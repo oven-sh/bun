@@ -2752,7 +2752,7 @@ pub mod JSZstd {
 
     /// Error of a `Bun.zstd*` call: thrown by the sync functions, rejected by [`ZstdJob`].
     pub(crate) enum Failure {
-        /// The output buffer, whose size the input decides, could not be allocated.
+        /// The output, whose size the input decides, or zstd's own state for it could not be allocated.
         OutOfMemory,
         /// An `ERR_ZSTD` with this message.
         Compression(&'static [u8]),
@@ -2796,7 +2796,8 @@ pub mod JSZstd {
         }
     }
 
-    fn compress_to_vec(input: &[u8], level: i32) -> Result<Vec<u8>, Failure> {
+    /// Boxed (trimmed to the bytes produced) so an empty result owns no memory, as `create_buffer_from_box` requires.
+    fn compress_to_box(input: &[u8], level: i32) -> Result<Box<[u8]>, Failure> {
         let max_size = bun_zstd::compress_bound(input.len());
         // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
         if bun_zstd::is_error(max_size) {
@@ -2815,9 +2816,13 @@ pub mod JSZstd {
             return Err(Failure::Compression(err.as_bytes()));
         }
 
-        // Release the slack between the compressed size and the bound.
-        output.shrink_to_fit();
-        Ok(output)
+        Ok(output.into_boxed_slice())
+    }
+
+    fn decompress_to_box(input: &[u8]) -> Result<Box<[u8]>, Failure> {
+        bun_zstd::decompress_alloc(input)
+            .map(Vec::into_boxed_slice)
+            .map_err(Failure::from)
     }
 
     #[bun_jsc::host_fn]
@@ -2832,9 +2837,9 @@ pub mod JSZstd {
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
 
         let output =
-            compress_to_vec(buffer.slice(), level).map_err(|failure| failure.throw(global_this))?;
+            compress_to_box(buffer.slice(), level).map_err(|failure| failure.throw(global_this))?;
 
-        JSValue::create_buffer(global_this, output.leak())
+        JSValue::create_buffer_from_box(global_this, output)
     }
 
     #[bun_jsc::host_fn]
@@ -2844,10 +2849,10 @@ pub mod JSZstd {
     ) -> JsResult<JSValue> {
         let (buffer, _) = parse_compress_buffer_and_options(global_this, callframe)?;
 
-        let output = bun_zstd::decompress_alloc(buffer.slice())
-            .map_err(|err| Failure::from(err).throw(global_this))?;
+        let output =
+            decompress_to_box(buffer.slice()).map_err(|failure| failure.throw(global_this))?;
 
-        JSValue::create_buffer(global_this, output.leak())
+        JSValue::create_buffer_from_box(global_this, output)
     }
 
     // --- Async versions ---
@@ -2860,7 +2865,7 @@ pub mod JSZstd {
         pub is_compress: bool,
         pub level: i32,
         /// Filled in by `run`.
-        pub result: Result<Vec<u8>, Failure>,
+        pub result: Result<Box<[u8]>, Failure>,
     }
 
     impl jsc::JobContext for ZstdJob {
@@ -2874,9 +2879,9 @@ pub mod JSZstd {
             let input = this.buffer.slice();
 
             this.result = if this.is_compress {
-                compress_to_vec(input, this.level)
+                compress_to_box(input, this.level)
             } else {
-                bun_zstd::decompress_alloc(input).map_err(Failure::from)
+                decompress_to_box(input)
             };
             Some(done)
         }
@@ -2892,7 +2897,7 @@ pub mod JSZstd {
             match this.result {
                 Ok(output) => promise.settle(
                     global_this,
-                    JSValue::create_buffer(global_this, output.leak()),
+                    JSValue::create_buffer_from_box(global_this, output),
                 ),
                 Err(failure) => {
                     promise.reject_with_async_stack(global_this, Ok(failure.to_js(global_this)))
@@ -2916,7 +2921,7 @@ pub mod JSZstd {
                 buffer: bun_jsc::ThreadSafe::adopt(buffer),
                 is_compress,
                 level,
-                result: Ok(Vec::new()),
+                result: Ok(Box::default()),
             },
             promise,
         );

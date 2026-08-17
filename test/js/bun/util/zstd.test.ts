@@ -13,6 +13,13 @@ import { bunEnv, bunExe, isASAN, rss } from "harness";
 import zlib from "node:zlib";
 import path from "path";
 
+// A hand-written empty frame: magic, a descriptor without a content size (so it goes through the
+// streaming decoder), the window descriptor (the decoder allocates a window of 2^windowLog bytes before
+// it can produce anything) and one empty raw last block.
+const emptyFrameWithWindowLog = (windowLog: number) =>
+  new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, (windowLog - 10) << 3, 0x01, 0x00, 0x00]);
+const emptyFrameWith16MiBWindow = emptyFrameWithWindowLog(24);
+
 describe("Zstandard compression", async () => {
   // Test data of various sizes
   const testCases = [
@@ -59,20 +66,32 @@ describe("Zstandard compression", async () => {
     // Ensure this input actually hits the streaming error path (not InvalidZstdData / fast path).
     expect(() => zstdDecompressSync(bad)).toThrowError(/ZstdDecompressionError/);
 
+    expectStreamingDecompressionNotToLeak(() => {
+      try {
+        zstdDecompressSync(bad);
+      } catch {}
+    }, "failed");
+  }, 60_000);
+
+  it("does not leak on streaming decompression of an empty result (unknown content size)", () => {
+    // The streaming path reserves an output buffer before it knows the result is empty; the empty
+    // Buffer handed to JS owns no memory, so that reservation has to be freed rather than leaked.
+    const frame = emptyFrameWithWindowLog(10);
+    expect(zstdDecompressSync(frame)).toHaveLength(0);
+
+    expectStreamingDecompressionNotToLeak(() => zstdDecompressSync(frame), "empty");
+  }, 60_000);
+
+  function expectStreamingDecompressionNotToLeak(decompressOnce: () => void, what: string) {
     const iterations = 10000;
     function batch() {
-      for (let i = 0; i < iterations; i++) {
-        try {
-          zstdDecompressSync(bad);
-        } catch {}
-      }
+      for (let i = 0; i < iterations; i++) decompressOnce();
       Bun.gc(true);
       return rss();
     }
 
     // Warm up until RSS stabilizes (allocator / ASAN quarantine reach steady state).
-    // Without the fix each call leaks the ~4 KiB partial output buffer, so growth never
-    // converges and every batch adds ~40+ MiB.
+    // A leak of the ~4 KiB output buffer per call never converges: every batch adds 40+ MiB.
     let prev = batch();
     let growthMiB = Infinity;
     for (let round = 0; round < 5; round++) {
@@ -84,9 +103,9 @@ describe("Zstandard compression", async () => {
 
     expect(
       growthMiB,
-      `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} failed zstd decompressions after warmup`,
+      `RSS grew by ${growthMiB.toFixed(1)} MiB over ${iterations} ${what} zstd decompressions after warmup`,
     ).toBeLessThan(10);
-  }, 60_000);
+  }
 
   // Test with known zstd-compressed data
   describe("zstd CLI compatibility", () => {
@@ -331,11 +350,8 @@ describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   const CAP_MIB = 8;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
 
-  // Two streams whose decoders have to allocate a 16 MiB window (larger than the cap) before they can
-  // produce anything, so it is the codec's own allocation that fails, not one of ours:
-  // an empty zstd frame (magic, descriptor, window descriptor, one empty raw last block) without a
-  // content size, and a brotli stream compressed with a 2^24 byte window.
-  const emptyFrameWith16MiBWindow = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, 14 << 3, 0x01, 0x00, 0x00]);
+  // Like emptyFrameWith16MiBWindow, a stream whose decoder has to allocate a 16 MiB window (larger
+  // than the cap) before it can produce anything, so the codec's own allocation fails, not one of ours.
   const brotliWith16MiBWindow = (input: Uint8Array) =>
     zlib.brotliCompressSync(input, {
       params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 },

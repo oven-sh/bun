@@ -433,42 +433,85 @@ devTest("import.meta.hot on/off events", {
     }),
     "index.ts": `
       console.log("Initial setup");
-      // Add event listener
-      import.meta.hot.on("vite:beforeUpdate", () => {
-        console.log("Before update event");
+      import.meta.hot.on("bun:beforeUpdate", () => {
+        console.log("bun:beforeUpdate (initial)");
       });
+      // "vite:*" names are aliases of the "bun:*" events
+      import.meta.hot.on("vite:beforeUpdate", () => {
+        console.log("vite:beforeUpdate (initial)");
+      });
+      import.meta.hot.accept();
+    `,
+    // "off" accepts either name for a listener registered under the other.
+    "off.html": emptyHtmlFile({
+      scripts: ["off.ts"],
+    }),
+    "off.ts": `
+      console.log("Initial setup");
+      const a = () => console.log("a");
+      import.meta.hot.on("bun:beforeUpdate", a);
+      import.meta.hot.off("vite:beforeUpdate", a);
+      const b = () => console.log("b");
+      import.meta.hot.on("vite:beforeUpdate", b);
+      import.meta.hot.off("bun:beforeUpdate", b);
+      import.meta.hot.on("vite:beforeUpdate", () => console.log("still listening"));
       import.meta.hot.accept();
     `,
   },
   async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("Initial setup");
-    await dev.write(
-      "index.ts",
-      `
-        console.log("Updated setup");
-        // Events implementation is partial according to docs
-        import.meta.hot.on("vite:beforeUpdate", () => {
-          console.log("Before update event 2");
-        });
-        const handler = () => {
-          console.log("Another handler");
-        };
-        import.meta.hot.on("vite:beforeUpdate", handler);
-        // Remove the handler
-        import.meta.hot.off("vite:beforeUpdate", handler);
-        import.meta.hot.accept();
-      `,
-    );
-    await c.expectMessage("Updated setup");
-    await dev.write(
-      "index.ts",
-      `
-        console.log("Third update");
-        import.meta.hot.accept();
-      `,
-    );
-    await c.expectMessage("Third update");
+    {
+      await using c = await dev.client("/index");
+      await c.expectMessage("Initial setup");
+      await dev.write(
+        "index.ts",
+        `
+          console.log("Updated setup");
+          import.meta.hot.on("vite:beforeUpdate", () => {
+            console.log("vite:beforeUpdate (updated)");
+          });
+          import.meta.hot.on("vite:afterUpdate", () => {
+            console.log("vite:afterUpdate (updated)");
+          });
+          const handler = () => {
+            console.log("removed handler");
+          };
+          import.meta.hot.on("vite:beforeUpdate", handler);
+          import.meta.hot.off("vite:beforeUpdate", handler);
+          import.meta.hot.accept();
+        `,
+      );
+      // The initial module's listeners fire for the update that replaces it. The
+      // afterUpdate listener added by the new module fires once the update is done.
+      await c.expectMessage(
+        "bun:beforeUpdate (initial)",
+        "vite:beforeUpdate (initial)",
+        "Updated setup",
+        "vite:afterUpdate (updated)",
+      );
+      await dev.write(
+        "index.ts",
+        `
+          console.log("Third update");
+          import.meta.hot.accept();
+        `,
+      );
+      // The initial module's listeners were removed when it was replaced, and the
+      // off() listener never fires. The replaced module's afterUpdate listener is
+      // removed before this update finishes.
+      await c.expectMessage("vite:beforeUpdate (updated)", "Third update");
+    }
+    {
+      await using c = await dev.client("/off");
+      await c.expectMessage("Initial setup");
+      await dev.write(
+        "off.ts",
+        `
+          console.log("Updated setup");
+          import.meta.hot.accept();
+        `,
+      );
+      await c.expectMessage("still listening", "Updated setup");
+    }
   },
 });
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {

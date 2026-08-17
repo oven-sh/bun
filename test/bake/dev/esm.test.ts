@@ -361,6 +361,194 @@ devTest("cannot require a module with top level await", {
     });
   },
 });
+devTest("import() and require() probes: options forwarding, rejection instead of throwing, require-of-TLA error", {
+  // Every import() in a dev server module is lowered to hmr.dynamicImport(),
+  // and require() to hmr.require(). One server, one route per concern.
+  framework: minimalFramework,
+  files: {
+    // /import-options: modules the dev server did not bundle (builtins,
+    // externals, absolute paths) fall through to a real import(), which must
+    // receive the options and whose promise must be handed back to the caller.
+    "import-options/dep.ts": `
+      export const x = 1;
+    `,
+    "import-options/data.json": `{"a":1}`,
+    "routes/import-options.ts": `
+      import * as path from "node:path";
+      export default async function (req, meta) {
+        const builtinWithOptions = import("node:path", { with: {} });
+        // Computed, so the bundler cannot resolve it; type: "text" is only
+        // honored if the options object reaches the real import().
+        const dataFile = path.join(process.cwd(), "import-options/data.json");
+        const computedWithOptions = import(dataFile, { with: { type: "text" } });
+        const bundledWithOptions = import("../import-options/dep", { with: {} });
+        return Response.json({
+          builtinWithOptions: [builtinWithOptions instanceof Promise, (await builtinWithOptions) === path],
+          computedWithOptions: [computedWithOptions instanceof Promise, (await computedWithOptions)?.default],
+          bundledWithOptions: [bundledWithOptions instanceof Promise, (await bundledWithOptions)?.x],
+        });
+      }
+    `,
+    // /rejects: like a native import(), hmr.dynamicImport() must always hand
+    // back a promise: load failures reject it rather than escape synchronously.
+    "rejects/ok.ts": `
+      export const value = "ok";
+    `,
+    "rejects/throws.ts": `
+      export const value = "unreachable";
+      throw new Error("boom esm");
+    `,
+    "rejects/throws-cjs.ts": `
+      module.exports = { value: "unreachable" };
+      throw new Error("boom cjs");
+    `,
+    "rejects/imports-thrower.ts": `
+      import "./throws-dep";
+      export const value = "unreachable";
+    `,
+    "rejects/throws-dep.ts": `
+      export const value = "unreachable";
+      throw new Error("boom dep");
+    `,
+    "rejects/imports-tla-thrower.ts": `
+      import "./tla-throws";
+      export const value = "unreachable";
+    `,
+    "rejects/tla-throws.ts": `
+      export const value = "unreachable";
+      await 1;
+      throw new Error("boom tla");
+    `,
+    "rejects/proxy-cjs.ts": `
+      module.exports = new Proxy({}, {
+        ownKeys() {
+          throw new Error("boom ownKeys");
+        },
+      });
+    `,
+    "routes/rejects.ts": `
+      async function probe(run) {
+        let promise;
+        try {
+          promise = run();
+        } catch (e) {
+          return "threw synchronously: " + e.message;
+        }
+        if (!(promise instanceof Promise)) return "returned a non-promise";
+        return promise.then(
+          ns => "resolved: " + ns.value,
+          e => "rejected: " + e.message,
+        );
+      }
+      export default async function () {
+        const results = {};
+        results.ok = await probe(() => import("../rejects/ok"));
+        results.okAgain = await probe(() => import("../rejects/ok"));
+        results.esm = await probe(() => import("../rejects/throws"));
+        results.esmAgain = await probe(() => import("../rejects/throws"));
+        results.cjs = await probe(() => import("../rejects/throws-cjs"));
+        results.cjsAgain = await probe(() => import("../rejects/throws-cjs"));
+        results.dep = await probe(() => import("../rejects/imports-thrower"));
+        results.tla = await probe(() => import("../rejects/imports-tla-thrower"));
+        results.tlaAgain = await probe(() => import("../rejects/imports-tla-thrower"));
+        results.cjsProxy = await probe(() => import("../rejects/proxy-cjs"));
+        results.builtin = await probe(() => import("node:path").then(m => ({ value: typeof m.join })));
+        return Response.json(results);
+      }
+    `,
+    // /require-tla: require() used to produce its message by rewriting, in
+    // place, the error the loader threw, so every enclosing require() the error
+    // propagated through renamed it again (including a recorded failure).
+    "require-tla/tla.ts": `
+      await 1;
+      export const value = "tla";
+    `,
+    "require-tla/imports-tla.ts": `
+      import "./tla";
+      export const value = "unreachable";
+    `,
+    "require-tla/outer.ts": `
+      require("./inner");
+      export const value = "unreachable";
+    `,
+    "require-tla/inner.ts": `
+      require("./tla");
+      export const value = "unreachable";
+    `,
+    "require-tla/requires-tla.ts": `
+      require("./tla");
+      export const value = "unreachable";
+    `,
+    "require-tla/imports-requires-tla.ts": `
+      import "./requires-tla";
+      export const value = "unreachable";
+    `,
+    "routes/require-tla.ts": `
+      async function attempt(load) {
+        try {
+          await load();
+          return "loaded";
+        } catch (e) {
+          return e.message;
+        }
+      }
+      export default async function () {
+        return Response.json({
+          requireTla: await attempt(() => require("../require-tla/tla")),
+          requireImportsTla: await attempt(() => require("../require-tla/imports-tla")),
+          requireOuter: await attempt(() => require("../require-tla/outer")),
+          importRequiresTla: await attempt(() => import("../require-tla/requires-tla")),
+          requireRequiresTla: await attempt(() => require("../require-tla/requires-tla")),
+          requireImportsRequiresTla: await attempt(() => require("../require-tla/imports-requires-tla")),
+          importRequiresTlaAgain: await attempt(() => import("../require-tla/requires-tla")),
+        });
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/import-options").json()).toStrictEqual({
+      builtinWithOptions: [true, true],
+      computedWithOptions: [true, '{"a":1}'],
+      bundledWithOptions: [true, 1],
+    });
+
+    expect(await dev.fetch("/rejects").json()).toStrictEqual({
+      ok: "resolved: ok",
+      okAgain: "resolved: ok",
+      // First import evaluates the module; the second one hits its recorded failure.
+      esm: "rejected: boom esm",
+      esmAgain: "rejected: boom esm",
+      // CommonJS failures are not recorded: the module is marked stale and the
+      // second import runs its body again, which throws again.
+      cjs: "rejected: boom cjs",
+      cjsAgain: "rejected: boom cjs",
+      dep: "rejected: boom dep",
+      tla: "rejected: boom tla",
+      tlaAgain: "rejected: boom tla",
+      // The module evaluates fine; converting its exports to a namespace fails.
+      cjsProxy: "rejected: boom ownKeys",
+      // Not part of the bundle, so this falls through to the runtime's own import().
+      builtin: "resolved: function",
+    });
+
+    const cannotRequire = (id: string, asyncId: string) =>
+      `Cannot require "require-tla/${id}" because "require-tla/${asyncId}" uses top-level await, but 'require' is a synchronous operation.`;
+    expect(await dev.fetch("/require-tla").json()).toStrictEqual({
+      // The required module, or one of its static imports, has top-level await.
+      requireTla: cannotRequire("tla.ts", "tla.ts"),
+      requireImportsTla: cannotRequire("imports-tla.ts", "tla.ts"),
+      // The call that failed is the require("./tla") in inner.ts; its error
+      // propagates out of the two enclosing require() calls unchanged.
+      requireOuter: cannotRequire("tla.ts", "tla.ts"),
+      // The import() records the error on requires-tla.ts; the require() calls
+      // rethrow that recorded error as-is, and so does the second import().
+      importRequiresTla: cannotRequire("tla.ts", "tla.ts"),
+      requireRequiresTla: cannotRequire("tla.ts", "tla.ts"),
+      requireImportsRequiresTla: cannotRequire("tla.ts", "tla.ts"),
+      importRequiresTlaAgain: cannotRequire("tla.ts", "tla.ts"),
+    });
+  },
+});
 devTest("function that is assigned to should become a live binding", {
   files: {
     "index.html": emptyHtmlFile({

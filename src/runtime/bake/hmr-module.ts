@@ -6,16 +6,7 @@
 // Some build failures from the bundler surface as runtime errors here, such as
 // `require` on a module with transitive top-level await, or a missing export.
 // This was done to make incremental updates as isolated as possible.
-import {
-  __callDispose,
-  __EARLY_RETURN_SENTINEL,
-  __legacyDecorateClassTS,
-  __legacyDecorateParamTS,
-  __legacyMetadataTS,
-  __MEMO_CACHE_SENTINEL,
-  __name,
-  __using,
-} from "../../runtime.bun";
+import * as runtimeHelpers from "../../runtime.bun";
 // This import is different based on client vs server side.
 // On the server, remapping is done automatically.
 import { type SourceMapURL, derefMapping } from "#stack-trace";
@@ -126,23 +117,25 @@ export class HMRModule {
     try {
       const mod = loadModuleSync(id, true, this);
       return mod.esm ? (mod.cjs ??= toCommonJS(mod.exports)) : mod.cjs.exports;
-    } catch (e: any) {
+    } catch (e) {
       if (e instanceof AsyncImportError) {
-        e.message = `Cannot require "${id}" because "${e.asyncId}" uses top-level await, but 'require' is a synchronous operation.`;
+        throw new Error(
+          `Cannot require "${id}" because "${e.asyncId}" uses top-level await, but 'require' is a synchronous operation.`,
+        );
       }
       throw e;
     }
   }
 
-  /** Lowered from `.e_import` (import(id)) */
-  dynamicImport(id: Id, opts?: ImportCallOptions) {
+  /** Lowered from `.e_import` (import(id)). `async` so a failed load rejects instead of throwing, like import() */
+  async dynamicImport(id: Id, opts?: ImportCallOptions) {
     const found = loadModuleAsync(id, true, this);
     if (found) {
-      if ((found as HMRModule).id === id) return Promise.resolve(getEsmExports(found as HMRModule));
+      if ((found as HMRModule).id === id) return getEsmExports(found as HMRModule);
       return (found as Promise<HMRModule>).then(getEsmExports);
     }
     return opts
-      ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "import(specifier, opts)"))(id, opts)
+      ? (lazyDynamicImportWithOptions ??= new Function("specifier, opts", "return import(specifier, opts)"))(id, opts)
       : import(id);
   }
 
@@ -228,17 +221,13 @@ export class HMRModule {
   }
 
   on(event: string, cb: HotEventHandler) {
-    // Vite compatibility, but favor using Bun's event names.
-    if (event.startsWith("vite:")) {
-      event = "bun:" + event.slice(4);
-    }
-
+    event = normalizeEventName(event);
     (eventHandlers[event] ??= []).push(cb);
     this.dispose(() => this.off(event, cb));
   }
 
   off(event: string, cb: HotEventHandler) {
-    const handlers = eventHandlers[event];
+    const handlers = eventHandlers[normalizeEventName(event)];
     if (!handlers) return;
     const index = handlers.indexOf(cb);
     if (index !== -1) {
@@ -817,6 +806,11 @@ function createAcceptArray(modules: string[], key: Id) {
   return arr;
 }
 
+/** `vite:*` is an alias of `bun:*`; both `on` and `off` go through this. */
+function normalizeEventName(event: string): string {
+  return event.startsWith("vite:") ? "bun:" + event.slice("vite:".length) : event;
+}
+
 export function emitEvent(event: HMREvent, data: any) {
   const handlers = eventHandlers[event];
   if (!handlers) return;
@@ -855,7 +849,6 @@ class AsyncImportError extends Error {
   constructor(asyncId: string) {
     super(`Cannot load async module "${asyncId}" synchronously because it uses top-level await.`);
     this.asyncId = asyncId;
-    Object.defineProperty(this, "name", { value: "Error" });
   }
 }
 
@@ -938,24 +931,9 @@ function isReactRefreshBoundary(esmExports): boolean {
 
 function implicitAcceptFunction() {}
 
-declare global {
-  interface Error {
-    asyncId?: string;
-  }
-}
-
 // bun:bake/server, bun:bake/client, and bun:wrap are
 // provided by this file instead of the bundler
-registerSynthetic("bun:wrap", {
-  __name,
-  __legacyDecorateClassTS,
-  __legacyDecorateParamTS,
-  __legacyMetadataTS,
-  __using,
-  __callDispose,
-  __MEMO_CACHE_SENTINEL,
-  __EARLY_RETURN_SENTINEL,
-});
+registerSynthetic("bun:wrap", runtimeHelpers);
 
 if (side === "server") {
   registerSynthetic("bun:bake/server", {

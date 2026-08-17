@@ -56,9 +56,9 @@ pub struct Graph<'a> {
     /// tasks will be run, and the count is "moved" back to `pending_items`
     pub(crate) deferred_pending: u32,
 
-    /// onLoad requests currently handed to the plugins' thread (dispatched, not yet answered), so
-    /// `drain_deferred_tasks` can reach the ones that called `.defer()`. Bundle thread only.
-    pub(crate) outstanding_loads: OutstandingList<crate::bundle_v2::api::JSBundler::Load>,
+    /// Which deferred batch is being collected: bumped each time `drain_deferred_tasks` moves the parked
+    /// units back, so a `Load` can tell whether its own unit is still parked. Bundle thread only.
+    pub(crate) defer_epoch: u32,
     /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
     /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
     pub(crate) cancelled: bool,
@@ -167,7 +167,7 @@ impl<'a> Graph<'a> {
             ast: MultiArrayList::default(),
             pending_items: 0,
             deferred_pending: 0,
-            outstanding_loads: OutstandingList::default(),
+            defer_epoch: 0,
             cancelled: false,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
@@ -228,19 +228,12 @@ impl<'a> Graph<'a> {
         transpiler.thread_lock.assert_locked();
 
         if self.deferred_pending > 0 {
-            // Their units are back in `pending_items`, plus one for the hop itself: the pass is not done
-            // until it is back (see `DeferredBatchTask`).
+            // Their units are back in `pending_items` (a new epoch: those loads' own units are no longer
+            // parked), plus one for the hop itself: the pass is not done until it is back (see
+            // `DeferredBatchTask`).
             self.pending_items += self.deferred_pending + 1;
             self.deferred_pending = 0;
-            let mut load = self.outstanding_loads.head;
-            while !load.is_null() {
-                // SAFETY: linked ⇒ arena-live; bundle thread.
-                unsafe {
-                    (*load).deferred = false;
-                    load = (*load).outstanding.next;
-                }
-            }
-
+            self.defer_epoch += 1;
             transpiler.drain_defer_task.schedule();
 
             return true;
@@ -255,73 +248,3 @@ impl<'a> Graph<'a> {
 // here so `InputFile` and the derived `items_side_effects()` SoA accessor share
 // the same type that `LinkerContext::mark_file_live_for_tree_shaking` expects.
 use bun_ast::SideEffects;
-
-/// Intrusive doubly-linked membership in an [`OutstandingList`].
-pub struct OutstandingLink<T> {
-    prev: *mut T,
-    pub(crate) next: *mut T,
-    linked: bool,
-}
-impl<T> Default for OutstandingLink<T> {
-    fn default() -> Self {
-        Self {
-            prev: core::ptr::null_mut(),
-            next: core::ptr::null_mut(),
-            linked: false,
-        }
-    }
-}
-pub trait OutstandingNode: Sized {
-    fn link(&mut self) -> &mut OutstandingLink<Self>;
-}
-/// A bundle pass's outstanding plugin requests; single-threaded (bundle thread).
-pub struct OutstandingList<T: OutstandingNode> {
-    head: *mut T,
-}
-impl<T: OutstandingNode> Default for OutstandingList<T> {
-    fn default() -> Self {
-        Self {
-            head: core::ptr::null_mut(),
-        }
-    }
-}
-impl<T: OutstandingNode> OutstandingList<T> {
-    pub(crate) fn push(&mut self, node: *mut T) {
-        // SAFETY: `node` is arena-live and unlinked; bundle thread.
-        unsafe {
-            let l = (*node).link();
-            debug_assert!(!l.linked);
-            l.linked = true;
-            l.prev = core::ptr::null_mut();
-            l.next = self.head;
-            if !self.head.is_null() {
-                (*self.head).link().prev = node;
-            }
-        }
-        self.head = node;
-    }
-    /// No-op if `node` is not linked (already answered / never dispatched).
-    pub(crate) fn unlink(&mut self, node: &mut T) {
-        let node_ptr: *mut T = node;
-        let l = node.link();
-        if !l.linked {
-            return;
-        }
-        l.linked = false;
-        let (prev, next) = (l.prev, l.next);
-        l.prev = core::ptr::null_mut();
-        l.next = core::ptr::null_mut();
-        // SAFETY: neighbours are linked ⇒ arena-live; bundle thread.
-        unsafe {
-            if prev.is_null() {
-                debug_assert!(core::ptr::eq(self.head, node_ptr));
-                self.head = next;
-            } else {
-                (*prev).link().next = next;
-            }
-            if !next.is_null() {
-                (*next).link().prev = prev;
-            }
-        }
-    }
-}

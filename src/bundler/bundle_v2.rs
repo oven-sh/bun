@@ -1221,17 +1221,16 @@ pub mod bv2_impl {
                 pub parse_task: bun_ptr::BackRef<ParseTask, bun_ptr::Mut>,
                 /// Defer may only be called once.
                 pub called_defer: bool,
-                /// `.defer()`ed and not yet drained: its scan-counter unit sits in
-                /// `Graph::deferred_pending` (bundle thread only).
-                pub(crate) deferred: bool,
+                /// `.defer()`ed during this `Graph::defer_epoch`: until that epoch's batch is drained (or
+                /// this load's answer arrives first) its scan-counter unit sits in
+                /// `Graph::deferred_pending`. Bundle thread only.
+                pub(crate) deferred_in: Option<u32>,
                 /// Intrusive node for the Mini-loop queue: carries this load's answer back to the bundle
                 /// thread (`on_load_async`).
                 pub task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
                 /// A second node for `.defer()`'s notification: it can still be queued when the plugin
                 /// answers, and one node cannot sit in the queue twice.
                 pub defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext,
-                /// Links in `Graph::outstanding_loads`; bundle thread only.
-                pub(crate) outstanding: crate::Graph::OutstandingLink<Load>,
             }
             impl Load {
                 pub(crate) fn init(bv2: &mut BundleV2<'_>, parse: &mut ParseTask) -> Self {
@@ -1248,10 +1247,9 @@ pub mod bv2_impl {
                     path: parse.path.text.to_vec().into_boxed_slice(),
                     namespace: parse.path.namespace.to_vec().into_boxed_slice(),
                     called_defer: false,
-                    deferred: false,
+                    deferred_in: None,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
                     defer_task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                    outstanding: Default::default(),
                 }
                 }
                 /// Shared access to the heap-allocated `ParseTask` this load wraps.
@@ -1286,7 +1284,6 @@ pub mod bv2_impl {
                     // by `enqueue_on_js_loop_for_plugins`).
                     unsafe {
                         let bv2 = &mut *self.bv2;
-                        bv2.graph.outstanding_loads.push(self);
                         if bv2.graph.cancelled {
                             self.answer_cancelled();
                             return;
@@ -1332,11 +1329,6 @@ pub mod bv2_impl {
                 unsafe fn release_unrun(this: *mut Self) {
                     // SAFETY: as `Resolve::release_unrun`.
                     unsafe { (*this).answer_cancelled() };
-                }
-            }
-            impl crate::Graph::OutstandingNode for Load {
-                fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
-                    &mut self.outstanding
                 }
             }
         }
@@ -4356,11 +4348,10 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
-            this.graph.outstanding_loads.unlink(load);
-            if load.deferred {
-                // Answered while `.defer()`red (cancelled, or a plugin that did not wait): its unit is parked
-                // in `deferred_pending`; move it back so this answer accounts for it like any other.
-                load.deferred = false;
+            if load.deferred_in.take() == Some(this.graph.defer_epoch) {
+                // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
+                // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
+                // answer accounts for it like any other.
                 this.graph.deferred_pending -= 1;
                 this.graph.pending_items += 1;
             }
@@ -6873,7 +6864,7 @@ pub mod bv2_impl {
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
             this.thread_lock.assert_locked();
-            load.deferred = true;
+            load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
             this.decrement_scan_counter();
         }

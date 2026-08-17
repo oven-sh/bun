@@ -32,7 +32,9 @@ export async function run() {
     req.pipe(proxyRequest); // Use pipe instead of manual data handling
   });
 
-  proxyServer.listen(0, "localhost", async () => {
+  // "localhost" can resolve to ::1 for the listen while the client connects to
+  // 127.0.0.1; bind the IPv4 loopback explicitly so they always match.
+  proxyServer.listen(0, "127.0.0.1", async () => {
     const address = proxyServer.address();
 
     const options = {

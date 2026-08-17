@@ -216,9 +216,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeHTTPServerSocketEnd, (JSC::JSGlobalObject
     }
 
     thisObject->ended = true;
-    // The response's buffered body must reach the kernel before the FIN; uWS
-    // performs the shutdown after its send buffer drains.
-    if (thisObject->shutdownAfterResponseDrains()) {
+    // uWS performs the shutdown once the buffered response has drained and,
+    // for the end() after a finished response (argument 0), the body parse is
+    // done.
+    bool afterResponseFinished = callFrame->argument(0).isTrue();
+    if (thisObject->shutdownAfterResponseDrains(afterResponseFinished)) {
         return JSValue::encode(JSC::jsUndefined());
     }
     auto bufferedSize = thisObject->streamBuffer.bufferedSize();

@@ -2436,10 +2436,7 @@ pub mod JSZlib {
         let mut list: Vec<u8> = Vec::new();
         let mut reserved = false;
         if is_gzip && compressed.len() > 64 {
-            //   0   1   2   3   4   5   6   7
-            //  +---+---+---+---+---+---+---+---+
-            //  |     CRC32     |     ISIZE     |
-            //  +---+---+---+---+---+---+---+---+
+            // The gzip trailer is CRC32 then ISIZE, the uncompressed size mod 2^32 (RFC 1952 2.3.1).
             let estimated_size: u32 = u32::from_le_bytes(
                 compressed[compressed.len() - 4..][..4]
                     .try_into()

@@ -165,18 +165,15 @@ pub enum ZlibError {
 
 bun_core::impl_tag_error!(ZlibError);
 
-// zlib `alloc_func`/`free_func` thunks → mimalloc. Shared by `ZlibReader` and
-// `ZlibCompressorArrayList`. Intentionally
-// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
-// heap-breakdown variant used by `ZlibReaderArrayList`).
 pub(crate) use bun_alloc::c_thunks::{
     mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc,
 };
 
+// zlib `alloc_func`/`free_func` thunks tagged with the "zlib" heap-breakdown zone.
 #[allow(non_snake_case)]
 mod ZlibAllocator {
     bun_alloc::c_thunks_for_zone!("zlib");
-    pub(crate) use calloc_items as alloc;
+    pub(crate) use malloc_items as alloc;
 }
 
 pub struct ZlibReaderArrayList<'a> {
@@ -976,10 +973,9 @@ impl DeflateEncoder {
     /// Reserves at least `reserve` spare bytes in `out`, points
     /// `next_in`/`avail_in` at `input` and `next_out`/`avail_out` at the
     /// spare, calls `deflate(flush)`, and advances `out.len()` by the bytes
-    /// produced. Returns `(bytes_consumed_from_input, return_code)`, with
-    /// `MemError` and nothing consumed when `out` cannot be grown. Inputs
+    /// produced. Returns `(bytes_consumed_from_input, return_code)`. Inputs
     /// larger than `u32::MAX` are clamped; callers loop and advance `input`
-    /// by `consumed`.
+    /// by `consumed`. A failed growth of `out` is `MemError` with nothing consumed.
     pub fn step(
         &mut self,
         input: &[u8],

@@ -84,8 +84,8 @@ pub(crate) fn compress_into(
 }
 
 /// libdeflate one-shot fast path into `state.shared_buffer`. Returns `None`
-/// when the worst-case bound exceeds the shared buffer or a compressor cannot
-/// be allocated — caller falls back to [`compress_zlib_streaming`].
+/// when the bound exceeds the shared buffer or no compressor can be allocated — caller falls back to
+/// [`compress_zlib_streaming`].
 fn compress_libdeflate_fast(
     state: &mut LibdeflateState,
     input: &[u8],

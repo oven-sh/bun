@@ -1741,7 +1741,7 @@ pub fn init(
                         &root_buf[..json_path_len]
                     };
                     let json_source =
-                        bun_ast::Source::init_path_string(&*json_path, &json_buf[..json_len]);
+                        bun_ast::Source::init_path_string(json_path, &json_buf[..json_len]);
                     initialize_store();
                     // SAFETY: `ctx.log` is a borrow of the CLI's `Log`; valid for the
                     // duration of `init()` (set by `Command::create()` before any install

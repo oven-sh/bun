@@ -1061,7 +1061,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     if let Err(err) = unsafe {
                         Self::spawn_next_script(std::ptr::from_mut::<Self>(self), script_index)
                     } {
-                        self.exit_after_spawn_failure(script_index, &err);
+                        self.exit_after_spawn_failure(script_index, err);
                     }
                     return;
                 }
@@ -1118,7 +1118,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         } {
                             self.exit_after_spawn_failure(
                                 u8::try_from(new_script_index).expect("int cast"),
-                                &err,
+                                err,
                             );
                         }
                         return;
@@ -1361,7 +1361,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
             // SAFETY: `spawn_next_script` does not free the subprocess when it
             // fails; `lss` is a non-owning view that is not used again.
-            unsafe { (*lifecycle_subprocess).exit_after_spawn_failure(first_index, &err) }
+            unsafe { (*lifecycle_subprocess).exit_after_spawn_failure(first_index, err) }
         }
 
         Ok(())
@@ -1388,7 +1388,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         }
     }
 
-    fn exit_after_spawn_failure(&mut self, script_index: u8, err: &crate::Error) -> ! {
+    fn exit_after_spawn_failure(&mut self, script_index: u8, err: crate::Error) -> ! {
         Output::err_generic(
             "Failed to run script <b>{}<r> due to error <b>{}<r>",
             (

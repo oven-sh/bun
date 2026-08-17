@@ -614,11 +614,8 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
-        // The directories read below are cached process-wide and reused by the
-        // VM that `bun run file.js` boots afterwards, and a package.json's
-        // dependency ranges (what auto-install resolves against) are only
-        // recorded when the resolver caching it has auto-install enabled. So
-        // this resolver needs the VM's setting (see `InitOptions::global_cache`).
+        // The dir cache below outlives this resolver into the VM, and only an auto-installing
+        // resolver records the package.json dependency ranges auto-install resolves against.
         this_transpiler.options.global_cache = ctx.debug.global_cache;
         this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 
@@ -693,11 +690,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
-        // Like npm, `npm_config_local_prefix` and the `npm_package_*` vars below
-        // describe this run and overwrite what an outer `bun run` exported
-        // (`cd pkg && bun run x` must see `pkg`'s values); name/version are left
-        // alone only when package.json lacks them. `npm_config_user_agent` /
-        // `npm_execpath` are deliberately inherited.
+        // This and `npm_package_*` describe this run, over whatever an outer `bun run` exported.
         env_loader
             .map
             .put(b"npm_config_local_prefix", top_level_dir)

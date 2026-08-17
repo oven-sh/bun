@@ -247,50 +247,30 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
-/// argv for spawning a package.json script: `<shell> -c <script>` with the
-/// POSIX shell the caller found, otherwise (always on Windows)
-/// `bun exec --no-env-file <script>`.
-///
-/// The envp the caller spawns with is the script's entire environment either
-/// way: `sh` adds nothing to it, and `--no-env-file` keeps `bun exec` from
-/// loading the `.env*` files in the script's cwd on top of it.
-pub struct ScriptArgv<'a> {
-    /// Elements are bare nullable pointers (an `Option<*const c_char>` would
-    /// not be one word each); terminated by a null after the last argument,
-    /// which for the shell form is one slot early.
-    argv: [*const c_char; 5],
-    _borrowed: core::marker::PhantomData<&'a ZStr>,
-}
+/// `<shell> -c <script>`, or without a POSIX shell (always on Windows, where `find_shell` yields
+/// cmd.exe) `bun exec --no-env-file <script>`: like `sh`, that adds no `.env*` file to the envp.
+pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
 
 impl<'a> ScriptArgv<'a> {
     pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
-        // `find_shell` yields cmd.exe on Windows, which does not take `-c`.
+        let (null, script) = (core::ptr::null(), script.as_ptr());
+        let (exec, no_env_file) = (c"exec".as_ptr(), c"--no-env-file".as_ptr());
         let argv = match shell {
-            Some(shell) if cfg!(unix) => [
-                shell.as_ptr(),
-                c"-c".as_ptr(),
-                script.as_ptr(),
-                core::ptr::null(),
-                core::ptr::null(),
-            ],
+            Some(sh) if cfg!(unix) => [sh.as_ptr(), c"-c".as_ptr(), script, null, null],
             _ => [
                 bun_core::self_exe_path()?.as_ptr(),
-                c"exec".as_ptr(),
-                c"--no-env-file".as_ptr(),
-                script.as_ptr(),
-                core::ptr::null(),
+                exec,
+                no_env_file,
+                script,
+                null,
             ],
         };
-        Ok(Self {
-            argv,
-            _borrowed: core::marker::PhantomData,
-        })
+        Ok(Self(argv, core::marker::PhantomData))
     }
 
-    /// The null-terminated array `spawn_process` takes; valid while `self`
-    /// (and the strings it borrows) is.
+    /// The null-terminated array `spawn_process` takes.
     pub fn as_ptr(&self) -> *const *const c_char {
-        self.argv.as_ptr()
+        self.0.as_ptr()
     }
 }
 

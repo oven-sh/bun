@@ -1508,30 +1508,25 @@ fn bin_kind_without_following_symlinks(
 ) -> bun_sys::FileKind {
     // A trailing slash would make `lstat` resolve a symlink to a directory.
     let bin_path = strings::without_trailing_slash(bin_path);
-    // By absolute path: on Windows `lstatat` reports a reparse point as its target's kind.
     let mut spill: Vec<u8> = Vec::new();
-    let mut end = 0;
-    loop {
-        end += match strings::index_of_char_usize(&bin_path[end..], b'/') {
-            Some(i) => i,
-            None => bin_path.len() - end,
+    let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
+    for end in slashes.chain([bin_path.len()]) {
+        // By absolute path: on Windows `lstatat` reports a reparse point as its target's kind.
+        let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
+        let abs_path =
+            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
+        let Ok(stat) = bun_sys::lstat(abs_path) else {
+            break;
         };
-        let abs_path = resolve_path::join_z_spill::<resolve_path::platform::Auto>(
-            &mut spill,
-            &[abs_workspace_path, &bin_path[..end]],
-        );
-        let kind = match bun_sys::lstat(abs_path) {
-            Ok(stat) => bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode),
-            Err(_) => return bun_sys::FileKind::Unknown,
-        };
+        let kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
         if end == bin_path.len() {
             return kind;
         }
         if kind != bun_sys::FileKind::Directory {
-            return bun_sys::FileKind::Unknown;
+            break;
         }
-        end += 1;
     }
+    bun_sys::FileKind::Unknown
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
@@ -1849,12 +1844,7 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // `Some` only when FOR_PUBLISH == true.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
-/// The package.json being packed, through the manager's cache; a package.json
-/// that cannot be read or parsed ends the command.
-///
-/// `workspace_package_json_cache` and `log` are disjoint fields on
-/// `PackageManager`; route through raw-pointer field projections so the two
-/// `&mut` borrows don't conflict.
+/// Through the manager's cache; exits when it cannot be read or parsed.
 fn package_json_entry<'a>(
     manager_ptr: *mut PackageManager,
     abs_package_json_path: &ZStr,
@@ -1987,18 +1977,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // not repeated.
         unsafe { (*transpiler_for_deinit).deinit() };
     }
-    let script_env = ctx.manager.env_mut();
-    script_env.map.put(b"npm_command", b"pack")?;
-    // `configure_env_for_run` described the package.json of the directory the
-    // package manager chdir'd to, which for a workspace member is the
-    // workspace root; the lifecycle scripts belong to the manifest being packed.
-    script_env
-        .map
-        .put(b"npm_package_json", abs_package_json_path.as_bytes())?;
-    script_env.map.put(b"npm_package_name", package_name)?;
-    script_env
-        .map
-        .put(b"npm_package_version", package_version)?;
+    let script_env = &mut ctx.manager.env_mut().map;
+    script_env.put(b"npm_command", b"pack")?;
+    // `configure_env_for_run` described the workspace root's package.json, not the one packed.
+    script_env.put(b"npm_package_json", abs_package_json_path.as_bytes())?;
+    script_env.put(b"npm_package_name", package_name)?;
+    script_env.put(b"npm_package_version", package_version)?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,
@@ -2471,14 +2455,18 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let abs_tarball_dest: Option<&ZStr> = if FOR_PUBLISH {
         None
     } else {
-        Some(pack_destination(
-            ctx.manager,
+        let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
+            opt_pack_destination(ctx.manager),
+            opt_pack_filename(ctx.manager),
             ctx.original_cwd,
             abs_workspace_path,
             package_name,
             package_version,
-            &mut dest_buf,
-        ))
+            &mut dest_buf[..],
+        );
+        // create the directory if it doesn't exist
+        let _ = Dir::cwd().make_path(&abs_tarball_dest.as_bytes()[..abs_tarball_dest_dir_end]);
+        Some(abs_tarball_dest)
     };
 
     if archive_write_open2(
@@ -2990,30 +2978,6 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
-/// Resolves where `bun pm pack` writes the tarball and creates that directory.
-fn pack_destination<'a>(
-    manager: &PackageManager,
-    original_cwd: &[u8],
-    abs_workspace_path: &[u8],
-    package_name: &[u8],
-    package_version: &[u8],
-    buf: &'a mut PathBuffer,
-) -> &'a ZStr {
-    let (abs_tarball_dest, dir_end) = tarball_destination(
-        opt_pack_destination(manager),
-        opt_pack_filename(manager),
-        original_cwd,
-        abs_workspace_path,
-        package_name,
-        package_version,
-        &mut buf[..],
-    );
-    let len = abs_tarball_dest.as_bytes().len();
-    let _ = bun_sys::Dir::cwd().make_path(&buf[..dir_end]);
-    // SAFETY: buf[len] == 0 (written by tarball_destination)
-    ZStr::from_buf(&buf[..], len)
-}
-
 /// The only write to disk, and so the only failure that has a partial file to remove.
 fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
     let file = match File::create(Fd::cwd(), abs_tarball_dest, true) {
@@ -3200,13 +3164,15 @@ fn add_archive_entry(
 
 /// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
 enum Substitution<'a> {
-    /// `workspace:^`, `workspace:~`, `workspace:*`: the workspace's current version behind that prefix.
-    WorkspaceVersion { prefix: &'static str },
-    /// Another workspace under this dependency's name, `workspace:@acme/core@*`; a directory,
-    /// `workspace:../core`; or `workspace:1.x` on a dependency that is itself a workspace.
+    /// `workspace:^` / `~` / `*`: the workspace's current version behind that prefix.
+    WorkspaceVersion {
+        prefix: &'static str,
+    },
+    /// `workspace:@acme/core@*` (alias), `workspace:../core`, or `workspace:1.x` on a workspace.
     WorkspaceRangeOrDirectory(&'a [u8]),
-    /// `catalog:` / `catalog:<name>`: that catalog's entry for the dependency.
-    Catalog { catalog_name: &'a [u8] },
+    Catalog {
+        catalog_name: &'a [u8],
+    },
 }
 
 impl<'a> Substitution<'a> {
@@ -3322,9 +3288,8 @@ fn publish_spec_for_workspace_range_or_directory(
     ))
 }
 
-/// `<name>@<range>` of `workspace:<name>@<range>`, which installs workspace `<name>` under the
-/// dependency's name. `<name>` may be scoped, so it ends at the last `@`; what a directory such as
-/// `../@scope/pkg` leaves in front of its last `@` is not a package name, so that is not an alias.
+/// `<name>@<range>` of `workspace:<name>@<range>`; `<name>` may be scoped, so it ends at the last
+/// `@`, and a directory like `../@scope/pkg` is not an alias since `../` is no package name.
 fn split_workspace_alias(spec: &[u8]) -> Option<(&[u8], &[u8])> {
     let at = strings::last_index_of_char(spec, b'@').filter(|at| *at > 0)?;
     let (name, range) = (&spec[..at], &spec[at + 1..]);
@@ -3350,7 +3315,6 @@ fn publish_workspace(
 }
 
 /// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
-/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is.
 fn edit_root_package_json(
     workspace_manifests: Option<&WorkspaceManifests>,
     package_dir: &[u8],

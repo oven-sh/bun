@@ -114,8 +114,8 @@ impl<'a> ProcessHandle<'a> {
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
             let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            // SAFETY: `argv` and `envp` are null-terminated C-string arrays
-            // (argv[0] non-null) owned by locals that outlive this call.
+            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
+            // with argv[0] non-null; valid for this call.
             break 'brk unsafe {
                 spawn::spawn_process(
                     &handle.options,
@@ -929,13 +929,10 @@ pub(crate) fn run_scripts_with_filter(
         &mut *event_loop
     }));
     let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
-        let shell = RunCommand::find_shell(
-            // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-            unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-            fsinstance.top_level_dir,
-        )
-        .ok_or(crate::Error::MissingShell)?;
-        Some(shell)
+        // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+        let path = unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b"");
+        let top_level_dir = fsinstance.top_level_dir;
+        Some(RunCommand::find_shell(path, top_level_dir).ok_or(crate::Error::MissingShell)?)
     } else {
         None
     };

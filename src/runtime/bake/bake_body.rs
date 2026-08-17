@@ -31,19 +31,6 @@ use super::{dev_server, framework_router};
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
-/// Local shim until `bun_jsc` grows a typed `get_optional`.
-/// Returns `None` for missing/null/undefined.
-fn get_optional_slice(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<ZigStringSlice>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
-        _ => Ok(None),
-    }
-}
-
 /// `JSValue.getBooleanStrict` — local shim.
 fn get_boolean_strict(
     target: JSValue,
@@ -164,15 +151,7 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
-                        Err(e) => {
-                            return Err(global.throw_error(
-                                e.to_zig_err(),
-                                "while querying current working directory",
-                            ));
-                        }
-                    };
+                    let root = resolve_root(None, global, &arena)?;
 
                     let framework = Framework::react(&arena)
                         .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
@@ -220,32 +199,37 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
-            allocations.track(slice)
-        } else {
-            match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
-                Err(e) => {
-                    return Err(global
-                        .throw_error(e.to_zig_err(), "while querying current working directory"));
-                }
-            }
-        };
+        let root = resolve_root(config.get_optional_slice(global, b"root")?, global, &arena)?;
 
         if let Some(plugin_array) = config.get(global, "plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        let root_z = arena_dupe_z(&arena, root);
-
         Ok(UserOptions {
-            root: root_z,
+            root,
             framework,
             bundler_options,
             allocations,
             arena,
         })
     }
+}
+
+/// Absolute, no trailing separator, resolved against the same directory as `Framework::resolve`.
+fn resolve_root(
+    user_root: Option<ZigStringSlice>,
+    global: &JSGlobalObject,
+    arena: &Arena,
+) -> JsResult<&'static ZStr> {
+    let user_root = user_root.as_ref().map_or(b".".as_slice(), |s| s.slice());
+    let Some(resolved) = resolve_dir_option(user_root) else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "'{}.root' must resolve to a path shorter than {} bytes",
+            API_NAME,
+            paths::MAX_PATH_BYTES
+        )));
+    };
+    Ok(arena_dupe_z(arena, &resolved))
 }
 
 /// Each string stores its allocator since some may hold reference counts to JSC
@@ -322,7 +306,7 @@ impl SplitBundlerOptions {
                 );
             }
 
-            if let Some(slice) = get_optional_slice(plugin_config, global, b"name")? {
+            if let Some(slice) = plugin_config.get_optional_slice(global, b"name")? {
                 if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
@@ -872,7 +856,7 @@ impl Framework {
                     )));
                 },
                 server_runtime_import: refs.track(
-                    match get_optional_slice(sc, global, b"serverRuntimeImportSource")? {
+                    match sc.get_optional_slice(global, b"serverRuntimeImportSource")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -882,7 +866,7 @@ impl Framework {
                     },
                 ),
                 server_register_client_reference: if let Some(slice) =
-                    get_optional_slice(sc, global, b"serverRegisterClientReferenceExport")?
+                    sc.get_optional_slice(global, b"serverRegisterClientReferenceExport")?
                 {
                     refs.track(slice)
                 } else {

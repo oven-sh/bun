@@ -217,12 +217,12 @@ test("import of an extension mapped to the napi loader throws instead of crashin
   });
 });
 
-// #13391: a file:// URL specifier with a ?query must produce a distinct module
-// instance per distinct query, the same as a relative or absolute path
+// #13391, #21346: a file:// URL specifier with a ?query must produce a distinct
+// module instance per distinct query, the same as a relative or absolute path
 // specifier does. Tools such as `astro dev` rely on
 // `await import(pathToFileURL(p) + "?t=" + Date.now())` to re-read a config
 // file after it changes on disk.
-test("dynamic import of a file:// URL keeps the query string in the module key", async () => {
+test.concurrent("dynamic import of a file:// URL keeps the query string in the module key", async () => {
   using dir = tempDir("import-query-file-url-dynamic", {
     "config.mjs": `export default { port: 4321 };\nexport const url = import.meta.url;`,
     "entry.mjs": `
@@ -263,7 +263,7 @@ test("dynamic import of a file:// URL keeps the query string in the module key",
   expect(exitCode).toBe(0);
 });
 
-test("mock.module with a file:// URL + query string registers under the same key import() resolves to", async () => {
+test.concurrent("mock.module with a file:// URL + query string registers under the key import() uses", async () => {
   using dir = tempDir("import-query-file-url-mock", {
     "real.mjs": `export default "REAL"; export const url = import.meta.url;`,
     "entry.mjs": `
@@ -303,19 +303,19 @@ test("mock.module with a file:// URL + query string registers under the same key
   expect(exitCode).toBe(0);
 });
 
-test("Bun.resolveSync of a file:// URL keeps the query string", async () => {
+test.concurrent("Bun.resolveSync and Bun.resolve of a file:// URL keep the query string", async () => {
   using dir = tempDir("import-query-file-url-resolvesync", {
     "target.mjs": ``,
     "entry.mjs": `
       import { pathToFileURL } from "node:url";
       const base = pathToFileURL("./target.mjs").href;
-      const withQuery = Bun.resolveSync(base + "?t=1", import.meta.dir);
       const noQuery = Bun.resolveSync(base, import.meta.dir);
-      const relative = Bun.resolveSync("./target.mjs?t=1", import.meta.dir);
       console.log(JSON.stringify({
-        withQuery: withQuery.endsWith("target.mjs?t=1"),
-        noQuery: noQuery.endsWith("target.mjs"),
-        matchesRelative: withQuery === relative,
+        noQuery,
+        withQuery: Bun.resolveSync(base + "?t=1", import.meta.dir),
+        withOtherQuery: Bun.resolveSync(base + "?t=2", import.meta.dir),
+        relative: Bun.resolveSync("./target.mjs?t=1", import.meta.dir),
+        async: await Bun.resolve(base + "?t=1", import.meta.dir),
       }));
     `,
   });
@@ -328,15 +328,97 @@ test("Bun.resolveSync of a file:// URL keeps the query string", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
-  expect(JSON.parse(stdout.trim())).toEqual({
-    withQuery: true,
-    noQuery: true,
-    matchesRelative: true,
+  const { noQuery, ...resolved } = JSON.parse(stdout.trim());
+  expect(noQuery).toEndWith(path.sep + "target.mjs");
+  expect(resolved).toEqual({
+    withQuery: noQuery + "?t=1",
+    withOtherQuery: noQuery + "?t=2",
+    relative: noQuery + "?t=1",
+    async: noQuery + "?t=1",
   });
   expect(exitCode).toBe(0);
 });
 
-test("static import of a file:// URL keeps the query string in the module key", async () => {
+test.concurrent("import.meta.resolveSync and import.meta.resolve of a file:// URL keep the query string", async () => {
+  using dir = tempDir("import-query-file-url-import-meta-resolve", {
+    "target.js": ``,
+    "entry.mjs": `
+      const base = new URL("./target.js", import.meta.url).href;
+      const noQuery = import.meta.resolveSync(base);
+      console.log(JSON.stringify({
+        noQuery,
+        withQuery: import.meta.resolveSync(base + "?v=1"),
+        relative: import.meta.resolveSync("./target.js?v=2"),
+        url: import.meta.resolve(base + "?v=1"),
+        relativeUrl: import.meta.resolve("./target.js?v=2"),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { noQuery, ...resolved } = JSON.parse(stdout.trim());
+  expect(noQuery).toEndWith(path.sep + "target.js");
+  expect(resolved).toEqual({
+    withQuery: noQuery + "?v=1",
+    relative: noQuery + "?v=2",
+    url: Bun.pathToFileURL(noQuery).href + "?v=1",
+    relativeUrl: Bun.pathToFileURL(noQuery).href + "?v=2",
+  });
+  expect(exitCode).toBe(0);
+});
+
+// require() already evaluates "./x.cjs?v=1" and "./x.cjs?v=2" as two modules;
+// a file:// URL spelling of the same specifier goes through the same resolver.
+test.concurrent("require and require.resolve of a file:// URL keep the query string", async () => {
+  using dir = tempDir("import-query-file-url-require", {
+    "target.cjs": `module.exports = {};`,
+    "entry.cjs": `
+      const { pathToFileURL } = require("node:url");
+      const base = pathToFileURL(require("node:path").join(__dirname, "target.cjs")).href;
+      const noQuery = require.resolve(base);
+      const v1 = require(base + "?v=1");
+      const v2 = require(base + "?v=2");
+      console.log(JSON.stringify({
+        noQuery,
+        resolvedWithQuery: require.resolve(base + "?v=1"),
+        resolvedRelative: require.resolve("./target.cjs?v=1"),
+        sameForDifferentQuery: v1 === v2,
+        sameForSameQuery: v1 === require(base + "?v=1"),
+        sameAsRelative: v1 === require("./target.cjs?v=1"),
+        sameAsNoQuery: v1 === require(base),
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.cjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { noQuery, ...result } = JSON.parse(stdout.trim());
+  expect(noQuery).toEndWith(path.sep + "target.cjs");
+  expect(result).toEqual({
+    resolvedWithQuery: noQuery + "?v=1",
+    resolvedRelative: noQuery + "?v=1",
+    sameForDifferentQuery: false,
+    sameForSameQuery: true,
+    sameAsRelative: true,
+    sameAsNoQuery: false,
+  });
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("static import of a file:// URL keeps the query string in the module key", async () => {
   using dir = tempDir("import-query-file-url-static", {
     "target.mjs": `(globalThis.hits ??= []).push(import.meta.url);`,
   });
@@ -359,6 +441,37 @@ test("static import of a file:// URL keeps the query string in the module key", 
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stderr).toBe("");
   expect(JSON.parse(stdout.trim())).toEqual(["target.mjs?a", "target.mjs?b"]);
+  expect(exitCode).toBe(0);
+});
+
+test.concurrent("static imports of a file:// URL with distinct queries evaluate distinct instances", async () => {
+  using dir = tempDir("import-query-file-url-static-instances", {
+    "target.js": `export const captured = globalThis.__token;`,
+    "setup1.js": `globalThis.__token = "one";`,
+    "setup2.js": `globalThis.__token = "two";`,
+  });
+  const target = Bun.pathToFileURL(path.join(String(dir), "target.js")).href;
+  await Bun.write(
+    path.join(String(dir), "entry.js"),
+    [
+      `import "./setup1.js";`,
+      `import { captured as first } from ${JSON.stringify(target + "?v=1")};`,
+      `import "./setup2.js";`,
+      `import { captured as second } from ${JSON.stringify(target + "?v=2")};`,
+      `console.log(JSON.stringify({ first, second }));`,
+    ].join("\n"),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Same output as Node: "?v=2" is a second instance, evaluated after setup2.js.
+  expect(JSON.parse(stdout.trim())).toEqual({ first: "one", second: "two" });
   expect(exitCode).toBe(0);
 });
 

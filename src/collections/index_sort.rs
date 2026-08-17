@@ -57,13 +57,12 @@ pub fn sort_vec_unstable_by<T>(items: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -
     apply_permutation(items, &order);
 }
 
-/// Reorders `items` in place so that `items[i]` becomes the element that was at `order[i]`,
-/// without a scratch `Vec`; `order` must be a permutation of `0..items.len()` and is left as
-/// the identity permutation.
+/// Reorders `items` in place so that `items[i]` becomes the element that was at `order[i]`;
+/// `order` must be a permutation of `0..items.len()` and comes back as the identity permutation.
 pub fn apply_permutation_in_place<T>(items: &mut [T], order: &mut [u32]) {
     debug_assert_eq!(items.len(), order.len());
     for start in 0..items.len() {
-        // Already in place: either a fixed point or part of a cycle applied from an earlier `start`.
+        // Either a fixed point or part of a cycle already applied from an earlier `start`.
         if order[start] as usize == start {
             continue;
         }

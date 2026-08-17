@@ -1,18 +1,13 @@
-//! Test-only bridge exposing `bun_collections::index_sort::apply_permutation_in_place` to
-//! `bun:internal-for-testing` (see `src/js/internal-for-testing.ts`).
-//!
-//! Every in-tree caller builds the order array itself and drops it right after the call, so
-//! the function's contract for that array (it must be left as the identity permutation) has no
-//! JS-visible surface; this probe returns it. Lives in `bun_runtime` for the same reason as
-//! `linear_fifo_testing`: it needs both `bun_collections` and `bun_jsc`.
+//! `bun:internal-for-testing` probe for `index_sort::apply_permutation_in_place`. Its callers all
+//! drop the index array right after the call, so the state it is left in is only observable here.
+//! Lives in `bun_runtime` like `linear_fifo_testing`: it needs `bun_collections` and `bun_jsc`.
 
 use bun_collections::index_sort;
 use bun_core::ZigString;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
-/// `applyPermutationInPlaceProbe(order)`: applies `order` (a permutation of `0..order.length`)
-/// to the items `[0, 10, 20, ...]` and returns `{ items, order }`, where `order` is the state of
-/// the index array after the call.
+/// `applyPermutationInPlaceProbe(order)`: applies `order` to `[0, 10, 20, ...]` and returns
+/// `{ items, order }`, the latter as the call left it.
 pub(crate) fn apply_permutation_in_place_probe(
     global: &JSGlobalObject,
     frame: &CallFrame,

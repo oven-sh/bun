@@ -5034,6 +5034,9 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     case JSC::CellType:
         if (cell->inherits<JSC::Exception>()) {
             JSC::Exception* exception = uncheckedDowncast<JSC::Exception>(cell);
+            // The VM's TerminationException wraps a bare string; it is not an error anyone should see as a value.
+            if (exception->vm().isTerminationException(exception))
+                return {};
             return JSC::JSValue::encode(exception->value());
         }
     default: {

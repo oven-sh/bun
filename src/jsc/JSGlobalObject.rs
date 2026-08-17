@@ -1037,8 +1037,14 @@ impl JSGlobalObject {
         })
     }
 
+    /// The taken exception as an error value; the VM's termination comes back as its (inert) cell —
+    /// every reporter recognises and drops it.
     pub fn take_error(&self, proof: JsError) -> JSValue {
-        self.take_exception(proof).to_error().unwrap_or_else(|| {
+        let exception = self.take_exception(proof);
+        if exception.is_termination_exception() {
+            return exception;
+        }
+        exception.to_error().unwrap_or_else(|| {
             panic!("Couldn't convert a JavaScript exception to an Error instance.");
         })
     }

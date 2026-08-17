@@ -238,6 +238,16 @@ public:
         // Do not forget to set the original name: https://github.com/oven-sh/bun/issues/8794
         function->m_originalName.set(vm, function, globalObject->commonStrings().mockedFunctionString(globalObject));
 
+        // Ordinary functions (and jest mocks) carry a default `prototype` so
+        // `new fn() instanceof fn` works; InternalFunction does not, so
+        // install one. The auto-mock class path overwrites it with the
+        // mocked source prototype.
+        JSObject* prototype = JSC::constructEmptyObject(globalObject);
+        prototype->putDirect(vm, vm.propertyNames->constructor, function,
+            static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
+        function->putDirect(vm, vm.propertyNames->prototype, prototype,
+            JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
+
         return function;
     }
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)

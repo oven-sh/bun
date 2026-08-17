@@ -70,6 +70,8 @@ pub enum Error {
     Failed,
     #[error("UnrecognizedDependencyFormat")]
     UnrecognizedDependencyFormat,
+    #[error("InvalidDependencyName")]
+    InvalidDependencyName,
     #[error("No global directory found")]
     NoGlobalDirectoryFound,
     #[error("InvalidPackageID")]
@@ -282,6 +284,7 @@ impl Error {
             Self::HTTPError => "HTTPError",
             Self::Failed => "Failed",
             Self::UnrecognizedDependencyFormat => "UnrecognizedDependencyFormat",
+            Self::InvalidDependencyName => "InvalidDependencyName",
             Self::NoGlobalDirectoryFound => "No global directory found",
             Self::InvalidPackageID => "InvalidPackageID",
             Self::PartialInstallFailed => "PartialInstallFailed",

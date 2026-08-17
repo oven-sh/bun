@@ -383,8 +383,7 @@ function pushBindParam(
   return adapter.placeholder(index) + " ";
 }
 
-// Every path except the tagged template (helpers, sql.unsafe, sql.file) hands values to
-// native raw, and native JSON-stringifies objects. Copies lazily: `values` may be the caller's.
+// Never mutates `values`: on the sql.unsafe path it is the caller's own array.
 function unwrapArrayParams(values: unknown[]): unknown[] {
   let out: unknown[] | undefined;
   for (let i = 0; i < values.length; i++) {

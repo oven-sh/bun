@@ -20,7 +20,7 @@ export interface PinnedCommit {
  * therefore never consulted; the sha is taken from the name.
  */
 export function pinnedCommit(version: string): PinnedCommit | undefined {
-  const preview = /^autobuild-preview-pr-(\d+)-([0-9a-f]{7,40})$/.exec(version);
+  const preview = /^autobuild-preview-pr-(\d+)-([0-9a-f]{8})$/.exec(version);
   if (preview) {
     // refs/pull/<n>/head still serves the commit once the PR's branch has been merged or deleted.
     return { rev: preview[2], fetch: [`refs/pull/${preview[1]}/head`] };
@@ -41,7 +41,7 @@ export async function syncWebKitSource(webkitRepo: string, version: string): Pro
   if (!pin) {
     throw new Error(
       `cannot tell which commit WEBKIT_VERSION ${JSON.stringify(version)} was built from: expected a 40-hex sha, ` +
-        "autobuild-<sha>, or autobuild-preview-pr-<n>-<sha>",
+        "autobuild-<sha>, or autobuild-preview-pr-<n>-<first 8 hex of the sha>",
     );
   }
 

@@ -79,6 +79,9 @@ describe.concurrent("sync-webkit-source", () => {
       preview: pinnedCommit("autobuild-preview-pr-459-9203122d"),
       abbreviatedSha: pinnedCommit(sha.slice(0, 12)),
       previewWithoutSha: pinnedCommit("autobuild-preview-pr-459"),
+      // build-preview.yml names previews after exactly the first 8 hex of the head.
+      previewWith7Hex: pinnedCommit("autobuild-preview-pr-459-9203122"),
+      previewWith9Hex: pinnedCommit("autobuild-preview-pr-459-9203122d6"),
       unknown: pinnedCommit("autobuild-nightly"),
     }).toEqual({
       sha: { rev: sha, fetch: [] },
@@ -86,6 +89,8 @@ describe.concurrent("sync-webkit-source", () => {
       preview: { rev: "9203122d", fetch: ["refs/pull/459/head"] },
       abbreviatedSha: undefined,
       previewWithoutSha: undefined,
+      previewWith7Hex: undefined,
+      previewWith9Hex: undefined,
       unknown: undefined,
     });
   });

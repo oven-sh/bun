@@ -2281,6 +2281,42 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   expect(exitCode).toBe(0);
 }, 30_000);
 
+it("ServerResponse.write() with an encoding whose toPrimitive destroys the response does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const http = require("node:http");
+        const server = http.createServer((req, res) => {
+          const enc = Object.assign(new String("hex"), {
+            [Symbol.toPrimitive]() { res.destroy(); Bun.gc(true); return "hex"; },
+          });
+          let result;
+          try {
+            result = "returned " + typeof res.write("41".repeat(20000), enc);
+            res.end();
+          } catch (e) {
+            result = "threw " + (e.code || e.message);
+          }
+          console.log(result);
+          setImmediate(() => { server.close(); process.exit(0); });
+        });
+        server.listen(0, "127.0.0.1", () => {
+          fetch("http://127.0.0.1:" + server.address().port + "/").then(r => r.text()).catch(() => {});
+        });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("returned boolean\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("client request path that does not begin with a slash stays on the configured host", async () => {
   // `options.path` must only ever influence the request target that is written
   // on the wire; it must never change which server the client connects to,

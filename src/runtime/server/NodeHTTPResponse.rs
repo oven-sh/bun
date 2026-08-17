@@ -2027,6 +2027,24 @@ impl NodeHTTPResponse {
             return Err(jsc::JsError::Thrown);
         }
 
+        // Converting `encoding` / `input` can run user JS (toString,
+        // Symbol.toPrimitive) that destroys or ends the response.
+        if self.flags.get().contains(Flags::SOCKET_CLOSED) || self.raw_response.get().is_none() {
+            return Ok(if IS_END {
+                JSValue::UNDEFINED
+            } else {
+                JSValue::js_number_from_int32(0)
+            });
+        }
+        let state = self.raw_response.get().unwrap().state();
+        if self.is_requested_completed_or_ended() || !state.is_response_pending() {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
+                "Stream already ended",
+            );
+        }
+
         let bytes = string_or_buffer.slice();
 
         if IS_END {

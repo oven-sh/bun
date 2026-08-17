@@ -1,6 +1,6 @@
 import { dlopen, FFIType } from "bun:ffi";
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isLinux, isMusl, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isMusl, isRoot, isWindows, tempDir } from "harness";
 import { chmodSync, readFileSync } from "node:fs";
 import { setTimeout as sleep } from "node:timers/promises";
 
@@ -219,7 +219,7 @@ test.concurrent.skipIf(!isPosix)(
 // Same as above but the grandchild is spawned with uid/gid. The credential
 // change clears the pdeathsig the spawn armed (prctl(2)), so this proves it
 // gets re-armed after setgid/setuid. Needs root to setuid.
-test.concurrent.skipIf(!isPosix || process.getuid?.() !== 0)(
+test.concurrent.skipIf(!isPosix || !isRoot)(
   "BUN_FEATURE_FLAG_NO_ORPHANS=1: a non-Bun grandchild spawned with uid/gid is reaped",
   async () => {
     const { sh, bunPid, grandchildPid } = await spawnTree("1", "child-nonbun-uid.js");

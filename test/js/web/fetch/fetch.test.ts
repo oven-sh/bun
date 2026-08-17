@@ -13,6 +13,7 @@ import {
   isDebug,
   isFlaky,
   isMacOS,
+  isRoot,
   isWindows,
   rss,
   runFixtureMaxRSS,
@@ -1111,8 +1112,9 @@ describe.concurrent("Bun.file", () => {
     }
   }
 
-  // on Windows the creator of the file will be able to read from it so this test is disabled on it
-  describe.skipIf(isWindows)("bad permissions throws", () => {
+  // on Windows the creator of the file will be able to read from it so this test is disabled on it;
+  // root can read it anywhere, so it is disabled there as well
+  describe.skipIf(isWindows || isRoot)("bad permissions throws", () => {
     const path = join(tmp_dir, "my-new-file");
     beforeAll(async () => {
       await Bun.write(path, "hey");

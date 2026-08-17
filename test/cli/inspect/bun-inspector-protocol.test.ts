@@ -1,14 +1,19 @@
 // packages/bun-inspector-protocol ships a snapshot of the inspector protocol of the WebKit
 // build bun links against (src/protocol/jsc/protocol.json, from which index.d.ts is
-// generated). Nothing regenerates it when WebKit is bumped, so this test runs a short
+// generated). Nothing regenerates it when WebKit is bumped, so the first test runs a short
 // debugging session against this build of bun and validates every message it sends
 // against the snapshot. If it fails after a WebKit upgrade, regenerate the snapshot:
 //
 //   bun packages/bun-inspector-protocol/scripts/generate-protocol.ts
+//
+// The second test typechecks src/js/internal/inspector/cdp.ts, the node:inspector CDP adapter,
+// which reads JSC's messages through index.d.ts. Regenerating the snapshot therefore also
+// reports every field the adapter still reads under a name WebKit no longer sends.
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { basename } from "node:path";
+import { bunEnv, bunExe, nodeExe, tempDir } from "harness";
+import { readFileSync } from "node:fs";
+import { basename, join } from "node:path";
 import protocolJson from "../../../packages/bun-inspector-protocol/src/protocol/jsc/protocol.json";
 import type { Property, Protocol } from "../../../packages/bun-inspector-protocol/src/protocol/schema";
 
@@ -262,3 +267,56 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
     ]),
   );
 });
+
+const snapshotPath = join(import.meta.dir, "../../../packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts");
+
+/**
+ * Typechecks cdp.ts (see cdp-protocol-types-fixture.mts) and returns the diagnostics as
+ * `file:line: message` strings. `snapshotReplacement` is a file to use in place of index.d.ts.
+ *
+ * Runs under node rather than in this process: the debug build of bun spends tens of seconds
+ * transpiling typescript.js alone, and the check has nothing to do with the bun under test.
+ */
+async function typecheckCdpAdapter(snapshotReplacement?: string): Promise<string[]> {
+  await using proc = spawn({
+    cmd: [
+      nodeExe()!,
+      join(import.meta.dir, "cdp-protocol-types-fixture.mts"),
+      ...(snapshotReplacement === undefined ? [] : [snapshotReplacement]),
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+  return JSON.parse(stdout);
+}
+
+test.skipIf(!nodeExe())(
+  "src/js/internal/inspector/cdp.ts reads JSC messages through the snapshot's types",
+  async () => {
+    // Renaming things in the snapshot has to surface at the adapter's uses of them, otherwise the
+    // typecheck below proves nothing. One event parameter, one response field, one request parameter.
+    const renamed = ["scriptType", "wasThrown", "doNotPauseOnExceptionsAndMuteConsole"];
+    let snapshot = readFileSync(snapshotPath, "utf8");
+    for (const name of renamed) {
+      const withRename = snapshot.replaceAll(new RegExp(`\\b${name}\\b`, "g"), `${name}Renamed`);
+      if (withRename === snapshot) throw new Error(`${name} is no longer in the snapshot; rename something else here`);
+      snapshot = withRename;
+    }
+    using dir = tempDir("cdp-protocol-types", { "index.d.ts": snapshot });
+
+    const [diagnostics, diagnosticsAfterRenames] = await Promise.all([
+      typecheckCdpAdapter(),
+      typecheckCdpAdapter(join(String(dir), "index.d.ts")),
+    ]);
+    // Failures here after regenerating the snapshot are the fields WebKit renamed or dropped that
+    // cdp.ts still reads or sends, one diagnostic per use site.
+    expect(diagnostics).toEqual([]);
+    expect(
+      renamed.filter(name => diagnosticsAfterRenames.some(diagnostic => diagnostic.includes(`'${name}'`))),
+    ).toEqual(renamed);
+  },
+);

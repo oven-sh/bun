@@ -16,7 +16,7 @@ use bun_ast::{
 
 use crate::hir::environment::OutputMode;
 use crate::options::ReactCompilerOptions;
-use crate::program::Host;
+use crate::program::{Host, ModuleScopeOptOut};
 
 /// An import specifier tracked by ProgramContext.
 /// Corresponds to NonLocalImportSpecifier in the TS compiler.
@@ -35,7 +35,7 @@ pub(crate) struct ProgramContext {
     pub(crate) code: Option<String>,
     pub(crate) react_runtime_module: &'static str,
     pub(crate) output_mode: OutputMode,
-    pub(crate) has_module_scope_opt_out: bool,
+    pub(crate) has_module_scope_opt_out: ModuleScopeOptOut,
 
     // Pre-resolved import local names for codegen
     pub(crate) instrument_fn_name: Option<String>,
@@ -55,7 +55,7 @@ impl ProgramContext {
         opts: ReactCompilerOptions,
         filename: Option<String>,
         code: Option<String>,
-        has_module_scope_opt_out: bool,
+        has_module_scope_opt_out: ModuleScopeOptOut,
     ) -> Self {
         let react_runtime_module = get_react_compiler_runtime_module(opts.target.as_deref());
         Self {

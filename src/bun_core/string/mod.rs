@@ -95,6 +95,11 @@ unsafe extern "C" {
     fn BunString__createExternalGloballyAllocatedUTF16(bytes: *mut u16, len: usize) -> String;
 }
 
+crate::bool_enum!(
+    /// Character width of the buffer handed to `create_external*`.
+    pub WTFEncoding { Utf16, Latin1 }
+);
+
 /// `ctx` is the pointer passed into `create_external`; `buffer` is the
 /// `[*]u8`/`[*]u16` storage; `len` is the character count.
 ///
@@ -282,7 +287,7 @@ impl String {
     /// the const-assert below to keep the C-ABI cast sound.
     pub fn create_external<Ctx>(
         bytes: &[u8],
-        is_latin1: bool,
+        encoding: WTFEncoding,
         ctx: Ctx,
         callback: ExternalStringImplFreeFunction<Ctx>,
     ) -> Self {
@@ -328,7 +333,7 @@ impl String {
             BunString__createExternal(
                 bytes.as_ptr(),
                 bytes.len(),
-                is_latin1,
+                encoding == WTFEncoding::Latin1,
                 ctx_erased,
                 cb_erased,
             )
@@ -349,11 +354,17 @@ impl String {
     /// `bun.String.createStaticExternal` — wraps `bytes` in a
     /// `WTF::ExternalStringImpl` that will **never** be freed. Only use for
     /// dynamically-allocated data with process lifetime.
-    pub fn create_static_external(bytes: &[u8], is_latin1: bool) -> Self {
+    pub fn create_static_external(bytes: &[u8], encoding: WTFEncoding) -> Self {
         debug_assert!(!bytes.is_empty());
         // SAFETY: bytes describes a valid slice; C++ side stores ptr/len
         // without copying and never frees it.
-        unsafe { BunString__createStaticExternal(bytes.as_ptr(), bytes.len(), is_latin1) }
+        unsafe {
+            BunString__createStaticExternal(
+                bytes.as_ptr(),
+                bytes.len(),
+                encoding == WTFEncoding::Latin1,
+            )
+        }
     }
     /// `bun.String.createFormat` — formats `args` into a temporary buffer and
     /// copies the result into a fresh WTF-backed string.
@@ -851,7 +862,10 @@ impl String {
     /// `bun.String.visibleWidthExcludeANSIColors` — terminal column width of
     /// `self`, treating ANSI escape sequences as zero-width.
     /// Dispatches on encoding to [`strings::visible::width::exclude_ansi_colors`].
-    pub fn visible_width_exclude_ansi_colors(&self, ambiguous_as_wide: bool) -> usize {
+    pub fn visible_width_exclude_ansi_colors(
+        &self,
+        ambiguous_as_wide: strings::AmbiguousWidth,
+    ) -> usize {
         use crate::strings::visible::width::exclude_ansi_colors as w;
         if self.is_utf16() {
             return w::utf16(self.utf16(), ambiguous_as_wide);
@@ -2140,8 +2154,12 @@ pub mod printer {
     /// `MutableString`, and any other `crate::io::Write` sink.
     pub use crate::io::Write as PrinterWriter;
 
+    crate::bool_enum!(pub AsciiOnly);
+
+    crate::bool_enum!(pub Json);
+
     #[inline]
-    fn can_print_without_escape(c: i32, ascii_only: bool) -> bool {
+    fn can_print_without_escape(c: i32, ascii_only: AsciiOnly) -> bool {
         if c <= LAST_ASCII as i32 {
             c >= FIRST_ASCII as i32
                 && c != b'\\' as i32
@@ -2150,7 +2168,7 @@ pub mod printer {
                 && c != b'`' as i32
                 && c != b'$' as i32
         } else {
-            !ascii_only
+            ascii_only == AsciiOnly::No
                 && c != 0xFEFF
                 && c != 0x2028
                 && c != 0x2029
@@ -2165,10 +2183,11 @@ pub mod printer {
         text_in: &[u8],
         writer: &mut W,
         quote_char: u8,
-        ascii_only: bool,
-        json: bool,
+        ascii_only: AsciiOnly,
+        json: Json,
         encoding: StrEncoding,
     ) -> crate::CrateResult<()> {
+        let json = json == Json::Yes;
         debug_assert!(!json || quote_char == b'"');
         // utf16 view over the same bytes (only used when encoding == Utf16).
         // Callers pass 2-byte-aligned even-length input for Utf16; `cast_slice`
@@ -2309,11 +2328,11 @@ pub mod printer {
     pub fn quote_for_json(
         text: &[u8],
         bytes: &mut MutableString,
-        ascii_only: bool,
+        ascii_only: AsciiOnly,
     ) -> crate::CrateResult<()> {
         // PERF: consider pre-growing via an estimated UTF-8 length — profile if it shows up on a hot path.
         bytes.append_char(b'"')?;
-        write_pre_quoted_string(text, bytes, b'"', ascii_only, true, StrEncoding::Utf8)?;
+        write_pre_quoted_string(text, bytes, b'"', ascii_only, Json::Yes, StrEncoding::Utf8)?;
         bytes.append_char(b'"').expect("unreachable");
         Ok(())
     }

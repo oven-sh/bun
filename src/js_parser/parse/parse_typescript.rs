@@ -3,7 +3,7 @@ use bun_collections::VecExt;
 
 use crate::Error;
 use crate::lexer::{self as js_lexer, T};
-use crate::p::P;
+use crate::p::{IsEnumScope, P};
 use crate::parser::{FnOrArrowDataParse, ParseStatementOptions, Ref, ScopeOrder, StatementScope};
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast::expr::EFlags;
@@ -215,7 +215,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Generate the namespace object
         // Arena-owned `StoreRef<TSNamespaceScope>`.
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
-            p.get_or_create_exported_namespace_members(name_text, opts.is_export, false);
+            p.get_or_create_exported_namespace_members(name_text, opts.is_export, IsEnumScope::No);
         let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
             ts_namespace.exported_members;
         let ns_member_data = TSNamespaceMemberData::Namespace(exported_members);
@@ -588,7 +588,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         // Generate the namespace object
         let mut arg_ref: Ref = Ref::NONE;
         let mut ts_namespace: js_ast::StoreRef<js_ast::TSNamespaceScope> =
-            p.get_or_create_exported_namespace_members(name_text, opts.is_export, true);
+            p.get_or_create_exported_namespace_members(name_text, opts.is_export, IsEnumScope::Yes);
         let mut exported_members: js_ast::StoreRef<TSNamespaceMemberMap> =
             ts_namespace.exported_members;
 

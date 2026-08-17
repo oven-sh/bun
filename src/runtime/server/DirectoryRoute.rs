@@ -42,6 +42,10 @@ pub struct DirectoryRoute {
     stat_cache_path_bytes: Cell<usize>,
 }
 
+bun_core::bool_enum!(pub StatCache { Disabled, Enabled });
+bun_core::bool_enum!(TrailingSlash);
+bun_core::bool_enum!(IsIndex);
+
 impl DirectoryRoute {
     #[inline]
     pub fn set_server(&self, server: Option<AnyServer>) {
@@ -60,7 +64,7 @@ impl DirectoryRoute {
         global: &JSGlobalObject,
         root: &[u8],
         url_prefix: &[u8],
-        enable_stat_cache: bool,
+        enable_stat_cache: StatCache,
     ) -> JsResult<*mut DirectoryRoute> {
         debug_assert!(url_prefix.last() == Some(&b'/'));
         debug_assert!(!strings::contains(url_prefix, b"//"));
@@ -77,7 +81,7 @@ impl DirectoryRoute {
             }
         };
 
-        let slots = if enable_stat_cache {
+        let slots = if enable_stat_cache == StatCache::Enabled {
             STAT_CACHE_SLOTS
         } else {
             0
@@ -196,7 +200,7 @@ impl DirectoryRoute {
         write_any_status(resp, status_code);
         resp.write_mark();
 
-        let ext: &[u8] = if is_index {
+        let ext: &[u8] = if is_index == IsIndex::Yes {
             b"html"
         } else {
             extension_for_mime(rel)
@@ -280,7 +284,7 @@ impl DirectoryRoute {
     /// URL had a trailing slash, otherwise ask the caller to 301-redirect to
     /// the slash form so the new request re-enters routing (the served
     /// resource's canonical URL may be owned by a more-specific route).
-    fn open_subpath(&self, rel: &[u8], had_trailing_slash: bool) -> Option<Subpath> {
+    fn open_subpath(&self, rel: &[u8], had_trailing_slash: TrailingSlash) -> Option<Subpath> {
         let open_and_stat = |p: &[u8]| -> Option<(File, bun_sys::Stat)> {
             let f = self.open_beneath(p)?;
             let s = f.stat().ok()?;
@@ -288,14 +292,17 @@ impl DirectoryRoute {
         };
         if rel.is_empty() {
             let (f, s) = open_and_stat(b"index.html")?;
-            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
-                .then_some(Subpath::File(f, s, true));
+            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode).then_some(Subpath::File(
+                f,
+                s,
+                IsIndex::Yes,
+            ));
         }
         let (file, stat) = open_and_stat(rel)?;
         let mode = stat.st_mode as bun_sys::Mode;
         if bun_sys::S::ISDIR(mode) {
             drop(file);
-            if !had_trailing_slash {
+            if had_trailing_slash == TrailingSlash::No {
                 return Some(Subpath::RedirectSlash);
             }
             let mut buf = bun_paths::path_buffer_pool::get();
@@ -304,12 +311,16 @@ impl DirectoryRoute {
                 &[rel, b"index.html"],
             );
             let (f, s) = open_and_stat(joined)?;
-            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode)
-                .then_some(Subpath::File(f, s, true));
+            return bun_sys::S::ISREG(s.st_mode as bun_sys::Mode).then_some(Subpath::File(
+                f,
+                s,
+                IsIndex::Yes,
+            ));
         }
         // Trailing slash on a regular file is a miss (nginx, npm `send`):
         // `/file/` would route past an exact `/file` handler in uWS.
-        (bun_sys::S::ISREG(mode) && !had_trailing_slash).then_some(Subpath::File(file, stat, false))
+        (bun_sys::S::ISREG(mode) && had_trailing_slash == TrailingSlash::No)
+            .then_some(Subpath::File(file, stat, IsIndex::No))
     }
 
     /// `openat2(RESOLVE_IN_ROOT|NO_MAGICLINKS)` on Linux, `openat` elsewhere.
@@ -412,7 +423,7 @@ fn on_stream_error(ctx: *mut c_void, resp: AnyResponse, _err: bun_sys::Error) {
 // `Stat` is ~144 bytes; boxing it would add a heap alloc on the hot path.
 #[allow(clippy::large_enum_variant)]
 enum Subpath {
-    File(File, bun_sys::Stat, bool),
+    File(File, bun_sys::Stat, IsIndex),
     RedirectSlash,
 }
 
@@ -502,7 +513,11 @@ fn is_url_path_literal(b: u8) -> bool {
 /// canonical relative path. `None` for any input that would make the served
 /// path differ from the routed path (see comment on the segment scan below).
 /// Writes into `out`; returns `(len, had_trailing_slash)`.
-fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usize, bool)> {
+fn resolve_subpath(
+    url: &[u8],
+    url_prefix: &[u8],
+    out: &mut [u8],
+) -> Option<(usize, TrailingSlash)> {
     let (path, _query) = path_and_query(url);
     let after_prefix = if strings::starts_with(path, url_prefix) {
         &path[url_prefix.len()..]
@@ -559,7 +574,7 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         return None;
     }
     if decoded_len == 0 {
-        return Some((0, false));
+        return Some((0, TrailingSlash::No));
     }
     let had_trailing_slash = decoded[decoded_len - 1] == b'/';
     let end = decoded_len - usize::from(had_trailing_slash);
@@ -577,7 +592,7 @@ fn resolve_subpath(url: &[u8], url_prefix: &[u8], out: &mut [u8]) -> Option<(usi
         }
         i += 1;
     }
-    Some((end, had_trailing_slash))
+    Some((end, TrailingSlash::from_bool(had_trailing_slash)))
 }
 
 /// `W/"<size-hex>-<mtime-sec-hex>"` (nginx/send scheme).
@@ -600,7 +615,8 @@ mod tests {
 
     fn resolve(url: &[u8], prefix: &[u8]) -> Option<(Vec<u8>, bool)> {
         let mut out = [0u8; 4096];
-        resolve_subpath(url, prefix, &mut out).map(|(n, s)| (out[..n].to_vec(), s))
+        resolve_subpath(url, prefix, &mut out)
+            .map(|(n, s)| (out[..n].to_vec(), s == TrailingSlash::Yes))
     }
     fn ok(bytes: &[u8], slash: bool) -> Option<(Vec<u8>, bool)> {
         Some((bytes.to_vec(), slash))

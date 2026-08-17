@@ -4,6 +4,7 @@ use bun_alloc::AllocError;
 
 use crate::Error;
 use crate::bun_fs::FileSystem;
+use crate::lockfile_real::PrintNameVersion;
 use crate::lockfile_real::package::PackageColumns;
 use crate::repository::Repository;
 use bun_core::ZStr;
@@ -620,7 +621,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
     let scope = this.scope_for_package_name(name);
 
     if scope.name.is_empty() && !this.options.did_override_default_scope {
-        let include_version_number = true;
+        let include_version_number = IncludeCacheVersion::Yes;
         return cached_npm_package_folder_print_basename(
             buf,
             name,
@@ -630,7 +631,7 @@ pub fn cached_npm_package_folder_name_print<'a>(
         );
     }
 
-    let include_version_number = false;
+    let include_version_number = IncludeCacheVersion::No;
     let spanned_len =
         cached_npm_package_folder_print_basename(buf, name, version, None, include_version_number)
             .as_bytes()
@@ -691,15 +692,17 @@ pub fn cached_npm_package_folder_name(
     )
 }
 
+bun_core::bool_enum!(pub IncludeCacheVersion);
+
 // TODO: normalize to alphanumeric
 pub fn cached_npm_package_folder_print_basename<'a>(
     buf: &'a mut [u8],
     name: &[u8],
     version: Semver::Version,
     patch_hash: Option<u64>,
-    include_cache_version: bool,
+    include_cache_version: IncludeCacheVersion,
 ) -> &'a ZStr {
-    let cache_ver = if include_cache_version {
+    let cache_ver = if include_cache_version == IncludeCacheVersion::Yes {
         Some(CacheVersion::CURRENT)
     } else {
         None
@@ -1080,11 +1083,13 @@ pub fn attempt_to_create_package_json() -> Result<(), Error> {
     Ok(())
 }
 
+bun_core::bool_enum!(pub HadAnyDiffs);
+
 pub fn save_lockfile(
     this: &mut PackageManager,
     load_result: &LoadResult,
     save_format: LockfileFormat,
-    had_any_diffs: bool,
+    had_any_diffs: HadAnyDiffs,
     // NOTE(dylan-conway): this and `packages_len_before_install` can most likely be deleted
     // now that git dependnecies don't append to lockfile during installation.
     lockfile_before_install: &Lockfile,
@@ -1112,7 +1117,7 @@ pub fn save_lockfile(
                     Err(err) => {
                         // we don't care
                         if err.get_errno() == sys::E::ENOENT {
-                            if had_any_diffs {
+                            if had_any_diffs == HadAnyDiffs::Yes {
                                 return Ok(false);
                             }
                             break 'delete;
@@ -1177,7 +1182,7 @@ pub fn save_lockfile(
             } else {
                 if this
                     .lockfile
-                    .has_meta_hash_changed(false, packages_len_before_install)
+                    .has_meta_hash_changed(PrintNameVersion::No, packages_len_before_install)
                     .unwrap_or(false)
                 {
                     Output::panic(format_args!(

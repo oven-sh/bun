@@ -9,7 +9,8 @@ use bun_sys::{self, Fd, File, O};
 
 use crate::install::{self as Install, PackageManager, Subcommand};
 use crate::lockfile::{
-    Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile, Migrated,
+    self, Format as LockfileFormat, LoadResult, LoadResultErr, LoadResultOk, LoadStep, Lockfile,
+    Migrated,
 };
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
@@ -409,7 +410,8 @@ fn migrate_npm_lockfile<'a>(
         this.verify_data()?;
     }
 
-    this.meta_hash = this.generate_meta_hash(false, this.packages.len())?;
+    this.meta_hash =
+        this.generate_meta_hash(lockfile::PrintNameVersion::No, this.packages.len())?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile: this,

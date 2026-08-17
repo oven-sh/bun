@@ -2,6 +2,8 @@ use core::ffi::c_void;
 use core::marker::PhantomData;
 #[cfg(windows)]
 use core::mem::MaybeUninit;
+#[cfg(not(windows))]
+use core::ops::ControlFlow;
 use core::sync::atomic::AtomicU8;
 #[cfg(not(windows))]
 use core::sync::atomic::Ordering;
@@ -338,6 +340,9 @@ impl FileOpener for ReadFile {
 
 crate::webcore::blob::impl_file_closer!(ReadFile);
 
+#[cfg(not(windows))]
+bun_core::bool_enum!(ReadTarget { Heap, Stack });
+
 impl ReadFile {
     pub(crate) fn update(&mut self) {
         #[cfg(windows)]
@@ -513,12 +518,12 @@ impl ReadFile {
         stack_buffer: &'a mut [u8],
         max_length: SizeType,
         read_off: SizeType,
-    ) -> (bool, &'a mut [u8]) {
+    ) -> (ReadTarget, &'a mut [u8]) {
         let cap = (max_length.saturating_sub(read_off)) as usize;
         let spare = buffer.spare_capacity_mut();
         if spare.len() < stack_buffer.len() {
             let n = stack_buffer.len().min(cap);
-            (true, &mut stack_buffer[..n])
+            (ReadTarget::Stack, &mut stack_buffer[..n])
         } else {
             let n = spare.len().min(cap);
             // SAFETY: `spare` is `&mut [MaybeUninit<u8>]` over the Vec's spare
@@ -527,7 +532,7 @@ impl ReadFile {
             // kernel-reported initialized count; no uninit byte is ever read.
             let target =
                 unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<u8>(), n) };
-            (false, target)
+            (ReadTarget::Heap, target)
         }
     }
 
@@ -538,7 +543,7 @@ impl ReadFile {
         buf: &mut [u8],
         read_len: &mut usize,
         retry: &mut bool,
-    ) -> bool {
+    ) -> ControlFlow<()> {
         let result: bun_sys::Result<usize> = 'brk: {
             if bun_sys::S::ISSOCK(self.file_store.mode) {
                 break 'brk bun_sys::recv_non_block(self.opened_fd, buf);
@@ -562,7 +567,7 @@ impl ReadFile {
                             }
                             *retry = true;
                             self.read_eof = false;
-                            return true;
+                            return ControlFlow::Continue(());
                         }
                         _ => {
                             self.errno = Some(bun_errno::from_errno(err.errno as i32).into());
@@ -578,7 +583,7 @@ impl ReadFile {
                                         BunString::EMPTY.into()
                                     };
                             }
-                            return false;
+                            return ControlFlow::Break(());
                         }
                     }
                 }
@@ -586,7 +591,7 @@ impl ReadFile {
             break;
         }
 
-        true
+        ControlFlow::Continue(())
     }
 
     pub(crate) fn then(
@@ -837,7 +842,7 @@ impl ReadFile {
                     let continue_reading = self.do_read(buf, &mut read_amount, &mut retry);
 
                     // We might read into the stack buffer, so we need to copy it into the heap.
-                    if use_stack {
+                    if use_stack == ReadTarget::Stack {
                         // `do_read` wrote `read_amount` initialized bytes at
                         // `stack_buffer[..read_amount]`; the stack array is live
                         // for this iteration.
@@ -866,7 +871,7 @@ impl ReadFile {
                         break;
                     }
 
-                    if !continue_reading {
+                    if continue_reading.is_break() {
                         // Stop reading, we errored
                         break;
                     }

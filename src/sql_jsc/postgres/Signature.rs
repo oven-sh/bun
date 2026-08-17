@@ -1,6 +1,8 @@
 use crate::jsc::{JSGlobalObject, JSValue};
 use bun_sql::postgres::postgres_types::Int4;
 
+bun_core::bool_enum!(pub(crate) StatementName { Named, Unnamed });
+
 #[derive(Default)]
 pub struct Signature {
     pub(crate) fields: Box<[Int4]>,
@@ -28,7 +30,7 @@ impl Signature {
         array_value: JSValue,
         columns: JSValue,
         prepared_statement_id: u64,
-        unnamed: bool,
+        unnamed: StatementName,
     ) -> crate::Result<Signature> {
         use crate::jsc::js_error_to_postgres;
         use crate::postgres::types::tag_jsc;
@@ -92,7 +94,7 @@ impl Signature {
             return Err(crate::Error::InvalidQueryBinding);
         }
         // max u64 length is 20, max prepared_statement_name length is 63
-        let prepared_statement_name: Box<[u8]> = if unnamed {
+        let prepared_statement_name: Box<[u8]> = if unnamed == StatementName::Unnamed {
             Box::default()
         } else {
             use std::io::Write;

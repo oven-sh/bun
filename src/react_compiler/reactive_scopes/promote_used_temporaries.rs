@@ -87,7 +87,7 @@ pub(crate) fn promote_used_temporaries(func: &mut ReactiveFunction, env: &mut En
             }
         }
     }
-    let mut inter_state: IdMap<IdentifierId, (IdentifierId, bool)> = IdMap::new();
+    let mut inter_state: IdMap<IdentifierId, (IdentifierId, NeedsPromotion)> = IdMap::new();
     promote_interposed_block(
         &func.body,
         &mut state,
@@ -544,10 +544,12 @@ fn visit_hir_function_for_promotion(func_id: FunctionId, state: &mut State, env:
 // Phase 3: PromoteInterposedTemporaries
 // =============================================================================
 
+bun_core::bool_enum!(NeedsPromotion);
+
 fn promote_interposed_block(
     block: &ReactiveBlock,
     state: &mut State,
-    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, NeedsPromotion)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -587,13 +589,16 @@ fn promote_interposed_block(
 fn promote_interposed_place(
     place: &Place,
     state: &mut State,
-    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, NeedsPromotion)>,
     consts: &HashSet<IdentifierId>,
     env: &mut Environment,
 ) {
     if let Some(&(id, needs_promotion)) = inter_state.get(place.identifier) {
         let identifier = &env.identifiers[id.0 as usize];
-        if needs_promotion && identifier.name.is_none() && !consts.contains(&id) {
+        if needs_promotion == NeedsPromotion::Yes
+            && identifier.name.is_none()
+            && !consts.contains(&id)
+        {
             promote_identifier(id, state, env);
         }
     }
@@ -602,7 +607,7 @@ fn promote_interposed_place(
 fn promote_interposed_instruction(
     instr: &ReactiveInstruction,
     state: &mut State,
-    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, NeedsPromotion)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -671,13 +676,14 @@ fn promote_interposed_instruction(
                     {
                         // Mark all tracked temporaries as needing promotion
                         for entry in inter_state.values_mut() {
-                            entry.1 = true;
+                            entry.1 = NeedsPromotion::Yes;
                         }
                     }
                     if let Some(lvalue) = &instr.lvalue {
                         let identifier = &env.identifiers[lvalue.identifier.0 as usize];
                         if identifier.name.is_none() {
-                            inter_state.insert(lvalue.identifier, (lvalue.identifier, false));
+                            inter_state
+                                .insert(lvalue.identifier, (lvalue.identifier, NeedsPromotion::No));
                         }
                     }
                 }
@@ -705,7 +711,8 @@ fn promote_interposed_instruction(
                             if consts.contains(&load_place.identifier) {
                                 consts.insert(lvalue.identifier);
                             }
-                            inter_state.insert(lvalue.identifier, (lvalue.identifier, false));
+                            inter_state
+                                .insert(lvalue.identifier, (lvalue.identifier, NeedsPromotion::No));
                         }
                     }
                     // Visit operands
@@ -722,7 +729,8 @@ fn promote_interposed_instruction(
                         }
                         let identifier = &env.identifiers[lvalue.identifier.0 as usize];
                         if identifier.name.is_none() {
-                            inter_state.insert(lvalue.identifier, (lvalue.identifier, false));
+                            inter_state
+                                .insert(lvalue.identifier, (lvalue.identifier, NeedsPromotion::No));
                         }
                     }
                     // Visit operands
@@ -780,7 +788,7 @@ fn promote_interposed_instruction(
 fn promote_interposed_value(
     value: &ReactiveValue,
     state: &mut State,
-    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, NeedsPromotion)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,
@@ -824,7 +832,7 @@ fn promote_interposed_value(
 fn promote_interposed_terminal(
     stmt: &ReactiveTerminalStatement,
     state: &mut State,
-    inter_state: &mut IdMap<IdentifierId, (IdentifierId, bool)>,
+    inter_state: &mut IdMap<IdentifierId, (IdentifierId, NeedsPromotion)>,
     consts: &mut HashSet<IdentifierId>,
     globals: &mut HashSet<IdentifierId>,
     env: &mut Environment,

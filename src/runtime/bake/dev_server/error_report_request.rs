@@ -19,6 +19,7 @@ use bun_alloc::ArenaVecExt as _;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
 use bun_collections::ArrayHashMap;
+use bun_core::output::AnsiColors;
 use bun_core::{Ordinal, Output};
 use bun_core::{String as BunString, strings};
 use bun_io::Write as _;
@@ -329,8 +330,8 @@ impl ErrorReportRequest {
                 &mut exception,
                 None,
                 stderr,
-                true,
-                ansi_colors,
+                bun_jsc::virtual_machine::AllowSideEffects::Yes,
+                AnsiColors::from_bool(ansi_colors),
             );
         }
 

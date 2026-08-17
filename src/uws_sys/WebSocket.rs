@@ -26,6 +26,9 @@ impl RawWebSocket {
 // AnyWebSocket
 // ─────────────────────────────────────────────────────────────────────────────
 
+bun_core::bool_enum!(pub Compress);
+bun_core::bool_enum!(pub Fin);
+
 #[derive(Clone, Copy)]
 pub enum AnyWebSocket {
     Ssl(*mut RawWebSocket),
@@ -86,7 +89,7 @@ impl AnyWebSocket {
         c::uws_ws_close(ssl, ws)
     }
 
-    pub fn send(self, message: &[u8], opcode: Opcode, compress: bool, fin: bool) -> SendStatus {
+    pub fn send(self, message: &[u8], opcode: Opcode, compress: Compress, fin: Fin) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
         unsafe {
@@ -96,8 +99,8 @@ impl AnyWebSocket {
                 message.as_ptr(),
                 message.len(),
                 opcode,
-                compress,
-                fin,
+                compress == Compress::Yes,
+                fin == Fin::Yes,
             )
         }
     }
@@ -158,7 +161,7 @@ impl AnyWebSocket {
         topic: &[u8],
         message: &[u8],
         opcode: Opcode,
-        compress: bool,
+        compress: Compress,
     ) -> SendStatus {
         let (ssl, ws) = self.split();
         // SAFETY: `ws` is a live uWS-owned socket (S012 opaque); ptr+len from &[u8].
@@ -171,7 +174,7 @@ impl AnyWebSocket {
                 message.as_ptr(),
                 message.len(),
                 opcode,
-                compress,
+                compress == Compress::Yes,
             )
         }
     }
@@ -182,7 +185,7 @@ impl AnyWebSocket {
         topic: &[u8],
         message: &[u8],
         opcode: Opcode,
-        compress: bool,
+        compress: Compress,
     ) -> SendStatus {
         // S012: `NewApp<SSL>` is a ZST opaque — route the `*mut → &mut` deref
         // through `bun_opaque::opaque_deref_mut` (caller still vouches that

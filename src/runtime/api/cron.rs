@@ -2431,7 +2431,11 @@ unsafe fn spawn_cmd_prepare<T: SpawnCmdTarget>(
                             | PosixFlags::CLOSED_WITHOUT_REPORTING,
                     );
                 }
-                if s!().stdout_reader().start(stdout, true).is_err() {
+                if s!()
+                    .stdout_reader()
+                    .start(stdout, bun_io::IsPollable::Yes)
+                    .is_err()
+                {
                     s!().set_err(format_args!("Failed to start reading stdout"));
                     return Err(());
                 }

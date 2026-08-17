@@ -124,6 +124,8 @@ pub mod text {
     // hoist into `const` once the proc-macro lands.
     use bun_core::output::pretty_fmt;
 
+    bun_core::bool_enum!(pub IndentName);
+
     pub fn write_format_with_values<const ENABLE_COLORS: bool>(
         filename: &[u8],
         max_filename_length: usize,
@@ -131,7 +133,7 @@ pub mod text {
         failing: Fraction,
         failed: bool,
         writer: &mut impl bun_io::Write,
-        indent_name: bool,
+        indent_name: IndentName,
     ) -> bun_io::Result<()> {
         if ENABLE_COLORS {
             if failed {
@@ -141,14 +143,14 @@ pub mod text {
             }
         }
 
-        if indent_name {
+        if indent_name == IndentName::Yes {
             writer.write_all(b" ")?;
         }
 
         writer.write_all(filename)?;
         writer.splat_byte_all(
             b' ',
-            max_filename_length - filename.len() + usize::from(!indent_name),
+            max_filename_length - filename.len() + usize::from(indent_name == IndentName::No),
         )?;
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;
 
@@ -214,7 +216,7 @@ pub mod text {
             failing,
             failed,
             writer,
-            true,
+            IndentName::Yes,
         )?;
 
         writer.write_all(&pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>"))?;

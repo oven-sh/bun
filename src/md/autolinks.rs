@@ -28,7 +28,7 @@ pub(crate) fn is_emph_boundary_resolved(
     if al.beg > 0 {
         let prev = content[al.beg - 1];
         if prev == b'*' || prev == b'_' || prev == b'~' {
-            if !check_left_boundary(content, al.beg, false) {
+            if !check_left_boundary(content, al.beg, AllowEmph::No) {
                 // Left boundary failed strict check, emphasis char caused the relaxed match.
                 // Verify it's actually resolved.
                 let mut found_resolved = false;
@@ -51,7 +51,7 @@ pub(crate) fn is_emph_boundary_resolved(
     if al.end < content.len() {
         let next = content[al.end];
         if next == b'*' || next == b'_' || next == b'~' {
-            if !check_right_boundary(content, al.end, false) {
+            if !check_right_boundary(content, al.end, AllowEmph::No) {
                 let mut found_resolved = false;
                 for d in resolved {
                     if d.pos <= al.end
@@ -158,23 +158,25 @@ fn is_in_set(c: u8, set: &[u8]) -> bool {
     false
 }
 
+bun_core::bool_enum!(pub(crate) AllowEmph);
+
 /// Check left boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_left_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// With `AllowEmph::Yes`, emphasis delimiters (*_~) are also valid boundaries.
+fn check_left_boundary(content: &[u8], pos: usize, allow_emph: AllowEmph) -> bool {
     if pos == 0 {
         return true;
     }
     match content[pos - 1] {
         b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
         b'(' | b'{' | b'[' => true,
-        b'*' | b'_' | b'~' => allow_emph,
+        b'*' | b'_' | b'~' => allow_emph == AllowEmph::Yes,
         _ => false,
     }
 }
 
 /// Check right boundary for permissive autolinks.
-/// When `allow_emph` is true, emphasis delimiters (*_~) are also valid boundaries.
-fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
+/// With `AllowEmph::Yes`, emphasis delimiters (*_~) are also valid boundaries.
+fn check_right_boundary(content: &[u8], pos: usize, allow_emph: AllowEmph) -> bool {
     if pos >= content.len() {
         return true;
     }
@@ -182,7 +184,7 @@ fn check_right_boundary(content: &[u8], pos: usize, allow_emph: bool) -> bool {
         b' ' | b'\t' | b'\n' | b'\r' | 0x0B | 0x0C => true,
         b')' | b'}' | b']' | b'<' => true,
         b'.' | b'!' | b'?' | b',' | b';' | b'&' => true,
-        b'*' | b'_' | b'~' => allow_emph,
+        b'*' | b'_' | b'~' => allow_emph == AllowEmph::Yes,
         _ => false,
     }
 }
@@ -197,7 +199,7 @@ struct Scheme {
 pub(crate) fn find_permissive_autolink(
     content: &[u8],
     pos: usize,
-    allow_emph: bool,
+    allow_emph: AllowEmph,
 ) -> AutolinkResult {
     if pos >= content.len() {
         return None;

@@ -31,6 +31,12 @@ pub struct Scripts {
     pub(crate) filled: bool,
 }
 
+bun_core::bool_enum!(
+    /// Whether to synthesize a `node-gyp rebuild` install script because the
+    /// package ships a `binding.gyp` without its own install/preinstall script.
+    pub AddNodeGypRebuildScript
+);
+
 impl Scripts {
     /// (name, getter) table used by debug JSON serialization in place of
     /// field reflection.
@@ -119,14 +125,14 @@ impl Scripts {
         &self,
         lockfile_buf: &[u8],
         resolution_tag: ResolutionTag,
-        add_node_gyp_rebuild_script: bool,
+        add_node_gyp_rebuild_script: AddNodeGypRebuildScript,
     ) -> (i8, u8, [Option<Box<[u8]>>; SCRIPT_NAMES_LEN]) {
         let mut script_index: u8 = 0;
         let mut first_script_index: i8 = -1;
         let mut scripts: [Option<Box<[u8]>>; 6] = [const { None }; 6];
         let mut counter: u8 = 0;
 
-        if add_node_gyp_rebuild_script {
+        if add_node_gyp_rebuild_script == AddNodeGypRebuildScript::Yes {
             {
                 script_index += 1;
                 if first_script_index == -1 {
@@ -204,7 +210,7 @@ impl Scripts {
         cwd_: &mut bun_paths::AutoAbsPath,
         package_name: &[u8],
         resolution_tag: ResolutionTag,
-        add_node_gyp_rebuild_script: bool,
+        add_node_gyp_rebuild_script: AddNodeGypRebuildScript,
     ) -> Option<List> {
         let _ = lockfile;
         let (first_index, total, scripts) =
@@ -296,7 +302,7 @@ impl Scripts {
         resolution: &Resolution,
     ) -> Result<Option<List>, crate::Error> {
         if self.has_any() {
-            let add_node_gyp_rebuild_script =
+            let add_node_gyp_rebuild_script = AddNodeGypRebuildScript::from_bool(
                 if lockfile.has_trusted_dependency(folder_name, folder_name, resolution)
                     && self.install.is_empty()
                     && self.preinstall.is_empty()
@@ -309,7 +315,8 @@ impl Scripts {
                     bun_sys::exists(save.slice())
                 } else {
                     false
-                };
+                },
+            );
 
             return Ok(self.create_list(
                 lockfile,
@@ -375,16 +382,18 @@ impl Scripts {
         let mut builder = tmp.string_builder();
         self.fill_from_package_json(&mut builder, log, folder_path)?;
 
-        let add_node_gyp_rebuild_script = if self.install.is_empty() && self.preinstall.is_empty() {
-            // `defer save.restore()` — `save()` returns an RAII guard that
-            // restores the path length on Drop and derefs to the path.
-            let mut save = folder_path.save();
-            let _ = save.append(b"binding.gyp");
+        let add_node_gyp_rebuild_script = AddNodeGypRebuildScript::from_bool(
+            if self.install.is_empty() && self.preinstall.is_empty() {
+                // `defer save.restore()` — `save()` returns an RAII guard that
+                // restores the path length on Drop and derefs to the path.
+                let mut save = folder_path.save();
+                let _ = save.append(b"binding.gyp");
 
-            bun_sys::exists(save.slice())
-        } else {
-            false
-        };
+                bun_sys::exists(save.slice())
+            } else {
+                false
+            },
+        );
 
         Ok(self.create_list(
             lockfile,

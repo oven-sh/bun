@@ -784,8 +784,8 @@ impl Snapshots {
                     re_indented,
                     &mut result_text,
                     b'`',
-                    false,
-                    false,
+                    js_printer::AsciiOnly::No,
+                    js_printer::Json::No,
                     strings::Encoding::Utf8,
                 )?;
                 result_text.extend_from_slice(b"`");
@@ -862,7 +862,9 @@ impl Snapshots {
             pos += Self::SNAPSHOTS_DIR_NAME.len();
 
             let cached_dir = self.snapshot_dir_path;
-            if cached_dir.is_none() || !strings::eql_long(dir_path, cached_dir.unwrap(), true) {
+            if cached_dir.is_none()
+                || !strings::eql_long(dir_path, cached_dir.unwrap(), strings::CheckLen::Yes)
+            {
                 buf[pos] = 0;
                 // SAFETY: buf[pos] == 0 written above
                 let snapshot_dir_path = ZStr::from_buf(&buf[..], pos);

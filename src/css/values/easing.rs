@@ -1,5 +1,5 @@
 use crate::css_parser as css;
-use crate::css_parser::{CssResult as Result, PrintErr, Printer, Token};
+use crate::css_parser::{CssResult as Result, PrintErr, Printer, Token, WsBefore};
 use crate::values::number::{CSSInteger, CSSIntegerFns, CSSNumber, CSSNumberFns};
 
 /// A CSS [easing function](https://www.w3.org/TR/css-easing-1/#easing-functions).
@@ -181,7 +181,7 @@ impl EasingFunction {
                             return dest.write_str("step-end");
                         }
                         dest.write_fmt(format_args!("steps({}", steps.count))?;
-                        dest.delim(b',', false)?;
+                        dest.delim(b',', WsBefore::No)?;
                         steps.position.to_css(dest)?;
                         dest.write_char(b')')
                     }

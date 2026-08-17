@@ -11,7 +11,7 @@ use super::client_session::ClientSession;
 use super::stream::Stream;
 use crate::http_request_body::HTTPRequestBody;
 use crate::internal_state::HTTPStage;
-use crate::{HTTPClient, HTTPVerboseLevel, Protocol};
+use crate::{HTTPClient, HTTPVerboseLevel, IntoShared, Protocol};
 
 /// Build pseudo-headers + user headers and send them on `qs`, then kick off
 /// body transmission. Called from the first `callbacks.on_stream_writable`
@@ -36,7 +36,7 @@ pub(crate) fn write_request(
     let reject_unauthorized = client.flags.reject_unauthorized;
     // h3 body bytes flow into lsquic's send buffer asynchronously — compress
     // into the Vec so the cursor stays valid across event-loop ticks.
-    client.compress_body_for_send(false)?;
+    client.compress_body_for_send(IntoShared::No)?;
     let req_body: bun_ptr::RawSlice<u8> = client.state.request_body;
     let body_len = client.body_len_for_send();
     let is_streaming = client.state.original_request_body.is_stream();
@@ -52,9 +52,9 @@ pub(crate) fn write_request(
             Protocol::Http3,
             &request,
             href,
-            !reject_unauthorized,
+            bun_picohttp::IgnoreInsecure::from_bool(!reject_unauthorized),
             body,
-            verbose == HTTPVerboseLevel::Curl,
+            verbose,
         );
     }
 

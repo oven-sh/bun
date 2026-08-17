@@ -43,6 +43,8 @@ use crate::reactive_scopes::visitors::Transformed;
 use crate::reactive_scopes::visitors::transform_reactive_function;
 use crate::reactive_scopes::visitors::visit_reactive_function;
 
+bun_core::bool_enum!(ForceMemoize);
+
 // =============================================================================
 // Public entry point
 // =============================================================================
@@ -1108,11 +1110,12 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
 
     fn visit(
         id: DeclarationId,
-        force_memoize: bool,
+        force_memoize: ForceMemoize,
         identifier_nodes: &mut IdMap<DeclarationId, IdentNodeTuple>,
         scope_nodes: &mut IdMap<ScopeId, (Vec<DeclarationId>, bool)>,
         memoized: &mut HashSet<DeclarationId>,
     ) -> bool {
+        let force_memoize = force_memoize == ForceMemoize::Yes;
         let Some(&(level, _, _, _, seen)) = identifier_nodes.get(id) else {
             return false;
         };
@@ -1134,7 +1137,13 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
             .collect();
         let mut has_memoized_dependency = false;
         for dep in deps {
-            let is_dep_memoized = visit(dep, false, identifier_nodes, scope_nodes, memoized);
+            let is_dep_memoized = visit(
+                dep,
+                ForceMemoize::No,
+                identifier_nodes,
+                scope_nodes,
+                memoized,
+            );
             has_memoized_dependency |= is_dep_memoized;
         }
 
@@ -1176,7 +1185,13 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
 
         let deps: Vec<DeclarationId> = scope_nodes.get(id).unwrap().0.clone();
         for dep in deps {
-            visit(dep, true, identifier_nodes, scope_nodes, memoized);
+            visit(
+                dep,
+                ForceMemoize::Yes,
+                identifier_nodes,
+                scope_nodes,
+                memoized,
+            );
         }
     }
 
@@ -1185,7 +1200,7 @@ fn compute_memoized_identifiers(state: &CollectState) -> HashSet<DeclarationId> 
     for value in escaping {
         visit(
             value,
-            false,
+            ForceMemoize::No,
             &mut identifier_nodes,
             &mut scope_nodes,
             &mut memoized,

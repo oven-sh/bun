@@ -1,7 +1,7 @@
 use core::fmt;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
-use crate::Error;
+use crate::{Error, Scope};
 use bun_alloc::AllocError;
 use bun_collections::{StringHashMap, VecExt};
 use bun_core::ZStr;
@@ -838,6 +838,12 @@ pub struct Linker<'a> {
 static UMASK: AtomicU32 = AtomicU32::new(0);
 static HAS_SET_UMASK: AtomicBool = AtomicBool::new(false);
 
+bun_core::bool_enum!(
+    /// Whether a bin target's textual form was inconclusive and its resolved
+    /// parent must be checked for escaping the package directory.
+    ContainmentCheck { Lexical, Resolved }
+);
+
 impl<'a> Linker<'a> {
     pub fn ensure_umask() {
         // Single-winner gate: only the thread that flips false->true performs
@@ -888,8 +894,8 @@ impl<'a> Linker<'a> {
         &mut self,
         abs_target: &ZStr,
         abs_dest: &ZStr,
-        global: bool,
-        target_needs_resolved_containment_check: bool,
+        global: Scope,
+        target_needs_resolved_containment_check: ContainmentCheck,
     ) {
         debug_assert!(path::is_absolute(abs_target.as_bytes()));
         debug_assert!(path::is_absolute(abs_dest.as_bytes()));
@@ -911,7 +917,7 @@ impl<'a> Linker<'a> {
             return;
         }
 
-        if target_needs_resolved_containment_check {
+        if target_needs_resolved_containment_check == ContainmentCheck::Resolved {
             #[cfg(not(windows))]
             if self.resolved_target_parent_escapes_package_dir(abs_target) {
                 return;
@@ -1110,7 +1116,7 @@ impl<'a> Linker<'a> {
         target: &sys::File,
         abs_target: &ZStr,
         abs_dest: &ZStr,
-        global: bool,
+        global: Scope,
     ) {
         // `encode_into` reinterprets this byte buffer as `[u16]`.
         // Constructing a `&mut [u16]` from a pointer that is not 2-aligned is
@@ -1147,7 +1153,9 @@ impl<'a> Linker<'a> {
                 Ok(f) => break 'bunx_file f,
                 Err(err) => {
                     let err: crate::Error = err.into();
-                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT) || global {
+                    if err != crate::Error::Sys(bun_errno::SystemErrno::ENOENT)
+                        || global == Scope::Global
+                    {
                         self.err = Some(err);
                         return;
                     }
@@ -1257,7 +1265,7 @@ impl<'a> Linker<'a> {
     }
 
     #[cfg(not(windows))]
-    fn create_symlink(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: bool) {
+    fn create_symlink(&mut self, abs_target: &ZStr, abs_dest: &ZStr, global: Scope) {
         // hoisted from `defer { if (this.err == null) chmod }` — scopeguard
         // cannot capture `&mut self.err` without conflicting with the body's writes,
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
@@ -1278,7 +1286,7 @@ impl<'a> Linker<'a> {
 
                 // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                 if err.get_errno() == sys::Errno::ENOENT {
-                    if global {
+                    if global == Scope::Global {
                         self.err = Some(err.into());
                         Self::chmod_on_ok(self.err, abs_target);
                         return;
@@ -1551,13 +1559,13 @@ impl<'a> Linker<'a> {
     /// (i.e. where the bin name should be written).
     // Returning an offset (rather than a slice into abs_dest_buf) avoids
     // overlapping &mut borrows of self.
-    pub(crate) fn build_destination_dir(&mut self, global: bool) -> usize {
+    pub(crate) fn build_destination_dir(&mut self, global: Scope) -> usize {
         let dest_dir_without_trailing_slash =
             strings::without_trailing_slash(self.node_modules_path.slice());
 
         let buf = &mut *self.abs_dest_buf;
         let mut off: usize = 0;
-        if global {
+        if global == Scope::Global {
             let global_bin_path_without_trailing_slash =
                 strings::without_trailing_slash(self.global_bin_path.as_bytes());
             buf[off..off + global_bin_path_without_trailing_slash.len()]
@@ -1581,7 +1589,7 @@ impl<'a> Linker<'a> {
 
     // target: what the symlink points to
     // destination: where the symlink exists on disk
-    pub fn link(&mut self, global: bool) {
+    pub fn link(&mut self, global: Scope) {
         let package_dir_len = self.build_target_package_dir().len();
         let mut dest_off = self.build_destination_dir(global);
         let is_redirect = self.is_native_binlink_redirect();
@@ -1609,8 +1617,9 @@ impl<'a> Linker<'a> {
                     if target.is_empty() || bin_target_escapes_package_dir(target) {
                         return;
                     }
-                    let target_needs_resolved_containment_check =
-                        bin_target_needs_resolved_containment_check(target);
+                    let target_needs_resolved_containment_check = ContainmentCheck::from_bool(
+                        bin_target_needs_resolved_containment_check(target),
+                    );
 
                     let unscoped_package_name =
                         Dependency::unscoped_package_name(self.package_name.slice());
@@ -1664,8 +1673,9 @@ impl<'a> Linker<'a> {
                     {
                         return;
                     }
-                    let target_needs_resolved_containment_check =
-                        bin_target_needs_resolved_containment_check(target);
+                    let target_needs_resolved_containment_check = ContainmentCheck::from_bool(
+                        bin_target_needs_resolved_containment_check(target),
+                    );
                     if normalized_name.len() >= self.abs_dest_buf.len().saturating_sub(dest_off) {
                         self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
@@ -1718,8 +1728,9 @@ impl<'a> Linker<'a> {
                             i += 2;
                             continue;
                         }
-                        let target_needs_resolved_containment_check =
-                            bin_target_needs_resolved_containment_check(bin_target);
+                        let target_needs_resolved_containment_check = ContainmentCheck::from_bool(
+                            bin_target_needs_resolved_containment_check(bin_target),
+                        );
                         if normalized_bin_dest.len()
                             >= self.abs_dest_buf.len().saturating_sub(abs_dest_dir_end)
                         {
@@ -1831,7 +1842,12 @@ impl<'a> Linker<'a> {
                                 // SAFETY: abs_dest_buf[abs_dest_len] == 0 written above; see note above.
                                 let abs_dest = ZStr::from_raw(abs_dest_buf_ptr, abs_dest_len);
 
-                                self.link_bin_or_create_shim(abs_target, abs_dest, global, true);
+                                self.link_bin_or_create_shim(
+                                    abs_target,
+                                    abs_dest,
+                                    global,
+                                    ContainmentCheck::Resolved,
+                                );
                             }
                             _ => {}
                         }
@@ -1841,7 +1857,7 @@ impl<'a> Linker<'a> {
         }
     }
 
-    pub fn unlink(&mut self, global: bool) {
+    pub fn unlink(&mut self, global: Scope) {
         let package_dir_len = self.build_target_package_dir().len();
         let mut dest_off = self.build_destination_dir(global);
 

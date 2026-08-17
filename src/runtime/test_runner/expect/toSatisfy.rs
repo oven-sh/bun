@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -53,7 +54,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
     let mut formatter = super::make_formatter(global);
 
     if not {
-        let signature = get_signature("toSatisfy", "<green>expected<r>", true);
+        let signature = get_signature("toSatisfy", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -62,7 +63,7 @@ pub(crate) fn to_satisfy(this: &Expect, global: &JSGlobalObject, frame: &CallFra
         );
     }
 
-    let signature = get_signature("toSatisfy", "<green>expected<r>", false);
+    let signature = get_signature("toSatisfy", "<green>expected<r>", IsNot::No);
 
     // `to_fmt(&mut Formatter)` borrows exclusively, so use a second formatter for the
     // received value (matches the toBeGreaterThan.rs pattern).

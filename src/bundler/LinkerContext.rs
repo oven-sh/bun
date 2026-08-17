@@ -365,6 +365,8 @@ use crate::bundled_ast::Flags as AstFlags;
 use crate::generic_path_with_pretty_initialized;
 type DeclaredSymbolList = bun_ast::DeclaredSymbolList;
 
+bun_core::bool_enum!(pub(crate) CanHaveShifts);
+
 impl<'a> LinkerContext<'a> {
     pub(crate) fn arena(&self) -> &Bump {
         // LinkerGraph owns (a backref to) the bundle arena; see `LinkerGraph::arena`.
@@ -1036,7 +1038,7 @@ impl<'a> LinkerContext<'a> {
         _worker: &mut crate::thread_pool::Worker,
         results: &MultiArrayList<CompileResultForSourceMap>,
         chunk_abs_dir: &[u8],
-        can_have_shifts: bool,
+        can_have_shifts: CanHaveShifts,
     ) -> Result<SourceMapPieces, BunError> {
         let _trace = bun::perf::trace("Bundler.generateSourceMapForChunk");
 
@@ -1076,7 +1078,7 @@ impl<'a> LinkerContext<'a> {
                 };
 
                 let mut quote_buf = MutableString::init(pretty.len() + 2)?;
-                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
+                js_printer::quote_for_json(pretty, &mut quote_buf, js_printer::AsciiOnly::No)?;
                 // `to_default_owned` moves the buffer into the joiner
                 // (joiner owns it until `done`).
                 j.push_owned(quote_buf.to_default_owned());
@@ -1104,7 +1106,7 @@ impl<'a> LinkerContext<'a> {
 
                 let mut quote_buf = MutableString::init(pretty.len() + ", ".len() + 2)?;
                 quote_buf.append_assume_capacity(b", ");
-                js_printer::quote_for_json(pretty, &mut quote_buf, false)?;
+                js_printer::quote_for_json(pretty, &mut quote_buf, js_printer::AsciiOnly::No)?;
                 j.push_owned(quote_buf.to_default_owned());
             }
         }
@@ -1192,7 +1194,7 @@ impl<'a> LinkerContext<'a> {
         debug_assert!(done[0] == b'{');
 
         let mut pieces = SourceMapPieces::init();
-        if can_have_shifts {
+        if can_have_shifts == CanHaveShifts::Yes {
             pieces.prefix.extend_from_slice(&done[0..mapping_start]);
             pieces
                 .mappings
@@ -1543,7 +1545,11 @@ impl SourceMapData {
         );
         buf.push(b'"');
         js_printer::write_pre_quoted_string_inner::<_, { js_printer::Encoding::Utf8 }>(
-            contents, &mut buf, b'"', false, true,
+            contents,
+            &mut buf,
+            b'"',
+            js_printer::AsciiOnly::No,
+            js_printer::Json::Yes,
         )
         .expect("OOM");
         buf.push(b'"');
@@ -2309,8 +2315,9 @@ impl<'a> LinkerContext<'a> {
     pub(crate) fn require_or_import_meta_for_source(
         &mut self,
         source_index: crate::IndexInt,
-        was_unwrapped_require: bool,
+        was_unwrapped_require: js_printer::WasUnwrappedRequire,
     ) -> js_printer::RequireOrImportMeta {
+        let was_unwrapped_require = was_unwrapped_require == js_printer::WasUnwrappedRequire::Yes;
         let flags = self.graph.meta.items_flags()[source_index as usize];
         js_printer::RequireOrImportMeta {
             exports_ref: if flags.wrap == WrapKind::Esm
@@ -2565,7 +2572,7 @@ impl<'a> js_printer::RequireOrImportMetaSource for LinkerContext<'a> {
     fn require_or_import_meta_for_source(
         &mut self,
         id: u32,
-        was_unwrapped_require: bool,
+        was_unwrapped_require: js_printer::WasUnwrappedRequire,
     ) -> js_printer::RequireOrImportMeta {
         LinkerContext::require_or_import_meta_for_source(self, id, was_unwrapped_require)
     }

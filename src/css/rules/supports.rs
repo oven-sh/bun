@@ -1,8 +1,8 @@
 use crate as css;
-use crate::css_rules::{CssRuleList, Location, MinifyContext};
+use crate::css_rules::{CssRuleList, Location, MinifyContext, ParentIsUnused};
 use crate::error::MinifyErr;
 use crate::properties::PropertyId;
-use crate::{PrintErr, Printer};
+use crate::{PrintErr, Printer, WsBefore};
 use bun_alloc::ArenaPtr;
 
 /// A [`<supports-condition>`](https://drafts.csswg.org/css-conditional-3/#typedef-supports-condition),
@@ -210,7 +210,7 @@ impl SupportsCondition {
             |d| d.write_str(b") or ("),
             |d, _flag| {
                 d.serialize_name(name)?;
-                d.delim(b':', false)?;
+                d.delim(b':', WsBefore::No)?;
                 // Raw parser-input slice: may span newlines.
                 d.write_bytes(value)
             },
@@ -419,7 +419,7 @@ impl<R> SupportsRule<R> {
     pub(crate) fn minify(
         &mut self,
         context: &mut MinifyContext,
-        parent_is_unused: bool,
+        parent_is_unused: ParentIsUnused,
     ) -> core::result::Result<(), MinifyErr>
     where
         R: for<'b> crate::generics::DeepClone<'b>,

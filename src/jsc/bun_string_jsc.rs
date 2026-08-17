@@ -142,20 +142,22 @@ pub(crate) fn slice_with_underlying_string_to_js(
     this: &mut SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(this, global_object, false)
+    slice_with_underlying_string_to_js_with_options(this, global_object, Transfer::No)
 }
 
 pub(crate) fn slice_with_underlying_string_transfer_to_js(
     this: &mut SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
 ) -> JsResult<JSValue> {
-    slice_with_underlying_string_to_js_with_options(this, global_object, true)
+    slice_with_underlying_string_to_js_with_options(this, global_object, Transfer::Yes)
 }
+
+bun_core::bool_enum!(Transfer);
 
 fn slice_with_underlying_string_to_js_with_options(
     this: &mut SliceWithUnderlyingString,
     global_object: &JSGlobalObject,
-    transfer: bool,
+    transfer: Transfer,
 ) -> JsResult<JSValue> {
     if (this.underlying.tag() == Tag::Dead || this.underlying.tag() == Tag::Empty)
         && this.utf8.length() > 0
@@ -169,8 +171,12 @@ fn slice_with_underlying_string_to_js_with_options(
         // `ZigStringSlice` encodes ownership in the variant:
         // `Owned`/`WTF` ⇒ allocated, `Static` ⇒ borrowed.
         if this.utf8.is_allocated() {
-            if let Some(utf16) = strings::to_utf16_alloc(this.utf8.slice(), false, false)
-                .map_err(|_| global_object.throw_out_of_memory())?
+            if let Some(utf16) = strings::to_utf16_alloc(
+                this.utf8.slice(),
+                strings::FailIfInvalid::No,
+                strings::Sentinel::No,
+            )
+            .map_err(|_| global_object.throw_out_of_memory())?
             {
                 // Drop the now-unused utf8 allocation.
                 this.utf8 = ZigStringSlice::default();
@@ -200,13 +206,13 @@ fn slice_with_underlying_string_to_js_with_options(
         }
 
         let result = create_utf8_for_js(global_object, this.utf8.slice());
-        if transfer {
+        if transfer == Transfer::Yes {
             this.utf8 = ZigStringSlice::default();
         }
         return result;
     }
 
-    if transfer {
+    if transfer == Transfer::Yes {
         this.utf8 = ZigStringSlice::default();
         transfer_to_js(&mut this.underlying, global_object)
     } else {
@@ -292,7 +298,11 @@ pub mod unicode_testing_apis {
         };
         let bytes = array_buffer.byte_slice();
 
-        let result = match strings::to_utf16_alloc_for_real(bytes, false, true) {
+        let result = match strings::to_utf16_alloc_for_real(
+            bytes,
+            strings::FailIfInvalid::No,
+            strings::Sentinel::Yes,
+        ) {
             Ok(r) => r,
             Err(err) => {
                 return Err(global_this.throw(format_args!("{err:?} toUTF16AllocForReal failed")));

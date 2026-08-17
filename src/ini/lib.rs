@@ -1634,7 +1634,7 @@ mod draft {
 
     use bun_install_types::NodeLinker::{
         Behavior as PnpmBehavior, CreateMatcherError, FromExprError, Matcher as PnpmMatcherEntry,
-        PnpmMatcher, create_matcher,
+        MatcherKind, PnpmMatcher, create_matcher,
     };
 
     /// `PnpmMatcher.fromExpr` operating on
@@ -1680,8 +1680,8 @@ mod draft {
                         return Err(FromExprError::InvalidRegExp);
                     }
                 };
-                has_include = has_include || !matcher.is_exclude;
-                has_exclude = has_exclude || matcher.is_exclude;
+                has_include = has_include || matcher.kind == MatcherKind::Include;
+                has_exclude = has_exclude || matcher.kind == MatcherKind::Exclude;
                 matchers.push(matcher);
             }
             ExprData::EArray(patterns) => {
@@ -1705,8 +1705,8 @@ mod draft {
                                 return Err(FromExprError::InvalidRegExp);
                             }
                         };
-                        has_include = has_include || !matcher.is_exclude;
-                        has_exclude = has_exclude || matcher.is_exclude;
+                        has_include = has_include || matcher.kind == MatcherKind::Include;
+                        has_exclude = has_exclude || matcher.kind == MatcherKind::Exclude;
                         matchers.push(matcher);
                     } else {
                         log.add_error_opts(

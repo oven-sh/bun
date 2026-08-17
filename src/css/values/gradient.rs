@@ -9,7 +9,7 @@ use crate::values::percentage::{DimensionPercentage, NumberOrPercentage, Percent
 use crate::values::position::{
     HorizontalPositionKeyword, Position, PositionComponent, VerticalPositionKeyword,
 };
-use crate::{PrintErr, Printer, VendorPrefix};
+use crate::{PrintErr, Printer, VendorPrefix, WsBefore};
 use bun_alloc::Arena;
 
 // `'bump` arena threading dropped for now: `BumpVec<'bump,_>` →
@@ -160,7 +160,10 @@ impl Gradient {
 
         match self {
             Gradient::Linear(linear) | Gradient::RepeatingLinear(linear) => {
-                linear.to_css(dest, linear.vendor_prefix != VendorPrefix::NONE)?;
+                linear.to_css(
+                    dest,
+                    IsPrefixed::from_bool(linear.vendor_prefix != VendorPrefix::NONE),
+                )?;
             }
             Gradient::Radial(radial) | Gradient::RepeatingRadial(radial) => {
                 radial.to_css(dest)?;
@@ -311,11 +314,16 @@ pub struct LinearGradient {
     pub(crate) items: Vec<GradientItem<LengthPercentage>>,
 }
 
+bun_core::bool_enum!(pub(crate) IsPrefixed);
+
 impl LinearGradient {
     fn parse(input: &mut css::Parser, vendor_prefix: VendorPrefix) -> Result<LinearGradient> {
-        let direction: LineDirection = if let Ok(dir) =
-            input.try_parse(|i| LineDirection::parse(i, vendor_prefix != VendorPrefix::NONE))
-        {
+        let direction: LineDirection = if let Ok(dir) = input.try_parse(|i| {
+            LineDirection::parse(
+                i,
+                IsPrefixed::from_bool(vendor_prefix != VendorPrefix::NONE),
+            )
+        }) {
             input.expect_comma()?;
             dir
         } else {
@@ -329,7 +337,11 @@ impl LinearGradient {
         })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+    fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_prefixed: IsPrefixed,
+    ) -> core::result::Result<(), PrintErr> {
         let angle: f32 = match &self.direction {
             LineDirection::Vertical(v) => match v {
                 VerticalPositionKeyword::Bottom => 180.0,
@@ -410,7 +422,7 @@ impl LinearGradient {
                 && self.direction != LineDirection::Angle(Angle::Deg(180.0))
             {
                 self.direction.to_css(dest, is_prefixed)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
             }
 
             if serialize_items::<LengthPercentage>(&self.items, dest).is_err() {
@@ -499,7 +511,7 @@ impl RadialGradient {
         if self.shape != EndingShape::default() {
             self.shape.to_css(dest)?;
             if self.position.is_center() {
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
             } else {
                 dest.write_char(b' ')?;
             }
@@ -508,7 +520,7 @@ impl RadialGradient {
         if !self.position.is_center() {
             dest.write_str(b"at ")?;
             self.position.to_css(dest)?;
-            dest.delim(b',', false)?;
+            dest.delim(b',', WsBefore::No)?;
         }
 
         serialize_items::<LengthPercentage>(&self.items, dest)
@@ -595,7 +607,7 @@ impl ConicGradient {
             self.angle.to_css(dest)?;
 
             if self.position.is_center() {
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
             } else {
                 dest.write_char(b' ')?;
             }
@@ -604,7 +616,7 @@ impl ConicGradient {
         if !self.position.is_center() {
             dest.write_str(b"at ")?;
             self.position.to_css(dest)?;
-            dest.delim(b',', false)?;
+            dest.delim(b',', WsBefore::No)?;
         }
 
         serialize_items::<AnglePercentage>(&self.items, dest)
@@ -754,28 +766,28 @@ impl WebKitGradient {
         match self {
             WebKitGradient::Linear(linear) => {
                 dest.write_str(b"linear")?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 linear.from.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 linear.to.to_css(dest)?;
                 for stop in linear.stops.iter() {
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     stop.to_css(dest)?;
                 }
                 Ok(())
             }
             WebKitGradient::Radial(radial) => {
                 dest.write_str(b"radial")?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 radial.from.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 CSSNumberFns::to_css(radial.r0, dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 radial.to.to_css(dest)?;
-                dest.delim(b',', false)?;
+                dest.delim(b',', WsBefore::No)?;
                 CSSNumberFns::to_css(radial.r1, dest)?;
                 for stop in radial.stops.iter() {
-                    dest.delim(b',', false)?;
+                    dest.delim(b',', WsBefore::No)?;
                     stop.to_css(dest)?;
                 }
                 Ok(())
@@ -932,14 +944,14 @@ pub enum LineDirection {
 }
 
 impl LineDirection {
-    fn parse(input: &mut css::Parser, is_prefixed: bool) -> Result<LineDirection> {
+    fn parse(input: &mut css::Parser, is_prefixed: IsPrefixed) -> Result<LineDirection> {
         // Spec allows unitless zero angles for gradients.
         // https://w3c.github.io/csswg-drafts/css-images-3/#linear-gradient-syntax
         if let Ok(angle) = input.try_parse(Angle::parse_with_unitless_zero) {
             return Ok(LineDirection::Angle(angle));
         }
 
-        if !is_prefixed {
+        if is_prefixed == IsPrefixed::No {
             input.expect_ident_matching(b"to")?;
         }
 
@@ -963,7 +975,11 @@ impl LineDirection {
         Ok(LineDirection::Vertical(y))
     }
 
-    fn to_css(&self, dest: &mut Printer, is_prefixed: bool) -> core::result::Result<(), PrintErr> {
+    fn to_css(
+        &self,
+        dest: &mut Printer,
+        is_prefixed: IsPrefixed,
+    ) -> core::result::Result<(), PrintErr> {
         match self {
             LineDirection::Angle(angle) => angle.to_css(dest),
             LineDirection::Horizontal(k) => {
@@ -973,7 +989,7 @@ impl LineDirection {
                         HorizontalPositionKeyword::Right => &b"90deg"[..],
                     })
                 } else {
-                    if !is_prefixed {
+                    if is_prefixed == IsPrefixed::No {
                         dest.write_str(b"to ")?;
                     }
                     k.to_css(dest)
@@ -986,14 +1002,14 @@ impl LineDirection {
                         VerticalPositionKeyword::Bottom => &b"180deg"[..],
                     })
                 } else {
-                    if !is_prefixed {
+                    if is_prefixed == IsPrefixed::No {
                         dest.write_str(b"to ")?;
                     }
                     k.to_css(dest)
                 }
             }
             LineDirection::Corner(c) => {
-                if !is_prefixed {
+                if is_prefixed == IsPrefixed::No {
                     dest.write_str(b"to ")?;
                 }
                 c.vertical.to_css(dest)?;
@@ -1219,7 +1235,7 @@ impl WebKitColorStop {
         } else {
             dest.write_str(b"color-stop(")?;
             CSSNumberFns::to_css(self.position, dest)?;
-            dest.delim(b',', false)?;
+            dest.delim(b',', WsBefore::No)?;
             self.color.to_css(dest)?;
         }
         dest.write_char(b')')
@@ -1516,7 +1532,7 @@ fn serialize_items<D: GradientPosition>(
         if first {
             first = false;
         } else {
-            dest.delim(b',', false)?;
+            dest.delim(b',', WsBefore::No)?;
         }
         item.to_css(dest)?;
         last = Some(item);

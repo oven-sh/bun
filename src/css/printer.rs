@@ -5,6 +5,7 @@ use bun_alloc::ArenaVec as BumpVec;
 use bun_ast::ImportRecord;
 use bun_core::strings;
 
+use crate::css_modules::ReplaceDots;
 use crate::css_parser as css;
 use crate::values as css_values;
 
@@ -101,6 +102,10 @@ impl<'a> ImportInfo<'a> {
         }
     }
 }
+
+bun_core::bool_enum!(pub WsBefore);
+bun_core::bool_enum!(pub HandleCssModule);
+bun_core::bool_enum!(pub IsDeclaration);
 
 /// A `Printer` represents a destination to output serialized CSS, as used in
 /// the [ToCss](super::traits::ToCss) trait. It can wrap any destination that
@@ -519,9 +524,9 @@ impl<'a> Printer<'a> {
     pub(crate) fn write_ident_or_ref(
         &mut self,
         ident: css_values::ident::IdentOrRef,
-        handle_css_module: bool,
+        handle_css_module: HandleCssModule,
     ) -> PrintResult<()> {
-        if !handle_css_module {
+        if handle_css_module == HandleCssModule::No {
             if let Some(identifier) = ident.as_ident() {
                 return self.serialize_identifier(identifier.v());
             } else {
@@ -548,9 +553,9 @@ impl<'a> Printer<'a> {
     pub(crate) fn write_ident(
         &mut self,
         ident: &'a [u8],
-        handle_css_module: bool,
+        handle_css_module: HandleCssModule,
     ) -> PrintResult<()> {
-        if handle_css_module {
+        if handle_css_module == HandleCssModule::Yes {
             if self.css_module.is_some() {
                 // Copy the `'a`-lifetime references out of `css_module` up front so
                 // the closure can hold the sole `&mut self`.
@@ -568,14 +573,16 @@ impl<'a> Printer<'a> {
 
                 let mut first = true;
                 let mut err: Option<PrintErr> = None;
-                config
-                    .pattern
-                    .write(hash, source, ident, |s1: &[u8], replace_dots: bool| {
+                config.pattern.write(
+                    hash,
+                    source,
+                    ident,
+                    |s1: &[u8], replace_dots: ReplaceDots| {
                         if err.is_some() {
                             return;
                         }
                         // PERF: stack fallback?
-                        let s: &[u8] = if !replace_dots {
+                        let s: &[u8] = if replace_dots == ReplaceDots::No {
                             s1
                         } else {
                             Printer::replace_dots(arena, s1)
@@ -590,7 +597,8 @@ impl<'a> Printer<'a> {
                         if r.is_err() {
                             err = Some(PrintErr::CSSPrintError);
                         }
-                    });
+                    },
+                );
                 if let Some(e) = err {
                     return Err(e);
                 }
@@ -610,7 +618,7 @@ impl<'a> Printer<'a> {
     pub(crate) fn write_dashed_ident(
         &mut self,
         ident: &DashedIdent,
-        is_declaration: bool,
+        is_declaration: IsDeclaration,
     ) -> PrintResult<()> {
         self.write_str(b"--")?;
 
@@ -642,11 +650,11 @@ impl<'a> Printer<'a> {
                 hash,
                 source,
                 &ident_v[2..],
-                |s1: &[u8], replace_dots: bool| {
+                |s1: &[u8], replace_dots: ReplaceDots| {
                     if err.is_some() {
                         return;
                     }
-                    let s: &[u8] = if !replace_dots {
+                    let s: &[u8] = if replace_dots == ReplaceDots::No {
                         s1
                     } else {
                         Printer::replace_dots(arena, s1)
@@ -661,7 +669,7 @@ impl<'a> Printer<'a> {
                 return Err(e);
             }
 
-            if is_declaration {
+            if is_declaration == IsDeclaration::Yes {
                 let src_idx = self.loc.source_index;
                 self.css_module
                     .as_mut()
@@ -700,8 +708,8 @@ impl<'a> Printer<'a> {
 
     /// Writes a delimiter character, followed by whitespace (depending on the `minify` option).
     /// If `ws_before` is true, then whitespace is also written before the delimiter.
-    pub(crate) fn delim(&mut self, delim_: u8, ws_before: bool) -> PrintResult<()> {
-        if ws_before {
+    pub(crate) fn delim(&mut self, delim_: u8, ws_before: WsBefore) -> PrintResult<()> {
+        if ws_before == WsBefore::Yes {
             self.whitespace()?;
         }
         self.write_char(delim_)?;
@@ -781,7 +789,7 @@ impl<'a> Printer<'a> {
         I: IntoIterator,
         F: FnMut(&mut Self, I::Item) -> PrintResult<()>,
     {
-        self.write_separated(iter, |d| d.delim(b',', false), f)
+        self.write_separated(iter, |d| d.delim(b',', WsBefore::No), f)
     }
 
     pub(crate) fn with_context<C, F>(

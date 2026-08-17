@@ -10,8 +10,10 @@ use super::flow_control::{RecvWindow, SendWindow};
 use super::hpack;
 use super::settings::{self, Settings};
 use super::stream::{self, State};
-use super::wire::{self, ErrorCode, FrameHeader, FrameType, SettingId};
+use super::wire::{self, Ack, ErrorCode, FrameHeader, FrameType, Padded, SettingId};
 use bun_collections::HashMap;
+use bun_http::h2::EndStream;
+use bun_http::lshpack::NeverIndex;
 use std::num::NonZeroU32;
 
 /// Pseudo-header presence bits shared by the per-field decode loop and the RFC 9113 §8.3.1
@@ -146,6 +148,11 @@ pub struct Feed {
     pub fatal: bool,
 }
 
+bun_core::bool_enum!(
+    /// Whether handling a frame tore the connection down (GOAWAY sent / session terminated).
+    Fatal
+);
+
 /// nghttp2's NGHTTP2_DEFAULT_MAX_OBQ_FLOOD_ITEM: outbound PING/SETTINGS ACKs that may pile up
 /// behind a non-reading peer before the session is treated as flooded (NGHTTP2_ERR_FLOODED).
 const MAX_OUTBOUND_ACK_QUEUE: u32 = 1000;
@@ -162,7 +169,7 @@ pub trait Sink {
     fn on_error(&self, lib_error_code: i32, last_stream_id: u32, debug: &[u8]);
     fn on_local_settings(&self, settings: &Settings);
     fn on_remote_settings(&self, settings: &Settings);
-    fn on_ping(&self, payload: &[u8], is_ack: bool);
+    fn on_ping(&self, payload: &[u8], is_ack: Ack);
     /// `code` is the raw u32 from the wire so unknown error codes survive to JS (node parity).
     fn on_go_away(&self, code: u32, last_stream_id: u32, debug: &[u8]);
     /// After a WINDOW_UPDATE has been applied (for resuming sends).
@@ -188,9 +195,9 @@ pub trait Sink {
     /// A SETTINGS entry with an id outside the standard registry (node's remoteCustomSettings).
     fn on_remote_custom_setting(&self, _id: u16, _value: u32) {}
     /// One decoded header field. `name`/`value` alias a shared buffer — copy before returning.
-    fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: bool) {}
+    fn on_header(&self, _stream_id: u32, _name: &[u8], _value: &[u8], _never_index: NeverIndex) {}
     /// The header block for `stream_id` is complete. `end_stream` = the HEADERS carried END_STREAM.
-    fn on_headers_complete(&self, _stream_id: u32, _end_stream: bool, _flags: u8) {}
+    fn on_headers_complete(&self, _stream_id: u32, _end_stream: EndStream, _flags: u8) {}
     /// A DATA payload (padding already stripped).
     fn on_data(&self, _stream_id: u32, _data: &[u8]) {}
     /// The stream half/fully closed; `state` is the `stream::State` integer.
@@ -239,8 +246,13 @@ pub trait Sink {
     }
 }
 
+bun_core::bool_enum!(
+    /// Which end of the HTTP/2 connection this engine is.
+    pub Side { Client, Server }
+);
+
 pub struct Connection {
-    pub is_server: bool,
+    pub side: Side,
     /// Wire frames fully accepted from the peer (perf_hooks http2 session stats).
     pub frames_received: u64,
     /// Wire frames this engine itself has written (the embedder counts its own).
@@ -315,9 +327,9 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn new(is_server: bool, local: Settings) -> Self {
+    pub fn new(side: Side, local: Settings) -> Self {
         Connection {
-            is_server,
+            side,
             local_settings: local,
             remote_settings: Settings::default(),
             local_settings_acked: false,
@@ -346,6 +358,11 @@ impl Connection {
             last_stream_id: 0,
             going_away: false,
         }
+    }
+
+    #[inline]
+    pub fn is_server(&self) -> bool {
+        self.side == Side::Server
     }
 
     // ---- Outbound -------------------------------------------------------
@@ -448,7 +465,7 @@ impl Connection {
         }
 
         // §3.4: server validates the 24-octet client preface before any frame.
-        if self.is_server && self.preface_received < wire::CONNECTION_PREFACE.len() {
+        if self.is_server() && self.preface_received < wire::CONNECTION_PREFACE.len() {
             let need = wire::CONNECTION_PREFACE.len() - self.preface_received;
             let avail = need.min(bytes.len());
             let expect =
@@ -531,7 +548,12 @@ impl Connection {
                     let avail_payload = remaining.len() - wire::FRAME_HEADER_SIZE;
                     // With PADDED set the first payload octet is Pad Length; wait for it.
                     if !padded || avail_payload >= 1 {
-                        match self.begin_streamed_data(sink, &hdr, remaining, padded) {
+                        match self.begin_streamed_data(
+                            sink,
+                            &hdr,
+                            remaining,
+                            Padded::from_bool(padded),
+                        ) {
                             StreamedDataStart::Fatal => {
                                 return Feed {
                                     consumed: offset,
@@ -547,7 +569,7 @@ impl Connection {
                 break;
             }
             let payload = &remaining[wire::FRAME_HEADER_SIZE..total];
-            if self.dispatch(sink, &hdr, payload) {
+            if self.dispatch(sink, &hdr, payload) == Fatal::Yes {
                 return Feed {
                     consumed: offset + total,
                     fatal: true,
@@ -609,7 +631,7 @@ impl Connection {
     }
 
     /// Dispatch one fully-buffered frame. Returns true if the connection is now fatally closing.
-    fn dispatch(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn dispatch(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         // GOAWAY is excluded: it terminates the session, so node's statistics — which are
         // read off a session that stopped processing at that frame — never include it.
         if !matches!(hdr.typ(), Some(FrameType::GoAway)) {
@@ -628,7 +650,7 @@ impl Connection {
                     ErrorCode::ProtocolError,
                     b"expected CONTINUATION frame",
                 );
-                return true;
+                return Fatal::Yes;
             }
         }
 
@@ -637,11 +659,11 @@ impl Connection {
             wire::HeaderValidation::Ok => {}
             wire::HeaderValidation::ConnectionError(code) => {
                 self.send_go_away(sink, code, b"frame validation failed");
-                return true;
+                return Fatal::Yes;
             }
             wire::HeaderValidation::StreamError { id, code } => {
                 self.send_rst_stream(sink, id, code);
-                return false;
+                return Fatal::No;
             }
         }
 
@@ -658,13 +680,13 @@ impl Connection {
             Some(FrameType::AltSvc) => self.handle_altsvc(sink, hdr, payload),
             Some(FrameType::Origin) => self.handle_origin(sink, hdr, payload),
             // PRIORITY has no scheduling effect here; structurally validated above, otherwise ignored.
-            Some(FrameType::Priority) => false,
+            Some(FrameType::Priority) => Fatal::No,
             // §4.1: unknown frame types are silently discarded.
-            _ => false,
+            _ => Fatal::No,
         }
     }
 
-    fn handle_settings(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_settings(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
             if hdr.length != 0 {
                 self.send_go_away(
@@ -672,7 +694,7 @@ impl Connection {
                     ErrorCode::FrameSizeError,
                     b"SETTINGS ACK with payload",
                 );
-                return true;
+                return Fatal::Yes;
             }
             // An ACK with no outstanding SETTINGS submission is unsolicited; nghttp2 silently
             // ignores it (it never reaches node's HandleSettingsFrame defensive branch). The
@@ -680,7 +702,7 @@ impl Connection {
             // pending_settings_window_submissions is drained into this queue between batches),
             // so the first ACK falls back to local_settings rather than being dropped.
             if self.local_settings_acked && self.pending_local_settings_acks.is_empty() {
-                return false;
+                return Fatal::No;
             }
             self.local_settings_acked = true;
             // §6.5.3: this ACK acknowledges the oldest outstanding SETTINGS, whose values may
@@ -696,7 +718,7 @@ impl Connection {
             // limit it carried.
             self.enforced_max_header_list_size = acked.settings.max_header_list_size;
             sink.on_local_settings(&acked.settings);
-            return false;
+            return Fatal::No;
         }
         // node's maxSettings (nghttp2 max_settings): refuse SETTINGS frames carrying more entries
         // than the session allows before applying or surfacing any of them.
@@ -706,12 +728,12 @@ impl Connection {
                 ErrorCode::EnhanceYourCalm,
                 b"SETTINGS: too many settings entries",
             );
-            return true;
+            return Fatal::Yes;
         }
         // §6.5.2: validate value ranges before applying.
         if let Some(code) = settings::validate_payload(payload) {
             self.send_go_away(sink, code, b"SETTINGS value out of range");
-            return true;
+            return Fatal::Yes;
         }
         let old_table = self.remote_settings.header_table_size;
         let old_initial_window = self.remote_settings.initial_window_size;
@@ -736,7 +758,7 @@ impl Connection {
                         ErrorCode::ProtocolError,
                         b"SETTINGS: server attempted to disable enableConnectProtocol",
                     );
-                    return true;
+                    return Fatal::Yes;
                 }
                 self.remote_settings.apply(sid, value);
             } else {
@@ -762,10 +784,10 @@ impl Connection {
         let snapshot = self.remote_settings;
         sink.on_remote_settings(&snapshot);
         self.send_settings_ack(sink);
-        if self.note_outbound_ack(sink) {
-            return true;
+        if self.note_outbound_ack(sink) == Fatal::Yes {
+            return Fatal::Yes;
         }
-        false
+        Fatal::No
     }
 
     /// The embedder confirms its outbound buffer is fully drained to the
@@ -781,10 +803,10 @@ impl Connection {
     /// note_outbound_drained() when the transport actually drains, so detection
     /// is independent of recv() chunk size. Returns true when the session was
     /// torn down.
-    fn note_outbound_ack(&mut self, sink: &impl Sink) -> bool {
+    fn note_outbound_ack(&mut self, sink: &impl Sink) -> Fatal {
         self.obq_ack_pending = self.obq_ack_pending.saturating_add(1);
         if self.obq_ack_pending < MAX_OUTBOUND_ACK_QUEUE {
-            return false;
+            return Fatal::No;
         }
         self.local_connection_error(
             sink,
@@ -792,30 +814,30 @@ impl Connection {
             wire::lib_error::FLOODED,
             b"too many outbound control frames queued",
         );
-        true
+        Fatal::Yes
     }
 
-    fn handle_ping(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_ping(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         if wire::flags::has(hdr.flags, wire::flags::ACK) {
-            sink.on_ping(payload, true);
-            return false;
+            sink.on_ping(payload, Ack::Yes);
+            return Fatal::No;
         }
         // copy the 8-byte payload before echoing (sink.write may reuse buffers).
         let mut echo = [0u8; 8];
         echo.copy_from_slice(&payload[..8]);
         self.send_ping_ack(sink, &echo);
-        sink.on_ping(&echo, false);
-        if self.note_outbound_ack(sink) {
-            return true;
+        sink.on_ping(&echo, Ack::No);
+        if self.note_outbound_ack(sink) == Fatal::Yes {
+            return Fatal::Yes;
         }
-        false
+        Fatal::No
     }
 
-    fn handle_go_away(&mut self, sink: &impl Sink, payload: &[u8]) -> bool {
+    fn handle_go_away(&mut self, sink: &impl Sink, payload: &[u8]) -> Fatal {
         // §6.8: GOAWAY carries at least an 8-octet last-stream-id + error-code prefix.
         if payload.len() < 8 {
             self.send_go_away(sink, ErrorCode::FrameSizeError, b"GOAWAY too short");
-            return true;
+            return Fatal::Yes;
         }
         let last_stream_id =
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
@@ -823,7 +845,7 @@ impl Connection {
         // nghttp2 (nghttp2_session_on_goaway_received): the Last-Stream-ID must refer to a stream
         // the *receiver* initiated (or 0) — for a server that means an even id, for a client an
         // odd id. Anything else is a connection PROTOCOL_ERROR.
-        let initiated_locally = if self.is_server {
+        let initiated_locally = if self.is_server() {
             last_stream_id.is_multiple_of(2)
         } else {
             !last_stream_id.is_multiple_of(2)
@@ -834,11 +856,11 @@ impl Connection {
                 ErrorCode::ProtocolError,
                 b"GOAWAY: invalid last_stream_id",
             );
-            return true;
+            return Fatal::Yes;
         }
         self.going_away = true;
         sink.on_go_away(code_raw, last_stream_id, &payload[8..]);
-        false
+        Fatal::No
     }
 
     fn handle_window_update(
@@ -846,7 +868,7 @@ impl Connection {
         sink: &impl Sink,
         hdr: &FrameHeader,
         payload: &[u8],
-    ) -> bool {
+    ) -> Fatal {
         let increment =
             u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]) & 0x7fff_ffff;
         // §6.9.1: a 0 increment is an error (connection error on stream 0).
@@ -857,7 +879,7 @@ impl Connection {
                     ErrorCode::ProtocolError,
                     b"WINDOW_UPDATE with 0 increment",
                 );
-                return true;
+                return Fatal::Yes;
             }
             // Locally-initiated stream RST: close the engine entry and tell the embedder, the
             // same as handle_data's Rst path, so the JS stream learns it was reset and the
@@ -867,7 +889,7 @@ impl Connection {
                 s.state = State::Closed;
             }
             sink.on_stream_reset(hdr.stream_id, ErrorCode::ProtocolError.as_u32());
-            return false;
+            return Fatal::No;
         }
         if hdr.stream_id == 0 {
             // 6.9.1: the connection window must not exceed 2^31-1.
@@ -877,7 +899,7 @@ impl Connection {
                     ErrorCode::FlowControlError,
                     b"connection flow-control window overflow",
                 );
-                return true;
+                return Fatal::Yes;
             }
         } else if let Some(s) = self.streams.get_mut(&hdr.stream_id) {
             // 6.9.1: a per-stream overflow is a stream error, not a connection error.
@@ -885,31 +907,31 @@ impl Connection {
                 s.state = State::Closed;
                 self.send_rst_stream(sink, hdr.stream_id, ErrorCode::FlowControlError);
                 sink.on_stream_reset(hdr.stream_id, ErrorCode::FlowControlError.as_u32());
-                return false;
+                return Fatal::No;
             }
         }
         sink.on_window_update(hdr.stream_id, increment);
-        false
+        Fatal::No
     }
 
     // ---- Stream-level inbound ------------------------------------------
 
     /// RFC 9113 §6.2 HEADERS: strip padding/priority, then begin (or complete) the header block.
-    fn handle_headers(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_headers(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         let mut off = 0usize;
         let mut end = payload.len();
 
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
             if payload.is_empty() {
                 self.send_go_away(sink, ErrorCode::FrameSizeError, b"HEADERS padded but empty");
-                return true;
+                return Fatal::Yes;
             }
             let pad = payload[0] as usize;
             off = 1;
             // §6.1: padding that spans the whole frame is a PROTOCOL_ERROR.
             if off + pad > end {
                 self.send_go_away(sink, ErrorCode::ProtocolError, b"HEADERS padding too large");
-                return true;
+                return Fatal::Yes;
             }
             end -= pad;
         }
@@ -921,7 +943,7 @@ impl Connection {
                     ErrorCode::FrameSizeError,
                     b"HEADERS priority truncated",
                 );
-                return true;
+                return Fatal::Yes;
             }
             off += 5;
         }
@@ -938,15 +960,15 @@ impl Connection {
         // would open an even-id stream is a connection PROTOCOL_ERROR. (Monotonicity is not
         // checked here: a client legitimately receives HEADERS on even promised ids that are
         // numerically below its own latest odd id.)
-        if is_new && self.is_server && hdr.stream_id.is_multiple_of(2) {
+        if is_new && self.is_server() && hdr.stream_id.is_multiple_of(2) {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
                 b"invalid stream id for HEADERS",
             );
-            return true;
+            return Fatal::Yes;
         }
-        let refused = is_new && self.is_server && !sink.can_open_stream();
+        let refused = is_new && self.is_server() && !sink.can_open_stream();
         let mut disposition = if refused {
             BlockDisposition::Refused
         } else {
@@ -975,7 +997,7 @@ impl Connection {
                         ErrorCode::ProtocolError,
                         b"HEADERS in invalid stream state",
                     );
-                    return true;
+                    return Fatal::Yes;
                 }
                 Err(stream::TransitionError::StreamClosed) => {
                     // nghttp2 (session_on_*_headers_received): HEADERS for a stream whose remote
@@ -993,7 +1015,7 @@ impl Connection {
                             wire::lib_error::STREAM_CLOSED,
                             b"HEADERS: stream closed",
                         );
-                        return true;
+                        return Fatal::Yes;
                     }
                     disposition = BlockDisposition::StreamClosed;
                 }
@@ -1021,7 +1043,7 @@ impl Connection {
             // Only a server receives request blocks via HEADERS; on a client every response block
             // looks "new" (the engine only tracks inbound-created streams), so without this gate it
             // would be misclassified as a request. PUSH_PROMISE sets the flag itself.
-            is_request: self.is_server && is_new,
+            is_request: self.is_server() && is_new,
             disposition,
         };
         self.finish_or_park_header_block(sink, hdr, meta)
@@ -1035,19 +1057,24 @@ impl Connection {
         sink: &impl Sink,
         hdr: &FrameHeader,
         meta: HeaderBlockMeta,
-    ) -> bool {
+    ) -> Fatal {
         if !wire::flags::has(hdr.flags, wire::flags::END_HEADERS) {
             self.header_block_in_flight = Some(HeaderBlockInFlight {
                 continuation_stream: hdr.stream_id,
                 meta,
             });
-            return false;
+            return Fatal::No;
         }
         self.finish_header_block(sink, &meta)
     }
 
     /// RFC 9113 §6.10 CONTINUATION: append the fragment; complete the block on END_HEADERS.
-    fn handle_continuation(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_continuation(
+        &mut self,
+        sink: &impl Sink,
+        hdr: &FrameHeader,
+        payload: &[u8],
+    ) -> Fatal {
         let Some(inflight) = self.header_block_in_flight.take() else {
             // §6.10: a CONTINUATION with no header block in progress is a connection PROTOCOL_ERROR.
             self.send_go_away(
@@ -1055,7 +1082,7 @@ impl Connection {
                 ErrorCode::ProtocolError,
                 b"unexpected CONTINUATION frame",
             );
-            return true;
+            return Fatal::Yes;
         };
         // dispatch() already enforced that we are assembling this exact stream.
         // Cap the reassembled block at the header-list limit (floored so tiny custom settings
@@ -1070,12 +1097,12 @@ impl Connection {
             // nghttp2's NGHTTP2_MAX_HEADERSLEN (65536) overflow returns NGHTTP2_ERR_HEADER_COMP,
             // which node surfaces as a session COMPRESSION_ERROR.
             self.send_go_away(sink, ErrorCode::CompressionError, b"header block too large");
-            return true;
+            return Fatal::Yes;
         }
         self.header_block.extend_from_slice(payload);
         if !wire::flags::has(hdr.flags, wire::flags::END_HEADERS) {
             self.header_block_in_flight = Some(inflight);
-            return false;
+            return Fatal::No;
         }
         self.finish_header_block(sink, &inflight.meta)
     }
@@ -1083,7 +1110,7 @@ impl Connection {
     /// Decode the assembled header block (HPACK) and dispatch each field, then finalize. The whole
     /// block is always decoded so the connection-scoped HPACK table stays in sync (§4.3). Works for
     /// both a normal HEADERS block and a PUSH_PROMISE block (`meta.push_parent` set).
-    fn finish_header_block(&mut self, sink: &impl Sink, meta: &HeaderBlockMeta) -> bool {
+    fn finish_header_block(&mut self, sink: &impl Sink, meta: &HeaderBlockMeta) -> Fatal {
         let HeaderBlockMeta {
             target,
             push_parent,
@@ -1170,14 +1197,14 @@ impl Connection {
                             // a malformed block. (The client direction also constrains pseudo
                             // headers, but inbound PUSH_PROMISE blocks legitimately carry request
                             // pseudo-headers, so that check needs the push context first.)
-                            let wrong_direction = self.is_server && rest == b"status";
+                            let wrong_direction = self.is_server() && rest == b"status";
                             // RFC 8441 §4: :protocol is only valid when SETTINGS_ENABLE_CONNECT_PROTOCOL
                             // has been enabled by this endpoint. nghttp2 (and so node) checks the
                             // submitted local value here, not the ACKed one — so a request that arrives
                             // after a server has set enableConnectProtocol back to false is rejected at
                             // the protocol level and never reaches the JS 'stream' handler
                             // (test-http2-connect-method-extended-cant-turn-off).
-                            let protocol_disabled = self.is_server
+                            let protocol_disabled = self.is_server()
                                 && rest == b"protocol"
                                 && self.local_settings.enable_connect_protocol == 0;
                             // nghttp2 (check_pseudo_header) treats an empty pseudo-header value as
@@ -1225,7 +1252,12 @@ impl Connection {
                     if malformed {
                         continue;
                     }
-                    sink.on_header(target, h.name, h.value, h.never_index);
+                    sink.on_header(
+                        target,
+                        h.name,
+                        h.value,
+                        NeverIndex::from_bool(h.never_index),
+                    );
                 }
                 Err(_) => {
                     // §4.3: a header-block decoding error is a connection COMPRESSION_ERROR.
@@ -1239,7 +1271,7 @@ impl Connection {
         self.header_block = block;
         self.header_block.clear();
         if fatal {
-            return true;
+            return Fatal::Yes;
         }
         match disposition {
             BlockDisposition::Refused => {
@@ -1248,7 +1280,7 @@ impl Connection {
                 // is what node's own test-http2-max-session-memory asserts.
                 self.send_rst_stream(sink, target, ErrorCode::EnhanceYourCalm);
                 sink.on_stream_rejected(target);
-                return false;
+                return Fatal::No;
             }
             BlockDisposition::StreamClosed => {
                 // §5.1: HEADERS on a closed/half-closed-remote stream is a stream error of type
@@ -1258,7 +1290,7 @@ impl Connection {
                     s.state = State::Closed;
                 }
                 sink.on_stream_reset(target, ErrorCode::StreamClosed.as_u32());
-                return false;
+                return Fatal::No;
             }
             BlockDisposition::Deliver => {}
         }
@@ -1278,7 +1310,7 @@ impl Connection {
                     || (extended_connect && (!saw_connect || (seen_pseudo & AUTHORITY) == 0))
             };
         }
-        if push_parent.is_none() && self.is_server && !malformed && !rejected {
+        if push_parent.is_none() && self.is_server() && !malformed && !rejected {
             if let Some(s) = self.streams.get_mut(&target) {
                 if !saw_connect && s.content_length.is_none() {
                     s.content_length = content_length;
@@ -1300,7 +1332,7 @@ impl Connection {
             if count > self.max_invalid_frames {
                 self.terminated = true;
                 sink.on_too_many_invalid_frames();
-                return true;
+                return Fatal::Yes;
             }
             // RFC 9113 §8.2: a malformed header block gets a stream error of type PROTOCOL_ERROR and
             // is not delivered to the application.
@@ -1310,7 +1342,7 @@ impl Connection {
             }
             sink.on_stream_reset(target, ErrorCode::ProtocolError.as_u32());
             sink.on_stream_rejected(target);
-            return false;
+            return Fatal::No;
         }
         if rejected {
             // Refuse the oversized header list with a stream error (matches the legacy engine and
@@ -1321,7 +1353,7 @@ impl Connection {
             }
             sink.on_stream_reset(target, ErrorCode::EnhanceYourCalm.as_u32());
             sink.on_stream_rejected(target);
-            return false;
+            return Fatal::No;
         }
         if push_parent.is_none()
             && !informational
@@ -1329,14 +1361,14 @@ impl Connection {
         {
             s.recv_final_headers = true;
         }
-        sink.on_headers_complete(target, end_stream, flags);
+        sink.on_headers_complete(target, EndStream::from_bool(end_stream), flags);
         if end_stream {
             let state = self.streams.get(&target).map(|s| s.state as u8);
             if let Some(state) = state {
                 sink.on_stream_end(target, state);
             }
         }
-        false
+        Fatal::No
     }
 
     /// RFC 9113 §6.1 DATA: strip padding, enforce flow control, deliver, replenish windows.
@@ -1349,12 +1381,12 @@ impl Connection {
         sink: &impl Sink,
         hdr: &FrameHeader,
         remaining: &[u8],
-        padded: bool,
+        padded: Padded,
     ) -> StreamedDataStart {
         let payload_avail = &remaining[wire::FRAME_HEADER_SIZE..];
         let mut pad = 0usize;
         let mut off = 0usize;
-        if padded {
+        if padded == Padded::Yes {
             pad = payload_avail[0] as usize;
             off = 1;
             if 1 + pad > hdr.length as usize {
@@ -1464,19 +1496,19 @@ impl Connection {
         }
     }
 
-    fn handle_data(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_data(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         let mut off = 0usize;
         let mut end = payload.len();
         if wire::flags::has(hdr.flags, wire::flags::PADDED) {
             if payload.is_empty() {
                 self.send_go_away(sink, ErrorCode::FrameSizeError, b"DATA padded but empty");
-                return true;
+                return Fatal::Yes;
             }
             let pad = payload[0] as usize;
             off = 1;
             if off + pad > end {
                 self.send_go_away(sink, ErrorCode::ProtocolError, b"DATA padding too large");
-                return true;
+                return Fatal::Yes;
             }
             end -= pad;
         }
@@ -1490,7 +1522,7 @@ impl Connection {
                 ErrorCode::FlowControlError,
                 b"connection flow-control window exceeded",
             );
-            return true;
+            return Fatal::Yes;
         }
 
         // An empty DATA frame that does not end the stream carries no information and is only
@@ -1502,7 +1534,7 @@ impl Connection {
             if count > self.max_invalid_frames {
                 self.terminated = true;
                 sink.on_too_many_invalid_frames();
-                return true;
+                return Fatal::Yes;
             }
         }
 
@@ -1550,7 +1582,7 @@ impl Connection {
                 }
                 // Surface the stream error (e.g. a peer protocol violation) to the embedder.
                 sink.on_stream_reset(hdr.stream_id, code.as_u32());
-                return false;
+                return Fatal::No;
             }
             DataDecision::FlowControlViolation => {
                 // nghttp2 (nghttp2_session_update_recv_stream_window_size): a stream flow-control
@@ -1561,7 +1593,7 @@ impl Connection {
                     ErrorCode::FlowControlError,
                     b"stream flow-control window exceeded",
                 );
-                return true;
+                return Fatal::Yes;
             }
             DataDecision::Deliver(inc) => inc,
         };
@@ -1578,7 +1610,7 @@ impl Connection {
 
         if end_stream {
             if self.enforce_content_length(sink, hdr.stream_id) {
-                return false;
+                return Fatal::No;
             }
             let state = match self.streams.get_mut(&hdr.stream_id) {
                 Some(s) => {
@@ -1593,14 +1625,14 @@ impl Connection {
                 sink.on_stream_end(hdr.stream_id, state);
             }
         }
-        false
+        Fatal::No
     }
 
     /// RFC 9113 §8.1.1: once END_STREAM arrives, a request whose received DATA total contradicts
     /// its declared `content-length` is malformed. Resets the stream with PROTOCOL_ERROR instead
     /// of signalling end-of-stream and returns true if it did so.
     fn enforce_content_length(&mut self, sink: &impl Sink, stream_id: u32) -> bool {
-        if !self.is_server {
+        if !self.is_server() {
             return false;
         }
         let mismatch = self.streams.get(&stream_id).is_some_and(|s| {
@@ -1619,7 +1651,7 @@ impl Connection {
     }
 
     /// RFC 9113 §6.4 RST_STREAM.
-    fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_rst_stream(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         let code_raw = u32::from_be_bytes([payload[0], payload[1], payload[2], payload[3]]);
         // §5.1: RST_STREAM on an idle (or never-seen) stream is a connection PROTOCOL_ERROR.
         let mut on_idle = match self.streams.get_mut(&hdr.stream_id) {
@@ -1649,27 +1681,32 @@ impl Connection {
             && (hdr.stream_id <= self.last_stream_id
                 || hdr.stream_id <= sink.highest_started_stream_id())
         {
-            return false;
+            return Fatal::No;
         }
         if on_idle {
             self.send_go_away(sink, ErrorCode::ProtocolError, b"RST_STREAM on idle stream");
-            return true;
+            return Fatal::Yes;
         }
         sink.on_stream_reset(hdr.stream_id, code_raw);
-        false
+        Fatal::No
     }
 
     /// RFC 9113 §6.6 PUSH_PROMISE (clients only, §8.4): reserve the promised stream and assemble its
     /// request header block (decoded in finish_header_block, which fires on_push_promise first).
-    fn handle_push_promise(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_push_promise(
+        &mut self,
+        sink: &impl Sink,
+        hdr: &FrameHeader,
+        payload: &[u8],
+    ) -> Fatal {
         // 8.4: a server must never receive PUSH_PROMISE.
-        if self.is_server {
+        if self.is_server() {
             self.send_go_away(
                 sink,
                 ErrorCode::ProtocolError,
                 b"server received PUSH_PROMISE",
             );
-            return true;
+            return Fatal::Yes;
         }
         // 6.6: a client that disabled push (SETTINGS_ENABLE_PUSH=0) must treat the receipt of a
         // PUSH_PROMISE as a connection error of type PROTOCOL_ERROR.
@@ -1679,7 +1716,7 @@ impl Connection {
                 ErrorCode::ProtocolError,
                 b"PUSH_PROMISE with push disabled",
             );
-            return true;
+            return Fatal::Yes;
         }
         let mut off = 0usize;
         let mut end = payload.len();
@@ -1690,7 +1727,7 @@ impl Connection {
                     ErrorCode::FrameSizeError,
                     b"PUSH_PROMISE padded but empty",
                 );
-                return true;
+                return Fatal::Yes;
             }
             let pad = payload[0] as usize;
             off = 1;
@@ -1700,7 +1737,7 @@ impl Connection {
                     ErrorCode::ProtocolError,
                     b"PUSH_PROMISE padding too large",
                 );
-                return true;
+                return Fatal::Yes;
             }
             end -= pad;
         }
@@ -1710,7 +1747,7 @@ impl Connection {
                 ErrorCode::FrameSizeError,
                 b"PUSH_PROMISE missing promised id",
             );
-            return true;
+            return Fatal::Yes;
         }
         let promised = u32::from_be_bytes([
             payload[off],
@@ -1727,7 +1764,7 @@ impl Connection {
                 ErrorCode::ProtocolError,
                 b"PUSH_PROMISE invalid promised stream id",
             );
-            return true;
+            return Fatal::Yes;
         }
 
         // Reserve the promised (even) stream.
@@ -1757,38 +1794,38 @@ impl Connection {
     }
 
     /// RFC 7838 §4 ALTSVC: optional 2-byte origin-length + origin, then the Alt-Svc field value.
-    fn handle_altsvc(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_altsvc(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         if payload.len() < 2 {
-            return false; // malformed ALTSVC is ignored (§4)
+            return Fatal::No; // malformed ALTSVC is ignored (§4)
         }
         let origin_len = u16::from_be_bytes([payload[0], payload[1]]) as usize;
         if 2 + origin_len > payload.len() {
-            return false;
+            return Fatal::No;
         }
         let origin = &payload[2..2 + origin_len];
         let value = &payload[2 + origin_len..];
         // RFC 7838 4 MUST-ignore rules: a server never accepts ALTSVC; on stream 0 the origin
         // must be present; on a request stream it must be empty (the stream's own origin applies).
-        if self.is_server
+        if self.is_server()
             || (hdr.stream_id == 0 && origin.is_empty())
             || (hdr.stream_id != 0 && !origin.is_empty())
         {
-            return false;
+            return Fatal::No;
         }
         sink.on_altsvc(hdr.stream_id, origin, value);
-        false
+        Fatal::No
     }
 
     /// RFC 8336 §2 ORIGIN: a sequence of (2-byte length + origin) entries on stream 0.
-    fn handle_origin(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> bool {
+    fn handle_origin(&mut self, sink: &impl Sink, hdr: &FrameHeader, payload: &[u8]) -> Fatal {
         // §2.1: ORIGIN on a non-zero stream is ignored, and like ALTSVC it is server-to-client
         // only - a server receiving it must ignore it. The whole payload is delivered once; the
         // embedder iterates the (2-byte length, origin) entries and surfaces a single event.
-        if hdr.stream_id != 0 || self.is_server {
-            return false;
+        if hdr.stream_id != 0 || self.is_server() {
+            return Fatal::No;
         }
         sink.on_origin(payload);
-        false
+        Fatal::No
     }
 
     // ---- Outbound stream API (called by the embedder) ------------------
@@ -1802,7 +1839,7 @@ impl Connection {
     }
 
     /// HPACK-encode one header field into the current block. Returns false on encode failure.
-    pub fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: bool) -> bool {
+    pub fn encode_header(&mut self, name: &[u8], value: &[u8], never_index: NeverIndex) -> bool {
         let old = self.enc_buf.len();
         self.enc_buf.resize(old + name.len() + value.len() + 16, 0);
         match self
@@ -1822,7 +1859,8 @@ impl Connection {
 
     /// Emit the accumulated header block as a HEADERS frame, splitting into CONTINUATION frames when
     /// it exceeds the peer's max frame size (§4.3/§6.10), and advance the send-side stream state.
-    pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: bool) {
+    pub fn send_header_block(&mut self, sink: &impl Sink, stream_id: u32, end_stream: EndStream) {
+        let end_stream = end_stream == EndStream::Yes;
         let block = std::mem::take(&mut self.enc_buf);
         let max = (self.remote_settings.max_frame_size as usize).max(1);
         let total = block.len();
@@ -1889,8 +1927,9 @@ impl Connection {
         sink: &impl Sink,
         stream_id: u32,
         data: &[u8],
-        end_stream: bool,
+        end_stream: EndStream,
     ) -> usize {
+        let end_stream = end_stream == EndStream::Yes;
         let conn_avail = self.send_window.available();
         let stream_avail = self
             .streams
@@ -2013,14 +2052,14 @@ mod tests {
     #[derive(Default)]
     struct CaptureSink {
         out: RefCell<Vec<u8>>,
-        pings: RefCell<Vec<(Vec<u8>, bool)>>,
+        pings: RefCell<Vec<(Vec<u8>, Ack)>>,
         remote_settings: Cell<u32>,
         goaway: Cell<Option<(u32, u32)>>,
         /// nghttp2-style lib error code from on_error (locally-detected connection errors).
         local_error: Cell<Option<i32>>,
         opens: RefCell<Vec<u32>>,
         headers: RefCell<Vec<(u32, Vec<u8>, Vec<u8>)>>,
-        headers_done: RefCell<Vec<(u32, bool)>>,
+        headers_done: RefCell<Vec<(u32, EndStream)>>,
         data: RefCell<Vec<(u32, Vec<u8>)>>,
         ended: RefCell<Vec<u32>>,
         resets: RefCell<Vec<(u32, u32)>>,
@@ -2041,7 +2080,7 @@ mod tests {
         fn on_remote_settings(&self, _s: &Settings) {
             self.remote_settings.set(self.remote_settings.get() + 1);
         }
-        fn on_ping(&self, payload: &[u8], is_ack: bool) {
+        fn on_ping(&self, payload: &[u8], is_ack: Ack) {
             self.pings.borrow_mut().push((payload.to_vec(), is_ack));
         }
         fn on_go_away(&self, c: u32, l: u32, _d: &[u8]) {
@@ -2051,12 +2090,12 @@ mod tests {
         fn on_stream_open(&self, id: u32) {
             self.opens.borrow_mut().push(id);
         }
-        fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: bool) {
+        fn on_header(&self, id: u32, name: &[u8], value: &[u8], _never: NeverIndex) {
             self.headers
                 .borrow_mut()
                 .push((id, name.to_vec(), value.to_vec()));
         }
-        fn on_headers_complete(&self, id: u32, end_stream: bool, _flags: u8) {
+        fn on_headers_complete(&self, id: u32, end_stream: EndStream, _flags: u8) {
             self.headers_done.borrow_mut().push((id, end_stream));
         }
         fn on_data(&self, id: u32, data: &[u8]) {
@@ -2087,7 +2126,9 @@ mod tests {
         let mut buf = vec![0u8; 4096];
         let mut off = 0usize;
         for (name, value) in pairs {
-            off += coder.encode(name, value, false, &mut buf, off).unwrap();
+            off += coder
+                .encode(name, value, NeverIndex::No, &mut buf, off)
+                .unwrap();
         }
         buf.truncate(off);
         buf
@@ -2111,7 +2152,7 @@ mod tests {
     #[test]
     fn ping_is_acked_with_echo() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len(); // skip preface
         let payload = [1u8, 2, 3, 4, 5, 6, 7, 8];
         let f = frame(FrameType::Ping, 0, 0, &payload);
@@ -2131,7 +2172,7 @@ mod tests {
     #[test]
     fn window_update_zero_increment_on_conn_is_goaway() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let f = frame(FrameType::WindowUpdate, 0, 0, &[0, 0, 0, 0]);
         let fed = c.receive(&sink, &f);
@@ -2142,7 +2183,7 @@ mod tests {
     #[test]
     fn settings_value_out_of_range_is_goaway() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         // ENABLE_PUSH = 2 (invalid)
         let payload = [0u8, 0x02, 0, 0, 0, 2];
@@ -2155,7 +2196,7 @@ mod tests {
     #[test]
     fn headers_decode_and_open_stream() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let block = encode_block(&[
             (b":method", b"GET"),
@@ -2181,7 +2222,7 @@ mod tests {
                 .iter()
                 .any(|(id, n, v)| *id == 1 && n == b":path" && v == b"/")
         );
-        assert_eq!(*sink.headers_done.borrow(), vec![(1, true)]);
+        assert_eq!(*sink.headers_done.borrow(), vec![(1, EndStream::Yes)]);
         assert_eq!(*sink.ended.borrow(), vec![1]);
         assert_eq!(
             c.streams.get(&1).map(|s| s.state),
@@ -2192,7 +2233,7 @@ mod tests {
     #[test]
     fn data_after_headers_is_delivered() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let block = encode_block(&[
             (b":method", b"POST"),
@@ -2219,7 +2260,7 @@ mod tests {
     #[test]
     fn rst_stream_on_idle_is_goaway() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         let f = frame(
             FrameType::RstStream,
@@ -2236,13 +2277,13 @@ mod tests {
     fn headers_roundtrip_client_to_server() {
         // Client engine encodes + emits a HEADERS frame...
         let csink = CaptureSink::default();
-        let mut client = Connection::new(false, Settings::default());
+        let mut client = Connection::new(Side::Client, Settings::default());
         client.begin_header_block();
-        assert!(client.encode_header(b":method", b"GET", false));
-        assert!(client.encode_header(b":scheme", b"http", false));
-        assert!(client.encode_header(b":path", b"/x", false));
-        assert!(client.encode_header(b":authority", b"localhost", false));
-        client.send_header_block(&csink, 1, true);
+        assert!(client.encode_header(b":method", b"GET", NeverIndex::No));
+        assert!(client.encode_header(b":scheme", b"http", NeverIndex::No));
+        assert!(client.encode_header(b":path", b"/x", NeverIndex::No));
+        assert!(client.encode_header(b":authority", b"localhost", NeverIndex::No));
+        client.send_header_block(&csink, 1, EndStream::Yes);
         let wire_bytes = csink.out.borrow().clone();
         assert_eq!(
             client.streams.get(&1).map(|s| s.state),
@@ -2251,7 +2292,7 @@ mod tests {
 
         // ...and a server engine decodes the exact same bytes back to the original fields.
         let ssink = CaptureSink::default();
-        let mut server = Connection::new(true, Settings::default());
+        let mut server = Connection::new(Side::Server, Settings::default());
         server.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = server.receive(&ssink, &wire_bytes);
         assert!(!fed.fatal);
@@ -2277,12 +2318,12 @@ mod tests {
     fn push_promise_roundtrip_server_to_client() {
         // Server stages the promised request headers and emits PUSH_PROMISE on parent stream 1.
         let ssink = CaptureSink::default();
-        let mut server = Connection::new(true, Settings::default());
+        let mut server = Connection::new(Side::Server, Settings::default());
         server.begin_header_block();
-        assert!(server.encode_header(b":method", b"GET", false));
-        assert!(server.encode_header(b":scheme", b"http", false));
-        assert!(server.encode_header(b":path", b"/pushed", false));
-        assert!(server.encode_header(b":authority", b"localhost", false));
+        assert!(server.encode_header(b":method", b"GET", NeverIndex::No));
+        assert!(server.encode_header(b":scheme", b"http", NeverIndex::No));
+        assert!(server.encode_header(b":path", b"/pushed", NeverIndex::No));
+        assert!(server.encode_header(b":authority", b"localhost", NeverIndex::No));
         server.send_push_promise(&ssink, 1, 2);
         let bytes = ssink.out.borrow().clone();
         assert_eq!(
@@ -2292,7 +2333,7 @@ mod tests {
 
         // Client receives it: on_push_promise(parent=1, promised=2) then the request headers.
         let csink = CaptureSink::default();
-        let mut client = Connection::new(false, Settings::default());
+        let mut client = Connection::new(Side::Client, Settings::default());
         client.preface_received = wire::CONNECTION_PREFACE.len();
         let fed = client.receive(&csink, &bytes);
         assert!(!fed.fatal);
@@ -2314,7 +2355,7 @@ mod tests {
     #[test]
     fn server_rejects_inbound_push_promise() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(true, Settings::default());
+        let mut c = Connection::new(Side::Server, Settings::default());
         c.preface_received = wire::CONNECTION_PREFACE.len();
         // promised id + empty block
         let f = frame(
@@ -2331,18 +2372,18 @@ mod tests {
     #[test]
     fn send_data_respects_flow_control_window() {
         let sink = CaptureSink::default();
-        let mut c = Connection::new(false, Settings::default());
+        let mut c = Connection::new(Side::Client, Settings::default());
         // Open a stream (send side) with a tiny peer window.
         c.begin_header_block();
-        assert!(c.encode_header(b":method", b"POST", false));
-        c.send_header_block(&sink, 1, false);
+        assert!(c.encode_header(b":method", b"POST", NeverIndex::No));
+        c.send_header_block(&sink, 1, EndStream::No);
         sink.out.borrow_mut().clear();
         if let Some(s) = c.streams.get_mut(&1) {
             s.send_window = SendWindow::new(4);
         }
         c.send_window = SendWindow::new(4);
         // Only 4 of 10 bytes fit in the window.
-        let sent = c.send_data(&sink, 1, b"0123456789", true);
+        let sent = c.send_data(&sink, 1, b"0123456789", EndStream::Yes);
         assert_eq!(sent, 4);
     }
 }

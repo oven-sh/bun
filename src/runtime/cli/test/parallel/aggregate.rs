@@ -343,7 +343,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
                 base,
                 frac.failing,
                 &mut body,
-                true,
+                CoverageReportText::IndentName::Yes,
             );
             let _ = body.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> | <r>").as_ref());
 
@@ -389,7 +389,7 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             base,
             failing,
             &mut all_files,
-            false,
+            CoverageReportText::IndentName::No,
         );
         let _ = console.write_all(&all_files);
         let _ = console.write_all(Output::pretty_fmt::<ENABLE_COLORS>("<r><d> |<r>\n").as_ref());

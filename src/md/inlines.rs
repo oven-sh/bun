@@ -1,6 +1,6 @@
-use crate::autolinks::{find_permissive_autolink, is_emph_boundary_resolved};
+use crate::autolinks::{AllowEmph, find_permissive_autolink, is_emph_boundary_resolved};
 use crate::helpers;
-use crate::links::{BracketMatches, LabelLeave};
+use crate::links::{BracketMatches, LabelLeave, LinkKind};
 use crate::parser::{self, Parser};
 use crate::types::{SpanType, TextType, VerbatimLine};
 
@@ -123,6 +123,8 @@ impl HtmlScanMemo {
     }
 }
 
+bun_core::bool_enum!(pub(crate) TrimTrailing);
+
 impl Parser<'_> {
     /// Merge all lines into buffer with \n between them (unmodified),
     /// then process inlines on the merged text. Hard/soft breaks are detected
@@ -130,7 +132,7 @@ impl Parser<'_> {
     pub(crate) fn process_leaf_block(
         &mut self,
         block_lines: &[VerbatimLine],
-        trim_trailing: bool,
+        trim_trailing: TrimTrailing,
     ) -> Result<(), parser::Error> {
         if block_lines.is_empty() {
             return Ok(());
@@ -152,7 +154,7 @@ impl Parser<'_> {
 
         // For headings, trim trailing whitespace
         let mut merged_len = self.buffer.len();
-        if trim_trailing {
+        if trim_trailing == TrimTrailing::Yes {
             while merged_len > 0
                 && (self.buffer[merged_len - 1] == b' ' || self.buffer[merged_len - 1] == b'\t')
             {
@@ -441,7 +443,9 @@ impl Parser<'_> {
                     if i > text_start {
                         self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
-                    if let Some(parse) = self.process_link(content, i, false, &brackets, base)? {
+                    if let Some(parse) =
+                        self.process_link(content, i, LinkKind::Link, &brackets, base)?
+                    {
                         enter_label!(parse);
                     } else {
                         self.emit_text(TextType::Normal, b"[")?;
@@ -456,7 +460,9 @@ impl Parser<'_> {
                     if i > text_start {
                         self.emit_text(TextType::Normal, &content[text_start..i])?;
                     }
-                    if let Some(parse) = self.process_link(content, i + 1, true, &brackets, base)? {
+                    if let Some(parse) =
+                        self.process_link(content, i + 1, LinkKind::Image, &brackets, base)?
+                    {
                         enter_label!(parse);
                     } else {
                         self.emit_text(TextType::Normal, b"!")?;
@@ -476,9 +482,9 @@ impl Parser<'_> {
                         || (c == b'.' && self.flags.permissive_www_autolinks))
                 {
                     // First try with strict boundaries, then with relaxed (emphasis-aware)
-                    let mut al = find_permissive_autolink(content, i, false);
+                    let mut al = find_permissive_autolink(content, i, AllowEmph::No);
                     if al.is_none() {
-                        al = find_permissive_autolink(content, i, true);
+                        al = find_permissive_autolink(content, i, AllowEmph::Yes);
                         if let Some(a) = al {
                             if !is_emph_boundary_resolved(content, a, &resolved) {
                                 al = None;

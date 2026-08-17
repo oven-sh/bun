@@ -50,6 +50,13 @@ fn debug_thread_stamp() -> u64 {
     ID.with(|id| *id)
 }
 
+/// Result of [`MimallocArena::reset_retain_with_limit`].
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum ResetOutcome {
+    Recycled,
+    Retained,
+}
+
 /// A mimalloc heap. Owns a `mi_heap_t`; all allocations are bulk-freed on
 /// `Drop` via `mi_heap_destroy`.
 ///
@@ -212,8 +219,8 @@ impl MimallocArena {
 
     /// Retains the warm heap while its in-use footprint is `<= limit`, and
     /// only then falls back to a full [`Self::reset`] (`mi_heap_destroy` +
-    /// `mi_heap_new`). Returns `true` when the heap was retained, `false` when
-    /// it was recycled.
+    /// `mi_heap_new`). Returns [`ResetOutcome::Retained`] when the heap was
+    /// retained, [`ResetOutcome::Recycled`] when it was recycled.
     ///
     /// **Why this isn't a no-op-or-full-reset.** The ideal behavior would be
     /// "free every block but keep the warm pages (up to `limit`)" — but
@@ -252,7 +259,7 @@ impl MimallocArena {
     /// `mi_heap_destroy`" knob; raising it trades steady-state RSS for fewer
     /// destroys per transpile batch.
     #[inline]
-    pub fn reset_retain_with_limit(&mut self, limit: usize) -> bool {
+    pub fn reset_retain_with_limit(&mut self, limit: usize) -> ResetOutcome {
         // `borrowing_default()` arenas (`!owns`) wrap `mi_heap_main()`, whose
         // footprint is the whole process — they always fall through to
         // `reset()`, which debug-asserts `owns` (recycling the main heap is a
@@ -267,10 +274,10 @@ impl MimallocArena {
             #[cfg(debug_assertions)]
             self.owning_thread
                 .store(debug_thread_stamp(), Ordering::Relaxed);
-            return true;
+            return ResetOutcome::Retained;
         }
         self.reset();
-        false
+        ResetOutcome::Recycled
     }
 
     /// `bumpalo::Bump::allocated_bytes` parity — total bytes currently in use

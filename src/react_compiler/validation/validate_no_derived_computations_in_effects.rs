@@ -166,6 +166,8 @@ impl LocKey {
     }
 }
 
+bun_core::bool_enum!(IsStateSource);
+
 #[derive(Debug, Clone)]
 struct DerivationCache {
     has_changes: bool,
@@ -243,9 +245,9 @@ impl DerivationCache {
         derived_name: Option<IdentifierName>,
         source_ids: crate::collections::IndexSet<IdentifierId>,
         type_of_value: TypeOfValue,
-        is_state_source: bool,
+        is_state_source: IsStateSource,
     ) {
-        let mut final_is_source = is_state_source;
+        let mut final_is_source = is_state_source == IsStateSource::Yes;
         if !final_is_source {
             for source_id in &source_ids {
                 if let Some(source_metadata) = self.cache.get(source_id) {
@@ -495,7 +497,7 @@ fn record_phi_derivations(
                 name,
                 source_ids,
                 type_of_value,
-                false,
+                IsStateSource::No,
             );
         }
     }
@@ -522,7 +524,7 @@ fn record_instruction_derivations(
     );
 
     let mut type_of_value = TypeOfValue::Ignored;
-    let is_source = false;
+    let is_source = IsStateSource::No;
     let mut sources: crate::collections::IndexSet<IdentifierId> =
         crate::collections::IndexSet::new();
 
@@ -579,7 +581,7 @@ fn record_instruction_derivations(
                     name,
                     crate::collections::IndexSet::new(),
                     TypeOfValue::FromState,
-                    true,
+                    IsStateSource::Yes,
                 );
                 return Ok(());
             }
@@ -618,7 +620,7 @@ fn record_instruction_derivations(
                     name,
                     crate::collections::IndexSet::new(),
                     TypeOfValue::FromState,
-                    true,
+                    IsStateSource::Yes,
                 );
                 return Ok(());
             }
@@ -694,7 +696,7 @@ fn record_instruction_derivations(
                         name,
                         sources.clone(),
                         type_of_value,
-                        false,
+                        IsStateSource::No,
                     );
                 }
             }
@@ -813,13 +815,16 @@ fn build_tree_node(
     children
 }
 
+bun_core::bool_enum!(IsLast);
+
 fn render_tree(
     node: &TreeNode,
     indent: &str,
-    is_last: bool,
+    is_last: IsLast,
     props_set: &mut crate::collections::IndexSet<String>,
     state_set: &mut crate::collections::IndexSet<String>,
 ) -> String {
+    let is_last = is_last == IsLast::Yes;
     let prefix = format!(
         "{}{}",
         indent,
@@ -855,7 +860,7 @@ fn render_tree(
     if !node.children.is_empty() {
         result += "\n";
         for (index, child) in node.children.iter().enumerate() {
-            let is_last_child = index == node.children.len() - 1;
+            let is_last_child = IsLast::from_bool(index == node.children.len() - 1);
             result += &render_tree(child, &child_indent, is_last_child, props_set, state_set);
             if index < node.children.len() - 1 {
                 result += "\n";
@@ -1091,7 +1096,7 @@ fn validate_effect(
                         render_tree(
                             node,
                             "",
-                            index == root_nodes.len() - 1,
+                            IsLast::from_bool(index == root_nodes.len() - 1),
                             &mut props_set,
                             &mut state_set,
                         )

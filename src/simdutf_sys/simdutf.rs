@@ -462,6 +462,19 @@ pub mod base64 {
     use super::SIMDUTFResult;
     use core::ffi::c_int;
 
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+    pub enum Alphabet {
+        Standard,
+        UrlSafe,
+    }
+
+    impl Alphabet {
+        #[inline]
+        const fn as_c_int(self) -> c_int {
+            matches!(self, Alphabet::UrlSafe) as c_int
+        }
+    }
+
     unsafe extern "C" {
         fn simdutf__base64_encode(
             input: *const u8,
@@ -485,14 +498,14 @@ pub mod base64 {
         fn simdutf__base64_length_from_binary(length: usize, options: c_int) -> usize;
     }
 
-    pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> usize {
+    pub fn encode(input: &[u8], output: &mut [u8], is_urlsafe: Alphabet) -> usize {
         // SAFETY: caller guarantees output.len() >= encode_len(input.len(), is_urlsafe).
         unsafe {
             simdutf__base64_encode(
                 input.as_ptr(),
                 input.len(),
                 output.as_mut_ptr(),
-                is_urlsafe as c_int,
+                is_urlsafe.as_c_int(),
             )
         }
     }
@@ -506,18 +519,20 @@ pub mod base64 {
     /// `output` must be valid for writes of at least
     /// `encode_len(input.len(), is_urlsafe)` bytes and must not overlap
     /// `input`.
-    pub unsafe fn encode_raw(input: &[u8], output: *mut u8, is_urlsafe: bool) -> usize {
+    pub unsafe fn encode_raw(input: &[u8], output: *mut u8, is_urlsafe: Alphabet) -> usize {
         // SAFETY: caller contract guarantees `output` is valid for
         // `encode_len(input.len(), is_urlsafe)` bytes and disjoint from `input`.
-        unsafe { simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe as c_int) }
+        unsafe {
+            simdutf__base64_encode(input.as_ptr(), input.len(), output, is_urlsafe.as_c_int())
+        }
     }
 
-    pub fn encode_len(input: usize, is_urlsafe: bool) -> usize {
+    pub fn encode_len(input: usize, is_urlsafe: Alphabet) -> usize {
         // SAFETY: pure length computation; no pointers dereferenced.
-        unsafe { simdutf__base64_length_from_binary(input, is_urlsafe as c_int) }
+        unsafe { simdutf__base64_length_from_binary(input, is_urlsafe.as_c_int()) }
     }
 
-    pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: bool) -> SIMDUTFResult {
+    pub fn decode(input: &[u8], output: &mut [u8], is_urlsafe: Alphabet) -> SIMDUTFResult {
         // SAFETY: input/output are valid slices; FFI honors outlen bound.
         unsafe {
             simdutf__base64_decode_from_binary(
@@ -525,7 +540,7 @@ pub mod base64 {
                 input.len(),
                 output.as_mut_ptr(),
                 output.len(),
-                is_urlsafe as c_int,
+                is_urlsafe.as_c_int(),
             )
         }
     }

@@ -6,8 +6,8 @@ use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, StringJsc as _, UUID};
 use bun_threading::Guarded;
 
-use crate::webcore::Blob;
 use crate::webcore::BlobExt as _;
+use crate::webcore::{Blob, IncludeContentType};
 
 // The map is wrapped in a `Guarded` (mutex + value).
 //
@@ -40,7 +40,7 @@ const _: fn() = || {
 impl Entry {
     pub(crate) fn init(blob: &Blob) -> Box<Entry> {
         Box::new(Entry {
-            blob: blob.dupe_with_content_type(true),
+            blob: blob.dupe_with_content_type(IncludeContentType::Yes),
         })
     }
 }
@@ -70,7 +70,7 @@ impl ObjectURLRegistry {
         let uuid = uuid_from_pathname(pathname)?;
         let map = self.map.lock();
         map.get(&uuid.bytes)
-            .map(|e| e.blob.dupe_with_content_type(true))
+            .map(|e| e.blob.dupe_with_content_type(IncludeContentType::Yes))
     }
 
     pub(crate) fn resolve_and_dupe_to_js(

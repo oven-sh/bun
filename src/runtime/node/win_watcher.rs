@@ -19,7 +19,9 @@ use bun_threading::Mutex;
 
 use super::node_fs_watcher::WatchEventKind;
 // The callbacks are *associated functions* on `FSWatcher`, not free fns.
-use crate::node::node_fs_watcher::{Event, FSWatcher, StringOrBytesToDecode};
+use crate::node::node_fs_watcher::{
+    CloseWatcher, Event, FSWatcher, Recursive, StringOrBytesToDecode,
+};
 #[allow(non_upper_case_globals)]
 const on_path_update_fn: fn(Option<*mut c_void>, Event, bool) = FSWatcher::ON_PATH_UPDATE;
 #[allow(non_upper_case_globals)]
@@ -230,7 +232,7 @@ impl PathWatcher {
                     Some(ctx),
                     Event::Error {
                         err: err.clone(),
-                        close: true,
+                        close: CloseWatcher::Yes,
                     },
                     false,
                 );
@@ -337,7 +339,7 @@ impl PathWatcher {
     fn init(
         manager: *mut PathWatcherManager,
         path: &ZStr,
-        recursive: bool,
+        recursive: Recursive,
     ) -> sys::Result<*mut PathWatcher> {
         let mut outbuf = PathBuffer::uninit();
         // Windows `sys::readlink` returns the byte length; the link target is
@@ -395,7 +397,7 @@ impl PathWatcher {
                 ptr::addr_of_mut!((*this).handle),
                 Some(PathWatcher::uv_event_callback),
                 event_path.as_ptr().cast::<c_char>(),
-                if recursive {
+                if recursive == Recursive::Yes {
                     uv::UV_FS_EVENT_RECURSIVE as u32
                 } else {
                     0
@@ -510,7 +512,7 @@ impl PathWatcher {
 pub(crate) fn watch(
     vm: &'static jsc::VirtualMachineRef,
     path: &ZStr,
-    recursive: bool,
+    recursive: Recursive,
     ctx: *mut c_void,
 ) -> sys::Result<*mut PathWatcher> {
     #[cfg(not(windows))]

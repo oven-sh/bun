@@ -17,6 +17,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager::IsRoot;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -839,7 +840,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 b".",
                 exclude_links,
                 log,
-                true,
+                IsRoot::Yes,
                 &importers_obj,
                 importer_versions.value_ptr,
             )?;
@@ -868,7 +869,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let value = prop.value.as_ref().expect("infallible: prop has value");
 
                 let path = as_string(key).unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_bytes!(lockfile)), true) {
+                if !strings::eql_long(
+                    path,
+                    workspace_path.slice(string_bytes!(lockfile)),
+                    strings::CheckLen::Yes,
+                ) {
                     continue;
                 }
 
@@ -918,7 +923,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                     path,
                     exclude_links,
                     log,
-                    false,
+                    IsRoot::No,
                     &importers_obj,
                     importer_versions.value_ptr,
                 )?;
@@ -1021,7 +1026,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                     if strings::eql_long(
                                         workspace_path_buf.slice(),
                                         link_path_buf.slice(),
-                                        true,
+                                        strings::CheckLen::Yes,
                                     ) {
                                         continue 'next_dep;
                                     }
@@ -2108,7 +2113,7 @@ fn parse_append_importer_dependencies(
     importer_path: &[u8],
     exclude_links_from_lockfile: bool,
     log: &mut bun_ast::Log,
-    is_root: bool,
+    is_root: IsRoot,
     importers_obj: &Expr,
     importer_versions: &mut StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(u32, u32), ParseAppendDependenciesError> {
@@ -2234,13 +2239,17 @@ fn parse_append_importer_dependencies(
         }
     }
 
-    if is_root {
+    if is_root == IsRoot::Yes {
         let workspace_paths_snapshot: Vec<String> = lockfile.workspace_paths.values().to_vec();
         'workspaces: for workspace_path in &workspace_paths_snapshot {
             for prop in e_object(importers_obj).properties.slice() {
                 let key = prop.key.as_ref().expect("infallible: prop has key");
                 let path = as_string(key).unwrap();
-                if !strings::eql_long(path, workspace_path.slice(string_bytes!(lockfile)), true) {
+                if !strings::eql_long(
+                    path,
+                    workspace_path.slice(string_bytes!(lockfile)),
+                    strings::CheckLen::Yes,
+                ) {
                     continue;
                 }
 

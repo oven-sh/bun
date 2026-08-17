@@ -198,7 +198,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
     };
     let blob = Blob::init(data, global_this);
 
-    let mime_type = MimeType::MimeType::init(data_url.mime_type, true, None);
+    let mime_type = MimeType::MimeType::init(data_url.mime_type, MimeType::Dupe::Yes, None);
     blob.content_type
         .set(crate::webcore::blob::BlobContentType::from(mime_type));
 
@@ -210,7 +210,7 @@ fn data_url_response(data_url_: DataURL, global_this: &JSGlobalObject) -> JSValu
         },
         Body::new(BodyValue::Blob(blob)),
         data_url.url.dupe_ref(),
-        false,
+        response::Redirected::No,
     )));
 
     // Ownership of the boxed Response is transferred to the JS GC via
@@ -307,7 +307,7 @@ fn bun_fetch_preconnect(
 
     // `preconnect` is a free fn in `bun_http::async_http`. Ownership
     // of `href_raw` transfers here (`is_url_owned: true`).
-    http::async_http::preconnect(url, true);
+    http::async_http::preconnect(url, http::async_http::UrlOwnership::Owned);
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1566,7 +1566,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 )),
             );
 
-            break 'blob Blob::find_or_create_file_from_path(&mut pathlike, global_this, true);
+            break 'blob Blob::find_or_create_file_from_path(
+                &mut pathlike,
+                global_this,
+                blob::CheckS3::Yes,
+            );
         };
 
         let response = bun_core::heap::into_raw(Box::new(Response::init(
@@ -1576,7 +1580,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             },
             Body::new(BodyValue::Blob(blob_to_use)),
             url_string,
-            false,
+            response::Redirected::No,
         )));
 
         // Ownership of the boxed Response transfers to the JS GC; see
@@ -1881,6 +1885,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                 let s3_options: JSValue = s3_options;
                 if s3_options.is_object() {
                     s3_options.ensure_still_alive();
+                    use crate::webcore::s3::credentials_jsc::RequestPayer;
                     use crate::webcore::s3_client::S3CredentialsExt as _;
                     credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
                         &credentials_with_options.credentials,
@@ -1888,7 +1893,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         Some(s3_options),
                         None,
                         None,
-                        false,
+                        RequestPayer::No,
                         global_this,
                     )?;
                 }
@@ -2144,7 +2149,7 @@ impl<'a> S3StreamWrapper<'a> {
                     },
                     Body::new(BodyValue::Empty),
                     BunString::create_atom_if_possible(self_.url.href),
-                    false,
+                    response::Redirected::No,
                 ));
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;
                 // ownership transfers to JSC.
@@ -2166,7 +2171,7 @@ impl<'a> S3StreamWrapper<'a> {
                         was_string: true,
                     })),
                     BunString::create_atom_if_possible(self_.url.href),
-                    false,
+                    response::Redirected::No,
                 ));
 
                 // SAFETY: `into_raw` yields a freshly allocated heap `Response`;

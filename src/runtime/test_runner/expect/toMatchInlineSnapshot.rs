@@ -3,6 +3,7 @@ use bun_core::ZigString;
 
 use super::throw;
 use super::Expect;
+use super::IsNot;
 
 pub(crate) fn to_match_inline_snapshot(
     this: &Expect,
@@ -21,7 +22,7 @@ pub(crate) fn to_match_inline_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        let signature = Expect::get_signature("toMatchInlineSnapshot", "", true);
+        let signature = Expect::get_signature("toMatchInlineSnapshot", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -55,7 +56,7 @@ pub(crate) fn to_match_inline_snapshot(
                 let signature = Expect::get_signature(
                     "toMatchInlineSnapshot",
                     "<green>properties<r><d>, <r>hint",
-                    false,
+                    IsNot::No,
                 );
                 return throw!(
                     this,

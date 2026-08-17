@@ -544,7 +544,7 @@ pub mod registry {
         package_name: &[u8],
         loaded_manifest: Option<PackageManifest>,
         package_manager: &mut PackageManager,
-        is_extended_manifest: bool,
+        is_extended_manifest: ExtendedManifest,
     ) -> Result<PackageVersionResponse, Error> {
         match response.status_code {
             400 => return Err(crate::Error::BadRequest),
@@ -890,6 +890,13 @@ const _: () = {
 };
 
 // ──────────────────────────────────────────────────────────────────────────
+
+bun_core::bool_enum!(
+    /// Whether a registry manifest is (or must be) the full `application/json`
+    /// document rather than the abbreviated `vnd.npm.install-v1` form. The
+    /// extended form is needed for `time` (minimum-release-age filtering).
+    pub ExtendedManifest
+);
 
 #[derive(Default, Clone)]
 pub struct PackageManifest {
@@ -2008,7 +2015,7 @@ impl PackageManifest {
         last_modified: &[u8],
         etag: &[u8],
         public_max_age: u32,
-        is_extended_manifest: bool,
+        is_extended_manifest: ExtendedManifest,
     ) -> Result<Option<PackageManifest>, Error> {
         // `bun_ast::Source::init_path_string` accepts borrowed `&[u8]` via
         // `IntoStr`; the Source only lives for the duration of this function,
@@ -2024,7 +2031,7 @@ impl PackageManifest {
             Ok(j) => j,
             Err(_) => {
                 let mut cloned_log = bun_ast::Log::init();
-                log.clone_to_with_recycled(&mut cloned_log, true);
+                log.clone_to_with_recycled(&mut cloned_log, bun_ast::Recycled::Yes);
                 *log = cloned_log;
                 return Ok(None);
             }
@@ -2070,7 +2077,7 @@ impl PackageManifest {
                 // from the default registry we don't check because the registry might have a different name in the manifest.
                 // https://github.com/oven-sh/bun/issues/4925
                 if scope.url_hash == *registry::DEFAULT_URL_HASH
-                    && !strings::eql_long(expected_name, received_name, true)
+                    && !strings::eql_long(expected_name, received_name, strings::CheckLen::Yes)
                 {
                     bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
@@ -2467,7 +2474,11 @@ impl PackageManifest {
                                                         cur.slice(string_builder.allocated_slice());
                                                     let second = prev_item
                                                         .slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
+                                                    if !strings::eql_long(
+                                                        first,
+                                                        second,
+                                                        strings::CheckLen::Yes,
+                                                    ) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
                                                             bstr::BStr::new(first),
@@ -2494,7 +2505,11 @@ impl PackageManifest {
                                                         cur.slice(string_builder.allocated_slice());
                                                     let second = prev_item
                                                         .slice(string_builder.allocated_slice());
-                                                    if !strings::eql_long(first, second, true) {
+                                                    if !strings::eql_long(
+                                                        first,
+                                                        second,
+                                                        strings::CheckLen::Yes,
+                                                    ) {
                                                         Output::panic(format_args!(
                                                             "Bin group is not identical: {} != {}",
                                                             bstr::BStr::new(first),
@@ -3193,7 +3208,7 @@ impl PackageManifest {
         };
         result.bundled_deps_buf = bundled_deps_buf;
         result.pkg.public_max_age = public_max_age;
-        result.pkg.has_extended_manifest = is_extended_manifest;
+        result.pkg.has_extended_manifest = is_extended_manifest == ExtendedManifest::Yes;
 
         if let Some(buf) = string_builder.ptr.take() {
             let mut v = buf.into_vec();

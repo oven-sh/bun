@@ -5,7 +5,7 @@ use crate::css_values::ident::{CustomIdent, DashedIdent, is_reserved_custom_iden
 use crate::css_values::number::{CSSNumber, CSSNumberFns};
 use crate::css_values::time::Time;
 use crate::generics::CssEql;
-use crate::{Parser, PrintErr, Printer};
+use crate::{HandleCssModule, Parser, PrintErr, Printer};
 use bun_core::strings;
 
 /// A value for the [animation](https://drafts.csswg.org/css-animations/#animation) shorthand property.
@@ -178,7 +178,9 @@ impl Animation {
         }
 
         if self.iteration_count != AnimationIterationCount::default()
-            || name_str.is_some_and(|n| strings::eql_case_insensitive_ascii(n, b"infinite", true))
+            || name_str.is_some_and(|n| {
+                strings::eql_case_insensitive_ascii(n, b"infinite", strings::CheckLen::Yes)
+            })
         {
             space!();
             self.iteration_count.to_css(dest)?;
@@ -202,7 +204,7 @@ impl Animation {
 
         if self.fill_mode != AnimationFillMode::default()
             || name_str.is_some_and(|n| {
-                !strings::eql_case_insensitive_ascii(n, b"none", true)
+                !strings::eql_case_insensitive_ascii(n, b"none", strings::CheckLen::Yes)
                     && css::parse_utility::parse_string::<AnimationFillMode>(
                         dest.arena,
                         n,
@@ -347,7 +349,10 @@ impl AnimationName {
                         css_module.get_reference(arena, name, source_index);
                     }
                 }
-                return s.to_css_with_options(dest, css_module_animation_enabled);
+                return s.to_css_with_options(
+                    dest,
+                    HandleCssModule::from_bool(css_module_animation_enabled),
+                );
             }
             AnimationName::String(s) => {
                 // SAFETY: arena-owned slice valid for 'bump.
@@ -368,7 +373,10 @@ impl AnimationName {
                     return dest.serialize_string(name);
                 }
 
-                return dest.write_ident(name, css_module_animation_enabled);
+                return dest.write_ident(
+                    name,
+                    HandleCssModule::from_bool(css_module_animation_enabled),
+                );
             }
         }
     }

@@ -4,6 +4,7 @@
 
 use bun_paths::strings;
 use core::ffi::{c_char, c_int, c_uint, c_void};
+use core::ops::ControlFlow;
 use core::ptr::NonNull;
 use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
@@ -18,6 +19,7 @@ use bun_jsc::debugger::AsyncTaskTracker;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{EventLoopHandle, JSGlobalObject, JSValue, JsResult, ThreadSafe, Unprotect};
 use bun_paths::{self as paths, OSPathBuffer, OSPathChar, OSPathSliceZ, PathBuffer};
+use bun_standalone_graph::Recursive;
 use bun_sys::FdExt as _;
 use bun_sys::{self as sys, E, Fd as FD, Maybe, Mode, SystemErrno};
 use bun_threading::UnboundedQueue;
@@ -150,12 +152,12 @@ use bun_jsc::AbortSignalRef;
 
 // Wired to the real sibling modules under `super::` (rather than a
 // `bun_jsc::node` re-export shim) so this file compiles standalone.
-use super::stat::Stats;
+use super::stat::{Stats, StatsKind};
 use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
-    VectorArrayBuffer,
+    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, PinBuffers, StringObjects,
+    StringOrBuffer, VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
 // canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
@@ -475,6 +477,17 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
 // per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
 
+bun_core::bool_enum!(
+    /// Recursive readdir: whether `basename` is the user-supplied root (opened
+    /// relative to cwd) or a subdirectory (opened relative to `root_fd`).
+    pub(crate) IsRoot
+);
+bun_core::bool_enum!(
+    /// Recursive readdir: whether entry names honour `args.encoding` (sync) or
+    /// are always cloned as UTF-8 (async).
+    pub ApplyEncoding
+);
+
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
 // ──────────────────────────────────────────────────────────────────────────
@@ -590,7 +603,8 @@ mod _async_tasks {
                 let path = unsafe { &*self.path };
                 let result = node_fs.mkdir_recursive(&args::Mkdir {
                     path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                        path, false,
+                        path,
+                        bun_ptr::cow_slice::Ownership::Borrowed,
                     )),
                     recursive: true,
                     ..Default::default()
@@ -1916,7 +1930,6 @@ mod _async_tasks {
             );
         }
 
-        // returns boolean `should_continue`
         fn cp_async_directory(
             nodefs: &mut NodeFS,
             args: args::CpFlags,
@@ -1925,7 +1938,7 @@ mod _async_tasks {
             src_dir_len: PathInt,
             dest_buf: &mut OSPathBuffer,
             dest_dir_len: PathInt,
-        ) -> bool {
+        ) -> ControlFlow<()> {
             // SAFETY: `this` is the live Box-leaked task. Shared borrow only — spawned
             // `CpSingleTask`s on other workpool threads may concurrently hold `&Self`.
             // The raw `*mut` is threaded through (instead of `&Self`) so that the
@@ -1953,14 +1966,14 @@ mod _async_tasks {
                             // `errno_sys_p`
                             // already boxed `src.as_bytes()` into `err.path`, so just forward.
                             this_ref.finish_concurrently(err);
-                            return false;
+                            return ControlFlow::Break(());
                         }
                         // Other errors may be due to clonefile() not being supported
                         // We'll fall back to other implementations
                         _ => {}
                     }
                 } else {
-                    return true;
+                    return ControlFlow::Continue(());
                 }
             }
 
@@ -1970,7 +1983,7 @@ mod _async_tasks {
                     this_ref.finish_concurrently(Err(
                         err.with_path(nodefs.os_path_into_sync_error_buf(src))
                     ));
-                    return false;
+                    return ControlFlow::Break(());
                 }
                 Ok(fd_) => fd_,
             };
@@ -1992,7 +2005,7 @@ mod _async_tasks {
             ) {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(err));
-                    return false;
+                    return ControlFlow::Break(());
                 }
                 Ok(n) => n,
             };
@@ -2003,7 +2016,7 @@ mod _async_tasks {
             match mkdir_ {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(err));
-                    return false;
+                    return ControlFlow::Break(());
                 }
                 Ok(_) => {
                     this_ref.on_copy(src, normdest);
@@ -2024,7 +2037,7 @@ mod _async_tasks {
                         this_ref.finish_concurrently(Err(
                             err.with_path(nodefs.os_path_into_sync_error_buf(src))
                         ));
-                        return false;
+                        return ControlFlow::Break(());
                     }
                     Ok(ent) => match ent {
                         Some(e) => e,
@@ -2047,7 +2060,7 @@ mod _async_tasks {
                             .into(),
                         ..Default::default()
                     }));
-                    return false;
+                    return ControlFlow::Break(());
                 }
 
                 match current.kind {
@@ -2070,8 +2083,8 @@ mod _async_tasks {
                             dest_buf,
                             (dd + 1 + cname.len()) as PathInt,
                         );
-                        if !should_continue {
-                            return false;
+                        if should_continue.is_break() {
+                            return ControlFlow::Break(());
                         }
                     }
                     _ => {
@@ -2105,7 +2118,7 @@ mod _async_tasks {
                 entry = iterator.next();
             }
 
-            true
+            ControlFlow::Continue(())
         }
     }
 
@@ -2183,7 +2196,7 @@ mod _async_tasks {
             };
             // May finish synchronously (no subdirectories) or fan out; the last
             // subtask finishes the token.
-            this.perform_work(root_path_z, &mut buf, true);
+            this.perform_work(root_path_z, &mut buf, IsRoot::Yes);
             None
         }
 
@@ -2313,7 +2326,7 @@ mod _async_tasks {
             // refcount. `from_raw_mut` was used at enqueue, so write provenance is
             // present; this work-pool callback is the sole holder of `&mut` to the
             // parent's per-result fields (it pushes to a lock-free queue).
-            unsafe { readdir_task.assume_mut() }.perform_work(basename_z, &mut buf, false);
+            unsafe { readdir_task.assume_mut() }.perform_work(basename_z, &mut buf, IsRoot::No);
         }
     }
 
@@ -2395,7 +2408,7 @@ mod _async_tasks {
             &mut self,
             basename: &ZStr,
             buf: &mut PathBuffer,
-            is_root: bool,
+            is_root: IsRoot,
         ) {
             macro_rules! impl_tag {
                 ($T:ty, $variant:ident) => {{
@@ -2721,7 +2734,7 @@ pub mod args {
                 })?,
                 // The iovec pointers outlive this call on the async path; root
                 // each element and pin its backing store until completion.
-                arguments.will_be_async,
+                PinBuffers::from_bool(arguments.will_be_async),
             )?;
             let position: Option<u64> = arguments
                 .next_eat()
@@ -3250,12 +3263,18 @@ pub mod args {
     }
     impl Rm {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<Rm> {
-            Ok(Rm(RmDir::from_js_impl(ctx, arguments, true)?))
+            Ok(Rm(RmDir::from_js_impl(
+                ctx,
+                arguments,
+                StrictBooleans::Yes,
+            )?))
         }
         pub(crate) fn to_thread_safe(&mut self) {
             self.0.to_thread_safe();
         }
     }
+
+    bun_core::bool_enum!(StrictBooleans);
 
     pub struct RmDir {
         pub path: PathLike,
@@ -3278,7 +3297,7 @@ pub mod args {
     fs_args_path_forwarders!(RmDir; path);
     impl RmDir {
         pub fn from_js(ctx: &JSGlobalObject, arguments: &mut ArgumentsSlice) -> JsResult<RmDir> {
-            Self::from_js_impl(ctx, arguments, false)
+            Self::from_js_impl(ctx, arguments, StrictBooleans::No)
         }
         /// `strict_booleans` selects node's `validateRmOptions` behavior (used by
         /// `fs.rm`): a present-but-`undefined` `recursive`/`force` is a type
@@ -3286,7 +3305,7 @@ pub mod args {
         fn from_js_impl(
             ctx: &JSGlobalObject,
             arguments: &mut ArgumentsSlice,
-            strict_booleans: bool,
+            strict_booleans: StrictBooleans,
         ) -> JsResult<RmDir> {
             let path = PathLike::from_js_required(ctx, arguments, "path")?;
             let mut recursive = false;
@@ -3297,7 +3316,7 @@ pub mod args {
                 arguments.eat();
                 if val.is_object() {
                     let get_option = |name: &'static str| -> JsResult<Option<JSValue>> {
-                        if strict_booleans {
+                        if strict_booleans == StrictBooleans::Yes {
                             let key = bun_core::String::borrow_utf8(name.as_bytes());
                             val.get_own(ctx, &key)
                         } else {
@@ -5329,7 +5348,7 @@ impl NodeFS {
             }
         };
 
-        Ok(sys::exists_os_path(slice, false))
+        Ok(sys::exists_os_path(slice, sys::FileOnly::No))
     }
 
     pub(crate) fn chown(&mut self, args: &args::Chown, _: Flavor) -> Maybe<ret::Chown> {
@@ -5402,12 +5421,15 @@ impl NodeFS {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         if sys::SUPPORTS_STATX_ON_LINUX.load(Ordering::Relaxed) {
             return match sys::fstatx(args.fd, sys::STATX_MASK_FOR_STATS) {
-                Ok(result) => Ok(Stats::init(&result, args.big_int)),
+                Ok(result) => Ok(Stats::init(&result, StatsKind::from_bool(args.big_int))),
                 Err(err) => Err(err),
             };
         }
         match Syscall::fstat(args.fd) {
-            Ok(result) => Ok(Stats::init(&PosixStat::init(&result), args.big_int)),
+            Ok(result) => Ok(Stats::init(
+                &PosixStat::init(&result),
+                StatsKind::from_bool(args.big_int),
+            )),
             Err(err) => Err(err),
         }
     }
@@ -5539,7 +5561,7 @@ impl NodeFS {
             if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
-                    args.big_int,
+                    StatsKind::from_bool(args.big_int),
                 ))));
             }
         }
@@ -5548,7 +5570,7 @@ impl NodeFS {
             return match sys::lstatx(path, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &result,
-                    args.big_int,
+                    StatsKind::from_bool(args.big_int),
                 )))),
                 Err(err) => {
                     if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
@@ -5561,7 +5583,7 @@ impl NodeFS {
         match Syscall::lstat(path) {
             Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &PosixStat::init(&result),
-                args.big_int,
+                StatsKind::from_bool(args.big_int),
             )))),
             Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
@@ -5995,7 +6017,10 @@ impl NodeFS {
         // before `uv_fs_req_cleanup` releases the backing storage.
         let statfs_: super::statfs::RawStatFS =
             unsafe { core::ptr::read_unaligned(req.ptr_as::<super::statfs::RawStatFS>()) };
-        Ok(ret::StatFS::init(&statfs_, args.big_int))
+        Ok(ret::StatFS::init(
+            &statfs_,
+            StatsKind::from_bool(args.big_int),
+        ))
     }
 
     fn read_inner(&mut self, args: &args::Read) -> Maybe<ret::Read> {
@@ -6291,19 +6316,19 @@ impl NodeFS {
             ret::ReaddirTag::Buffers => Self::readdir_inner::<Buffer>(
                 &mut self.sync_error_buf,
                 args,
-                args.recursive,
+                Recursive::from_bool(args.recursive),
                 flavor,
             ),
             ret::ReaddirTag::WithFileTypes => Self::readdir_inner::<Dirent>(
                 &mut self.sync_error_buf,
                 args,
-                args.recursive,
+                Recursive::from_bool(args.recursive),
                 flavor,
             ),
             ret::ReaddirTag::Files => Self::readdir_inner::<BunString>(
                 &mut self.sync_error_buf,
                 args,
-                args.recursive,
+                Recursive::from_bool(args.recursive),
                 flavor,
             ),
         };
@@ -6444,8 +6469,9 @@ impl NodeFS {
         async_task: &mut AsyncReaddirRecursiveTask,
         basename: &ZStr,
         entries: &mut Vec<T>,
-        is_root: bool,
+        is_root: IsRoot,
     ) -> Maybe<()> {
+        let is_root = is_root == IsRoot::Yes;
         // `root_path` is never mutated for the lifetime of the task, but
         // borrowck can't see that across `async_task.enqueue(&mut self, …)`. Detach
         // the slice via raw-pointer round-trip.
@@ -6614,7 +6640,7 @@ impl NodeFS {
                 &dirent_path_prev,
                 effective_kind,
                 async_task.encoding,
-                false,
+                ApplyEncoding::No,
             );
         }
 
@@ -6796,7 +6822,7 @@ impl NodeFS {
                     &dirent_path_prev,
                     effective_kind,
                     args.encoding,
-                    true,
+                    ApplyEncoding::Yes,
                 );
             }
             dirent_path_prev.deref();
@@ -6831,7 +6857,7 @@ impl NodeFS {
     fn readdir_inner<T: ReaddirEntry>(
         buf: &mut PathBuffer,
         args: &args::Readdir,
-        recursive: bool,
+        recursive: Recursive,
         flavor: Flavor,
     ) -> Maybe<ret::Readdir> {
         let path = args.path.slice_z(buf);
@@ -6848,7 +6874,7 @@ impl NodeFS {
             }
         }
 
-        if recursive && flavor == Flavor::Sync {
+        if recursive == Recursive::Yes && flavor == Flavor::Sync {
             let mut buf_to_pass = PathBuffer::uninit();
             let mut entries: Vec<T> = Vec::new();
             return match Self::readdir_with_entries_recursive_sync::<T>(
@@ -6867,7 +6893,7 @@ impl NodeFS {
             };
         }
 
-        if recursive {
+        if recursive == Recursive::Yes {
             panic!(
                 "This code path should never be reached. It should only go through readdirWithEntriesRecursiveAsync."
             );
@@ -6904,7 +6930,7 @@ impl NodeFS {
         graph: &bun_standalone_graph::Graph,
         path: &[u8],
         args: &args::Readdir,
-        recursive: bool,
+        recursive: Recursive,
         flavor: Flavor,
     ) -> Maybe<ret::Readdir> {
         let Some(list) = graph.readdir(path, recursive) else {
@@ -6924,13 +6950,12 @@ impl NodeFS {
         };
         let mut joined: Vec<u8> = Vec::new();
         #[allow(unused_mut)]
-        for (mut name, is_dir) in list {
-            let kind = if is_dir {
-                sys::FileKind::Directory
-            } else {
-                sys::FileKind::File
+        for (mut name, entry_kind) in list {
+            let kind = match entry_kind {
+                bun_standalone_graph::DirEntryKind::Dir => sys::FileKind::Directory,
+                bun_standalone_graph::DirEntryKind::File => sys::FileKind::File,
             };
-            if recursive {
+            if recursive == Recursive::Yes {
                 #[cfg(windows)]
                 for b in name.iter_mut() {
                     if *b == b'/' {
@@ -6959,7 +6984,7 @@ impl NodeFS {
                     &dirent_path,
                     kind,
                     args.encoding,
-                    flavor == Flavor::Sync,
+                    ApplyEncoding::from_bool(flavor == Flavor::Sync),
                 );
                 dirent_path.deref();
             } else {
@@ -7549,7 +7574,7 @@ impl NodeFS {
         let link_path: &[u8] = &outbuf[..link_len];
         if args.encoding == Encoding::Utf8 {
             if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                if strings::eql_long(s.slice(), link_path, true) {
+                if strings::eql_long(s.slice(), link_path, strings::CheckLen::Yes) {
                     return Ok(StringOrBuffer::String(s.dupe_ref()));
                 }
             }
@@ -7639,7 +7664,7 @@ impl NodeFS {
             }
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                    if strings::eql_long(s.slice(), buf, true) {
+                    if strings::eql_long(s.slice(), buf, strings::CheckLen::Yes) {
                         return Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
                 }
@@ -7692,7 +7717,7 @@ impl NodeFS {
             let _ = variant;
             if args.encoding == Encoding::Utf8 {
                 if let PathLike::SliceWithUnderlyingString(s) = &args.path {
-                    if strings::eql_long(s.slice(), buf, true) {
+                    if strings::eql_long(s.slice(), buf, strings::CheckLen::Yes) {
                         return Ok(StringOrBuffer::String(s.dupe_ref()));
                     }
                 }
@@ -7830,7 +7855,10 @@ impl NodeFS {
 
     pub(crate) fn statfs(&mut self, args: &args::StatFS, _: Flavor) -> Maybe<ret::StatFS> {
         match Syscall::statfs(args.path.slice_z(&mut self.sync_error_buf)) {
-            Ok(result) => Ok(ret::StatFS::init(&result, args.big_int)),
+            Ok(result) => Ok(ret::StatFS::init(
+                &result,
+                StatsKind::from_bool(args.big_int),
+            )),
             Err(err) => Err(err),
         }
     }
@@ -7841,7 +7869,7 @@ impl NodeFS {
             if let Some(result) = graph.stat(path.as_bytes()) {
                 return Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &PosixStat::init(&result),
-                    args.big_int,
+                    StatsKind::from_bool(args.big_int),
                 ))));
             }
         }
@@ -7850,7 +7878,7 @@ impl NodeFS {
             return match sys::statx(path, sys::STATX_MASK_FOR_STATS) {
                 Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                     &result,
-                    args.big_int,
+                    StatsKind::from_bool(args.big_int),
                 )))),
                 Err(err) => {
                     if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
@@ -7863,7 +7891,7 @@ impl NodeFS {
         match Syscall::stat(path) {
             Ok(result) => Ok(StatOrNotFound::Stats(Box::new(Stats::init(
                 &PosixStat::init(&result),
-                args.big_int,
+                StatsKind::from_bool(args.big_int),
             )))),
             Err(err) => {
                 if !args.throw_if_no_entry && err.get_errno() == E::ENOENT {
@@ -9155,7 +9183,7 @@ impl NodeFS {
                     let mkdir_result = self.mkdir_recursive(&args::Mkdir {
                         path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                             &bytes[..len],
-                            false,
+                            bun_ptr::cow_slice::Ownership::Borrowed,
                         )),
                         recursive: true,
                         ..Default::default()
@@ -9383,7 +9411,7 @@ pub trait ReaddirEntry: Sized {
         dirent_path: &BunString,
         kind: sys::FileKind,
         encoding: Encoding,
-        apply_encoding: bool,
+        apply_encoding: ApplyEncoding,
     );
 }
 impl ReaddirEntry for BunString {
@@ -9431,10 +9459,10 @@ impl ReaddirEntry for BunString {
         _dirent_path: &BunString,
         _kind: sys::FileKind,
         encoding: Encoding,
-        apply_encoding: bool,
+        apply_encoding: ApplyEncoding,
     ) {
         let bytes = without_nt_prefix::<u8>(name_to_copy);
-        entries.push(if apply_encoding {
+        entries.push(if apply_encoding == ApplyEncoding::Yes {
             webcore::encoding::to_bun_string(bytes, encoding)
         } else {
             BunString::clone_utf8(bytes)
@@ -9486,10 +9514,10 @@ impl ReaddirEntry for Dirent {
         dirent_path: &BunString,
         kind: sys::FileKind,
         encoding: Encoding,
-        apply_encoding: bool,
+        apply_encoding: ApplyEncoding,
     ) {
         entries.push(Dirent {
-            name: if apply_encoding {
+            name: if apply_encoding == ApplyEncoding::Yes {
                 webcore::encoding::to_bun_string(utf8_name, encoding)
             } else {
                 BunString::clone_utf8(utf8_name)
@@ -9537,7 +9565,7 @@ impl ReaddirEntry for Buffer {
         _dirent_path: &BunString,
         _kind: sys::FileKind,
         _encoding: Encoding,
-        _apply_encoding: bool,
+        _apply_encoding: ApplyEncoding,
     ) {
         entries.push(Buffer::from_string(without_nt_prefix::<u8>(name_to_copy)).expect("oom"));
     }
@@ -9622,7 +9650,8 @@ pub(crate) unsafe extern "C" fn Bun__mkdirp(
     node_fs
         .mkdir_recursive(&args::Mkdir {
             path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
-                path_bytes, false,
+                path_bytes,
+                bun_ptr::cow_slice::Ownership::Borrowed,
             )),
             recursive: true,
             ..Default::default()

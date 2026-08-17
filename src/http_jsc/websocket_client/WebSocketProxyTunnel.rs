@@ -36,8 +36,8 @@ use core::ptr::NonNull;
 
 use bun_boringssl as boringssl;
 use bun_io::StreamBuffer;
-use bun_uws::ssl_wrapper::{Handlers as SslHandlers, SslWrapper};
-use bun_uws::{NewSocketHandler, us_bun_verify_error_t};
+use bun_uws::ssl_wrapper::{FastShutdown, Handlers as SslHandlers, SslWrapper};
+use bun_uws::{NewSocketHandler, RejectUnauthorized, us_bun_verify_error_t};
 
 use super::websocket_upgrade_client::{
     HttpUpgradeClient, HttpsUpgradeClient, NewHttpUpgradeClient,
@@ -134,7 +134,7 @@ pub struct WebSocketProxyTunnel {
     /// Hostname for SNI (Server Name Indication)
     sni_hostname: Option<Box<[u8]>>,
     /// Whether to reject unauthorized certificates
-    reject_unauthorized: bool,
+    reject_unauthorized: RejectUnauthorized,
 }
 
 use bun_uws::MaybeAnySocket as SocketUnion;
@@ -147,7 +147,7 @@ impl WebSocketProxyTunnel {
         upgrade_client: *mut NewHttpUpgradeClient<SSL>,
         socket: NewSocketHandler<SSL>,
         sni_hostname: &[u8],
-        reject_unauthorized: bool,
+        reject_unauthorized: RejectUnauthorized,
     ) -> Result<NonNull<WebSocketProxyTunnel>, bun_alloc::AllocError> {
         // const-generic bool → variant selection. The pointer cast is
         // identity when SSL matches the alias (HttpUpgradeClient = NewHttpUpgradeClient<false>,
@@ -204,7 +204,7 @@ impl WebSocketProxyTunnel {
         // the `SSLConfig`-taking `init` lives in bun_runtime.
         let wrapper = SslWrapperType::init_from_options(
             &options.as_usockets(),
-            true,
+            bun_uws::TlsRole::Client,
             SslHandlers {
                 // Store the Box-provenance pointer directly so callback derefs
                 // remain valid regardless of intervening reborrows.
@@ -355,7 +355,7 @@ impl WebSocketProxyTunnel {
         }
 
         // Check for SSL errors if we need to reject unauthorized
-        if reject_unauthorized {
+        if reject_unauthorized == RejectUnauthorized::Yes {
             if ssl_error.error_no != 0 {
                 upgrade_client.terminate(ErrorCode::TlsHandshakeFailed);
                 return;
@@ -591,7 +591,7 @@ impl WebSocketProxyTunnel {
         let wrapper_ptr = unsafe { ptr::addr_of_mut!((*this).wrapper) };
         // SAFETY: deref of field projection; `this` is live.
         if let Some(w) = unsafe { (*wrapper_ptr).as_ref() } {
-            let _ = w.shutdown(true); // Fast shutdown
+            let _ = w.shutdown(FastShutdown::Yes);
         }
     }
 

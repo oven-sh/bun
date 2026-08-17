@@ -325,6 +325,8 @@ impl ServerConfig {
 // NOTE: free `extern "C"` fns are monomorphized per `<SSL, T>` and registered
 // via the raw `c::uws_method_handler` overload.
 
+bun_core::bool_enum!(pub(crate) PathHasUserHeadRoute);
+
 /// # Safety
 /// `entry` must be a live route pointer that outlives `app` — it is registered
 /// as the uWS userdata and dereferenced from request callbacks for the lifetime
@@ -339,7 +341,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
-    path_has_user_head_route: bool,
+    path_has_user_head_route: PathHasUserHeadRoute,
 ) where
     T: StaticRouteLike<SSL>,
 {
@@ -394,7 +396,7 @@ pub(crate) fn apply_static_route<const SSL: bool, T>(
     // Only answer HEAD from an entry that serves GET (HEAD must mirror GET,
     // RFC 9110 section 9.3.2) or HEAD itself, and never displace an explicit HEAD
     // handler route: uWS keeps the last registration for the same method and path.
-    if !path_has_user_head_route && serves_head(&method) {
+    if path_has_user_head_route == PathHasUserHeadRoute::No && serves_head(&method) {
         app.head(path, Some(head::<SSL, T>), user_data);
     }
     match method {
@@ -434,7 +436,7 @@ pub(crate) fn apply_static_route_h3<T>(
     entry: *mut T,
     path: &[u8],
     method: http_method::Optional,
-    path_has_user_head_route: bool,
+    path_has_user_head_route: PathHasUserHeadRoute,
 ) where
     T: StaticRouteLike<false>,
 {
@@ -470,7 +472,7 @@ pub(crate) fn apply_static_route_h3<T>(
         };
     }
 
-    if !path_has_user_head_route && serves_head(&method) {
+    if path_has_user_head_route == PathHasUserHeadRoute::No && serves_head(&method) {
         app.head(path, entry, head::<T>);
     }
     match method {

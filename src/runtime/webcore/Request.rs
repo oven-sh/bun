@@ -638,7 +638,7 @@ impl Request {
                         empty.write_format::<F, W, ENABLE_ANSI_COLORS>(&mut formatter, writer)?;
                     } else {
                         crate::webcore::blob::write_format_for_size::<W, ENABLE_ANSI_COLORS>(
-                            false,
+                            crate::webcore::blob::IsJsDomFile::No,
                             size as usize,
                             writer,
                         )?;
@@ -975,6 +975,8 @@ enum Fields {
     Url,
 }
 
+bun_core::bool_enum!(pub(crate) PreserveUrl);
+
 impl Request {
     #[inline]
     fn check_body_stream_ref(&self, global_object: &JSGlobalObject) {
@@ -1099,7 +1101,7 @@ impl Request {
                             request,
                             &mut req,
                             global_this,
-                            fields.contains(Fields::Url),
+                            PreserveUrl::from_bool(fields.contains(Fields::Url)),
                         ) {
                             Ok(()) => {}
                             Err(e) => bail!(Err(e)),
@@ -1513,7 +1515,7 @@ impl Request {
         &self,
         req: &mut Request,
         global_this: &JSGlobalObject,
-        preserve_url: bool,
+        preserve_url: PreserveUrl,
     ) -> JsResult<()> {
         // allocator param dropped (global mimalloc)
         let _ = self.ensure_url();
@@ -1528,7 +1530,7 @@ impl Request {
         // releasing its +1.
         let headers = self.clone_headers(global_this)?;
         // `headers` is released automatically on the error path via its drop glue
-        let url = if preserve_url {
+        let url = if preserve_url == PreserveUrl::Yes {
             // Bitwise copy — the `ptr::write` below overwrites the old slot;
             // `BunString` has no `Drop`, so the stale `req.url` bits are discarded
             // and this copy becomes the sole live handle.
@@ -1595,7 +1597,7 @@ impl Request {
             reported_estimated_size: Cell::new(0),
         });
         // Box<Request> drops on the error path automatically
-        self.clone_into(&mut req, global_this, false)?;
+        self.clone_into(&mut req, global_this, PreserveUrl::No)?;
         Ok(req)
     }
 }

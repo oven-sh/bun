@@ -30,14 +30,16 @@ pub enum Angle {
     Turn(CSSNumber) = TAG_TURN,
 }
 
+bun_core::bool_enum!(AllowUnitlessZero);
+
 impl Angle {
     // ~toCssImpl
 
     pub(crate) fn parse(input: &mut Parser) -> Result<Angle> {
-        Angle::parse_internal(input, false)
+        Angle::parse_internal(input, AllowUnitlessZero::No)
     }
 
-    fn parse_internal(input: &mut Parser, allow_unitless_zero: bool) -> Result<Angle> {
+    fn parse_internal(input: &mut Parser, allow_unitless_zero: AllowUnitlessZero) -> Result<Angle> {
         if let Ok(calc_value) = input.try_parse(Calc::<Angle>::parse) {
             if let Calc::Value(value) = calc_value {
                 return Ok(*value);
@@ -61,7 +63,7 @@ impl Angle {
                 }};
             }
             Token::Number(num) => {
-                if num.value == 0.0 && allow_unitless_zero {
+                if num.value == 0.0 && allow_unitless_zero == AllowUnitlessZero::Yes {
                     return Ok(Angle::zero());
                 }
             }
@@ -71,7 +73,7 @@ impl Angle {
     }
 
     pub(crate) fn parse_with_unitless_zero(input: &mut Parser) -> Result<Angle> {
-        Angle::parse_internal(input, true)
+        Angle::parse_internal(input, AllowUnitlessZero::Yes)
     }
 
     pub(crate) fn to_css(self, dest: &mut Printer) -> core::result::Result<(), PrintErr> {

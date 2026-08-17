@@ -5,6 +5,7 @@ use core::ptr::NonNull;
 use bun_sys::FdExt as _;
 
 use bun_core::String as BunString;
+use bun_dotenv::HttpScheme;
 use bun_http_types::Method::Method;
 use bun_jsc::JsCell;
 use bun_uws::{self as uws, WebSocketUpgradeContext};
@@ -1135,7 +1136,7 @@ where
         }
     }
 
-    pub(crate) fn end(&self, data: &[u8], close_connection: bool) {
+    pub(crate) fn end(&self, data: &[u8], close_connection: uws::CloseConnection) {
         ctx_log!("end");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
@@ -1149,7 +1150,7 @@ where
         }
     }
 
-    pub(crate) fn end_stream(&self, close_connection: bool) {
+    pub(crate) fn end_stream(&self, close_connection: uws::CloseConnection) {
         ctx_log!("endStream");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
@@ -1197,7 +1198,7 @@ where
         }
     }
 
-    pub(crate) fn end_without_body(&self, close_connection: bool) {
+    pub(crate) fn end_without_body(&self, close_connection: uws::CloseConnection) {
         ctx_log!("endWithoutBody");
         if let Some(resp) = self.resp.get() {
             self.detach_response();
@@ -2476,7 +2477,7 @@ where
                         .as_mut()
                         .transpiler
                         .env_mut()
-                        .get_http_proxy(true, None, None)
+                        .get_http_proxy(HttpScheme::Http, None, None)
                         .map(|proxy| proxy.href);
 
                     let _ = S3::client::stat(
@@ -3436,12 +3437,12 @@ where
     }
 
     #[inline]
-    pub(crate) fn should_close_connection(&self) -> bool {
+    pub(crate) fn should_close_connection(&self) -> uws::CloseConnection {
         if let Some(resp) = self.resp.get() {
             // SAFETY: FFI handle
             return resp.should_close_connection();
         }
-        false
+        uws::CloseConnection::No
     }
 
     fn finish_running_error_handler(&self, value: JSValue, status: u16) {
@@ -3954,7 +3955,7 @@ where
                         resp.write_status(b"413 Payload Too Large");
                     }
                 }
-                this.end_without_body(!HTTP3);
+                this.end_without_body(uws::CloseConnection::from_bool(!HTTP3));
                 return;
             }
 
@@ -4060,7 +4061,7 @@ where
                         resp.write_status(b"413 Payload Too Large");
                     }
                 }
-                this.end_without_body(!HTTP3);
+                this.end_without_body(uws::CloseConnection::from_bool(!HTTP3));
                 return;
             }
 
@@ -4644,7 +4645,10 @@ fn get_content_type(headers: Option<&mut FetchHeaders>, blob: &AnyBlob) -> (Mime
 
                 let content_slice = content.to_slice();
                 // Dupe only when the latin1/utf16 slice was heap-converted.
-                let dupe = matches!(content_slice, bun_core::ZigStringSlice::Owned(_));
+                let dupe = bun_http_types::MimeType::Dupe::from_bool(matches!(
+                    content_slice,
+                    bun_core::ZigStringSlice::Owned(_)
+                ));
                 let mt = MimeType::init(
                     content_slice.slice(),
                     dupe,

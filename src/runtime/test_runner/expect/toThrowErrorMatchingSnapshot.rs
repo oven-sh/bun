@@ -2,6 +2,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use bun_core::ZigString;
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -21,7 +22,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
 
     let not = this.flags.get().not();
     if not {
-        let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
+        let signature = get_signature("toThrowErrorMatchingSnapshot", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -31,7 +32,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
     }
 
     let Some(bun_test_strong) = this.bun_test() else {
-        let signature = get_signature("toThrowErrorMatchingSnapshot", "", true);
+        let signature = get_signature("toThrowErrorMatchingSnapshot", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -78,7 +79,7 @@ pub(crate) fn to_throw_error_matching_snapshot(
         )?,
     )?
     else {
-        let signature = get_signature("toThrowErrorMatchingSnapshot", "", false);
+        let signature = get_signature("toThrowErrorMatchingSnapshot", "", IsNot::No);
         return throw!(
             this,
             global,

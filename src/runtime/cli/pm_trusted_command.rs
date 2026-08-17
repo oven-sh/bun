@@ -5,6 +5,7 @@ use bun_alloc::Arena as Bump;
 use bun_collections::{ArrayHashMap, ArrayIdentityContext, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{Global, Output, Progress};
+use bun_install::lifecycle_script_runner::{Foreground, Optional};
 use bun_install::lockfile::{
     LoadResult, Lockfile,
     package::PackageColumns as _,
@@ -214,15 +215,20 @@ struct ScriptInfo {
     skip: bool,
 }
 
+bun_core::bool_enum!(TrustAll);
+
 impl TrustCommand {
     fn error_expected_args() -> ! {
         Output::err_generic("expected package names(s) or --all", ());
         Global::crash();
     }
 
-    fn print_error_zero_untrusted_dependencies_found(trust_all: bool, packages_to_trust: &[&[u8]]) {
+    fn print_error_zero_untrusted_dependencies_found(
+        trust_all: TrustAll,
+        packages_to_trust: &[&[u8]],
+    ) {
         Output::print(format_args!("\n"));
-        if trust_all {
+        if trust_all == TrustAll::Yes {
             Output::err_generic(
                 "0 scripts ran. This means all dependencies are already trusted or none have scripts.",
                 (),
@@ -324,7 +330,10 @@ impl TrustCommand {
         }
 
         if untrusted_dep_ids.count() == 0 {
-            Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_error_zero_untrusted_dependencies_found(
+                TrustAll::from_bool(trust_all),
+                &packages_to_trust,
+            );
             Global::crash();
         }
 
@@ -398,13 +407,15 @@ impl TrustCommand {
                         }
 
                         for package_name_from_cli in &packages_to_trust {
-                            if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
-                                    alias,
-                                    packages.items_name()[package_id as usize].slice(buf),
-                                    resolution,
-                                )
-                            {
+                            if strings::eql_long(
+                                package_name_from_cli,
+                                alias,
+                                strings::CheckLen::Yes,
+                            ) && !lockfile.has_trusted_dependency(
+                                alias,
+                                packages.items_name()[package_id as usize].slice(buf),
+                                resolution,
+                            ) {
                                 break 'brk false;
                             }
                         }
@@ -435,7 +446,10 @@ impl TrustCommand {
         }
 
         if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
-            Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
+            Self::print_error_zero_untrusted_dependencies_found(
+                TrustAll::from_bool(trust_all),
+                &packages_to_trust,
+            );
             Global::crash();
         }
 
@@ -486,8 +500,8 @@ impl TrustCommand {
                     unsafe { (*pm_raw).sleep() };
                 }
 
-                let output_in_foreground = false;
-                let optional = false;
+                let output_in_foreground = Foreground::No;
+                let optional = Optional::No;
                 // SAFETY: `pm_raw` singleton; `ctx` is the CLI `&mut ContextData`.
                 unsafe {
                     (*pm_raw).spawn_package_lifecycle_scripts(

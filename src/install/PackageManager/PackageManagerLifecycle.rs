@@ -17,9 +17,9 @@ use crate::bun_fs::FileSystem;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
-    InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess,
+    Foreground, InstallCtx, LifecycleScriptSubprocess as RealLifecycleScriptSubprocess, Optional,
 };
-use crate::lockfile_real::package::scripts::List as ScriptsList;
+use crate::lockfile_real::package::scripts::{AddNodeGypRebuildScript, List as ScriptsList};
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
@@ -309,9 +309,11 @@ impl PackageManager {
         // `defer top_level_dir.deinit()` — handled by Drop
 
         if root_package.scripts.has_any() {
-            let add_node_gyp_rebuild_script = root_package.scripts.install.is_empty()
-                && root_package.scripts.preinstall.is_empty()
-                && Syscall::exists(binding_dot_gyp_path.as_bytes());
+            let add_node_gyp_rebuild_script = AddNodeGypRebuildScript::from_bool(
+                root_package.scripts.install.is_empty()
+                    && root_package.scripts.preinstall.is_empty()
+                    && Syscall::exists(binding_dot_gyp_path.as_bytes()),
+            );
 
             self.root_lifecycle_scripts = root_package.scripts.create_list(
                 &self.lockfile,
@@ -329,7 +331,7 @@ impl PackageManager {
                 &mut top_level_dir,
                 name,
                 ResolutionTag::Root,
-                true,
+                AddNodeGypRebuildScript::Yes,
             );
         }
     }
@@ -340,8 +342,8 @@ impl PackageManager {
         &mut self,
         ctx: Command::Context<'_>,
         list: ScriptsList,
-        optional: bool,
-        foreground: bool,
+        optional: Optional,
+        foreground: Foreground,
         install_ctx: Option<InstallCtx<'_>>,
     ) -> Result<(), crate::Error> {
         let log_level = self.options.log_level;

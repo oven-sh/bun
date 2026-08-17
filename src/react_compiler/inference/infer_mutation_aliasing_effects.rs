@@ -23,6 +23,7 @@ use crate::hir::BlockId;
 use crate::hir::DeclarationId;
 use crate::hir::Effect;
 use crate::hir::FunctionId;
+use crate::hir::FunctionNesting;
 use crate::hir::HirFunction;
 use crate::hir::HirVec;
 use crate::hir::IdentifierId;
@@ -57,7 +58,7 @@ use crate::hir::visitors;
 pub(crate) fn infer_mutation_aliasing_effects(
     func: &mut HirFunction,
     env: &mut Environment,
-    is_function_expression: bool,
+    is_function_expression: FunctionNesting,
 ) -> Result<(), CompilerDiagnostic> {
     // ValueIds are dense and pass-local so `InferenceState.values` can be a
     // flat Vec; allocation starts at 0 and continues via `Context.next_value_id`.
@@ -82,7 +83,7 @@ pub(crate) fn infer_mutation_aliasing_effects(
         initial_state.define(ctx_place.identifier, value_id);
     }
 
-    let param_kind: AbstractValue = if is_function_expression {
+    let param_kind: AbstractValue = if is_function_expression == FunctionNesting::Nested {
         AbstractValue {
             kind: ValueKind::Mutable,
             reason: hashset_of(ValueReason::Other),
@@ -635,8 +636,8 @@ struct InferenceState {
 }
 
 impl InferenceState {
-    fn empty(is_function_expression: bool, identifier_capacity: usize) -> Self {
-        let variables = if is_function_expression {
+    fn empty(is_function_expression: FunctionNesting, identifier_capacity: usize) -> Self {
+        let variables = if is_function_expression == FunctionNesting::Nested {
             Variables::Sparse(HashMap::default())
         } else {
             let mut vec = Vec::with_capacity(identifier_capacity);
@@ -923,7 +924,7 @@ struct Context {
     interned_effects: HashMap<u64, AliasingEffect>,
     instruction_signature_cache: HashMap<u32, InstructionSignature>,
     catch_handlers: HashMap<BlockId, Place>,
-    is_function_expression: bool,
+    is_function_expression: FunctionNesting,
     hoisted_context_declarations: HashMap<DeclarationId, Option<Place>>,
     non_mutating_spreads: HashSet<IdentifierId>,
     /// Cache of ValueIds keyed by effect hash, ensuring stable allocation-site identity
@@ -1490,7 +1491,7 @@ fn infer_block(
             }
         }
         TerminalAction::Return => {
-            if !context.is_function_expression {
+            if context.is_function_expression == FunctionNesting::TopLevel {
                 let block_mut = func.body.blocks.get_mut(&block_id).unwrap();
                 if let crate::hir::Terminal::Return {
                     ref value,
@@ -2200,7 +2201,7 @@ fn apply_effect(
                         )?;
                     }
 
-                    if *is_spread {
+                    if *is_spread == IsSpread::Yes {
                         let ty = &env.types
                             [env.identifiers[operand.identifier.0 as usize].type_.0 as usize];
                         if let Some(mutate_iter) = conditionally_mutate_iterator(operand, ty) {
@@ -2237,7 +2238,7 @@ fn apply_effect(
                     // so NO pairs are skipped when the outer arg is a Spread
                     // (including self-pairs, producing self-captures).
                     for (other, _other_is_func, _other_is_spread) in &all_operands {
-                        if !is_spread && other.identifier == operand.identifier {
+                        if *is_spread == IsSpread::No && other.identifier == operand.identifier {
                             continue;
                         }
                         apply_effect(
@@ -3124,7 +3125,8 @@ fn compute_effects_for_legacy_signature(
                 } else {
                     signature.rest_param.unwrap_or(Effect::ConditionallyMutate)
                 };
-                let (effect, err_detail) = get_argument_effect(sig_effect, is_spread, place.loc);
+                let (effect, err_detail) =
+                    get_argument_effect(sig_effect, IsSpread::from_bool(is_spread), place.loc);
                 if let Some(d) = err_detail {
                     todo_errors.push(d);
                 }
@@ -3158,10 +3160,10 @@ fn compute_effects_for_legacy_signature(
 
 fn get_argument_effect(
     sig_effect: Effect,
-    is_spread: bool,
+    is_spread: IsSpread,
     spread_loc: Option<SourceLocation>,
 ) -> (Effect, Option<crate::diagnostics::CompilerErrorDetail>) {
-    if !is_spread {
+    if is_spread == IsSpread::No {
         (sig_effect, None)
     } else if sig_effect == Effect::Mutate || sig_effect == Effect::ConditionallyMutate {
         (sig_effect, None)
@@ -3976,20 +3978,27 @@ fn place_or_spread_to_hole(pos: &PlaceOrSpread) -> PlaceOrSpreadOrHole {
 
 use crate::hir::JsxTag;
 
+bun_core::bool_enum!(IsFunctionOperand);
+bun_core::bool_enum!(IsSpread);
+
 fn build_apply_operands(
     receiver: &Place,
     function: &Place,
     args: &[PlaceOrSpreadOrHole],
-) -> Vec<(Place, bool, bool)> {
+) -> Vec<(Place, IsFunctionOperand, IsSpread)> {
     let mut result = vec![
-        (receiver.clone(), false, false),
-        (function.clone(), true, false),
+        (receiver.clone(), IsFunctionOperand::No, IsSpread::No),
+        (function.clone(), IsFunctionOperand::Yes, IsSpread::No),
     ];
     for arg in args {
         match arg {
             PlaceOrSpreadOrHole::Hole => continue,
-            PlaceOrSpreadOrHole::Place(p) => result.push((p.clone(), false, false)),
-            PlaceOrSpreadOrHole::Spread(s) => result.push((s.place.clone(), false, true)),
+            PlaceOrSpreadOrHole::Place(p) => {
+                result.push((p.clone(), IsFunctionOperand::No, IsSpread::No))
+            }
+            PlaceOrSpreadOrHole::Spread(s) => {
+                result.push((s.place.clone(), IsFunctionOperand::No, IsSpread::Yes))
+            }
         }
     }
     result

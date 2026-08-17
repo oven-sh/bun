@@ -18,7 +18,9 @@ use crate::internal_state::HTTPStage;
 use crate::lshpack;
 use crate::signals;
 use crate::ssl_config;
-use crate::{HTTPClient, HTTPVerboseLevel, HeaderResult, NewHTTPContext, Protocol};
+use crate::{
+    HTTPClient, HTTPVerboseLevel, HeaderResult, IntoShared, NewHTTPContext, OnlyBuffer, Protocol,
+};
 
 /// HTTP/2 only ever runs over TLS in this client (ALPN "h2").
 pub type Socket = HTTPSocket<true>;
@@ -402,7 +404,7 @@ impl ClientSession {
         self.port == port
             && mine == ssl_config
             && self.host_header_hash == host_header_hash
-            && strings::eql_long(&self.hostname, hostname, true)
+            && strings::eql_long(&self.hostname, hostname, strings::CheckLen::Yes)
     }
 
     fn adopt_client(&mut self, client: &mut HTTPClient) {
@@ -546,7 +548,7 @@ impl ClientSession {
         self.rearm_timeout();
         // DATA-frame encoding may yield mid-body — compress into the Vec so the
         // cursor stays valid across event-loop ticks.
-        if let Err(e) = client.compress_body_for_send(false) {
+        if let Err(e) = client.compress_body_for_send(IntoShared::No) {
             self.remove_stream(stream);
             client.h2 = None;
             client.fail(e);
@@ -582,9 +584,9 @@ impl ClientSession {
                 Protocol::Http2,
                 &request,
                 client.url.href,
-                !client.flags.reject_unauthorized,
+                bun_picohttp::IgnoreInsecure::from_bool(!client.flags.reject_unauthorized),
                 client.state.request_body.slice(),
-                client.verbose == HTTPVerboseLevel::Curl,
+                client.verbose,
             );
         }
         client.state.request_stage = if stream_ref.local_closed() {
@@ -1188,7 +1190,7 @@ impl ClientSession {
                 stream.client = None;
                 client.h2 = None;
             }
-            let report = match client.h2_handle_response_body(&stream.body_buffer, false) {
+            let report = match client.h2_handle_response_body(&stream.body_buffer, OnlyBuffer::No) {
                 Ok(r) => r,
                 Err(err) => {
                     stream.body_buffer.clear();

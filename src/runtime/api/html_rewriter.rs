@@ -472,7 +472,7 @@ impl HTMLRewriter {
                     },
                     body_value,
                     BunString::empty(),
-                    false,
+                    webcore::response::Redirected::No,
                 )),
                 Response::finalize,
             );
@@ -789,6 +789,8 @@ pub struct RewriterPipe {
     pump_controller_attached: Cell<bool>,
 }
 
+bun_core::bool_enum!(CancelUpstream);
+
 impl RewriterPipe {
     /// How far the output may run ahead of its reader before the input is
     /// held (or, unobserved, before the turn is yielded). The same distance
@@ -891,11 +893,11 @@ impl RewriterPipe {
     /// after the first call. Returns the severed handle for
     /// [`Self::release_input_roots`], which the caller runs after its
     /// terminal work.
-    fn detach_input_source(&self, cancel_upstream: bool) -> SourceHandle {
+    fn detach_input_source(&self, cancel_upstream: CancelUpstream) -> SourceHandle {
         let mut src = self.input_source.replace(SourceHandle::None);
         let mut upstream = src;
         JSSink::<RewriterPipe>::detach(&mut src, &self.global);
-        if cancel_upstream {
+        if cancel_upstream == CancelUpstream::Yes {
             match upstream {
                 SourceHandle::ByteStream(_) | SourceHandle::FileReader(_) => {
                     upstream.close(None);
@@ -1071,7 +1073,7 @@ impl RewriterPipe {
                 webcore::body::Value::Locked(pv)
             }),
             BunString::empty(),
-            false,
+            webcore::response::Redirected::No,
         ));
         let result_ref = BackRef::from(result);
         this.response.set(Some(result_ref));
@@ -1457,7 +1459,7 @@ impl RewriterPipe {
         // pipe; otherwise the controller's destructor would later dispatch
         // `__controllerDetached`/`__finalize` on freed memory. The upstream
         // already ended, so there is nothing to cancel.
-        let src = self.detach_input_source(false);
+        let src = self.detach_input_source(CancelUpstream::No);
 
         if self.js_pump_reaction_pending.get() {
             // The pump-promise `.then()` reaction is the single terminal
@@ -1506,7 +1508,7 @@ impl RewriterPipe {
     pub fn cancel_from_output(&self, _err: Option<SysError>) {
         let _pin = self.pin();
         self.detach_output();
-        let src = self.detach_input_source(true);
+        let src = self.detach_input_source(CancelUpstream::Yes);
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
         self.pending.with_mut(|p| {
@@ -1759,7 +1761,7 @@ impl RewriterPipe {
         let _pin = self.pin();
         self.phase.set(RewritePhase::Done);
         self.done.set(true);
-        let src = self.detach_input_source(true);
+        let src = self.detach_input_source(CancelUpstream::Yes);
         // Settle any `flush(true)`/`write()` promise a direct-stream `pull()`
         // is parked on so the pump promise can settle (mirrors
         // `cancel_from_output`).

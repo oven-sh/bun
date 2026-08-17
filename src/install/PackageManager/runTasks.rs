@@ -21,11 +21,11 @@ use bun_install::{
 use super::{
     Command, PackageInstaller, PackageManager, ProgressStrings, Subcommand, TaskCallbackList,
 };
-use super::{directories, enqueue};
+use super::{InstallPeer, directories, enqueue};
 use crate::dependency::Behavior;
 use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
-use crate::lifecycle_script_runner::InstallCtx;
+use crate::lifecycle_script_runner::{Foreground, InstallCtx, Optional};
 use crate::network_task::{Authorization, ForTarballError};
 use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
@@ -137,7 +137,7 @@ pub trait RunTasksCallbacks {
 pub fn run_tasks<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
     extract_ctx: &mut C::Ctx,
-    install_peer: bool,
+    install_peer: InstallPeer,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
     // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
@@ -278,7 +278,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let node_id = installer.store.entries.items_node_id()[entry_id.get() as usize];
                     let dep_id = installer.store.nodes.items_dep_id()[node_id.get() as usize];
                     let dep = &installer.lockfile().buffers.dependencies[dep_id as usize];
-                    let optional = dep.behavior.contains(Behavior::OPTIONAL);
+                    let optional = Optional::from_bool(dep.behavior.contains(Behavior::OPTIONAL));
                     // SAFETY: `list` is the per-entry scripts slot owned by
                     // `store.entries.items_scripts()[entry_id]`; this Task is
                     // its sole consumer (see Installer.rs Yield::RunScripts).
@@ -294,7 +294,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         command_ctx,
                         list_val,
                         optional,
-                        false,
+                        Foreground::No,
                         Some(InstallCtx {
                             entry_id,
                             installer: installer_ptr,
@@ -532,7 +532,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // The HTTP request was cached
                     if let Some(mut manifest) = loaded_manifest.take() {
                         // If we requested extended manifest but we somehow got an abbreviated one, this is a bug
-                        debug_assert!(!is_extended_manifest || manifest.pkg.has_extended_manifest);
+                        debug_assert!(
+                            is_extended_manifest == crate::npm::ExtendedManifest::No
+                                || manifest.pkg.has_extended_manifest
+                        );
 
                         if timestamp_this_tick.is_none() {
                             let now = u64::try_from(bun_core::time::timestamp().max(0))
@@ -1628,7 +1631,13 @@ fn do_flush_dependency_queue(this: &mut PackageManager) {
         while i < end {
             let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
             let resolution = this.lockfile.buffers.resolutions[i as usize];
-            let _ = enqueue::enqueue_dependency_with_main(this, i, &dependency, resolution, false);
+            let _ = enqueue::enqueue_dependency_with_main(
+                this,
+                i,
+                &dependency,
+                resolution,
+                InstallPeer::No,
+            );
             i += 1;
         }
     }
@@ -1960,7 +1969,7 @@ fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
     dependency_list: TaskCallbackList,
     extract_ctx: &mut C::Ctx,
-    install_peer: bool,
+    install_peer: InstallPeer,
 ) -> crate::Result<()> {
     let ctx_ptr: *mut C::Ctx = extract_ctx;
     manager.process_dependency_list(

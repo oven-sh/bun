@@ -3,6 +3,7 @@ use core::ffi::c_void;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, VM};
 
 use super::Expect;
+use super::IsNot;
 use super::get_signature;
 use super::throw;
 
@@ -89,7 +90,7 @@ pub(crate) fn to_be_one_of(
     let mut formatter = super::make_formatter(global_this);
     let mut formatter2 = super::make_formatter(global_this);
     if not {
-        let signature = get_signature("toBeOneOf", "<green>expected<r>", true);
+        let signature = get_signature("toBeOneOf", "<green>expected<r>", IsNot::Yes);
         return throw!(
             this,
             global_this,
@@ -103,7 +104,7 @@ pub(crate) fn to_be_one_of(
         );
     }
 
-    let signature = get_signature("toBeOneOf", "<green>expected<r>", false);
+    let signature = get_signature("toBeOneOf", "<green>expected<r>", IsNot::No);
     return throw!(
         this,
         global_this,

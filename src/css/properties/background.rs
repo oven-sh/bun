@@ -1,5 +1,6 @@
 #![warn(unused_must_use)]
 use crate as css;
+use crate::WsBefore;
 use crate::css_values::color::ColorFallbackKind;
 use crate::css_values::color::CssColor;
 use crate::css_values::image::Image;
@@ -156,7 +157,7 @@ impl Background {
             position.to_css(dest)?;
 
             if !self.size.eql(&BackgroundSize::default()) {
-                dest.delim(b'/', true)?;
+                dest.delim(b'/', WsBefore::Yes)?;
                 self.size.to_css(dest)?;
             }
 

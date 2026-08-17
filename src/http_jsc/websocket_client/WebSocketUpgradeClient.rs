@@ -35,7 +35,7 @@ use bun_io::KeepAlive;
 use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
-use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
+use bun_uws::{self as uws, RejectUnauthorized, SocketHandler, SocketKind, SslCtx};
 
 use super::cpp_websocket::CppWebSocket;
 use super::websocket_deflate as WebSocketDeflate;
@@ -79,6 +79,13 @@ unsafe fn vm_loop_ctx(vm: *mut VirtualMachineRef) -> bun_io::EventLoopCtx {
 
 /// `uws.NewSocketHandler(ssl)`
 type Socket<const SSL: bool> = SocketHandler<SSL>;
+
+bun_core::bool_enum!(
+    /// Whether the target URL is `wss://` (independent of the socket's `SSL` parameter:
+    /// an HTTPS proxy carries `ws://` targets over TLS too).
+    pub(crate) TargetTls { Plain, Tls }
+);
+bun_core::bool_enum!(pub(crate) OfferPermessageDeflate);
 
 #[derive(Default, Clone, Copy)]
 pub(crate) struct DeflateNegotiationResult {
@@ -238,14 +245,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // TLS options (full SSLConfig for complete TLS customization)
         ssl_config: Option<Box<SSLConfig>>,
         // Whether the target URL is wss:// (separate from ssl template parameter)
-        target_is_secure: bool,
+        target_is_secure: TargetTls,
         // Target URL authorization (Basic auth from ws://user:pass@host)
         target_authorization: Option<&BunString>,
         // Unix domain socket path for ws+unix:// / wss+unix:// (None for TCP)
         unix_socket_path: Option<&BunString>,
         // Whether to advertise `permessage-deflate` in the upgrade request
         // (ws.WebSocket's `perMessageDeflate` option; true by default).
-        offer_permessage_deflate: bool,
+        offer_permessage_deflate: OfferPermessageDeflate,
     ) -> Option<*mut Self> {
         let vm_ptr = global.bun_vm_ptr();
         let vm = global.bun_vm().as_mut();
@@ -276,7 +283,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Check if user provided a custom protocol for subprotocols validation
         let mut protocol_for_subprotocols: &[u8] = client_protocol_slice.slice();
         for (name, value) in extra_headers.iter() {
-            if strings::eql_case_insensitive_ascii(name, b"sec-websocket-protocol", true) {
+            if strings::eql_case_insensitive_ascii(
+                name,
+                b"sec-websocket-protocol",
+                strings::CheckLen::Yes,
+            ) {
                 protocol_for_subprotocols = value;
                 break;
             }
@@ -457,7 +468,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             ssl_config,
             secure,
             expected_accept: request_result.expected_accept,
-            offered_permessage_deflate: offer_permessage_deflate,
+            offered_permessage_deflate: offer_permessage_deflate == OfferPermessageDeflate::Yes,
             subprotocols,
         }));
         bun_core::scoped_log!(alloc, "new({}) = {:p}", Self::TYPE_NAME, client);
@@ -470,7 +481,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 secure_ptr,
                 usp.slice(),
                 client,
-                false,
+                uws::AllowHalfOpen::No,
             ) {
                 Ok(socket) => {
                     // `client` is live (refcount >= 1) but no longer solely
@@ -526,7 +537,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             display_host,
             c_int::from(connect_port),
             client,
-            false,
+            uws::AllowHalfOpen::No,
         ) {
             Ok(sock) => {
                 // `client` is live (refcount >= 1) but no longer solely owned
@@ -1121,8 +1132,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // Get certificate verification setting
         // SAFETY: `this` is live; scoped read of a `Copy` field.
         let reject_unauthorized = match unsafe { (*this).outgoing_websocket } {
-            Some(ws) => CppWebSocket::opaque_ref(ws).reject_unauthorized(),
-            None => true,
+            Some(ws) => {
+                RejectUnauthorized::from_bool(CppWebSocket::opaque_ref(ws).reject_unauthorized())
+            }
+            None => RejectUnauthorized::Yes,
         };
 
         // Create proxy tunnel with all parameters.
@@ -1543,7 +1556,11 @@ impl<const SSL: bool> HTTPClient<SSL> {
             return;
         }
 
-        if !strings::eql_case_insensitive_ascii(upgrade_header.value(), b"websocket", true) {
+        if !strings::eql_case_insensitive_ascii(
+            upgrade_header.value(),
+            b"websocket",
+            strings::CheckLen::Yes,
+        ) {
             // SAFETY: no `&mut Self` is live across this call.
             unsafe { Self::terminate(this, ErrorCode::InvalidUpgradeHeader) };
             return;
@@ -1930,7 +1947,11 @@ fn build_connect_request(
             // Skip Proxy-Authorization if user provided one (we already added it)
             let name = hdrs.as_str(*name_ptr);
             if proxy_authorization.is_some()
-                && strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+                && strings::eql_case_insensitive_ascii(
+                    name,
+                    b"proxy-authorization",
+                    strings::CheckLen::Yes,
+                )
             {
                 continue;
             }
@@ -1959,16 +1980,16 @@ struct BuildRequestResult {
 fn build_request_body(
     vm: &mut VirtualMachineRef,
     pathname: &[u8],
-    is_https: bool,
+    is_https: TargetTls,
     host: &[u8],
     port: u16,
     client_protocol: &[u8],
     extra_headers: &Headers8Bit<'_>,
     target_authorization: Option<&[u8]>,
-    // When false, don't advertise `permessage-deflate` (matches `ws` with
-    // `perMessageDeflate: false`). When true, send the default extension
+    // When `No`, don't advertise `permessage-deflate` (matches `ws` with
+    // `perMessageDeflate: false`). When `Yes`, send the default extension
     // offer `permessage-deflate; client_max_window_bits`.
-    offer_permessage_deflate: bool,
+    offer_permessage_deflate: OfferPermessageDeflate,
 ) -> Result<BuildRequestResult, bun_alloc::AllocError> {
     // Check for user overrides
     let mut user_host: Option<&[u8]> = None;
@@ -1977,18 +1998,32 @@ fn build_request_body(
     let mut user_authorization = false;
 
     for (name_slice, value) in extra_headers.iter() {
-        if user_host.is_none() && strings::eql_case_insensitive_ascii(name_slice, b"host", true) {
+        if user_host.is_none()
+            && strings::eql_case_insensitive_ascii(name_slice, b"host", strings::CheckLen::Yes)
+        {
             user_host = Some(value);
         } else if user_key.is_none()
-            && strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-key", true)
+            && strings::eql_case_insensitive_ascii(
+                name_slice,
+                b"sec-websocket-key",
+                strings::CheckLen::Yes,
+            )
         {
             user_key = Some(value);
         } else if user_protocol.is_none()
-            && strings::eql_case_insensitive_ascii(name_slice, b"sec-websocket-protocol", true)
+            && strings::eql_case_insensitive_ascii(
+                name_slice,
+                b"sec-websocket-protocol",
+                strings::CheckLen::Yes,
+            )
         {
             user_protocol = Some(value);
         } else if !user_authorization
-            && strings::eql_case_insensitive_ascii(name_slice, b"authorization", true)
+            && strings::eql_case_insensitive_ascii(
+                name_slice,
+                b"authorization",
+                strings::CheckLen::Yes,
+            )
         {
             user_authorization = true;
         }
@@ -2019,7 +2054,7 @@ fn build_request_body(
     let protocol = user_protocol.unwrap_or(client_protocol);
 
     let host_fmt = HostFormatter {
-        is_https,
+        is_https: is_https == TargetTls::Tls,
         host,
         port: Some(port),
     };
@@ -2071,7 +2106,7 @@ fn build_request_body(
         .unwrap();
     }
 
-    let extensions_line: &[u8] = if offer_permessage_deflate {
+    let extensions_line: &[u8] = if offer_permessage_deflate == OfferPermessageDeflate::Yes {
         b"Sec-WebSocket-Extensions: permessage-deflate; client_max_window_bits\r\n"
     } else {
         b""
@@ -2219,10 +2254,10 @@ macro_rules! export_http_client {
                         proxy_header_values,
                         proxy_header_count,
                         ssl_config,
-                        target_is_secure,
+                        TargetTls::from_bool(target_is_secure),
                         target_authorization,
                         unix_socket_path,
-                        offer_permessage_deflate,
+                        OfferPermessageDeflate::from_bool(offer_permessage_deflate),
                     )
                 } {
                     Some(p) => p,

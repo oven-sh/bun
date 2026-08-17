@@ -938,7 +938,7 @@ pub trait PathLikeExt {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: &mut bun_core::String,
-        will_be_async: bool,
+        will_be_async: Flavor,
     ) -> JsResult<PathLike>
     where
         Self: Sized;
@@ -1217,11 +1217,12 @@ impl PathLikeExt for PathLike {
 
                 arguments.eat();
 
-                Ok(Some(Self::from_bun_string(
-                    ctx,
-                    &mut str,
-                    arguments.will_be_async,
-                )?))
+                let flavor = if arguments.will_be_async {
+                    Flavor::Async
+                } else {
+                    Flavor::Sync
+                };
+                Ok(Some(Self::from_bun_string(ctx, &mut str, flavor)?))
             }
             _ => {
                 if let Some(domurl) = jsc::DOMURL::cast(arg) {
@@ -1263,11 +1264,12 @@ impl PathLikeExt for PathLike {
                     }
                     arguments.eat();
 
-                    return Ok(Some(Self::from_bun_string(
-                        ctx,
-                        &mut str,
-                        arguments.will_be_async,
-                    )?));
+                    let flavor = if arguments.will_be_async {
+                        Flavor::Async
+                    } else {
+                        Flavor::Sync
+                    };
+                    return Ok(Some(Self::from_bun_string(ctx, &mut str, flavor)?));
                 }
 
                 Ok(None)
@@ -1278,9 +1280,9 @@ impl PathLikeExt for PathLike {
     fn from_bun_string(
         global: &JSGlobalObject,
         str: &mut bun_core::String,
-        will_be_async: bool,
+        will_be_async: Flavor,
     ) -> JsResult<PathLike> {
-        if will_be_async {
+        if will_be_async == Flavor::Async {
             let sliced = str.to_thread_safe_slice();
             let sliced = scopeguard::guard(sliced, |s| s.deinit());
 
@@ -1445,6 +1447,8 @@ unsafe extern "C" fn append_buffer_span(
     out.views.push(element);
 }
 
+bun_core::bool_enum!(pub PinBuffers);
+
 impl VectorArrayBuffer {
     /// Collect an array of ArrayBufferViews into iovecs. Every element is read
     /// before any raw pointer is taken, so user code run by an indexed read (a
@@ -1457,8 +1461,9 @@ impl VectorArrayBuffer {
     pub fn from_js(
         global_object: &JSGlobalObject,
         val: JSValue,
-        pin: bool,
+        pin: PinBuffers,
     ) -> JsResult<VectorArrayBuffer> {
+        let pin = pin == PinBuffers::Yes;
         let mut out = VectorArrayBuffer {
             value: val,
             buffers: Vec::new(),

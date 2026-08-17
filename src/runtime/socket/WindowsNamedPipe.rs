@@ -42,14 +42,16 @@ use bun_sys::{self, Fd};
 use bun_uws::us_bun_verify_error_t;
 
 use crate::socket::SSLConfig;
-use crate::socket::ssl_wrapper::{self, SSLWrapper};
+use crate::socket::ssl_wrapper::{self, FastShutdown, SSLWrapper};
 #[cfg(windows)]
 use crate::timer::EventLoopTimerTag;
 use crate::timer::{ElTimespec, EventLoopTimer, EventLoopTimerState};
+use bun_uws::TlsRole;
 
 bun_output::declare_scope!(WindowsNamedPipe, visible);
 
 pub type CertError = crate::socket::upgraded_duplex::CertError;
+use crate::socket::upgraded_duplex::WriteOrEnd;
 
 type WrapperType = SSLWrapper<*mut WindowsNamedPipe>;
 
@@ -415,7 +417,7 @@ impl WindowsNamedPipe {
         }
     }
 
-    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
+    fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: WriteOrEnd) {
         if let Some(bytes) = data {
             if !bytes.is_empty() {
                 // ref because we have pending data
@@ -437,9 +439,9 @@ impl WindowsNamedPipe {
             }
         }
 
-        if !msg_more {
+        if msg_more == WriteOrEnd::End {
             let _ = self.with_wrapper(|w| {
-                let _ = w.shutdown(false);
+                let _ = w.shutdown(FastShutdown::No);
             });
             self.with_writer(|w| w.end());
         }
@@ -453,7 +455,7 @@ impl WindowsNamedPipe {
         // Scenario 2: will not write if a exception is thrown (will be handled by onError)
         // Scenario 3: will be queued in memory and will be flushed later
         // Scenario 4: no write/end function exists (will be handled by onError)
-        self.call_write_or_end(Some(encoded_data), true);
+        self.call_write_or_end(Some(encoded_data), WriteOrEnd::Write);
     }
 
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__resume_stream")]
@@ -600,7 +602,7 @@ impl WindowsNamedPipe {
         }
 
         self.update_flags(|f| f.set(Flags::DISCONNECTED, false));
-        if self.start(true) {
+        if self.start(TlsRole::Client) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
                 let _ = self.with_wrapper(|w| w.start());
@@ -626,7 +628,7 @@ impl WindowsNamedPipe {
         if let Some(tls) = ssl_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
             let tls_nn = NonNull::new(tls).expect("caller passes Some only for a live SSL_CTX*");
-            match WrapperType::init_with_ctx(tls_nn, false, self.wrapper_handlers()) {
+            match WrapperType::init_with_ctx(tls_nn, TlsRole::Server, self.wrapper_handlers()) {
                 Ok(w) => self.wrapper.set(Some(w)),
                 Err(_) => {
                     self.discard_unadopted_pipe();
@@ -648,7 +650,9 @@ impl WindowsNamedPipe {
             let uv_loop = self.vm.uv_loop();
             let pipe = self.uv_pipe().unwrap();
             // SAFETY: live libuv handle alias; see `pipe`.
-            if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
+            if let Err(e) =
+                unsafe { (*pipe).init(uv_loop, uv::Ipc::No) }.to_result(bun_sys::Tag::pipe)
+            {
                 self.discard_unadopted_pipe();
                 return Err(e);
             }
@@ -671,7 +675,7 @@ impl WindowsNamedPipe {
         }
 
         self.update_flags(|f| f.set(Flags::DISCONNECTED, false));
-        if self.start(false) {
+        if self.start(TlsRole::Server) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
                 let _ = self.with_wrapper(|w| w.start());
@@ -702,7 +706,8 @@ impl WindowsNamedPipe {
         let uv_loop = self.vm.uv_loop();
         let pipe = self.uv_pipe().unwrap();
         // SAFETY: live libuv handle alias; see `pipe`.
-        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
+        if let Err(e) = unsafe { (*pipe).init(uv_loop, uv::Ipc::No) }.to_result(bun_sys::Tag::pipe)
+        {
             self.discard_unadopted_pipe();
             return Err(e);
         }
@@ -747,7 +752,8 @@ impl WindowsNamedPipe {
         }
         let uv_loop = self.vm.uv_loop();
         // SAFETY: as above.
-        if let Err(e) = unsafe { (*pipe).init(uv_loop, false) }.to_result(bun_sys::Tag::pipe) {
+        if let Err(e) = unsafe { (*pipe).init(uv_loop, uv::Ipc::No) }.to_result(bun_sys::Tag::pipe)
+        {
             self.discard_unadopted_pipe();
             return Err(e);
         }
@@ -815,7 +821,7 @@ impl WindowsNamedPipe {
         if let Some(ctx) = owned_ctx {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
             let ctx_nn = NonNull::new(ctx).expect("caller passes Some only for a live SSL_CTX*");
-            match WrapperType::init_with_ctx(ctx_nn, true, self.wrapper_handlers()) {
+            match WrapperType::init_with_ctx(ctx_nn, TlsRole::Client, self.wrapper_handlers()) {
                 Ok(w) => self.wrapper.set(Some(w)),
                 Err(_) => {
                     // SAFETY: ctx is a valid SSL_CTX* with one adopted ref
@@ -831,7 +837,7 @@ impl WindowsNamedPipe {
         }
         if let Some(tls) = ssl_options {
             self.update_flags(|f| f.set(Flags::IS_SSL, true));
-            match ssl_wrapper::init(&tls, true, self.wrapper_handlers()) {
+            match ssl_wrapper::init(&tls, TlsRole::Client, self.wrapper_handlers()) {
                 Ok(w) => self.wrapper.set(Some(w)),
                 Err(_) => {
                     return Some(bun_sys::Result::Err(bun_sys::Error {
@@ -846,8 +852,8 @@ impl WindowsNamedPipe {
         None
     }
 
-    pub(crate) fn start(&self, is_client: bool) -> bool {
-        self.update_flags(|f| f.set(Flags::IS_CLIENT, is_client));
+    pub(crate) fn start(&self, is_client: TlsRole) -> bool {
+        self.update_flags(|f| f.set(Flags::IS_CLIENT, is_client == TlsRole::Client));
         #[cfg(windows)]
         {
             let Some(pipe_nn) = self.pipe.get() else {
@@ -932,7 +938,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&self) {
         let _ = self.with_wrapper(|w| {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(FastShutdown::No);
         });
         self.with_writer(|w| w.end());
     }
@@ -940,7 +946,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__shutdown")]
     pub fn shutdown(&self) {
         let handled = self.with_wrapper(|w| {
-            let _ = w.shutdown(false);
+            let _ = w.shutdown(FastShutdown::No);
         });
         if handled.is_none() {
             // Plain (non-TLS) named pipe: half-close the write side so the peer

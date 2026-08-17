@@ -1,5 +1,5 @@
 use crate::jsc::{JSGlobalObject, JSValue};
-use crate::mysql::my_sql_value::DateTime;
+use crate::mysql::my_sql_value::{DateTime, Signedness};
 use bun_core::parse_int;
 
 use bun_sql::mysql::protocol::ColumnDefinition41;
@@ -11,9 +11,10 @@ use bun_sql::shared::Data;
 use bun_sql::shared::SQLQueryResultMode;
 
 use crate::shared::CachedStructure;
+use crate::shared::UseBigint;
 use crate::shared::sql_data_cell::{Flags as SQLDataCellFlags, SQLDataCell};
 
-use super::decode_binary_value::{self, decode_binary_value};
+use super::decode_binary_value::{self, BinaryColumn, Raw, decode_binary_value};
 
 pub use bun_sql::mysql::protocol::ResultSetHeader as Header;
 
@@ -269,10 +270,10 @@ impl<'a> Row<'a> {
                     self.global_object,
                     column.column_type,
                     column.column_length,
-                    self.raw,
-                    self.bigint,
-                    column.flags.contains(ColumnFlags::UNSIGNED),
-                    column.flags.contains(ColumnFlags::BINARY),
+                    Raw::from_bool(self.raw),
+                    UseBigint::from_bool(self.bigint),
+                    Signedness::from_bool(column.flags.contains(ColumnFlags::UNSIGNED)),
+                    BinaryColumn::from_bool(column.flags.contains(ColumnFlags::BINARY)),
                     column.character_set,
                     reader,
                 )

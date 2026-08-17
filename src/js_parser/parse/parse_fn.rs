@@ -5,8 +5,8 @@ use crate::js_lexer;
 use crate::js_lexer::T;
 use crate::p::P;
 use crate::parser::{
-    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, LexicalDecl,
-    ParseStatementOptions, TypeParameterFlag,
+    ARGUMENTS_STR as arguments_str, AwaitOrYield, FnOrArrowDataParse, FunctionKind, IsAsync,
+    LexicalDecl, ParseStatementOptions, TypeParameterFlag,
 };
 use bun_ast as js_ast;
 use bun_ast::op::Level;
@@ -418,9 +418,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     pub(crate) fn parse_fn_expr(
         &mut self,
         loc: bun_ast::Loc,
-        is_async: bool,
+        is_async: IsAsync,
     ) -> Result<Expr, Error> {
         let p = self;
+        let is_async = is_async == IsAsync::Yes;
         p.lexer.next()?;
         let is_generator = p.lexer.token == T::TAsterisk;
         if is_generator {

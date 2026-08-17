@@ -2,6 +2,7 @@ use bun_core as bstring;
 use bun_jsc::{CallFrame, JSFunction, JSGlobalObject, JSValue, JsResult};
 
 use super::node_assert;
+use super::node_assert::{CheckCommaDisparity, DiffMode};
 
 /// ```ts
 /// const enum DiffType {
@@ -21,11 +22,17 @@ fn myers_diff(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
 
     let actual_arg: JSValue = frame.argument(0);
     let expected_arg: JSValue = frame.argument(1);
-    let (check_comma_disparity, lines): (bool, bool) = match nargs {
+    let (check_comma_disparity, lines): (CheckCommaDisparity, DiffMode) = match nargs {
         0 | 1 => unreachable!(),
-        2 => (false, false),
-        3 => (frame.argument(2).is_truthy(), false),
-        _ => (frame.argument(2).is_truthy(), frame.argument(3).is_truthy()),
+        2 => (CheckCommaDisparity::No, DiffMode::Chars),
+        3 => (
+            CheckCommaDisparity::from_bool(frame.argument(2).is_truthy()),
+            DiffMode::Chars,
+        ),
+        _ => (
+            CheckCommaDisparity::from_bool(frame.argument(2).is_truthy()),
+            DiffMode::from_bool(frame.argument(3).is_truthy()),
+        ),
     };
 
     if !actual_arg.is_string() {

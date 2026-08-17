@@ -48,6 +48,8 @@ struct PackageJson {
     indentation: bun_ast::Indentation,
 }
 
+bun_core::bool_enum!(ParseJson);
+
 impl PmPkgCommand {
     pub(crate) fn exec(
         ctx: &Context,
@@ -286,7 +288,7 @@ impl PmPkgCommand {
             Global::exit(1);
         }
 
-        let parse_json = pm.options.json_output;
+        let parse_json = ParseJson::from_bool(pm.options.json_output);
 
         let path = Self::find_package_json(cwd)?;
 
@@ -393,7 +395,7 @@ impl PmPkgCommand {
                 let lowercase: Vec<u8> = name_str.iter().map(|b| b.to_ascii_lowercase()).collect();
 
                 if !strings::eql(name_str, &lowercase) {
-                    Self::set_value(&mut root, b"name", &lowercase, false)?;
+                    Self::set_value(&mut root, b"name", &lowercase, ParseJson::No)?;
                     modified = true;
                 }
             }
@@ -614,7 +616,12 @@ impl PmPkgCommand {
         Ok(path_parts)
     }
 
-    fn set_value(root: &mut Expr, key: &[u8], value: &[u8], parse_json: bool) -> Result<(), Error> {
+    fn set_value(
+        root: &mut Expr,
+        key: &[u8],
+        value: &[u8],
+        parse_json: ParseJson,
+    ) -> Result<(), Error> {
         if !matches!(root.data, ExprData::EObject(_)) {
             return Err(crate::Error::InvalidRoot);
         }
@@ -643,7 +650,7 @@ impl PmPkgCommand {
         root: &mut Expr,
         path: &[&[u8]],
         value: &[u8],
-        parse_json: bool,
+        parse_json: ParseJson,
     ) -> Result<(), Error> {
         if path.is_empty() {
             return Ok(());
@@ -685,8 +692,8 @@ impl PmPkgCommand {
         Self::set_nested(&mut nested, remaining_path, value, parse_json)
     }
 
-    fn parse_value(value: &[u8], parse_json: bool) -> Result<Expr, Error> {
-        if parse_json {
+    fn parse_value(value: &[u8], parse_json: ParseJson) -> Result<Expr, Error> {
+        if parse_json == ParseJson::Yes {
             if value == b"true" {
                 return Ok(Expr::init(E::Boolean { value: true }, Loc::EMPTY));
             } else if value == b"false" {

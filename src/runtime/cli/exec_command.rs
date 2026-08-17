@@ -51,7 +51,9 @@ impl ExecCommand {
         )?;
         // Read the field before the `&mut` method call (borrowck).
         let disable_default_env_files = bundle.options.env.disable_default_env_files;
-        bundle.run_env_loader(disable_default_env_files)?;
+        bundle.run_env_loader(bun_dotenv::SkipDefaultEnv::from_bool(
+            disable_default_env_files,
+        ))?;
         let mut buf = PathBuffer::uninit();
         let cwd: &[u8] = match bun_sys::getcwd(&mut *buf) {
             Ok(n) => &buf[..n],

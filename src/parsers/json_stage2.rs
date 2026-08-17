@@ -85,6 +85,11 @@ pub(crate) fn is_exotic_whitespace(cp: CodePoint) -> bool {
         || strings::is_unicode_space_separator(cp as u32)
 }
 
+bun_core::bool_enum!(
+    /// A `0`-prefixed number without a radix letter (`017`, `089`).
+    LegacyOctal
+);
+
 impl<'a, 's, 'i> Parser<'a, 's, 'i> {
     pub(crate) fn new(
         source: &'s Source,
@@ -702,7 +707,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         Ok(Expr::init(
             // SAFETY: `tape_ptr` is the tape allocation's own pointer, and the
             // tape outlives the AST (`take_tape` hands it to the caller).
-            unsafe { E::ArrayJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
+            unsafe {
+                E::ArrayJSON::new(
+                    self.tape_ptr(),
+                    first,
+                    count,
+                    E::IsSingleLine::from_bool(is_single_line),
+                    close_loc,
+                )
+            },
             loc,
         ))
     }
@@ -831,7 +844,15 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         let (first, count) = self.push_props_block(mark);
         Ok(Expr::init(
             // SAFETY: see `parse_array`.
-            unsafe { E::ObjectJSON::new(self.tape_ptr(), first, count, is_single_line, close_loc) },
+            unsafe {
+                E::ObjectJSON::new(
+                    self.tape_ptr(),
+                    first,
+                    count,
+                    E::IsSingleLine::from_bool(is_single_line),
+                    close_loc,
+                )
+            },
             loc,
         ))
     }
@@ -957,13 +978,13 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         }
 
         if first == b'0' && n > 1 {
-            let (radix, prefix_len, legacy_octal): (u32, usize, bool) = match t[1] {
-                b'b' | b'B' => (2, 2, false),
-                b'o' | b'O' => (8, 2, false),
-                b'x' | b'X' => (16, 2, false),
-                b'0'..=b'7' | b'_' => (8, 1, true),
-                b'8' | b'9' => (10, 1, true),
-                _ => (0, 0, false),
+            let (radix, prefix_len, legacy_octal): (u32, usize, LegacyOctal) = match t[1] {
+                b'b' | b'B' => (2, 2, LegacyOctal::No),
+                b'o' | b'O' => (8, 2, LegacyOctal::No),
+                b'x' | b'X' => (16, 2, LegacyOctal::No),
+                b'0'..=b'7' | b'_' => (8, 1, LegacyOctal::Yes),
+                b'8' | b'9' => (10, 1, LegacyOctal::Yes),
+                _ => (0, 0, LegacyOctal::No),
             };
             if radix != 0 {
                 return self.parse_radix_number(t, pos, radix, prefix_len, legacy_octal);
@@ -1063,8 +1084,9 @@ impl<'a, 's, 'i> Parser<'a, 's, 'i> {
         pos: usize,
         radix: u32,
         prefix_len: usize,
-        legacy_octal: bool,
+        legacy_octal: LegacyOctal,
     ) -> PResult<(f64, usize)> {
+        let legacy_octal = legacy_octal == LegacyOctal::Yes;
         let n = t.len();
         let mut i = prefix_len;
         let mut value: f64 = 0.0;

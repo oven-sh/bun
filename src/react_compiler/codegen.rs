@@ -40,7 +40,7 @@ use crate::hir::{
     IdentifierId, IdentifierName, InstructionKind, InstructionValue, JsxAttribute, JsxTag,
     LogicalOperator, NonLocalKind, ObjectPattern, ObjectPropertyKey, ObjectPropertyOrSpread,
     ObjectPropertyType, ParamPattern, Pattern, Place, PlaceOrSpread, PrimitiveValue,
-    PropertyLiteral, ScopeId,
+    PropertyLiteral, ScopeId, UpdatePosition,
 };
 use crate::reactive_scopes::visitors::{ReactiveFunctionVisitor, visit_reactive_function};
 use crate::reactive_scopes::{
@@ -48,7 +48,7 @@ use crate::reactive_scopes::{
     rename_variables,
 };
 
-use crate::program::{Host, JsxImportKind};
+use crate::program::{Host, JsxImportKind, RuntimeSentinel};
 
 /// Result of code generation for a single function.
 pub struct CodegenFunction {
@@ -157,12 +157,18 @@ impl<'h> Codegen<'h> {
         } else {
             let r = self
                 .host
-                .runtime_sentinel(matches!(w, WellKnown::EarlyReturnSentinel));
+                .runtime_sentinel(RuntimeSentinel::from_bool(matches!(
+                    w,
+                    WellKnown::EarlyReturnSentinel
+                )));
             self.well_known[w as usize] = Some(r);
             r
         };
         self.host.record_usage(r);
-        Expr::init(E::ImportIdentifier::new(r, false), loc)
+        Expr::init(
+            E::ImportIdentifier::new(r, E::WasOriginallyIdentifier::No),
+            loc,
+        )
     }
 
     fn well_known_global(&mut self, w: WellKnown, name: &[u8]) -> Ref {
@@ -191,7 +197,10 @@ impl<'h> Codegen<'h> {
         if ref_.is_symbol() {
             if let Some(sym) = self.host.symbols().get(ref_.inner_index() as usize) {
                 if sym.kind == bun_ast::symbol::Kind::Import {
-                    return Expr::init(E::ImportIdentifier::new(ref_, true), loc);
+                    return Expr::init(
+                        E::ImportIdentifier::new(ref_, E::WasOriginallyIdentifier::Yes),
+                        loc,
+                    );
                 }
             }
         }
@@ -250,7 +259,7 @@ pub(crate) fn codegen_function(
         let use_memo_cache = Expr::init(
             E::ImportIdentifier::new(
                 cx.cg.well_known(WellKnown::UseMemoCache, b"useMemoCache"),
-                true,
+                E::WasOriginallyIdentifier::Yes,
             ),
             loc,
         );
@@ -2113,7 +2122,7 @@ fn codegen_base_instruction_value(
             let arg = codegen_place_to_expression(cx, lvalue)?;
             Ok(Expr::init(
                 E::Unary {
-                    op: convert_update_operator(*operation, false),
+                    op: convert_update_operator(*operation, UpdatePosition::Postfix),
                     value: arg,
                     flags: E::UnaryFlags::empty(),
                 },
@@ -2126,7 +2135,7 @@ fn codegen_base_instruction_value(
             let arg = codegen_place_to_expression(cx, lvalue)?;
             Ok(Expr::init(
                 E::Unary {
-                    op: convert_update_operator(*operation, true),
+                    op: convert_update_operator(*operation, UpdatePosition::Prefix),
                     value: arg,
                     flags: E::UnaryFlags::empty(),
                 },
@@ -2234,7 +2243,10 @@ fn codegen_base_instruction_value(
             }
             let fragment_ref = cx.cg.host.jsx_import(JsxImportKind::Fragment);
             cx.cg.host.record_usage(fragment_ref);
-            let tag_value = Expr::init(E::ImportIdentifier::new(fragment_ref, true), loc);
+            let tag_value = Expr::init(
+                E::ImportIdentifier::new(fragment_ref, E::WasOriginallyIdentifier::Yes),
+                loc,
+            );
             Ok(codegen_jsx_call(
                 cx,
                 tag_value,
@@ -2676,7 +2688,10 @@ fn codegen_jsx_call(
 
     Expr::init(
         E::Call {
-            target: Expr::init(E::ImportIdentifier::new(target_ref, true), loc),
+            target: Expr::init(
+                E::ImportIdentifier::new(target_ref, E::WasOriginallyIdentifier::Yes),
+                loc,
+            ),
             args,
             can_be_unwrapped_if_unused: E::CallUnwrap::IfUnused,
             was_jsx_element: true,
@@ -3101,13 +3116,13 @@ fn convert_logical_operator(op: LogicalOperator) -> OpCode {
     }
 }
 
-fn convert_update_operator(op: crate::hir::UpdateOperator, prefix: bool) -> OpCode {
+fn convert_update_operator(op: crate::hir::UpdateOperator, prefix: UpdatePosition) -> OpCode {
     use crate::hir::UpdateOperator as U;
     match (op, prefix) {
-        (U::Increment, true) => OpCode::UnPreInc,
-        (U::Increment, false) => OpCode::UnPostInc,
-        (U::Decrement, true) => OpCode::UnPreDec,
-        (U::Decrement, false) => OpCode::UnPostDec,
+        (U::Increment, UpdatePosition::Prefix) => OpCode::UnPreInc,
+        (U::Increment, UpdatePosition::Postfix) => OpCode::UnPostInc,
+        (U::Decrement, UpdatePosition::Prefix) => OpCode::UnPreDec,
+        (U::Decrement, UpdatePosition::Postfix) => OpCode::UnPostDec,
     }
 }
 

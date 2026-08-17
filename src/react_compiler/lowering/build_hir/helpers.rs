@@ -850,7 +850,7 @@ pub(super) fn lower_assignment(
                 let Some(key_expr) = prop.key.as_ref() else {
                     continue;
                 };
-                let key = match lower_object_property_key(builder, key_expr, false)? {
+                let key = match lower_object_property_key(builder, key_expr, ComputedKey::No)? {
                     Some(k) => k,
                     None => continue,
                 };
@@ -1126,11 +1126,14 @@ fn lower_member_store(
     }
 }
 
+bun_core::bool_enum!(pub(crate) ComputedKey);
+
 pub(super) fn lower_object_property_key(
     builder: &mut HirBuilder,
     key: &Expr,
-    computed: bool,
+    computed: ComputedKey,
 ) -> Result<Option<ObjectPropertyKey>, CompilerError> {
+    let computed = computed == ComputedKey::Yes;
     match &key.data {
         Data::EString(s) => {
             let name = if s.is_utf16 {

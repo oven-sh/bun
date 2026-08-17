@@ -224,7 +224,7 @@ pub struct HeaderList<'a> {
 impl<'a> HeaderList<'a> {
     pub fn get(&self, name: &[u8]) -> Option<&'a [u8]> {
         for header in self.list {
-            if strings::eql_case_insensitive_ascii(header.name(), name, true) {
+            if strings::eql_case_insensitive_ascii(header.name(), name, strings::CheckLen::Yes) {
                 return Some(header.value());
             }
         }
@@ -240,11 +240,13 @@ impl<'a> HeaderList<'a> {
         let other = other.as_ref();
         let mut value: Option<&'a [u8]> = None;
         for header in self.list {
-            if strings::eql_case_insensitive_ascii(header.name(), other, true) {
+            if strings::eql_case_insensitive_ascii(header.name(), other, strings::CheckLen::Yes) {
                 return None;
             }
 
-            if value.is_none() && strings::eql_case_insensitive_ascii(header.name(), name, true) {
+            if value.is_none()
+                && strings::eql_case_insensitive_ascii(header.name(), name, strings::CheckLen::Yes)
+            {
                 value = Some(header.value());
             }
         }
@@ -265,8 +267,14 @@ pub struct Request<'a> {
     pub bytes_read: u32,
 }
 
+bun_core::bool_enum!(pub IgnoreInsecure);
+
 impl<'a> Request<'a> {
-    pub fn curl(&self, ignore_insecure: bool, body: &'a [u8]) -> RequestCurlFormatter<'_> {
+    pub fn curl(
+        &self,
+        ignore_insecure: IgnoreInsecure,
+        body: &'a [u8],
+    ) -> RequestCurlFormatter<'_> {
         RequestCurlFormatter {
             request: self,
             ignore_insecure,
@@ -322,7 +330,7 @@ impl fmt::Display for Request<'_> {
 
 pub struct RequestCurlFormatter<'a> {
     request: &'a Request<'a>,
-    ignore_insecure: bool,
+    ignore_insecure: IgnoreInsecure,
     body: &'a [u8],
 }
 
@@ -358,7 +366,7 @@ impl fmt::Display for RequestCurlFormatter<'_> {
             write!(f, " -X {}", BStr::new(request.method))?;
         }
 
-        if self.ignore_insecure {
+        if self.ignore_insecure == IgnoreInsecure::Yes {
             f.write_str(" -k")?;
         }
 
@@ -367,14 +375,22 @@ impl fmt::Display for RequestCurlFormatter<'_> {
         for header in request.headers {
             f.write_str(" ")?;
             if content_type.is_empty() {
-                if strings::eql_case_insensitive_ascii(b"content-type", header.name(), true) {
+                if strings::eql_case_insensitive_ascii(
+                    b"content-type",
+                    header.name(),
+                    strings::CheckLen::Yes,
+                ) {
                     content_type = header.value();
                 }
             }
 
             write!(f, "{}", header.curl())?;
 
-            if strings::eql_case_insensitive_ascii(b"accept-encoding", header.name(), true) {
+            if strings::eql_case_insensitive_ascii(
+                b"accept-encoding",
+                header.name(),
+                strings::CheckLen::Yes,
+            ) {
                 f.write_str(" --compressed")?;
             }
         }

@@ -12,6 +12,8 @@ use bun_s3_signing::{
 };
 use bun_url::URL;
 
+bun_core::bool_enum!(pub(crate) Strict);
+
 /// `opts.{key}` → owned UTF-8 slice when the property is present, truthy, a
 /// JS string, and non-empty. Shared ladder for the S3 option parsers
 /// (`get_credentials_with_options`, `get_list_objects_options_from_js`):
@@ -21,13 +23,13 @@ use bun_url::URL;
 /// The intermediate `BunString` is `deref()`ed before return; the returned
 /// `ZigStringSlice` owns (or independently refs) its bytes.
 ///
-/// * `strict = true`  — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
-/// * `strict = false` — non-string is silently ignored.
+/// * `Strict::Yes` — non-string throws `ERR_INVALID_ARG_TYPE` keyed on `key`.
+/// * `Strict::No`  — non-string is silently ignored.
 pub(crate) fn get_truthy_string_utf8(
     opts: JSValue,
     global: &JSGlobalObject,
     key: &[u8],
-    strict: bool,
+    strict: Strict,
 ) -> JsResult<Option<bun_core::ZigStringSlice>> {
     let Some(js_value) = opts.get_truthy(global, key)? else {
         return Ok(None);
@@ -36,7 +38,7 @@ pub(crate) fn get_truthy_string_utf8(
         return Ok(None);
     }
     if !js_value.is_string() {
-        if strict {
+        if strict == Strict::Yes {
             return Err(global.throw_invalid_argument_type_value(key, b"string", js_value));
         }
         return Ok(None);
@@ -65,6 +67,8 @@ const ACL_ONE_OF: &str = "\"private\", \"public-read\", \"public-read-write\", \
 const STORAGE_CLASS_ONE_OF: &str = "\"STANDARD\", \"STANDARD_IA\", \"INTELLIGENT_TIERING\", \"EXPRESS_ONEZONE\", \
 \"ONEZONE_IA\", \"GLACIER\", \"GLACIER_IR\", \"REDUCED_REDUNDANCY\", \"OUTPOSTS\", \"DEEP_ARCHIVE\", \"SNOW\"";
 
+bun_core::bool_enum!(pub(crate) RequestPayer);
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn get_credentials_with_options(
     this: &S3Credentials,
@@ -72,7 +76,7 @@ pub(crate) fn get_credentials_with_options(
     options: Option<JSValue>,
     default_acl: Option<ACL>,
     default_storage_class: Option<StorageClass>,
-    default_request_payer: bool,
+    default_request_payer: RequestPayer,
     global_object: &JSGlobalObject,
 ) -> JsResult<S3CredentialsWithOptions> {
     bun_analytics::features::s3.fetch_add(1, Ordering::Relaxed);
@@ -85,26 +89,29 @@ pub(crate) fn get_credentials_with_options(
         options: default_options,
         acl: default_acl,
         storage_class: default_storage_class,
-        request_payer: default_request_payer,
+        request_payer: default_request_payer == RequestPayer::Yes,
         ..Default::default()
     };
     // errdefer new_credentials.deinit() — handled by Drop on early return
 
     if let Some(opts) = options {
         if opts.is_object() {
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
+            if let Some(utf8) =
+                get_truthy_string_utf8(opts, global_object, b"accessKeyId", Strict::Yes)?
+            {
                 new_credentials.credentials.access_key_id = Box::<[u8]>::from(utf8.slice());
                 new_credentials._access_key_id_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
             }
             if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"secretAccessKey", true)?
+                get_truthy_string_utf8(opts, global_object, b"secretAccessKey", Strict::Yes)?
             {
                 new_credentials.credentials.secret_access_key = Box::<[u8]>::from(utf8.slice());
                 new_credentials._secret_access_key_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
             }
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", true)? {
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"region", Strict::Yes)?
+            {
                 new_credentials.credentials.region = Box::<[u8]>::from(utf8.slice());
                 new_credentials._region_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
@@ -148,7 +155,8 @@ pub(crate) fn get_credentials_with_options(
                     }
                 }
             }
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", true)? {
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"bucket", Strict::Yes)?
+            {
                 new_credentials.credentials.bucket = Box::<[u8]>::from(utf8.slice());
                 new_credentials._bucket_slice = Some(utf8);
                 new_credentials.changed_credentials = true;
@@ -161,7 +169,8 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials.changed_credentials = true;
             }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"sessionToken", true)?
+            if let Some(utf8) =
+                get_truthy_string_utf8(opts, global_object, b"sessionToken", Strict::Yes)?
             {
                 new_credentials.credentials.session_token = Box::<[u8]>::from(utf8.slice());
                 new_credentials._session_token_slice = Some(utf8);
@@ -249,7 +258,7 @@ pub(crate) fn get_credentials_with_options(
             }
 
             if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentDisposition", true)?
+                get_truthy_string_utf8(opts, global_object, b"contentDisposition", Strict::Yes)?
             {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
@@ -260,7 +269,7 @@ pub(crate) fn get_credentials_with_options(
                 new_credentials._content_disposition_slice = Some(utf8);
             }
 
-            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", true)? {
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"type", Strict::Yes)? {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(
                         "type must not contain newline characters (CR/LF)"
@@ -271,7 +280,7 @@ pub(crate) fn get_credentials_with_options(
             }
 
             if let Some(utf8) =
-                get_truthy_string_utf8(opts, global_object, b"contentEncoding", true)?
+                get_truthy_string_utf8(opts, global_object, b"contentEncoding", Strict::Yes)?
             {
                 if contains_newline_or_cr(utf8.slice()) {
                     return Err(global_object.throw_invalid_arguments(format_args!(

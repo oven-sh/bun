@@ -312,7 +312,7 @@ impl ShellMkdirTask {
         let args = fs_args::Mkdir {
             path: PathLike::String(bun_ptr::cow_slice::CowSlice::init_unchecked(
                 filepath.as_bytes(),
-                false,
+                bun_ptr::cow_slice::Ownership::Borrowed,
             )),
             recursive: this.opts.parents,
             mode: fs_args::Mkdir::DEFAULT_MODE,

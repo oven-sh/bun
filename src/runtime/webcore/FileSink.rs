@@ -3,7 +3,7 @@ use core::sync::atomic::{AtomicI32, Ordering};
 
 #[cfg(windows)]
 use bun_io::pipe_writer::BaseWindowsPipeWriter as _;
-use bun_io::{self, WriteResult, WriteStatus};
+use bun_io::{self, ForceSync, IsPollable, WriteResult, WriteStatus};
 use bun_jsc::JsCell;
 use bun_sys::{self as sys, Fd, FdExt as _};
 
@@ -238,7 +238,7 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
         // SAFETY(JsCell): single-field write; does not call into JS.
         this.writer.with_mut(|w| w.force_sync = true);
         if this.fd.get() != Fd::INVALID {
-            let _ = sys::update_nonblocking(this.fd.get(), false);
+            let _ = sys::update_nonblocking(this.fd.get(), sys::IoMode::Blocking);
         }
     }
     #[cfg(windows)]
@@ -624,7 +624,7 @@ impl FileSink {
             options.mode,
             &mut pollable_out,
             &mut is_socket_out,
-            self.force_sync.get(),
+            ForceSync::from_bool(self.force_sync.get()),
             &mut nonblocking_out,
             &mut force_sync_out,
             |_fs: &mut bool| {
@@ -658,7 +658,7 @@ impl FileSink {
                 // SAFETY(JsCell): `start_sync` is pure I/O setup; no JS.
                 match self
                     .writer
-                    .with_mut(|w| w.start_sync(fd, self.pollable.get()))
+                    .with_mut(|w| w.start_sync(fd, IsPollable::from_bool(self.pollable.get())))
                 {
                     sys::Result::Err(err) => {
                         fd.close();
@@ -674,7 +674,10 @@ impl FileSink {
         }
 
         // SAFETY(JsCell): `start` is pure I/O setup; no JS.
-        match self.writer.with_mut(|w| w.start(fd, self.pollable.get())) {
+        match self
+            .writer
+            .with_mut(|w| w.start(fd, IsPollable::from_bool(self.pollable.get())))
+        {
             sys::Result::Err(err) => {
                 fd.close();
                 return sys::Result::Err(err);

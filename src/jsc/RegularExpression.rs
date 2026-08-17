@@ -92,7 +92,7 @@ impl RegularExpression {
 #[unsafe(no_mangle)]
 fn __bun_regex_compile(pattern: BunString) -> Option<core::ptr::NonNull<()>> {
     // Initialize JSC before first compile (idempotent).
-    crate::initialize(false);
+    crate::initialize(crate::EvalMode::No);
     match RegularExpression::init(pattern, Flags::None) {
         Ok(r) => core::ptr::NonNull::new(r.cast()),
         Err(_) => None,

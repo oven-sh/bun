@@ -54,7 +54,7 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
     if value.is_empty() {
         return Ok(None);
     }
-    if strings::eql_case_insensitive_ascii(value, b"clear", true) {
+    if strings::eql_case_insensitive_ascii(value, b"clear", strings::CheckLen::Yes) {
         return Err(ParseError::Clear);
     }
 
@@ -75,7 +75,7 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
         let proto = &alternative[..eq];
         // Only the final IETF "h3" ALPN token; draft `h3-NN` versions are
         // ignored since lsquic is built for the final spec.
-        if !strings::eql_case_insensitive_ascii(proto, b"h3", true) {
+        if !strings::eql_case_insensitive_ascii(proto, b"h3", strings::CheckLen::Yes) {
             continue;
         }
 
@@ -108,7 +108,7 @@ pub(crate) fn parse(field_value: &[u8]) -> Result<Option<Entry>, ParseError> {
                 continue;
             };
             let peq = peq as usize;
-            if strings::eql_case_insensitive_ascii(&param[..peq], b"ma", true) {
+            if strings::eql_case_insensitive_ascii(&param[..peq], b"ma", strings::CheckLen::Yes) {
                 result.ma = strings::parse_int::<u32>(&param[peq + 1..], 10).unwrap_or(result.ma);
             }
             // `persist` and unknown parameters are ignored (§3.1).

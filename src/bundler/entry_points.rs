@@ -36,10 +36,12 @@ pub struct ServerEntryPoint {
 // `deinit` only freed `contents` and reset flags; with `Box<[u8]>` this is the
 // auto-generated `Drop`, so no explicit impl is needed.
 
+bun_core::bool_enum!(pub IsHotReloadEnabled);
+
 impl ServerEntryPoint {
     pub fn generate(
         entry: &mut ServerEntryPoint,
-        is_hot_reload_enabled: bool,
+        is_hot_reload_enabled: IsHotReloadEnabled,
         path_to_use: &[u8],
     ) -> crate::Result<()> {
         // Use the global arena so this buffer's lifetime is decoupled
@@ -47,7 +49,7 @@ impl ServerEntryPoint {
         // slice is read later from `getHardcodedModule` which outlives any
         // per-transpile arena.
         let code: Vec<u8> = 'brk: {
-            if is_hot_reload_enabled {
+            if is_hot_reload_enabled == IsHotReloadEnabled::Yes {
                 let mut v: Vec<u8> = Vec::new();
                 write!(
                     &mut v,

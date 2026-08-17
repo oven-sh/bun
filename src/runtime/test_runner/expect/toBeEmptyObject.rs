@@ -1,5 +1,6 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 use super::Expect;
+use super::IsNot;
 use super::throw;
 
 // Free fn (this module can't open `impl Expect`); bridged into `impl Expect` by the
@@ -25,7 +26,7 @@ pub(crate) fn to_be_empty_object(
     let received = value.to_fmt(&mut formatter);
 
     if not {
-        let signature = Expect::get_signature("toBeEmptyObject", "", true);
+        let signature = Expect::get_signature("toBeEmptyObject", "", IsNot::Yes);
         return throw!(
             this,
             global,
@@ -34,7 +35,7 @@ pub(crate) fn to_be_empty_object(
         );
     }
 
-    let signature = Expect::get_signature("toBeEmptyObject", "", false);
+    let signature = Expect::get_signature("toBeEmptyObject", "", IsNot::No);
     throw!(
         this,
         global,

@@ -302,11 +302,11 @@ impl<'a> PackageFilterIterator<'a> {
         let walker = OwnedWalker(bun_core::heap::alloc_nn(GlobWalker::init_with_cwd(
             pattern,
             self.root_dir,
-            true,
-            true,
-            false,
-            true,
-            true,
+            glob::Dot::Yes,
+            glob::Absolute::Yes,
+            glob::FollowSymlinks::No,
+            glob::ErrorOnBrokenSymlinks::Yes,
+            glob::OnlyFiles::Yes,
             Some(glob_ignore_fn),
         )??));
         // SAFETY: `walker` does not touch the allocation until it frees it, and `iter` is dropped

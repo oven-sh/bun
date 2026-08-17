@@ -2,6 +2,8 @@ use super::helpers;
 use super::parser::{Error as ParserError, Parser};
 use super::types::{self, BlockType, JsResult, TextType, VerbatimLine};
 
+bun_core::bool_enum!(pub(crate) TableRowKind { Body, Header });
+
 impl Parser<'_> {
     pub(crate) fn enter_block(
         &mut self,
@@ -80,7 +82,7 @@ impl Parser<'_> {
         // First line is header, second is underline, rest are body
         self.enter_block(BlockType::Thead, 0, 0)?;
         self.enter_block(BlockType::Tr, 0, 0)?;
-        self.process_table_row(block_lines[0], true, col_count)?;
+        self.process_table_row(block_lines[0], TableRowKind::Header, col_count)?;
         self.leave_block(BlockType::Tr, 0)?;
         self.leave_block(BlockType::Thead, 0)?;
 
@@ -88,7 +90,7 @@ impl Parser<'_> {
             self.enter_block(BlockType::Tbody, 0, 0)?;
             for vline in &block_lines[2..] {
                 self.enter_block(BlockType::Tr, 0, 0)?;
-                self.process_table_row(*vline, false, col_count)?;
+                self.process_table_row(*vline, TableRowKind::Body, col_count)?;
                 self.leave_block(BlockType::Tr, 0)?;
             }
             self.leave_block(BlockType::Tbody, 0)?;
@@ -99,9 +101,10 @@ impl Parser<'_> {
     pub(crate) fn process_table_row(
         &mut self,
         vline: VerbatimLine,
-        is_header: bool,
+        is_header: TableRowKind,
         col_count: u32,
     ) -> Result<(), ParserError> {
+        let is_header = is_header == TableRowKind::Header;
         let row_text = &self.text[vline.beg as usize..vline.end as usize];
         let mut start: usize = 0;
         let mut cell_index: u32 = 0;

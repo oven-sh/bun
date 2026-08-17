@@ -7,7 +7,7 @@ use bstr::BStr;
 
 use crate::cli::command::ContextData;
 use crate::cli::{self, Command};
-use crate::run_command::{ConfigureEnvOptions, RunCommand as Run};
+use crate::run_command::{ConfigureEnvOptions, ForceUsingBun, RunCommand as Run};
 
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
@@ -213,6 +213,8 @@ pub(crate) enum GetBinNameError {
     NeedToInstall,
 }
 
+bun_core::bool_enum!(WithStaleCheck);
+
 impl BunxCommand {
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -398,10 +400,10 @@ impl BunxCommand {
         transpiler: &mut Transpiler,
         tempdir_name: &[u8],
         package_name: &[u8],
-        with_stale_check: bool,
+        with_stale_check: WithStaleCheck,
     ) -> crate::Result<Box<[u8]>> {
         let mut subpath = PathBuffer::uninit();
-        if with_stale_check {
+        if with_stale_check == WithStaleCheck::Yes {
             let len = {
                 let total = subpath.len();
                 let mut cursor: &mut [u8] = &mut subpath[..];
@@ -510,7 +512,7 @@ impl BunxCommand {
                     transpiler,
                     tempdir_name,
                     package_name,
-                    true,
+                    WithStaleCheck::Yes,
                 ) {
                     Ok(v) => Ok(v),
                     Err(err2) => {
@@ -664,7 +666,7 @@ impl BunxCommand {
     }
 
     fn exit_with_usage() -> ! {
-        crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
+        crate::cli::command::tag_print_help(Command::Tag::BunxCommand, cli::ShowAllFlags::No);
         Global::exit(1);
     }
 
@@ -765,7 +767,7 @@ impl BunxCommand {
             this_transpiler,
             Some(&mut original_path),
             root_dir_info.abs_path,
-            force_using_bun,
+            ForceUsingBun::from_bool(force_using_bun),
         )?;
         let env_loader = this_transpiler.env_mut();
         env_loader
@@ -910,7 +912,7 @@ impl BunxCommand {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
-                    true,
+                    strings::CheckLen::Yes,
                 ) {
                     new_path.extend_from_slice(segment);
                 }
@@ -919,7 +921,7 @@ impl BunxCommand {
                 if !strings::eql_long(
                     strings::without_trailing_slash(segment),
                     strings::without_trailing_slash(&ignore_cwd),
-                    true,
+                    strings::CheckLen::Yes,
                 ) {
                     new_path.push(DELIMITER);
                     new_path.extend_from_slice(segment);
@@ -1175,7 +1177,11 @@ impl BunxCommand {
                     ) {
                         Ok(package_name_for_bin) => {
                             // if we check the bin name and its actually the same, we don't need to check $PATH here again
-                            if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
+                            if !strings::eql_long(
+                                &package_name_for_bin,
+                                initial_bin_name,
+                                strings::CheckLen::Yes,
+                            ) {
                                 absolute_in_cache_dir = {
                                     let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
                                     write!(
@@ -1315,7 +1321,7 @@ impl BunxCommand {
             let package_json = match bun_sys::File::create(
                 bunx_install_dir.fd,
                 b"package.json",
-                /* truncate */ true,
+                bun_sys::Truncate::Yes,
             ) {
                 Ok(f) => f,
                 Err(_) => break 'create_package_json,
@@ -1520,9 +1526,13 @@ impl BunxCommand {
                 this_transpiler,
                 bunx_cache_dir,
                 result_package_name,
-                false,
+                WithStaleCheck::No,
             ) {
-                if !strings::eql_long(&package_name_for_bin, initial_bin_name, true) {
+                if !strings::eql_long(
+                    &package_name_for_bin,
+                    initial_bin_name,
+                    strings::CheckLen::Yes,
+                ) {
                     absolute_in_cache_dir = {
                         let mut cursor: &mut [u8] = &mut absolute_in_cache_dir_buf[..];
                         write!(

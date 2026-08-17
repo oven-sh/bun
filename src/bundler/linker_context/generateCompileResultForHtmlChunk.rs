@@ -1,4 +1,5 @@
 use crate::mal_prelude::*;
+use core::ops::ControlFlow;
 
 use bstr::BStr;
 
@@ -202,15 +203,15 @@ impl<'a> HTMLProcessorHandler for HTMLLoader<'a> {
         }
     }
 
-    fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+    fn on_head_tag(&mut self, element: &mut Element<'_, '_>) -> ControlFlow<()> {
         self.register_end_tag_handler(element, Self::end_head_tag_handler)
     }
 
-    fn on_html_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+    fn on_html_tag(&mut self, element: &mut Element<'_, '_>) -> ControlFlow<()> {
         self.register_end_tag_handler(element, Self::end_html_tag_handler)
     }
 
-    fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> bool {
+    fn on_body_tag(&mut self, element: &mut Element<'_, '_>) -> ControlFlow<()> {
         self.register_end_tag_handler(element, Self::end_body_tag_handler)
     }
 }
@@ -222,22 +223,22 @@ type EndTagHandlerFn = fn(*mut (), &mut EndTag<'_>) -> HandlerResult;
 
 impl<'a> HTMLLoader<'a> {
     /// Arranges for `handler(self, end_tag)` to run when `element`'s end tag
-    /// is reached. Returns `true` (stop the rewriter) if `element` cannot
+    /// is reached. Returns `Break` (stop the rewriter) if `element` cannot
     /// have an end tag.
     fn register_end_tag_handler(
         &mut self,
         element: &mut Element<'_, '_>,
         handler: EndTagHandlerFn,
-    ) -> bool {
+    ) -> ControlFlow<()> {
         let Some(handlers) = element.end_tag_handlers() else {
-            return true;
+            return ControlFlow::Break(());
         };
         // `self` points at the `HTMLLoader` that `HTMLProcessor::run` holds
         // for the whole rewriting pass, so the erased pointer is still live
         // when lol-html invokes `handler` at the end tag.
         let opaque_this = std::ptr::from_mut::<Self>(self).cast::<()>();
         handlers.push(Box::new(move |end| handler(opaque_this, end)));
-        false
+        ControlFlow::Continue(())
     }
 
     /// This is called for head, body, and html; whichever ends up coming first.

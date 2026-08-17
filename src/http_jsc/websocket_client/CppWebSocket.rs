@@ -82,6 +82,11 @@ unsafe extern "C" {
     fn WebSocket__setProtocol(websocket_context: &CppWebSocket, protocol: *mut BunString);
 }
 
+bun_core::bool_enum!(
+    /// `Adopt`: C++ takes ownership of the (global-marked) buffer; `Clone`: C++ copies it.
+    pub(crate) CloneText { Adopt, Clone }
+);
+
 // Receivers are `&self` (not `&mut self`) because `CppWebSocket` is
 // an opaque C++ handle with no Rust-visible state; mutation happens entirely on
 // the C++ side. Callers hold `NonNull<CppWebSocket>` and dispatch via shared
@@ -135,13 +140,13 @@ impl CppWebSocket {
         event_loop.exit();
     }
 
-    pub(crate) fn did_receive_text(&self, clone: bool, text: &ZigString) {
+    pub(crate) fn did_receive_text(&self, clone: CloneText, text: &ZigString) {
         // SAFETY: VirtualMachine::get() returns the live current-thread VM;
         // event_loop() yields its raw event-loop pointer (live for VM lifetime).
         let event_loop = VirtualMachine::get().event_loop_mut();
         event_loop.enter();
         // SAFETY: self is a valid C++ WebCore::WebSocket; text outlives the call.
-        unsafe { WebSocket__didReceiveText(self, clone, text) };
+        unsafe { WebSocket__didReceiveText(self, clone == CloneText::Clone, text) };
         event_loop.exit();
     }
 

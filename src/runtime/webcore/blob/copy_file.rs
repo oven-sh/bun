@@ -1109,6 +1109,9 @@ impl Default for ReadWriteLoop {
     }
 }
 
+#[cfg(windows)]
+bun_core::bool_enum!(OpenFor { Writing, Reading });
+
 // `ReadWriteLoop` is a subobject of `CopyFileWindows`, so passing both as
 // `&mut` would be aliasing UB. These are hoisted onto `CopyFileWindows` so the
 // borrow checker can see `self.read_write_loop` / `self.io_request` / `self.event_loop`
@@ -1394,13 +1397,13 @@ impl<'a> CopyFileWindows<'a> {
     fn prepare_pathlike(
         pathlike: &mut PathOrFileDescriptor,
         must_close: &mut bool,
-        is_reading: bool,
+        is_reading: OpenFor,
     ) -> bun_sys::Result<Fd> {
         if let PathOrFileDescriptor::Path(path) = pathlike {
             let fd = match bun_sys::openat_windows_a(
                 Fd::INVALID,
                 path.slice(),
-                if is_reading {
+                if is_reading == OpenFor::Reading {
                     bun_sys::O::RDONLY
                 } else {
                     bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC
@@ -1442,7 +1445,7 @@ impl<'a> CopyFileWindows<'a> {
                 .as_file_mut()
                 .pathlike,
             &mut self.read_write_loop.must_close_destination_fd,
-            false,
+            OpenFor::Writing,
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {
@@ -1459,7 +1462,7 @@ impl<'a> CopyFileWindows<'a> {
         self.read_write_loop.source_fd = match Self::prepare_pathlike(
             &mut self.source_file_store.data_mut().as_file_mut().pathlike,
             &mut self.read_write_loop.must_close_source_fd,
-            true,
+            OpenFor::Reading,
         ) {
             bun_sys::Result::Ok(fd) => fd,
             bun_sys::Result::Err(err) => {

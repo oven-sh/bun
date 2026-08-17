@@ -411,6 +411,9 @@ impl<const SSL: bool> Drop for ScopeExit<SSL> {
     }
 }
 
+bun_core::bool_enum!(BufferUnwrittenData);
+bun_core::bool_enum!(DefersServerIdentity);
+
 impl<const SSL: bool> NewSocket<SSL> {
     // ─── R-2 interior-mutability helpers ─────────────────────────────────────
 
@@ -649,7 +652,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     core::mem::size_of::<*mut c_void>() as c_int,
                     f.native() as uws::LIBUS_SOCKET_DESCRIPTOR,
                     flags,
-                    false,
+                    uws::Ipc::No,
                 );
                 if s.is_null() {
                     return Err(crate::Error::ConnectionFailed);
@@ -2329,7 +2332,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let mut args = callframe.arguments_undef::<5>();
 
         Ok(
-            match this.write_or_end::<false>(global, args.mut_(), false) {
+            match this.write_or_end::<false>(global, args.mut_(), BufferUnwrittenData::No) {
                 WriteResult::Fail => JSValue::ZERO,
                 WriteResult::Success { wrote, .. } => JSValue::js_number_from_int32(wrote),
             },
@@ -2591,7 +2594,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 JSValue::UNDEFINED,
                 encoding_value,
             ];
-            return self.write_or_end::<IS_END>(global, &mut values, true);
+            return self.write_or_end::<IS_END>(global, &mut values, BufferUnwrittenData::Yes);
         }
 
         let buffer: StringOrBuffer = if data_value.is_undefined() {
@@ -2753,7 +2756,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         &self,
         global: &JSGlobalObject,
         args: &mut [JSValue],
-        buffer_unwritten_data: bool,
+        buffer_unwritten_data: BufferUnwrittenData,
     ) -> WriteResult {
         if args[0].is_undefined() {
             if !self.flags.get().contains(Flags::END_AFTER_FLUSH) && IS_END {
@@ -2934,7 +2937,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         log!("writeOrEnd {}", bytes.len());
         let wrote = self.write_maybe_corked(bytes);
         let uwrote: usize = usize::try_from(wrote.max(0)).expect("int cast");
-        if buffer_unwritten_data {
+        if buffer_unwritten_data == BufferUnwrittenData::Yes {
             let remaining = &bytes[uwrote..];
             if !remaining.is_empty() {
                 let _ = self
@@ -3179,7 +3182,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // `write_or_end` reaches `internal_flush`, which re-enters JS.
         // SAFETY: the JS wrapper holds a ref for the whole host-fn call.
         let _keepalive = unsafe { bun_ptr::ScopedRef::new(this.as_ctx_ptr()) };
-        let result = match this.write_or_end::<true>(global, args.mut_(), false) {
+        let result = match this.write_or_end::<true>(global, args.mut_(), BufferUnwrittenData::No) {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
@@ -3364,7 +3367,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if callframe.arguments_count() < 1 {
             return Err(global.throw(format_args!("Expected 1 arguments")));
         }
-        Self::upgrade_tls_impl(this, global, opts, false)
+        Self::upgrade_tls_impl(this, global, opts, DefersServerIdentity::No)
     }
 
     /// `defers_server_identity`: node:tls owns hostname policy in its JS layer
@@ -3374,7 +3377,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         this: &Self,
         global: &JSGlobalObject,
         opts: JSValue,
-        defers_server_identity: bool,
+        defers_server_identity: DefersServerIdentity,
     ) -> JsResult<JSValue> {
         if SSL {
             return Ok(JSValue::UNDEFINED);
@@ -3551,7 +3554,10 @@ impl<const SSL: bool> NewSocket<SSL> {
             ),
         };
         let mut initial_flags = Flags::initial(reject_unauthorized);
-        initial_flags.set(Flags::DEFERS_SERVER_IDENTITY, defers_server_identity);
+        initial_flags.set(
+            Flags::DEFERS_SERVER_IDENTITY,
+            defers_server_identity == DefersServerIdentity::Yes,
+        );
         initial_flags.set(Flags::TLS_SERVER_ROLE, is_server);
         let tls: bun_ptr::ThisPtr<TLSSocket> = TLSSocket::new(TLSSocket {
             ref_count: bun_ptr::RefCount::init(),
@@ -3595,9 +3601,9 @@ impl<const SSL: bool> NewSocket<SSL> {
                 uws::SocketKind::BunSocketTls,
                 &mut *(tls.owned_ssl_ctx.get().unwrap()),
                 sni,
-                !is_server,
-                adopt_request_cert,
-                adopt_reject_unauthorized,
+                uws::TlsRole::from_bool(!is_server),
+                uws::RequestCert::from_bool(adopt_request_cert),
+                uws::RejectUnauthorized::from_bool(adopt_reject_unauthorized),
                 core::mem::size_of::<*mut c_void>() as i32,
                 core::mem::size_of::<*mut c_void>() as i32,
             )
@@ -4153,7 +4159,15 @@ fn upgrade_reject_policy(
     if cfg.is_none() && is_server {
         server_ctx_rejects_unauthorized(ctx)
     } else {
-        crate::socket::resolve_reject_unauthorized(vm, cfg, is_server)
+        crate::socket::resolve_reject_unauthorized(
+            vm,
+            cfg,
+            if is_server {
+                uws::TlsRole::Server
+            } else {
+                uws::TlsRole::Client
+            },
+        )
     }
 }
 
@@ -4484,7 +4498,7 @@ impl DuplexUpgradeContext {
                         "DuplexUpgradeContext.startTLS mode={}",
                         <&'static str>::from((*this).mode)
                     );
-                    let is_client = (*this).mode == SocketMode::Client;
+                    let is_client = uws::TlsRole::from_bool((*this).mode == SocketMode::Client);
                     let verify = (*this).server_verify;
                     if let Some(ctx) = (*this).owned_ctx.take() {
                         // Transfer the ref into SSLWrapper; null first so the
@@ -4648,10 +4662,10 @@ pub fn js_upgrade_tls_deferred(
     jsc::mark_binding!();
     let [socket, opts] = callframe.arguments_as_array::<2>();
     if let Some(this) = socket.as_class_ref::<TCPSocket>() {
-        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, true);
+        return NewSocket::<false>::upgrade_tls_impl(this, global, opts, DefersServerIdentity::Yes);
     }
     if let Some(this) = socket.as_class_ref::<TLSSocket>() {
-        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, true);
+        return NewSocket::<true>::upgrade_tls_impl(this, global, opts, DefersServerIdentity::Yes);
     }
     Err(global.throw(format_args!("Expected a socket instance")))
 }
@@ -5006,8 +5020,8 @@ pub fn js_create_socket_pair(global: &JSGlobalObject, _frame: &CallFrame) -> JsR
             return Err(global.throw_value(err.to_js(global)));
         }
 
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), true);
-        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), true);
+        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[0]), sys::IoMode::NonBlocking);
+        let _ = sys::update_nonblocking(sys::Fd::from_native(fds_[1]), sys::IoMode::NonBlocking);
 
         let array = JSValue::create_empty_array(global, 2)?;
         array.put_index(global, 0, JSValue::js_number(fds_[0] as f64))?;

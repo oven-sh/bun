@@ -302,7 +302,10 @@ impl<'a> Writable<'a> {
                     .expect("FileSink::create returns non-null");
                 let pipe = Self::pipe_sink_mut(&pipe_nn);
 
-                match pipe.writer.with_mut(|w| w.start(pipe.fd.get(), true)) {
+                match pipe
+                    .writer
+                    .with_mut(|w| w.start(pipe.fd.get(), bun_io::IsPollable::Yes))
+                {
                     bun_sys::Result::Ok(()) => {}
                     bun_sys::Result::Err(_err) => {
                         Self::pipe_release(pipe_nn);

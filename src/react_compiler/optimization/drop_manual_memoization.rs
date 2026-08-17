@@ -367,7 +367,7 @@ fn collect_temporaries(
         _ => {}
     }
 
-    let is_optional = sidemap.optionals.contains(&lvalue_id);
+    let is_optional = IsOptional::from_bool(sidemap.optionals.contains(&lvalue_id));
     let maybe_dep =
         collect_maybe_memo_dependencies(&instr.value, &sidemap.maybe_deps, is_optional, env);
     if let Some(dep) = maybe_dep {
@@ -387,14 +387,17 @@ fn collect_temporaries(
 // collectMaybeMemoDependencies
 // =============================================================================
 
+bun_core::bool_enum!(pub(crate) IsOptional);
+
 /// Collect loads from named variables and property reads into `maybe_deps`.
 /// Returns the variable + property reads represented by the instruction value.
 pub(crate) fn collect_maybe_memo_dependencies(
     value: &InstructionValue,
     maybe_deps: &HashMap<IdentifierId, ManualMemoDependency>,
-    optional: bool,
+    optional: IsOptional,
     env: &Environment,
 ) -> Option<ManualMemoDependency> {
+    let optional = optional == IsOptional::Yes;
     match value {
         InstructionValue::LoadGlobal { binding, loc, .. } => Some(ManualMemoDependency {
             root: ManualMemoDependencyRoot::Global {

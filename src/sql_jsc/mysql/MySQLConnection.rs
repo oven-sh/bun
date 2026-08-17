@@ -5,7 +5,7 @@ use bun_uws::{self as uws, AnySocket as Socket, SslCtx};
 use bun_sql::mysql::Capabilities;
 use bun_sql::mysql::MySQLQueryResult;
 use bun_sql::mysql::auth_method::AuthMethod;
-use bun_sql::mysql::capabilities::MariaDBCapabilities;
+use bun_sql::mysql::capabilities::{HasDbName, MariaDBCapabilities, Ssl};
 use bun_sql::mysql::connection_state::ConnectionState;
 use bun_sql::mysql::mysql_types::FieldType;
 use bun_sql::mysql::protocol::any_mysql_error::{self as any_mysql_error, Error as AnyMySQLError};
@@ -13,8 +13,8 @@ use bun_sql::mysql::protocol::auth as Auth;
 use bun_sql::mysql::protocol::auth_switch_request::AuthSwitchRequest;
 use bun_sql::mysql::protocol::auth_switch_response::AuthSwitchResponse;
 use bun_sql::mysql::protocol::character_set::CharacterSet;
-use bun_sql::mysql::protocol::column_definition41::ColumnDefinition41;
 use bun_sql::mysql::protocol::column_definition41::ColumnFlags;
+use bun_sql::mysql::protocol::column_definition41::{Changed, ColumnDefinition41};
 use bun_sql::mysql::protocol::eof_packet::EOFPacket;
 use bun_sql::mysql::protocol::handshake_response41::HandshakeResponse41;
 use bun_sql::mysql::protocol::handshake_v10::HandshakeV10;
@@ -89,9 +89,11 @@ pub struct MySQLConnection {
     tls_config: SSLConfig,
     tls_status: TLSStatus,
     ssl_mode: SSLMode,
-    allow_public_key_retrieval: bool,
+    allow_public_key_retrieval: AllowPublicKeyRetrieval,
     flags: ConnectionFlags,
 }
+
+bun_core::bool_enum!(pub AllowPublicKeyRetrieval);
 
 impl Default for MySQLConnection {
     fn default() -> Self {
@@ -123,7 +125,7 @@ impl Default for MySQLConnection {
             tls_config: SSLConfig::default(),
             tls_status: TLSStatus::None,
             ssl_mode: SSLMode::Disable,
-            allow_public_key_retrieval: false,
+            allow_public_key_retrieval: AllowPublicKeyRetrieval::No,
             flags: ConnectionFlags::default(),
         }
     }
@@ -143,7 +145,7 @@ impl MySQLConnection {
         tls_config: SSLConfig,
         secure: Option<*mut SslCtx>,
         ssl_mode: SSLMode,
-        allow_public_key_retrieval: bool,
+        allow_public_key_retrieval: AllowPublicKeyRetrieval,
     ) -> Self {
         Self {
             database,
@@ -384,9 +386,9 @@ impl MySQLConnection {
             bun_uws::SocketKind::MysqlTls,
             ssl_ctx,
             sni,
-            true,  // is_client
-            false, // request_cert (server-only)
-            false, // reject_unauthorized (server-only)
+            uws::TlsRole::Client,
+            uws::RequestCert::No,        // server-only
+            uws::RejectUnauthorized::No, // server-only
             ext_size,
             ext_size,
         ) else {
@@ -665,8 +667,8 @@ impl MySQLConnection {
         // are only used when the server actually supports them (critical for MySQL-compatible
         // databases like StarRocks, TiDB, SingleStore, etc.).
         self.capabilities = Capabilities::get_default_capabilities(
-            self.ssl_mode != SSLMode::Disable,
-            !self.database.is_empty(),
+            Ssl::from_bool(self.ssl_mode != SSLMode::Disable),
+            HasDbName::from_bool(!self.database.is_empty()),
         )
         .intersect(handshake.capability_flags);
         self.mariadb_capabilities = MariaDBCapabilities::get_default_capabilities()
@@ -859,7 +861,9 @@ impl MySQLConnection {
                                         // public-key request with their own key and recover the
                                         // password. Match mysql2 / Connector/J: refuse unless the
                                         // user explicitly opted in.
-                                        if !self.allow_public_key_retrieval {
+                                        if self.allow_public_key_retrieval
+                                            == AllowPublicKeyRetrieval::No
+                                        {
                                             return Err(
                                                 AnyMySQLError::PublicKeyRetrievalNotAllowed,
                                             );
@@ -1574,7 +1578,7 @@ impl MySQLConnection {
                         &mut reader,
                         self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO,
                     )?;
-                    if changed {
+                    if changed == Changed::Yes {
                         statement.cached_structure = Default::default();
                         statement.fields_flags = Default::default();
                         statement

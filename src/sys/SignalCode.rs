@@ -1,6 +1,6 @@
 use core::fmt;
 
-use bun_core::output;
+use bun_core::output::{self, AnsiColors};
 
 // Any u8 is a valid
 // inhabitant. A Rust `#[repr(u8)] enum` with only the named variants would be
@@ -85,7 +85,7 @@ impl SignalCode {
         SignalCode(bytemuck::bytes_of(&value)[0])
     }
 
-    pub fn fmt(self, enable_ansi_colors: bool) -> Fmt {
+    pub fn fmt(self, enable_ansi_colors: AnsiColors) -> Fmt {
         Fmt {
             signal: self,
             enable_ansi_colors,
@@ -102,7 +102,7 @@ pub fn from_name(s: &[u8]) -> Option<SignalCode> {
 // This wrapper struct is lame, what if bun's color formatter was more versatile
 pub struct Fmt {
     signal: SignalCode,
-    enable_ansi_colors: bool,
+    enable_ansi_colors: AnsiColors,
 }
 
 impl fmt::Display for Fmt {
@@ -110,7 +110,7 @@ impl fmt::Display for Fmt {
         let signal = self.signal;
         if let Some(str_) = signal.name() {
             if let Some(desc) = signal.description() {
-                if self.enable_ansi_colors {
+                if self.enable_ansi_colors == AnsiColors::Enabled {
                     return write!(f, "{} {}({}){}", str_, output::DIM, desc, output::RESET);
                 } else {
                     return write!(f, "{} ({})", str_, desc);

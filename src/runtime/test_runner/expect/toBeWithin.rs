@@ -1,6 +1,7 @@
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult};
 
 use super::{throw, Expect};
+use super::IsNot;
 
 impl Expect {
     #[bun_jsc::host_fn(method)]
@@ -70,7 +71,7 @@ impl Expect {
             let signature = Expect::get_signature(
                 "toBeWithin",
                 "<green>start<r><d>, <r><green>end<r>",
-                true,
+                IsNot::Yes,
             );
             return throw!(
                 this,
@@ -90,7 +91,7 @@ impl Expect {
         let signature = Expect::get_signature(
             "toBeWithin",
             "<green>start<r><d>, <r><green>end<r>",
-            false,
+            IsNot::No,
         );
         throw!(
             this,

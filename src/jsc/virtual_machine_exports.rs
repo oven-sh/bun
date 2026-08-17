@@ -76,10 +76,11 @@ pub fn report_unhandled_error(global: &JSGlobalObject, value: JSValue) {
     crate::mark_binding!();
 
     if !value.is_termination_exception() {
-        let _ = global
-            .bun_vm()
-            .as_mut()
-            .uncaught_exception(global, value, false);
+        let _ = global.bun_vm().as_mut().uncaught_exception(
+            global,
+            value,
+            crate::virtual_machine::IsRejection::No,
+        );
     }
 }
 

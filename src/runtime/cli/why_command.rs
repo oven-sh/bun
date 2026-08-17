@@ -267,6 +267,8 @@ impl<'a> GlobPattern<'a> {
     }
 }
 
+bun_core::bool_enum!(TopOnly);
+
 impl WhyCommand {
     fn print_usage() {
         bun_core::prettyln!(
@@ -311,10 +313,10 @@ impl WhyCommand {
                 Self::print_usage();
                 Global::exit(1);
             }
-            return Self::exec_with_manager(ctx, pm, positionals[1], top_only);
+            return Self::exec_with_manager(ctx, pm, positionals[1], TopOnly::from_bool(top_only));
         }
 
-        Self::exec_with_manager(ctx, pm, positionals[0], top_only)
+        Self::exec_with_manager(ctx, pm, positionals[0], TopOnly::from_bool(top_only))
     }
 
     pub(crate) fn exec_from_pm(
@@ -327,15 +329,21 @@ impl WhyCommand {
             Global::exit(1);
         }
 
-        Self::exec_with_manager(ctx, pm, positionals[1], pm.options.top_only)
+        Self::exec_with_manager(
+            ctx,
+            pm,
+            positionals[1],
+            TopOnly::from_bool(pm.options.top_only),
+        )
     }
 
     fn exec_with_manager(
         ctx: command::Context,
         pm: &mut PackageManager,
         package_pattern: &[u8],
-        top_only: bool,
+        top_only: TopOnly,
     ) -> Result<(), crate::Error> {
+        let top_only = top_only == TopOnly::Yes;
         // Detach the `Box<Lockfile>` from `pm`
         // so `load_from_cwd` can take `Option<&mut PackageManager>` without
         // overlapping the `&mut self` lockfile borrow. `pm.options.depth` is read
@@ -511,8 +519,8 @@ impl WhyCommand {
                                     PREFIX_CONTINUE
                                 },
                                 1,
-                                is_last,
-                                dep.workspace,
+                                PrintedBreakLine::from_bool(is_last),
+                                ParentIsWorkspace::from_bool(dep.workspace),
                             );
                         }
                     }
@@ -582,14 +590,19 @@ impl<'a> TreeContext<'a> {
     }
 }
 
+bun_core::bool_enum!(PrintedBreakLine);
+bun_core::bool_enum!(ParentIsWorkspace);
+
 fn print_dependency_tree(
     ctx: &mut TreeContext<'_>,
     current_pkg_id: PackageID,
     prefix: &[u8],
     depth: usize,
-    printed_break_line: bool,
-    parent_is_workspace: bool,
+    printed_break_line: PrintedBreakLine,
+    parent_is_workspace: ParentIsWorkspace,
 ) {
+    let printed_break_line = printed_break_line == PrintedBreakLine::Yes;
+    let parent_is_workspace = parent_is_workspace == ParentIsWorkspace::Yes;
     if ctx.path_tracker.get(&current_pkg_id).is_some() {
         bun_core::prettyln!("<d>{}└─ <yellow>*circular<r>", BStr::new(prefix));
         return;
@@ -642,8 +655,8 @@ fn print_dependency_tree(
                 dep.pkg_id,
                 &next_prefix,
                 depth + 1,
-                printed_break_line || print_break_line,
-                dep.workspace,
+                PrintedBreakLine::from_bool(printed_break_line || print_break_line),
+                ParentIsWorkspace::from_bool(dep.workspace),
             );
 
             if print_break_line {

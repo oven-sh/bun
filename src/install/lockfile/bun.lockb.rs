@@ -431,8 +431,11 @@ pub(crate) fn load(
         return Err(crate::Error::LockfileIsMissingData);
     }
 
-    let packages_load_result =
-        package::serializer::load(stream, total_buffer_size as usize, migrate_from_v2)?;
+    let packages_load_result = package::serializer::load(
+        stream,
+        total_buffer_size as usize,
+        package::serializer::MigrateFromV2::from_bool(migrate_from_v2),
+    )?;
 
     lockfile.packages = packages_load_result.list;
 

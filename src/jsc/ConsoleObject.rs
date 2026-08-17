@@ -6,11 +6,14 @@
 use crate::{ComptimeStringMapExt as _, ZigStringJsc as _};
 use core::cell::{Cell, RefCell};
 use core::ffi::c_void;
+use core::ops::ControlFlow;
 
 use crate as jsc;
 use crate::virtual_machine::VirtualMachine;
 use crate::{EventType, JSGlobalObject, JSPromise, JSValue, JsResult, ZigString};
 use bun_collections::HashMap;
+use bun_core::output::AnsiColors;
+use bun_core::strings::AmbiguousWidth;
 use bun_core::{Output, StackCheck};
 use bun_core::{OwnedString, String as BunString, strings};
 
@@ -611,7 +614,8 @@ enum RowKey {
 impl RowKey {
     fn str(name: &BunString) -> Self {
         Self::Str {
-            width: u32::try_from(name.visible_width_exclude_ansi_colors(false)).expect("int cast"),
+            width: u32::try_from(name.visible_width_exclude_ansi_colors(AmbiguousWidth::Narrow))
+                .expect("int cast"),
             text: name.to_utf8(),
         }
     }
@@ -1016,8 +1020,11 @@ impl<'a> TablePrinter<'a> {
             for col in columns.iter_mut() {
                 // also update the col width with the length of the column name itself
                 col.width = col.width.max(
-                    u32::try_from(col.name.visible_width_exclude_ansi_colors(false))
-                        .expect("int cast"),
+                    u32::try_from(
+                        col.name
+                            .visible_width_exclude_ansi_colors(AmbiguousWidth::Narrow),
+                    )
+                    .expect("int cast"),
                 );
             }
 
@@ -1039,7 +1046,9 @@ impl<'a> TablePrinter<'a> {
                 if i > 0 {
                     let _ = writer.write_all("│".as_bytes());
                 }
-                let len = col.name.visible_width_exclude_ansi_colors(false);
+                let len = col
+                    .name
+                    .visible_width_exclude_ansi_colors(AmbiguousWidth::Narrow);
                 let needed = (col.width as usize).saturating_sub(len);
                 let _ = writer.splat_byte_all(b' ', 1);
                 if ENABLE_ANSI_COLORS {
@@ -1170,7 +1179,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
         None,
         &mut need_to_clear,
         &mut source_code_slice,
-        false,
+        crate::virtual_machine::AllowSourceCodePreview::No,
     );
     holder.need_to_clear_parser_arena_on_deinit = need_to_clear;
 
@@ -1178,7 +1187,7 @@ pub fn write_trace(writer: &mut dyn bun_io::Write, global: &JSGlobalObject) {
     let _ = VirtualMachine::print_stack_trace(
         adapter.interface(),
         &holder.zig_exception().stack,
-        Output::enable_ansi_colors_stderr(),
+        AnsiColors::from_bool(Output::enable_ansi_colors_stderr()),
     );
 
     // `ZigStringSlice` frees on `Drop`.
@@ -1235,13 +1244,14 @@ pub enum Colon {
 pub struct ErrorDisplayLevelFormatter {
     pub name: BunString,
     pub(crate) level: ErrorDisplayLevel,
-    pub(crate) enable_colors: bool,
+    pub(crate) enable_colors: AnsiColors,
     pub(crate) colon: Colon,
 }
 
 impl core::fmt::Display for ErrorDisplayLevelFormatter {
     fn fmt(&self, writer: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if self.enable_colors {
+        let enable_colors = self.enable_colors == AnsiColors::Enabled;
+        if enable_colors {
             match self.level {
                 ErrorDisplayLevel::Normal => writer.write_str(pfmt!("<r>", true))?,
                 ErrorDisplayLevel::Warn => writer.write_str(pfmt!("<r><yellow>", true))?,
@@ -1258,13 +1268,13 @@ impl core::fmt::Display for ErrorDisplayLevelFormatter {
         }
 
         if self.colon == Colon::ExcludeColon {
-            if self.enable_colors {
+            if enable_colors {
                 writer.write_str(pfmt!("<r>", true))?;
             }
             return Ok(());
         }
 
-        if self.enable_colors {
+        if enable_colors {
             writer.write_str(pfmt!("<r><d>:<r> ", true))?;
         } else {
             writer.write_str(": ")?;
@@ -1277,7 +1287,7 @@ impl ErrorDisplayLevel {
     pub(crate) fn formatter(
         self,
         error_name: BunString,
-        enable_colors: bool,
+        enable_colors: AnsiColors,
         colon: Colon,
     ) -> ErrorDisplayLevelFormatter {
         ErrorDisplayLevelFormatter {
@@ -3274,7 +3284,7 @@ pub mod formatter {
         /// carry a 32-byte redzone, and the 512-deep `Bun.inspect` test
         /// cannot afford them in the per-level `print_as` frame.
         ///
-        /// Returns `Ok(true)` to continue into the tag dispatch.
+        /// Returns `Ok(Continue)` to continue into the tag dispatch.
         #[inline(never)]
         fn print_as_prelude<const C: bool>(
             &mut self,
@@ -3282,15 +3292,15 @@ pub mod formatter {
             value: JSValue,
             can_circ: bool,
             remove_before_recurse: &mut bool,
-        ) -> JsResult<bool> {
+        ) -> JsResult<ControlFlow<()>> {
             if self.failed {
-                return Ok(false);
+                return Ok(ControlFlow::Break(()));
             }
             if self.global_this.has_exception() {
                 return Err(jsc::JsError::Thrown);
             }
             if !can_circ {
-                return Ok(true);
+                return Ok(ControlFlow::Continue(()));
             }
 
             if !self.stack_check.is_safe_to_recurse() {
@@ -3298,7 +3308,7 @@ pub mod formatter {
                 if self.can_throw_stack_overflow {
                     return Err(self.global_this.throw_stack_overflow());
                 }
-                return Ok(false);
+                return Ok(ControlFlow::Break(()));
             }
 
             if self.map_node.is_none() {
@@ -3318,10 +3328,10 @@ pub mod formatter {
                 {
                     self.failed = true;
                 }
-                return Ok(false);
+                return Ok(ControlFlow::Break(()));
             }
             *remove_before_recurse = true;
-            Ok(true)
+            Ok(ControlFlow::Continue(()))
         }
 
         #[inline(never)]
@@ -3336,12 +3346,15 @@ pub mod formatter {
             // `[Circular]` due to the value already being present in the map.
             let mut remove_before_recurse = false;
 
-            if !self.print_as_prelude::<ENABLE_ANSI_COLORS>(
-                writer_,
-                value,
-                format.can_have_circular_references(),
-                &mut remove_before_recurse,
-            )? {
+            if self
+                .print_as_prelude::<ENABLE_ANSI_COLORS>(
+                    writer_,
+                    value,
+                    format.can_have_circular_references(),
+                    &mut remove_before_recurse,
+                )?
+                .is_break()
+            {
                 return Ok(());
             }
 
@@ -3935,7 +3948,15 @@ pub mod formatter {
             let mut adapter = DynWriteAdapter::new(&mut *writer_);
             // SAFETY: per-thread VM.
             let vm = VirtualMachine::get().as_mut();
-            vm.print_errorlike_object(value, None, None, self, adapter.interface(), C, false);
+            vm.print_errorlike_object(
+                value,
+                None,
+                None,
+                self,
+                adapter.interface(),
+                AnsiColors::from_bool(C),
+                crate::virtual_machine::AllowSideEffects::No,
+            );
             Ok(())
         }
 

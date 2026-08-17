@@ -267,12 +267,24 @@ pub(crate) fn rotate(src: &[u8], w: u32, h: u32, quarters: u32) -> Result<Vec<u8
 }
 
 #[allow(dead_code)]
-pub(crate) fn flip(src: &[u8], w: u32, h: u32, horizontal: bool) -> Result<Vec<u8>, BackendError> {
+pub(crate) fn flip(
+    src: &[u8],
+    w: u32,
+    h: u32,
+    horizontal: codecs::FlipAxis,
+) -> Result<Vec<u8>, BackendError> {
     // PERF: zero-fill alloc — profile if hot.
     let mut out = vec![0u8; (w as usize) * (h as usize) * 4];
     // SAFETY: src and out both have w*h*4 bytes.
-    if unsafe { bun_coregraphics_reflect(src.as_ptr(), w, h, out.as_mut_ptr(), horizontal as i32) }
-        != CG_OK
+    if unsafe {
+        bun_coregraphics_reflect(
+            src.as_ptr(),
+            w,
+            h,
+            out.as_mut_ptr(),
+            (horizontal == codecs::FlipAxis::Horizontal) as i32,
+        )
+    } != CG_OK
     {
         return Err(BackendError::BackendUnavailable);
     }

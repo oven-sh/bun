@@ -10,6 +10,11 @@ pub use endpoint::QuicEndpoint;
 pub use session::QuicSession;
 pub use stream::QuicStream;
 
+bun_core::bool_enum!(
+    /// Which half of the endpoint a session/engine/TLS config belongs to.
+    pub Side { Client, Server }
+);
+
 /// Monotonic nanoseconds, mirroring Node's use of `uv_hrtime()` for the
 /// `*_AT` stats slots.
 pub(crate) fn now_ns() -> u64 {

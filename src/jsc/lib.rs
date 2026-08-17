@@ -486,13 +486,16 @@ pub mod jsc_scheduler;
 #[path = "ProcessAutoKiller.rs"]
 pub mod process_auto_killer;
 
+bun_core::bool_enum!(pub EvalMode);
+bun_core::bool_enum!(pub ShortLivedGlobals);
+
 /// Binding for JSCInitialize in ZigGlobalObject.cpp
-pub fn initialize(eval_mode: bool) {
-    initialize_with(eval_mode, false);
+pub fn initialize(eval_mode: EvalMode) {
+    initialize_with(eval_mode, ShortLivedGlobals::No);
 }
 
 /// `short_lived_globals`: `bun test --isolate`/`--parallel`, where each file gets a fresh global and per-global JIT code is discarded with it.
-pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
+pub fn initialize_with(eval_mode: EvalMode, short_lived_globals: ShortLivedGlobals) {
     // The counter lives in `bun_core` so this crate doesn't depend on
     // `bun_analytics`.
     bun_core::analytics::Features::jsc_inc();
@@ -509,9 +512,9 @@ pub fn initialize_with(eval_mode: bool, short_lived_globals: bool) {
             env.as_ptr(),
             env.len(),
             on_jsc_invalid_env_var,
-            eval_mode,
+            eval_mode == EvalMode::Yes,
             one_shot,
-            short_lived_globals,
+            short_lived_globals == ShortLivedGlobals::Yes,
         )
     };
 }
@@ -775,7 +778,7 @@ pub use abort_signal::{AbortSignal, AbortSignalRef};
 // type (and likewise for `JSGlobalObject`). Both structs carry `UnsafeCell`
 // so `&T → *mut T` for FFI is sound under Stacked Borrows.
 pub use self::js_global_object::{GlobalRef, JSGlobalObject};
-pub use self::vm::VM;
+pub use self::vm::{GcMode, VM};
 
 /// Options for `JSGlobalObject::validate_integer_range` / `validate_bigint_range`.
 /// min/max are `i128` so every

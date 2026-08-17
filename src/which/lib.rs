@@ -238,24 +238,28 @@ pub fn batch_arg_has_cmd_metachars(arg: &[u8]) -> bool {
     strings::contains_any(arg, b"\"%&|<>^\r\n")
 }
 
+#[cfg(windows)]
+bun_core::bool_enum!(CheckWindowsExtensions);
+
 /// Check if the WPathBuffer holds a existing file path, checking also for windows extensions variants like .exe, .cmd and .bat (internally used by which_win)
 #[cfg(windows)]
 fn search_bin(
     buf: &mut WPathBuffer,
     path_size: usize,
-    check_windows_extensions: bool,
+    check_windows_extensions: CheckWindowsExtensions,
 ) -> Option<&mut [u16]> {
     {
-        if !check_windows_extensions {
+        if check_windows_extensions == CheckWindowsExtensions::No {
             // On Windows, files without extensions are not executable
             // Therefore, we should only care about this check when the file already has an extension.
             // SAFETY: caller wrote NUL at buf[path_size]
-            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), true) {
+            if bun_sys::exists_os_path(WStr::from_buf(&buf[..], path_size), bun_sys::FileOnly::Yes)
+            {
                 return Some(&mut buf[..path_size]);
             }
         }
 
-        if check_windows_extensions {
+        if check_windows_extensions == CheckWindowsExtensions::Yes {
             buf[path_size] = b'.' as u16;
             buf[path_size + 1 + 3] = 0;
             for ext in WIN_EXTENSIONS_W {
@@ -263,7 +267,7 @@ fn search_bin(
                 // SAFETY: buf[path_size + 1 + ext.len()] == 0 written above
                 if bun_sys::exists_os_path(
                     WStr::from_buf(&buf[..], path_size + 1 + ext.len()),
-                    true,
+                    bun_sys::FileOnly::Yes,
                 ) {
                     return Some(&mut buf[..path_size + 1 + ext.len()]);
                 }
@@ -280,7 +284,7 @@ fn search_bin_in_path<'a>(
     path_buf: &mut PathBuffer,
     path: &[u8],
     bin: &[u8],
-    check_windows_extensions: bool,
+    check_windows_extensions: CheckWindowsExtensions,
 ) -> Option<&'a mut [u16]> {
     if path.is_empty() {
         return None;
@@ -293,7 +297,11 @@ fn search_bin_in_path<'a>(
     } else {
         path
     };
-    let tail_units = if check_windows_extensions { 5 } else { 1 };
+    let tail_units = if check_windows_extensions == CheckWindowsExtensions::Yes {
+        5
+    } else {
+        1
+    };
     if segment.len() + 1 + bin.len() + tail_units > buf.len()
         && bun_core::strings::element_length_utf8_into_utf16(segment)
             + 1
@@ -335,7 +343,11 @@ pub(crate) fn which_win<'a>(
     }
     let mut path_buf = path_buffer_pool::get();
 
-    let check_windows_extensions = !ends_with_extension(bin);
+    let check_windows_extensions = if ends_with_extension(bin) {
+        CheckWindowsExtensions::No
+    } else {
+        CheckWindowsExtensions::Yes
+    };
 
     // handle absolute paths
     if is_absolute(bin) {

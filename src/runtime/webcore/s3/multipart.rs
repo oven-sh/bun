@@ -390,6 +390,9 @@ impl Drop for MultiPartUpload {
     }
 }
 
+bun_core::bool_enum!(NeedsClone);
+bun_core::bool_enum!(pub(crate) IsLast);
+
 impl MultiPartUpload {
     pub(crate) fn single_send_upload_response(
         result: S3UploadResult,
@@ -460,7 +463,7 @@ impl MultiPartUpload {
         &self,
         chunk: &[u8],
         allocated_size: usize,
-        needs_clone: bool,
+        needs_clone: NeedsClone,
     ) -> Option<&UploadPart> {
         let mut available = self.available.get();
         let Some(index) = available.find_first_set() else {
@@ -495,7 +498,7 @@ impl MultiPartUpload {
             }
             self.queue.set(Some(queue.into_boxed_slice()));
         }
-        let (data, allocated_len): (*const [u8], usize) = if needs_clone {
+        let (data, allocated_len): (*const [u8], usize) = if needs_clone == NeedsClone::Yes {
             let owned = Box::<[u8]>::from(chunk);
             let len = owned.len();
             (bun_core::heap::into_raw(owned).cast_const(), len)
@@ -848,7 +851,7 @@ impl MultiPartUpload {
         &self,
         chunk: &[u8],
         allocated_size: usize,
-        needs_clone: bool,
+        needs_clone: NeedsClone,
     ) -> bun_jsc::JsResult<bool> {
         let Some(part) = self.get_create_part(chunk, allocated_size, needs_clone) else {
             return Ok(false);
@@ -919,7 +922,7 @@ impl MultiPartUpload {
                 let slice_len = owned.slice().len();
 
                 // we dont care about the result because we are sending everything
-                if self.enqueue_part(owned.slice(), allocated_size, false)? {
+                if self.enqueue_part(owned.slice(), allocated_size, NeedsClone::No)? {
                     scoped_log!(
                         S3MultiPartUpload,
                         "processMultiPart {} {} full buffer enqueued",
@@ -948,7 +951,7 @@ impl MultiPartUpload {
             let slice_ptr = std::ptr::from_ref::<[u8]>(&self.buffered.get().slice()[..len]);
             // allocated size is the slice len because we dupe the buffer
             // SAFETY: slice_ptr points at self.buffered's storage which is not mutated until after enqueue_part dupes it
-            if self.enqueue_part(unsafe { &*slice_ptr }, len, true)? {
+            if self.enqueue_part(unsafe { &*slice_ptr }, len, NeedsClone::Yes)? {
                 scoped_log!(
                     S3MultiPartUpload,
                     "processMultiPart {} {} slice enqueued",
@@ -1061,8 +1064,9 @@ impl MultiPartUpload {
         &self,
         encoding: WriteEncoding,
         chunk: &[u8],
-        is_last: bool,
+        is_last: IsLast,
     ) -> Result<UploadBackpressure, AllocError> {
+        let is_last = is_last == IsLast::Yes;
         if self.ended.get() {
             return Ok(UploadBackpressure::Done); // no backpressure since we are done
         }
@@ -1117,7 +1121,7 @@ impl MultiPartUpload {
     pub(crate) fn write_latin1(
         &self,
         chunk: &[u8],
-        is_last: bool,
+        is_last: IsLast,
     ) -> Result<UploadBackpressure, AllocError> {
         self.write(WriteEncoding::Latin1, chunk, is_last)
     }
@@ -1125,7 +1129,7 @@ impl MultiPartUpload {
     pub(crate) fn write_utf16(
         &self,
         chunk: &[u8],
-        is_last: bool,
+        is_last: IsLast,
     ) -> Result<UploadBackpressure, AllocError> {
         self.write(WriteEncoding::Utf16, chunk, is_last)
     }
@@ -1133,7 +1137,7 @@ impl MultiPartUpload {
     pub(crate) fn write_bytes(
         &self,
         chunk: &[u8],
-        is_last: bool,
+        is_last: IsLast,
     ) -> Result<UploadBackpressure, AllocError> {
         self.write(WriteEncoding::Bytes, chunk, is_last)
     }

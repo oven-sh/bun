@@ -29,7 +29,7 @@ use crate::webcore::blob::{Any as AnyBlob, Blob, SizeType as BlobSizeType, Store
 use crate::webcore::body::{self, Body, Value as BodyValue, ValueError as BodyValueError};
 use crate::webcore::fetch::fetch_request_body_sink::{FetchRequestBodySink, RequestBodyChunk};
 use crate::webcore::readable_stream::{ReadableStream, Strong as ReadableStreamStrong};
-use crate::webcore::response::HeadersRef;
+use crate::webcore::response::{HeadersRef, Redirected};
 use crate::webcore::sink::JSSink;
 use crate::webcore::streams::{SourceHandle, StreamError, StreamResult, Writable};
 use crate::webcore::{AbortSignal, DrainResult, FetchHeaders, InternalBlob, Response, SinkHandle};
@@ -291,6 +291,8 @@ impl HTTPRequestBody {
     }
 }
 
+bun_core::bool_enum!(LastChunk);
+
 impl FetchTasklet {
     const HOLDS_TICKET: &str = "fetch on the HTTP thread holds a ticket";
 
@@ -344,11 +346,11 @@ impl FetchTasklet {
     /// `on_data` call per the `StreamResult::Temporary*` contract — `on_data`
     /// copies/consumes before returning and never retains the slice.
     #[inline]
-    fn temporary_chunk(chunk: &[u8], done: bool) -> StreamResult {
+    fn temporary_chunk(chunk: &[u8], done: LastChunk) -> StreamResult {
         // See INVARIANT above. `RawSlice` is non-owning; backing buffer
         // outlives the synchronous `on_data` call.
         let v = bun_ptr::RawSlice::new(chunk);
-        if done {
+        if done == LastChunk::Yes {
             StreamResult::TemporaryAndDone(v)
         } else {
             StreamResult::Temporary(v)
@@ -820,7 +822,7 @@ impl FetchTasklet {
                 // body can be marked as used but we still need to pipe the data
                 if self.result.has_more {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, false));
+                    bytes.on_data(Self::temporary_chunk(chunk, LastChunk::No));
                     self.drop_backpressure_if_unobserved(&readable, &bytes);
                 } else {
                     self.clear_stream_handlers();
@@ -828,7 +830,7 @@ impl FetchTasklet {
                     buffer_reset.set(false);
 
                     let chunk = self.scheduled_response_buffer.list.as_slice();
-                    bytes.on_data(Self::temporary_chunk(chunk, true));
+                    bytes.on_data(Self::temporary_chunk(chunk, LastChunk::Yes));
                     drop(prev);
                 }
                 return Ok(());
@@ -848,12 +850,12 @@ impl FetchTasklet {
                     let chunk = self.scheduled_response_buffer.list.as_slice();
 
                     if self.result.has_more {
-                        bytes.on_data(Self::temporary_chunk(chunk, false));
+                        bytes.on_data(Self::temporary_chunk(chunk, LastChunk::No));
                         self.drop_backpressure_if_unobserved(&readable, &bytes);
                     } else {
                         readable.value.ensure_still_alive();
                         response.detach_readable_stream(&global_this);
-                        bytes.on_data(Self::temporary_chunk(chunk, true));
+                        bytes.on_data(Self::temporary_chunk(chunk, LastChunk::Yes));
                     }
 
                     return Ok(());
@@ -1815,7 +1817,7 @@ impl FetchTasklet {
             None => BunString::clone_utf8(http_response.status),
         };
         let url = BunString::clone_utf8(metadata.url.slice());
-        let redirected = self.result.redirected;
+        let redirected = Redirected::from_bool(self.result.redirected);
         Response::init(
             crate::webcore::response::Init {
                 // SAFETY: create_from_pico_headers returns a fresh refcount=1 FetchHeaders*.

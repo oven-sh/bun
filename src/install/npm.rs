@@ -1584,36 +1584,26 @@ pub struct FindResult<'a> {
     pub(crate) package: &'a PackageVersion,
 }
 
-/// `minimumReleaseAgeExcludes` entries (pnpm grammar): `name` exempts a package, `name@1.2.3 || 1.2.4` only those versions.
-pub struct MinimumReleaseAgeExcludes {
-    packages: Box<[&'static [u8]]>,
-    /// Matched with `Version::eql`, which compares tags by hash, so no string buffer is kept.
-    versions: Box<[(&'static [u8], Semver::Version)]>,
-}
+/// `minimumReleaseAgeExcludes` entries (pnpm grammar): `name` exempts a package, `name@1.2.3 || 1.2.4` only those
+/// versions (matched with `Version::eql`, which compares tags by hash, so no string buffer is kept).
+pub struct MinimumReleaseAgeExcludes(Vec<(&'static [u8], Option<Semver::Version>)>);
 
 impl MinimumReleaseAgeExcludes {
     /// A malformed entry (`foo@`, `foo@^1`) is dropped with a warning, never widened to the bare name.
-    pub(crate) fn parse(
-        entries: &[&'static [u8]],
-        log: &mut bun_ast::Log,
-    ) -> MinimumReleaseAgeExcludes {
-        let mut packages: Vec<&'static [u8]> = Vec::new();
-        let mut versions: Vec<(&'static [u8], Semver::Version)> = Vec::new();
-
+    pub(crate) fn parse(entries: &[&'static [u8]], log: &mut bun_ast::Log) -> Self {
+        let mut list = Vec::new();
         for &entry in entries {
             // Skip a scope's leading `@` so `@types/node@20.0.0` splits after the name.
             let name_start = usize::from(strings::starts_with_char(entry, b'@'));
             let Some(at) = strings::index_of_char_usize(&entry[name_start..], b'@') else {
-                packages.push(entry);
+                list.push((entry, None));
                 continue;
             };
-            let name = &entry[..name_start + at];
-            let specs = &entry[name_start + at + 1..];
-
-            let first_of_entry = versions.len();
+            let (name, specs) = (&entry[..name_start + at], &entry[name_start + at + 1..]);
+            let first_of_entry = list.len();
             for spec in strings::split(specs, b"||") {
                 let Some(version) = parse_exact_version(spec) else {
-                    versions.truncate(first_of_entry);
+                    list.truncate(first_of_entry);
                     log.add_warning_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -1625,38 +1615,32 @@ impl MinimumReleaseAgeExcludes {
                     );
                     break;
                 };
-                versions.push((name, version));
+                list.push((name, Some(version)));
             }
         }
-
-        MinimumReleaseAgeExcludes {
-            packages: packages.into_boxed_slice(),
-            versions: versions.into_boxed_slice(),
-        }
+        MinimumReleaseAgeExcludes(list)
     }
 
-    /// `self` (if any) plus bare-name exemptions for `names`; `bun audit fix` exempts the packages it must move past the age gate.
+    /// `base` plus bare-name exemptions; `bun audit fix` exempts the packages it must move past the age gate.
     pub(crate) fn with_packages(
-        base: Option<&MinimumReleaseAgeExcludes>,
+        base: Option<&Self>,
         names: impl IntoIterator<Item = &'static [u8]>,
-    ) -> MinimumReleaseAgeExcludes {
-        let mut packages: Vec<&'static [u8]> =
-            base.map_or_else(Vec::new, |base| base.packages.to_vec());
-        packages.extend(names);
-        MinimumReleaseAgeExcludes {
-            packages: packages.into_boxed_slice(),
-            versions: base.map_or_else(Box::default, |base| base.versions.clone()),
-        }
+    ) -> Self {
+        let mut list = base.map_or_else(Vec::new, |base| base.0.clone());
+        list.extend(names.into_iter().map(|name| (name, None)));
+        MinimumReleaseAgeExcludes(list)
     }
 
     fn excludes_package(&self, name: &[u8]) -> bool {
-        self.packages.contains(&name)
+        self.0
+            .iter()
+            .any(|&(package, v)| package == name && v.is_none())
     }
 
     fn excludes_version(&self, name: &[u8], version: Semver::Version) -> bool {
-        self.versions
+        self.0
             .iter()
-            .any(|&(package, excluded)| package == name && excluded.eql(version))
+            .any(|&(p, v)| p == name && v.is_some_and(|v| v.eql(version)))
     }
 }
 

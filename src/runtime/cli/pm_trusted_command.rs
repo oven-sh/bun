@@ -444,12 +444,8 @@ impl TrustCommand {
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
         let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
-        let root_file = match bun_sys::File::openat(
-            bun_sys::Fd::cwd(),
-            root_package_json_path.as_bytes(),
-            bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
-            0,
-        ) {
+        let (cwd, flags) = (bun_sys::Fd::cwd(), bun_sys::O::RDWR | bun_sys::O::CLOEXEC);
+        let root_file = match bun_sys::File::openat(cwd, root_package_json_path, flags, 0) {
             Ok(file) => file,
             Err(err) => {
                 Output::err(

@@ -3062,8 +3062,9 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(stream);
     if (!readableStream) [[unlikely]]
         return JSC::JSValue::encode(JSC::Exception::create(vm, createTypeError(this, "Expected a ReadableStream"_s)));
-    // The generated `${Sink}__assignToStream` caller expects any failure returned as the
-    // encoded Exception cell, never left pending on the VM.
+    // The native caller (JSSink::assign_to_stream, via the generated
+    // JSSinkController__assignToStream) expects any failure returned as the encoded
+    // Exception cell, never left pending on the VM.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
     if (auto* exception = scope.exception()) [[unlikely]] {

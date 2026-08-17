@@ -66,12 +66,10 @@ macro_rules! decl_js_sink_externs {
                 ) -> ::bun_jsc::JSValue;
                 #[link_name = concat!($abi, "__setDestroyCallback")]
                 pub(crate) safe fn set_destroy_callback(v: ::bun_jsc::JSValue, cb: usize);
-                #[link_name = concat!($abi, "__assignToStream")]
-                pub(crate) safe fn assign_to_stream(
+                #[link_name = concat!($abi, "__createController")]
+                pub(crate) safe fn create_controller(
                     g: &::bun_jsc::JSGlobalObject,
-                    s: ::bun_jsc::JSValue,
                     p: *mut ::core::ffi::c_void,
-                    jp: *mut *mut ::core::ffi::c_void,
                 ) -> ::bun_jsc::JSValue;
             }
         }
@@ -100,13 +98,11 @@ macro_rules! impl_js_sink_abi {
                 fn set_destroy_callback_extern(value: ::bun_jsc::JSValue, callback: usize) {
                     __abi::set_destroy_callback(value, callback)
                 }
-                fn assign_to_stream_extern(
+                fn create_controller_extern(
                     global: &::bun_jsc::JSGlobalObject,
-                    stream: ::bun_jsc::JSValue,
                     ptr: *mut ::core::ffi::c_void,
-                    jsvalue_ptr: *mut *mut ::core::ffi::c_void,
                 ) -> ::bun_jsc::JSValue {
-                    __abi::assign_to_stream(global, stream, ptr, jsvalue_ptr)
+                    __abi::create_controller(global, ptr)
                 }
             }
         };
@@ -180,14 +176,12 @@ pub trait JsSinkAbi {
     ) -> crate::webcore::jsc::JSValue;
     /// `${abi_name}__setDestroyCallback`.
     fn set_destroy_callback_extern(value: crate::webcore::jsc::JSValue, callback: usize);
-    /// `${abi_name}__assignToStream`. Safe wrapper: takes `&JSGlobalObject` and
-    /// performs the `as_ptr()` projection internally so the FFI call is the
-    /// impl body's sole guarded operation.
-    fn assign_to_stream_extern(
+    /// `${abi_name}__createController`: a `JSReadable*SinkController` cell
+    /// holding `ptr` as its `m_sinkPtr`, for [`JSSink::assign_to_stream`] to
+    /// hand to the stream pump.
+    fn create_controller_extern(
         global: &crate::webcore::jsc::JSGlobalObject,
-        stream: crate::webcore::jsc::JSValue,
         ptr: *mut c_void,
-        jsvalue_ptr: *mut *mut c_void,
     ) -> crate::webcore::jsc::JSValue;
 }
 
@@ -227,19 +221,14 @@ impl<T: JsSinkAbi> JSSink<T> {
         }
     }
 
-    /// Pump `stream` into the sink through a `JSReadable*SinkController`
-    /// (`${abi}__assignToStream`), leaving that controller in the sink's
-    /// `source()` so the sink can `ready()`/`close()`/[`detach`](Self::detach)
-    /// it.
+    /// Pump `stream` into the sink through a new `JSReadable*SinkController`,
+    /// which the sink keeps as its `source()` to `ready()`/`close()`/
+    /// [`detach`](Self::detach) the pump.
     ///
-    /// The extern stores the controller through its out-pointer before it
-    /// starts the pump, and the pump may drain the whole stream, user code
-    /// included, before returning. A sink that fails during that drain
-    /// detaches whatever its `source()` holds at the time, so the out-pointer
-    /// is aimed straight at the `JSController` payload instead of at a local
-    /// that would only be copied into the slot afterwards. Until the store
-    /// lands the payload is `JSValue::ZERO`, which `SourceHandle::close`/
-    /// `ready` and [`Self::detach`] treat as "no controller yet".
+    /// The controller is installed before the pump starts: the pump writes
+    /// everything the stream has already queued (running user code on the
+    /// way) before `JSSinkController__assignToStream` returns, and a sink that
+    /// fails during that drain detaches whatever its `source()` holds.
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
@@ -248,37 +237,29 @@ impl<T: JsSinkAbi> JSSink<T> {
     where
         T: JsSinkType,
     {
-        use crate::webcore::jsc::JSValue;
         // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
-        // call; the pointer is only stashed in C++ `m_sinkPtr`, and the slot
-        // handed to the extern below lives inside it (or in this frame).
+        // call; the pointer is only stashed in C++ `m_sinkPtr`.
         let ptr = unsafe { ptr.as_mut() };
-        let mut unsourced = streams::SourceHandle::None;
-        // `JSValue` is `repr(transparent)` over the encoded bits the extern
-        // stores.
-        let controller_slot: *mut JSValue = {
-            let src = ptr.source().unwrap_or(&mut unsourced);
-            *src = streams::SourceHandle::JSController(JSValue::ZERO);
-            match src {
-                streams::SourceHandle::JSController(slot) => slot,
-                _ => unreachable!(),
-            }
-        };
-        let result = T::assign_to_stream_extern(
-            global,
-            stream,
-            std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
-            controller_slot.cast::<*mut c_void>(),
-        );
-        // The controller was created with m_sinkPtr=ptr before the pump
-        // started. If the pump setup throws (e.g. a direct stream's `pull`
-        // getter), nothing ever calls end()/close() on it, so its destructor
+        let controller =
+            T::create_controller_extern(global, std::ptr::from_mut::<T>(ptr).cast::<c_void>());
+        if let Some(src) = ptr.source() {
+            *src = streams::SourceHandle::JSController(controller);
+        }
+        let result = streams::controller_abi::assign_to_stream(global, stream, controller);
+        // If the pump setup throws (e.g. a direct stream's `pull` getter),
+        // nothing ever calls end()/close() on the controller, so its destructor
         // would run `${name}__finalize(m_sinkPtr)` after the caller has freed
-        // the sink. Detach it now while `ptr` is still live; a controller that
-        // detached inside the call already cleared the slot
-        // (`js_controller_detached`), and this is then a no-op.
+        // the sink. Detach it now while `ptr` is still live; the controller's
+        // later GC then sees m_sinkPtr==null and skips the native finalize.
+        // (detachPtr is a no-op for a controller that already detached inside
+        // the call.)
         if result.to_error().is_some() {
-            Self::detach(ptr.source().unwrap_or(&mut unsourced), global);
+            if let Some(src) = ptr.source() {
+                src.clear();
+            }
+            let _ = ::bun_jsc::call_check_slow(global, || {
+                streams::controller_abi::detach_ptr(controller)
+            });
         }
         result
     }
@@ -288,10 +269,6 @@ impl<T: JsSinkAbi> JSSink<T> {
         match *source {
             SourceHandle::JSController(value) => {
                 source.clear();
-                // `assign_to_stream` has not received the controller yet.
-                if value == JSValue::ZERO {
-                    return;
-                }
                 value.unprotect();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
                 let _ = ::bun_jsc::call_check_slow(_global, || {
@@ -641,11 +618,11 @@ impl<T: JsSinkType> JSSink<T> {
     /// controller stops being attached to this sink.
     ///
     /// `SourceHandle::JSController` stores the controller's encoded JSValue
-    /// bits (written by `__assignToStream`) without rooting the cell, so the
-    /// controller can be collected while the native sink still has a flush in
-    /// flight. Once the controller detaches or dies the source must never
-    /// fire again: `onClose`/`onReady` would decode a dead cell. Clear it,
-    /// but only when it still holds this controller's bits — a sink
+    /// bits (installed by [`JSSink::assign_to_stream`]) without rooting the
+    /// cell, so the controller can be collected while the native sink still
+    /// has a flush in flight. Once the controller detaches or dies the source
+    /// must never fire again: `onClose`/`onReady` would decode a dead cell.
+    /// Clear it, but only when it still holds this controller's bits — a sink
     /// re-assigned to a new stream holds the newer controller's bits.
     pub(crate) fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
         if let Some(src) = this.source() {

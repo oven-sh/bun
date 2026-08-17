@@ -2577,3 +2577,175 @@ it.each<{
     expect(instancesOf(expected!, "z")).toEqual(z);
   },
 );
+
+// The bundled-shadow-* fixtures are described in
+// registry/packages/create-bundled-shadow-packages.ts. In short: host depends
+// on shared@1.0.0, which is hoisted to the root, and bundles inner, which
+// depends on shared@2.0.0. A bundle's dependencies hoist no further than the
+// bundling package's node_modules, but `host/shared` in bun.lock is also what
+// host's own `shared` edge resolves to when the lockfile is loaded again, and
+// likewise for anything nested under host that resolves shared from the root.
+// https://github.com/oven-sh/bun/issues/29263
+it("a bundled dependency's dependency does not take a slot the bundling package resolves through", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+  });
+  const run = makeInstallRunner(packageDir);
+  const hostNodeModules = join(packageDir, "node_modules", "bundled-shadow-host", "node_modules");
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "bundled-shadow-host": "1.0.0", "bundled-shadow-shared": "1.0.0" },
+    }),
+  );
+  await run(["install"]);
+  const fresh = await file(join(packageDir, "bun.lock")).text();
+  expect(fresh).toContain('"bundled-shadow-shared": ["bundled-shadow-shared@1.0.0"');
+  expect(fresh).toContain(
+    '"bundled-shadow-host/bundled-shadow-inner/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
+  );
+  expect(fresh).not.toContain('"bundled-shadow-host/bundled-shadow-shared"');
+
+  // inner's shared@2.0.0 ships inside host's tarball; host itself uses the root copy.
+  const layout = async () => ({
+    root: (await file(join(packageDir, "node_modules", "bundled-shadow-shared", "package.json")).json()).version,
+    host: await readdirSorted(hostNodeModules),
+    inner: (
+      await file(
+        join(hostNodeModules, "bundled-shadow-inner", "node_modules", "bundled-shadow-shared", "package.json"),
+      ).json()
+    ).version,
+  });
+  const expectedLayout = { root: "1.0.0", host: ["bundled-shadow-inner"], inner: "2.0.0" };
+  expect(await layout()).toEqual(expectedLayout);
+
+  // Every install that starts from the lockfile has to give host the same
+  // shared as the install that wrote it.
+  await run(["install"]);
+  expect(await layout()).toEqual(expectedLayout);
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+  expect(await layout()).toEqual(expectedLayout);
+
+  await run(["install", "--lockfile-only"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(fresh);
+});
+
+it("the isolated linker links the bundling package against the same dependency on a reinstall", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "isolated" },
+  });
+  const run = makeInstallRunner(packageDir);
+  const hostStoreEntry = join(packageDir, "node_modules", ".bun", "bundled-shadow-host@1.0.0", "node_modules");
+  const sharedVersion = async (...dir: string[]) =>
+    (await file(join(...dir, "bundled-shadow-shared", "package.json")).json()).version;
+  // `host` is what gets linked next to host in its store entry; `inner` is the
+  // copy that came out of host's tarball.
+  const layout = async () => ({
+    host: await sharedVersion(hostStoreEntry),
+    inner: await sharedVersion(
+      hostStoreEntry,
+      "bundled-shadow-host",
+      "node_modules",
+      "bundled-shadow-inner",
+      "node_modules",
+    ),
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: { "bundled-shadow-host": "1.0.0", "bundled-shadow-shared": "1.0.0" },
+    }),
+  );
+  await run(["install"]);
+  expect(await layout()).toEqual({ host: "1.0.0", inner: "2.0.0" });
+
+  // The store is rebuilt from the resolutions bun.lock loads, which come from
+  // the saved paths.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+  expect(await layout()).toEqual({ host: "1.0.0", inner: "2.0.0" });
+});
+
+it("a bundled dependency's dependency does not take a slot a dependency nested under the bundling package resolves through", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+  });
+  const run = makeInstallRunner(packageDir);
+
+  // deep-host itself does not depend on shared. consumer@1.0.0 nests under it
+  // (consumer@2.0.0 holds the root), mid@1.0.0 nests under consumer (mid@2.0.0
+  // holds the root), and mid's shared@1.0.0 is hoisted to the root, up through
+  // deep-host's node_modules. deep-host bundles wrapper, whose inner depends on
+  // shared@2.0.0, and that is hoisted after mid's shared is already at the root.
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "bundled-shadow-deep-host": "1.0.0",
+        "bundled-shadow-consumer": "2.0.0",
+        "bundled-shadow-mid": "2.0.0",
+      },
+    }),
+  );
+  await run(["install"]);
+  const fresh = await file(join(packageDir, "bun.lock")).text();
+  expect(fresh).toContain('"bundled-shadow-shared": ["bundled-shadow-shared@1.0.0"');
+  expect(fresh).toContain(
+    '"bundled-shadow-deep-host/bundled-shadow-consumer/bundled-shadow-mid": ["bundled-shadow-mid@1.0.0"',
+  );
+  expect(fresh).toContain(
+    '"bundled-shadow-deep-host/bundled-shadow-inner/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
+  );
+  expect(fresh).not.toContain('"bundled-shadow-deep-host/bundled-shadow-shared"');
+
+  // mid@1.0.0 has to keep finding shared@1.0.0 at the root on a reinstall.
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+  expect({
+    root: (await file(join(packageDir, "node_modules", "bundled-shadow-shared", "package.json")).json()).version,
+    deepHost: await readdirSorted(join(packageDir, "node_modules", "bundled-shadow-deep-host", "node_modules")),
+  }).toEqual({ root: "1.0.0", deepHost: ["bundled-shadow-consumer", "bundled-shadow-wrapper"] });
+
+  await run(["install", "--lockfile-only"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(fresh);
+});
+
+it("a bundled dependency's optional peer bound late does not take a slot the bundling package resolves through", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({
+    bunfigOpts: { saveTextLockfile: true, linker: "hoisted" },
+  });
+  const run = makeInstallRunner(packageDir);
+
+  // peer-inner (bundled) has an optional peer on shared and depends on
+  // peer-leaf, which depends on shared@2.0.0. The peer is still unbound when
+  // peer-inner is hoisted and gets bound to peer-leaf's shared@2.0.0 inside the
+  // bundle; peer-host's own shared@1.0.0 at the root must not be shadowed by
+  // either of them.
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "bundled-shadow-peer-host": "1.0.0" } }));
+  await run(["install"]);
+  const fresh = await file(join(packageDir, "bun.lock")).text();
+  expect(fresh).toContain('"bundled-shadow-shared": ["bundled-shadow-shared@1.0.0"');
+  expect(fresh).toContain(
+    '"bundled-shadow-peer-host/bundled-shadow-peer-inner/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
+  );
+  expect(fresh).toContain(
+    '"bundled-shadow-peer-host/bundled-shadow-peer-leaf/bundled-shadow-shared": ["bundled-shadow-shared@2.0.0"',
+  );
+  expect(fresh).not.toContain('"bundled-shadow-peer-host/bundled-shadow-shared"');
+
+  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+  await run(["install", "--frozen-lockfile"]);
+  expect(await readdirSorted(join(packageDir, "node_modules", "bundled-shadow-peer-host", "node_modules"))).toEqual([
+    "bundled-shadow-peer-inner",
+  ]);
+
+  await run(["install", "--lockfile-only"]);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(fresh);
+});

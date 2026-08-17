@@ -1073,39 +1073,39 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             count++;
         }
     }
-    // Named parameters, e.g.
+    // Named and/or positional keys, possibly with accessors, e.g.
     //
     // { foo: "bar", baz: "qux" }
     //
     else {
+        // Only the indexed and slow-path reads can run a getter that mutates `target` or finalizes `stmt`; refresh after those.
+        Structure* structure = target->structure();
+        bool canUseFastPath = target->canUseFastGetOwnProperty(*structure);
         for (size_t i = 0; i < size; i++) {
             const auto& property = bindingNames[i];
             JSValue value;
-            bool hasProperty = false;
 
-            // Getters for earlier parameters can mutate the object, so the Structure and fast-path check are re-done per parameter.
-            Structure* structure = target->structure();
-            if (property.isEmpty()) {
-                value = target->getDirectIndex(globalObject, i);
-                hasProperty = !!value;
-            } else if (target->canUseFastGetOwnProperty(*structure)) [[likely]] {
+            if (!property.isEmpty() && canUseFastPath) [[likely]] {
                 value = target->fastGetOwnProperty(vm, *structure, property);
-                hasProperty = !!value;
             } else {
-                PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
-                hasProperty = target->methodTable()->getOwnPropertySlot(target, globalObject, property, slot);
-                if (hasProperty && !scope.exception()) {
-                    if (!slot.isTaintedByOpaqueObject()) [[likely]]
-                        value = slot.getValue(globalObject, property);
-                    else
-                        value = target->get(globalObject, property);
+                if (property.isEmpty()) {
+                    value = target->getDirectIndex(globalObject, i);
+                } else {
+                    PropertySlot slot(target, PropertySlot::InternalMethodType::GetOwnProperty);
+                    if (target->methodTable()->getOwnPropertySlot(target, globalObject, property, slot) && !scope.exception()) {
+                        if (!slot.isTaintedByOpaqueObject()) [[likely]]
+                            value = slot.getValue(globalObject, property);
+                        else
+                            value = target->get(globalObject, property);
+                    }
                 }
+                if (!statementStillAlive())
+                    return {};
+                structure = target->structure();
+                canUseFastPath = target->canUseFastGetOwnProperty(*structure);
             }
 
-            if (!statementStillAlive())
-                return {};
-
-            if (!hasProperty && !scope.exception()) {
+            if (!value && !scope.exception()) {
                 if (throwOnMissing) {
                     throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, property.isEmpty() ? String::number(i) : property.string(), "\""_s)));
                 } else {

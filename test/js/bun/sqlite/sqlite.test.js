@@ -230,6 +230,21 @@ describe("bind parameters object mutated by a getter during bind", () => {
     expect(q.all(t)).toEqual([{ a: "i", b: "two", c: "three-new" }]);
   });
 
+  it("strict mode: positional + named, index getter deletes a later parameter", () => {
+    const db = new Database(":memory:", { strict: true });
+    const q = db.query("select ? as a, $c as c");
+    const u = { c: "three" };
+    Object.defineProperty(u, 0, {
+      enumerable: true,
+      get() {
+        delete u.c;
+        u.secret = "SECRET-NOT-A-PARAM";
+        return 0;
+      },
+    });
+    expect(() => q.all(u)).toThrow('Missing parameter "c"');
+  });
+
   it("default mode: treats a parameter deleted by an index getter as missing", () => {
     const db = new Database(":memory:");
     const q = db.query("select ? as a, $c as c");

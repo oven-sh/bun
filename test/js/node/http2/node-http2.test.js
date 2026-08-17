@@ -1,3 +1,4 @@
+import { jscDescribe } from "bun:jsc";
 import { bunEnv, bunExe, isASAN, isCI, isDebug, nodeExe } from "harness";
 import { createTest } from "node-harness";
 import { AsyncLocalStorage } from "node:async_hooks";
@@ -4156,6 +4157,64 @@ it("http2 materializes pseudo, known, unknown and all-digit header names the sam
         ...["123", "first", "123", "second"],
       ],
       sensitive: [],
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+// The name strings in rawHeaders wrap the atoms the headers object is keyed by: the per-VM
+// HTTPHeaderIdentifiers entry for pseudo-headers and known names, the atom the block was keyed
+// with for anything else. jscDescribe reports such strings as atomic; a name string built per block
+// instead (a JSString over WebCore's static name string, or a copy of the wire bytes) is not.
+// Checked before the names are used as keys anywhere, since that can atomize a string in place.
+it("http2 hands out the cached name strings for pseudo-headers and known header names", async () => {
+  const atomicByName = rawHeaders => {
+    const entries = [];
+    for (let i = 0; i < rawHeaders.length; i += 2) {
+      entries.push([rawHeaders[i], jscDescribe(rawHeaders[i]).includes("(atomic)")]);
+    }
+    return Object.fromEntries(entries);
+  };
+
+  let request;
+  const server = http2.createServer();
+  server.on("stream", (stream, _headers, _flags, rawHeaders) => {
+    request = atomicByName(rawHeaders);
+    stream.respond([
+      ...[":status", "200"],
+      ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+      ...["content-type", "text/plain"],
+      ...["x-unknown", "u"],
+    ]);
+    stream.end();
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const response = await new Promise((resolve, reject) => {
+      const req = client.request({ ":method": "POST", ":path": "/", "content-type": "text/plain", "x-unknown": "u" });
+      req.on("error", reject);
+      req.on("response", (_headers, _flags, rawHeaders) => resolve(atomicByName(rawHeaders)));
+      req.end();
+    });
+
+    expect({ request, response }).toEqual({
+      request: {
+        ":method": true,
+        ":path": true,
+        ":scheme": true,
+        ":authority": true,
+        "content-type": true,
+        "x-unknown": true,
+      },
+      response: {
+        ":status": true,
+        "date": true,
+        "content-type": true,
+        "x-unknown": true,
+      },
     });
   } finally {
     client.close();

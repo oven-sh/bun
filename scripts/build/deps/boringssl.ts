@@ -20,7 +20,6 @@
  *           console.log("nasm\n",f([...j.bcm.nasm,...j.crypto.nasm]))'
  */
 
-import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depSourceDir } from "../source.ts";
 
@@ -76,15 +75,10 @@ export const boringssl: Dependency = {
             ...(cfg.linux || cfg.freebsd ? ["-Wa,--noexecstack"] : []),
           ],
       // nasm needs -I with a trailing slash and CodeView debug info to
-      // match cmake's `-gcv8`. Absolute path quoted — a checkout root
-      // with a space (C:\Users\John Doe\bun) would otherwise split argv.
-      // Quote style follows the HOST shell (cmd natively, sh when
-      // cross-compiling win-x64 from linux).
-      nasmflags: [
-        "-fwin64",
-        "-gcv8",
-        `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
-      ],
+      // match cmake's `-gcv8`. Bare argv like cflags — nasm() in compile.ts
+      // quotes it for the host, so a checkout root with a space
+      // (C:\Users\John Doe\bun) survives intact.
+      nasmflags: ["-fwin64", "-gcv8", `-I${depSourceDir(cfg, "boringssl")}/gen/`],
     };
     return spec;
   },

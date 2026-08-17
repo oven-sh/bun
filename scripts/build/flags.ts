@@ -100,7 +100,7 @@ export const globalFlags: Flag[] = [
     // splat laid out like a VS install (VC/Tools/MSVC + Windows Kits/10),
     // covering the MSVC CRT/STL and Windows SDK headers + import libs.
     // The lld-link equivalent (/winsysroot:) is added in linkerFlags below.
-    flag: c => ["/winsysroot", quote(c.winsysroot!, false)],
+    flag: c => ["/winsysroot", c.winsysroot!],
     when: c => c.windows && c.winsysroot !== undefined,
     desc: "Windows cross-compile: MSVC CRT + Windows SDK root (xwin splat)",
   },
@@ -736,9 +736,12 @@ export const defines: Flag[] = [
     desc: "Core bun defines (always on)",
   },
   {
-    // Shell-escaped quotes so clang receives literal quotes in the define
-    // (the preprocessor needs the string to be "26.3.0", not bare 26.3.0).
-    flag: c => `REPORTED_NODEJS_VERSION=\\"${c.nodejsVersion}\\"`,
+    // The quotes are part of the define itself (the macro must expand to the
+    // string literal "26.3.0", not the bare tokens 26.3.0). Like every other
+    // entry here this is the argument clang receives; compile.ts quotes it
+    // for the shell when it writes build.ninja, and compile_commands.json
+    // gets it verbatim.
+    flag: c => `REPORTED_NODEJS_VERSION="${c.nodejsVersion}"`,
     desc: "Node.js version string reported by process.version",
   },
   {
@@ -746,7 +749,7 @@ export const defines: Flag[] = [
     desc: "Node.js ABI version (process.versions.modules)",
   },
   {
-    flag: c => `REPORTED_NODEJS_V8_VERSION=\\"${c.nodejsV8Version}\\"`,
+    flag: c => `REPORTED_NODEJS_V8_VERSION="${c.nodejsV8Version}"`,
     desc: "V8 version string (process.versions.v8)",
   },
   {
@@ -773,7 +776,7 @@ export const defines: Flag[] = [
   },
   {
     // slash(): path becomes a C string literal — `\U` would be a unicode escape.
-    flag: c => `BUN_DYNAMIC_JS_LOAD_PATH=\\"${slash(join(c.buildDir, "js"))}\\"`,
+    flag: c => `BUN_DYNAMIC_JS_LOAD_PATH="${slash(join(c.buildDir, "js"))}"`,
     when: c => c.debug && !c.ci,
     desc: "Hot-reload built-in JS from build dir (dev convenience)",
   },
@@ -1631,15 +1634,25 @@ export const fileOverrides: FileOverride[] = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 export interface ComputedFlags {
-  /** C compiler flags (clang -c for .c files). */
+  /**
+   * C compiler flags (clang -c for .c files). cflags/cxxflags/defines are
+   * bare argv entries — compile.ts quotes them for build.ninja and writes
+   * them as-is to compile_commands.json, so a table entry must never be
+   * pre-escaped for a shell.
+   */
   cflags: string[];
-  /** C++ compiler flags (clang++ -c for .cpp files). */
+  /** C++ compiler flags (clang++ -c for .cpp files). Same contract as cflags. */
   cxxflags: string[];
-  /** Preprocessor defines, without -D prefix. */
+  /** Preprocessor defines, without -D prefix. Same contract as cflags. */
   defines: string[];
-  /** Linker flags for the final bun link. */
+  /**
+   * Linker flags for the final bun link. Unlike the compile flags these are
+   * joined into the link command verbatim (link() in compile.ts), so an
+   * entry that can contain shell metacharacters quotes itself — see the
+   * /libpath: and /winsysroot: entries in linkerFlags.
+   */
   ldflags: string[];
-  /** Strip flags for post-link. */
+  /** Strip flags for post-link. Joined verbatim like ldflags. */
   stripflags: string[];
 }
 

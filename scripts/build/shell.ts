@@ -1,8 +1,10 @@
 /**
  * Shell argument quoting for ninja rule commands.
  *
- * Ninja executes commands via `/bin/sh -c "<command>"` on unix and
- * `cmd /c "<command>"` on windows (when we wrap it that way in rules).
+ * Ninja executes commands via `/bin/sh -c "<command>"` on unix. On windows it
+ * hands the command line to CreateProcess as-is (no shell), and the tool
+ * being run splits it into argv with the Win32 rules; the few rules we wrap
+ * in `cmd /c "..."` pass the text through to the tool unchanged as well.
  * Arguments with spaces/metacharacters need quoting to survive that layer.
  *
  * ## Why this is its own file
@@ -21,19 +23,21 @@
  *   escaped quote, reopen quote). Handles every metachar including `$`, `|`,
  *   backticks, etc.
  *
- * Windows (`cmd /c`):
- *   Double-quote. Embedded `"` becomes `""`. This is cmd's escape convention,
- *   NOT the C argv convention (`\"`). The distinction matters: if the inner
- *   executable parses argv itself (most .exe do), cmd unwraps one layer of
- *   `""` but passes the rest through, so the inner program sees a literal `"`.
- *   Good enough for paths and values; breaks if you need to nest three layers
- *   of quoting (you shouldn't).
+ * Windows (CreateProcess → the tool's own argv parsing):
+ *   Double-quote, with the documented Win32 argv rules: an embedded `"`
+ *   becomes `\"`, and a run of backslashes is doubled when it sits in front
+ *   of a `"` (ours or an embedded one), since only there is `\` an escape.
+ *   This is what the MS CRT, CommandLineToArgvW, LLVM's tokenizer and ninja's
+ *   own $in/$out escaping all implement. The alternative `""` spelling is
+ *   not interpreted consistently: ccache 4.12, for one, ends the quoted span
+ *   at `""`, so an argument holding both a quote and a space (a define whose
+ *   value is a path) splits in two on its way to clang-cl.
  *
- *   Known cmd footguns we DON'T handle: `%VAR%` expansion, `^` escape,
- *   `&`/`|`/`>` redirection. If an argument contains these, double-quoting
- *   protects SOME but not all. In practice our args are paths + flag values;
- *   we'd hit this only with very weird file names. If it happens: switch the
- *   affected rule to invoke via powershell instead of cmd.
+ *   Known cmd footguns we DON'T handle for the `cmd /c`-wrapped rules:
+ *   `%VAR%` expansion, `^` escape, `&`/`|`/`>` redirection. In practice the
+ *   args those rules see are paths + flag values; we'd hit this only with
+ *   very weird file names. If it happens: switch the affected rule to invoke
+ *   via powershell instead of cmd.
  *
  * ## Safe chars (no quoting needed)
  *
@@ -45,21 +49,43 @@
 /**
  * Quote a single argument for a shell command.
  *
- * @param windows If true, use cmd.exe quoting (`""`). If false, posix (`'`).
- *   Pass `cfg.windows` from the build config.
+ * @param windows If true, use Win32 argv quoting (`"..."`, `\"`). If false,
+ *   posix (`'`). Pass the HOST's os: the host is what runs the command.
  */
 export function quote(arg: string, windows: boolean): string {
   // Fast path: safe characters only, no quoting needed. Keeps the .ninja
   // file legible for the common case (paths without spaces, flag values).
-  // `\` is safe in cmd (not a metachar) — and posix paths never contain
-  // it, so including it doesn't affect the posix branch.
+  // `\` is safe on windows outside quotes (it only escapes a following `"`,
+  // and `"` is not in this set) — and posix paths never contain it, so
+  // including it doesn't affect the posix branch.
   if (/^[A-Za-z0-9_@%+=:,./\\\-]+$/.test(arg)) {
     return arg;
   }
   if (windows) {
-    return `"${arg.replace(/"/g, '""')}"`;
+    return quoteWin32(arg);
   }
   return `'${arg.replace(/'/g, `'\\''`)}'`;
+}
+
+function quoteWin32(arg: string): string {
+  let out = '"';
+  let backslashes = 0;
+  for (const ch of arg) {
+    if (ch === "\\") {
+      backslashes++;
+      continue;
+    }
+    if (ch === '"') {
+      // The backslashes now precede a quote, so each one needs escaping
+      // itself, and then the quote does too.
+      out += "\\".repeat(backslashes * 2 + 1) + '"';
+    } else {
+      out += "\\".repeat(backslashes) + ch;
+    }
+    backslashes = 0;
+  }
+  // A trailing run would otherwise escape our closing quote.
+  return out + "\\".repeat(backslashes * 2) + '"';
 }
 
 /**

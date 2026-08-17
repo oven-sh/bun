@@ -119,7 +119,9 @@ Build flags must come before exec args. `bun bd --asan=off test foo.ts` works; `
 { flag: "-fno-foo", when: c => c.linux && c.release, desc: "why this flag" },
 ```
 
-Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local WebKit via `computeCpuTargetFlags()`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
+Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local WebKit via `computeCpuTargetFlags()`), `globalFlags` (bun + all deps), `bunOnlyFlags` (just bun), `defines`, `linkFlags`, `stripFlags`. Use `lang: "cxx"` to restrict to C++.
+
+Compile-side entries (`globalFlags`, `bunOnlyFlags`, `defines`, and a dep's `cflags`/`defines`) are the bare argument the compiler should receive — write `FOO="bar"`, never `FOO=\"bar\"`. `compile.ts` shell-quotes them when it writes `build.ninja`; `compile_commands.json` gets them as-is, and clangd would otherwise pass the backslashes on to clang.
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 

@@ -104,7 +104,6 @@ impl VM {
         JSC__VM__collectFullAsync(self)
     }
 
-
     pub fn execution_forbidden(&self) -> bool {
         JSC__VM__executionForbidden(self)
     }

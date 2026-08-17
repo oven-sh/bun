@@ -8,9 +8,10 @@ use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
+use bun_install::PackageManager;
 use bun_install::package_manager::LogLevel;
+use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
-use bun_install::{Lockfile, PackageManager};
 use bun_parsers::json as JSON;
 // Note: `WorkspacePackageJSONCache` returns the T2 value-subset
 // `bun_ast::Expr` (see `bun_install::bun_json`), not the full T4
@@ -114,12 +115,6 @@ pub(crate) struct Context<'a> {
     // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) command_ctx: Command::Context<'a>,
 
-    /// `bun pack` does not require a lockfile, but
-    /// it's possible we will need it for finding
-    /// workspace versions. This is the only valid lockfile
-    /// pointer in this file. `manager.lockfile` is incorrect
-    pub(crate) lockfile: Option<&'a Lockfile>,
-
     /// Where the command was run from; relative `--destination`/`--filename` resolve against it.
     pub(crate) original_cwd: &'a [u8],
 
@@ -209,8 +204,6 @@ impl PackCommand {
         manager: &mut PackageManager,
         original_cwd: &[u8],
     ) -> crate::Result<()> {
-        use bun_install::lockfile::{LoadResult, LoadStep};
-
         if manager.options.log_level != LogLevel::Silent
             && manager.options.log_level != LogLevel::Quiet
         {
@@ -221,56 +214,6 @@ impl PackCommand {
             Output::flush();
         }
 
-        let mut lockfile = Lockfile::default();
-        // `log` is non-null after `PackageManager::init()`.
-        let log_ptr: *mut bun_ast::Log = manager.log;
-        let manager_ptr: *mut PackageManager = manager;
-        // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed
-        // disjointly (`log` is a separate allocation from the manager fields
-        // `load_from_cwd` touches).
-        let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
-
-        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            LoadResult::Ok(ok) => Some(&*ok.lockfile),
-            LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic(
-                            "failed to open lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic(
-                            "failed to parse lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic(
-                            "failed to read lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                }
-                if pm_log(manager_ptr).has_errors() {
-                    let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                }
-                Global::crash();
-            }
-            LoadResult::NotFound => None,
-        };
-
         // Note: split-borrowing through
         // `Context` would conflict with `&mut PackageManager`, so capture the
         // package.json path before constructing `Context`.
@@ -279,7 +222,6 @@ impl PackCommand {
         let mut pack_ctx = Context {
             manager,
             command_ctx: ctx,
-            lockfile: lockfile_ref,
             original_cwd,
             bundled_deps: Vec::new(),
             stats: Stats::default(),
@@ -2145,25 +2087,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         break 'post_scripts (postpack_script, None, None, did_run_scripts);
     };
 
-    // If any lifecycle scripts ran, they may have modified package.json,
-    // so we need to re-read it from disk to pick up any changes.
+    // The scripts may have edited any package.json in the workspace, and the cache predates them.
     if ran_scripts {
-        // Invalidate the cached entry by removing it.
-        // On Windows, the cache key is stored with POSIX path separators,
-        // so we need to convert the path before removing.
-        #[cfg(windows)]
-        let mut cache_key_buf = PathBuffer::uninit();
-        #[cfg(windows)]
-        let cache_key: &[u8] = {
-            let len = abs_package_json_path.as_bytes().len();
-            cache_key_buf[..len].copy_from_slice(abs_package_json_path.as_bytes());
-            path::dangerously_convert_path_to_posix_in_place::<u8>(&mut cache_key_buf[..len]);
-            &cache_key_buf[..len]
-        };
-        #[cfg(not(windows))]
-        let cache_key: &[u8] = abs_package_json_path.as_bytes();
-        let _ = pm_workspace_cache(manager_ptr).map.remove(cache_key);
-
+        pm_workspace_cache(manager_ptr).map.clear();
         json = package_json_entry(manager_ptr, abs_package_json_path);
 
         // Re-validate private flag after scripts may have modified it.
@@ -2203,7 +2129,13 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     // Create the edited package.json content after lifecycle scripts have run
-    let edited_package_json = edit_root_package_json(ctx.lockfile, json)?;
+    let workspace_manifests =
+        needs_workspace_manifests(json.root).then(|| WorkspaceManifests::load(ctx.manager));
+    if workspace_manifests.is_some() {
+        // Loading added the other workspaces' package.json files to the cache `json` points into.
+        json = package_json_entry(manager_ptr, abs_package_json_path);
+    }
+    let edited_package_json = edit_root_package_json(workspace_manifests.as_ref(), json)?;
 
     let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
@@ -3270,165 +3202,142 @@ fn add_archive_entry(
     entry.clear()
 }
 
-/// Strips workspace and catalog protocols from dependency versions then
-/// returns the printed json
-fn edit_root_package_json(
-    maybe_lockfile: Option<&Lockfile>,
-    json: &mut WorkspacePackageJSONCache::MapEntry,
-) -> Result<Box<[u8]>, AllocError> {
+/// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
+enum Substitution<'a> {
+    /// `workspace:^`, `workspace:~`, `workspace:*`: the workspace's current version behind that prefix.
+    WorkspaceVersion { prefix: &'static str },
+    /// `workspace:1.2.3`, `workspace:1.x`, ...: the range as written.
+    WorkspaceRange(&'a [u8]),
+    /// `catalog:` / `catalog:<name>`: that catalog's entry for the dependency.
+    Catalog { catalog_name: &'a [u8] },
+}
+
+impl<'a> Substitution<'a> {
+    fn for_spec(spec: &'a [u8]) -> Option<Substitution<'a>> {
+        if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
+            return Some(match range {
+                b"^" => Substitution::WorkspaceVersion { prefix: "^" },
+                b"~" => Substitution::WorkspaceVersion { prefix: "~" },
+                b"*" => Substitution::WorkspaceVersion { prefix: "" },
+                _ => Substitution::WorkspaceRange(range),
+            });
+        }
+        let catalog_name = strings::without_prefix_if_possible_comptime(spec, b"catalog:")?;
+        Some(Substitution::Catalog {
+            catalog_name: strings::trim(catalog_name, &strings::WHITESPACE_CHARS),
+        })
+    }
+
+    fn needs_workspace_manifests(&self) -> bool {
+        !matches!(self, Substitution::WorkspaceRange(_))
+    }
+}
+
+/// Section order is the order errors get reported in.
+fn for_each_dependency(
+    package_json: Expr,
+    mut f: impl FnMut(&'static [u8], &mut bun_ast::G::Property),
+) {
     use bun_install_types::DependencyGroup;
-    // preserve deps→dev→peer→optional order (error-message ordering)
-    for dependency_group in [
+    for group in [
         DependencyGroup::DEPENDENCIES,
         DependencyGroup::DEV,
         DependencyGroup::PEER,
         DependencyGroup::OPTIONAL,
-    ]
-    .map(|g| g.prop)
-    {
-        if let Some(dependencies_expr) = json.root.get(dependency_group) {
-            if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
-                for dependency in dependencies.properties.slice_mut() {
-                    if dependency.key.is_none() {
-                        continue;
-                    }
-                    if dependency.value.is_none() {
-                        continue;
-                    }
-
-                    let Some(package_spec) = dependency
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_utf8_string_literal()
-                    else {
-                        continue;
-                    };
-                    let package_spec = bun_install::dependency::trim_literal(package_spec);
-                    if let Some(without_workspace_protocol) =
-                        strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
-                    {
-                        // TODO: make semver parsing more strict. `^`, `~` are not valid
-
-                        if without_workspace_protocol.len() == 1 {
-                            // TODO: this might be too strict
-                            let c = without_workspace_protocol[0];
-                            if c == b'^' || c == b'~' || c == b'*' {
-                                let dependency_name = match dependency
-                                    .key
-                                    .as_ref()
-                                    .expect("infallible: prop has key")
-                                    .as_utf8_string_literal()
-                                {
-                                    Some(n) => n,
-                                    None => {
-                                        Output::err_generic(
-                                            "expected string value for dependency name in \"{}\"",
-                                            format_args!("{}", bstr::BStr::new(dependency_group)),
-                                        );
-                                        Global::crash();
-                                    }
-                                };
-
-                                let resolved = 'failed_to_resolve: {
-                                    // find the current workspace version and append to package spec without `workspace:`
-                                    let Some(lockfile) = maybe_lockfile else {
-                                        break 'failed_to_resolve false;
-                                    };
-                                    let Some(workspace_version) = lockfile.workspace_versions.get(
-                                        &Semver::string::Builder::string_hash(dependency_name),
-                                    ) else {
-                                        break 'failed_to_resolve false;
-                                    };
-                                    let prefix: &[u8] = match c {
-                                        b'^' => b"^",
-                                        b'~' => b"~",
-                                        b'*' => b"",
-                                        _ => unreachable!(),
-                                    };
-                                    // Format on the heap then copy into the
-                                    // pack arena; `EString::init` erases the
-                                    // lifetime.
-                                    let tmp = format!(
-                                        "{}{}",
-                                        bstr::BStr::new(prefix),
-                                        workspace_version
-                                            .fmt(lockfile.buffers.string_bytes.as_slice()),
-                                    );
-                                    let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
-                                    dependency.value = Some(Expr::init(
-                                        E::EString::init(data),
-                                        Default::default(),
-                                    ));
-                                    true
-                                };
-                                if resolved {
-                                    continue;
-                                }
-
-                                // only produce this error only when we need to get the workspace version
-                                Output::err_generic(
-                                    "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again.",
-                                    (
-                                        bstr::BStr::new(dependency_name),
-                                        bstr::BStr::new(dependency_group),
-                                    ),
-                                );
-                                Global::crash();
-                            }
-                        }
-
-                        let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(dup), Default::default()));
-                    } else if let Some(catalog_name_str) =
-                        strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
-                    {
-                        let dep_name_str = dependency
-                            .key
-                            .as_ref()
-                            .expect("infallible: prop has key")
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked");
-
-                        let lockfile = match maybe_lockfile {
-                            Some(l) => l,
-                            None => {
-                                Output::err_generic(
-                                    "Failed to resolve catalog version for \"{}\" in `{}` (catalogs require a lockfile).",
-                                    (
-                                        bstr::BStr::new(dep_name_str),
-                                        bstr::BStr::new(dependency_group),
-                                    ),
-                                );
-                                Global::crash();
-                            }
-                        };
-
-                        let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
-                        let catalog_name =
-                            strings::trim(catalog_name_str, &strings::WHITESPACE_CHARS);
-                        let Some(dep) = lockfile.catalogs.find(map_buf, catalog_name, dep_name_str)
-                        else {
-                            Output::err_generic(
-                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
-                                (
-                                    bstr::BStr::new(dep_name_str),
-                                    bstr::BStr::new(dependency_group),
-                                ),
-                            );
-                            Global::crash();
-                        };
-
-                        let literal =
-                            pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(literal), Default::default()));
-                    }
-                }
-            }
+    ] {
+        let Some(section) = package_json.get(group.prop) else {
+            continue;
+        };
+        let ExprData::EObject(mut dependencies) = section.data else {
+            continue;
+        };
+        for dependency in dependencies.properties.slice_mut() {
+            f(group.prop, dependency);
         }
     }
+}
+
+/// Packages without such specs must pack whatever state the rest of the workspace is in.
+fn needs_workspace_manifests(package_json: Expr) -> bool {
+    let mut needed = false;
+    for_each_dependency(package_json, |_, dependency| {
+        needed |= dependency
+            .value
+            .as_ref()
+            .and_then(Expr::as_utf8_string_literal)
+            .and_then(Substitution::for_spec)
+            .is_some_and(|substitution| substitution.needs_workspace_manifests());
+    });
+    needed
+}
+
+/// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
+/// `workspace_manifests` is `Some` whenever `needs_workspace_manifests(json.root)` is.
+fn edit_root_package_json(
+    workspace_manifests: Option<&WorkspaceManifests>,
+    json: &mut WorkspacePackageJSONCache::MapEntry,
+) -> Result<Box<[u8]>, AllocError> {
+    let bump = pack_bump();
+    for_each_dependency(json.root, |dependency_group, dependency| {
+        let (Some(name), Some(spec)) = (dependency.key.as_ref(), dependency.value.as_ref()) else {
+            return;
+        };
+        let Some(substitution) = spec
+            .as_utf8_string_literal()
+            .and_then(Substitution::for_spec)
+        else {
+            return;
+        };
+        let Some(dependency_name) = name.as_utf8_string_literal() else {
+            Output::err_generic(
+                "expected string value for dependency name in \"{}\"",
+                format_args!("{}", bstr::BStr::new(dependency_group)),
+            );
+            Global::crash();
+        };
+        let manifests =
+            || workspace_manifests.expect("pack() loads the manifests when a spec needs them");
+        let fail = |what: &str, why: fmt::Arguments<'_>| -> ! {
+            Output::err_generic(
+                "Failed to resolve {} version for \"{}\" in `{}` ({}).",
+                (
+                    what,
+                    bstr::BStr::new(dependency_name),
+                    bstr::BStr::new(dependency_group),
+                    why,
+                ),
+            );
+            Global::crash();
+        };
+
+        // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
+        let replacement: &[u8] = match substitution {
+            Substitution::WorkspaceRange(range) => bump.alloc_slice_copy(range),
+            Substitution::WorkspaceVersion { prefix } => {
+                let Some(version) = manifests().workspace_version(dependency_name) else {
+                    fail(
+                        "workspace",
+                        format_args!(
+                            "\"{}\" has no workspace named \"{}\", or its package.json has no version",
+                            bstr::BStr::new(manifests().root_package_json_path()),
+                            bstr::BStr::new(dependency_name),
+                        ),
+                    )
+                };
+                bump.alloc_slice_copy(format!("{prefix}{version}").as_bytes())
+            }
+            Substitution::Catalog { catalog_name } => {
+                match manifests().catalog_version(catalog_name, dependency_name) {
+                    Some(version) => bump.alloc_slice_copy(version),
+                    None => fail("catalog", format_args!("no matching catalog dependency")),
+                }
+            }
+        };
+        dependency.value = Some(Expr::init(
+            E::EString::init(replacement),
+            Default::default(),
+        ));
+    });
 
     let has_trailing_newline = !json.source.contents.is_empty()
         && json.source.contents[json.source.contents.len() - 1] == b'\n';

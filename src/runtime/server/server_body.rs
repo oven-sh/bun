@@ -1441,7 +1441,7 @@ where
             // on this (single-threaded) JS thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
-                Err(JsError::Thrown) => {
+                Err(JsError::Thrown | JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -2606,7 +2606,7 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
-        // Each close reaches `on_connection_filter(-1)` synchronously; hold
+        // Each close reaches `on_connection_filter(-2)` synchronously; hold
         // the guard so it cannot re-derive `&mut self` while this frame owns
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.
@@ -3746,54 +3746,6 @@ bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classe
 bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_classes::js_DebugHTTPSServer, no_constructor);
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
-#[unsafe(no_mangle)]
-extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: &JSGlobalObject) {
-    match server_set_idle_timeout(server, seconds, global) {
-        Ok(()) => {}
-        Err(JsError::Thrown) => {}
-        Err(JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory_value();
-        }
-    }
-}
-
-fn server_set_idle_timeout(
-    server: JSValue,
-    seconds: JSValue,
-    global: &JSGlobalObject,
-) -> JsResult<()> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    }
-
-    if !seconds.is_number() {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The provided value is not of type 'number'."
-        )));
-    }
-    let value = seconds.to_u32();
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    }
-    Ok(())
-}
-
 fn server_set_on_client_error(
     global: &JSGlobalObject,
     server: JSValue,

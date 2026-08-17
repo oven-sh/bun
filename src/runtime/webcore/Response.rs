@@ -142,9 +142,9 @@ impl BodyAbortListener {
             // destructor already freed. `Locked.readable` is a real `JSC::Weak`
             // on the stream and reads `None` exactly when the box is gone.
             if let BodyValue::Locked(locked) = response.get_body_value() {
-                if let Some(readable) = locked.readable.get(&global) {
+                if let Some(readable) = locked.readable.get() {
                     readable.value.ensure_still_alive();
-                    readable.error(&global, reason);
+                    crate::dispatch::fold(readable.error(&global, reason));
                 }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
@@ -498,11 +498,8 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn get_body_readable_stream(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        <Self as BodyMixin>::get_body_readable_stream(self, global_object)
+    pub(crate) fn get_body_readable_stream(&self) -> Option<ReadableStream> {
+        <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
     #[inline]
@@ -539,7 +536,7 @@ impl Response {
     pub(crate) fn set_size_hint(&self, size_hint: super::blob::SizeType) {
         if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             locked.size_hint = size_hint;
-            if let Some(readable) = locked.readable.get(locked.global()) {
+            if let Some(readable) = locked.readable.get() {
                 // BACKREF: see `Source::bytes()` — back-pointer owned by the
                 // ReadableStream; `size_hint` is `Cell<_>` so shared deref + `.set()`.
                 if let Some(bytes) = readable.ptr.bytes() {

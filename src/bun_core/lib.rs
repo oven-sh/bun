@@ -551,6 +551,38 @@ pub mod vec {
             r
         }
     }
+
+    /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
+    pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
+
+    impl<const N: usize> UninitBuf<N> {
+        #[inline(always)]
+        pub const fn uninit() -> Self {
+            Self(core::mem::MaybeUninit::uninit())
+        }
+
+        #[inline(always)]
+        pub fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.0.as_mut_ptr().cast::<u8>()
+        }
+
+        /// # Safety
+        /// Write-only view, same contract as [`spare_bytes_mut`]: only a producer may store into it, and only the prefix it reports may be read back.
+        #[inline(always)]
+        pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+            // SAFETY: `MaybeUninit<[u8; N]>` has the layout of `[u8; N]`; the caller upholds the write-only contract.
+            unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr(), N) }
+        }
+
+        /// # Safety
+        /// A producer must have written every byte of `[0..len]` (`len <= N`).
+        #[inline(always)]
+        pub unsafe fn filled(&self, len: usize) -> &[u8] {
+            assert!(len <= N);
+            // SAFETY: `[0..len]` is inside the array (asserted above) and initialized (caller contract).
+            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
+        }
+    }
 }
 
 #[path = "Progress.rs"]
@@ -962,11 +994,15 @@ pub type OOM = AllocError;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope (a termination is just such an
-    /// exception): unwind to the native/JS boundary.
+    /// A JavaScript exception is pending in the VM's exception scope: unwind to the native/JS boundary.
+    /// (Beneath script, the VM's TerminationException is carried this way too — JSC unwinds it.)
     Thrown = 0,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory = 1,
+    /// The VM has been terminated (a worker's `terminate()` / `process.exit()`), and its
+    /// TerminationException was taken where it unwound past the outermost script frame: nothing is
+    /// pending. Stand down — no more script runs on this VM.
+    Terminated = 2,
 }
 
 bun_alloc::oom_from_alloc!(JsError);

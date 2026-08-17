@@ -181,27 +181,33 @@ fn avail_out_for(len: usize) -> uInt {
     len.min(uInt::MAX as usize) as uInt
 }
 
-/// Point the stream's output at freshly reserved tail capacity of `list`,
-/// capping `avail_out` at `budget` bytes (`usize::MAX` = unbounded).
-fn regrow_output_tail(zlib: &mut zStream_struct, list: &mut Vec<u8>, budget: usize) {
+/// Grow `list` and point the stream's output at the new tail, capping
+/// `avail_out` at `budget` bytes (`usize::MAX` = unbounded). Fails only when
+/// the growth itself fails; callers decide how to tear the stream down.
+fn regrow_output_tail(
+    zlib: &mut zStream_struct,
+    list: &mut Vec<u8>,
+    budget: usize,
+) -> Result<(), ZlibError> {
+    if list.try_reserve(budget.min(4096)).is_err() {
+        return Err(ZlibError::OutOfMemory);
+    }
     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-    let (next_out, avail_out) = unsafe { list.reserve_expand_tail(budget.min(4096)) };
+    let (next_out, avail_out) = unsafe { list.reserve_expand_tail(0) };
     zlib.next_out = next_out;
     zlib.avail_out = avail_out_for(avail_out.min(budget));
+    Ok(())
 }
 
-// zlib `alloc_func`/`free_func` thunks → mimalloc, used by
-// `ZlibCompressorArrayList`. Intentionally
-// `mi_malloc`, NOT `mi_calloc` (see `ZlibAllocator::alloc` for the zeroing
-// heap-breakdown variant used by `ZlibReaderArrayList`).
 pub(crate) use bun_alloc::c_thunks::{
     mi_free_opaque as zlib_mi_free, mi_malloc_items as zlib_mi_malloc,
 };
 
+// zlib `alloc_func`/`free_func` thunks tagged with the "zlib" heap-breakdown zone.
 #[allow(non_snake_case)]
 mod ZlibAllocator {
     bun_alloc::c_thunks_for_zone!("zlib");
-    pub(crate) use calloc_items as alloc;
+    pub(crate) use malloc_items as alloc;
 }
 
 pub struct ZlibReaderArrayList<'a> {
@@ -353,7 +359,12 @@ impl<'a> ZlibReaderArrayList<'a> {
                         return Err(ZlibError::ZlibError);
                     }
                     // Clamp so a single inflate call cannot write past `max_output_size`.
-                    regrow_output_tail(&mut self.zlib, self.list_ptr, remaining_budget);
+                    if let Err(err) =
+                        regrow_output_tail(&mut self.zlib, self.list_ptr, remaining_budget)
+                    {
+                        self.state = ZlibReaderArrayListState::Error;
+                        return Err(err);
+                    }
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
@@ -794,9 +805,11 @@ impl<'a> ZlibCompressorArrayList<'a> {
 
         // SAFETY: zlib initialized; deflateBound returns upper bound on output.
         let bound = unsafe { deflateBound(&raw mut zlib_reader.zlib, uLong::from(avail_in)) };
-        // ensureTotalCapacityPrecise → reserve_exact
         let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
-        zlib_reader.list_ptr.reserve_exact(need);
+        // Returning drops `zlib_reader`, which runs `deflateEnd` (same as the `?` above).
+        if zlib_reader.list_ptr.try_reserve_exact(need).is_err() {
+            return Err(ZlibError::OutOfMemory);
+        }
         zlib_reader.zlib.avail_out = avail_out_for(zlib_reader.list_ptr.capacity());
         zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
@@ -845,7 +858,12 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
-                    regrow_output_tail(&mut self.zlib, self.list_ptr, usize::MAX);
+                    if let Err(err) = regrow_output_tail(&mut self.zlib, self.list_ptr, usize::MAX)
+                    {
+                        self.end();
+                        self.state = ZlibCompressorArrayListState::Error;
+                        return Err(err);
+                    }
                 }
 
                 if self.zlib.avail_out == 0 {
@@ -962,7 +980,7 @@ impl DeflateEncoder {
     /// spare, calls `deflate(flush)`, and advances `out.len()` by the bytes
     /// produced. Returns `(bytes_consumed_from_input, return_code)`. Inputs
     /// larger than `u32::MAX` are clamped; callers loop and advance `input`
-    /// by `consumed`.
+    /// by `consumed`. A failed growth of `out` is `MemError` with nothing consumed.
     pub fn step(
         &mut self,
         input: &[u8],
@@ -1176,11 +1194,14 @@ fn step(
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
+    if out.try_reserve(reserve).is_err() {
+        return (0, ReturnCode::MemError);
+    }
+
     let in_len = input.len().min(u32::MAX as usize);
     strm.next_in = input.as_ptr();
     strm.avail_in = in_len as uInt;
 
-    out.reserve(reserve);
     let spare = out.spare_capacity_mut();
     let out_len = spare.len().min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();

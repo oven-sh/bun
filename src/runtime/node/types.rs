@@ -794,7 +794,13 @@ impl Encoding {
             .throw()
     }
 
-    /// `max_size` is a runtime arg (see `encode_with_size`); callers pass
+    /// node's `StringBytes::Encode`: a JS string, or a `Buffer` for `Self::Buffer`.
+    #[inline]
+    pub(crate) fn encode(self, global_object: &JSGlobalObject, input: &[u8]) -> JsResult<JSValue> {
+        self.encode_with_max_size(global_object, input.len(), input)
+    }
+
+    /// `max_size` is a runtime arg (see `encode`); callers pass
     /// `EVP_MAX_MD_SIZE` etc.
     pub(crate) fn encode_with_max_size(
         self,

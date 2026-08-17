@@ -4,6 +4,7 @@ use bun_collections::VecExt;
 // This file contains the core Valkey client implementation with protocol handling
 
 use bun_collections::OffsetByteList;
+use bun_jsc::SocketJsc as _;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_uws::{self as uws, AnySocket, SocketGroup, SocketKind, SslCtx};
@@ -642,9 +643,8 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        // On an established socket uSockets dispatches the close event — the user's `onclose` — synchronously
-        // from in here, so this is a call that enters script: checked like one.
-        bun_jsc::from_js_host_call_generic(&global, || socket.close(uws::CloseCode::Normal))?;
+        // On an established socket uSockets dispatches the close event — the user's `onclose` — from in here.
+        socket.close_js(&global, uws::CloseCode::Normal)?;
         if is_semi_socket {
             self.status = Status::Disconnected;
             // A half-open socket never gets uSockets' close dispatch, so run the

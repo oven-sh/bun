@@ -425,6 +425,8 @@ pub mod plugin_runner;
 pub mod posix_signal_handle;
 #[path = "resolve_path_jsc.rs"]
 pub mod resolve_path_jsc;
+pub mod uws_jsc;
+pub use uws_jsc::SocketJsc;
 #[path = "resolver_jsc.rs"]
 pub mod resolver_jsc;
 #[path = "virtual_machine_exports.rs"]

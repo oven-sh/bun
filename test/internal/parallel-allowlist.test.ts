@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 
 const testDir = join(import.meta.dir, "..");
@@ -28,8 +28,18 @@ const denylist = readFileSync(join(testDir, "parallel-denylist.txt"), "utf8")
   .map(line => line.trim())
   .filter(line => line && !line.startsWith("#"));
 
-test("parallel-denylist.txt entries are real files", () => {
-  const bad = denylist.filter(f => f.includes("\\") || f.startsWith("test/") || !existsSync(join(testDir, f)));
+// Entries must name a file the same way the generator enumerates them: a
+// relative, forward-slash path under test/. A directory or a path with ".."
+// exists on disk but never matches anything the generator compares against.
+test("parallel-denylist.txt entries are files relative to test/", () => {
+  const bad = denylist.filter(
+    f =>
+      f.includes("\\") ||
+      f.startsWith("/") ||
+      f.startsWith("test/") ||
+      f.split("/").includes("..") ||
+      !statSync(join(testDir, f), { throwIfNoEntry: false })?.isFile(),
+  );
   expect(bad).toEqual([]);
 });
 

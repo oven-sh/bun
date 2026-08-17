@@ -370,3 +370,19 @@ devTest("error report endpoint blanks stray non-text bytes in reported frames", 
     await dev.fetch("/").expect.toInclude("<h1>Frame Bytes</h1>");
   },
 });
+
+devTest("multiple html files are served at the routes bun derives from their paths", {
+  files: {
+    "index.html": emptyHtmlFile({ body: "<h1>home</h1>" }),
+    "about.html": emptyHtmlFile({ body: "<h1>about</h1>" }),
+    "docs/index.html": emptyHtmlFile({ body: "<h1>docs</h1>" }),
+    "docs/guide.html": emptyHtmlFile({ body: "<h1>guide</h1>" }),
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<h1>home</h1>");
+    await dev.fetch("/about").expect.toInclude("<h1>about</h1>");
+    await dev.fetch("/docs").expect.toInclude("<h1>docs</h1>");
+    await dev.fetch("/docs/guide").expect.toInclude("<h1>guide</h1>");
+    await dev.fetch("/docs/index").expect404();
+  },
+});

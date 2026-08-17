@@ -44,7 +44,9 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
     if proof == JsError::Terminated
-        || (proof == JsError::Thrown && !global.has_exception() && global.vm().execution_forbidden())
+        || (proof == JsError::Thrown
+            && !global.has_exception()
+            && global.vm().execution_forbidden())
     {
         return Err(Stopped);
     }

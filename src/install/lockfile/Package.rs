@@ -1881,7 +1881,10 @@ impl Package<u64> {
         }
 
         match dependency_version.tag {
-            dependency::version::Tag::Folder => {
+            // Cache packages (`Features::NPM`) keep these package-relative, like `from_npm`.
+            dependency::version::Tag::Folder
+                if features.is_main || features.is_workspace || features.is_folder =>
+            {
                 let folder = *dependency_version.folder();
                 let mut folder_buf = PathBuffer::uninit();
                 let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(

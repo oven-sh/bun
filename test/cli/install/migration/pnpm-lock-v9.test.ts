@@ -412,6 +412,65 @@ snapshots:
       `);
     });
 
+    test("credentials in a namedRegistries URL stay out of bun.lock and a token in its path is masked in the warning", async () => {
+      const password = "s3cret";
+      const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "named-registry-secrets", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: http://carol:${password}@127.0.0.1:1/${token}/\n`,
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain(
+        'warn: fetching pnpm registry "work" packages from http://127.0.0.1:1/***/; add it to bunfig.toml or .npmrc if it needs authentication',
+      );
+      expect(stderr).not.toContain(password);
+      expect(stderr).not.toContain(token);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      // The token is part of the tarball location; the credentials are not.
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `["no-deps@1.0.1", "http://127.0.0.1:1/${token}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
+      );
+      expect(bunLock).not.toContain(password);
+    });
+
+    test("namedRegistries entry naming the configured registry with credentials in the URL needs no warning", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "named-registry-same-creds", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${verdaccio.registryUrl().replace("http://", "http://carol:s3cret@")}\n`,
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("pnpm registry");
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("s3cret");
+      expect(bunLock).not.toContain("work:");
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
+    });
+
     test("two packages from one unknown registry warn once", async () => {
       const { packageDir } = await verdaccio.createTestDir({
         bunfigOpts: { linker: "hoisted" },

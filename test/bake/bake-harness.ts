@@ -228,7 +228,25 @@ export class Dev extends EventEmitter {
     this.output.on("panic", () => {
       this.panicked = true;
     });
+    this.devProcess.exited.then(() => this.emit("exit"));
     this.nodeEnv = nodeEnv;
+  }
+
+  /** Rejects `promise` when the dev server exits, so a wait it will never satisfy fails at the call instead of the test timeout. */
+  #rejectOnExit<T>(promise: Promise<T>, waitingFor: string): Promise<T> {
+    return new Promise<T>((resolve, reject) => {
+      const onExit = () => {
+        const { exitCode, signalCode } = this.devProcess;
+        const how = exitCode !== null ? `code ${exitCode}` : `signal ${signalCode}`;
+        reject(new Error(`Dev server exited with ${how} while waiting for ${waitingFor}`));
+      };
+      if (this.devProcess.exitCode !== null || this.devProcess.signalCode !== null) {
+        onExit();
+      } else {
+        this.once("exit", onExit);
+      }
+      promise.then(resolve, reject).finally(() => this.off("exit", onExit));
+    });
   }
 
   connectSocket() {
@@ -267,7 +285,7 @@ export class Dev extends EventEmitter {
   }
 
   #waitForSyncEvent(event: WatchSynchronization) {
-    return new Promise<void>((resolve, reject) => {
+    const received = new Promise<void>(resolve => {
       let dev = this;
       function handle(kind: WatchSynchronization) {
         if (kind === event) {
@@ -277,6 +295,58 @@ export class Dev extends EventEmitter {
       }
       dev.on("watch_synchronization", handle);
     });
+    return this.#rejectOnExit(received, "watch synchronization event " + WatchSynchronization[event]);
+  }
+
+  /** Runs `change` and returns, by name and in order, the watch synchronization messages the dev server published while handling it. */
+  async watchSynchronizationMessagesFor(change: () => void | Promise<void>): Promise<string[]> {
+    assert(this.batchingChanges === null, "watchSynchronizationMessagesFor cannot be used inside batchChanges");
+    const messages: WatchSynchronization[] = [];
+    const firstMessage = Promise.withResolvers<void>();
+    const batchStarted = Promise.withResolvers<void>();
+    function onEvent(kind: WatchSynchronization) {
+      if (kind === WatchSynchronization.Started) {
+        batchStarted.resolve();
+        return;
+      }
+      messages.push(kind);
+      firstMessage.resolve();
+    }
+    this.on("watch_synchronization", onEvent);
+    try {
+      await change();
+      await firstMessage.promise;
+      // The batch-start ack is ordered after everything published while handling `change`, so the list is complete once it arrives.
+      this.socket!.send("H");
+      await batchStarted.promise;
+    } finally {
+      this.off("watch_synchronization", onEvent);
+    }
+    // Leaving batch mode is answered with ResultDidNotBundle or, if `change` invalidated something, with a build.
+    const batchEnded = this.waitForHotReload(false);
+    this.socket!.send("H");
+    await batchEnded;
+    return messages.map(kind => WatchSynchronization[kind]);
+  }
+
+  /** Returns how many bundles (successful or failed) the dev server finished while `fn` ran. */
+  async countBundles(fn: () => Promise<void>): Promise<number> {
+    let count = 0;
+    const handle = (kind: WatchSynchronization) => {
+      if (
+        kind === WatchSynchronization.AnyBuildFinished ||
+        kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets
+      ) {
+        count++;
+      }
+    };
+    this.on("watch_synchronization", handle);
+    try {
+      await fn();
+    } finally {
+      this.off("watch_synchronization", handle);
+    }
+    return count;
   }
 
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
@@ -320,10 +390,8 @@ export class Dev extends EventEmitter {
       write: resetSeenFilesWithResolvers,
       [Symbol.asyncDispose]: async () => {
         try {
-          if (wantsHmrEvent && interactive) {
-            await seenFiles.promise;
-          } else if (wantsHmrEvent) {
-            await Promise.race([seenFiles.promise]);
+          if (wantsHmrEvent) {
+            await this.#rejectOnExit(seenFiles.promise, "the dev server to see the changed files");
           }
           // Let the several watcher events one Bun.write can produce (notably on Windows) coalesce.
           await Bun.sleep(50);
@@ -331,7 +399,7 @@ export class Dev extends EventEmitter {
           dev.off("watch_synchronization", onSeenFiles);
 
           this.socket!.send("H");
-          await wait;
+          await this.#rejectOnExit(wait, "the hot reload");
 
           let errors = options.errors;
           if (errors !== null) {
@@ -745,6 +813,27 @@ class DevFetchPromise extends Promise<Response> {
       try {
         const res = await this;
         expect(res.status).toBe(404);
+      } catch (err) {
+        if (this.dev.panicked) {
+          throw new Error("DevServer crashed");
+        }
+        throw err;
+      }
+    });
+  }
+
+  /** Expects the dev error page (500) carrying exactly these exception messages. */
+  expectErrorPage(...messages: string[]) {
+    return withAnnotatedStack(snapshotCallerLocation(), async () => {
+      try {
+        const res = await this;
+        const text = await res.text();
+        // The page embeds its payload as JSON (see src/runtime/server/DevErrorPage.rs).
+        const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
+        if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
+        const payload = JSON.parse(match[1]);
+        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
+        expect(res.status).toBe(500);
       } catch (err) {
         if (this.dev.panicked) {
           throw new Error("DevServer crashed");

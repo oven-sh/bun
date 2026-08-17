@@ -1115,18 +1115,12 @@ impl Tree {
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
                     // Optional peers take whatever the tree offers, as they do in the resolver.
+                    let buf = builder.buf();
                     let rejected = !dependency.behavior.is_optional_peer()
-                        && peer_range.tag == crate::dependency::VersionTag::Npm
-                        && builder
-                            .lockfile()
-                            .package_version(res_id)
-                            .is_some_and(|copy| {
-                                !peer_range.npm().version.satisfies(
-                                    copy,
-                                    builder.buf(),
-                                    builder.buf(),
-                                )
-                            });
+                        && peer_range.try_npm().is_some_and(|npm| {
+                            (builder.lockfile().package_version(res_id))
+                                .is_some_and(|copy| !npm.version.satisfies(copy, buf, buf))
+                        });
                     return if rejected {
                         HoistDependencyResult::HoistedOutOfRange(res_id) // 1
                     } else {

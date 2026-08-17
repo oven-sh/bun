@@ -3439,7 +3439,7 @@ importers:
 
       expect(stderr).not.toContain("warn:");
       expect(stderr).toContain(
-        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies in package.json",
+        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies, pnpm.onlyBuiltDependencies to trustedDependencies in package.json",
       );
       expect(exitCode).toBe(0);
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
@@ -3448,6 +3448,7 @@ importers:
         pnpm,
         overrides: pnpm.overrides,
         patchedDependencies: pnpm.patchedDependencies,
+        trustedDependencies: pnpm.onlyBuiltDependencies,
       });
 
       const onlyMigrated = await migrate(String(onlyMigratedKeys));
@@ -3648,6 +3649,7 @@ catalog:
       name: "root",
       private: true,
       dependencies: { a: "workspace:*", foo: "file:vendor/foo" },
+      pnpm: { overrides: { "left-pad": "1.3.0" } },
       overrides: { "left-pad": "1.3.0" },
       workspaces: ["packages/*"],
     };
@@ -3815,7 +3817,7 @@ snapshots:
         overrides: migratedPackageJson.overrides,
         workspaces: migratedPackageJson.workspaces,
       });
-      expect(written).not.toHaveProperty("pnpm");
+      expect(written.pnpm).toStrictEqual(migratedPackageJson.pnpm);
       expect(Object.keys(written.dependencies).sort()).toStrictEqual(["a", "bar", "foo"]);
       expect(await bunLockOf(String(dir))).toContain(`"bar":`);
       expect(exitCode).toBe(0);

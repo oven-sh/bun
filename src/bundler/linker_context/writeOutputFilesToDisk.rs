@@ -413,6 +413,7 @@ pub(crate) fn write_output_files_to_disk(
                         &code_result.buffer,
                         &mut source_provider_url,
                     ) {
+                        let bytecode = crate::bytecode_sidecar::frame(bytecode);
                         let source_provider_url_str = source_provider_url.to_utf8();
                         debug!(
                             "Bytecode cache generated {}: {}",

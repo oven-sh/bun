@@ -27,6 +27,46 @@ pub mod bun_css {
 
 pub use crate::HTMLScanner as html_scanner;
 
+/// Framing for the `<chunk>.jsc` bytecode sidecar written by `bun build --bytecode`.
+/// JSC decodes cached bytecode in place with no bounds or integrity checks, so the
+/// payload is followed by `payload_len: u64 le | wyhash(payload): u64 le | MAGIC`
+/// and anything that does not verify is ignored (the module is parsed from source).
+/// Bytecode embedded in `--compile` executables is not framed.
+pub mod bytecode_sidecar {
+    pub const EXTENSION: &str = ".jsc";
+    const MAGIC: [u8; 8] = *b"\0bun.jsc";
+    pub const FOOTER_LEN: usize = 8 + 8 + 8;
+
+    fn footer(payload: &[u8]) -> [u8; FOOTER_LEN] {
+        let mut out = [0u8; FOOTER_LEN];
+        out[0..8].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        out[8..16].copy_from_slice(&bun_wyhash::hash(payload).to_le_bytes());
+        out[16..].copy_from_slice(&MAGIC);
+        out
+    }
+
+    pub fn frame(payload: Box<[u8]>) -> Box<[u8]> {
+        let footer = footer(&payload);
+        let mut bytes = Vec::from(payload);
+        bytes.reserve_exact(FOOTER_LEN);
+        bytes.extend_from_slice(&footer);
+        bytes.into_boxed_slice()
+    }
+
+    /// Length of the verified JSC payload at the start of `file`.
+    pub fn payload_len(file: &[u8]) -> Option<usize> {
+        let (payload, tail) = file.split_at(file.len().checked_sub(FOOTER_LEN)?);
+        if payload.is_empty()
+            || tail[16..] != MAGIC
+            || tail[0..8] != (payload.len() as u64).to_le_bytes()
+            || tail[8..16] != bun_wyhash::hash(payload).to_le_bytes()
+        {
+            return None;
+        }
+        Some(payload.len())
+    }
+}
+
 pub(crate) mod index {
     pub(crate) use bun_ast::IndexInt as Int;
 }

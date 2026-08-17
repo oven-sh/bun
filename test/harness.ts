@@ -31,6 +31,11 @@ export const isWindows = process.platform === "win32";
  * on Windows, where `process.getuid` does not exist.
  */
 export const isRoot = process.getuid?.() === 0;
+/**
+ * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not
+ * fit in one, which code taking a path from the user has to report rather than overflow the buffer.
+ */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");

@@ -1991,14 +1991,6 @@ impl NodeHTTPResponse {
             return Err(jsc::JsError::Thrown);
         }
 
-        if self.is_requested_completed_or_ended() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
-                "Stream already ended",
-            );
-        }
-
         // Loosely mimicking this code:
         //      function _writeRaw(data, encoding, callback, size) {
         //        const conn = this[kSocket];
@@ -2016,7 +2008,7 @@ impl NodeHTTPResponse {
         }
 
         let state = self.raw_response.get().unwrap().state();
-        if !state.is_response_pending() {
+        if self.is_requested_completed_or_ended() || !state.is_response_pending() {
             return err_throw(
                 global_object,
                 ErrorCode::ERR_STREAM_WRITE_AFTER_END,

@@ -1,7 +1,7 @@
 import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun";
 import { serve, spawn } from "bun";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir } from "harness";
 import net, { isIP } from "node:net";
 import path from "node:path";
 
@@ -756,12 +756,17 @@ describe("ServerWebSocket", () => {
     test(
       "(benchmark)",
       (done, connect) => {
-        const maxClients = 10;
-        const maxMessages = 10_000;
+        // On debug/ASAN builds each echo client takes ~2s to start and every round trip is
+        // ~50x slower than release: 10 clients x 10_000 messages runs right up to the 30s timeout.
+        const maxClients = isDebug || isASAN ? 4 : 10;
+        const maxMessages = isDebug || isASAN ? 1_000 : 10_000;
         let count = 0;
         return {
           open(ws) {
-            if (ws.data.id < maxClients) {
+            // test() spawned the first client; each client spawns the next one until maxClients
+            // are connected. Spawning them all at once would trip the pid limit of small containers:
+            // this file's concurrent tests already keep ~20 echo clients (14 threads each) alive.
+            if (ws.data.id < maxClients - 1) {
               connect();
             }
             for (let i = 0; i < maxMessages; i++) {

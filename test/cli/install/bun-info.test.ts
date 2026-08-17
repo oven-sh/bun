@@ -467,6 +467,71 @@ describe.concurrent("bun info with control characters in the packument", () => {
   });
 });
 
+// Semver strings longer than 8 bytes are stored as offsets into the buffer they
+// were parsed from. A range given on the command line is parsed from the
+// argument, so its prerelease tags have to be read back out of the argument and
+// not out of the manifest's string buffer. The manifest buffer starts with the
+// package name, and the name is longer than any range below, so reading the
+// wrong buffer yields a piece of the name rather than the tag by coincidence.
+describe.concurrent("version ranges with prerelease tags longer than 8 bytes", () => {
+  const name = "long-prerelease-tags-pkg";
+  const published = ["1.0.0-beta.20240101", "1.0.0-beta.20240301"];
+  const packument = JSON.stringify({
+    name,
+    "dist-tags": { latest: "1.0.0-beta.20240301" },
+    versions: Object.fromEntries(
+      published.map(version => [
+        version,
+        { name, version, dist: { tarball: `http://localhost/${name}-${version}.tgz` } },
+      ]),
+    ),
+  });
+
+  async function view(subcommand: string[], spec: string) {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(packument, { headers: { "content-type": "application/json" } }),
+    });
+    using dir = tempDir("view-long-prerelease", {
+      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...subcommand, `${name}@${spec}`, "version"],
+      cwd: String(dir),
+      env: { ...bunEnv, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  describe.each([
+    ["bun info", ["info"]],
+    ["bun pm view", ["pm", "view"]],
+  ])("%s", (_, subcommand) => {
+    test.each([
+      // resolved through the `latest` dist-tag
+      [">=1.0.0-beta.20240101", "1.0.0-beta.20240301"],
+      ["~1.0.0-beta.20240301", "1.0.0-beta.20240301"],
+      // `latest` is excluded, resolved by walking the prerelease list
+      ["<1.0.0-beta.20240201", "1.0.0-beta.20240101"],
+    ])(`${name}@%s resolves to %s`, async (spec, expected) => {
+      expect(await view(subcommand, spec)).toEqual({ stdout: `${expected}\n`, stderr: "", exitCode: 0 });
+    });
+
+    test(`${name}@<1.0.0-beta.20240101 matches nothing`, async () => {
+      expect(await view(subcommand, "<1.0.0-beta.20240101")).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining(`No version of "${name}" satisfying "<1.0.0-beta.20240101" found`),
+        exitCode: 1,
+      });
+    });
+  });
+});
+
 // LSan's default conservative scan only flags the `send_sync` response-metadata
 // leak when no idle thread parks with a stale pointer in a callee-saved
 // register; excluding registers as roots makes the check deterministic.

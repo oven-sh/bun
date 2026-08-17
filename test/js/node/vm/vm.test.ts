@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
 import {
   compileFunction,
   constants,
@@ -1527,3 +1527,307 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
 });
+
+// breakOnSigint must interrupt a guest parked in Atomics.wait. The SIGINT
+// watcher thread fires the NeedTermination trap, which wakes the VM's sync
+// waiter, but JSC's park loop re-parks unless vm.hasTerminationRequest() is
+// set, and no safepoint inside the futex wait ever sets it. The watcher now
+// sets the request itself, and the vm entry points clear the unserviced trap
+// afterward so the surviving thread is not re-terminated at its next trap
+// check.
+describe.skipIf(isWindows)("breakOnSigint interrupts Atomics.wait", () => {
+  // Each Atomics.notify returning 1 proves the guest thread is parked at that
+  // instant; the second spin observes the re-park after the first wake, so
+  // SIGINT is only sent against a provably parked (or just-woken) guest.
+  const workerSource = `
+    const { workerData } = require("node:worker_threads");
+    const ia = new Int32Array(workerData);
+    while (Atomics.notify(ia, 0, 1) === 0) {}
+    while (Atomics.notify(ia, 0, 1) === 0) {}
+    process.kill(process.pid, "SIGINT");
+  `;
+
+  // The loop and call after catching are trap checks: they would rethrow the
+  // termination if the NeedTermination trap were left pending.
+  const proveStillAlive = `
+    let n = 0;
+    for (let i = 0; i < 100000; i++) n++;
+    (function alive() { console.log("alive", n === 100000); })();
+  `;
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  }
+
+  test.concurrent(
+    "script",
+    async () => {
+      const fixture = `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      globalThis.ia = new Int32Array(sab);
+      new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab }).unref();
+      try {
+        vm.runInThisContext("for(;;) Atomics.wait(ia, 0, 0);", { breakOnSigint: true });
+        console.log("returned");
+      } catch (e) {
+        console.log("caught", e.code);
+      }
+      ${proveStillAlive}
+    `;
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
+  test.concurrent(
+    "source text module",
+    async () => {
+      const fixture = `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      const context = vm.createContext({ ia: new Int32Array(sab) });
+      new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab }).unref();
+      const mod = new vm.SourceTextModule("for(;;) Atomics.wait(ia, 0, 0);", { context });
+      await mod.link(() => { throw new Error("unexpected import"); });
+      try {
+        await mod.evaluate({ breakOnSigint: true });
+        console.log("returned");
+      } catch (e) {
+        console.log("caught", e.code);
+      }
+      ${proveStillAlive}
+    `;
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
+  // The inverted topology the watcher's cross-thread machinery exists for:
+  // the guest runs inside a worker_threads Worker while the process-wide
+  // SIGINT arrives on the main thread. Also pins the listener semantics: a
+  // main-thread SIGINT listener must not fire while the watcher holds the
+  // signal, and must fire again once the breakOnSigint run is over.
+  test.concurrent(
+    "script hosted in a worker",
+    async () => {
+      const fixture = `
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      const ia = new Int32Array(sab);
+      let phase = "hold";
+      let holdCount = 0;
+      const { promise: post, resolve: postResolve } = Promise.withResolvers();
+      process.on("SIGINT", () => (phase === "hold" ? holdCount++ : postResolve()));
+      const w = new Worker(
+        \`const { parentPort, workerData } = require("node:worker_threads");
+         const vm = require("node:vm");
+         globalThis.ia = new Int32Array(workerData);
+         try {
+           vm.runInThisContext("for(;;) Atomics.wait(ia, 0, 0);", { breakOnSigint: true });
+           parentPort.postMessage("returned");
+         } catch (e) {
+           parentPort.postMessage("caught " + e.code);
+         }
+         parentPort.postMessage("alive");\`,
+        { eval: true, workerData: sab },
+      );
+      const { promise: alive, resolve: aliveResolve } = Promise.withResolvers();
+      const messages = [];
+      w.on("message", m => {
+        messages.push(m);
+        if (m === "alive") aliveResolve();
+      });
+      // Each Atomics.notify returning 1 proves the worker is parked inside
+      // the guest's Atomics.wait; the second spin observes the re-park.
+      while (Atomics.notify(ia, 0, 1) === 0) {}
+      while (Atomics.notify(ia, 0, 1) === 0) {}
+      process.kill(process.pid, "SIGINT");
+      await alive;
+      phase = "post";
+      process.kill(process.pid, "SIGINT");
+      await post;
+      console.log(JSON.stringify({ messages, holdCount }));
+      process.exit(0);
+    `;
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout.trim()).toBe(
+        JSON.stringify({ messages: ["caught ERR_SCRIPT_EXECUTION_INTERRUPTED", "alive"], holdCount: 0 }),
+      );
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
+  // A nested plain run must not consume (or crash on) an interrupt that
+  // belongs to the outer breakOnSigint frame, and the guest's own try/catch
+  // must not observe the uncatchable termination; the outer frame reports it.
+  test.concurrent(
+    "nested plain run inside a breakOnSigint run",
+    async () => {
+      const fixture = `
+      const vm = require("node:vm");
+      const { Worker } = require("node:worker_threads");
+      const sab = new SharedArrayBuffer(8);
+      globalThis.ia = new Int32Array(sab);
+      globalThis.vm = vm;
+      new Worker(${JSON.stringify(workerSource)}, { eval: true, workerData: sab }).unref();
+      try {
+        vm.runInThisContext(
+          "try { vm.runInThisContext('for(;;) Atomics.wait(ia, 0, 0);'); } catch (e) { console.log('guest caught', String(e)); } console.log('guest after');",
+          { breakOnSigint: true },
+        );
+        console.log("returned");
+      } catch (e) {
+        console.log("caught", e.code);
+      }
+      ${proveStillAlive}
+    `;
+      const [stdout, stderr, exitCode] = await run(fixture);
+      expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    },
+    20_000,
+  );
+
+  // breakOnSigint composed with {timeout}: the watchdog's NeedWatchdogCheck
+  // fires first and claims the thread-stop request, so the SIGINT's own trap
+  // does not notify the parked waiter; the watcher's direct syncWaiter notify
+  // is what delivers the wake. Run under both trap configurations: polling
+  // traps has no signal-sender retry loop to paper over a missed notify
+  // (Windows always behaves like polling traps).
+  for (const usePollingTraps of [false, true]) {
+    test.concurrent(
+      `script with timeout armed${usePollingTraps ? " (polling traps)" : ""}`,
+      async () => {
+        const fixture = `
+        const vm = require("node:vm");
+        const { Worker } = require("node:worker_threads");
+        const sab = new SharedArrayBuffer(8);
+        globalThis.ia = new Int32Array(sab);
+        new Worker(
+          \`const { workerData } = require("node:worker_threads");
+           const ia = new Int32Array(workerData);
+           while (Atomics.notify(ia, 0, 1) === 0) {}
+           // The 400ms wait is wall-clock ordering, not a park grace: the
+           // 200ms watchdog timer must fire (claiming the thread-stop
+           // request) before SIGINT arrives, or this test degenerates into
+           // the plain interrupt path. The final spin proves the guest is
+           // parked again when SIGINT is sent.
+           Atomics.wait(ia, 1, 0, 400);
+           while (Atomics.notify(ia, 0, 1) === 0) {}
+           process.kill(process.pid, "SIGINT");\`,
+          { eval: true, workerData: sab },
+        ).unref();
+        try {
+          vm.runInThisContext("for(;;) Atomics.wait(ia, 0, 0);", { breakOnSigint: true, timeout: 200 });
+          console.log("returned");
+        } catch (e) {
+          console.log("caught", e.code);
+        }
+        ${proveStillAlive}
+      `;
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", fixture],
+          env: usePollingTraps ? { ...bunEnv, BUN_JSC_usePollingTraps: "1" } : bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_INTERRUPTED\nalive true\n");
+        expect(stderr).toBe("");
+        expect(exitCode).toBe(0);
+      },
+      20_000,
+    );
+  }
+});
+
+// A nested vm run with no options observes the shared VM's termination
+// request when the outer frame's {timeout} watchdog fires; its cleanup used
+// to hit RELEASE_ASSERT_NOT_REACHED ("terminated due neither to SIGINT nor
+// to timeout"), a crash in release builds too. The inner run must leave the
+// request for the outer frame, which reports the timeout as node does.
+test.concurrent(
+  "nested vm run propagates the outer frame's termination",
+  async () => {
+    const fixture = `
+    const vm = require("node:vm");
+    globalThis.vm = vm;
+    try {
+      vm.runInThisContext("vm.runInThisContext('for(;;);');", { timeout: 100 });
+      console.log("returned");
+    } catch (e) {
+      console.log("caught", e.code);
+    }
+    let n = 0;
+    for (let i = 0; i < 100000; i++) n++;
+    console.log("alive", n === 100000);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_TIMEOUT\nalive true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);
+
+// An inner breakOnSigint-only run must not claim the outer frame's watchdog
+// termination as a SIGINT: the misattributed (and catchable) error would let
+// the guest swallow it and keep running with the outer's one-shot watchdog
+// already spent, silently bypassing the outer {timeout}. The termination must
+// propagate uncatchably to the outer frame, which reports the timeout.
+test.concurrent(
+  "outer timeout fires during a nested breakOnSigint run",
+  async () => {
+    const fixture = `
+    const vm = require("node:vm");
+    globalThis.vm = vm;
+    try {
+      vm.runInThisContext(
+        "try { vm.runInThisContext('for(;;);', { breakOnSigint: true }); } catch (e) { console.log('guest caught', e.code); } for(;;);",
+        { timeout: 100 },
+      );
+      console.log("returned");
+    } catch (e) {
+      console.log("caught", e.code);
+    }
+    let n = 0;
+    for (let i = 0; i < 100000; i++) n++;
+    console.log("alive", n === 100000);
+  `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("caught ERR_SCRIPT_EXECUTION_TIMEOUT\nalive true\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  },
+  20_000,
+);

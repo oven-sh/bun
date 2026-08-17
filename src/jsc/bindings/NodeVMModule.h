@@ -61,6 +61,12 @@ public:
 
     JSValue evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint);
 
+    // Consume a termination this evaluation owns and throw the matching
+    // ERR_SCRIPT_EXECUTION_* (returns true), or propagate one that is not
+    // ours: VM teardown, an outer vm frame's interrupt, or a worker stop
+    // that raced the consume (returns false, termination left pending).
+    bool reportOwnedTermination(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMGlobalObject* nodeVmGlobalObject, uint32_t timeout, bool breakOnSigint);
+
     // For top-level-await modules JSC finishes evaluation asynchronously
     // (record status EvaluatingAsync -> Evaluated); pull the final state into
     // m_status/m_evaluationException once the record has settled.

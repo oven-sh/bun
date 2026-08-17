@@ -1,6 +1,8 @@
 #include "NodeVM.h"
 #include "SigintWatcher.h"
 
+#include <JavaScriptCore/WaiterListManager.h>
+
 #if OS(WINDOWS)
 #include <windows.h>
 #endif
@@ -207,7 +209,18 @@ bool SigintWatcher::signalAll()
     }
 
     for (JSGlobalObject* globalObject : m_globalObjects) {
-        globalObject->vm().notifyNeedTermination();
+        JSC::VM& vm = globalObject->vm();
+        // Atomics.wait's park loop (WaiterListManager::waitForSync) only exits
+        // on hasTerminationRequest(); the NeedTermination trap wakes the waiter
+        // but is serviced only at safepoints, which a parked thread never reaches.
+        vm.setHasTerminationRequest();
+        vm.notifyNeedTermination();
+        // fireTrap only notifies the sync waiter on the first thread-stop
+        // request; if another async trap (a {timeout} watchdog fire) already
+        // requested one, the parked waiter would not be woken. POSIX hides
+        // this behind the trap SignalSender's retry loop, but that is
+        // compiled out on Windows and under usePollingTraps.
+        vm.syncWaiter()->condition().notifyOne();
     }
 
     return true;

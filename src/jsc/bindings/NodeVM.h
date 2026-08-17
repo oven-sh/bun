@@ -30,6 +30,18 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
+// Clear a termination node:vm consumed (breakOnSigint/timeout). The request
+// flag alone is insufficient: a termination that interrupted Atomics.wait
+// never ran handleTraps, and the pending trap would re-terminate the VM.
+// armedWatchdog: whether this run armed a {timeout} watchdog; only then is a
+// pending NeedWatchdogCheck this run's to stand down.
+// Returns false when the VM began stopping (worker.terminate()) while we
+// consumed: the stop was re-delivered and the caller must propagate the
+// termination instead of reporting ERR_SCRIPT_EXECUTION_*.
+[[nodiscard]] bool consumeTermination(JSC::VM& vm, bool armedWatchdog);
+// An enclosing vm frame's {timeout} watchdog still has a time limit armed, so
+// a termination that carries no SIGINT flag is its timeout, not a raced SIGINT.
+bool outerWatchdogArmed(JSC::VM& vm);
 // `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
 // when no filename was provided; compileFunction has no such default.
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);

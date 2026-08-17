@@ -70,6 +70,40 @@ void NodeVMModule::reconcileEvaluationState(JSC::VM& vm)
     }
 }
 
+bool NodeVMModule::reportOwnedTermination(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, NodeVMGlobalObject* nodeVmGlobalObject, uint32_t timeout, bool breakOnSigint)
+{
+    VM& vm = JSC::getVM(globalObject);
+    // Ours only if the VM is not being stopped and this evaluation can
+    // attribute the termination to its own arming: a flagged SIGINT, its own
+    // {timeout}, or breakOnSigint with no enclosing armed watchdog (an armed
+    // outer watchdog means this is the outer frame's timeout firing).
+    bool owned = Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)
+        && (getSigintReceived() || timeout != 0 || (breakOnSigint && !NodeVM::outerWatchdogArmed(vm)));
+    if (!owned) {
+        if (!vm.hasPendingTerminationException())
+            vm.throwTerminationException();
+        return false;
+    }
+    vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
+    if (vm.hasPendingTerminationException())
+        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    if (!NodeVM::consumeTermination(vm, timeout != 0)) {
+        vm.throwTerminationException();
+        return false;
+    }
+    if (getSigintReceived()) {
+        setSigintReceived(false);
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    } else if (timeout != 0) {
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
+    } else {
+        // breakOnSigint was armed, but SIGINT raced the watcher registration
+        // or teardown past the sigintReceived flag. It is still an interrupt.
+        throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
+    }
+    return true;
+}
+
 JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, bool breakOnSigint)
 {
     VM& vm = globalObject->vm();
@@ -100,22 +134,8 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
             // exception-check validator is satisfied before the TOP scope
             // below, then convert it to ERR_SCRIPT_EXECUTION_*.
             std::ignore = scope.exception();
-            if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-                // The VM itself is being stopped; not ours to consume. Propagate the termination.
-                if (!vm.hasPendingTerminationException())
-                    vm.throwTerminationException();
-                return {};
-            }
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-                vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-                DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-                vm.clearHasTerminationRequest();
-                if (getSigintReceived()) {
-                    setSigintReceived(false);
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-                } else {
-                    throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-                }
+                reportOwnedTermination(globalObject, scope, nodeVmGlobalObject, timeout, breakOnSigint);
                 return {};
             }
         }
@@ -246,24 +266,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
     // termination one is converted to ERR_SCRIPT_EXECUTION_* here. Observe it
     // so the exception-check validator is satisfied before the TOP scope.
     std::ignore = scope.exception();
-    if ((vm.hasTerminationRequest() || vm.hasPendingTerminationException()) && !Bun__VmHandle__scriptAllowed(WebCore::clientData(vm)->vmHandle)) {
-        // The VM itself is being stopped; not ours to consume. Propagate the termination.
-        if (!vm.hasPendingTerminationException())
-            vm.throwTerminationException();
-        return {};
-    }
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
-        vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
-        DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
-        vm.clearHasTerminationRequest();
-        if (getSigintReceived()) {
-            setSigintReceived(false);
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_INTERRUPTED, "Script execution was interrupted by `SIGINT`"_s);
-        } else if (timeout != 0) {
-            throwError(globalObject, scope, ErrorCode::ERR_SCRIPT_EXECUTION_TIMEOUT, makeString("Script execution timed out after "_s, timeout, "ms"_s));
-        } else {
-            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("vm.SourceTextModule evaluation terminated due neither to SIGINT nor to timeout");
-        }
+        // A propagated termination must not mark the module Errored (the
+        // VM_RETURN_IF_EXCEPTION below would pin it as the module's
+        // evaluation exception forever); only owned ERR_* errors fall through.
+        if (!reportOwnedTermination(globalObject, scope, nodeVmGlobalObject, timeout, breakOnSigint))
+            return {};
     } else {
         setSigintReceived(false);
     }

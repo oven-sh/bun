@@ -102,7 +102,6 @@ pub struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
-    /// Seats `Formatter::can_throw_stack_overflow`.
     pub(crate) can_throw_stack_overflow: bool,
 }
 
@@ -298,10 +297,8 @@ pub struct Formatter<'a> {
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
     stack_check: StackCheck,
-    /// On an exhausted stack, throw a `RangeError` instead of silently
-    /// truncating the output. Set for snapshot serialization, where a
-    /// truncated result would be stored as if it were complete; left off for
-    /// diff output, which is only diagnostic.
+    /// Snapshot serialization sets this so a too-deep value fails the test
+    /// rather than storing a truncated snapshot; diff output leaves it off.
     can_throw_stack_overflow: bool,
 }
 
@@ -1039,8 +1036,6 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
-        // Ahead of the circular-reference bookkeeping below, which only some
-        // of the tags that recurse into child values take part in.
         if !self.stack_check.is_safe_to_recurse() {
             self.failed = true;
             if self.can_throw_stack_overflow {

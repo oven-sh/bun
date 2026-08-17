@@ -745,24 +745,10 @@ impl Lockfile {
     /// Gives the folder rows of root, workspace and `file:` packages the top-level relative
     /// `value.folder` that `Package::parse` gives them (the stored literal is package-relative).
     pub(crate) fn rebase_folder_dependencies(&mut self) -> Result<(), AllocError> {
-        let Lockfile {
-            packages,
-            buffers,
-            string_pool,
-            ..
-        } = self;
-        let Buffers {
-            string_bytes,
-            dependencies,
-            ..
-        } = buffers;
-        let pkgs = packages.slice();
+        let pkgs = self.packages.slice();
         let mut path_buf = bun_paths::path_buffer_pool::get();
-
-        for (pkg_resolution, pkg_dependencies) in pkgs
-            .items_resolution()
-            .iter()
-            .zip(pkgs.items_dependencies())
+        for (pkg_resolution, pkg_dependencies) in
+            (pkgs.items_resolution().iter()).zip(pkgs.items_dependencies())
         {
             let pkg_dir: SemverString = match pkg_resolution.tag {
                 ResolutionTag::Root => SemverString::default(),
@@ -770,12 +756,11 @@ impl Lockfile {
                 ResolutionTag::Folder => *pkg_resolution.folder(),
                 _ => continue,
             };
-
-            for dep in pkg_dependencies.mut_(dependencies.as_mut_slice()) {
+            for dep in pkg_dependencies.mut_(self.buffers.dependencies.as_mut_slice()) {
                 if dep.version.tag != dependency::Tag::Folder {
                     continue;
                 }
-                let buf = string_bytes.as_slice();
+                let buf = self.buffers.string_bytes.as_slice();
                 let literal = dep.version.literal.sliced(buf);
                 let Some(declared) = dependency::parse_with_tag(
                     dep.name,
@@ -796,13 +781,12 @@ impl Lockfile {
                     continue;
                 };
                 dep.version.value.folder = SemverStringBuf {
-                    bytes: &mut *string_bytes,
-                    pool: &mut *string_pool,
+                    bytes: &mut self.buffers.string_bytes,
+                    pool: &mut self.string_pool,
                 }
                 .append(relative)?;
             }
         }
-
         Ok(())
     }
 

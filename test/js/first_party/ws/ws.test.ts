@@ -373,42 +373,33 @@ describe("send() with { binary }", () => {
       if (received.length === sends.length) resolve(received);
     });
     ws.on("error", reject);
+    ws.on("close", () => reject(new Error(`closed after ${received.length} of ${sends.length} messages`)));
     return promise;
   }
 
-  async function connectPair() {
+  // Connects a client to a new server, sends `sends` from one side and returns what the other side received.
+  async function exchange(from: "client" | "server") {
     const wss = new WebSocketServer({ port: 0 });
-    const connection = once(wss, "connection");
-    const client = new WebSocket("ws://localhost:" + wss.address().port);
-    clients.push(client);
-    const opened = once(client, "open");
-    const [serverSide] = (await connection) as [WebSocket];
-    await opened;
-    return { wss, client, serverSide };
+    try {
+      const connection = once(wss, "connection");
+      const client = new WebSocket("ws://localhost:" + wss.address().port);
+      clients.push(client);
+      const [[serverSide]] = (await Promise.all([connection, once(client, "open")])) as [[WebSocket], unknown[]];
+      const [sender, receiver] = from === "client" ? [client, serverSide] : [serverSide, client];
+      const received = receiveAll(receiver);
+      for (const { data, opts } of sends) sender.send(data, opts);
+      return await received;
+    } finally {
+      wss.close();
+    }
   }
 
   it("from the client", async () => {
-    const { wss, client, serverSide } = await connectPair();
-    try {
-      const received = receiveAll(serverSide);
-      for (const { data, opts } of sends) client.send(data, opts);
-      expect(await received).toEqual(expected);
-    } finally {
-      serverSide.terminate();
-      wss.close();
-    }
+    expect(await exchange("client")).toEqual(expected);
   });
 
   it("from the server", async () => {
-    const { wss, client, serverSide } = await connectPair();
-    try {
-      const received = receiveAll(client);
-      for (const { data, opts } of sends) serverSide.send(data, opts);
-      expect(await received).toEqual(expected);
-    } finally {
-      serverSide.terminate();
-      wss.close();
-    }
+    expect(await exchange("server")).toEqual(expected);
   });
 });
 

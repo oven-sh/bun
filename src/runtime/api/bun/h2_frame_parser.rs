@@ -8028,6 +8028,10 @@ impl H2FrameParser {
 
             if js_value.js_type().is_array() {
                 let mut value_iter = js_value.array_iterator(global_object)?;
+                // [] sends nothing, so (as in node) it is not an occurrence of the field.
+                if value_iter.len == 0 {
+                    continue;
+                }
 
                 if let Some(idx) = this.single_value_index_checked(validated_name) {
                     if value_iter.len > 1 || single_value_headers[idx] {
@@ -8508,6 +8512,10 @@ impl H2FrameParser {
                 };
                 if js_value.js_type().is_array() {
                     let mut value_iter = js_value.array_iterator(global_object)?;
+                    // [] sends nothing, so (as in node) it is not an occurrence of the field.
+                    if value_iter.len == 0 {
+                        continue;
+                    }
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {
                             return Err(global_object
@@ -9066,6 +9074,10 @@ impl H2FrameParser {
                 if js_value.js_type().is_array() {
                     bun_output::scoped_log!(H2FrameParser, "array header {}", BStr::new(name));
                     let mut value_iter = js_value.array_iterator(global_object)?;
+                    // [] sends nothing, so (as in node) it is not an occurrence of the field.
+                    if value_iter.len == 0 {
+                        continue;
+                    }
 
                     if let Some(idx) = this.single_value_index_checked(validated_name) {
                         if value_iter.len > 1 || single_value_headers[idx] {

@@ -12,7 +12,7 @@ use bun_paths::MAX_PATH_BYTES;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::platform::Auto as PlatformAuto;
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{ExternalString, String};
@@ -755,7 +755,7 @@ fn normalized_bin_name(name: &[u8]) -> &[u8] {
 /// verbatim from package.json, so without this check a malicious package could
 /// point a bin link at (and chmod) an arbitrary file on disk (the bug class
 /// npm fixed as CVE-2019-16775).
-pub(crate) fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
+pub fn bin_target_escapes_package_dir(target: &[u8]) -> bool {
     if path::is_absolute(target) {
         return true;
     }
@@ -925,29 +925,34 @@ impl<'a> Linker<'a> {
 
         bun_core::analytics::Features::binlinks_inc();
 
+        // Only this bin's outcome decides whether the link just made is kept.
+        let prior_err = self.err.take();
         #[cfg(not(windows))]
         {
             self.create_symlink(abs_target, abs_dest, global);
         }
         #[cfg(windows)]
         {
-            let target = match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
-                Ok(f) => f,
+            match sys::File::openat(Fd::cwd(), abs_target, sys::O::RDONLY, 0) {
+                Ok(target) => self.create_windows_shim(&target, abs_target, abs_dest, global),
                 Err(err) => {
                     let err: crate::Error = err.into();
+                    // ignore directories, creating a shim for one won't do anything
                     if err != crate::Error::Sys(bun_errno::SystemErrno::EISDIR) {
-                        // ignore directories, creating a shim for one won't do anything
                         self.err = Some(err);
                     }
-                    return;
                 }
-            };
-            self.create_windows_shim(&target, abs_target, abs_dest, global);
+            }
         }
+        let err = self.err;
+        self.err = prior_err.or(err);
 
-        if self.err.is_some() {
+        if err.is_some() {
             // cleanup on error just in case
             Self::unlink_bin_or_shim(abs_dest);
+            if let Some(seen) = self.seen.as_deref_mut() {
+                seen.remove(abs_dest.as_bytes());
+            }
             return;
         }
 
@@ -1042,11 +1047,11 @@ impl<'a> Linker<'a> {
 
         // Create temporary file path
         let mut tmppath_buf = [0u8; MAX_PATH_BYTES];
-        let tmppath = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
-            dir_path,
-            &mut tmppath_buf,
-            &[tmpname.as_bytes()],
-        );
+        let Some(tmppath) =
+            join_z_checked::<PlatformAuto>(dir_path, &mut tmppath_buf, &[tmpname.as_bytes()])
+        else {
+            return;
+        };
         let mut needs_unlink = true;
         let unlink_guard = scopeguard::guard(&mut needs_unlink, |needs_unlink| {
             if *needs_unlink {
@@ -1179,12 +1184,16 @@ impl<'a> Linker<'a> {
             resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes()),
             abs_target.as_bytes(),
         );
-        debug_assert!(strings::has_prefix(rel_target.as_bytes(), b"..\\"));
 
-        let rel_target_w = strings::to_w_path_normalized(
-            target_buf.as_mut_slice(),
-            &rel_target.as_bytes()[b"..\\".len()..],
-        );
+        // The shim resolves `bin_path` against its directory's parent, hence no `..\`. Global
+        // installs can target another drive or the bin directory itself: store those absolute.
+        let (bin_path, is_absolute_target): (&[u8], bool) =
+            match strings::without_prefix_if_possible_comptime(rel_target.as_bytes(), b"..\\") {
+                Some(rel_to_parent) => (rel_to_parent, false),
+                None => (abs_target.as_bytes(), true),
+            };
+
+        let bin_path_w = strings::to_w_path_normalized(target_buf.as_mut_slice(), bin_path);
 
         let shebang = 'shebang: {
             let first_content_chunk: Option<&[u8]> = 'contents: {
@@ -1201,7 +1210,7 @@ impl<'a> Linker<'a> {
             };
 
             if let Some(chunk) = first_content_chunk {
-                match WinShimShebang::parse(chunk, rel_target_w) {
+                match WinShimShebang::parse(chunk, bin_path_w) {
                     Ok(s) => break 'shebang s,
                     Err(_) => {
                         self.err = Some(crate::Error::InvalidBinCount);
@@ -1209,12 +1218,13 @@ impl<'a> Linker<'a> {
                     }
                 }
             } else {
-                break 'shebang WinShimShebang::parse_from_bin_path(rel_target_w);
+                break 'shebang WinShimShebang::parse_from_bin_path(bin_path_w);
             }
         };
 
         let shim = WinBinLinkingShim {
-            bin_path: rel_target_w,
+            bin_path: bin_path_w,
+            is_absolute_target,
             shebang,
         };
 
@@ -1263,10 +1273,12 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        let rel_target =
-            resolve_path::relative_buf_z(self.rel_buf, abs_dest_dir, abs_target.as_bytes());
-
-        debug_assert!(strings::has_prefix(rel_target.as_bytes(), b".."));
+        // Need not start with `..` (a global install may nest the package inside the bin
+        // directory), and one `..` per component of `abs_dest_dir` can outgrow `abs_target`.
+        let rel_bound = abs_target.len() + 3 * (strings::count_char(abs_dest_dir, SEP) + 1) + 2;
+        let mut rel_spill = Vec::new();
+        let rel_buf = resolve_path::buf_or_spill(self.rel_buf, &mut rel_spill, rel_bound);
+        let rel_target = resolve_path::relative_buf_z(rel_buf, abs_dest_dir, abs_target.as_bytes());
 
         match sys::symlink_running_executable(rel_target, abs_dest) {
             sys::Result::Err(err) => {
@@ -1464,59 +1476,45 @@ impl<'a> Linker<'a> {
     ///
     /// Falls through to (1) when nothing exists so the existing
     /// `skipped_due_to_missing_bin` retry-without-redirect path still fires.
-    // `is_native_binlink_redirect()` is hoisted to a parameter so the
-    // caller can drop its `&self` borrow before mutably calling
-    // `link_bin_or_create_shim`. Result borrows the threadlocal join buffer
-    // (lifetime tied to `package_dir` per `join_abs_string_z`'s signature).
+    /// `None`: the path does not fit `buf`; callers treat that as a missing bin.
     fn resolve_bin_target<'b>(
         is_native_binlink_redirect: bool,
-        package_dir: &'b [u8],
+        package_dir: &[u8],
         target: &[u8],
         bin_name: &[u8],
-    ) -> &'b ZStr {
+        buf: &'b mut [u8],
+    ) -> Option<&'b ZStr> {
         // A trailing separator would make `lchmod` follow a symlinked target; npm drops it too.
         let target = strings::without_trailing_slash(target);
-        let primary = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
 
         if !is_native_binlink_redirect {
-            return primary;
-        }
-
-        if sys::exists(primary.as_bytes()) {
-            return primary;
-        }
-
-        if !bin_name.is_empty() {
-            let at_root = resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[bin_name]);
-            if sys::exists(at_root.as_bytes()) {
-                return at_root;
-            }
+            return join_z_checked::<PlatformAuto>(package_dir, buf, &[target]);
         }
 
         let target_basename = path::basename(target);
-        if !target_basename.is_empty() && target_basename.len() != target.len() {
-            let at_root =
-                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target_basename]);
-            if sys::exists(at_root.as_bytes()) {
-                return at_root;
+        let in_subdir = target_basename.len() != target.len();
+        let exe_name: Vec<u8> =
+            if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
+                [bin_name, b".exe"].concat()
+            } else {
+                Vec::new()
+            };
+        let at_root = if in_subdir { target_basename } else { b"" };
+        for candidate in [target, bin_name, at_root, &exe_name] {
+            if candidate.is_empty() {
+                continue;
+            }
+            let found = join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
+                .filter(|abs| sys::exists_z(abs));
+            if let Some(len) = found.map(ZStr::len) {
+                return Some(ZStr::from_buf(buf, len));
             }
         }
 
-        if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
-            let mut exe_name = Vec::with_capacity(bin_name.len() + b".exe".len());
-            exe_name.extend_from_slice(bin_name);
-            exe_name.extend_from_slice(b".exe");
-            let at_root =
-                resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[&exe_name]);
-            if sys::exists(at_root.as_bytes()) {
-                return at_root;
-            }
-        }
-
-        // Nothing found; return the primary so `linkBinOrCreateShim` sets
+        // Nothing found; return the primary so `link_bin_or_create_shim` sets
         // `skipped_due_to_missing_bin` and the caller retries without the
         // redirect.
-        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target])
+        join_z_checked::<PlatformAuto>(package_dir, buf, &[target])
     }
 
     /// uses `self.abs_target_buf`
@@ -1588,16 +1586,12 @@ impl<'a> Linker<'a> {
 
         debug_assert!(self.bin.tag != Tag::None);
 
-        // `link_bin_or_create_shim(&mut self, ..)`
-        // is called while `abs_target` / `abs_dest` borrow `self.abs_target_buf`
-        // / `self.abs_dest_buf`. `link_bin_or_create_shim` never reads or writes
-        // those two buffers (it only touches `rel_buf`, `node_modules_path`, `seen`, `err`,
-        // `skipped_due_to_missing_bin`). Detach the `abs_dest` borrow via a raw
-        // pointer so borrowck allows the disjoint access; the SAFETY invariant
-        // is that `abs_dest_buf` is not aliased mutably for the lifetime of the
-        // detached slice. `package_dir` (`abs_target_buf[0..package_dir_len]`)
-        // is re-derived inside each arm so no detached borrow is needed for it.
+        // SAFETY (`from_raw` below): `link_bin_or_create_shim` never touches `abs_dest_buf`.
         let abs_dest_buf_ptr: *mut u8 = self.abs_dest_buf.as_mut_ptr();
+
+        // `abs_target_buf` holds `package_dir`, the join input, so the output needs its own buffer.
+        let mut resolved_target_pool_buf = path::path_buffer_pool::get();
+        let resolved_target_buf = resolved_target_pool_buf.as_mut_slice();
 
         // SAFETY: tag determines the active union field
         unsafe {
@@ -1616,20 +1610,15 @@ impl<'a> Linker<'a> {
                         Dependency::unscoped_package_name(self.package_name.slice());
 
                     // for normalizing `target`
-                    let abs_target: &ZStr = {
-                        let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = Self::resolve_bin_target(
-                            is_redirect,
-                            package_dir,
-                            target,
-                            unscoped_package_name,
-                        );
-                        // SAFETY: `resolve_bin_target` writes into the thread-local
-                        // `PARSER_JOIN_INPUT_BUFFER` (via `join_abs_string_z`); the
-                        // returned slice does not actually borrow `self` or
-                        // `package_dir`. Detach the lifetime so `self` can be
-                        // re-borrowed mutably below.
-                        ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                    let Some(abs_target) = Self::resolve_bin_target(
+                        is_redirect,
+                        &self.abs_target_buf[0..package_dir_len],
+                        target,
+                        unscoped_package_name,
+                        resolved_target_buf,
+                    ) else {
+                        self.skipped_due_to_missing_bin = true;
+                        return;
                     };
 
                     if unscoped_package_name.len()
@@ -1672,16 +1661,15 @@ impl<'a> Linker<'a> {
                     }
 
                     // for normalizing `target`
-                    let abs_target: &ZStr = {
-                        let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r = Self::resolve_bin_target(
-                            is_redirect,
-                            package_dir,
-                            target,
-                            normalized_name,
-                        );
-                        // SAFETY: thread-local buffer; see Tag::File above.
-                        ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                    let Some(abs_target) = Self::resolve_bin_target(
+                        is_redirect,
+                        &self.abs_target_buf[0..package_dir_len],
+                        target,
+                        normalized_name,
+                        resolved_target_buf,
+                    ) else {
+                        self.skipped_due_to_missing_bin = true;
+                        return;
                     };
 
                     self.abs_dest_buf[dest_off..dest_off + normalized_name.len()]
@@ -1728,16 +1716,16 @@ impl<'a> Linker<'a> {
                             return;
                         }
 
-                        let abs_target: &ZStr = {
-                            let package_dir = &self.abs_target_buf[0..package_dir_len];
-                            let r = Self::resolve_bin_target(
-                                is_redirect,
-                                package_dir,
-                                bin_target,
-                                normalized_bin_dest,
-                            );
-                            // SAFETY: thread-local buffer; see Tag::File above.
-                            ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                        let Some(abs_target) = Self::resolve_bin_target(
+                            is_redirect,
+                            &self.abs_target_buf[0..package_dir_len],
+                            bin_target,
+                            normalized_bin_dest,
+                            resolved_target_buf,
+                        ) else {
+                            self.skipped_due_to_missing_bin = true;
+                            i += 2;
+                            continue;
                         };
 
                         dest_off = abs_dest_dir_end;
@@ -1766,15 +1754,13 @@ impl<'a> Linker<'a> {
                         return;
                     }
                     // for normalizing `target`
-                    let abs_target_dir: &ZStr = {
-                        let package_dir = &self.abs_target_buf[0..package_dir_len];
-                        let r =
-                            resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
-                        // SAFETY: `join_abs_string_z` writes into the thread-local
-                        // `PARSER_JOIN_INPUT_BUFFER`; result does not borrow
-                        // `package_dir`. Detached so `abs_target_buf` can be
-                        // reused inside the loop body (see the SAFETY note below).
-                        ZStr::from_raw(r.as_bytes().as_ptr(), r.len())
+                    let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
+                        &self.abs_target_buf[0..package_dir_len],
+                        resolved_target_buf,
+                        &[target],
+                    ) else {
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        return;
                     };
 
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
@@ -1800,13 +1786,16 @@ impl<'a> Linker<'a> {
                         match entry.kind {
                             sys::EntryKind::SymLink | sys::EntryKind::File => {
                                 let entry_name = entry.name.slice_u8();
-                                // `self.abs_target_buf` is available now because `path::join_abs_string_z` copied everything into `parse_join_input_buffer`
+                                // `package_dir` is no longer needed, so `abs_target_buf` is free.
                                 let abs_target: &ZStr = {
-                                    let r = resolve_path::join_abs_string_buf_z::<PlatformAuto>(
+                                    let Some(r) = join_z_checked::<PlatformAuto>(
                                         abs_target_dir.as_bytes(),
                                         self.abs_target_buf,
                                         &[entry_name],
-                                    );
+                                    ) else {
+                                        self.skipped_due_to_missing_bin = true;
+                                        continue;
+                                    };
                                     // SAFETY: result lives in `self.abs_target_buf`, which
                                     // `link_bin_or_create_shim` does not write to (only
                                     // `rel_buf`/`node_modules_path`/`seen`/`err`/
@@ -1846,11 +1835,6 @@ impl<'a> Linker<'a> {
         let mut dest_off = self.build_destination_dir(global);
 
         debug_assert!(self.bin.tag != Tag::None);
-
-        // see `link()` — detach abs_target_buf borrow via raw ptr.
-        let abs_target_buf_ptr: *const u8 = self.abs_target_buf.as_ptr();
-        // SAFETY: abs_target_buf is not written between here and use.
-        let package_dir = unsafe { bun_core::ffi::slice(abs_target_buf_ptr, package_dir_len) };
 
         // SAFETY: tag determines the active union field
         unsafe {
@@ -1936,8 +1920,15 @@ impl<'a> Linker<'a> {
                         return;
                     }
 
-                    let abs_target_dir =
-                        resolve_path::join_abs_string_z::<PlatformAuto>(package_dir, &[target]);
+                    let mut abs_target_dir_buf = path::path_buffer_pool::get();
+                    let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
+                        &self.abs_target_buf[0..package_dir_len],
+                        abs_target_dir_buf.as_mut_slice(),
+                        &[target],
+                    ) else {
+                        self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+                        return;
+                    };
 
                     let target_dir = match sys::open_dir_absolute(abs_target_dir.as_bytes()) {
                         Ok(d) => d,

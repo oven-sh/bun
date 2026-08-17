@@ -614,6 +614,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
+        // The dir cache below outlives this resolver into the VM, and only an auto-installing
+        // resolver records the package.json dependency ranges auto-install resolves against.
+        this_transpiler.options.global_cache = ctx.debug.global_cache;
+        this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -686,9 +690,10 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         // remaining env-var seeding.
         let env_loader = this_transpiler.env_mut();
 
+        // This and `npm_package_*` describe this run, over whatever an outer `bun run` exported.
         env_loader
             .map
-            .put_default(b"npm_config_local_prefix", top_level_dir)
+            .put(b"npm_config_local_prefix", top_level_dir)
             .expect("unreachable");
 
         // Propagate --no-orphans / [run] noOrphans to the script's env so any
@@ -738,26 +743,22 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
 
         if let Some(package_json) = root_dir_info.enclosing_package_json {
             if !package_json.name.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_NAME).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_NAME, &package_json.name)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_NAME, &package_json.name)
+                    .expect("unreachable");
             }
 
             env_loader
                 .map
-                .put_default(b"npm_package_json", package_json.source.path.text)
+                .put(b"npm_package_json", package_json.source.path.text)
                 .expect("unreachable");
 
             if !package_json.version.is_empty() {
-                if env_loader.map.get(NpmArgs::PACKAGE_VERSION).is_none() {
-                    env_loader
-                        .map
-                        .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
-                        .expect("unreachable");
-                }
+                env_loader
+                    .map
+                    .put(NpmArgs::PACKAGE_VERSION, &package_json.version)
+                    .expect("unreachable");
             }
 
             if let Some(config) = package_json.config.as_deref() {
@@ -955,6 +956,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,

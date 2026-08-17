@@ -9,6 +9,13 @@
 //! [WSTR:program][u16:0][WSTR:args][u32:bin_path_byte_len][u32:arg_byte_len]
 //! - args always ends with a trailing space
 //!
+//! `bin_path` is normally relative to the parent of the directory containing
+//! the shim (`node_modules` for `node_modules/.bin/foo.exe`), which is what
+//! keeps a `node_modules` tree relocatable. When no such relative path exists
+//! (a global install whose bin directory is on a different drive than the
+//! package directory, or whose package directory is inside the bin directory)
+//! `Flags::is_absolute_target` is set and `bin_path` is the absolute path.
+//!
 //! See `bun_shim_impl.rs` for more details on how this file is consumed.
 //!
 //! ## `shim_standalone` feature
@@ -22,7 +29,7 @@
 /// Random numbers are chosen for validation purposes
 /// These arbitrary numbers will probably not show up in the other fields.
 /// This will reveal off-by-one mistakes.
-// The encoding is an open-ended 13-bit value, so model it as a transparent u16
+// The encoding is an open-ended 12-bit value, so model it as a transparent u16
 // newtype rather than an exhaustive enum.
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -32,10 +39,14 @@ impl VersionFlag {
     const CURRENT: VersionFlag = VersionFlag::V5;
 
     /// Fixed bugs where passing arguments did not always work.
-    const V5: VersionFlag = VersionFlag(5478);
+    ///
+    /// Was the 13-bit value 5478 at bit 3 of `Flags` before
+    /// `Flags::is_absolute_target` took that bit; `2739 << 4` is the same bit
+    /// pattern. The assertions below `Flags` explain and pin this.
+    const V5: VersionFlag = VersionFlag(2739);
 
-    /// Maximum 13-bit value.
-    const MAX: VersionFlag = VersionFlag((1u16 << 13) - 1);
+    /// Maximum 12-bit value.
+    const MAX: VersionFlag = VersionFlag((1u16 << 12) - 1);
 
     #[inline]
     pub(crate) const fn bits(self) -> u16 {
@@ -43,7 +54,7 @@ impl VersionFlag {
     }
 }
 
-// Packed u16 bitfield (three bools + a 13-bit version tag): `#[repr(transparent)]`
+// Packed u16 bitfield (four bools + a 12-bit version tag): `#[repr(transparent)]`
 // newtype with manual shift accessors (LSB first).
 #[repr(transparent)]
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -55,13 +66,15 @@ impl Flags {
         is_node_or_bun: bool,
         is_node: bool,
         has_shebang: bool,
+        is_absolute_target: bool,
         version_tag: VersionFlag,
     ) -> Flags {
         Flags(
             (is_node_or_bun as u16)
                 | ((is_node as u16) << 1)
                 | ((has_shebang as u16) << 2)
-                | (version_tag.0 << 3),
+                | ((is_absolute_target as u16) << 3)
+                | (version_tag.0 << 4),
         )
     }
 
@@ -90,9 +103,15 @@ impl Flags {
     pub(crate) const fn has_shebang(self) -> bool {
         (self.0 & 0b100) != 0
     }
+    // indicates that bin_path is an absolute path instead of being relative to
+    // the parent of the directory containing the shim
+    #[inline]
+    pub(crate) const fn is_absolute_target(self) -> bool {
+        (self.0 & 0b1000) != 0
+    }
     #[inline]
     pub(crate) const fn version_tag(self) -> VersionFlag {
-        VersionFlag(self.0 >> 3)
+        VersionFlag(self.0 >> 4)
     }
 
     #[inline]
@@ -101,11 +120,18 @@ impl Flags {
     }
 
     pub(crate) fn is_valid(self) -> bool {
-        let mask: u16 = Flags::new(false, false, false, VersionFlag::MAX).bits();
-        let compare_to: u16 = Flags::new(false, false, false, VersionFlag::CURRENT).bits();
+        let mask: u16 = Flags::new(false, false, false, false, VersionFlag::MAX).bits();
+        let compare_to: u16 = Flags::new(false, false, false, false, VersionFlag::CURRENT).bits();
         (self.0 & mask) == compare_to
     }
 }
+
+// Launchers that predate `is_absolute_target` validate `bits >> 3 == 5478`. A relative
+// shim must still satisfy that (they keep working on existing installs, and the bunx fast
+// path in a newer bun.exe keeps accepting the files they wrote), and an absolute shim must
+// not (they would otherwise resolve the absolute path as a relative one).
+const _: () = assert!(Flags::new(false, false, false, false, VersionFlag::V5).bits() == 5478 << 3);
+const _: () = assert!(Flags::new(false, false, false, true, VersionFlag::V5).bits() >> 3 != 5478);
 
 // ──────────────────────────────────────────────────────────────────────────
 // Host-side encoding / embedding. None of this is compiled into the
@@ -341,8 +367,10 @@ mod host {
     }
 
     pub(crate) struct BinLinkingShim<'a> {
-        /// Relative to node_modules. Do not include slash
+        /// Relative to the parent of the directory containing the shim (do not
+        /// include a leading slash), or absolute when `is_absolute_target` is set.
         pub(crate) bin_path: &'a [u16],
+        pub(crate) is_absolute_target: bool,
         /// Information found within the target file's shebang
         pub(crate) shebang: Option<Shebang<'a>>,
     }
@@ -392,6 +420,7 @@ mod host {
                 is_node_or_bun,
                 /* is_node */ false,
                 /* has_shebang */ self.shebang.is_some(),
+                self.is_absolute_target,
                 VersionFlag::CURRENT,
             );
 

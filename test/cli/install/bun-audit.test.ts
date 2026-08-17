@@ -10,6 +10,7 @@ import {
   normalizeBunSnapshot,
   runBunInstall,
   tempDir,
+  tls,
 } from "harness";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
@@ -750,6 +751,167 @@ describe("`bun audit`", () => {
     expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
     expect(exitCode).toBe(0);
   });
+
+  describe("registry responses", () => {
+    const projectDependingOnMs: DirectoryTree = {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          ms: "0.7.0",
+        },
+      }),
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "test",
+            "dependencies": {
+              ms: "0.7.0",
+            },
+          },
+        },
+        "packages": {
+          ms: ["ms@0.7.0", "", {}, fakeIntegrity],
+        },
+      }),
+    };
+
+    const NON_JSON = (registry: string) => `error: ${registry} returned a non-JSON audit response`;
+    const NOT_ADVISORIES = (registry: string) =>
+      `error: ${registry} returned an audit response that is not a list of advisories`;
+
+    async function auditAgainst(responseBody: string, args: string[] = []) {
+      await using registry = Bun.serve({
+        port: 0,
+        fetch: () => new Response(responseBody, { headers: { "content-type": "application/json" } }),
+      });
+      using dir = tempDir("bun-test-audit-registry-response", projectDependingOnMs);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "audit", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry.url.href },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      return { stdout, stderr: normalizeBunSnapshot(stderr), exitCode, registry: registry.url.href.slice(0, -1) };
+    }
+
+    // The text report starts with the `bun audit v...` header and a blank line; --json prints neither.
+    function withoutHeader(stdout: string) {
+      expect(stdout).toStartWith("bun audit v");
+      return stdout.slice(stdout.indexOf("\n\n") + 2);
+    }
+
+    const notAdvisoryLists = [
+      "[]",
+      "null",
+      '"all clear"',
+      '{"error":"audit is not supported by this registry"}',
+      '{"ms":{"severity":"high","title":"advisory object where the array should be"}}',
+      '{"ms":["high"]}',
+    ];
+
+    test.concurrent.each(notAdvisoryLists)("%s is a failed audit, not a clean one", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody);
+      expect(withoutHeader(stdout)).toBe("");
+      expect(stderr).toBe(NOT_ADVISORIES(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each(notAdvisoryLists)("--json relays %s and exits 1", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody, ["--json"]);
+      expect(stdout).toBe(`${responseBody}\n`);
+      expect(stderr).toBe(NOT_ADVISORIES(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    const notJson = ["<html>\x1b[2J\x1b]0;owned\x07sign in to continue</html>", "Not Found"];
+
+    test.concurrent.each(notJson)("a non-JSON body (%j) is neither echoed nor a clean audit", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody);
+      expect(withoutHeader(stdout)).toBe("");
+      expect(stderr).toBe(NON_JSON(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each(notJson)("--json does not echo a non-JSON body (%j) either", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody, ["--json"]);
+      expect(stdout).toBe("");
+      expect(stderr).toBe(NON_JSON(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a package listed with no advisories is a clean audit", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst('{"ms":[]}');
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("--json exits 0 when the packages are listed with no advisories", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst('{"ms":[]}', ["--json"]);
+      expect(stdout).toBe('{"ms":[]}\n');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an empty body is a clean audit", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst("");
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("--audit-level filtering out every advisory prints a clean audit, not nothing", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst(
+        JSON.stringify({ ms: [{ severity: "low", title: "minor", url: "https://example.com/minor" }] }),
+        ["--audit-level", "critical"],
+      );
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=critical"));
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("control characters in advisories and package names are escaped in the report", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst(
+        JSON.stringify({
+          ms: [
+            {
+              severity: "high",
+              title: "ms \x1b[2J\x1b]0;owned\x07 ReDoS in \\d+\r\n\tparsing\x7f \x9b \u00a9 2015",
+              url: "https://example.com/ms\x1b]8;;https://evil.example/\x07",
+              vulnerable_versions: "<2.0.0\x1b[0m",
+            },
+          ],
+          "ms\x1b[31m": [{ severity: "critical", title: "not a real package", url: "https://example.com/fake" }],
+        }),
+      );
+      // Not normalizeBunSnapshot: it rewrites the backslashes the escapes are made of.
+      expect(withoutHeader(stdout)).toBe(
+        [
+          "ms@0.7.0",
+          "  (direct dependency)",
+          "  high: ms \\x1b[2J\\x1b]0;owned\\x07 ReDoS in \\d+\\r\\n\\tparsing\\x7f \\u009b \u00a9 2015 (<2.0.0\\x1b[0m) - https://example.com/ms\\x1b]8;;https://evil.example/\\x07",
+          "",
+          "ms\\x1b[31m",
+          "  critical: not a real package - https://example.com/fake",
+          "",
+          "2 vulnerabilities (1 critical, 1 high)",
+          "",
+          REPORT_FOOTER,
+          "",
+        ].join("\n"),
+      );
+      expect(stdout).not.toContain("\x1b");
+      expect(stdout).not.toContain("\x07");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 // Every audit line that names a registry prints it through the same redaction as the install error lines, which
@@ -837,7 +999,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
 
     const json = await auditAgainst(dir, url, "--json");
     expect(normalizeBunSnapshot(json.stderr)).toBe(NON_JSON(printed));
-    expect(json.stdout).toBe(body + "\n");
+    expect(json.stdout).toBe("");
     expect(json.exitCode).toBe(1);
 
     const fix = await auditAgainst(dir, url, "fix");
@@ -1040,6 +1202,38 @@ describe("`bun audit --omit`", () => {
   });
 });
 
+describe("`bun audit --help`", () => {
+  test.concurrent("lists the flags bun audit and bun audit fix act on", async () => {
+    using dir = tempDir("audit-help-", {});
+
+    const { stdout, stderr, exitCode } = await audit(dir, "--help");
+    expect(stdout).toContain("Usage: bun audit [flags]");
+    const out = normalizeBunSnapshot(stdout).split("\n");
+    const flagsStart = out.indexOf("Flags:") + 1;
+    expect(flagsStart).toBeGreaterThan(0);
+    const flagLines = out.slice(flagsStart, out.indexOf("", flagsStart));
+    expect(flagLines.map(line => line.match(/--[\w-]+/)![0])).toStrictEqual([
+      "--audit-level",
+      "--production",
+      "--omit",
+      "--ignore",
+      "--json",
+      "--dry-run",
+      "--latest",
+      "--cwd",
+      "--help",
+    ]);
+    expect(flagLines.find(line => line.includes("--production"))).toStartWith("  -p, --production");
+    expect(flagLines.find(line => line.includes("--production"))).toContain("(alias: --prod)");
+    expect(flagLines.find(line => line.includes("--omit"))).toContain("dev, optional, or peer");
+    expect(flagLines.find(line => line.includes("--dry-run"))).toContain("bun audit fix");
+    expect(flagLines.find(line => line.includes("--latest"))).toStartWith("  -L, --latest");
+    expect(flagLines.find(line => line.includes("--help"))).toStartWith("  -h, --help");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("`bun audit` report", () => {
   test.concurrent("an unknown severity is counted and filtered as moderate", async () => {
     await using server = startRegistry({ "a-dep": [{ ...adv("<1.0.4"), severity: "info" }] });
@@ -1168,13 +1362,13 @@ describe("`bun audit` report", () => {
     expect(json.exitCode).toBe(1);
   });
 
-  test.concurrent("--json prints an unparsable response and reports the parse failure", async () => {
+  test.concurrent("--json reports an unparsable response without printing it", async () => {
     const body = "<html><body>registry is down</body></html>";
     await using server = startRegistry({}, { bulkBody: body });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
 
     const { stdout, stderr, exitCode } = await audit(dir, "--json");
-    expect(stdout).toBe(body + "\n");
+    expect(stdout).toBe("");
     expect(normalizeBunSnapshot(stderr)).toBe(`error: ${registryHref(server)} returned a non-JSON audit response`);
     expect(exitCode).toBe(1);
 
@@ -1184,18 +1378,33 @@ describe("`bun audit` report", () => {
     expect(text.exitCode).toBe(1);
   });
 
-  test.concurrent("a response whose root is not an object is a parse failure", async () => {
+  test.concurrent("a response whose root is not an object is not an advisory report", async () => {
     await using server = startRegistry({}, { bulkBody: "[]" });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const lockBefore = await lock(dir);
+    const rejected = `error: ${registryHref(server)} returned an audit response that is not a list of advisories`;
 
     const json = await audit(dir, "--json");
     expect(json.stdout).toBe("[]\n");
-    expect(json.stderr).toContain(`error: ${registryHref(server)} returned a non-JSON audit response`);
+    expect(normalizeBunSnapshot(json.stderr)).toBe(rejected);
     expect(json.exitCode).toBe(1);
 
     const fix = await auditFix(dir);
-    expect(normalizeBunSnapshot(fix.stderr)).toBe(`error: ${registryHref(server)} returned a non-JSON audit response`);
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(rejected);
+    expect(normalizeBunSnapshot(fix.stdout)).toBe("bun audit fix <version> (<revision>)");
+    expect(fix.exitCode).toBe(1);
+    expect(await lock(dir)).toBe(lockBefore);
+  });
+
+  test.concurrent("an object that is not a list of advisories fails `bun audit fix` too", async () => {
+    await using server = startRegistry({}, { bulkResponse: { error: "audit is not supported by this registry" } });
+    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
+    const lockBefore = await lock(dir);
+
+    const fix = await auditFix(dir);
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(
+      `error: ${registryHref(server)} returned an audit response that is not a list of advisories`,
+    );
     expect(normalizeBunSnapshot(fix.stdout)).toBe("bun audit fix <version> (<revision>)");
     expect(fix.exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);
@@ -1526,18 +1735,18 @@ describe("`bun audit fix`", () => {
   });
 
   test.concurrent("a range that rejects every safe release is blocked on the highest safe downgrade", async () => {
-    await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
-    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^2.0.0" } });
+    await using server = startRegistry({ "no-deps": [adv(">=1.1.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.1.0" } });
     const lockBefore = await lock(dir);
-    expect(lockBefore).toContain('"no-deps@2.0.0"');
+    expect(lockBefore).toContain('"no-deps@1.1.0"');
 
     const { stdout, exitCode } = await auditFix(dir);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
       "bun audit fix <version> (<revision>)
 
       blocked by a dependent's range:
-        v no-deps 2.0.0 -> 1.1.0 (downgrade)
-          package.json depends on no-deps@^2.0.0
+        v no-deps 1.1.0 -> 1.0.1 (downgrade)
+          package.json depends on no-deps@^1.1.0
           bun audit fix --latest
 
       Fixed 0 of 1 vulnerability (checked 1)
@@ -1545,6 +1754,93 @@ describe("`bun audit fix`", () => {
     `);
     expect(exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);
+  });
+
+  test.concurrent("a safe release in an older major is not a downgrade candidate", async () => {
+    await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^2.0.0" } });
+    const lockBefore = await lock(dir);
+    expect(lockBefore).toContain('"no-deps@2.0.0"');
+
+    const { stdout, stderr, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      no published version fixes:
+        no-deps@2.0.0  1
+          bun audit fix --ignore 1
+
+      Fixed 0 of 1 vulnerability (checked 1)
+      1 vulnerability remaining"
+    `);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(exitCode).toBe(1);
+    expect(await lock(dir)).toBe(lockBefore);
+  });
+
+  // peer-deps@1.0.0 declares no-deps@* as a peer, so every older release is inside the range; the installed major is still the floor.
+  test.concurrent("a dependent's wide range does not let a fix downgrade into an older major", async () => {
+    await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "peer-deps": "1.0.0" } });
+    const lockBefore = await lock(dir);
+    expect(lockBefore).toContain('"no-deps@2.0.0"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      no published version fixes:
+        no-deps@2.0.0  1
+          bun audit fix --ignore 1
+
+      Fixed 0 of 1 vulnerability (checked 2)
+      1 vulnerability remaining"
+    `);
+    expect(exitCode).toBe(1);
+    expect(await lock(dir)).toBe(lockBefore);
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+  });
+
+  // zero-major publishes 0.4.0, 0.4.1, 0.5.0 and 0.5.1; below 1.0.0 the minor is the release line.
+  test.concurrent("a 0.x package downgrades within its minor line", async () => {
+    await using server = startRegistry({ "zero-major": [adv(">=0.5.1")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "zero-major": "*" } });
+    expect(await lock(dir)).toContain('"zero-major@0.5.1"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        v zero-major 0.5.1 -> 0.5.0 (downgrade)
+
+      Fixed 1 vulnerability in 1 package (checked 1)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(await lock(dir)).toContain('"zero-major@0.5.0"');
+    expect(await installedVersion(dir, "zero-major")).toBe("0.5.0");
+  });
+
+  test.concurrent("a 0.x package is not downgraded into an older minor line", async () => {
+    await using server = startRegistry({ "zero-major": [adv(">=0.5.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "zero-major": "*" } });
+    const lockBefore = await lock(dir);
+    expect(lockBefore).toContain('"zero-major@0.5.1"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      no published version fixes:
+        zero-major@0.5.1  1
+          bun audit fix --ignore 1
+
+      Fixed 0 of 1 vulnerability (checked 1)
+      1 vulnerability remaining"
+    `);
+    expect(exitCode).toBe(1);
+    expect(await lock(dir)).toBe(lockBefore);
+    expect(await installedVersion(dir, "zero-major")).toBe("0.5.1");
   });
 
   test.concurrent("no vulnerabilities", async () => {
@@ -1598,7 +1894,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.4",
         downgrade: false,
         latestFixes: true,
-        blockers: [{ dependent: "package.json", range: "<1.0.4", bundled: false }],
+        blockers: [{ dependent: "package.json", range: "<1.0.4", bundled: false, override: null }],
       },
       {
         name: "no-deps",
@@ -1606,7 +1902,7 @@ describe("`bun audit fix`", () => {
         to: "1.1.0",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false }],
+        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false, override: null }],
       },
     ]);
     expect(json.exitCode).toBe(1);
@@ -1640,7 +1936,7 @@ describe("`bun audit fix`", () => {
 
     const json = await auditFix(dir, "--json");
     expect(JSON.parse(json.stdout).blocked[0].blockers).toStrictEqual([
-      { dependent: "packages/pkg-a/package.json", range: "<1.0.4", bundled: false },
+      { dependent: "packages/pkg-a/package.json", range: "<1.0.4", bundled: false, override: null },
     ]);
     expect(json.exitCode).toBe(1);
   });
@@ -2324,15 +2620,156 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("a version held by an overrides entry is blocked and the override is not rewritten", async () => {
+  test.concurrent("a direct dependency pinned by an overrides entry is fixed by rewriting the override", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
       dependencies: { "a-dep": "^1.0.2" },
       overrides: { "a-dep": "1.0.2" },
     });
+    expect(await lock(dir)).toContain('"a-dep@1.0.2"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ a-dep 1.0.2 -> 1.0.4
+          package.json (overrides): 1.0.2 -> 1.0.4
+
+      Fixed 1 vulnerability in 1 package (checked 1)"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await pkgJson(dir)).toStrictEqual({
+      name: "foo",
+      dependencies: { "a-dep": "^1.0.2" },
+      overrides: { "a-dep": "1.0.4" },
+    });
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"a-dep@1.0.4"');
+    expect(lockfile).not.toContain('"a-dep@1.0.2"');
+    expect(lockfile).toContain('"a-dep": "1.0.4"');
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
+
+    expectClean(await audit(dir), 1);
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  // one-range-dep and one-range-dep-too both declare no-deps@^1.0.0; only the override holds it at 1.0.0.
+  test.concurrent(
+    "a transitive dependency pinned by an overrides entry is fixed by rewriting the override",
+    async () => {
+      await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+      using dir = await setup(server, {
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      });
+      expect(await lock(dir)).toContain('"no-deps@1.0.0"');
+
+      const { stdout, stderr, exitCode } = await auditFix(dir);
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ no-deps 1.0.0 -> 1.0.1
+          package.json (overrides): 1.0.0 -> 1.0.1
+
+      Fixed 1 vulnerability in 1 package (checked 3)"
+    `);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(await pkgJson(dir)).toStrictEqual({
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "1.0.1" },
+      });
+      const lockfile = await lock(dir);
+      expect(lockfile).toContain('"no-deps@1.0.1"');
+      expect(lockfile).not.toContain('"no-deps@1.0.0"');
+      expect(lockfile).toContain('"no-deps": "1.0.1"');
+      expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+
+      expectClean(await audit(dir), 3);
+      await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+    },
+  );
+
+  test.concurrent.each([
+    ["overrides", { "no-deps": "1.0.0" }, "(overrides)", { "no-deps": "1.0.1" }],
+    ["overrides", { "no-deps": { ".": "1.0.0" } }, "(overrides)", { "no-deps": { ".": "1.0.1" } }],
+    ["resolutions", { "**/no-deps": "1.0.0" }, "(overrides)", { "**/no-deps": "1.0.1" }],
+    [
+      "overrides",
+      { "one-range-dep>no-deps": "1.0.0" },
+      "(overrides one-range-dep>no-deps)",
+      { "one-range-dep>no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "one-range-dep": { "no-deps": "1.0.0" } },
+      "(overrides one-range-dep>no-deps)",
+      { "one-range-dep": { "no-deps": "1.0.1" } },
+    ],
+    [
+      "resolutions",
+      { "one-range-dep/no-deps": "1.0.0" },
+      "(overrides one-range-dep>no-deps)",
+      { "one-range-dep/no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "one-range-dep@1>no-deps": "1.0.0" },
+      "(overrides one-range-dep@1>no-deps)",
+      { "one-range-dep@1>no-deps": "1.0.1" },
+    ],
+    ["overrides", { "no-deps@<1.0.1": "1.0.0" }, "(overrides no-deps@<1.0.1)", { "no-deps@<1.0.1": "1.0.1" }],
+    // Two spellings of one rule: the last one is the rule bun applies, and every entry holding the version is rewritten.
+    [
+      "overrides",
+      { "**/no-deps": "1.0.0", "no-deps": "1.0.0" },
+      "(overrides)",
+      { "**/no-deps": "1.0.1", "no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "**/no-deps": "1.1.0", "no-deps": "1.0.0" },
+      "(overrides)",
+      { "**/no-deps": "1.1.0", "no-deps": "1.0.1" },
+    ],
+  ])("rewrites the rule in place when %s is written as %j", async (field, rules, label, rewritten) => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0" }, [field]: rules });
+    expect(await lock(dir)).toContain('"no-deps@1.0.0"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(stdout).toContain(`  ^ no-deps 1.0.0 -> 1.0.1\n    package.json ${label}: 1.0.0 -> 1.0.1\n`);
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
+
+    expect(await pkgJson(dir)).toStrictEqual({
+      name: "foo",
+      dependencies: { "one-range-dep": "1.0.0" },
+      [field]: rewritten,
+    });
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps@1.0.1"');
+    expect(lockfile).not.toContain('"no-deps@1.0.0"');
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  test.concurrent("an override written as a $reference is reported as the blocker and left alone", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, {
+      name: "foo",
+      dependencies: { "no-deps": "1.0.0", "one-range-dep": "1.0.0" },
+      overrides: { "no-deps": "$no-deps" },
+    });
     const lockBefore = await lock(dir);
-    expect(lockBefore).toContain('"a-dep@1.0.2"');
+    expect(lockBefore).toContain('"no-deps@1.0.0"');
     const pkgJsonBefore = await pkgJsonText(dir);
 
     const { stdout, exitCode } = await auditFix(dir);
@@ -2340,15 +2777,15 @@ describe("`bun audit fix`", () => {
       "bun audit fix <version> (<revision>)
 
       blocked by a dependent's range:
-        ^ a-dep 1.0.2 -> 1.0.4
-          package.json depends on a-dep@1.0.2
+        ^ no-deps 1.0.0 -> 1.0.1
+          package.json overrides no-deps@1.0.0
 
-      Fixed 0 of 1 vulnerability (checked 1)
+      Fixed 0 of 1 vulnerability (checked 2)
       1 vulnerability remaining"
     `);
     expect(exitCode).toBe(1);
-    expect(await lock(dir)).toBe(lockBefore);
     expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+    expect(await lock(dir)).toBe(lockBefore);
   });
 
   test.concurrent("a pinned catalog entry is rewritten and the member keeps `catalog:`", async () => {
@@ -3114,7 +3551,9 @@ describe("`bun audit fix`", () => {
           to: "1.0.4",
           downgrade: false,
           newerThanMinimumReleaseAge: false,
-          packageJson: [{ file: "package.json", catalog: null, key: "a-dep", from: "1.0.2", to: "1.0.4" }],
+          packageJson: [
+            { file: "package.json", catalog: null, override: null, key: "a-dep", from: "1.0.2", to: "1.0.4" },
+          ],
         },
       ],
       blocked: [],
@@ -3206,7 +3645,7 @@ describe("`bun audit fix`", () => {
         to: "1.1.0",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false }],
+        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false, override: null }],
       },
     ]);
     expect(doc.unmatched).toStrictEqual([{ name: "no-deps", range: ">=9.0.0" }]);
@@ -3349,7 +3788,9 @@ describe("`bun audit fix`", () => {
           to: "1.0.4",
           downgrade: false,
           newerThanMinimumReleaseAge: false,
-          packageJson: [{ file: "package.json", catalog: null, key: "a-dep", from: "1.0.2", to: "1.0.4" }],
+          packageJson: [
+            { file: "package.json", catalog: null, override: null, key: "a-dep", from: "1.0.2", to: "1.0.4" },
+          ],
         },
       ],
       blocked: [],
@@ -3660,7 +4101,7 @@ describe("`bun audit fix`", () => {
         to: "2.0.0",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "package.json", range: "pre-1", bundled: false }],
+        blockers: [{ dependent: "package.json", range: "pre-1", bundled: false, override: null }],
       },
     ]);
     expect(exitCode).toBe(1);
@@ -3874,7 +4315,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.1",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "bundled-1@1.0.0", range: "1.0.0", bundled: true }],
+        blockers: [{ dependent: "bundled-1@1.0.0", range: "1.0.0", bundled: true, override: null }],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 0, remaining: 1, fixes: [] });
@@ -3883,8 +4324,8 @@ describe("`bun audit fix`", () => {
   });
 
   test.concurrent("--json marks a blocked fix that would be a downgrade", async () => {
-    await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
-    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^2.0.0" } });
+    await using server = startRegistry({ "no-deps": [adv(">=1.1.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.1.0" } });
     const lockBefore = await lock(dir);
 
     const { stdout, exitCode } = await auditFix(dir, "--json");
@@ -3892,11 +4333,11 @@ describe("`bun audit fix`", () => {
     expect(doc.blocked).toStrictEqual([
       {
         name: "no-deps",
-        from: "2.0.0",
-        to: "1.1.0",
+        from: "1.1.0",
+        to: "1.0.1",
         downgrade: true,
         latestFixes: true,
-        blockers: [{ dependent: "package.json", range: "^2.0.0", bundled: false }],
+        blockers: [{ dependent: "package.json", range: "^1.1.0", bundled: false, override: null }],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 0, remaining: 1, fixes: [] });
@@ -3925,7 +4366,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.1",
         downgrade: false,
         newerThanMinimumReleaseAge: false,
-        packageJson: [{ file: "package.json", catalog, key: "no-deps", from: "1.0.0", to: "1.0.1" }],
+        packageJson: [{ file: "package.json", catalog, override: null, key: "no-deps", from: "1.0.0", to: "1.0.1" }],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0 });
@@ -4255,13 +4696,109 @@ describe("`bun audit fix --latest`", () => {
         to: "2.0.0",
         downgrade: false,
         newerThanMinimumReleaseAge: false,
-        packageJson: [{ file: "package.json", catalog: null, key: "no-deps", from: "^1.0.0", to: "^2.0.0" }],
+        packageJson: [
+          { file: "package.json", catalog: null, override: null, key: "no-deps", from: "^1.0.0", to: "^2.0.0" },
+        ],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0, blocked: [] });
     expect(exitCode).toBe(0);
     expect((await pkgJson(dir)).dependencies).toStrictEqual({ "no-deps": "^2.0.0" });
     expect(await lock(dir)).toContain('"no-deps@2.0.0"');
+  });
+
+  // Every no-deps 2.x release is vulnerable. The safe 1.x releases are a different major, so there is nothing to rewrite the range to.
+  test.concurrent("never rewrites a range to downgrade into an older major", async () => {
+    await using server = startRegistry({ "no-deps": [adv(">=2.0.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^2.0.0" } });
+    const lockBefore = await lock(dir);
+    expect(lockBefore).toContain('"no-deps@2.0.0"');
+    const pkgJsonBefore = await pkgJsonText(dir);
+
+    const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      no published version fixes:
+        no-deps@2.0.0  1
+          bun audit fix --ignore 1
+
+      Fixed 0 of 1 vulnerability (checked 1)
+      1 vulnerability remaining"
+    `);
+    expect(stderr).not.toContain("Saved lockfile");
+    expect(exitCode).toBe(1);
+    expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+    expect(await lock(dir)).toBe(lockBefore);
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+
+    const json = await auditFix(dir, "--latest", "--json");
+    expect(JSON.parse(json.stdout)).toMatchObject({
+      fixed: 0,
+      remaining: 1,
+      fixes: [],
+      blocked: [],
+      unfixable: [{ name: "no-deps", from: "2.0.0", advisories: ["1"] }],
+    });
+    expect(json.exitCode).toBe(1);
+    expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+    expect(await lock(dir)).toBe(lockBefore);
+  });
+
+  test.concurrent("rewrites a range for a downgrade that stays in the installed major", async () => {
+    await using server = startRegistry({ "no-deps": [adv(">=1.1.0")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.1.0" } });
+    expect(await lock(dir)).toContain('"no-deps@1.1.0"');
+
+    const { stdout, exitCode } = await auditFix(dir, "--latest");
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        v no-deps 1.1.0 -> 1.0.1 (downgrade)
+          package.json: ^1.1.0 -> ^1.0.1
+
+      Fixed 1 vulnerability in 1 package (checked 1)"
+    `);
+    expect(exitCode).toBe(0);
+    expect((await pkgJson(dir)).dependencies).toStrictEqual({ "no-deps": "^1.0.1" });
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps@1.0.1"');
+    expect(lockfile).not.toContain('"no-deps@1.1.0"');
+    expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+
+    const recheck = await audit(dir);
+    expectClean(recheck, 1);
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  test.concurrent("rewrites a catalog entry for a downgrade that stays in the installed major", async () => {
+    await using server = startRegistry({ "no-deps": [adv(">=1.1.0")] });
+    const member = JSON.stringify({ name: "a", dependencies: { "no-deps": "catalog:" } });
+    using dir = await setup(
+      server,
+      { name: "root", workspaces: ["packages/*"], catalog: { "no-deps": "^1.1.0" } },
+      { "packages/a/package.json": member },
+    );
+    expect(await lock(dir)).toContain('"no-deps@1.1.0"');
+
+    const { stdout, exitCode } = await auditFix(dir, "--latest");
+    expect(stdout).toContain("  v no-deps 1.1.0 -> 1.0.1 (downgrade)\n    package.json (catalog): ^1.1.0 -> ^1.0.1\n");
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
+
+    expect((await pkgJson(dir)).catalog).toStrictEqual({ "no-deps": "^1.0.1" });
+    expect(await pkgJsonText(dir, "packages", "a")).toBe(member);
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps@1.0.1"');
+    expect(lockfile).not.toContain('"no-deps@1.1.0"');
+    expect((await pkgJson(dir, "packages", "a", "node_modules", "no-deps")).version).toBe("1.0.1");
+
+    const recheck = await audit(dir);
+    expectClean(recheck, 1);
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
   test.concurrent("a package blocked only by a transitive dependent stays blocked", async () => {
@@ -4288,24 +4825,137 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a version held by an overrides entry stays blocked", async () => {
-    await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+  // Both dependents declare no-deps@^1.0.0, which also rejects 2.0.0; the override is what the user can change, so it alone is reported.
+  test.concurrent(
+    "a range held by an overrides entry is blocked on the override, which --latest rewrites",
+    async () => {
+      await using server = noDeps1x();
+      using dir = await setup(server, {
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "~1.0.0" },
+      });
+      const lockBefore = await lock(dir);
+      expect(lockBefore).toContain('"no-deps@1.0.1"');
+      const pkgJsonBefore = await pkgJsonText(dir);
+
+      const blocked = await auditFix(dir);
+      expect(normalizeBunSnapshot(blocked.stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      blocked by a dependent's range:
+        ^ no-deps 1.0.1 -> 2.0.0
+          package.json overrides no-deps@~1.0.0
+          bun audit fix --latest
+
+      Fixed 0 of 1 vulnerability (checked 3)
+      1 vulnerability remaining"
+    `);
+      expect(blocked.exitCode).toBe(1);
+      expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+      expect(await lock(dir)).toBe(lockBefore);
+
+      const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ no-deps 1.0.1 -> 2.0.0
+          package.json (overrides): ~1.0.0 -> ~2.0.0
+
+      Fixed 1 vulnerability in 1 package (checked 3)"
+    `);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(await pkgJson(dir)).toStrictEqual({
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "~2.0.0" },
+      });
+      const lockfile = await lock(dir);
+      expect(lockfile).toContain('"no-deps@2.0.0"');
+      expect(lockfile).not.toContain('"no-deps@1.0.1"');
+      expect(lockfile).toContain('"no-deps": "~2.0.0"');
+      expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+
+      expectClean(await audit(dir), 3);
+      await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+    },
+  );
+
+  test.concurrent("a nested override is blocked with its key and rewritten under it", async () => {
+    await using server = noDeps1x();
     using dir = await setup(server, {
       name: "foo",
-      dependencies: { "a-dep": "^1.0.2" },
-      overrides: { "a-dep": "1.0.2" },
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep>no-deps": "~1.0.0" },
     });
-    const lockBefore = await lock(dir);
-    const pkgJsonBefore = await pkgJsonText(dir);
+    expect(await lock(dir)).toContain('"no-deps@1.0.1"');
+
+    const blocked = await auditFix(dir);
+    expect(blocked.stdout).toContain(
+      "    package.json overrides no-deps@~1.0.0 (one-range-dep>no-deps)\n    bun audit fix --latest\n",
+    );
+    expect(blocked.exitCode).toBe(1);
 
     const { stdout, exitCode } = await auditFix(dir, "--latest");
-    expect(stdout).toContain("blocked by a dependent's range:");
-    expect(stdout).toContain("package.json depends on a-dep@1.0.2");
-    expect(stdout).not.toContain("fixing:");
-    expect(stdout).not.toContain("bun audit fix --latest");
-    expect(exitCode).toBe(1);
-    expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
-    expect(await lock(dir)).toBe(lockBefore);
+    expect(stdout).toContain(
+      "  ^ no-deps 1.0.1 -> 2.0.0\n    package.json (overrides one-range-dep>no-deps): ~1.0.0 -> ~2.0.0\n",
+    );
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
+    expect((await pkgJson(dir)).overrides).toStrictEqual({ "one-range-dep>no-deps": "~2.0.0" });
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  test.concurrent("--json names the overrides rule on the blocker and on the edit that rewrites it", async () => {
+    await using server = noDeps1x();
+    using dir = await setup(server, {
+      name: "foo",
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep>no-deps": "~1.0.0" },
+    });
+
+    const blocked = await auditFix(dir, "--json");
+    expect(JSON.parse(blocked.stdout).blocked).toStrictEqual([
+      {
+        name: "no-deps",
+        from: "1.0.1",
+        to: "2.0.0",
+        downgrade: false,
+        latestFixes: true,
+        blockers: [{ dependent: "package.json", range: "~1.0.0", bundled: false, override: "one-range-dep>no-deps" }],
+      },
+    ]);
+    expect(blocked.exitCode).toBe(1);
+
+    const { stdout, exitCode } = await auditFix(dir, "--latest", "--dry-run", "--json");
+    const doc = JSON.parse(stdout);
+    expect(doc.fixes).toStrictEqual([
+      {
+        name: "no-deps",
+        from: "1.0.1",
+        to: "2.0.0",
+        downgrade: false,
+        newerThanMinimumReleaseAge: false,
+        packageJson: [
+          {
+            file: "package.json",
+            catalog: null,
+            override: "one-range-dep>no-deps",
+            key: "no-deps",
+            from: "~1.0.0",
+            to: "~2.0.0",
+          },
+        ],
+      },
+    ]);
+    expect(doc).toMatchObject({ dryRun: true, fixed: 1, remaining: 0, blocked: [] });
+    expect(exitCode).toBe(0);
+    expect((await pkgJson(dir)).overrides).toStrictEqual({ "one-range-dep>no-deps": "~1.0.0" });
   });
 
   test.concurrent("a bundled dependency stays blocked without a --latest hint", async () => {
@@ -4347,5 +4997,50 @@ describe("`bun audit fix --latest`", () => {
     expect(exitCode).toBe(1);
     expect(bulkHits.count).toBe(0);
     expect(await lock(dir)).toBe(lockBefore);
+  });
+});
+
+describe.concurrent("`bun audit` against a registry with a self-signed certificate", () => {
+  async function audit(env: NodeJS.Dict<string>) {
+    const requests: string[] = [];
+    using auditServer = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname}`);
+        return Response.json({});
+      },
+    });
+    using dir = tempDir("bun-test-audit-self-signed", fixture("safe-is-number@7"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "audit"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: String(dir),
+      env: {
+        ...env,
+        NPM_CONFIG_REGISTRY: `https://localhost:${auditServer.port}`,
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, requests };
+  }
+
+  test("NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off", async () => {
+    const { stdout, stderr, exitCode, requests } = await audit({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+
+    expect(stderr).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(stdout).toContain("No vulnerabilities found");
+    expect(requests).toEqual(["POST /-/npm/v1/security/advisories/bulk"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("verification stays on when the variable is unset", async () => {
+    const { stderr, exitCode, requests } = await audit({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: undefined });
+
+    expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
   });
 });

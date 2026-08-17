@@ -13,13 +13,28 @@ Configuration is loaded in this order, with later sources overriding earlier one
 4. `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY` and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` environment variables
 5. Command-line flags such as `--registry`
 
-Bun matches credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) to registries by host and path, even if you set the registry URL itself in `bunfig.toml`.
+Bun matches credentials in `.npmrc` (`//<registry>/:_authToken`, etc.) by host and path to the URLs it requests, so they apply no matter where you set the registry URL itself (`.npmrc`, `bunfig.toml`, an environment variable or `--registry`). Bun also uses them for tarballs a registry serves from a different host than its own, as long as that host has its own `//<host>/:_authToken` line; it never sends a registry's credentials to another host.
 
 Values may reference environment variables. Bun replaces `${NAME}` with the variable's value, or leaves it as-is if the variable is unset. `${NAME?}` becomes an empty string if unset.
 
 <Note>
   We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/runtime/bunfig) format, which supports more
   options, including Bun-specific ones.
+</Note>
+
+---
+
+## Which files are read
+
+Bun reads up to two `.npmrc` files. Options in the later file override the earlier one:
+
+1. The user-level file. This is the file `NPM_CONFIG_USERCONFIG` (npm's `userconfig` option) points at when that variable is set; otherwise `$XDG_CONFIG_HOME/.npmrc` if it exists, otherwise `$HOME/.npmrc`.
+2. The `.npmrc` next to your project's root `package.json`.
+
+<Note>
+  `actions/setup-node` with `registry-url` writes an `.npmrc` to `$RUNNER_TEMP` and exports `NPM_CONFIG_USERCONFIG`
+  pointing at it, so `bun publish` reads the token from `NODE_AUTH_TOKEN` in that workflow the same way `npm publish`
+  does.
 </Note>
 
 ---

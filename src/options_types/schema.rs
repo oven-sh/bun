@@ -150,6 +150,12 @@ pub mod api {
         pub token: Box<[u8]>,
         /// email
         pub email: Box<[u8]>,
+        /// Set by `from_url` when the credentials were written into the URL.
+        /// `Scope::from_api` takes those as complete as written: `http://user@host/`
+        /// authenticates as `user` with an empty password (what npm sends for that
+        /// URL), whereas a `username` configured on its own (`.npmrc` `username`
+        /// without `_password`, bunfig `username` without `password`) sends nothing.
+        pub credentials_from_url: bool,
     }
 
     impl NpmRegistry {
@@ -157,12 +163,15 @@ pub mod api {
             let url = bun_url::URL::parse(str);
             let mut registry = NpmRegistry::default();
 
-            if url.username.is_empty() && !url.password.is_empty() {
-                registry.token = Box::from(url.password);
-                registry.url = url.href_without_auth();
-            } else if !url.username.is_empty() && !url.password.is_empty() {
+            if !url.username.is_empty() {
                 registry.username = Box::from(url.username);
                 registry.password = Box::from(url.password);
+                registry.credentials_from_url = true;
+                registry.url = url.href_without_auth();
+            } else if !url.password.is_empty() {
+                // `http://:token@host/`
+                registry.token = Box::from(url.password);
+                registry.credentials_from_url = true;
                 registry.url = url.href_without_auth();
             } else {
                 // Do not include a trailing slash. There might be parameters at the end.
@@ -181,6 +190,24 @@ pub mod api {
     #[derive(Default)]
     pub struct NpmRegistryMap {
         pub scopes: bun_collections::StringArrayHashMap<NpmRegistry>,
+    }
+
+    /// The credentials `.npmrc` configures for one `//host/path/` prefix
+    /// (`//host/path/:_authToken=...`, `:_auth=`, `:username=` + `:_password=`).
+    ///
+    /// Unlike `default_registry` / `scoped`, these are not attached to a
+    /// registry declared in a config file: the package manager matches them
+    /// against the URL of each request, so they also apply to a registry
+    /// given on the command line or in the environment and to tarballs served
+    /// from a different host than the registry that published them.
+    #[derive(Default)]
+    pub struct NpmUrlAuth {
+        /// `host[:port]` as written between `//` and the first `/` of the key.
+        pub host: Box<[u8]>,
+        /// Pathname of the key without its trailing slash; `/` for a bare host.
+        pub pathname: Box<[u8]>,
+        /// Only the credential fields are set; `url` stays empty.
+        pub credentials: NpmRegistry,
     }
 
     /// Value of `BunInstall.ca`; hoisted to a named type so callers can
@@ -208,6 +235,10 @@ pub mod api {
         pub default_registry: Option<NpmRegistry>,
         /// scoped
         pub scoped: Option<NpmRegistryMap>,
+        /// Every `//host/path/` credential prefix found in the `.npmrc` files,
+        /// in file order (a later file's lines override an earlier file's for
+        /// the same prefix).
+        pub url_auth: Vec<NpmUrlAuth>,
         /// lockfile_path
         pub lockfile_path: Option<Box<[u8]>>,
         /// save_lockfile_path

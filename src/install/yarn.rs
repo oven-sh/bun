@@ -1,12 +1,10 @@
-use bun_collections::VecExt;
 use std::borrow::Cow;
-use std::io::Write as _;
 
-use crate::Error;
-use bun_collections::{HashMap, StringHashMap, index_sort};
+use crate::{Error, Features, GetJsonResult};
+use bun_collections::StringHashMap;
 use bun_install::bin::Bin;
-use bun_install::dependency::{self, Dependency, DependencyExt as _};
-use bun_install::install::{self, DependencyID, PackageID, PackageManager};
+use bun_install::dependency::{self, Dependency, DependencyExt as _, Tag as DepTag, TagExt as _};
+use bun_install::install::{self, PackageID, PackageManager};
 use bun_install::integrity::Integrity;
 // `bun_install::lockfile` is the column-accessor stub used by the
 // audit/why CLI walkers; the yarn migrator needs the real Lockfile/Tree/
@@ -15,23 +13,20 @@ use bun_install::integrity::Integrity;
 // resolve against the ported types.
 use crate::Origin;
 use crate::lockfile_real::package::meta::HasInstallScript;
-use crate::lockfile_real::package::workspace_map::{MissingWorkspace, NamesArray, WorkspaceMap};
 use crate::lockfile_real::package::{
-    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _, value_loc_of,
+    Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
 };
-use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile, tree, tree::Tree};
+use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
 use bun_install::npm;
 // `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
 // (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
 // `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
-use crate::bun_json;
 use crate::repository::Repository;
-use crate::resolution_real::{Resolution, Tag as ResolutionTag, TaggedValue as ResolutionValue};
+use crate::resolution_real::{Resolution, TaggedValue as ResolutionValue};
 use crate::versioned_url::VersionedURL;
 use bun_core::strings;
-use bun_paths::PathBuffer;
+use bun_paths::AutoAbsPath;
 use bun_semver::{self as Semver, SlicedString, String as SemverString};
-use bun_sys::Fd;
 
 // Entry/YarnLock borrow from the input `data: &[u8]` passed to `migrate_yarn_lockfile`;
 // `resolved` may instead own a rewritten URL (see `Cow` below) and `git_repo_name` is
@@ -41,62 +36,74 @@ pub(crate) struct YarnLock<'a> {
     pub(crate) entries: Vec<Entry<'a>>,
 }
 
+#[derive(Default)]
 pub struct Entry<'a> {
     pub(crate) specs: Vec<&'a [u8]>,
+    /// Name of the package the entry resolves to; see `package_name_of`.
+    pub(crate) name: &'a [u8],
     pub(crate) version: &'a [u8],
-    // Usually borrows from the input; owned when `parse_git_url` rewrites a
+    // Usually borrows from the input; owned when `set_git_source` rewrites a
     // `github:` spec to a `https://github.com/...` URL.
     pub(crate) resolved: Option<Cow<'a, [u8]>>,
     pub(crate) integrity: Option<&'a [u8]>,
-    pub(crate) dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub(crate) optional_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub(crate) peer_dependencies: Option<StringHashMap<&'a [u8]>>,
-    pub(crate) dev_dependencies: Option<StringHashMap<&'a [u8]>>,
+    /// In `DEPENDENCY_SECTIONS` order.
+    pub(crate) dependencies: [Option<StringHashMap<&'a [u8]>>; 4],
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
     pub(crate) file: Option<&'a [u8]>,
-    pub(crate) os: Option<Vec<&'a [u8]>>,
-    pub(crate) cpu: Option<Vec<&'a [u8]>>,
+    pub(crate) os: npm::Negatable<npm::OperatingSystem>,
+    pub(crate) cpu: npm::Negatable<npm::Architecture>,
     // Owned heap allocation (unlike the borrowed fields above); created in parse()
     pub(crate) git_repo_name: Option<Box<[u8]>>,
 }
 
-impl<'a> Default for Entry<'a> {
-    fn default() -> Self {
-        Self {
-            specs: Vec::new(),
-            version: b"",
-            resolved: None,
-            integrity: None,
-            dependencies: None,
-            optional_dependencies: None,
-            peer_dependencies: None,
-            dev_dependencies: None,
-            commit: None,
-            workspace: false,
-            file: None,
-            os: None,
-            cpu: None,
-            git_repo_name: None,
-        }
-    }
-}
-
-pub(crate) struct ParsedGitUrl<'a> {
-    pub(crate) url: &'a [u8],
-    pub(crate) commit: Option<&'a [u8]>,
-    pub(crate) repo: Option<&'a [u8]>,
-    // Optional owned "https://github.com/{path}" buffer so the borrow
-    // case stays zero-copy. Callers must check `owned_url` first: when it is `Some`,
-    // it supersedes `url` (see `into_resolved`).
-    pub(crate) owned_url: Option<Vec<u8>>,
-}
+const DEPENDENCY_SECTIONS: [(&[u8], dependency::Behavior); 4] = [
+    (b"dependencies:", dependency::Behavior::PROD),
+    (b"optionalDependencies:", dependency::Behavior::OPTIONAL),
+    (b"peerDependencies:", dependency::Behavior::PEER),
+    (b"devDependencies:", dependency::Behavior::DEV),
+];
 
 pub(crate) struct ParsedNpmAlias<'a> {
+    pub(crate) name: &'a [u8],
     pub(crate) version: &'a [u8],
 }
 
 impl<'a> Entry<'a> {
+    /// The alias spec may follow plain specs of the same package on yarn's shared key line.
+    pub(crate) fn package_name_of(specs: &[&'a [u8]]) -> &'a [u8] {
+        let first = specs
+            .first()
+            .map_or(b"".as_slice(), |spec| Self::get_name_from_spec(spec));
+        specs
+            .iter()
+            .find_map(|spec| Self::npm_alias_target(spec))
+            .unwrap_or(first)
+    }
+
+    /// `alias@npm:<name>@<range>` -> `<name>`; `None` for every other kind of spec.
+    pub(crate) fn npm_alias_target(spec: &[u8]) -> Option<&[u8]> {
+        let alias_end = strings::index_of(spec, b"@npm:")?;
+        let name = Self::parse_npm_alias(&spec[alias_end + 1..]).name;
+        (!name.is_empty()).then_some(name)
+    }
+
+    /// Whether the dependency was declared as a tarball URL (`name@https://...`).
+    pub(crate) fn has_direct_url_spec(&self) -> bool {
+        self.specs.iter().any(|spec| {
+            strings::index_of(spec, b"@https://").is_some()
+                || strings::index_of(spec, b"@http://").is_some()
+        })
+    }
+
+    /// Identity shared by consolidation and the package-id pass; git entries go by repository.
+    pub(crate) fn dedupe_name(&self) -> &[u8] {
+        match &self.git_repo_name {
+            Some(repo_name) if !self.has_direct_url_spec() => repo_name,
+            _ => self.name,
+        }
+    }
+
     pub(crate) fn get_name_from_spec(spec: &[u8]) -> &[u8] {
         let unquoted = if spec[0] == b'"' && spec[spec.len() - 1] == b'"' {
             &spec[1..spec.len() - 1]
@@ -129,18 +136,37 @@ impl<'a> Entry<'a> {
     }
 
     pub(crate) fn is_git_dependency(version: &[u8]) -> bool {
+        if let Some(github_path) = version.strip_prefix(b"https://github.com/") {
+            // An archive download's `#` is yarn's tarball hash, not a commit.
+            return !dependency::is_github_tarball_path(Entry::url_without_hash(github_path));
+        }
         version.starts_with(b"git+")
             || version.starts_with(b"git://")
             || version.starts_with(b"github:")
-            || version.starts_with(b"https://github.com/")
     }
 
     pub(crate) fn is_npm_alias(version: &[u8]) -> bool {
         version.starts_with(b"npm:")
     }
 
+    /// A spec asked a registry for this entry (a semver range, a dist-tag, or an `npm:` alias of one).
+    pub(crate) fn is_registry_entry(&self) -> bool {
+        self.specs.iter().any(|spec| {
+            let name = Entry::get_name_from_spec(spec);
+            let range = spec.get(name.len() + 1..).unwrap_or(b"");
+            let alias = range.strip_prefix(b"npm:");
+            DepTag::infer(alias.map_or(range, |alias| Entry::parse_npm_alias(alias).version))
+                .is_npm()
+        })
+    }
+
     pub(crate) fn is_remote_tarball(version: &[u8]) -> bool {
         version.starts_with(b"https://") && version.ends_with(b".tgz")
+    }
+
+    /// yarn v1 writes tarball `resolved` fields as `<url>#<sha1 of the tarball>`.
+    pub(crate) fn url_without_hash(resolved: &[u8]) -> &[u8] {
+        strings::split_once_char(resolved, b'#').map_or(resolved, |(url, _)| url)
     }
 
     pub(crate) fn is_workspace_dependency(version: &[u8]) -> bool {
@@ -159,96 +185,60 @@ impl<'a> Entry<'a> {
         strings::without_trailing_slash(path)
     }
 
-    pub(crate) fn parse_git_url(
-        _yarn_lock: &YarnLock<'a>,
-        version: &'a [u8],
-    ) -> Result<ParsedGitUrl<'a>, Error> {
-        let mut url: &[u8] = version;
-        let mut commit: Option<&[u8]> = None;
-        let mut repo: Option<&[u8]> = None;
-        let mut owned_url: Option<Vec<u8>> = None;
-
-        if url.starts_with(b"git+") {
-            url = &url[4..];
-        }
-
-        if let Some(hash_idx) = strings::index_of(url, b"#") {
-            commit = Some(&url[hash_idx + 1..]);
-            url = &url[0..hash_idx];
-        }
-
-        if version.starts_with(b"github:") {
-            let github_path = &version[b"github:".len()..];
-            let path_without_commit = if let Some(idx) = strings::index_of(github_path, b"#") {
-                &github_path[0..idx]
-            } else {
-                github_path
-            };
-
-            if let Some(slash_idx) = strings::index_of(path_without_commit, b"/") {
-                repo = Some(&path_without_commit[slash_idx + 1..]);
-            }
-            let mut buf =
-                Vec::with_capacity(b"https://github.com/".len() + path_without_commit.len());
-            buf.extend_from_slice(b"https://github.com/");
-            buf.extend_from_slice(path_without_commit);
-            owned_url = Some(buf);
-            // `url` still borrows the stripped input; callers must prefer
-            // `owned_url` when it is Some.
-        } else if strings::index_of(url, b"github.com").is_some() {
-            let mut remaining = url;
-            if let Some(idx) = strings::index_of(remaining, b"github.com/") {
-                remaining = &remaining[idx + b"github.com/".len()..];
-            }
-            if let Some(slash_idx) = strings::index_of(remaining, b"/") {
-                let after_owner = &remaining[slash_idx + 1..];
-                if after_owner.ends_with(b".git") {
-                    repo = Some(&after_owner[0..after_owner.len() - b".git".len()]);
-                } else {
-                    repo = Some(after_owner);
-                }
-            }
-        }
-
-        Ok(ParsedGitUrl {
-            url,
-            commit,
-            repo,
-            owned_url,
-        })
+    /// `https://registry.npmjs.org/@scope/name/-/name-1.0.0.tgz` -> `@scope/name`
+    pub(crate) fn get_package_name_from_default_registry_url(url: &[u8]) -> Option<&[u8]> {
+        let host_and_path = url
+            .strip_prefix(b"https://")
+            .or_else(|| url.strip_prefix(b"http://"))?;
+        let path = host_and_path
+            .strip_prefix(b"registry.npmjs.org/")
+            .or_else(|| host_and_path.strip_prefix(b"registry.yarnpkg.com/"))?;
+        let name = &path[..strings::index_of(path, b"/-/")?];
+        (!name.is_empty()).then_some(name)
     }
 
+    /// `commit`, `git_repo_name` and `resolved` of a git `version`/`resolved` value; a `github:`
+    /// shorthand resolves to its `https://github.com/` URL.
+    fn set_git_source(&mut self, version: &'a [u8]) {
+        let url = version.strip_prefix(b"git+").unwrap_or(version);
+        self.commit = strings::split_once_char(url, b'#').map(|(_, commit)| commit);
+        let url = Entry::url_without_hash(url);
+        if let Some(github_path) = version.strip_prefix(b"github:") {
+            let path = Entry::url_without_hash(github_path);
+            if let Some((_, repo)) = strings::split_once_char(path, b'/') {
+                self.git_repo_name = Some(Box::from(repo));
+            }
+            self.resolved = Some(Cow::Owned([b"https://github.com/", path].concat()));
+            return;
+        }
+        if strings::index_of(url, b"github.com").is_some() {
+            let remaining = match strings::index_of(url, b"github.com/") {
+                Some(idx) => &url[idx + b"github.com/".len()..],
+                None => url,
+            };
+            if let Some((_, repo)) = strings::split_once_char(remaining, b'/') {
+                self.git_repo_name = Some(Box::from(repo.strip_suffix(b".git").unwrap_or(repo)));
+            }
+        }
+        self.resolved = Some(Cow::Borrowed(url));
+    }
+
+    /// Splits `npm:<name>@<range>`; the `@` of a scoped `<name>` is not the separator.
     pub(crate) fn parse_npm_alias(version: &[u8]) -> ParsedNpmAlias<'_> {
-        if version.len() <= 4 {
-            return ParsedNpmAlias { version: b"*" };
-        }
-
-        let npm_part = &version[4..];
-        if let Some(at_idx) = strings::index_of(npm_part, b"@") {
+        let target = version.strip_prefix(b"npm:").unwrap_or(version);
+        let scope_len = usize::from(target.starts_with(b"@"));
+        let Some(at_idx) = strings::index_of_char_usize(&target[scope_len..], b'@') else {
             return ParsedNpmAlias {
-                version: if at_idx + 1 < npm_part.len() {
-                    &npm_part[at_idx + 1..]
-                } else {
-                    b"*"
-                },
+                name: target,
+                version: b"*",
             };
+        };
+        let (name, range) = target.split_at(scope_len + at_idx);
+        let range = &range[b"@".len()..];
+        ParsedNpmAlias {
+            name,
+            version: if range.is_empty() { b"*" } else { range },
         }
-        ParsedNpmAlias { version: b"*" }
-    }
-
-    /// Registry tarball URLs look like `<registry>/<name>/-/<basename>-<version>.tgz`,
-    /// where `<name>` spans two path segments (`@scope/name`) for scoped packages.
-    pub(crate) fn get_package_name_from_resolved_url(url: &[u8]) -> Option<&[u8]> {
-        let path = &url[..strings::index_of(url, b"/-/")?];
-        let (prefix, name) = strings::rsplit_once_char(path, b'/')?;
-        if name.is_empty() {
-            return None;
-        }
-        let scope_start = strings::last_index_of_char(prefix, b'/').map_or(0, |slash| slash + 1);
-        if prefix[scope_start..].starts_with(b"@") {
-            return Some(&path[scope_start..]);
-        }
-        Some(name)
     }
 }
 
@@ -264,11 +254,7 @@ impl<'a> YarnLock<'a> {
         let mut current_entry: Option<Entry<'a>> = None;
         let mut current_specs: Vec<&'a [u8]> = Vec::new();
 
-        let mut current_deps: Option<StringHashMap<&'a [u8]>> = None;
-        let mut current_optional_deps: Option<StringHashMap<&'a [u8]>> = None;
-        let mut current_peer_deps: Option<StringHashMap<&'a [u8]>> = None;
-        let mut current_dev_deps: Option<StringHashMap<&'a [u8]>> = None;
-        let mut current_dep_type: Option<DependencyType> = None;
+        let mut current_dep_type: Option<usize> = None;
 
         while let Some(line_) = lines.next() {
             let line = bun_core::trim_right(line_, b" \r\t");
@@ -287,11 +273,7 @@ impl<'a> YarnLock<'a> {
             }
 
             if indent == 0 && trimmed.ends_with(b":") {
-                if let Some(mut entry) = current_entry.take() {
-                    entry.dependencies = current_deps.take();
-                    entry.optional_dependencies = current_optional_deps.take();
-                    entry.peer_dependencies = current_peer_deps.take();
-                    entry.dev_dependencies = current_dev_deps.take();
+                if let Some(entry) = current_entry.take() {
                     self.consolidate_and_append_entry(entry)?;
                 }
 
@@ -308,6 +290,7 @@ impl<'a> YarnLock<'a> {
 
                 let mut new_entry = Entry::<'a> {
                     specs: current_specs.clone(),
+                    name: Entry::package_name_of(&current_specs),
                     version: b"", // assigned below when "version" key is parsed
                     ..Default::default()
                 };
@@ -320,11 +303,6 @@ impl<'a> YarnLock<'a> {
                 }
 
                 current_entry = Some(new_entry);
-
-                current_deps = None;
-                current_optional_deps = None;
-                current_peer_deps = None;
-                current_dev_deps = None;
                 current_dep_type = None;
                 continue;
             }
@@ -334,27 +312,9 @@ impl<'a> YarnLock<'a> {
             };
 
             if indent > 0 {
-                if trimmed == b"dependencies:" {
-                    current_dep_type = Some(DependencyType::Production);
-                    current_deps = Some(StringHashMap::new());
-                    continue;
-                }
-
-                if trimmed == b"optionalDependencies:" {
-                    current_dep_type = Some(DependencyType::Optional);
-                    current_optional_deps = Some(StringHashMap::new());
-                    continue;
-                }
-
-                if trimmed == b"peerDependencies:" {
-                    current_dep_type = Some(DependencyType::Peer);
-                    current_peer_deps = Some(StringHashMap::new());
-                    continue;
-                }
-
-                if trimmed == b"devDependencies:" {
-                    current_dep_type = Some(DependencyType::Development);
-                    current_dev_deps = Some(StringHashMap::new());
+                if let Some(i) = DEPENDENCY_SECTIONS.iter().position(|s| s.0 == trimmed) {
+                    current_dep_type = Some(i);
+                    entry.dependencies[i] = Some(StringHashMap::new());
                     continue;
                 }
 
@@ -362,12 +322,7 @@ impl<'a> YarnLock<'a> {
                     if let Some(space_idx) = strings::index_of(trimmed, b" ") {
                         let key = strings::trim(&trimmed[0..space_idx], b" \"");
                         let value = strings::trim(&trimmed[space_idx + 1..], b" \"");
-                        let map = match dep_type {
-                            DependencyType::Production => current_deps.as_mut().unwrap(),
-                            DependencyType::Optional => current_optional_deps.as_mut().unwrap(),
-                            DependencyType::Peer => current_peer_deps.as_mut().unwrap(),
-                            DependencyType::Development => current_dev_deps.as_mut().unwrap(),
-                        };
+                        let map = entry.dependencies[dep_type].get_or_insert_default();
                         map.put(key, value)?;
                     }
                     continue;
@@ -385,99 +340,53 @@ impl<'a> YarnLock<'a> {
                         } else if Entry::is_file_dependency(value) {
                             entry.file = Some(Entry::file_path_from_spec(value));
                         } else if Entry::is_git_dependency(value) {
-                            let git_info = Entry::parse_git_url(self, value)?;
-                            entry.commit = git_info.commit;
-                            if let Some(repo_name) = git_info.repo {
-                                entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
-                            }
-                            // For the `github:` branch the resolved URL is the
-                            // owned `https://github.com/{path}` buffer.
-                            entry.resolved = Some(match git_info.owned_url {
-                                Some(owned) => Cow::Owned(owned),
-                                None => Cow::Borrowed(git_info.url),
-                            });
+                            entry.set_git_source(value);
                         } else if Entry::is_npm_alias(value) {
-                            let alias_info = Entry::parse_npm_alias(value);
-                            entry.version = alias_info.version;
+                            entry.version = Entry::parse_npm_alias(value).version;
                         } else if Entry::is_remote_tarball(value) {
                             entry.resolved = Some(Cow::Borrowed(value));
                         }
                     } else if key == b"resolved" {
                         entry.resolved = Some(Cow::Borrowed(value));
                         if Entry::is_git_dependency(value) {
-                            let git_info = Entry::parse_git_url(self, value)?;
-                            entry.commit = git_info.commit;
-                            if let Some(repo_name) = git_info.repo {
-                                entry.git_repo_name = Some(Box::<[u8]>::from(repo_name));
-                            }
-                            // As in the `version` branch: prefer the rewritten
-                            // `https://github.com/...` buffer for `github:` specs.
-                            entry.resolved = Some(match git_info.owned_url {
-                                Some(owned) => Cow::Owned(owned),
-                                None => Cow::Borrowed(git_info.url),
-                            });
+                            entry.set_git_source(value);
                         }
                     } else if key == b"integrity" {
                         entry.integrity = Some(value);
-                    } else if key == b"os" && value.starts_with(b"[") && value.ends_with(b"]") {
-                        let mut os_list: Vec<&'a [u8]> = Vec::new();
-                        let mut os_it = strings::split(&value[1..value.len() - 1], b",");
-                        while let Some(os) = os_it.next() {
-                            let trimmed_os = strings::trim(os, b" \"");
-                            os_list.push(trimmed_os);
+                    } else if (key == b"os" || key == b"cpu")
+                        && value.starts_with(b"[")
+                        && value.ends_with(b"]")
+                    {
+                        for item in strings::split(&value[1..value.len() - 1], b",") {
+                            let item = strings::trim(item, b" \"");
+                            if key == b"os" {
+                                entry.os.apply(item);
+                            } else {
+                                entry.cpu.apply(item);
+                            }
                         }
-                        entry.os = Some(os_list);
-                    } else if key == b"cpu" && value.starts_with(b"[") && value.ends_with(b"]") {
-                        let mut cpu_list: Vec<&'a [u8]> = Vec::new();
-                        let mut cpu_it = strings::split(&value[1..value.len() - 1], b",");
-                        while let Some(cpu) = cpu_it.next() {
-                            let trimmed_cpu = strings::trim(cpu, b" \"");
-                            cpu_list.push(trimmed_cpu);
-                        }
-                        entry.cpu = Some(cpu_list);
                     }
                 }
             }
         }
 
-        if let Some(mut entry) = current_entry.take() {
-            entry.dependencies = current_deps.take();
-            entry.optional_dependencies = current_optional_deps.take();
-            entry.peer_dependencies = current_peer_deps.take();
-            entry.dev_dependencies = current_dev_deps.take();
+        if let Some(entry) = current_entry.take() {
             self.consolidate_and_append_entry(entry)?;
         }
 
         Ok(())
     }
 
-    fn find_entry_by_spec(&self, spec: &[u8]) -> Option<&Entry<'a>> {
-        // Every caller only reads `.workspace` / `.specs`, so `&self`
-        // suffices and avoids the borrowck conflict with the outer
-        // `entries.iter()` loops.
-        for entry in self.entries.iter() {
-            for entry_spec in entry.specs.iter() {
-                if *entry_spec == spec {
-                    return Some(entry);
-                }
-            }
-        }
-        None
-    }
-
     fn consolidate_and_append_entry(&mut self, new_entry: Entry<'a>) -> Result<(), Error> {
         if new_entry.specs.is_empty() {
             return Ok(());
         }
-        let package_name = Entry::get_name_from_spec(new_entry.specs[0]);
+        let dedupe_name = new_entry.dedupe_name();
 
         for existing_entry in self.entries.iter_mut() {
-            if existing_entry.specs.is_empty() {
-                continue;
-            }
-            let existing_name = Entry::get_name_from_spec(existing_entry.specs[0]);
-
-            if package_name == existing_name && new_entry.version == existing_entry.version {
+            if dedupe_name == existing_entry.dedupe_name()
+                && new_entry.version == existing_entry.version
+            {
                 let old_len = existing_entry.specs.len();
                 let mut combined_specs: Vec<&'a [u8]> =
                     Vec::with_capacity(old_len + new_entry.specs.len());
@@ -495,100 +404,134 @@ impl<'a> YarnLock<'a> {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum DependencyType {
-    Production,
-    Development,
-    Optional,
-    Peer,
-}
-
-fn process_deps(
-    deps: &StringHashMap<&[u8]>,
-    dep_type: DependencyType,
-    yarn_lock_: &YarnLock<'_>,
-    string_buf_: &mut Semver::string::Buf,
-    deps_buf: &mut [Dependency],
-    res_buf: &mut [PackageID],
-    log: &mut bun_ast::Log,
+/// Parses `<workspace_path>/package.json` (the root's for `None`) the way `bun install` does and appends it.
+fn append_package_json(
+    this: &mut Lockfile,
     manager: &mut PackageManager,
-    yarn_entry_to_package_id: &[PackageID],
-) -> Result<usize, Error> {
-    // Returns count instead of slice to avoid borrowck conflict with caller's bufs.
-    let mut count: usize = 0;
-
-    for (dep_name_key, dep_version_ref) in deps.iter() {
-        let dep_name: &[u8] = dep_name_key.as_ref();
-        let dep_version: &[u8] = *dep_version_ref;
-        let mut dep_spec = Vec::new();
-        write!(
-            &mut dep_spec,
-            "{}@{}",
-            bstr::BStr::new(dep_name),
-            bstr::BStr::new(dep_version)
-        )
-        .expect("unreachable");
-
-        if let Some(dep_entry) = yarn_lock_.find_entry_by_spec(&dep_spec) {
-            let dep_entry_workspace = dep_entry.workspace;
-            let dep_name_hash = string_hash(dep_name);
-            let dep_name_str = string_buf_.append_with_hash(dep_name, dep_name_hash)?;
-
-            let parsed_version = if Entry::is_npm_alias(dep_version) {
-                let alias_info = Entry::parse_npm_alias(dep_version);
-                alias_info.version
-            } else {
-                dep_version
-            };
-
-            let dep = Dependency {
-                name: dep_name_str,
-                name_hash: dep_name_hash,
-                version: Dependency::parse(
-                    dep_name_str,
-                    Some(dep_name_hash),
-                    parsed_version,
-                    &SlicedString::init(parsed_version, parsed_version),
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default(),
-                behavior: behavior_for(dep_type, dep_entry_workspace),
-            };
-            let mut found_package_id: Option<PackageID> = None;
-            'outer: for (yarn_idx, entry_) in yarn_lock_.entries.iter().enumerate() {
-                for entry_spec in entry_.specs.iter() {
-                    if *entry_spec == dep_spec.as_slice() {
-                        found_package_id = Some(yarn_entry_to_package_id[yarn_idx]);
-                        break 'outer;
-                    }
-                }
-            }
-
-            if let Some(pkg_id) = found_package_id {
-                // SAFETY: `deps_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe { core::ptr::write(deps_buf.as_mut_ptr().add(count), dep) };
-                res_buf[count] = pkg_id;
-                count += 1;
-            }
+    log: &mut bun_ast::Log,
+    workspace_path: Option<SemverString>,
+) -> Result<LockfilePackage, Error> {
+    let mut path = AutoAbsPath::init_top_level_dir();
+    let _ = path.append(match &workspace_path {
+        Some(workspace_path) => workspace_path.slice(this.buffers.string_bytes.as_slice()),
+        None => b"",
+    });
+    let _ = path.append(b"package.json");
+    let (source, json) = match manager.workspace_package_json_cache.get_with_path(
+        log,
+        path.slice(),
+        Default::default(),
+    ) {
+        // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
+        GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
+        GetJsonResult::ReadErr(err) => {
+            let path = bstr::BStr::new(path.slice());
+            let loc = bun_ast::Loc::EMPTY;
+            log.add_error_fmt(
+                None,
+                loc,
+                format_args!("{} reading \"{}\"", err.name(), path),
+            );
+            return Err(err);
         }
+        // The parse diagnostics are already in `log`.
+        GetJsonResult::ParseErr(_) => return Err(crate::Error::InvalidPackageJSON),
+    };
+    let mut package = LockfilePackage::default();
+    let features = workspace_path.map_or(Features::main(), |_| Features::WORKSPACE);
+    package.parse_with_json(this, manager, log, &source, json, &mut (), features)?;
+    if let Some(workspace_path) = workspace_path {
+        package.resolution = Resolution::init(ResolutionValue::Workspace(workspace_path));
     }
-    Ok(count)
+    Ok(this.append_package(&package)?)
 }
 
-struct RootDep {
-    name: Vec<u8>,
-    version: Vec<u8>,
-    dep_type: DependencyType,
+/// Only the exact `name@range` key binds; an entry that merely satisfies it is another resolution.
+fn bind_importer_dependency(
+    this: &Lockfile,
+    dep: &Dependency,
+    spec_to_package_id: &StringHashMap<PackageID>,
+    workspace_id_by_path: &StringHashMap<PackageID>,
+    spec: &mut Vec<u8>,
+) -> Option<PackageID> {
+    let string_bytes = this.buffers.string_bytes.as_slice();
+    if dep.version.tag == dependency::Tag::Workspace {
+        let path = dep.version.workspace().slice(string_bytes);
+        return workspace_id_by_path.get(path).copied();
+    }
+    // yarn never locked these peers; bind them the way loading a bun.lock does.
+    if dep.behavior.is_peer() {
+        if dep.behavior.is_optional_peer() {
+            // Bound by the hoister, as after a fresh resolve.
+            return Some(install::INVALID_PACKAGE_ID);
+        }
+        // Overrides are not consulted: yarn applied them to the entries the candidates come from.
+        let range = this.catalogs.resolve_range(string_bytes, dep);
+        let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
+        let resolutions = this.packages.items_resolution();
+        let index = &this.package_index;
+        // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
+        let newest = || index.get(&name_hash)?.as_slice().first().copied();
+        return lockfile::bun_lock::resolve_peer_dep_by_range(
+            range,
+            name_hash,
+            index,
+            resolutions,
+            string_bytes,
+            |_| true,
+        )
+        .or_else(newest);
+    }
+    spec.clear();
+    spec.extend_from_slice(dep.name.slice(string_bytes));
+    spec.push(b'@');
+    spec.extend_from_slice(dep.version.literal.slice(string_bytes));
+    spec_to_package_id.get(spec.as_slice()).copied()
 }
 
-#[derive(Clone)]
-struct VersionInfo {
-    version: Vec<u8>,
-    // Owned Vec<u8> (rather than a borrow from the input) avoids a second
-    // lifetime on the local map.
-    package_id: PackageID,
-    yarn_idx: usize,
+/// Packages `0..importer_count` (root, then workspaces) own every row in the buffers so far.
+fn bind_importer_dependencies(
+    this: &mut Lockfile,
+    importer_count: usize,
+    spec_to_package_id: &StringHashMap<PackageID>,
+    workspace_id_by_path: &StringHashMap<PackageID>,
+) {
+    debug_assert_eq!(
+        this.buffers.dependencies.len(),
+        this.buffers.resolutions.len()
+    );
+    let mut declared = core::mem::take(&mut this.buffers.dependencies).into_iter();
+    this.buffers.resolutions.clear();
+
+    let mut spec: Vec<u8> = Vec::new();
+    let mut consumed: u32 = 0;
+    for package_id in 0..importer_count {
+        let declared_slice = this.packages.items_dependencies()[package_id];
+        debug_assert_eq!(declared_slice.off, consumed);
+        consumed += declared_slice.len;
+
+        let off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
+        for dep in declared.by_ref().take(declared_slice.len as usize) {
+            let bound = bind_importer_dependency(
+                this,
+                &dep,
+                spec_to_package_id,
+                workspace_id_by_path,
+                &mut spec,
+            );
+            let Some(resolution) = bound else {
+                // `bun install` resolves it, like a dependency added after yarn.lock was written.
+                continue;
+            };
+            this.buffers.dependencies.push(dep);
+            this.buffers.resolutions.push(resolution);
+        }
+        let len = u32::try_from(this.buffers.dependencies.len()).expect("int cast") - off;
+        this.packages.items_dependencies_mut()[package_id] =
+            lockfile::DependencySlice::new(off, len);
+        this.packages.items_resolutions_mut()[package_id] = lockfile::PackageIDSlice::new(off, len);
+    }
+    debug_assert!(declared.next().is_none());
 }
 
 pub(crate) fn migrate_yarn_lockfile<'a>(
@@ -596,7 +539,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-    dir: Fd,
 ) -> Result<LoadResult<'a>, Error> {
     // yarn v2+ (berry) lockfiles are not supported; only the v1 format migrates.
     if !strings::index_of(data, b"# yarn lockfile v1").is_some() {
@@ -624,349 +566,62 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         };
     }
 
-    let mut num_deps: u32 = 0;
-    let root_dep_count: u32;
-    let mut root_dep_count_from_package_json: u32 = 0;
+    let root = append_package_json(this, manager, log, None)?;
+    debug_assert_eq!(root.meta.id, 0);
 
-    let mut root_dependencies: Vec<RootDep> = Vec::new();
-
-    // read package.json to get specified dependencies
-    let Ok(package_json_fd) = bun_sys::File::openat(dir, b"package.json", bun_sys::O::RDONLY, 0)
-    else {
-        return Err(crate::Error::InvalidPackageJSON);
-    };
-    let Ok(package_json_contents) = package_json_fd.read_to_end() else {
-        return Err(crate::Error::InvalidPackageJSON);
-    };
-
-    // `package_json_source.path` borrows this buffer (lifetime-erased); keep it alive until the overrides are parsed below.
-    let mut package_json_path_buf = PathBuffer::uninit();
-    let package_json_source = {
-        let Ok(package_json_path) =
-            bun_sys::get_fd_path(package_json_fd.handle(), &mut package_json_path_buf)
-        else {
-            return Err(crate::Error::InvalidPackageJSON);
-        };
-        bun_ast::Source::init_path_string(&*package_json_path, package_json_contents.as_slice())
-    };
-    drop(package_json_fd);
-
-    let json_bump = bun_alloc::Arena::new();
-    let Ok(package_json_expr) = bun_json::parse_package_json_utf8_with_opts(
-        bun_json::JSONOptions {
-            json_warn_duplicate_keys: false,
-            guess_indentation: true,
-            ..bun_json::PACKAGE_JSON_OPTS
-        },
-        &package_json_source,
-        log,
-        &json_bump,
-    ) else {
-        return Err(crate::Error::InvalidPackageJSON);
-    };
-
-    let package_json = package_json_expr.root;
-
-    {
-        let package_name: Option<Vec<u8>> = 'blk: {
-            if let Some(name_prop) = package_json.as_property(b"name") {
-                if let bun_ast::ExprData::EString(e_string) = &name_prop.expr.data {
-                    let name_slice = e_string.string(&json_bump).unwrap_or(b"");
-                    if !name_slice.is_empty() {
-                        break 'blk Some(name_slice.to_vec());
-                    }
-                }
-            }
-            break 'blk None;
-        };
-        let package_name_hash = if let Some(name) = &package_name {
-            Semver::string::Builder::string_hash(name)
-        } else {
-            0
-        };
-
-        use bun_install_types::DependencyGroup;
-        // prop literals come from canonical; DependencyType retained as yarn-lexer-local discriminant
-        for (group, dep_type) in [
-            (DependencyGroup::DEPENDENCIES, DependencyType::Production),
-            (DependencyGroup::DEV, DependencyType::Development),
-            (DependencyGroup::OPTIONAL, DependencyType::Optional),
-            (DependencyGroup::PEER, DependencyType::Peer),
-        ] {
-            let Some(prop) = package_json.as_property(group.prop) else {
-                continue;
-            };
-            let bun_ast::ExprData::EObject(e_object) = &prop.expr.data else {
-                continue;
-            };
-
-            for p in e_object.properties.slice() {
-                let Some(key) = &p.key else { continue };
-                let bun_ast::ExprData::EString(key_str) = &key.data else {
-                    continue;
-                };
-
-                let Ok(name_slice) = key_str.string(&json_bump) else {
-                    continue;
-                };
-                let Some(value) = &p.value else { continue };
-                let bun_ast::ExprData::EString(value_str) = &value.data else {
-                    continue;
-                };
-
-                let Ok(version_slice) = value_str.string(&json_bump) else {
-                    continue;
-                };
-                if version_slice.is_empty() {
-                    continue;
-                }
-
-                let name = name_slice.to_vec();
-                let version = version_slice.to_vec();
-                root_dependencies.push(RootDep {
-                    name,
-                    version,
-                    dep_type,
-                });
-                root_dep_count_from_package_json += 1;
-            }
+    let mut workspace_id_by_path: StringHashMap<PackageID> = StringHashMap::new();
+    for dep_id in root.dependencies.begin()..root.dependencies.end() {
+        let dep = &this.buffers.dependencies[dep_id as usize];
+        if !dep.behavior.is_workspace() {
+            continue;
         }
-
-        root_dep_count = root_dep_count_from_package_json.max(10);
-        num_deps += root_dep_count;
-
-        for entry in yarn_lock.entries.iter() {
-            if let Some(deps) = &entry.dependencies {
-                num_deps += u32::try_from(deps.count()).expect("int cast");
-            }
-            if let Some(deps) = &entry.optional_dependencies {
-                num_deps += u32::try_from(deps.count()).expect("int cast");
-            }
-            if let Some(deps) = &entry.peer_dependencies {
-                num_deps += u32::try_from(deps.count()).expect("int cast");
-            }
-            if let Some(deps) = &entry.dev_dependencies {
-                num_deps += u32::try_from(deps.count()).expect("int cast");
-            }
-        }
-
-        let num_packages = u32::try_from(yarn_lock.entries.len() + 1).expect("int cast");
-
-        this.buffers
-            .dependencies
-            .reserve((num_deps as usize).saturating_sub(this.buffers.dependencies.len()));
-        this.buffers
-            .resolutions
-            .reserve((num_deps as usize).saturating_sub(this.buffers.resolutions.len()));
-        this.packages.ensure_total_capacity(num_packages as usize)?;
-        this.package_index
-            .ensure_total_capacity(num_packages as usize)?;
-
-        let root_name = if let Some(name) = &package_name {
-            sbuf!().append_with_hash(name, package_name_hash)?
-        } else {
-            sbuf!().append(b"")?
-        };
-
-        this.packages.append(LockfilePackage {
-            name: root_name,
-            name_hash: package_name_hash,
-            resolution: Resolution::init(ResolutionValue::Root),
-            dependencies: Default::default(),
-            resolutions: Default::default(),
-            meta: PackageMeta {
-                id: 0,
-                origin: Origin::Local,
-                arch: npm::Architecture::ALL,
-                os: npm::OperatingSystem::ALL,
-                man_dir: SemverString::default(),
-                has_install_script: HasInstallScript::False,
-                integrity: Integrity::default(),
-                ..Default::default()
-            },
-            bin: Bin::init(),
-            scripts: Default::default(),
-        })?;
+        let workspace_path = *dep.version.workspace();
+        let workspace = append_package_json(this, manager, log, Some(workspace_path))?;
+        workspace_id_by_path.put(
+            workspace_path.slice(this.buffers.string_bytes.as_slice()),
+            workspace.meta.id,
+        )?;
     }
+    let importer_count = this.packages.len();
 
-    // SAFETY: capacity reserved above to num_deps; we write past `len` through
-    // raw pointers into the reserved capacity and set `len` at the end.
-    let dependencies_base_ptr = this.buffers.dependencies.as_mut_ptr();
-    let resolutions_base_ptr = this.buffers.resolutions.as_mut_ptr();
-    let mut dependencies_buf: &mut [Dependency] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(dependencies_base_ptr, num_deps as usize)
-    };
-    let mut resolutions_buf: &mut [PackageID] = unsafe {
-        // SAFETY: capacity >= num_deps reserved above
-        bun_core::ffi::slice_mut(resolutions_base_ptr, num_deps as usize)
-    };
-
-    let mut yarn_entry_to_package_id: Vec<PackageID> = vec![0; yarn_lock.entries.len()];
-
-    let mut package_versions: StringHashMap<VersionInfo> = StringHashMap::new();
-
-    let mut scoped_packages: StringHashMap<Vec<VersionInfo>> = StringHashMap::new();
-
-    let mut next_package_id: PackageID = 1; // 0 is root
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let mut is_npm_alias = false;
-        let mut is_direct_url = false;
-        for spec in entry.specs.iter() {
-            if strings::index_of(spec, b"@npm:").is_some() {
-                is_npm_alias = true;
-                break;
-            }
-            if strings::index_of(spec, b"@https://").is_some()
-                || strings::index_of(spec, b"@http://").is_some()
-            {
-                is_direct_url = true;
-            }
-        }
-
-        let name: &[u8] = if let (true, Some(resolved)) = (is_npm_alias, entry.resolved.as_deref())
-        {
-            Entry::get_package_name_from_resolved_url(resolved)
-                .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
-        } else if is_direct_url {
-            Entry::get_name_from_spec(entry.specs[0])
-        } else if let Some(repo_name) = &entry.git_repo_name {
-            repo_name
-        } else {
-            Entry::get_name_from_spec(entry.specs[0])
-        };
-        let version = entry.version;
-
-        if let Some(existing) = package_versions.get(name).cloned() {
-            if existing.version.as_slice() != version {
-                let mut list = scoped_packages.get(name).cloned().unwrap_or_default();
-
-                let mut found_existing = false;
-                let mut found_new = false;
-                for item in list.iter() {
-                    if item.version.as_slice() == existing.version.as_slice() {
-                        found_existing = true;
-                    }
-                    if item.version.as_slice() == version {
-                        found_new = true;
-                    }
-                }
-
-                if !found_existing {
-                    list.push(VersionInfo {
-                        yarn_idx: existing.yarn_idx,
-                        version: existing.version.clone(),
-                        package_id: existing.package_id,
-                    });
-                }
-
-                if !found_new {
-                    let package_id = next_package_id;
-                    next_package_id += 1;
-                    list.push(VersionInfo {
-                        yarn_idx,
-                        version: version.to_vec(),
-                        package_id,
-                    });
-                    yarn_entry_to_package_id[yarn_idx] = package_id;
-                } else {
-                    for item in list.iter() {
-                        if item.version.as_slice() == version {
-                            yarn_entry_to_package_id[yarn_idx] = item.package_id;
-                            break;
-                        }
-                    }
-                }
-
-                scoped_packages.put(name, list)?;
-            } else {
-                yarn_entry_to_package_id[yarn_idx] = existing.package_id;
-            }
-        } else {
-            let package_id = next_package_id;
+    // One id per distinct (dedupe name, version), in order of first appearance.
+    let mut yarn_entry_to_package_id: Vec<PackageID> = Vec::with_capacity(yarn_lock.entries.len());
+    let mut package_id_by_name_version: StringHashMap<PackageID> = StringHashMap::new();
+    let mut next_package_id: PackageID = PackageID::try_from(importer_count).expect("int cast");
+    let mut key: Vec<u8> = Vec::new();
+    for entry in &yarn_lock.entries {
+        key.clear();
+        key.extend_from_slice(entry.dedupe_name());
+        key.push(b'\n');
+        key.extend_from_slice(entry.version);
+        let package_id = *package_id_by_name_version.get_or_put_value(&key, next_package_id)?;
+        if package_id == next_package_id {
             next_package_id += 1;
-            yarn_entry_to_package_id[yarn_idx] = package_id;
-            package_versions.put(
-                name,
-                VersionInfo {
-                    version: version.to_vec(),
-                    package_id,
-                    yarn_idx,
-                },
-            )?;
         }
+        yarn_entry_to_package_id.push(package_id);
     }
 
-    let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
+    // A package's id is its index in `this.packages`, and an entry whose resolution cannot be built is
+    // not appended; it stays `INVALID_PACKAGE_ID` here, an unresolved edge like a spec missing from yarn.lock.
+    let mut appended_package_ids: Vec<PackageID> =
+        vec![install::INVALID_PACKAGE_ID; next_package_id as usize];
+    let mut seen_package_ids = vec![false; next_package_id as usize];
+    let silent = manager.options.log_level.is_silent();
 
-    let created_packages: StringHashMap<bool> = StringHashMap::new();
-    let _ = &created_packages; // never populated
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let mut is_npm_alias = false;
-        for spec in entry.specs.iter() {
-            if strings::index_of(spec, b"@npm:").is_some() {
-                is_npm_alias = true;
-                break;
-            }
-        }
-
-        let mut is_direct_url_dep = false;
-        for spec in entry.specs.iter() {
-            if strings::index_of(spec, b"@https://").is_some()
-                || strings::index_of(spec, b"@http://").is_some()
-            {
-                is_direct_url_dep = true;
-                break;
-            }
-        }
-
-        let base_name: &[u8] =
-            if let (true, Some(resolved)) = (is_npm_alias, entry.resolved.as_deref()) {
-                Entry::get_package_name_from_resolved_url(resolved)
-                    .unwrap_or_else(|| Entry::get_name_from_spec(entry.specs[0]))
-            } else {
-                Entry::get_name_from_spec(entry.specs[0])
-            };
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-
-        if (package_id as usize) < package_id_to_yarn_idx.len()
-            && package_id_to_yarn_idx[package_id as usize] != usize::MAX
-        {
+    for (entry, &package_id) in yarn_lock.entries.iter().zip(&yarn_entry_to_package_id) {
+        let is_direct_url_dep = entry.has_direct_url_spec();
+        let base_name: &[u8] = entry.name;
+        if core::mem::replace(&mut seen_package_ids[package_id as usize], true) {
             continue;
         }
 
-        package_id_to_yarn_idx[package_id as usize] = yarn_idx;
-
-        let name_to_use: &[u8] = 'blk: {
-            if entry.commit.is_some() && entry.git_repo_name.is_some() {
-                break 'blk entry.git_repo_name.as_deref().unwrap();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep
-                    || Entry::is_remote_tarball(resolved)
-                    || resolved.ends_with(b".tgz")
-                {
-                    // https://registry.npmjs.org/package/-/package-version.tgz
-                    if strings::index_of(resolved, b"registry.npmjs.org/").is_some()
-                        || strings::index_of(resolved, b"registry.yarnpkg.com/").is_some()
-                    {
-                        if let Some(separator_idx) = strings::index_of(resolved, b"/-/") {
-                            if let Some(registry_idx) = strings::index_of(resolved, b"registry.") {
-                                let after_registry = &resolved[registry_idx..];
-                                if let Some(domain_slash) = strings::index_of(after_registry, b"/")
-                                {
-                                    let package_start = registry_idx + domain_slash + 1;
-                                    let extracted_name = &resolved[package_start..separator_idx];
-                                    break 'blk extracted_name;
-                                }
-                            }
-                        }
-                    }
-                    break 'blk base_name;
-                }
-            }
-            break 'blk base_name;
+        let resolved_url: Option<&[u8]> = entry.resolved.as_deref().map(Entry::url_without_hash);
+        let name_to_use: &[u8] = match (entry.commit, entry.git_repo_name.as_deref()) {
+            (Some(_), Some(repo_name)) => repo_name,
+            _ => resolved_url
+                .filter(|_| is_direct_url_dep)
+                .and_then(Entry::get_package_name_from_default_registry_url)
+                .unwrap_or(base_name),
         };
 
         let name_hash = string_hash(name_to_use);
@@ -990,89 +645,106 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     break 'blk Resolution::init(ResolutionValue::Folder(sbuf!().append(file)?));
                 }
             } else if let Some(commit) = entry.commit {
-                if let Some(resolved) = entry.resolved.as_deref() {
-                    let mut owner_str: &[u8] = b"";
-                    let mut repo_str: &[u8] = resolved;
-
-                    if strings::index_of(resolved, b"github.com/").is_some() {
-                        if let Some(idx) = strings::index_of(resolved, b"github.com/") {
-                            let after_github = &resolved[idx + b"github.com/".len()..];
-                            if let Some(slash_idx) = strings::index_of(after_github, b"/") {
-                                owner_str = &after_github[0..slash_idx];
-                                repo_str = &after_github[slash_idx + 1..];
-                                if repo_str.ends_with(b".git") {
-                                    repo_str = &repo_str[0..repo_str.len() - 4];
-                                }
-                            }
-                        }
-                    }
-
-                    let actual_name: &[u8] = if let Some(repo_name) = &entry.git_repo_name {
-                        repo_name
-                    } else {
-                        repo_str
-                    };
-
-                    if !owner_str.is_empty() && !repo_str.is_empty() {
-                        break 'blk Resolution::init(ResolutionValue::Github(Repository {
-                            owner: sbuf!().append(owner_str)?,
-                            repo: sbuf!().append(repo_str)?,
-                            committish: sbuf!()
-                                .append(&commit[0..b"github:".len().min(commit.len())])?,
-                            resolved: SemverString::default(),
-                            package_name: sbuf!().append(actual_name)?,
-                        }));
-                    } else {
-                        break 'blk Resolution::init(ResolutionValue::Git(Repository {
-                            owner: sbuf!().append(owner_str)?,
-                            repo: sbuf!().append(repo_str)?,
-                            committish: sbuf!().append(commit)?,
-                            resolved: SemverString::default(),
-                            package_name: sbuf!().append(actual_name)?,
-                        }));
+                let Some(resolved) = entry.resolved.as_deref() else {
+                    break 'blk Resolution::default();
+                };
+                let mut owner_str: &[u8] = b"";
+                let mut repo_str: &[u8] = resolved;
+                if let Some(idx) = strings::index_of(resolved, b"github.com/") {
+                    let after_github = &resolved[idx + b"github.com/".len()..];
+                    if let Some((owner, repo)) = strings::split_once_char(after_github, b'/') {
+                        owner_str = owner;
+                        repo_str = repo.strip_suffix(b".git").unwrap_or(repo);
                     }
                 }
-                break 'blk Resolution::default();
-            } else if let Some(resolved) = entry.resolved.as_deref() {
-                if is_direct_url_dep {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
-                }
-
-                // Yarn v1 lockfiles legitimately contain entries without an integrity field
-                // (workspace deps, file:, codeload tarballs), so migration intentionally
-                // accepts off-registry tarball URLs without integrity instead of failing.
-                if Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz") {
-                    break 'blk Resolution::init(ResolutionValue::RemoteTarball(
-                        sbuf!().append(resolved)?,
-                    ));
+                let is_github = !owner_str.is_empty() && !repo_str.is_empty();
+                let committish = if is_github {
+                    &commit[..7.min(commit.len())]
+                } else {
+                    commit
+                };
+                let package_name = entry.git_repo_name.as_deref().unwrap_or(repo_str);
+                let repository = Repository {
+                    owner: sbuf!().append(owner_str)?,
+                    repo: sbuf!().append(repo_str)?,
+                    committish: sbuf!().append(committish)?,
+                    resolved: SemverString::default(),
+                    package_name: sbuf!().append(package_name)?,
+                };
+                let value = if is_github {
+                    ResolutionValue::Github
+                } else {
+                    ResolutionValue::Git
+                };
+                break 'blk Resolution::init(value(repository));
+            } else {
+                match resolved_url {
+                    Some(resolved) if is_direct_url_dep => {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
+                    None if !entry.is_registry_entry() => break 'blk Resolution::default(),
+                    _ => {}
                 }
 
                 let version = sbuf!().append(entry.version)?;
                 let result =
                     Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
                 if !result.valid {
+                    // An off-registry tarball (codeload and the like) installs from its URL.
+                    if let Some(resolved) = resolved_url
+                        && Entry::is_remote_tarball(resolved)
+                        && Entry::get_package_name_from_default_registry_url(resolved).is_none()
+                        && !resolved.starts_with(strings::without_trailing_slash(
+                            manager.options.scope.url.href(),
+                        ))
+                    {
+                        break 'blk Resolution::init(ResolutionValue::RemoteTarball(
+                            sbuf!().append(resolved)?,
+                        ));
+                    }
                     break 'blk Resolution::default();
                 }
 
-                let is_default_registry = resolved.starts_with(b"https://registry.yarnpkg.com/")
-                    || resolved.starts_with(b"https://registry.npmjs.org/");
-
-                let url = if is_default_registry {
-                    SemverString::default()
-                } else {
-                    sbuf!().append(resolved)?
+                // The bare URL a fresh install records (`has_trusted_dependency` compares it); empty means the configured registry.
+                let url = match resolved_url {
+                    Some(resolved)
+                        if !(resolved.starts_with(b"https://registry.yarnpkg.com/")
+                            || resolved.starts_with(b"https://registry.npmjs.org/")) =>
+                    {
+                        sbuf!().append(resolved)?
+                    }
+                    _ => SemverString::default(),
                 };
-
                 break 'blk Resolution::init(ResolutionValue::Npm(VersionedURL {
                     url,
                     version: result.version.min(),
                 }));
-            } else {
-                break 'blk Resolution::default();
             }
         };
+
+        if resolution.tag == crate::resolution::Tag::Uninitialized {
+            if !silent {
+                let reason: Cow<str> = if entry.version.is_empty() {
+                    "missing \"version\" field".into()
+                } else if !Semver::Version::parse_utf8(entry.version).valid {
+                    format!("invalid version \"{}\"", bstr::BStr::new(entry.version)).into()
+                } else {
+                    "missing \"resolved\" field".into()
+                };
+                let specs = bstr::join(", ", &entry.specs);
+                bun_core::warn!(
+                    "skipped \"{}\" from yarn.lock: {}",
+                    bstr::BStr::new(&specs),
+                    reason
+                );
+            }
+            continue;
+        }
+
+        let appended_id = PackageID::try_from(this.packages.len()).expect("int cast");
+        appended_package_ids[package_id as usize] = appended_id;
 
         this.packages.append(LockfilePackage {
             name: pkg_name,
@@ -1081,601 +753,40 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             dependencies: Default::default(),
             resolutions: Default::default(),
             meta: PackageMeta {
-                id: package_id,
+                id: appended_id,
                 origin: Origin::Npm,
-                arch: if let Some(cpu_list) = &entry.cpu {
-                    let mut arch = npm::Architecture::NONE.negatable();
-                    for cpu in cpu_list.iter() {
-                        arch.apply(cpu);
-                    }
-                    arch.combine()
-                } else {
-                    npm::Architecture::ALL
-                },
-                os: if let Some(os_list) = &entry.os {
-                    let mut os = npm::OperatingSystem::NONE.negatable();
-                    for os_str in os_list.iter() {
-                        os.apply(os_str);
-                    }
-                    os.combine()
-                } else {
-                    npm::OperatingSystem::ALL
-                },
+                arch: entry.cpu.combine(),
+                os: entry.os.combine(),
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
-                integrity: if let Some(integrity) = entry.integrity {
-                    Integrity::parse(integrity)
-                } else {
-                    Integrity::default()
-                },
+                integrity: entry
+                    .integrity
+                    .map_or_else(Integrity::default, Integrity::parse),
                 ..Default::default()
             },
             bin: Bin::init(),
             scripts: Default::default(),
         })?;
+        this.get_or_put_id(appended_id, name_hash)?;
     }
 
-    // The derive's `&mut self` accessors can't alias, so we re-borrow per write
-    // below via `this.packages.items_*_mut()[idx] = …` instead of caching
-    // two field slices simultaneously.
-
-    let mut actual_root_dep_count: u32 = 0;
-
-    if !root_dependencies.is_empty() {
-        for dep in root_dependencies.iter() {
-            let mut dep_spec = Vec::new();
-            write!(
-                &mut dep_spec,
-                "{}@{}",
-                bstr::BStr::new(&dep.name),
-                bstr::BStr::new(&dep.version)
-            )
-            .expect("unreachable");
-
-            let mut found_idx: Option<usize> = None;
-            for (idx, entry) in yarn_lock.entries.iter().enumerate() {
-                for spec in entry.specs.iter() {
-                    if *spec == dep_spec.as_slice() {
-                        found_idx = Some(idx);
-                        break;
-                    }
-                }
-                if found_idx.is_some() {
-                    break;
-                }
-            }
-
-            if let Some(idx) = found_idx {
-                let name_hash = string_hash(&dep.name);
-                let dep_name_string = sbuf!().append_with_hash(&dep.name, name_hash)?;
-                let version_string = sbuf!().append(&dep.version)?;
-
-                // SAFETY: `dependencies_buf` is uninitialized spare capacity; `ptr::write` skips Drop.
-                unsafe {
-                    core::ptr::write(
-                        dependencies_buf
-                            .as_mut_ptr()
-                            .add(actual_root_dep_count as usize),
-                        Dependency {
-                            name: dep_name_string,
-                            name_hash,
-                            version: Dependency::parse(
-                                dep_name_string,
-                                Some(name_hash),
-                                version_string.slice(this.buffers.string_bytes.as_slice()),
-                                &version_string.sliced(this.buffers.string_bytes.as_slice()),
-                                Some(&mut *log),
-                                Some(&mut *manager),
-                            )
-                            .unwrap_or_default(),
-                            behavior: behavior_for(dep.dep_type, false),
-                        },
-                    );
-                }
-
-                resolutions_buf[actual_root_dep_count as usize] = yarn_entry_to_package_id[idx];
-                actual_root_dep_count += 1;
-            }
-        }
+    for package_id in yarn_entry_to_package_id.iter_mut() {
+        *package_id = appended_package_ids[*package_id as usize];
     }
-
-    this.packages.items_dependencies_mut()[0] =
-        lockfile::DependencySlice::new(0, actual_root_dep_count);
-    this.packages.items_resolutions_mut()[0] =
-        lockfile::DependencyIDSlice::new(0, actual_root_dep_count);
-
-    dependencies_buf = &mut dependencies_buf[actual_root_dep_count as usize..];
-    resolutions_buf = &mut resolutions_buf[actual_root_dep_count as usize..];
-
-    for yarn_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-
-        let dependencies_start = dependencies_buf.as_mut_ptr();
-        let resolutions_start = resolutions_buf.as_mut_ptr();
-
-        // reshaped for borrowck — iterate by index and re-borrow
-        // `yarn_lock.entries[yarn_idx]` for each map so the shared borrow of
-        // `yarn_lock` passed into `process_deps` doesn't overlap an iterator.
-        if let Some(deps) = yarn_lock.entries[yarn_idx].dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Production,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        if let Some(deps) = yarn_lock.entries[yarn_idx].optional_dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Optional,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        if let Some(deps) = yarn_lock.entries[yarn_idx].peer_dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Peer,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        if let Some(deps) = yarn_lock.entries[yarn_idx].dev_dependencies.as_ref() {
-            let processed = process_deps(
-                deps,
-                DependencyType::Development,
-                &yarn_lock,
-                &mut sbuf!(),
-                dependencies_buf,
-                resolutions_buf,
-                &mut *log,
-                &mut *manager,
-                &yarn_entry_to_package_id,
-            )?;
-            dependencies_buf = &mut dependencies_buf[processed..];
-            resolutions_buf = &mut resolutions_buf[processed..];
-        }
-
-        // dependencies_start/dependencies_buf.as_ptr() are within the same allocation
-        let deps_len = (dependencies_buf.as_mut_ptr() as usize) - (dependencies_start as usize);
-        let deps_off = (dependencies_start as usize) - (dependencies_base_ptr as usize);
-        this.packages.items_dependencies_mut()[package_id as usize] =
-            lockfile::DependencySlice::new(
-                u32::try_from(deps_off / core::mem::size_of::<Dependency>()).expect("int cast"),
-                u32::try_from(deps_len / core::mem::size_of::<Dependency>()).expect("int cast"),
-            );
-        let res_off = (resolutions_start as usize) - (resolutions_base_ptr as usize);
-        let res_len = (resolutions_buf.as_mut_ptr() as usize) - (resolutions_start as usize);
-        this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(
-                u32::try_from(res_off / core::mem::size_of::<PackageID>()).expect("int cast"),
-                u32::try_from(res_len / core::mem::size_of::<PackageID>()).expect("int cast"),
-            );
-    }
-
-    let final_deps_len = ((dependencies_buf.as_mut_ptr() as usize)
-        - (dependencies_base_ptr as usize))
-        / core::mem::size_of::<Dependency>();
-    unsafe {
-        // SAFETY: all elements in 0..final_deps_len initialized above; capacity >= num_deps
-        this.buffers.dependencies.set_len(final_deps_len);
-        this.buffers.resolutions.set_len(final_deps_len);
-    }
-
-    this.buffers.hoisted_dependencies.reserve(
-        (this.buffers.dependencies.len() * 2)
-            .saturating_sub(this.buffers.hoisted_dependencies.len()),
-    );
-
-    this.buffers.trees.push(Tree {
-        id: 0,
-        parent: tree::INVALID_ID,
-        dependency_id: tree::ROOT_DEP_ID,
-        dependencies: lockfile::DependencyIDSlice::new(0, 0),
-    });
-
-    let mut package_dependents: Vec<Vec<PackageID>> =
-        (0..next_package_id).map(|_| Vec::new()).collect();
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let parent_package_id = yarn_entry_to_package_id[yarn_idx];
-
-        let dep_maps: [Option<&StringHashMap<&[u8]>>; 4] = [
-            entry.dependencies.as_ref(),
-            entry.optional_dependencies.as_ref(),
-            entry.peer_dependencies.as_ref(),
-            entry.dev_dependencies.as_ref(),
-        ];
-
-        for deps in dep_maps.iter().flatten() {
-            for (dep_name_key, dep_version_ref) in deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version: &[u8] = *dep_version_ref;
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version)
-                )
-                .expect("unreachable");
-
-                let found_entry_idx: Option<usize> = yarn_lock
-                    .entries
-                    .iter()
-                    .position(|e| e.specs.contains(&dep_spec.as_slice()));
-
-                if let Some(found_entry_idx) = found_entry_idx {
-                    let dep_entry_specs = &yarn_lock.entries[found_entry_idx].specs;
-                    for (idx, e) in yarn_lock.entries.iter().enumerate() {
-                        let mut found = false;
-                        for spec in e.specs.iter() {
-                            for dep_spec_item in dep_entry_specs.iter() {
-                                if *spec == *dep_spec_item {
-                                    found = true;
-                                    break;
-                                }
-                            }
-                            if found {
-                                break;
-                            }
-                        }
-
-                        if found {
-                            let dep_package_id = yarn_entry_to_package_id[idx];
-                            package_dependents[dep_package_id as usize].push(parent_package_id);
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    for dep in root_dependencies.iter() {
-        let mut dep_spec = Vec::new();
-        write!(
-            &mut dep_spec,
-            "{}@{}",
-            bstr::BStr::new(&dep.name),
-            bstr::BStr::new(&dep.version)
-        )
-        .expect("unreachable");
-
-        for (idx, entry) in yarn_lock.entries.iter().enumerate() {
-            for spec in entry.specs.iter() {
-                if *spec == dep_spec.as_slice() {
-                    let dep_package_id = yarn_entry_to_package_id[idx];
-                    package_dependents[dep_package_id as usize].push(0); // 0 is root package
-                    break;
-                }
-            }
-        }
-    }
-
-    for (base_name, versions) in scoped_packages.iter_mut() {
-        let base_name: &[u8] = base_name.as_ref();
-
-        index_sort::sort_slice_by(versions, |a, b| a.package_id.cmp(&b.package_id));
-
-        let original_name_hash = string_hash(base_name);
-        // `remove` drops the value (and thus the `Ids` Vec) automatically.
-        let _ = this.package_index.remove(&original_name_hash);
-    }
-
-    for (base_name, versions) in scoped_packages.iter() {
-        let base_name: &[u8] = base_name.as_ref();
-
-        for version_info in versions.iter() {
-            let package_id = version_info.package_id;
-
-            let mut found_in_index = false;
-            for (_, index_value) in this.package_index.iter() {
-                match index_value {
-                    lockfile::PackageIndexEntry::Id(id) => {
-                        if *id == package_id {
-                            found_in_index = true;
-                            break;
-                        }
-                    }
-                    lockfile::PackageIndexEntry::Ids(ids) => {
-                        for id in ids.iter() {
-                            if *id == package_id {
-                                found_in_index = true;
-                                break;
-                            }
-                        }
-                        if found_in_index {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            if !found_in_index {
-                let mut fallback_name = Vec::new();
-                write!(
-                    &mut fallback_name,
-                    "{}#{}",
-                    bstr::BStr::new(base_name),
-                    package_id
-                )
-                .expect("unreachable");
-
-                let fallback_hash = string_hash(&fallback_name);
-                this.get_or_put_id(package_id, fallback_hash)?;
-            }
-        }
-    }
-
-    let mut package_names: Vec<&[u8]> = vec![b"".as_slice(); next_package_id as usize];
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_names[package_id as usize].is_empty() {
-            package_names[package_id as usize] = Entry::get_name_from_spec(entry.specs[0]);
-        }
-    }
-
-    let mut root_packages: StringHashMap<PackageID> = StringHashMap::new();
-
-    let mut usage_count: StringHashMap<u32> = StringHashMap::new();
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        for dep_entry in yarn_lock.entries.iter() {
-            if let Some(deps) = &dep_entry.dependencies {
-                for (dep_name_key, _) in deps.iter() {
-                    if dep_name_key.as_ref() == base_name {
-                        let count = usage_count.get(base_name).copied().unwrap_or(0);
-                        usage_count.put(base_name, count + 1)?;
-                    }
-                }
-            }
-        }
-    }
-
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        if root_packages.get(base_name).is_none() {
-            root_packages.put(base_name, package_id)?;
-            let name_hash = string_hash(base_name);
-            this.get_or_put_id(package_id, name_hash)?;
-        }
-    }
-
-    let mut scoped_names: HashMap<PackageID, Vec<u8>> = HashMap::new();
-    let mut scoped_count: u32 = 0;
-    for entry_idx in 0..yarn_lock.entries.len() {
-        let package_id = yarn_entry_to_package_id[entry_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-        let base_name = package_names[package_id as usize];
-
-        if let Some(root_pkg_id) = root_packages.get(base_name).copied() {
-            if root_pkg_id == package_id {
-                continue;
-            }
-        } else {
-            continue;
-        }
-
-        let mut scoped_name: Option<Vec<u8>> = None;
-        for (dep_entry_idx, dep_entry) in yarn_lock.entries.iter().enumerate() {
-            let dep_package_id = yarn_entry_to_package_id[dep_entry_idx];
-            if dep_package_id == install::INVALID_PACKAGE_ID {
-                continue;
-            }
-
-            if let Some(deps) = &dep_entry.dependencies {
-                for (dep_name_key, _) in deps.iter() {
-                    if dep_name_key.as_ref() == base_name {
-                        if dep_package_id != package_id {
-                            let parent_name = package_names[dep_package_id as usize];
-
-                            let mut potential_name = Vec::new();
-                            write!(
-                                &mut potential_name,
-                                "{}/{}",
-                                bstr::BStr::new(parent_name),
-                                bstr::BStr::new(base_name)
-                            )
-                            .expect("unreachable");
-
-                            let mut name_already_used = false;
-                            for existing_name in scoped_names.values() {
-                                if existing_name.as_slice() == potential_name.as_slice() {
-                                    name_already_used = true;
-                                    break;
-                                }
-                            }
-
-                            if !name_already_used {
-                                scoped_name = Some(potential_name);
-                                break;
-                            }
-                            // else: potential_name dropped
-                        }
-                    }
-                }
-                if scoped_name.is_some() {
-                    break;
-                }
-            }
-        }
-
-        if scoped_name.is_none() {
-            let pkg_resolution = this.packages.get(package_id as usize).resolution;
-            let version_str: Vec<u8> = match pkg_resolution.tag {
-                ResolutionTag::Npm => 'brk: {
-                    let mut version_buf = [0u8; 64];
-                    let mut cursor = &mut version_buf[..];
-                    let npm_version = pkg_resolution.npm().version;
-                    let _ = write!(
-                        &mut cursor,
-                        "{}",
-                        npm_version.fmt(this.buffers.string_bytes.as_slice())
-                    );
-                    let written = 64 - cursor.len();
-                    break 'brk version_buf[..written].to_vec();
-                }
-                _ => b"unknown".to_vec(),
-            };
-            let mut name = Vec::new();
-            write!(
-                &mut name,
-                "{}@{}",
-                bstr::BStr::new(base_name),
-                bstr::BStr::new(&version_str)
-            )
-            .expect("unreachable");
-            scoped_name = Some(name);
-        }
-
-        if let Some(final_scoped_name) = scoped_name {
-            let name_hash = string_hash(&final_scoped_name);
-            this.get_or_put_id(package_id, name_hash)?;
-            scoped_names.put(package_id, final_scoped_name)?;
-            scoped_count += 1;
-        }
-    }
-    let _ = scoped_count;
-
-    for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-
-        if let Some(resolved) = entry.resolved.as_deref() {
-            if let Some(real_name) = Entry::get_package_name_from_resolved_url(resolved) {
-                for spec in entry.specs.iter() {
-                    let alias_name = Entry::get_name_from_spec(spec);
-
-                    if alias_name != real_name {
-                        let alias_hash = string_hash(alias_name);
-                        this.get_or_put_id(package_id, alias_hash)?;
-                    }
-                }
-            }
-        }
-    }
-
-    this.buffers.trees[0].dependencies = lockfile::DependencyIDSlice::new(0, 0);
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();
-
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
-        let package_id = yarn_entry_to_package_id[yarn_idx];
-        if package_id == install::INVALID_PACKAGE_ID {
-            continue;
-        }
-
         for spec in entry.specs.iter() {
-            spec_to_package_id.put(*spec, package_id)?;
+            spec_to_package_id.put(spec, yarn_entry_to_package_id[yarn_idx])?;
         }
     }
 
-    let root_deps_off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
-    let root_resolutions_off = u32::try_from(this.buffers.resolutions.len()).expect("int cast");
-
-    if !root_dependencies.is_empty() {
-        for root_dep in root_dependencies.iter() {
-            let _ = DependencyID::try_from(this.buffers.dependencies.len()).expect("int cast");
-
-            let name_hash = string_hash(&root_dep.name);
-            let dep_name_string = sbuf!().append_with_hash(&root_dep.name, name_hash)?;
-            let dep_version_string = sbuf!().append(&root_dep.version)?;
-            let sliced_string = SlicedString::init(
-                dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-            );
-
-            let mut parsed_version = Dependency::parse(
-                dep_name_string,
-                Some(name_hash),
-                dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                &sliced_string,
-                Some(&mut *log),
-                Some(&mut *manager),
-            )
-            .unwrap_or_default();
-
-            parsed_version.literal = dep_version_string;
-
-            let dep = Dependency {
-                name_hash,
-                name: dep_name_string,
-                version: parsed_version,
-                behavior: behavior_for(root_dep.dep_type, false),
-            };
-
-            this.buffers.dependencies.push(dep);
-
-            let mut dep_spec = Vec::new();
-            write!(
-                &mut dep_spec,
-                "{}@{}",
-                bstr::BStr::new(&root_dep.name),
-                bstr::BStr::new(&root_dep.version)
-            )
-            .expect("unreachable");
-
-            if let Some(pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                this.buffers.resolutions.push(pkg_id);
-            } else {
-                this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-            }
-        }
-    }
-
-    this.packages.items_dependencies_mut()[0] = lockfile::DependencySlice::new(
-        root_deps_off,
-        u32::try_from(root_dependencies.len()).expect("int cast"),
+    bind_importer_dependencies(
+        this,
+        importer_count,
+        &spec_to_package_id,
+        &workspace_id_by_path,
     );
-    this.packages.items_resolutions_mut()[0] = lockfile::DependencyIDSlice::new(
-        root_resolutions_off,
-        u32::try_from(root_dependencies.len()).expect("int cast"),
-    );
-
-    parse_root_overrides(this, manager, log, &package_json_source, package_json)?;
 
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let package_id = yarn_entry_to_package_id[yarn_idx];
@@ -1683,11 +794,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             continue;
         }
 
-        let mut dep_count: u32 = 0;
         let deps_off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
-        let resolutions_off = u32::try_from(this.buffers.resolutions.len()).expect("int cast");
-
-        if let Some(deps) = &entry.dependencies {
+        for (deps, (_, behavior)) in entry.dependencies.iter().zip(DEPENDENCY_SECTIONS) {
+            let Some(deps) = deps else {
+                continue;
+            };
             for (dep_name_key, dep_version_ref) in deps.iter() {
                 let dep_name: &[u8] = dep_name_key.as_ref();
                 let dep_version_literal: &[u8] = *dep_version_ref;
@@ -1695,210 +806,43 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let name_hash = string_hash(dep_name);
                 let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
                 let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
+                let version_bytes = dep_version_string.slice(this.buffers.string_bytes.as_slice());
+                let sliced_string = SlicedString::init(version_bytes, version_bytes);
                 let mut parsed_version = Dependency::parse(
                     dep_name_string,
                     Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
+                    version_bytes,
                     &sliced_string,
                     Some(&mut *log),
                     Some(&mut *manager),
                 )
                 .unwrap_or_default();
-
                 parsed_version.literal = dep_version_string;
 
                 this.buffers.dependencies.push(Dependency {
                     name: dep_name_string,
                     name_hash,
                     version: parsed_version,
-                    behavior: dependency::Behavior::PROD,
+                    behavior,
                 });
 
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
+                key.clear();
+                key.extend_from_slice(dep_name);
+                key.push(b'@');
+                key.extend_from_slice(dep_version_literal);
+                let resolution = spec_to_package_id.get(key.as_slice()).copied();
+                this.buffers
+                    .resolutions
+                    .push(resolution.unwrap_or(install::INVALID_PACKAGE_ID));
             }
         }
-
-        if let Some(optional_deps) = &entry.optional_dependencies {
-            for (dep_name_key, dep_version_ref) in optional_deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version_literal: &[u8] = *dep_version_ref;
-
-                let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
-                let mut parsed_version = Dependency::parse(
-                    dep_name_string,
-                    Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    &sliced_string,
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default();
-
-                parsed_version.literal = dep_version_string;
-
-                this.buffers.dependencies.push(Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: parsed_version,
-                    behavior: dependency::Behavior::OPTIONAL,
-                });
-
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
-            }
-        }
-
-        if let Some(peer_deps) = &entry.peer_dependencies {
-            for (dep_name_key, dep_version_ref) in peer_deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version_literal: &[u8] = *dep_version_ref;
-
-                let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
-                let mut parsed_version = Dependency::parse(
-                    dep_name_string,
-                    Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    &sliced_string,
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default();
-
-                parsed_version.literal = dep_version_string;
-
-                this.buffers.dependencies.push(Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: parsed_version,
-                    behavior: dependency::Behavior::PEER,
-                });
-
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
-            }
-        }
-
-        if let Some(dev_deps) = &entry.dev_dependencies {
-            for (dep_name_key, dep_version_ref) in dev_deps.iter() {
-                let dep_name: &[u8] = dep_name_key.as_ref();
-                let dep_version_literal: &[u8] = *dep_version_ref;
-
-                let name_hash = string_hash(dep_name);
-                let dep_name_string = sbuf!().append_with_hash(dep_name, name_hash)?;
-
-                let dep_version_string = sbuf!().append(dep_version_literal)?;
-                let sliced_string = SlicedString::init(
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                );
-
-                let mut parsed_version = Dependency::parse(
-                    dep_name_string,
-                    Some(name_hash),
-                    dep_version_string.slice(this.buffers.string_bytes.as_slice()),
-                    &sliced_string,
-                    Some(&mut *log),
-                    Some(&mut *manager),
-                )
-                .unwrap_or_default();
-
-                parsed_version.literal = dep_version_string;
-
-                this.buffers.dependencies.push(Dependency {
-                    name: dep_name_string,
-                    name_hash,
-                    version: parsed_version,
-                    behavior: dependency::Behavior::DEV,
-                });
-
-                let mut dep_spec = Vec::new();
-                write!(
-                    &mut dep_spec,
-                    "{}@{}",
-                    bstr::BStr::new(dep_name),
-                    bstr::BStr::new(dep_version_literal)
-                )
-                .expect("unreachable");
-
-                if let Some(res_pkg_id) = spec_to_package_id.get(dep_spec.as_slice()).copied() {
-                    this.buffers.resolutions.push(res_pkg_id);
-                } else {
-                    this.buffers.resolutions.push(install::INVALID_PACKAGE_ID);
-                }
-
-                dep_count += 1;
-            }
-        }
+        let dep_count =
+            u32::try_from(this.buffers.dependencies.len()).expect("int cast") - deps_off;
 
         this.packages.items_dependencies_mut()[package_id as usize] =
             lockfile::DependencySlice::new(deps_off, dep_count);
-
         this.packages.items_resolutions_mut()[package_id as usize] =
-            lockfile::DependencyIDSlice::new(resolutions_off, dep_count);
+            lockfile::DependencyIDSlice::new(deps_off, dep_count);
     }
 
     // `Lockfile::resolve` returns `Result<(), tree::SubtreeError>`; surface as
@@ -1925,98 +869,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
     Ok(result)
 }
 
-/// Must run after the root package's dependencies are laid out: `$ref` values resolve through them, then through the workspaces.
-fn parse_root_overrides(
-    this: &mut Lockfile,
-    manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
-    source: &bun_ast::Source,
-    package_json: bun_ast::Expr,
-) -> Result<(), Error> {
-    if package_json.as_property(b"overrides").is_none()
-        && package_json.as_property(b"resolutions").is_none()
-    {
-        return Ok(());
-    }
-
-    let mut workspace_names = WorkspaceMap::init();
-    let workspaces = package_json.as_property(b"workspaces");
-    let packages = workspaces
-        .as_ref()
-        .filter(|q| !q.expr.is_array())
-        .and_then(|q| q.expr.as_property(b"packages"));
-    let names: Option<(NamesArray<'_>, bun_ast::Loc)> = match (&workspaces, &packages) {
-        (Some(q), _) if q.expr.is_array() => Some((
-            NamesArray::from_expr(&q.expr, value_loc_of(source, q.loc))
-                .expect("is_array was checked above"),
-            q.loc,
-        )),
-        (Some(_), Some(p)) if p.expr.is_array() => Some((
-            NamesArray::from_expr(&p.expr, value_loc_of(source, p.loc))
-                .expect("is_array was checked above"),
-            p.loc,
-        )),
-        _ => None,
-    };
-    if let Some((arr, loc)) = names {
-        workspace_names.process_names_array(
-            &mut manager.workspace_package_json_cache,
-            log,
-            arr,
-            source,
-            loc,
-            None,
-            MissingWorkspace::Skip,
-        )?;
-    }
-
-    let root_package = *this.packages.get(0);
-    let (mut string_builder, lf) = this.string_builder_split();
-    lf.overrides.parse_count(
-        manager,
-        log,
-        source,
-        &workspace_names,
-        package_json,
-        &mut string_builder,
-    );
-    string_builder.allocate()?;
-    lf.overrides.parse_append(
-        manager,
-        lf.dependencies.as_slice(),
-        &root_package,
-        log,
-        source,
-        &workspace_names,
-        package_json,
-        &mut string_builder,
-    )?;
-    string_builder.clamp();
-    Ok(())
-}
-
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
     Semver::string::Builder::string_hash(s)
-}
-
-/// The bitflags-backed `Behavior` has no named fields, so build via
-/// `with(FLAG, cond)` chaining.
-#[inline]
-fn behavior_for(dep_type: DependencyType, workspace: bool) -> dependency::Behavior {
-    dependency::Behavior::default()
-        .with(
-            dependency::Behavior::PROD,
-            dep_type == DependencyType::Production,
-        )
-        .with(
-            dependency::Behavior::OPTIONAL,
-            dep_type == DependencyType::Optional,
-        )
-        .with(
-            dependency::Behavior::DEV,
-            dep_type == DependencyType::Development,
-        )
-        .with(dependency::Behavior::PEER, dep_type == DependencyType::Peer)
-        .with(dependency::Behavior::WORKSPACE, workspace)
 }

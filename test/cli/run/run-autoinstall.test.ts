@@ -85,6 +85,403 @@ test("auto-install in a project whose package.json has a name and version", asyn
   expect(exitCode).toBe(1);
 });
 
+// Serves the `no-deps` fixture (versions 1.0.0, 1.0.1, 1.1.0 and 2.0.0, with
+// `latest` pointing at 2.0.0) and records every request path, so a test can
+// tell which version auto-install decided to download.
+function noDepsRegistry() {
+  const fixtures = join(import.meta.dir, "..", "install", "registry", "packages", "no-deps");
+  const requests: string[] = [];
+  const server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      const pathname = new URL(req.url).pathname;
+      requests.push(pathname);
+      if (pathname === "/no-deps") {
+        const manifest = await Bun.file(join(fixtures, "package.json")).text();
+        return Response.json(
+          JSON.parse(manifest.replaceAll("http://localhost:4873", `http://127.0.0.1:${server.port}`)),
+        );
+      }
+      const tgz = pathname.match(/^\/no-deps\/-\/(no-deps-[\d.]+\.tgz)$/);
+      if (tgz) return new Response(Bun.file(join(fixtures, tgz[1])));
+      return new Response("not found", { status: 404 });
+    },
+  });
+  return {
+    requests,
+    bunfig: `[install]\nregistry = "http://127.0.0.1:${server.port}/"\n`,
+    tarballs: () => requests.filter(p => p.endsWith(".tgz")),
+    [Symbol.dispose]() {
+      server.stop(true);
+    },
+  };
+}
+
+async function runAutoInstall(cwd: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(cwd, ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+const printNoDepsVersion = `console.log(require("no-deps").version);\n`;
+
+// docs/runtime/auto-install.mdx: a bare import resolves to the version range the
+// nearest package.json declares for it, and only falls back to `latest` when no
+// package.json lists the package.
+describe.concurrent("auto-install uses the version range from package.json", () => {
+  test("bun <file> run from the project directory", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.1.0\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-1.1.0.tgz"]);
+  });
+
+  // `bun run <file>` reads the project directory while looking for a
+  // package.json script before it boots the runtime; the cached result must
+  // still carry the dependency ranges.
+  test("bun run <file> run from the project directory", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-run", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "run", "index.js");
+    expect(stdout).toBe("1.1.0\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-1.1.0.tgz"]);
+  });
+
+  test("project package.json in a directory below the cwd", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-nested", {
+      "bunfig.toml": registry.bunfig,
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^1.0.0" } }),
+      "app/index.js": printNoDepsVersion,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "app/index.js");
+    expect(stdout).toBe("1.1.0\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-1.1.0.tgz"]);
+  });
+
+  test("package.json without a name field", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-nameless", {
+      "package.json": JSON.stringify({ dependencies: { "no-deps": "~1.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.0.1\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-1.0.1.tgz"]);
+  });
+
+  // Ranges longer than 8 bytes are stored as offsets into the package.json
+  // source rather than inline, so this also checks they are read back from the
+  // right buffer.
+  test("range longer than an inline semver string", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-long", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": ">=1.0.0 <1.1.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.0.1\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-1.0.1.tgz"]);
+  });
+
+  test("a range nothing in the registry satisfies is an error, not latest", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-unsatisfiable", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": "^3.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("");
+    expect(stderr).toContain("Cannot find package 'no-deps'");
+    expect(exitCode).toBe(1);
+    expect(registry.requests).toContain("/no-deps");
+    expect(registry.tarballs()).toEqual([]);
+  });
+
+  test("npm: alias installs the aliased package", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-alias", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "my-alias": "npm:no-deps@^1.0.0" } }),
+      "index.js": `console.log(require("my-alias").version);\n`,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("1.1.0\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.requests).toEqual(["/no-deps", "/no-deps/-/no-deps-1.1.0.tgz"]);
+  });
+
+  test("a package the package.json does not list still resolves to latest", async () => {
+    using registry = noDepsRegistry();
+    using dir = tempDir("autoinstall-range-unlisted", {
+      "package.json": JSON.stringify({ name: "app", dependencies: { "something-else": "^1.0.0" } }),
+      "index.js": printNoDepsVersion,
+      "bunfig.toml": registry.bunfig,
+    });
+
+    const { stdout, stderr, exitCode } = await runAutoInstall(String(dir), "index.js");
+    expect(stdout).toBe("2.0.0\n");
+    expect(stderr).not.toContain("error");
+    expect(exitCode).toBe(0);
+    expect(registry.tarballs()).toEqual(["/no-deps/-/no-deps-2.0.0.tgz"]);
+  });
+});
+
+// A registry that has a manifest for `name` whose only version points at a
+// tarball the registry then answers with a 404. Every other path is a 404 too.
+function registryWithMissingTarball(name: string) {
+  const requests: string[] = [];
+  const tarballPath = `/${name}/-/${name}-1.0.0.tgz`;
+  const registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      requests.push(pathname);
+      if (pathname !== `/${name}`) return new Response("not found", { status: 404 });
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball: `${origin}${tarballPath}` } } },
+      });
+    },
+  });
+  const origin = `http://127.0.0.1:${registry.port}`;
+  return {
+    requests,
+    origin,
+    tarballPath,
+    tarballUrl: `${origin}${tarballPath}`,
+    [Symbol.dispose]() {
+      registry.stop(true);
+    },
+  };
+}
+
+async function runWithRegistry(registryOrigin: string, entry: string, source: string, installOptions = "") {
+  using dir = tempDir("autoinstall-error-report", {
+    [entry]: source,
+    "bunfig.toml": `[install]\nregistry = "${registryOrigin}/"\n${installOptions}`,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), entry],
+    cwd: String(dir),
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+// While auto-installing, the package manager writes the reason a package could
+// not be installed (the tarball GET and its status, a network error name, ...)
+// into the log of the resolve that triggered it. Those lines are attached to
+// the ResolveMessage as notes; without them the only output is
+// "<error name> while resolving package '...'".
+describe.concurrent("auto-install reports why a package could not be installed", () => {
+  test("tarball 404, static import", async () => {
+    const name = "pkg-whose-tarball-is-missing";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("tarball 404, require()", async () => {
+    const name = "pkg-whose-tarball-is-missing-cjs";
+    using r = registryWithMissingTarball(name);
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", `require("${name}");\n`);
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stderr).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(exitCode).toBe(1);
+  });
+
+  test("tarball 404, dynamic import() caught and logged by the script", async () => {
+    const name = "pkg-whose-tarball-is-missing-dynamic";
+    using r = registryWithMissingTarball(name);
+    const { stdout, stderr, exitCode } = await runWithRegistry(
+      r.origin,
+      "index.js",
+      `try {\n  await import("${name}");\n} catch (err) {\n  console.log(err);\n}\n`,
+    );
+
+    expect(r.requests).toEqual([`/${name}`, r.tarballPath]);
+    expect(stdout).toContain(`package '${name}'`);
+    expect(stdout).toContain(`note: GET ${r.tarballUrl} - 404`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  test("manifest 404", async () => {
+    const name = "pkg-whose-manifest-is-missing";
+    using r = registryWithMissingTarball("some-other-package");
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "${name}";\n`);
+
+    expect(r.requests).toEqual([`/${name}`]);
+    expect(stderr).toContain(`error: Cannot find package '${name}'`);
+    expect(stderr).toContain(`note: GET ${r.origin}/${name} - 404`);
+    expect(exitCode).toBe(1);
+  });
+});
+
+// A registry whose every package has exactly one version, 1.0.0, published now.
+// `pkg-with-bad-tarball-url` exists too, but its manifest does not say where
+// the tarball is.
+function registryWithOneFreshVersion() {
+  const registry = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const name = decodeURIComponent(new URL(req.url).pathname.slice(1));
+      const tarball = name === "pkg-with-bad-tarball-url" ? "not a url" : `http://127.0.0.1:1/${name}-1.0.0.tgz`;
+      return Response.json({
+        name,
+        "dist-tags": { latest: "1.0.0" },
+        versions: { "1.0.0": { name, version: "1.0.0", dist: { tarball } } },
+        time: { "1.0.0": new Date().toISOString() },
+      });
+    },
+  });
+  return {
+    origin: `http://127.0.0.1:${registry.port}`,
+    [Symbol.dispose]() {
+      registry.stop(true);
+    },
+  };
+}
+
+function noteLines(stderr: string) {
+  return stderr.split("\n").filter(line => line.startsWith("note: "));
+}
+
+// The manifest exists but nothing in it satisfies the request. These failures
+// belong to the dependency auto-install enqueues on the root, whose errors used
+// to go to a callback that never reported them, so they printed a bare
+// "Cannot find package". Each one now prints the same line `bun install` does,
+// exactly once: the runtime retries a failed resolve after busting its
+// directory cache, and the retry reports the same failure again.
+describe.concurrent("auto-install reports why a package could not be resolved", () => {
+  test("version the registry does not have", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "pkg-without-v2@2.0.0";\n`);
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-without-v2@2.0.0'");
+    expect(noteLines(stderr)).toEqual([
+      'note: No version matching "2.0.0" found for specifier "pkg-without-v2" (but package exists)',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("version the registry does not have, require()", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.cjs", `require("pkg-without-v2@2.0.0");\n`);
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-without-v2@2.0.0'");
+    expect(noteLines(stderr)).toEqual([
+      'note: No version matching "2.0.0" found for specifier "pkg-without-v2" (but package exists)',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist-tag the registry does not have", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "pkg-without-canary@canary";\n`);
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-without-canary@canary'");
+    expect(noteLines(stderr)).toEqual([
+      'note: Package "pkg-without-canary" with tag "canary" not found, but package exists',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("version blocked by minimumReleaseAge", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(
+      r.origin,
+      "index.js",
+      `import "pkg-published-today@1.0.0";\n`,
+      "minimumReleaseAge = 86400\n",
+    );
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-published-today@1.0.0'");
+    expect(noteLines(stderr)).toEqual([
+      expect.stringMatching(
+        /^note: No version matching "[^"]+" found for specifier "[^"]+" \(blocked by minimum-release-age: 86400 seconds\)$/,
+      ),
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("dist-tag whose versions are all blocked by minimumReleaseAge", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(
+      r.origin,
+      "index.js",
+      `import "pkg-published-today";\n`,
+      "minimumReleaseAge = 86400\n",
+    );
+
+    expect(stderr).toContain("error: Cannot find package 'pkg-published-today'");
+    expect(noteLines(stderr)).toEqual([
+      'note: Package "pkg-published-today" with tag "latest" not found (all versions blocked by minimum-release-age: 86400 seconds)',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+
+  // Any other error ends up named after its error code, like the
+  // "'main' returned error.InvalidURL" line `bun install` prints after the
+  // specific message.
+  test("error without a dedicated message", async () => {
+    using r = registryWithOneFreshVersion();
+    const { stderr, exitCode } = await runWithRegistry(r.origin, "index.js", `import "pkg-with-bad-tarball-url";\n`);
+
+    expect(stderr).toContain("while resolving package 'pkg-with-bad-tarball-url' from");
+    expect(noteLines(stderr)).toEqual([
+      'note: Expected tarball URL to start with https:// or http://, got "not a url" while fetching package "pkg-with-bad-tarball-url"',
+      'note: InvalidURL while resolving package "pkg-with-bad-tarball-url"',
+    ]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 test("--install=fallback to install missing packages", async () => {
   const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });

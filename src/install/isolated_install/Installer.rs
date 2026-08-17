@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::fmt::EscapeControlChars;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
@@ -15,7 +16,9 @@ use bun_sys::{FdDirExt as _, FdExt as _};
 use crate::bin_real;
 use crate::lockfile::package;
 use crate::lockfile_real::PackageIDSlice;
-use crate::package_install::{Method as InstallMethod, Summary as InstallSummary};
+use crate::package_install::{
+    Method as InstallMethod, StagingPath, Summary as InstallSummary, rename_staging_into_place,
+};
 use crate::package_manager_real::Command;
 use crate::postinstall_optimizer;
 use crate::postinstall_optimizer::PostinstallOptimizer;
@@ -36,7 +39,7 @@ use super::symlinker::{self, Symlinker};
 use crate::bun_fs;
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::directories;
-use crate::package_manager_real::package_manager_options::Do;
+use crate::package_manager_real::package_manager_options::{Do, Enable};
 
 /// The enum lives at module level in `crate::resolution`.
 type ResolutionTag = resolution::Tag;
@@ -70,7 +73,8 @@ pub struct Installer<'a> {
     /// pool and each task derefs this field; a `&'a mut` would assert
     /// exclusivity every concurrent task violates. Mutated only for
     /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
-    /// narrowed via `addr_of_mut!`). Never null. Read via `lockfile()`.
+    /// narrowed via `addr_of_mut!`) and in `record_extracted_integrity` (main
+    /// thread, one row). Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
     pub(crate) summary: InstallSummary,
@@ -117,6 +121,9 @@ pub struct Installer<'a> {
     /// Main-thread only: `waiters_head[dep]` starts the intrusive list of blocked entries waiting on `dep`, linked through `next_waiter`.
     pub(crate) waiters_head: Box<[StoreEntryId]>,
     pub(crate) next_waiter: Box<[StoreEntryId]>,
+
+    /// Main-thread only: entries deleted by `on_optional_dependency_scripts_failed`.
+    pub(crate) failed_optional_entries: Vec<StoreEntryId>,
 }
 
 impl<'a> Installer<'a> {
@@ -181,7 +188,11 @@ impl<'a> Installer<'a> {
         self.start_task(entry_id);
     }
 
-    pub(crate) fn on_package_extracted(&mut self, task_id: crate::package_manager_task::Id) {
+    pub(crate) fn on_package_extracted(
+        &mut self,
+        task_id: crate::package_manager_task::Id,
+        data: &install::ExtractData,
+    ) {
         if let Some(removed) = self.manager_mut().task_queue.remove(&task_id) {
             let store = self.store;
 
@@ -205,6 +216,11 @@ impl<'a> Installer<'a> {
 
                 let node_id = entry_node_ids[entry_id.get() as usize];
                 let pkg_id = node_pkg_ids[node_id.get() as usize];
+
+                if data.integrity.tag.is_supported() {
+                    self.record_extracted_integrity(pkg_id, &data.integrity);
+                }
+
                 let pkg_name = pkg_names[pkg_id as usize];
                 let pkg_name_hash = pkg_name_hashes[pkg_id as usize];
                 let pkg_res = &pkg_resolutions[pkg_id as usize];
@@ -228,6 +244,34 @@ impl<'a> Installer<'a> {
                 self.start_task(entry_id);
             }
         }
+    }
+
+    /// Main thread, before the package's tasks start (they name a local tarball's cache
+    /// entry after it). Same write-back as `install_enqueued_packages_after_extraction`.
+    fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
+        let pkgs = self.lockfile().packages.slice();
+        assert!((pkg_id as usize) < pkgs.len());
+        // SAFETY: in bounds; raw column pointer, so no `&mut Lockfile` is formed. Only this
+        // package's tasks read its `integrity` and none has started; other tasks' `&[Meta]`
+        // borrows never touch these bytes.
+        let recorded = unsafe {
+            core::ptr::addr_of_mut!(
+                (*pkgs
+                    .items_raw::<"meta", package::Meta>()
+                    .add(pkg_id as usize))
+                .integrity
+            )
+        };
+        // SAFETY: see above.
+        if unsafe { (*recorded).tag.is_supported() } {
+            return;
+        }
+        // SAFETY: see above.
+        unsafe { recorded.write(*integrity) };
+        self.manager_mut()
+            .options
+            .enable
+            .set(Enable::FORCE_SAVE_LOCKFILE, true);
     }
 
     /// Called from main thread when a tarball download or extraction fails.
@@ -268,10 +312,12 @@ impl<'a> Installer<'a> {
             Output::err_generic(
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                 (
-                    bstr::BStr::new(name),
-                    resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    bun_core::fmt::escape_control_chars(name),
+                    bun_core::fmt::for_terminal(
+                        resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                    ),
                     bstr::BStr::new(download_error_reason(err)),
-                    bstr::BStr::new(url),
+                    EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
                 ),
             );
             Output::flush();
@@ -331,58 +377,70 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let pkg_id = node_pkg_ids[node_id.get() as usize];
 
-        let pkg_name = pkg_names[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
+        let pkg_name =
+            bun_core::fmt::escape_control_chars(pkg_names[pkg_id as usize].slice(string_buf));
+        let pkg_res_fmt =
+            bun_core::fmt::for_terminal(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto));
 
         match err {
             TaskError::LinkPackage(link_err) => {
                 Output::err(
                     link_err.clone(),
                     "failed to link package: {}@{}",
-                    (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    ),
+                    (&pkg_name, &pkg_res_fmt),
                 );
             }
             TaskError::SymlinkDependencies(symlink_err) => {
                 Output::err(
                     symlink_err.clone(),
                     "failed to symlink dependencies for package: {}@{}",
-                    (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    ),
+                    (&pkg_name, &pkg_res_fmt),
+                );
+            }
+            TaskError::LinkPathTooLong => {
+                Output::err(
+                    "ENAMETOOLONG",
+                    "link path for package <b>{}<r> is too long",
+                    (&pkg_name,),
                 );
             }
             TaskError::Patching(patch_log) => {
-                Output::err_generic(
-                    "failed to patch package: {}@{}",
-                    (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    ),
-                );
+                Output::err_generic("failed to patch package: {}@{}", (&pkg_name, &pkg_res_fmt));
                 let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
             }
             TaskError::Binaries(bin_err) => {
                 Output::err(
                     *bin_err,
                     "failed to link binaries for package: {}@{}",
-                    (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    ),
+                    (&pkg_name, &pkg_res_fmt),
                 );
+            }
+            TaskError::DependencyBinaries(dep_errs) => {
+                for &(dep_entry_id, dep_err) in dep_errs.iter() {
+                    let dep_node_id = entry_node_ids[dep_entry_id.get() as usize];
+                    let dep_pkg_id = node_pkg_ids[dep_node_id.get() as usize];
+                    Output::err(
+                        dep_err,
+                        "failed to link binaries of dependency {}@{} for package: {}@{}",
+                        (
+                            bstr::BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
+                            pkg_resolutions[dep_pkg_id as usize]
+                                .fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                            &pkg_name,
+                            &pkg_res_fmt,
+                        ),
+                    );
+                }
             }
             TaskError::Download(dl) => {
                 Output::err_generic(
                     "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                     (
-                        bstr::BStr::new(pkg_name.slice(string_buf)),
-                        pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                        &pkg_name,
+                        &pkg_res_fmt,
                         bstr::BStr::new(download_error_reason(dl.err)),
-                        bstr::BStr::new(&dl.url),
+                        EscapeControlChars(bun_core::fmt::redacted_npm_url(&dl.url)),
                     ),
                 );
             }
@@ -397,35 +455,18 @@ impl<'a> Installer<'a> {
             let mut staging = AutoAbsPath::init();
             self.append_global_store_entry_path(&mut staging, entry_id, Which::Staging);
             let _ = Fd::cwd().delete_tree(staging.slice());
-        }
-
-        // attempt deleting the package so the next install will install it again
-        match pkg_res.tag {
-            ResolutionTag::Uninitialized
-            | ResolutionTag::SingleFileModule
-            | ResolutionTag::Root
-            | ResolutionTag::Workspace
-            | ResolutionTag::Symlink => {}
-
-            // to be safe make sure we only delete packages in the store
+        } else if matches!(
+            pkg_res.tag,
             ResolutionTag::Npm
-            | ResolutionTag::Git
-            | ResolutionTag::Github
-            | ResolutionTag::LocalTarball
-            | ResolutionTag::RemoteTarball
-            | ResolutionTag::Folder => {
-                let mut store_path = AutoRelPath::init();
-
-                // OOM/capacity: fire-and-forget
-                let _ = store_path.append_fmt(format_args!(
-                    "node_modules/{}",
-                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-                ));
-
-                let _ = sys::unlink(store_path.slice_z());
-            }
-
-            _ => {}
+                | ResolutionTag::Git
+                | ResolutionTag::Github
+                | ResolutionTag::LocalTarball
+                | ResolutionTag::RemoteTarball
+        ) {
+            // A failed link only ever wrote to the staging directory.
+            let mut staging = AutoPath::init_top_level_dir();
+            self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+            let _ = Fd::cwd().delete_tree(staging.slice());
         }
 
         if self.manager().options.enable.fail_early() {
@@ -565,6 +606,26 @@ impl<'a> Installer<'a> {
         let is_duplicate = self.installed.is_set(pkg_id as usize);
         self.summary.success += (!is_duplicate) as u32;
         self.installed.set(pkg_id as usize);
+
+        // Once per package, like `success`: a package has one store entry per peer set.
+        let blocked_scripts = self.tasks[entry_id.get() as usize].blocked_scripts;
+        if blocked_scripts > 0 && !is_duplicate {
+            let dep_id = nodes.items_dep_id()[node_id.get() as usize];
+            let dep_name_hash = self.lockfile().buffers.dependencies[dep_id as usize].name_hash;
+            *self
+                .summary
+                .packages_with_blocked_scripts
+                .entry(dep_name_hash as TruncatedPackageNameHash)
+                .or_default() += usize::from(blocked_scripts);
+        }
+    }
+
+    /// Called from main thread once the package is deleted; dependents finish without it.
+    pub(crate) fn on_optional_dependency_scripts_failed(&mut self, entry_id: StoreEntryId) {
+        self.failed_optional_entries.push(entry_id);
+        self.store.entries.items_step()[entry_id.get() as usize]
+            .store(Step::Done as u32, Ordering::Release);
+        self.on_task_complete(entry_id, CompleteState::Skipped);
     }
 
     /// Main thread only: `completed` just reached `Step::Done`; re-check every entry waiting on it.
@@ -656,6 +717,8 @@ pub struct Task {
 
     pub(crate) result: Result,
     pub(crate) relink: Relink,
+    /// Set by `Step::RunPreinstall` on the task thread, read by `on_task_complete` like `relink`.
+    pub(crate) blocked_scripts: u8,
 }
 
 // SAFETY: `next` is the sole intrusive link for `UnboundedQueue<Task>`.
@@ -687,8 +750,12 @@ pub struct DownloadError {
 pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
+    /// See `Installer::append_dependency_path`.
+    LinkPathTooLong,
     RunScripts(crate::Error),
     Binaries(crate::Error),
+    /// (dependency entry, error)
+    DependencyBinaries(Box<[(StoreEntryId, crate::Error)]>),
     Patching(Log),
     Download(DownloadError),
 }
@@ -698,7 +765,9 @@ impl TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
+            TaskError::LinkPathTooLong => TaskError::LinkPathTooLong,
             TaskError::Binaries(err) => TaskError::Binaries(*err),
+            TaskError::DependencyBinaries(errs) => TaskError::DependencyBinaries(errs.clone()),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
             TaskError::Patching(_log) => {
                 // `bun_ast::Log` is non-Clone; the only caller of
@@ -1132,9 +1201,12 @@ impl Task {
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::LocalTarball => {
-                                    directories::cached_tarball_folder_name(
-                                        manager,
-                                        *pkg_res.local_tarball(),
+                                    // recorded by the lockfile or `on_package_extracted`
+                                    debug_assert!(
+                                        pkg_metas[pkg_id as usize].integrity.tag.is_supported()
+                                    );
+                                    directories::cached_local_tarball_folder_name(
+                                        &pkg_metas[pkg_id as usize].integrity,
                                         patch_info.contents_hash(),
                                     )
                                 }
@@ -1210,24 +1282,7 @@ impl Task {
                             }
                         };
                         if is_stale_link {
-                            let remove_err: Option<sys::Error> = {
-                                #[cfg(windows)]
-                                {
-                                    'win: {
-                                        if let Some(_e) = sys::rmdir(local.slice_z()).err() {
-                                            if let Some(e) = sys::unlink(local.slice_z()).err() {
-                                                break 'win Some(e);
-                                            }
-                                        }
-                                        break 'win None;
-                                    }
-                                }
-                                #[cfg(not(windows))]
-                                {
-                                    sys::unlink(local.slice_z()).err()
-                                }
-                            };
-                            if let Some(e) = remove_err {
+                            if let Err(e) = remove_link(local.slice_z()) {
                                 if e.get_errno() != sys::Errno::ENOENT {
                                     // Do NOT proceed: the backend below would
                                     // write *through* the still-live symlink
@@ -1237,14 +1292,15 @@ impl Task {
                             }
                         }
 
-                        // hardlink/copyfile overlay an existing tree, keeping files a previous patched build added.
-                        let mut previous = AutoPath::init_top_level_dir();
-                        installer.append_real_store_path(
-                            &mut previous,
-                            self.entry_id,
-                            Which::Final,
-                        );
-                        let _ = Fd::cwd().delete_tree(previous.slice());
+                        // The final path must be free for the rename below, and the backends
+                        // would keep whatever a stale staging tree holds.
+                        for which in [Which::Final, Which::Staging] {
+                            let mut leftover = AutoPath::init_top_level_dir();
+                            installer.append_real_store_path(&mut leftover, self.entry_id, which);
+                            if let sys::Result::Err(err) = Fd::cwd().delete_tree(leftover.slice()) {
+                                return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                            }
+                        }
                     }
 
                     if uses_global_store {
@@ -1349,8 +1405,7 @@ impl Task {
                                         },
                                     }
 
-                                    step = self.next_step(current_step);
-                                    continue 'step;
+                                    break 'backend;
                                 }
                             }
 
@@ -1419,8 +1474,7 @@ impl Task {
                                     }
                                 }
 
-                                step = self.next_step(current_step);
-                                continue 'step;
+                                break 'backend;
                             }
 
                             // fallthrough copyfile
@@ -1487,12 +1541,21 @@ impl Task {
                                     }
                                 }
 
-                                step = self.next_step(current_step);
-                                continue 'step;
+                                break 'backend;
                             }
                         }
                     }
-                    // unreachable: every backend arm continues to next_step or returns
+
+                    if !uses_global_store {
+                        if let sys::Result::Err(err) =
+                            installer.commit_local_store_package(self.entry_id)
+                        {
+                            return Ok(Yield::failure(TaskError::LinkPackage(err)));
+                        }
+                    }
+
+                    step = self.next_step(current_step);
+                    continue 'step;
                 }
 
                 Step::SymlinkDependencies => {
@@ -1507,10 +1570,8 @@ impl Task {
                     };
 
                     let changed = match installer.symlink_dependencies(self.entry_id, strategy) {
-                        sys::Result::Ok(changed) => changed,
-                        sys::Result::Err(err) => {
-                            return Ok(Yield::failure(TaskError::SymlinkDependencies(err)));
-                        }
+                        Ok(changed) => changed,
+                        Err(err) => return Ok(Yield::failure(err)),
                     };
 
                     if relinking {
@@ -1555,7 +1616,7 @@ impl Task {
                 Step::SymlinkDependencyBinaries => {
                     let current_step = Step::SymlinkDependencyBinaries;
                     if let Err(err) = installer.link_dependency_bins(self.entry_id) {
-                        return Ok(Yield::failure(TaskError::Binaries(err)));
+                        return Ok(Yield::failure(err));
                     }
 
                     match pkg_res.tag {
@@ -1587,22 +1648,7 @@ impl Task {
 
                 Step::RunPreinstall => {
                     let current_step = Step::RunPreinstall;
-                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
-                        || self.entry_id == StoreEntryId::ROOT
-                    {
-                        step = self.next_step(current_step);
-                        continue;
-                    }
-
-                    // The eligibility check excludes any package whose
-                    // lifecycle scripts are trusted to run, so a global-store
-                    // entry should never reach script enqueueing. Guard it
-                    // anyway: `meta.hasInstallScript` can be a false negative
-                    // (yarn-migrated lockfiles force it to `.false`), and a
-                    // script running with cwd inside a shared content-
-                    // addressed directory would mutate every other project's
-                    // copy.
-                    if installer.entry_uses_global_store(self.entry_id) {
+                    if self.entry_id == StoreEntryId::ROOT {
                         step = self.next_step(current_step);
                         continue;
                     }
@@ -1630,15 +1676,36 @@ impl Task {
                         break 'brk (false, false);
                     };
 
+                    if !(pkg_res.tag != ResolutionTag::Root
+                        && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
+                    {
+                        // Before the early returns below, like the hoisted installer.
+                        if pkg_res.tag != ResolutionTag::Root
+                            && pkg_metas[pkg_id as usize].has_install_script()
+                        {
+                            self.blocked_scripts = self.count_blocked_scripts(
+                                installer,
+                                pkg_script_lists[pkg_id as usize],
+                                dep.name.slice(string_buf),
+                                &pkg_res,
+                            );
+                        }
+                        step = self.next_step(current_step);
+                        continue;
+                    }
+
+                    // Trusted entries are never global-store eligible; never run in the shared dir.
+                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
+                        || installer.entry_uses_global_store(self.entry_id)
+                    {
+                        step = self.next_step(current_step);
+                        continue;
+                    }
+
                     let mut pkg_cwd = AutoAbsPath::init_top_level_dir();
                     installer.append_store_path(&mut pkg_cwd, self.entry_id);
 
                     'enqueue_lifecycle_scripts: {
-                        if !(pkg_res.tag != ResolutionTag::Root
-                            && (pkg_res.tag == ResolutionTag::Workspace || is_trusted))
-                        {
-                            break 'enqueue_lifecycle_scripts;
-                        }
                         let mut pkg_scripts: package::scripts::Scripts =
                             pkg_script_lists[pkg_id as usize];
                         let manager = manager_ref.get();
@@ -1660,6 +1727,7 @@ impl Task {
                                     pkg_metas,
                                     manager.options.cpu,
                                     manager.options.os,
+                                    manager.options.libc,
                                 )
                         {
                             break 'enqueue_lifecycle_scripts;
@@ -1853,6 +1921,8 @@ impl Task {
                         bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                         bin_linker.target_package_name =
                             strings::StringOrTinyString::init(dep_name);
+                        bin_linker.err = None;
+                        bin_linker.skipped_due_to_missing_bin = false;
 
                         if manager_ref.options.log_level.is_verbose() {
                             bun_core::pretty_errorln!(
@@ -1933,6 +2003,54 @@ impl Task {
                     debug_assert!(false);
                     return Ok(Yield::Yield);
                 }
+            }
+        }
+    }
+
+    /// Task thread. Counts the installed scripts; `hasInstallScript` alone can be a false positive.
+    fn count_blocked_scripts(
+        &self,
+        installer: &Installer<'_>,
+        mut pkg_scripts: package::scripts::Scripts,
+        dep_name: &[u8],
+        pkg_res: &Resolution,
+    ) -> u8 {
+        let (manager, lockfile) = (installer.manager(), installer.lockfile());
+        // A global-store entry stays in its staging dir until `Step::Binaries` renames it; a
+        // project-local one was renamed into place by `Step::LinkPackage`.
+        let mut pkg_dir = AutoAbsPath::init_top_level_dir();
+        let which = if installer.entry_uses_global_store(self.entry_id) {
+            Which::Staging
+        } else {
+            Which::Final
+        };
+        installer.append_real_store_path(&mut pkg_dir, self.entry_id, which);
+
+        let mut log = Log::init();
+        match pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res) {
+            Ok(Some(list)) => {
+                if manager.options.log_level.is_verbose() {
+                    bun_core::pretty_error!(
+                        "Blocked {} scripts for: {}@{}\n",
+                        list.total,
+                        bstr::BStr::new(dep_name),
+                        pkg_res.fmt(
+                            lockfile.buffers.string_bytes.as_slice(),
+                            bun_core::fmt::PathSep::Posix
+                        ),
+                    );
+                }
+                list.total
+            }
+            Ok(None) => 0,
+            Err(err) => {
+                if !manager.options.log_level.is_silent() {
+                    Output::err_generic(
+                        "failed to fill lifecycle scripts for <b>{}<r>: {}",
+                        (bstr::BStr::new(dep_name), err.name()),
+                    );
+                }
+                0
             }
         }
     }
@@ -2212,12 +2330,14 @@ impl<'a> Installer<'a> {
                     let manager = self.manager();
                     let target_cpu = manager.options.cpu;
                     let target_os = manager.options.os;
+                    let target_libc = manager.options.libc;
                     if let Some(replacement_pkg_id) =
                         postinstall_optimizer::PostinstallOptimizer::get_native_binlink_replacement_package_id(
                             pkg_resolutions_lists[pkg_id as usize].get(pkg_resolutions_buffer),
                             pkg_metas,
                             target_cpu,
                             target_os,
+                            target_libc,
                         )
                     {
                         for (new_entry_id, new_node_id) in entry_node_ids.iter().enumerate() {
@@ -2245,7 +2365,7 @@ impl<'a> Installer<'a> {
         &self,
         entry_id: StoreEntryId,
         strategy: symlinker::Strategy,
-    ) -> sys::Result<bool> {
+    ) -> core::result::Result<bool, TaskError> {
         let lockfile = self.lockfile();
         let string_buf = lockfile.buffers.string_bytes.as_slice();
         let dependencies = lockfile.buffers.dependencies.as_slice();
@@ -2270,19 +2390,45 @@ impl<'a> Installer<'a> {
             let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
 
             dest.set_length(base_len);
-            let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
-                // same name as the entry itself: nest one node_modules deeper to avoid the collision
-                let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
-                let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
-            }
+            append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+
+            let dep_node_id = self.store.entries.items_node_id()[dep.entry_id.get() as usize];
+            let dep_pkg_id = self.store.nodes.items_pkg_id()[dep_node_id.get() as usize];
+            let dep_res = &pkg_resolutions[dep_pkg_id as usize];
+            let folder_is_inside_this_package = dep_res.tag == ResolutionTag::Folder
+                && super::folder_is_inside_package(lockfile, pkg_id, dep_pkg_id);
+            let dep_is_nested_folder =
+                self.store.entries.items_nested_folder()[dep.entry_id.get() as usize];
+            // `build_store` only binds a nested folder to the packages containing it.
+            debug_assert!(folder_is_inside_this_package || !dep_is_nested_folder);
 
             let mut dep_store_path = AutoAbsPath::init_top_level_dir();
-            if uses_global_store {
+            if folder_is_inside_this_package {
+                let Some(package_dir_name) = entry_node_modules_name else {
+                    continue;
+                };
+                if !self
+                    .append_nested_folder_path(
+                        &mut dep_store_path,
+                        entry_id,
+                        package_dir_name,
+                        dep_res.folder().slice(string_buf),
+                    )
+                    .map_err(TaskError::SymlinkDependencies)?
+                {
+                    continue;
+                }
+            } else if dep_is_nested_folder {
+                continue;
+            } else if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
                 self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
-            } else {
-                self.append_store_path(&mut dep_store_path, dep.entry_id);
+            } else if self
+                .append_dependency_path(&mut dep_store_path, dep.entry_id)
+                .is_err()
+            {
+                // The `link:` entry itself reports the over-long target.
+                continue;
             }
 
             let dest_len = dest.len();
@@ -2298,13 +2444,67 @@ impl<'a> Installer<'a> {
             };
             let result = symlinker.ensure_symlink(strategy);
             dest = symlinker.dest.into_sep::<{ PathSeparators::AUTO }>();
-            changed |= result?;
+            changed |= result.map_err(TaskError::SymlinkDependencies)?;
         }
 
         Ok(changed)
     }
 
-    pub(crate) fn link_dependency_bins(&self, parent_entry_id: StoreEntryId) -> crate::Result<()> {
+    /// Main thread, once every task is done: dependents may still be linking while a script fails.
+    pub(crate) fn unlink_failed_optional_entries(&self) {
+        if self.failed_optional_entries.is_empty() {
+            return;
+        }
+
+        let lockfile = self.lockfile();
+        let string_buf = lockfile.buffers.string_bytes.as_slice();
+        let dependencies = lockfile.buffers.dependencies.as_slice();
+        let pkg_names = lockfile.packages.items_name();
+        let pkg_resolutions = lockfile.packages.items_resolution();
+
+        let entry_node_ids = self.store.entries.items_node_id();
+        let nodes = &self.store.nodes;
+
+        // Not `parents`: public hoisting adds root dependencies without recording a parent.
+        for (entry_index, entry_deps) in self.store.entries.items_dependencies().iter().enumerate()
+        {
+            for dep in entry_deps.slice() {
+                if !self.failed_optional_entries.contains(&dep.entry_id) {
+                    continue;
+                }
+                let entry_id = StoreEntryId::from(u32::try_from(entry_index).expect("int cast"));
+                let node_id = entry_node_ids[entry_index].get() as usize;
+                let pkg_id = nodes.items_pkg_id()[node_id];
+                let entry_node_modules_name = self.entry_store_node_modules_package_name(
+                    nodes.items_dep_id()[node_id],
+                    pkg_id,
+                    &pkg_resolutions[pkg_id as usize],
+                    pkg_names,
+                );
+                let mut dest = AutoPath::init_top_level_dir();
+                self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Final);
+                let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
+                append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
+                let _ = remove_link(dest.slice_z());
+            }
+        }
+
+        for &entry_id in &self.failed_optional_entries {
+            if self.store.entries.items_hoisted()[entry_id.get() as usize] {
+                let node_id = entry_node_ids[entry_id.get() as usize].get() as usize;
+                let pkg_name = pkg_names[nodes.items_pkg_id()[node_id] as usize].slice(string_buf);
+                let mut hidden = AutoPath::init();
+                let _ = hidden.append_fmt(format_args!("{NODE_MODULES_BUN}/node_modules"));
+                let _ = hidden.append(pkg_name);
+                let _ = remove_link(hidden.slice_z());
+            }
+        }
+    }
+
+    pub(crate) fn link_dependency_bins(
+        &self,
+        parent_entry_id: StoreEntryId,
+    ) -> core::result::Result<(), TaskError> {
         let lockfile = self.lockfile();
         let store = self.store;
 
@@ -2331,6 +2531,7 @@ impl<'a> Installer<'a> {
         let mut link_rel_buf = paths::path_buffer_pool::get();
 
         let mut seen: StringHashMap<()> = StringHashMap::default();
+        let mut failed = Vec::new();
 
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(
@@ -2414,6 +2615,8 @@ impl<'a> Installer<'a> {
             {
                 bin_linker.target_node_modules_path = bin_linker.node_modules_path;
                 bin_linker.target_package_name = package_name;
+                bin_linker.err = None;
+                bin_linker.skipped_due_to_missing_bin = false;
 
                 if self.manager().options.log_level.is_verbose() {
                     bun_core::pretty_errorln!(
@@ -2427,11 +2630,14 @@ impl<'a> Installer<'a> {
             }
 
             if let Some(err) = bin_linker.err {
-                return Err(err);
+                failed.push((dep.entry_id, err));
             }
         }
 
-        Ok(())
+        if failed.is_empty() {
+            return Ok(());
+        }
+        Err(TaskError::DependencyBinaries(failed.into_boxed_slice()))
     }
 
     /// True when this entry should live in the shared global virtual store
@@ -2544,6 +2750,17 @@ impl<'a> Installer<'a> {
         }
     }
 
+    /// Renames a project-local entry's fully linked `StagingPath` onto its final
+    /// path, which is what the next install's skip check looks at.
+    pub(crate) fn commit_local_store_package(&self, entry_id: StoreEntryId) -> sys::Result<()> {
+        debug_assert!(!self.entry_uses_global_store(entry_id));
+        let mut staging = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut staging, entry_id, Which::Staging);
+        let mut final_ = AutoPath::init_top_level_dir();
+        self.append_real_store_path(&mut final_, entry_id, Which::Final);
+        rename_staging_into_place(Fd::cwd(), staging.slice_z(), final_.slice_z())
+    }
+
     /// Project-local path `node_modules/.bun/<storepath>` (the symlink that
     /// points at the global virtual-store entry). Relative to top-level dir.
     pub(crate) fn append_local_store_entry_path(
@@ -2619,16 +2836,7 @@ impl<'a> Installer<'a> {
                     };
 
                     if is_symlink {
-                        #[cfg(windows)]
-                        {
-                            if sys::rmdir(dest.slice_z()).err().is_some() {
-                                let _ = sys::unlink(dest.slice_z());
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            let _ = sys::unlink(dest.slice_z());
-                        }
+                        let _ = remove_link(dest.slice_z());
                     } else {
                         let _ = Fd::cwd().delete_tree(dest.slice());
                     }
@@ -2713,10 +2921,58 @@ impl<'a> Installer<'a> {
             buf.append(pkg_name.slice(string_buf));
             return;
         }
-        self.append_store_path(buf, entry_id);
+        self.append_store_path_at(buf, entry_id, which);
     }
 
+    /// `append_store_path` for the entry a dependency symlink points at, the one place a
+    /// `link:` package's path (`<global link dir>/<target as written>`) is needed. A target
+    /// that does not fit a path buffer fails with `LinkPathTooLong`.
+    pub(crate) fn append_dependency_path(
+        &self,
+        buf: &mut AutoAbsPath,
+        entry_id: StoreEntryId,
+    ) -> core::result::Result<(), TaskError> {
+        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
+        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
+        let pkg_res = self.lockfile().packages.items_resolution()[pkg_id as usize];
+
+        if pkg_res.tag != ResolutionTag::Symlink {
+            self.append_store_path(buf, entry_id);
+            return Ok(());
+        }
+
+        // Ensured on the main thread (`install_isolated_packages`) before any task starts;
+        // this runs on worker threads and cannot lazily init it.
+        let link_dir_path: &[u8] = &self.manager().global_link_dir_path;
+        debug_assert!(!link_dir_path.is_empty());
+        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
+        let link_target = pkg_res.symlink().slice(string_buf);
+
+        let mut join_buf = paths::path_buffer_pool::get();
+        let Some(target) = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+            link_dir_path,
+            &mut join_buf[..],
+            &[link_target],
+        ) else {
+            return Err(TaskError::LinkPathTooLong);
+        };
+
+        paths::PathLike::clear(buf);
+        buf.append(target).assume_ok(); // bounded by the same buffer size
+        Ok(())
+    }
+
+    /// `entry_id` must not be a `link:` package; see `append_dependency_path`.
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
+        self.append_store_path_at(buf, entry_id, Which::Final);
+    }
+
+    fn append_store_path_at(
+        &self,
+        buf: &mut impl paths::PathLike,
+        entry_id: StoreEntryId,
+        which: Which,
+    ) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -2762,21 +3018,7 @@ impl<'a> Installer<'a> {
                 buf.append(pkg_res.workspace().slice(string_buf));
             }
             ResolutionTag::Symlink => {
-                // Lazily ensuring the global link dir would mutate
-                // `*PackageManager`, but `append_store_path` is
-                // `&self` and may run on worker
-                // threads, so the lazy init is hoisted to the main-thread caller
-                // (`isolated_install::install_packages`, before any `start_task`).
-                // Reading the cached field here is then equivalent.
-                let symlink_dir_path: &[u8] = &self.manager().global_link_dir_path;
-                debug_assert!(
-                    !symlink_dir_path.is_empty(),
-                    "global_link_dir_path must be ensured before tasks start",
-                );
-
-                buf.clear();
-                buf.append(symlink_dir_path);
-                buf.append(pkg_res.symlink().slice(string_buf));
+                unreachable!("link: packages have no store path; see append_dependency_path")
             }
             _ => {
                 let pkg_name = pkg_names[pkg_id as usize];
@@ -2786,8 +3028,44 @@ impl<'a> Installer<'a> {
                     store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
                 ));
                 buf.append(b"node_modules");
-                buf.append(pkg_name.slice(string_buf));
+                match which {
+                    Which::Final => buf.append(pkg_name.slice(string_buf)),
+                    Which::Staging => {
+                        buf.append_fmt(format_args!("{}", StagingPath(pkg_name.slice(string_buf))))
+                    }
+                }
             }
+        }
+    }
+
+    /// Appends `<entry's store node_modules>/<package_dir_name>/<folder>` to `buf`.
+    /// `Ok(false)`: nothing to link (the path leaves the package, or no such directory).
+    fn append_nested_folder_path(
+        &self,
+        buf: &mut AutoAbsPath,
+        entry_id: StoreEntryId,
+        package_dir_name: &[u8],
+        folder: &[u8],
+    ) -> sys::Result<bool> {
+        if bin_real::bin_target_escapes_package_dir(folder) {
+            return Ok(false);
+        }
+
+        self.append_real_store_node_modules_path(buf, entry_id, Which::Staging);
+        buf.append(package_dir_name).assume_ok();
+        // `folder` comes from a third-party manifest, so its length is unchecked.
+        if buf.len() + 1 + folder.len() >= paths::MAX_PATH_BYTES {
+            return Err(sys::Error::from_code(
+                sys::Errno::ENAMETOOLONG,
+                sys::Tag::fstatat,
+            ));
+        }
+        buf.append_join(folder).assume_ok();
+
+        match sys::directory_exists_at(Fd::cwd(), buf.slice_z()) {
+            Ok(is_dir) => Ok(is_dir),
+            Err(err) if err.get_errno() == sys::Errno::ENOTDIR => Ok(false),
+            Err(err) => Err(err),
         }
     }
 
@@ -2830,10 +3108,34 @@ pub enum Which {
     /// The published location (`<cache>/links/<entry>`). Use for symlink
     /// *targets* that point at other entries, and for the warm-hit check.
     Final,
-    /// The per-process temp sibling (`<entry>.tmp-<suffix>`) the build
-    /// steps write into. Use for *destinations* of clonefile/hardlink/
-    /// dep-symlink/bin-link when building this entry.
+    /// What the build steps write into, renamed onto `Final` once complete: the
+    /// whole entry (`<entry>.tmp-<suffix>`) for a global-store entry, only the
+    /// package directory (`StagingPath`) for a project-local one.
     Staging,
+}
+
+fn append_dependency_link_name(
+    dest: &mut AutoPath,
+    dep_name: &[u8],
+    entry_node_modules_name: Option<&[u8]>,
+) {
+    let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+    if entry_node_modules_name.is_some_and(|name| strings::eql_long(dep_name, name, true)) {
+        // same name as the entry itself: nest one node_modules deeper to avoid the collision
+        let _ = dest.append(b"node_modules"); // OOM/capacity: fire-and-forget
+        let _ = dest.append(dep_name); // OOM/capacity: fire-and-forget
+    }
+}
+
+/// Removes a symlink; on Windows also a directory symlink or junction (dangling or not).
+pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
+    #[cfg(windows)]
+    {
+        if sys::rmdir(path).is_ok() {
+            return Ok(());
+        }
+    }
+    sys::unlink(path)
 }
 
 fn is_rename_collision(err: &sys::Error) -> bool {

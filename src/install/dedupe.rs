@@ -6,6 +6,7 @@ use bun_collections::bit_set::Range;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
+use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
 use crate::package_manager::Options::{Enable, LogLevel};
@@ -308,6 +309,50 @@ pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
     label
 }
 
+// Biggest group first, dependents (at most 3) in name order, versioned only when the name alone is ambiguous.
+fn format_wanted(
+    lockfile: &Lockfile,
+    group_of: &[u32],
+    mut groups: Vec<(Box<[u8]>, Vec<PackageID>)>,
+) -> Vec<Wanted> {
+    let buf = lockfile.buffers.string_bytes.as_slice();
+    let names = lockfile.packages.items_name();
+    index_sort::sort_vec_by(&mut groups, |(range_a, owners_a), (range_b, owners_b)| {
+        owners_b
+            .len()
+            .cmp(&owners_a.len())
+            .then_with(|| strings::order(range_a, range_b))
+    });
+    groups
+        .into_iter()
+        .map(|(range, mut owners)| {
+            index_sort::sort_vec_by(&mut owners, |&a, &b| {
+                strings::order(names[a as usize].slice(buf), names[b as usize].slice(buf))
+                    .then(a.cmp(&b))
+            });
+            let shown = owners.len().min(3);
+            let mut dependents = Vec::new();
+            for (i, &owner) in owners[..shown].iter().enumerate() {
+                if i > 0 {
+                    dependents.extend_from_slice(b", ");
+                }
+                if group_of[owner as usize] == u32::MAX {
+                    dependents.extend_from_slice(names[owner as usize].slice(buf));
+                } else {
+                    dependents.extend_from_slice(&label(lockfile, owner));
+                }
+            }
+            if owners.len() > shown {
+                let _ = write!(dependents, " +{} more", owners.len() - shown);
+            }
+            Wanted {
+                range,
+                dependents: dependents.into_boxed_slice(),
+            }
+        })
+        .collect()
+}
+
 fn order_by_name_then_version(lockfile: &Lockfile, a: PackageID, b: PackageID) -> Ordering {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let names = lockfile.packages.items_name();
@@ -325,8 +370,21 @@ fn sort_by_name_then_version(lockfile: &Lockfile, ids: &mut [PackageID]) {
     index_sort::sort_indices(ids, &mut |a, b| order_by_name_then_version(lockfile, a, b));
 }
 
-// (name, removed version, surviving version(s) its dependents now resolve to)
-type Row = (Box<[u8]>, Box<[u8]>, Box<[u8]>);
+// One `wanted <range> by <dependents>` line under a row (`--why`).
+struct Wanted {
+    range: Box<[u8]>,
+    dependents: Box<[u8]>,
+}
+
+struct Row {
+    name: Box<[u8]>,
+    from: Box<[u8]>,
+    /// Surviving version(s); empty when `from` is dropped outright.
+    to: Box<[u8]>,
+    /// Every survivor is a lower major than `from`.
+    downgrade: bool,
+    wanted: Vec<Wanted>,
+}
 
 #[derive(Default)]
 pub(crate) struct Report {
@@ -339,7 +397,7 @@ fn plural(n: usize) -> &'static str {
     if n == 1 { "" } else { "s" }
 }
 
-fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
+fn dedupe_lockfile(lockfile: &mut Lockfile, why: bool) -> Report {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let checked = pkg_res.len();
@@ -536,12 +594,59 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
     }
 
     let names = lockfile.packages.items_name();
+
+    // Per row: dependents whose edges targeted the removed version or one of its survivors, by requested range.
+    let mut wanted: Vec<Vec<(Box<[u8]>, Vec<PackageID>)>> = vec![Vec::new(); removed.len()];
+    if why {
+        let deps = lockfile.buffers.dependencies.as_slice();
+        // A version explains the rows it was removed by and the rows whose edges moved onto it.
+        let mut explains: Vec<Vec<u32>> = vec![Vec::new(); pkg_res.len()];
+        for (i, &id) in removed.iter().enumerate() {
+            explains[id as usize].push(i as u32);
+        }
+        for (i, survivors) in targets.iter().enumerate() {
+            for &s in survivors {
+                explains[s as usize].push(i as u32);
+            }
+        }
+        // Owners come from the pre-dedupe tree so a dropped version's (themselves removed) dependents still show.
+        for (owner, slice) in lockfile.packages.items_dependencies().iter().enumerate() {
+            if !initial.is_set(owner) {
+                continue;
+            }
+            for dep_id in slice.begin() as usize..slice.end() as usize {
+                let Some(rows) = explains.get(original[dep_id] as usize) else {
+                    continue;
+                };
+                let dep = &deps[dep_id];
+                let literal = effective_version(lockfile, dep_id as DependencyID, dep)
+                    .map(|version| version.literal)
+                    .unwrap_or(dep.version.literal);
+                let range = literal.slice(buf);
+                for &r in rows {
+                    let groups = &mut wanted[r as usize];
+                    match groups.iter_mut().find(|(g, _)| strings::eql(g, range)) {
+                        Some((_, owners)) => {
+                            // Two aliases in one package can produce identical edges; list the owner once.
+                            if !owners.contains(&(owner as PackageID)) {
+                                owners.push(owner as PackageID);
+                            }
+                        }
+                        None => groups.push((Box::from(range), vec![owner as PackageID])),
+                    }
+                }
+            }
+        }
+    }
+
     let rows: Vec<Row> = removed
         .iter()
         .zip(&targets)
-        .map(|(&id, moved_to)| {
+        .zip(wanted)
+        .map(|((&id, moved_to), wanted)| {
+            let from_version = pkg_res[id as usize].npm().version;
             let mut from: Vec<u8> = Vec::new();
-            let _ = write!(from, "{}", pkg_res[id as usize].npm().version.fmt(buf));
+            let _ = write!(from, "{}", from_version.fmt(buf));
             let mut survivors: Vec<PackageID> = moved_to.clone();
             index_sort::sort_vec_by(&mut survivors, |&a, &b| {
                 pkg_res[a as usize]
@@ -556,11 +661,16 @@ fn dedupe_lockfile(lockfile: &mut Lockfile) -> Report {
                 }
                 let _ = write!(to, "{}", pkg_res[c as usize].npm().version.fmt(buf));
             }
-            (
-                Box::from(names[id as usize].slice(buf)),
-                from.into_boxed_slice(),
-                to.into_boxed_slice(),
-            )
+            let downgrade = survivors
+                .last()
+                .is_some_and(|&c| pkg_res[c as usize].npm().version.major < from_version.major);
+            Row {
+                name: Box::from(names[id as usize].slice(buf)),
+                from: from.into_boxed_slice(),
+                to: to.into_boxed_slice(),
+                downgrade,
+                wanted: format_wanted(lockfile, &group_of, wanted),
+            }
         })
         .collect();
 
@@ -581,21 +691,27 @@ pub(crate) fn effective_npm_range(
         .filter(|version| version.tag == DependencyVersionTag::Npm)
 }
 
+/// The override rule the resolver applies to this edge; `workspace:` and `npm:` alias edges are never overridden (PackageManagerEnqueue.rs).
+pub(crate) fn applied_override<'a>(
+    lockfile: &'a Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<OverrideRule<'a>> {
+    if dep.behavior.is_workspace()
+        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
+    {
+        return None;
+    }
+    lockfile.overrides.lookup(lockfile, dep_id, dep.name_hash)
+}
+
 pub(crate) fn effective_version(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = if dep.behavior.is_workspace()
-        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
-    {
-        dep.version.clone()
-    } else {
-        lockfile
-            .overrides
-            .get(lockfile, dep_id, dep.name_hash)
-            .unwrap_or_else(|| dep.version.clone())
-    };
+    let mut version = applied_override(lockfile, dep_id, dep)
+        .map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
     if version.tag == DependencyVersionTag::Catalog {
         version = lockfile
             .catalogs
@@ -605,7 +721,8 @@ pub(crate) fn effective_version(
     Some(version)
 }
 
-// Optional-peer edges are followed too: with an in-sync package.json `clean` runs with `keep_optional_peer_targets`.
+// Optional-peer edges are followed too: `clean` keeps a target the loaded lockfile held through them alone
+// (`Lockfile::held_at_load`), and a version that survives here keeps every edge it had, so anything else they reach stays held.
 fn reachable(lockfile: &Lockfile, resolutions: &[PackageID]) -> DynamicBitSet {
     crate::lockfile::reachable::packages(
         lockfile,
@@ -729,7 +846,7 @@ fn report_already_deduplicated(manager: &PackageManager, report: &Report) -> ! {
                 bun_core::pretty!("\n");
             }
             bun_core::pretty!(
-                "🎉 <green>No duplicates<r> <d>— checked {} package{}, every one already resolves to a single version<r> ",
+                "🎉 <green>No duplicates<r> <d>— checked {} package{} in bun.lock, every one already resolves to a single version<r> ",
                 report.checked,
                 plural(report.checked)
             );
@@ -757,7 +874,7 @@ fn print_would_remove(manager: &PackageManager, report: &Report) {
     }
     let n = report.rows.len();
     bun_core::pretty!(
-        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{})<r> ",
+        "\n<b>{}<r> duplicate version{} can be removed <d>(checked {} package{} in bun.lock)<r> ",
         n,
         plural(n),
         report.checked,
@@ -773,22 +890,43 @@ fn print_rows(report: &Report) {
     } else {
         ("~", "->")
     };
-    for (name, from, to) in &report.rows {
-        if to.is_empty() {
+    for row in &report.rows {
+        if row.to.is_empty() {
             bun_core::prettyln!(
-                "<cyan>{}<r> <b>{}<r> <d>{}<r>",
+                "<cyan>{}<r> <b>{}<r> <d>{} {} (removed)<r>",
                 glyph,
-                BStr::new(name),
-                BStr::new(from)
+                BStr::new(&row.name),
+                BStr::new(&row.from),
+                arrow
+            );
+        } else if row.downgrade {
+            bun_core::prettyln!(
+                "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r> <yellow>(downgrade)<r>",
+                glyph,
+                BStr::new(&row.name),
+                BStr::new(&row.from),
+                arrow,
+                BStr::new(&row.to)
             );
         } else {
             bun_core::prettyln!(
                 "<cyan>{}<r> <b>{}<r> <d>{} {}<r> <b>{}<r>",
                 glyph,
-                BStr::new(name),
-                BStr::new(from),
+                BStr::new(&row.name),
+                BStr::new(&row.from),
                 arrow,
-                BStr::new(to)
+                BStr::new(&row.to)
+            );
+        }
+        let width = row.wanted.iter().map(|w| w.range.len()).max().unwrap_or(0);
+        for w in &row.wanted {
+            let mut range = Vec::with_capacity(width);
+            range.extend_from_slice(&w.range);
+            range.resize(width, b' ');
+            bun_core::prettyln!(
+                "    <d>wanted<r> {} <d>by<r> {}",
+                BStr::new(&range),
+                BStr::new(&w.dependents)
             );
         }
     }
@@ -817,7 +955,7 @@ pub(crate) fn print_dedupe_summary(manager: &PackageManager, installed: u32, sta
         );
     }
     bun_core::pretty!(
-        " <d>(checked {} package{})<r> ",
+        " <d>(checked {} package{} in bun.lock)<r> ",
         report.checked,
         plural(report.checked)
     );
@@ -833,7 +971,7 @@ pub fn dedupe_after_differ(manager: &mut PackageManager) {
         refuse_out_of_date(manager);
     }
 
-    let report = dedupe_lockfile(&mut manager.lockfile);
+    let report = dedupe_lockfile(&mut manager.lockfile, manager.options.why);
     if report.rows.is_empty() {
         report_already_deduplicated(manager, &report);
     }

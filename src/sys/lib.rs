@@ -265,8 +265,7 @@ pub mod dir_iterator {
             // literal matches <sys/dirent.h>.
             #[cfg(any(target_os = "macos", target_os = "freebsd"))]
             14 /* DT_WHT */ => EntryKind::Whiteout,
-            // DT_UNKNOWN: some filesystems (bind mounts, FUSE, NFS) don't
-            // provide d_type. Callers should lstatat() to resolve when needed.
+            // DT_UNKNOWN: see `WrappedIterator::resolve_unknown_entry_types`.
             _ => EntryKind::Unknown,
         }
     }
@@ -731,6 +730,8 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
+        /// `lstat` entries the filesystem reports as `Unknown` (FUSE, NFS, XFS `ftype=0`).
+        pub resolve_unknown_entry_types: bool,
     }
     impl WrappedIterator {
         #[inline]
@@ -759,6 +760,16 @@ pub mod dir_iterator {
         /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
+            #[cfg(not(windows))] // The Windows iterator always knows the kind.
+            if self.resolve_unknown_entry_types {
+                let mut entry = self.state.next(self.dir)?;
+                if let Some(e) = entry.as_mut().filter(|e| e.kind == EntryKind::Unknown) {
+                    if let Ok(st) = super::lstatat(self.dir, e.name.as_zstr()) {
+                        e.kind = super::kind_from_mode(st.st_mode as super::Mode);
+                    }
+                }
+                return Ok(entry);
+            }
             self.state.next(self.dir)
         }
     }
@@ -770,6 +781,7 @@ pub mod dir_iterator {
                 dir,
                 name_filter: None,
                 state: State::new(),
+                resolve_unknown_entry_types: false,
             }
         }
         #[cfg(windows)]
@@ -777,6 +789,7 @@ pub mod dir_iterator {
             WrappedIterator {
                 dir,
                 state: State::new(),
+                resolve_unknown_entry_types: false,
             }
         }
     }
@@ -1063,6 +1076,13 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     fn into_errno_int(self) -> error::Int {
         windows::translate_nt_status_to_errno(self) as error::Int
     }
+}
+
+/// For [`flock`]: advisory `flock(2)` on POSIX, mandatory `LockFileEx` on Windows; released on close.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
 }
 
 /// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
@@ -1406,6 +1426,7 @@ impl Tag {
     #[cfg(not(windows))]
     pub(crate) const setrlimit: Tag = Tag(106);
     pub const clone3: Tag = Tag(107);
+    pub const flock: Tag = Tag(108);
     // `inotify_init1`/`inotify_add_watch` fold under the generic `.watch`
     // tag; `INotifyWatcher.rs` spells it `.inotify`. Alias to `.watch`
     // so the JS-facing `err.syscall == "watch"` string stays node-compatible.
@@ -1413,7 +1434,7 @@ impl Tag {
     /// The tag name — spelling is frozen (JS-facing
     /// `err.syscall` string; node-compat code matches on it).
     pub fn name(self) -> &'static str {
-        const NAMES: [&str; 108] = [
+        const NAMES: [&str; 109] = [
             "TODO",
             "dup",
             "access",
@@ -1523,6 +1544,7 @@ impl Tag {
             "getrlimit",
             "setrlimit",
             "clone3",
+            "flock",
         ];
         NAMES.get(self.0 as usize).copied().unwrap_or("unknown")
     }
@@ -1947,9 +1969,26 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
+    /// Android's app seccomp policy answers `openat2(2)`/`fchmodat2(2)` with SIGSYS, not ENOSYS,
+    /// so they must not even be probed there; the linux build runs under Termux, hence at runtime.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn is_android_kernel() -> bool {
+        static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
+            cfg!(target_os = "android")
+                || bun_core::strings::contains_case_insensitive_ascii(release, b"android")
+                || (bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some()
+                    && bun_core::env_var::ANDROID_DATA::get_not_empty().is_some())
+        })
+    }
+    /// `openat2(RESOLVE_BENEATH)`; ENOSYS on Android (see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
+        if is_android_kernel() {
+            return Err(Error::from_code_int(libc::ENOSYS, Tag::open).with_path(path.as_bytes()));
+        }
         super::linux_syscall::openat2_beneath(dir, path, flags, mode)
             .map_err(|e| Error::from_code_int(e, Tag::open).with_path(path.as_bytes()))
     }
@@ -1962,7 +2001,7 @@ mod posix_impl {
         static UNAVAILABLE: AtomicBool = AtomicBool::new(false);
 
         let dir = dir.as_fd();
-        if !UNAVAILABLE.load(Ordering::Relaxed) {
+        if !UNAVAILABLE.load(Ordering::Relaxed) && !is_android_kernel() {
             match super::linux_syscall::openat2_in_root(dir, path, flags, mode) {
                 Ok(fd) => return Ok(fd),
                 Err(e @ (libc::ENOSYS | libc::EPERM | libc::EINVAL | libc::E2BIG)) => {
@@ -2659,6 +2698,24 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
+    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let op = match mode {
+            FileLockMode::Shared => libc::LOCK_SH,
+            FileLockMode::Exclusive => libc::LOCK_EX,
+        } | if nonblocking { libc::LOCK_NB } else { 0 };
+        loop {
+            // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
+            if unsafe { libc::flock(fd.native(), op) } == 0 {
+                return Ok(true);
+            }
+            match last_errno() {
+                libc::EINTR => continue,
+                libc::EWOULDBLOCK if nonblocking => return Ok(false),
+                e => return Err(Error::from_code_int(e, Tag::flock).with_fd(fd)),
+            }
+        }
+    }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
         // SAFETY: `buf` is a valid exclusive slice; `getcwd` writes at most
         // `buf.len()` bytes (including the NUL).
@@ -2715,18 +2772,12 @@ mod posix_impl {
                 }
             } else {
                 let mut buf = [0u8; 32];
-                let n = {
-                    use std::io::Write as _;
-                    let mut c = std::io::Cursor::new(&mut buf[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
-                    c.position() as usize - 1
-                };
-                let _ = n;
-                // SAFETY: NUL written by the format string above.
+                let proc_path = fd_path_z(b"/proc/self/fd/", tmpfd, &mut buf);
+                // SAFETY: `proc_path` is NUL-terminated; dirfd valid.
                 unsafe {
                     libc::linkat(
                         libc::AT_FDCWD,
-                        buf.as_ptr().cast(),
+                        proc_path.as_ptr(),
                         dirfd.native(),
                         name.as_ptr(),
                         libc::AT_SYMLINK_FOLLOW,
@@ -2835,6 +2886,11 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
+            // glibc/musl `fchmodat(.., AT_SYMLINK_NOFOLLOW)` try `fchmodat2(2)` too.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if is_android_kernel() {
+                return lchmod_no_fchmodat2(path, mode);
+            }
             const SYS_FCHMODAT2: libc::c_long = 452;
             loop {
                 // SAFETY: `ZStr::as_ptr()` yields a valid NUL-terminated C string.
@@ -2860,6 +2916,20 @@ mod posix_impl {
                 return Ok(());
             }
         }
+    }
+    /// musl's fallback: `O_PATH` + `chmod("/proc/self/fd/N")`; symlinks get EOPNOTSUPP like libc.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    fn lchmod_no_fchmodat2(path: &ZStr, mode: Mode) -> Maybe<()> {
+        let retag = |mut err: Error| {
+            err.syscall = Tag::lchmod;
+            err.with_path(path.as_bytes())
+        };
+        let fd = open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0).map_err(retag)?;
+        let _close = crate::CloseOnDrop::new(fd);
+        if kind_from_mode(fstat(fd).map_err(retag)?.st_mode as Mode) == FileKind::SymLink {
+            return Err(retag(Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod)));
+        }
+        chmod(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), mode).map_err(retag)
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
@@ -3650,6 +3720,25 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
+    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere. Unlike `flock(2)`,
+    /// `LockFileEx` cannot convert a lock the handle already holds.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        use w::kernel32::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
+        let flags = (LOCKFILE_EXCLUSIVE_LOCK * u32::from(mode == FileLockMode::Exclusive))
+            | (LOCKFILE_FAIL_IMMEDIATELY * u32::from(nonblocking));
+        let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
+        let ol = &raw mut overlapped;
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `ol` a valid out-param at range start 0.
+        let rc = unsafe { w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, ol) };
+        if rc != 0 {
+            return Ok(true);
+        }
+        let er = w::Win32Error::get();
+        if nonblocking && er == w::Win32Error::LOCK_VIOLATION {
+            return Ok(false);
+        }
+        Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))
+    }
     pub fn pread(fd: Fd, buf: &mut [u8], off: i64) -> Maybe<usize> {
         // Positioned-I/O lowering:
         // libuv path for uv-kind fds, kernel32 ReadFile+OVERLAPPED for system
@@ -3692,7 +3781,7 @@ mod windows_impl {
             return Ok(amount_read as usize);
         }
     }
-    pub(crate) fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
+    pub fn pwrite(fd: Fd, buf: &[u8], off: i64) -> Maybe<usize> {
         // Same lowering as `pread`: kernel32 WriteFile with an
         // `OVERLAPPED.Offset` for HANDLE-kind fds.
         if fd.kind() == FdKind::Uv {
@@ -7503,22 +7592,22 @@ fn linux_kernel_is_freebsd() -> bool {
     detected == 2
 }
 
+/// `<prefix><fd number>`, NUL-terminated in `buf`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn fd_path_z<'a>(prefix: &[u8], fd: Fd, buf: &'a mut [u8; 32]) -> &'a ZStr {
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let end = prefix.len() + bun_core::fmt::print_int(&mut buf[prefix.len()..], fd.native());
+    buf[end] = 0;
+    ZStr::from_buf(&buf[..], end)
+}
+
 /// readlink `/dev/fd/N` (fdescfs).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn get_fd_path_freebsd_linuxulator<'a>(
     fd: Fd,
     out: &'a mut bun_paths::PathBuffer,
 ) -> Maybe<&'a mut [u8]> {
-    let mut dev = [0u8; 32];
-    let n = {
-        use std::io::Write as _;
-        let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.native());
-        c.position() as usize - 1
-    };
-    // SAFETY: NUL written above.
-    let z = ZStr::from_buf(&dev[..], n);
-    let len = readlink(z, &mut out.0)?;
+    let len = readlink(fd_path_z(b"/dev/fd/", fd, &mut [0u8; 32]), &mut out.0)?;
     Ok(&mut out.0[..len])
 }
 
@@ -7532,16 +7621,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         if linux_kernel_cached_is_freebsd() {
             return get_fd_path_freebsd_linuxulator(fd, out);
         }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        match readlink(z, &mut out.0) {
+        match readlink(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
                 // Under FreeBSD Linuxulator, fall back to
@@ -8944,7 +9024,13 @@ pub fn exists(path: &[u8]) -> bool {
 /// retries; on EXDEV falls back to the slow open+copy path. Only opens the
 /// source inside the EXDEV branch.
 pub fn move_file_z(from_dir: Fd, filename: &ZStr, to_dir: Fd, destination: &ZStr) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir, filename, to_dir, destination) {
+    match renameat_concurrently_without_fallback(
+        from_dir,
+        filename,
+        to_dir,
+        destination,
+        RenameatConcurrentlyOptions::default(),
+    ) {
         Ok(()) => Ok(()),
         // allow over-writing an empty directory
         Err(e) if e.get_errno() == E::EISDIR => {
@@ -9025,6 +9111,8 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
+    /// If `to` already exists (another process won the race), delete `from` instead of replacing `to`.
+    pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
 pub type RenameOptions = RenameatConcurrentlyOptions;
@@ -9044,6 +9132,7 @@ pub(crate) fn move_file_z_slow_maybe(
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
 /// an EXDEV result falls through to a slow open/copy.
+/// After an EXCHANGE, `from` holds the tree that was at `to`.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
     from: &ZStr,
@@ -9051,7 +9140,7 @@ pub fn renameat_concurrently(
     to: &ZStr,
     opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
-    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to) {
+    match renameat_concurrently_without_fallback(from_dir_fd, from, to_dir_fd, to, opts) {
         Ok(()) => Ok(()),
         Err(e) => {
             if opts.move_fallback && e.get_errno() == E::EXDEV {
@@ -9071,6 +9160,7 @@ pub(crate) fn renameat_concurrently_without_fallback(
     from: &ZStr,
     to_dir_fd: Fd,
     to: &ZStr,
+    opts: RenameatConcurrentlyOptions,
 ) -> Maybe<()> {
     'attempt: {
         {
@@ -9095,6 +9185,21 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 }
                 Ok(()) => break 'attempt,
             };
+
+            // Not keyed on the errno: it varies across Windows and filesystems without RENAME_NOREPLACE.
+            let to_dir = if to_dir_fd.is_valid() {
+                to_dir_fd
+            } else {
+                Fd::cwd()
+            };
+            if opts.keep_existing_destination && exists_at_type(to_dir, to).is_ok() {
+                if from_dir_fd.is_valid() {
+                    let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
+                } else {
+                    let _ = delete_tree_absolute(from.as_bytes());
+                }
+                break 'attempt;
+            }
 
             // Windows doesn't have any equivalent of renameat with swap
             #[cfg(not(windows))]
@@ -9458,6 +9563,7 @@ mod owned_handle_tests {
             b"sub",
             RenameatConcurrentlyOptions {
                 move_fallback: true,
+                ..Default::default()
             },
         )
         .expect("rename");
@@ -9469,6 +9575,42 @@ mod owned_handle_tests {
         );
 
         // Cleanup.
+        let _ = close(to_dir);
+        let _ = close(root);
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+    }
+
+    #[test]
+    fn renameat_concurrently_keep_existing_destination() {
+        let _g = crate::file::tests::FD_TEST_LOCK.lock();
+        let mut tmp = std::env::temp_dir().as_os_str().as_encoded_bytes().to_vec();
+        tmp.extend_from_slice(b"/bun_sys_renameat_keep_existing_test");
+        let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));
+        let _ = mkdir_recursive_at(Fd::cwd(), &tmp);
+        let root = open_dir_at(Fd::cwd(), &tmp).expect("open root");
+        let _ = mkdir_recursive_at(root, b"from/sub");
+        let _ = mkdir_recursive_at(root, b"to/sub");
+        File::write_file(root, ZStr::from_static(b"from/sub/loser\0"), b"").expect("loser");
+        File::write_file(root, ZStr::from_static(b"to/sub/winner\0"), b"").expect("winner");
+        let to_dir = open_dir_at(root, b"to").expect("open to");
+
+        let opts = RenameatConcurrentlyOptions {
+            keep_existing_destination: true,
+            ..Default::default()
+        };
+
+        let kind = |p: &'static [u8]| exists_at_type(root, ZStr::from_static(p)).ok();
+        // Destination taken: it is kept as-is and the source goes away.
+        renameat_concurrently_a(root, b"from/sub", to_dir, b"sub", opts).expect("rename");
+        assert!(matches!(kind(b"to/sub/winner\0"), Some(ExistsAtType::File)));
+        assert!(kind(b"to/sub/loser\0").is_none() && kind(b"from/sub\0").is_none());
+
+        // Destination free: a plain rename.
+        let _ = mkdir_recursive_at(root, b"from/other");
+        renameat_concurrently_a(root, b"from/other", to_dir, b"other", opts).expect("rename");
+        assert!(matches!(kind(b"to/other\0"), Some(ExistsAtType::Directory)));
+        assert!(kind(b"from/other\0").is_none());
+
         let _ = close(to_dir);
         let _ = close(root);
         let _ = Dir::open(&tmp).map(|d| d.delete_tree(b"."));

@@ -283,12 +283,14 @@ impl PatchTask {
             let pkg_name = pkg.name;
             let pkg_resolution_tag = pkg.resolution.tag;
             let name_and_version_hash = calc_hash.name_and_version_hash;
+            let dep_behavior = manager.lockfile.buffers.dependencies[dep_id as usize].behavior;
 
             let mut out_name_and_version_hash: Option<u64> = None;
             let mut out_patchfile_hash: Option<u64> = None;
             manager.set_preinstall_state(pkg_meta_id, PreinstallState::Unknown);
             match manager.determine_preinstall_state(
                 &pkg,
+                dep_behavior,
                 &mut out_name_and_version_hash,
                 &mut out_patchfile_hash,
             ) {
@@ -325,9 +327,7 @@ impl PatchTask {
                         TaskId::for_npm_package(manager.lockfile.str(&pkg_name), pkg_npm_version);
                     debug_assert!(!manager.network_dedupe_map.contains_key(&task_id));
 
-                    let is_required = manager.lockfile.buffers.dependencies[dep_id as usize]
-                        .behavior
-                        .is_required();
+                    let is_required = dep_behavior.is_required();
                     let pkg_again: Package = *manager.lockfile.packages.get(pkg_id as usize);
                     let network_task: *mut crate::NetworkTask =
                         package_manager::generate_network_task_for_tarball(
@@ -393,9 +393,11 @@ impl PatchTask {
         let patchfile_path = &patch.patchfilepath;
 
         let mut absolute_patchfile_path_buf = PathBuffer::uninit();
+        let mut absolute_patchfile_path_spill = Vec::new();
         // 1. Parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
+            &mut absolute_patchfile_path_spill,
             &[dir, patchfile_path],
         );
         // TODO: can the patch file be anything other than utf-8?
@@ -461,18 +463,6 @@ impl PatchTask {
 
         // 3. copy the unpatched files into temp dir
         let cache_dir_subpath_z: &ZStr = patch.cache_dir_subpath_without_patch_hash.as_zstr();
-        // Borrowck — `tempdir_name` borrows `tmpname_buf` mutably, but
-        // `PackageInstall` also wants `&mut tmpname_buf[..]` for
-        // `destination_dir_subpath_buf`. `PackageInstall` assumes
-        // `destination_dir_subpath` is a prefix slice *into*
-        // `destination_dir_subpath_buf` (see `verifyGitResolution` /
-        // `verifyPackageJSONNameAndVersion`), and that aliasing can't be
-        // expressed with `&ZStr` + `&mut [u8]`, so use a separate buffer but
-        // mirror the prefix bytes so the invariant holds for any future call
-        // that reaches those paths.
-        let mut dest_subpath_buf = [0u8; 1024];
-        dest_subpath_buf[..tempdir_name.len() + 1]
-            .copy_from_slice(tempdir_name.as_bytes_with_nul());
         // Not `self.manager()` — `&mut self.callback` is live.
         // BACKREF — read-only lockfile access while the task runs off-thread.
         let lockfile = &self.manager.get().lockfile;
@@ -480,7 +470,6 @@ impl PatchTask {
             cache_dir: patch.cache_dir,
             cache_dir_subpath: cache_dir_subpath_z,
             destination_dir_subpath: tempdir_name,
-            destination_dir_subpath_buf: &mut dest_subpath_buf[..],
             patch: None,
             progress: None,
             package_name: pkg_name,
@@ -523,7 +512,7 @@ impl PatchTask {
                         &e,
                         format_args!(
                             "failed trying to open temporary dir to apply patch to package: {}",
-                            BStr::new(&resolution_label)
+                            bun_core::fmt::for_terminal(BStr::new(&resolution_label))
                         ),
                     );
                     return Ok(());
@@ -608,9 +597,11 @@ impl PatchTask {
         let patchfile_path = &calc_hash.patchfile_path;
 
         let mut absolute_patchfile_path_buf = PathBuffer::uninit();
+        let mut absolute_patchfile_path_spill = Vec::new();
         // parse the patch file
-        let absolute_patchfile_path = path::resolve_path::join_z_buf::<path::platform::Auto>(
+        let absolute_patchfile_path = path::resolve_path::join_z_buf_spill::<path::platform::Auto>(
             &mut absolute_patchfile_path_buf.0,
+            &mut absolute_patchfile_path_spill,
             &[dir, patchfile_path],
         );
 
@@ -638,12 +629,10 @@ impl PatchTask {
                     );
                     return None;
                 }
-                bun_ast::add_warning_pretty!(
-                    log,
+                log.add_error_fmt(
                     None,
                     Loc::EMPTY,
-                    "patchfile <b>{}<r> is empty, please restore or delete it.",
-                    BStr::new(absolute_patchfile_path.as_bytes()),
+                    format_args!("failed to read patch file: {}", e),
                 );
                 return None;
             }
@@ -760,16 +749,18 @@ impl PatchTask {
         let pkg_name_slice = pkg_name
             .slice(&pkg_manager.lockfile.buffers.string_bytes)
             .to_vec();
-        // `Resolution` is `Copy`; copy out so the lockfile borrow ends
+        // `Resolution` and `Integrity` are `Copy`; copy out so the lockfile borrow ends
         // before `compute_cache_dir_and_subpath` reborrows `pkg_manager` mutably.
         let resolution_clone: Resolution =
             pkg_manager.lockfile.packages.items_resolution()[pkg_id as usize];
+        let integrity = pkg_manager.lockfile.packages.items_meta()[pkg_id as usize].integrity;
 
         let mut folder_path_buf = PathBuffer::uninit();
         let stuff = package_manager::compute_cache_dir_and_subpath(
             pkg_manager,
             &pkg_name_slice,
             &resolution_clone,
+            &integrity,
             &mut folder_path_buf,
             Some(patch_hash),
         );

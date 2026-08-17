@@ -170,9 +170,10 @@ impl hooks::AutoInstaller for PackageManager {
         &self,
         name: &[u8],
         version: &hooks::DependencyVersion,
+        version_buf: &[u8],
     ) -> Option<PackageID> {
         self.lockfile
-            .resolve_package_from_name_and_version(name, version)
+            .resolve_package_from_name_and_version(name, version, version_buf)
     }
 
     fn lockfile_legacy_package_to_dependency_id(
@@ -432,6 +433,31 @@ impl hooks::AutoInstaller for PackageManager {
     fn infer_dependency_tag(&self, dep: &[u8]) -> hooks::DependencyVersionTag {
         <dependency::Tag as dependency::TagExt>::infer(dep)
     }
+}
+
+// ─── Dependency parsing without a manager (resolver → install link-time hook) ──
+//
+// `bun_resolver::PackageJSON::parse` reads the project's package.json before the
+// first bare import creates the `PackageManager` (see `Resolver::parse_dependency`).
+// `parse` only uses the manager to record `npm:` aliases, and
+// `lockfile_append_from_package_json` records them when these dependencies are
+// cloned into the lockfile, so nothing is lost by parsing without one.
+#[unsafe(no_mangle)]
+fn __bun_resolver_parse_dependency(
+    name: SemverString,
+    name_hash: hooks::PackageNameHash,
+    version: &[u8],
+    sliced: &SlicedString,
+    log: Option<&mut bun_ast::Log>,
+) -> Option<hooks::DependencyVersion> {
+    dependency::parse(
+        name,
+        name_hash,
+        version,
+        sliced,
+        log,
+        None::<&mut PackageManager>,
+    )
 }
 
 // ─── Lazy factory (resolver → install link-time hook) ─────────────────────

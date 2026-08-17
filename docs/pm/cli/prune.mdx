@@ -16,7 +16,7 @@ bun prune v1.4.0 (abc12345)
 
 - @types/node@20.11.5
 - left-pad@1.3.0
-2 packages removed (checked 948) [22.00ms]
+2 packages removed (checked 948 installed packages) [22.00ms]
 ```
 
 Packages removed from a workspace or nested `node_modules` folder show the folder in parentheses, e.g. `- typescript@5.4.0 (packages/app/node_modules)`.
@@ -47,8 +47,16 @@ bun prune --production --dry-run
 bun prune v1.4.0 (abc12345)
 
 - typescript@5.4.0
-1 package can be removed (checked 948) [9.00ms]
+1 package can be removed (checked 948 installed packages) [9.00ms]
   bun prune --production
+```
+
+### `--check`
+
+Print the same report as `--dry-run`, but exit `1` if anything would be removed. Use it in CI:
+
+```bash terminal icon="terminal"
+bun prune --production --check
 ```
 
 ### `--filter`
@@ -66,7 +74,7 @@ bun prune --production --filter app
 - Uses the same linker as `bun install` would. If `node_modules` was created with the other linker, `bun prune` refuses to run. Pass the matching `--linker`, or run `bun install`.
 - Matches packages by name. If a package is at the wrong version, Bun leaves it for `bun install` to replace. Bun only removes a nested copy (`node_modules/a/node_modules/b`) once the correct version is installed above it; otherwise Bun keeps it and prints a warning.
 - Never removes workspace folders, `.bin` entries still in use, dot-directories like `.cache`, plain files, or anything outside `node_modules`.
-- Removes packages disabled for the current `os`/`cpu`. Pass `--os`/`--cpu` to prune for another platform.
+- Removes packages disabled for the current `os`/`cpu`/`libc`. Pass `--os`/`--cpu`/`--libc` to prune for another platform.
 - Works on a pruned monorepo checkout (e.g. `turbo prune` output) the same way `bun install --frozen-lockfile` does.
 - If any entry fails to delete, the command still removes the rest and exits `1`.
 - `--global` is not supported.

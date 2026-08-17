@@ -247,6 +247,33 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
+/// `<shell> -c <script>`, or without a POSIX shell (always on Windows, where `find_shell` yields
+/// cmd.exe) `bun exec --no-env-file <script>`: like `sh`, that adds no `.env*` file to the envp.
+pub struct ScriptArgv<'a>([*const c_char; 5], core::marker::PhantomData<&'a ZStr>);
+
+impl<'a> ScriptArgv<'a> {
+    pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
+        let (null, script) = (core::ptr::null(), script.as_ptr());
+        let (exec, no_env_file) = (c"exec".as_ptr(), c"--no-env-file".as_ptr());
+        let argv = match shell {
+            Some(sh) if cfg!(unix) => [sh.as_ptr(), c"-c".as_ptr(), script, null, null],
+            _ => [
+                bun_core::self_exe_path()?.as_ptr(),
+                exec,
+                no_env_file,
+                script,
+                null,
+            ],
+        };
+        Ok(Self(argv, core::marker::PhantomData))
+    }
+
+    /// The null-terminated array `spawn_process` takes.
+    pub fn as_ptr(&self) -> *const *const c_char {
+        self.0.as_ptr()
+    }
+}
+
 pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) package_name: Box<[u8]>,
 
@@ -536,9 +563,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             replace_package_manager_run(&mut copy_script, original_script)?;
             copy_script.push(0);
 
-            // SAFETY: we just pushed a NUL byte at copy_script[len-1]; slice [..len-1] is the body.
-            let combined_script: &mut ZStr =
-                ZStr::from_raw_mut(copy_script.as_mut_ptr(), copy_script.len() - 1);
+            let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
+            let argv = ScriptArgv::new((*this).shell_bin, combined_script)?;
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
                 Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
@@ -562,30 +588,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 bstr::BStr::new(&(*this).package_name),
                 bstr::BStr::new((*this).script_name()),
                 bstr::BStr::new(combined_script.as_bytes())
-            );
-
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            let mut argv: [*const c_char; 4] = if (*this).shell_bin.is_some() && !cfg!(windows) {
-                [
-                    (*this).shell_bin.unwrap().as_ptr().cast::<c_char>(),
-                    c"-c".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            } else {
-                [
-                    bun_core::self_exe_path()?.as_ptr().cast::<c_char>(),
-                    c"exec".as_ptr(),
-                    combined_script.as_ptr().cast::<c_char>(),
-                    core::ptr::null(),
-                ]
-            };
-            const _: () = assert!(
-                core::mem::size_of::<[*const c_char; 4]>() == 4 * core::mem::size_of::<usize>()
             );
 
             // OWNERSHIP:
@@ -666,9 +668,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
             let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
-                // argv is `[*const c_char; 4]` with trailing null — exactly the
-                // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-                argv.as_mut_ptr().cast(),
+                argv.as_ptr(),
                 (*this).envp.as_ptr().cast::<*const c_char>(),
             ) {
                 Ok(Ok(s)) => s,
@@ -851,14 +851,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             Status::Exited(exit) => {
                 if exit.code > 0 {
                     if self.optional {
-                        if let Some(ctx) = &self.ctx {
-                            let installer = ctx.installer_mut();
-                            installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                                .store(Step::Done as u32, Ordering::Release);
-                            installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                        }
-                        self.decrement_pending_script_tasks();
-                        self.deinit_and_delete_package();
+                        self.discard_failed_optional_package();
                         return;
                     }
                     self.print_output();
@@ -986,14 +979,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             }
             Status::Err(err) => {
                 if self.optional {
-                    if let Some(ctx) = &self.ctx {
-                        let installer = ctx.installer_mut();
-                        installer.store.entries.items_step()[ctx.entry_id.get() as usize]
-                            .store(Step::Done as u32, Ordering::Release);
-                        installer.on_task_complete(ctx.entry_id, CompleteState::Skipped);
-                    }
-                    self.decrement_pending_script_tasks();
-                    self.deinit_and_delete_package();
+                    self.discard_failed_optional_package();
                     return;
                 }
 
@@ -1061,6 +1047,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // uniquely owned here. Dropping the Box runs `Drop` (reset_polls + ensure_not_in_heap)
         // then frees the allocation.
         drop(unsafe { bun_core::heap::take(this) });
+    }
+
+    /// Frees `self`.
+    fn discard_failed_optional_package(&mut self) {
+        let ctx = self.ctx.take();
+        self.decrement_pending_script_tasks();
+        self.deinit_and_delete_package();
+        // deleted first so the resumed dependents do not link its binaries
+        if let Some(ctx) = ctx {
+            ctx.installer_mut()
+                .on_optional_dependency_scripts_failed(ctx.entry_id);
+        }
     }
 
     pub(crate) fn deinit_and_delete_package(&mut self) {

@@ -140,23 +140,8 @@ impl PackageManager {
             if !parsed.valid || parsed.wildcard != semver::query::Wildcard::None {
                 continue;
             }
-            // not handling OOM
             // TODO: wildcard
-            let mut version = parsed.version.min();
-            let total = (version.tag.build.len() + version.tag.pre.len()) as usize;
-            if total > 0 {
-                let len_before = tags_buf.len();
-                // `clone_into` writes exactly `total` bytes (build.len + pre.len)
-                // into `available` and advances it; zero-fill the tail first so
-                // we can hand it out as a safe `&mut [u8]` instead of slicing
-                // raw spare capacity.
-                tags_buf.resize(len_before + total, 0);
-                let mut available = &mut tags_buf[len_before..];
-                let new_version = version.clone_into(name, &mut available);
-                version = new_version;
-            }
-
-            list.push(version);
+            list.push(parsed.version.min().clone_into(name, tags_buf));
         }
 
         Ok(list)
@@ -333,11 +318,10 @@ impl PackageManager {
                     continue;
                 }
 
-                let features = match pkg_resolutions[parent_id].tag {
-                    ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder => {
-                        self.options.local_package_features
-                    }
-                    _ => self.options.remote_package_features,
+                let features = if pkg_resolutions[parent_id].tag.is_local_package() {
+                    self.options.local_package_features
+                } else {
+                    self.options.remote_package_features
                 };
                 // even if optional dependencies are enabled, it's still allowed to fail
                 if failed_dep.behavior.is_optional() || !failed_dep.behavior.is_enabled(features) {
@@ -391,14 +375,20 @@ impl PackageManager {
                     {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            (failed_dep.version.literal.fmt(string_buf),),
+                            (bun_core::fmt::for_terminal(
+                                failed_dep.version.literal.fmt(string_buf),
+                            ),),
                         );
                     } else {
                         Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
                             (
-                                bstr::BStr::new(failed_dep.name.slice(string_buf)),
-                                failed_dep.version.literal.fmt(string_buf),
+                                bun_core::fmt::escape_control_chars(
+                                    failed_dep.name.slice(string_buf),
+                                ),
+                                bun_core::fmt::for_terminal(
+                                    failed_dep.version.literal.fmt(string_buf),
+                                ),
                             ),
                         );
                     }

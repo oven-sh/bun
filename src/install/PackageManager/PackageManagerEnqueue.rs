@@ -20,7 +20,7 @@ use crate::lockfile::PackageIndexEntry;
 use crate::lockfile::package::Package;
 use crate::lockfile_real as Lockfile;
 use crate::package_manager_real::{
-    self, FailFn, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
+    self, PackageManager, SuccessFn, TaskCallbackList, determine_preinstall_state,
     get_cache_directory, get_preinstall_state, get_temporary_directory, run_tasks,
     set_preinstall_state,
 };
@@ -50,15 +50,6 @@ fn verbose_install() -> bool {
 // `PatchTask.callback` discriminant — routed to the real
 // `patch_install::Callback` enum (CalcHash / Apply).
 
-// `SuccessFn` / `FailFn` are bare `fn(&mut PackageManager, ...)` pointers; the
-// real bodies are inherent methods, so reference them via the type path.
-#[allow(non_upper_case_globals)]
-const assign_resolution: SuccessFn = PackageManager::assign_resolution;
-#[allow(non_upper_case_globals)]
-const assign_root_resolution: SuccessFn = PackageManager::assign_root_resolution;
-#[allow(non_upper_case_globals)]
-const fail_root_resolution: FailFn = PackageManager::fail_root_resolution;
-
 // The `use package_manager_real::PackageManager`
 // above already pulls the `declare_scope!`-generated `static PackageManager: ScopedLogger`
 // (value namespace) alongside the struct (type namespace), so re-declaring it here
@@ -85,8 +76,7 @@ pub fn enqueue_dependency_with_main(
         dependency,
         resolution,
         install_peer,
-        assign_resolution,
-        None,
+        PackageManager::assign_resolution,
         false,
     )
 }
@@ -108,42 +98,48 @@ pub fn enqueue_dependency_list(
         let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
         let resolution = this.lockfile.buffers.resolutions[i as usize];
         if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
-            let path_sep = match dependency.version.tag {
-                dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
-                _ => bun_fmt::PathSep::Any,
-            };
-            // `format_args!` borrows temporaries — bind the
-            // formatter first so it outlives the macro expansion.
-            let realname = dependency.realname();
-            let path_fmt = bun_fmt::fmt_path_u8(
-                this.lockfile.str(&realname),
-                bun_fmt::PathFormatOptions {
-                    path_sep,
-                    escape_backslashes: false,
-                },
-            );
-            let log = this.log_mut();
-            if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-                log.add_warning_with_note(
-                    None,
-                    bun_ast::Loc::default(),
-                    err.name().as_bytes(),
-                    format_args!("error occurred while resolving {}", path_fmt),
-                );
-            } else {
-                log.add_zig_error_with_note(
-                    err.name(),
-                    format_args!("error occurred while resolving {}", path_fmt),
-                );
-            }
-
-            i += 1;
-            continue;
+            add_dependency_error(this, &dependency, err);
         }
         i += 1;
     }
 
     this.drain_dependency_list();
+}
+
+/// Logged to `this.log`; the install fails later when `has_errors()` is checked.
+#[cold]
+#[inline(never)]
+pub(crate) fn add_dependency_error(
+    this: &mut PackageManager,
+    dependency: &Dependency,
+    err: crate::Error,
+) {
+    let path_sep = match dependency.version.tag {
+        dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
+        _ => bun_fmt::PathSep::Any,
+    };
+    let realname = dependency.realname();
+    let path_fmt = bun_fmt::EscapeControlChars(bun_fmt::fmt_path_u8(
+        this.lockfile.str(&realname),
+        bun_fmt::PathFormatOptions {
+            path_sep,
+            escape_backslashes: false,
+        },
+    ));
+    let log = this.log_mut();
+    if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
+        log.add_warning_with_note(
+            None,
+            bun_ast::Loc::default(),
+            err.name().as_bytes(),
+            format_args!("error occurred while resolving {}", path_fmt),
+        );
+    } else {
+        log.add_zig_error_with_note(
+            err.name(),
+            format_args!("error occurred while resolving {}", path_fmt),
+        );
+    }
 }
 
 pub fn enqueue_tarball_for_download(
@@ -462,8 +458,7 @@ pub fn enqueue_dependency_to_root(
             &dependency,
             invalid_package_id,
             false,
-            assign_root_resolution,
-            Some(fail_root_resolution),
+            PackageManager::assign_root_resolution,
             true,
         ) {
             return DependencyToEnqueue::Failure(err);
@@ -645,12 +640,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-    fail_fn: Option<FailFn>,
-    // The two `SuccessFn` candidates
-    // (`assign_resolution` / `assign_root_resolution`) have byte-identical
-    // bodies in release builds, so Apple ld64 (which ignores `.llvm_addrsig`)
-    // folds them and a runtime fn-pointer address comparison is unsound. Thread
-    // an explicit flag instead.
+    // `enqueue_dependency_to_root` (auto-install): resolution errors go to `this.log` instead of propagating.
+    // A flag rather than a `success_fn` address comparison, which linker folding would break.
     is_root: bool,
 ) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
@@ -770,6 +761,46 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         version_was_replaced = false;
         break 'version dependency.version.clone();
     };
+
+    // Refuse an unsafe alias (a future folder) or registry name before either is fetched or printed; empty is tolerated.
+    let alias = this.lockfile.str(&dependency.name);
+    let alias_is_safe = if alias == this.lockfile.str(&dependency.version.literal) {
+        // `bun add <specifier>`'s alias until `assign_resolution` names it: never a folder, but printed.
+        !dependency::contains_control_character(alias)
+    } else {
+        alias.is_empty() || dependency::is_safe_install_folder_name(alias)
+    };
+    let registry_name: &[u8] = match version.tag {
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
+            this.lockfile.str(&name)
+        }
+        _ => b"",
+    };
+    let invalid_name = if !alias_is_safe {
+        Some(alias)
+    } else if !registry_name.is_empty() && !dependency::is_safe_install_folder_name(registry_name) {
+        Some(registry_name)
+    } else {
+        None
+    };
+    if let Some(invalid_name) = invalid_name {
+        let name = bun_fmt::escape_control_chars(invalid_name);
+        if dependency.behavior.is_required() {
+            this.log_mut().add_error_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!("Invalid dependency name \"{name}\""),
+            );
+        } else {
+            this.log_mut().add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!("Invalid dependency name \"{name}\""),
+            );
+        }
+        return Ok(());
+    }
+
     let mut loaded_manifest: Option<Npm::PackageManifest> = None;
 
     match version.tag {
@@ -797,48 +828,45 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         Err(err) => {
                             if err == crate::Error::DistTagNotFound {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
-                                    } else if dependency.behavior.is_peer() {
-                                        warn_unmet_peer_dependency(this, name, &version);
+                                    if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
-                                        this.log_mut()
-                    .add_error_fmt(
-                                                None,
-                                                bun_ast::Loc::EMPTY,
-                                                format_args!(
-                                                    "Package \"{}\" with tag \"{}\" not found, but package exists",
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
-                                                    bstr::BStr::new(
-                                                        this.lockfile.str(&version.dist_tag().tag)
-                                                    ),
+                                        this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "Package \"{}\" with tag \"{}\" not found, but package exists",
+                                                bun_fmt::escape_control_chars(this.lockfile.str(&name)),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&version.dist_tag().tag)
                                                 ),
-                                            );
+                                            ),
+                                        );
                                     }
                                 }
                                 return Ok(());
                             } else if err == crate::Error::NoMatchingVersion {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
-                                    } else if dependency.behavior.is_peer() {
-                                        warn_unmet_peer_dependency(this, name, &version);
+                                    if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
                                             None,
                                             bun_ast::Loc::EMPTY,
                                             "No version matching \"{}\" found for specifier \"{}\"<r> <d>(but package exists)<r>",
-                                            bstr::BStr::new(this.lockfile.str(&version.literal)),
-                                            bstr::BStr::new(this.lockfile.str(&name)),
+                                            bun_fmt::escape_control_chars(
+                                                this.lockfile.str(&version.literal)
+                                            ),
+                                            bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                                         );
                                     }
                                 }
                                 return Ok(());
                             } else if err == crate::Error::TooRecentVersion {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
+                                    if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
                                         let age_gate_ms =
                                             this.options.minimum_release_age_ms.unwrap_or(0.0);
@@ -848,8 +876,10 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "Package \"{}\" with tag \"{}\" not found<r> <d>(all versions blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
+                                                bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.dist_tag().tag)
                                                 ),
                                                 age_gate_ms / MS_PER_S,
@@ -860,9 +890,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 "No version matching \"{}\" found for specifier \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
-                                                bstr::BStr::new(
+                                                bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.literal)
+                                                ),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
                                                 ),
                                                 age_gate_ms / MS_PER_S,
                                             );
@@ -872,17 +904,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 return Ok(());
                             } else if err == crate::Error::MissingPackageJSON {
                                 if dependency.behavior.is_required() {
-                                    if let Some(fail) = fail_fn {
-                                        fail(this, dependency, id, err);
-                                    } else if version.tag == dependency::version::Tag::Folder {
+                                    if version.tag == dependency::version::Tag::Folder {
                                         this.log_mut()
                     .add_error_fmt(
                                                 None,
                                                 bun_ast::Loc::EMPTY,
                                                 format_args!(
                                                     "Could not find package.json for \"file:{}\" dependency \"{}\"",
-                                                    bstr::BStr::new(this.lockfile.str(version.folder())),
-                                                    bstr::BStr::new(this.lockfile.str(&name)),
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(version.folder())),
+                                                    bun_fmt::escape_control_chars(this.lockfile.str(&name)),
                                                 ),
                                             );
                                     } else {
@@ -891,17 +921,26 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                             bun_ast::Loc::EMPTY,
                                             format_args!(
                                                 "Could not find package.json for dependency \"{}\"",
-                                                bstr::BStr::new(this.lockfile.str(&name)),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
                                             ),
                                         );
                                     }
                                 }
                                 return Ok(());
+                            } else if is_root {
+                                this.log_mut().add_error_fmt(
+                                    None,
+                                    bun_ast::Loc::EMPTY,
+                                    format_args!(
+                                        "{} while resolving package \"{}\"",
+                                        err.name(),
+                                        bun_fmt::escape_control_chars(this.lockfile.str(&name)),
+                                    ),
+                                );
+                                return Ok(());
                             } else {
-                                if let Some(fail) = fail_fn {
-                                    fail(this, dependency, id, err);
-                                    return Ok(());
-                                }
                                 return Err(err);
                             }
                         }
@@ -916,12 +955,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 bun_core::pretty_errorln!(
                                     "   -> \"{}\": \"{}\" -> {}@{}",
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    bstr::BStr::new(label),
+                                    bun_fmt::escape_control_chars(label),
                                     bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                                    result.package.resolution.fmt(
+                                    bun_fmt::EscapeControlChars(result.package.resolution.fmt(
                                         this.lockfile.buffers.string_bytes.as_slice(),
                                         bun_fmt::PathSep::Auto
-                                    ),
+                                    )),
                                 );
                             }
                             // Resolve dependencies first
@@ -1017,12 +1056,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         }
 
                         if !dependency.behavior.is_peer() || install_peer {
-                            if !this.has_created_network_task(
+                            let needs_extended_manifest = run_tasks::needs_extended_manifest(
+                                this,
+                                dependency.behavior,
+                                task_id,
+                            );
+                            if !run_tasks::has_created_manifest_task(
+                                this,
                                 task_id,
                                 dependency.behavior.is_required(),
+                                needs_extended_manifest,
                             ) {
-                                let needs_extended_manifest =
-                                    this.options.minimum_release_age_ms.is_some();
                                 if this.options.enable.manifest_cache() {
                                     let mut expired = false;
                                     // SAFETY: `this_ptr` is the live exclusive
@@ -1050,8 +1094,15 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 
                                         // If it's an exact package version already living in the cache
                                         // We can skip the network request, even if it's beyond the caching period
+                                        // (unless minimum-release-age needs publish times an abbreviated manifest lacks).
                                         if version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
+                                            && (!needs_extended_manifest
+                                                || loaded_manifest
+                                                    .as_ref()
+                                                    .unwrap()
+                                                    .pkg
+                                                    .has_extended_manifest)
                                         {
                                             if let Some(find_result) =
                                                 loaded_manifest.as_ref().unwrap().find_by_version(
@@ -1068,29 +1119,28 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 if let Some(min_age_ms) =
                                                     this.options.minimum_release_age_ms
                                                 {
-                                                    if !loaded_manifest
-                                                        .as_ref()
-                                                        .unwrap()
-                                                        .should_exclude_from_age_filter(
-                                                            this.options.minimum_release_age_excludes,
-                                                        )
-                                                        && Npm::PackageManifest::is_package_version_too_recent(
-                                                            find_result.package, min_age_ms,
-                                                        )
+                                                    let manifest =
+                                                        loaded_manifest.as_ref().unwrap();
+                                                    let excludes =
+                                                        this.options.minimum_release_age_excludes;
+                                                    if !manifest
+                                                        .should_exclude_from_age_filter(excludes)
+                                                        && manifest
+                                                            .is_version_blocked_by_age_filter(
+                                                                find_result,
+                                                                min_age_ms,
+                                                                excludes,
+                                                            )
                                                     {
-                                                        let package_name = this.lockfile.str(&name);
-                                                        let min_age_seconds = min_age_ms / MS_PER_S;
-                                                        let _ = this.log_mut().add_error_fmt(
-                                                            None,
-                                                            bun_ast::Loc::EMPTY,
-                                                            format_args!(
-                                                                "Version \"{}@{}\" was published within minimum release age of {} seconds",
-                                                                bstr::BStr::new(package_name),
-                                                                find_result.version.fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                                                min_age_seconds,
-                                                            ),
+                                                        // Reported by the `TooRecentVersion` arm above, like a fresh manifest would be.
+                                                        resolve_result_ =
+                                                            Err(crate::Error::TooRecentVersion);
+                                                        run_tasks::manifest_request_not_sent(
+                                                            this,
+                                                            task_id,
+                                                            needs_extended_manifest,
                                                         );
-                                                        return Ok(());
+                                                        continue 'retry_with_new_resolve_result;
                                                     }
                                                 }
                                                 // reshaped for borrowck — `find_result`
@@ -1121,8 +1171,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     .flatten()
                                                 {
                                                     resolve_result_ = Ok(Some(new_resolve_result));
-                                                    let _ =
-                                                        this.network_dedupe_map.remove(&task_id);
+                                                    run_tasks::manifest_request_not_sent(
+                                                        this,
+                                                        task_id,
+                                                        needs_extended_manifest,
+                                                    );
                                                     continue 'retry_with_new_resolve_result;
                                                 }
                                             }
@@ -1131,7 +1184,11 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         // Was it recent enough to just load it without the network call?
                                         if this.options.enable.manifest_cache_control() && !expired
                                         {
-                                            let _ = this.network_dedupe_map.remove(&task_id);
+                                            run_tasks::manifest_request_not_sent(
+                                                this,
+                                                task_id,
+                                                needs_extended_manifest,
+                                            );
                                             continue 'retry_from_manifests_ptr;
                                         }
                                     }
@@ -1408,6 +1465,17 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         dependency::version::Tag::Symlink | dependency::version::Tag::Workspace => {
             let dependency_tag = version.tag;
 
+            if dependency_tag == dependency::version::Tag::Symlink
+                && !version_was_replaced
+                && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(version.symlink()))
+                && let Some((declarer, false)) = this.lockfile.declarer_of(id)
+            {
+                if dependency.behavior.is_required() {
+                    reject_escaping_link_of_remote_package(this, declarer, dependency);
+                }
+                return Ok(());
+            }
+
             let _result = match get_or_put_resolved_package(
                 this,
                 name_hash,
@@ -1435,12 +1503,12 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         bun_core::pretty_errorln!(
                             "   -> \"{}\": \"{}\" -> {}@{}",
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            bstr::BStr::new(label),
+                            bun_fmt::escape_control_chars(label),
                             bstr::BStr::new(this.lockfile.str(&result.package.name)),
-                            result.package.resolution.fmt(
+                            bun_fmt::EscapeControlChars(result.package.resolution.fmt(
                                 this.lockfile.buffers.string_bytes.as_slice(),
                                 bun_fmt::PathSep::Auto
-                            ),
+                            )),
                         );
                     }
                     // We shouldn't see any dependencies
@@ -1517,6 +1585,16 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
+            if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
+                && !version_was_replaced
+                && let Some((declarer, false)) = this.lockfile.declarer_of(id)
+                && !this.lockfile.has_equal_root_dependency(dependency)
+            {
+                if dependency.behavior.is_required() {
+                    reject_local_tarball_of_remote_package(this, declarer, dependency);
+                }
+                return Ok(());
+            }
             let res: Resolution = match &tarball.uri {
                 dependency::tarball::Uri::Local(path) => {
                     Resolution::init(ResolutionTagged::LocalTarball(*path))
@@ -1643,20 +1721,89 @@ pub fn enqueue_dependency_with_main_and_success_fn(
 }
 
 /// Unmet peers stay unresolved instead of failing the install; see `may_stay_unresolved`.
+/// `err` is the `NoMatchingVersion` / `DistTagNotFound` / `TooRecentVersion` the lookup returned.
 #[cold]
 #[inline(never)]
 fn warn_unmet_peer_dependency(
     this: &PackageManager,
     name: SemverString,
     version: &dependency::Version,
+    err: crate::Error,
 ) {
-    bun_ast::add_warning_pretty!(
-        this.log_mut(),
+    let literal = bstr::BStr::new(this.lockfile.str(&version.literal));
+    let name = bstr::BStr::new(this.lockfile.str(&name));
+    if err == crate::Error::TooRecentVersion {
+        bun_ast::add_warning_pretty!(
+            this.log_mut(),
+            None,
+            bun_ast::Loc::EMPTY,
+            "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(blocked by minimum-release-age: {} seconds)<r>",
+            literal,
+            name,
+            this.options.minimum_release_age_ms.unwrap_or(0.0) / MS_PER_S,
+        );
+    } else {
+        bun_ast::add_warning_pretty!(
+            this.log_mut(),
+            None,
+            bun_ast::Loc::EMPTY,
+            "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
+            literal,
+            name,
+        );
+    }
+}
+
+/// `enqueue_local_tarball` would read the path relative to the project, not to the declarer.
+#[cold]
+#[inline(never)]
+fn reject_local_tarball_of_remote_package(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+) {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    let name = bstr::BStr::new(dependency.name.slice(buf));
+    let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
+    let declarer_name = bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf));
+    this.log_mut().add_range_error_fmt_with_notes(
+        None,
+        bun_ast::Range::NONE,
+        Box::new([bun_ast::range_data(
+            None,
+            bun_ast::Range::NONE,
+            bun_ast::alloc_print(format_args!(
+                "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
+            )),
+        )]),
+        format_args!(
+            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
+            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        ),
+    );
+}
+
+/// `normalize_package_json_path` resolves the value against the project, not the declaring package, so only package.json files read from the project may use `..` or an absolute path.
+#[cold]
+#[inline(never)]
+fn reject_escaping_link_of_remote_package(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+) {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    this.log_mut().add_error_fmt(
         None,
         bun_ast::Loc::EMPTY,
-        "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
-        bstr::BStr::new(this.lockfile.str(&version.literal)),
-        bstr::BStr::new(this.lockfile.str(&name)),
+        format_args!(
+            "refusing to resolve \"{}@{}\" declared by {}@{}: link: paths with \"..\" or an absolute path are only allowed in the package.json files of this project",
+            bstr::BStr::new(dependency.name.slice(buf)),
+            bstr::BStr::new(dependency.version.literal.slice(buf)),
+            bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf)),
+            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        ),
     );
 }
 
@@ -2075,13 +2222,7 @@ fn get_or_put_resolved_package_with_find_result(
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if !this.update_requests.is_empty() {
-            // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
-            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-            (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
-                || (name_hash != dependency.name_hash
-                    && this.is_update_request(name_hash, name.slice(string_buf))))
-                && crate::update_scope::UpdateScope::of(&*this)
-                    .contains_dependency(&this.lockfile, dependency_id)
+            is_named_update_row(this, dependency, dependency_id, name_hash, name)
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
             // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog
@@ -2099,10 +2240,21 @@ fn get_or_put_resolved_package_with_find_result(
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
-    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
+    // A patched package is held while the range still allows it (audit fix does not set to_update and moves it);
+    // a row owned by a regular package stays on the copy a direct row (enqueued first) resolves to when its
+    // range allows, as a fresh resolution would dedupe it there.
     if should_update && !behavior.is_peer() {
-        if let Some(id) = patched_package_satisfying(this, name_hash, version) {
+        let lockfile = &this.lockfile;
+        let held = if let Some(id) = lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
+            Some(id)
+        } else if !lockfile.is_workspace_dependency(dependency_id) {
+            let direct = |id| lockfile.is_direct_dependency_resolution(id);
+            lockfile.package_satisfying(name_hash, version, direct)
+        } else {
+            None
+        };
+        if let Some(id) = held {
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(id as usize),
@@ -2114,23 +2266,16 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // Determinism: passing `version` here unconditionally lets a
-    // peer like `>= 1.0.2` collapse onto whichever sibling-appended entry
-    // (e.g. `1.0.9`) happens to be highest in the index *at this instant* — a
-    // network-order artefact that the `^1.0.2` peer-hoisting test already
-    // todoIf's on macOS. The floor guard in `get_package_id` was
-    // meant to close that, but its exact-pinned/same-major exemptions reopen
-    // it when *every* candidate is an exact-pinned same-major sibling
-    // (`uses-a-dep-1..10`). For deferred peers, suppress the satisfies-
-    // fallback so only an exact `eql(find_result)` can bind here; everything
-    // else falls through to the `is_peer && !install_peer` defer below and is
-    // resolved deterministically by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`. `*` is left alone — it expresses no
-    // version preference, and the "peer *" hoisting test depends on it
-    // deduping to whatever sibling pin exists rather than the manifest floor.
-    let suppress_peer_satisfies = behavior.is_peer()
-        && !install_peer
-        && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
+    // A deferred peer may only reuse an exact match: which siblings exist yet depends on arrival
+    // order, so its range match waits for the `install_peer` pass; likewise only regular rows' pins count.
+    let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
+    let pins = !behavior.is_peer()
+        && version.tag == dependency::version::Tag::Npm
+        && version.npm().version.is_exact();
+    let npm_resolution = Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
+        version: find_result.version,
+        url: find_result.package.tarball_url.value,
+    }));
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {
@@ -2138,11 +2283,24 @@ fn get_or_put_resolved_package_with_find_result(
         } else {
             Some(version)
         },
-        &Resolution::init(ResolutionTagged::Npm(ResolutionNpmValue {
-            version: find_result.version,
-            url: find_result.package.tarball_url.value,
-        })),
+        &npm_resolution,
     ) {
+        if pins {
+            this.lockfile.mark_pinned_by_reuse(id);
+        }
+        // The existing entry may come from an abbreviated manifest or a pre-`libc` lockfile.
+        if find_result.package.libc != Npm::Libc::NONE {
+            let buf = this.lockfile.buffers.string_bytes.as_slice();
+            let same_version = this.lockfile.packages.items_resolution()[id as usize].eql(
+                &npm_resolution,
+                buf,
+                buf,
+            );
+            let meta = &mut this.lockfile.packages.items_meta_mut()[id as usize];
+            if same_version && meta.libc == Npm::Libc::NONE {
+                meta.libc = find_result.package.libc;
+            }
+        }
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
             package: *this.lockfile.packages.get(id as usize),
@@ -2170,15 +2328,9 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
-    // Record exact-version pins so `Lockfile::get_package_id`'s
-    // order-independence guard can tell them apart from range-resolved
-    // entries (which it treats as network-order artefacts).
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
-        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
-    }
+    // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here; `package`
+    // was returned by value above.
+    unsafe { &mut *(*this_ptr).lockfile }.mark_appended_for(package.meta.id, dependency_id, pins);
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.
@@ -2198,6 +2350,7 @@ fn get_or_put_resolved_package_with_find_result(
     let result = match determine_preinstall_state(
         this,
         &package,
+        behavior,
         &mut name_and_version_hash,
         &mut patchfile_hash,
     ) {
@@ -2296,107 +2449,16 @@ fn get_or_put_resolved_package(
     success_fn: SuccessFn,
 ) -> crate::Result<Option<ResolvedPackageResult>> {
     if install_peer && behavior.is_peer() {
-        if let Some(index) = this.lockfile.package_index.get(&name_hash) {
-            let resolutions = this.lockfile.packages.items_resolution();
-            match index {
-                PackageIndexEntry::Id(existing_id) => {
-                    let existing_id = *existing_id;
-                    if (existing_id as usize) < resolutions.len() {
-                        let existing_resolution = resolutions[existing_id as usize];
-                        if resolution_satisfies_dependency(this, &existing_resolution, version) {
-                            success_fn(this, dependency_id, existing_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-
-                        let res_tag = resolutions[existing_id as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package = this.lockfile.packages.get(existing_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
-                            success_fn(this, dependency_id, existing_id);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
-                PackageIndexEntry::Ids(list) => {
-                    for &existing_id in list.iter() {
-                        if (existing_id as usize) < resolutions.len() {
-                            let existing_resolution = resolutions[existing_id as usize];
-                            if resolution_satisfies_dependency(this, &existing_resolution, version)
-                            {
-                                success_fn(this, dependency_id, existing_id);
-                                return Ok(Some(ResolvedPackageResult {
-                                    package: *this.lockfile.packages.get(existing_id as usize),
-                                    ..Default::default()
-                                }));
-                            }
-                        }
-                    }
-
-                    if (list[0] as usize) < resolutions.len() {
-                        let res_tag = resolutions[list[0] as usize].tag;
-                        let ver_tag = version.tag;
-                        if (res_tag == ResolutionTag::Npm
-                            && ver_tag == dependency::version::Tag::Npm)
-                            || (res_tag == ResolutionTag::Git
-                                && ver_tag == dependency::version::Tag::Git)
-                            || (res_tag == ResolutionTag::Github
-                                && ver_tag == dependency::version::Tag::Github)
-                        {
-                            let existing_package_id = list[0];
-                            let existing_package =
-                                this.lockfile.packages.get(existing_package_id as usize);
-                            this.log_mut().add_warning_fmt(
-                                None,
-                                bun_ast::Loc::EMPTY,
-                                format_args!(
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    existing_package
-                                        .name
-                                        .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                                    existing_package.resolution.fmt(
-                                        this.lockfile.buffers.string_bytes.as_slice(),
-                                        bun_fmt::PathSep::Auto
-                                    ),
-                                ),
-                            );
-                            success_fn(this, dependency_id, list[0]);
-                            return Ok(Some(ResolvedPackageResult {
-                                // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                package: *this.lockfile.packages.get(existing_package_id as usize),
-                                ..Default::default()
-                            }));
-                        }
-                    }
-                }
-            }
+        if let Some((existing_id, satisfied)) =
+            existing_peer_target(this, name_hash, version, dependency_id)
+        {
+            return Ok(Some(bind_existing_peer(
+                this,
+                dependency_id,
+                existing_id,
+                satisfied,
+                success_fn,
+            )));
         }
     }
 
@@ -2452,7 +2514,11 @@ fn get_or_put_resolved_package(
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
-            let needs_ext = this.options.minimum_release_age_ms.is_some();
+            let needs_ext = run_tasks::needs_extended_manifest(
+                this,
+                behavior,
+                Task::Id::for_manifest(this.lockfile.str(&name)),
+            );
             let this_ptr: *mut PackageManager = this;
             // SAFETY: `string_bytes` is not resized between here and the
             // `find_result` lookup; `manifest` lives in `this.manifests` and
@@ -2538,7 +2604,7 @@ fn get_or_put_resolved_package(
                                     bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
-                                        bstr::BStr::new(tag_str),
+                                        bun_fmt::escape_control_chars(tag_str),
                                         result.version.fmt(manifest_buf),
                                         newest.fmt(manifest_buf),
                                         min_age_seconds,
@@ -2546,7 +2612,10 @@ fn get_or_put_resolved_package(
                                 }
                                 dependency::version::Tag::Npm => {
                                     // SAFETY: `version.tag == Npm`.
-                                    let version_str = &version.npm().version.fmt(manifest_buf);
+                                    let version_str = &version
+                                        .npm()
+                                        .version
+                                        .fmt(this.lockfile.buffers.string_bytes.as_slice());
                                     bun_core::pretty_errorln!(
                                         "<d>[minimum-release-age]<r> <b>{}<r>@{}<r> selected <green>{}<r> instead of <yellow>{}<r> due to {}-second filter",
                                         bstr::BStr::new(package_name),
@@ -2563,13 +2632,32 @@ fn get_or_put_resolved_package(
 
                     break 'blk Some(result);
                 }
-                Npm::FindVersionResult::Err(err_type) => match err_type {
-                    Npm::FindVersionError::TooRecent
-                    | Npm::FindVersionError::AllVersionsTooRecent => {
-                        return Err(crate::Error::TooRecentVersion);
+                Npm::FindVersionResult::Err(err_type) => {
+                    // The leftover `existing_peer_target` passed over is all there is.
+                    if install_peer && behavior.is_peer() {
+                        if let Some(id) = highest_peer_candidate(&this.lockfile, name_hash, version)
+                        {
+                            return Ok(Some(bind_existing_peer(
+                                this,
+                                dependency_id,
+                                id,
+                                false,
+                                success_fn,
+                            )));
+                        }
                     }
-                    Npm::FindVersionError::NotFound => None, // Handle below with existing logic
-                },
+                    match err_type {
+                        Npm::FindVersionError::TooRecent
+                        | Npm::FindVersionError::AllVersionsTooRecent => {
+                            // The peer pass may still bind it to a same-named package in the tree.
+                            if behavior.is_peer() && !install_peer {
+                                return Ok(None);
+                            }
+                            return Err(crate::Error::TooRecentVersion);
+                        }
+                        Npm::FindVersionError::NotFound => None, // Handle below with existing logic
+                    }
+                }
             };
 
             let find_result = match find_result_opt {
@@ -2656,7 +2744,24 @@ fn get_or_put_resolved_package(
         dependency::version::Tag::Folder => {
             let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
-                if this.lockfile.is_workspace_dependency(dependency_id) {
+                if !this.lockfile.is_workspace_dependency(dependency_id)
+                    && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                {
+                    // overrides/resolutions are only ever parsed from the root
+                    // package.json, so a folder path that reached here via an
+                    // override was written by the user and is trusted the same
+                    // as a direct dependency of the root.
+                    let buf = this.lockfile.buffers.string_bytes.as_slice();
+                    if !this.lockfile.overrides.contains_name(
+                        dependency.name_hash,
+                        dependency.name.slice(buf),
+                        buf,
+                    ) {
+                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
+                    }
+                }
+
+                if matches!(this.lockfile.declarer_of(dependency_id), Some((_, true))) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
                     // `string_bytes`; detach the slice lifetime so the
@@ -2690,22 +2795,8 @@ fn get_or_put_resolved_package(
                     );
                 }
 
-                // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder)) {
-                    // overrides/resolutions are only ever parsed from the root
-                    // package.json, so a folder path that reached here via an
-                    // override was written by the user and is trusted the same
-                    // as a direct dependency of the root.
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    if !this.lockfile.overrides.contains_name(
-                        dependency.name_hash,
-                        dependency.name.slice(buf),
-                        buf,
-                    ) {
-                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
-                    }
-                }
-
+                // Declared by a registry package: `Package::from_npm` keeps the path
+                // relative to that package, which is not on disk until it is installed.
                 let mut package = Package::default();
 
                 {
@@ -2845,8 +2936,24 @@ fn resolved_folder_package(
     }))
 }
 
+/// `bun update <name>`: the row names a requested package (declared or `npm:<name>@…` aliased) and is in the update scope; other resolutions stay pinned.
+pub(crate) fn is_named_update_row(
+    this: &PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    name: SemverString,
+) -> bool {
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+    (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
+        || (name_hash != dependency.name_hash
+            && this.is_update_request(name_hash, name.slice(string_buf))))
+        && crate::update_scope::UpdateScope::of(this)
+            .contains_dependency(&this.lockfile, dependency_id)
+}
+
 /// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
-fn keep_locked_if_ahead<'m>(
+pub(crate) fn keep_locked_if_ahead<'m>(
     manifest: &'m Npm::PackageManifest,
     found: Npm::FindResult<'m>,
     locked: &Option<(Semver::Version, &[u8])>,
@@ -2901,55 +3008,93 @@ fn locked_version_in_lockfile<'a>(
     name_hash: PackageNameHash,
     version: &dependency::Version,
 ) -> Option<(Semver::Version, &'a [u8])> {
-    if version.tag != dependency::version::Tag::Npm {
-        return None;
-    }
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let range = &version.npm().version;
-    candidates
-        .iter()
-        .copied()
-        .filter(|&id| id < lockfile.loaded_package_count)
-        .map(|id| &pkg_res[id as usize])
-        .filter(|res| res.tag == ResolutionTag::Npm)
-        .map(|res| res.npm().version)
-        .find(|&locked| range.satisfies(locked, buf, buf))
-        .map(|locked| (locked, buf))
+    let in_lockfile = |id| id < lockfile.loaded_package_count;
+    let id = lockfile.package_satisfying(name_hash, version, in_lockfile)?;
+    let res = &lockfile.packages.items_resolution()[id as usize];
+    (res.tag == ResolutionTag::Npm)
+        .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))
 }
 
-fn resolution_satisfies_dependency(
-    this: &PackageManager,
-    resolution: &Resolution,
-    dependency: &dependency::Version,
-) -> bool {
-    let buf = this.lockfile.buffers.string_bytes.as_slice();
-    resolution.satisfies_dependency_version(dependency, buf, buf)
-}
-
-fn patched_package_satisfying(
+/// The package to bind a deferred peer row to and whether it satisfies the row; the highest-or-nothing fallback is what `resolve_peer_dep_version_based` rebinds to on load.
+fn existing_peer_target(
     this: &PackageManager,
     name_hash: PackageNameHash,
     version: &dependency::Version,
-) -> Option<PackageID> {
+    row: DependencyID,
+) -> Option<(PackageID, bool)> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    if lockfile.patched_dependencies.count() == 0 {
-        return None;
+    if let Some(id) = lockfile.package_satisfying(name_hash, version, |_| true) {
+        return Some((id, true));
     }
-    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    candidates.iter().copied().find(|&id| {
-        let res = &pkg_res[id as usize];
-        res.tag == ResolutionTag::Npm
-            && res.satisfies_dependency_version(version, buf, buf)
-            && lockfile
-                .patched_dependencies
-                .contains(&Semver::string::Builder::string_hash(
-                    &crate::dedupe::label(lockfile, id),
-                ))
+    let highest = highest_peer_candidate(lockfile, name_hash, version)?;
+    (!would_revive_leftover(lockfile, row, highest)).then_some((highest, false))
+}
+
+/// `package_index` lists the highest version first.
+fn highest_peer_candidate(
+    lockfile: &Lockfile::Lockfile,
+    name_hash: PackageNameHash,
+    version: &dependency::Version,
+) -> Option<PackageID> {
+    let &highest = lockfile.packages_named(name_hash).first()?;
+    let resolution = lockfile.packages.items_resolution().get(highest as usize)?;
+    let same_kind = matches!(
+        (resolution.tag, version.tag),
+        (ResolutionTag::Npm, dependency::version::Tag::Npm)
+            | (ResolutionTag::Git, dependency::version::Tag::Git)
+            | (ResolutionTag::Github, dependency::version::Tag::Github)
+    );
+    same_kind.then_some(highest)
+}
+
+fn bind_existing_peer(
+    this: &mut PackageManager,
+    dependency_id: DependencyID,
+    existing_id: PackageID,
+    satisfied: bool,
+    success_fn: SuccessFn,
+) -> ResolvedPackageResult {
+    if !satisfied {
+        let existing_package = this.lockfile.packages.get(existing_id as usize);
+        this.log_mut().add_warning_fmt(
+            None,
+            bun_ast::Loc::EMPTY,
+            format_args!(
+                "incorrect peer dependency \"{}@{}\"",
+                existing_package
+                    .name
+                    .fmt(this.lockfile.buffers.string_bytes.as_slice()),
+                bun_core::fmt::for_terminal(existing_package.resolution.fmt(
+                    this.lockfile.buffers.string_bytes.as_slice(),
+                    bun_fmt::PathSep::Auto
+                )),
+            ),
+        );
+    }
+    success_fn(this, dependency_id, existing_id);
+    ResolvedPackageResult {
+        // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
+        package: *this.lockfile.packages.get(existing_id as usize),
+        ..Default::default()
+    }
+}
+
+/// `row` is a root or workspace `peerDependencies` entry and `package_id` is held only by non-root peer rows (usually this entry's own earlier install): nothing provides it, and it is not a root row's copy, which `Tree::hoist_dependency` dedupes every other peer onto regardless of range.
+fn would_revive_leftover(
+    lockfile: &Lockfile::Lockfile,
+    row: DependencyID,
+    package_id: PackageID,
+) -> bool {
+    if package_id >= lockfile.loaded_package_count || !lockfile.is_workspace_dependency(row) {
+        return false;
+    }
+    let deps = lockfile.buffers.dependencies.as_slice();
+    let resolutions = lockfile.buffers.resolutions.as_slice();
+    !(lockfile.packages.items_dependencies().iter().enumerate()).any(|(owner, list)| {
+        (list.begin() as usize..list.end() as usize).any(|row| {
+            resolutions[row] == package_id && (owner == 0 || !deps[row].behavior.is_peer())
+        })
     })
 }
 

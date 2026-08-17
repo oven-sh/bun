@@ -258,7 +258,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
 
             // Emit the run of bytes up to the next position where a uuid/npm
             // secret could possibly start, so multi-byte UTF-8 sequences are
-            // written intact (raw bytes, not Latin-1→UTF-8 chars).
+            // written intact (`BStr`: invalid UTF-8 becomes U+FFFD, not a bogus `&str`).
             let mut next = i + 1;
             while next < self.url.len() {
                 let b = self.url[next];
@@ -271,7 +271,7 @@ impl Display for RedactedNpmUrlFormatter<'_> {
                 }
                 next += 1;
             }
-            write_bytes(f, &self.url[i..next])?;
+            write!(f, "{}", bstr::BStr::new(&self.url[i..next]))?;
             i = next;
         }
         Ok(())
@@ -280,6 +280,30 @@ impl Display for RedactedNpmUrlFormatter<'_> {
 
 pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
+}
+
+/// [`redacted_npm_url`] over a `Display` (a lockfile resolution, a dependency specifier); values
+/// without `://` pass unchanged so a version whose pre-release tag looks like a token is not masked.
+pub struct Redacted<T>(T);
+
+impl<T: Display> Display for Redacted<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        // Rendered in full first: the password scan is anchored at the start of the whole value.
+        let text = self.0.to_string();
+        if !strings::contains(text.as_bytes(), b"://") {
+            return f.write_str(&text);
+        }
+        redacted_npm_url(text.as_bytes()).fmt(f)
+    }
+}
+
+pub fn redacted<T: Display>(value: T) -> Redacted<T> {
+    Redacted(value)
+}
+
+/// [`redacted`] + [`EscapeControlChars`]: how untrusted specifiers/resolutions go to a terminal.
+pub fn for_terminal<T: Display>(value: T) -> EscapeControlChars<Redacted<T>> {
+    EscapeControlChars(Redacted(value))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3324,6 +3348,70 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
         remain = &remain[i + 1..];
     }
     write_bytes(writer, remain)
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// escapeControlChars
+// ───────────────────────────────────────────────────────────────────────────
+
+/// Spells out C0/C1 controls and DEL (`\n`, `\x1b`, `\u009b`) in text somebody else authored
+/// (registry manifests, a dependency's `package.json`) so it cannot repaint or forge our output.
+pub struct EscapeControlChars<T>(pub T);
+
+/// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).
+pub struct EscapeControlCharsMultiline<T>(pub T);
+
+/// Invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
+    EscapeControlChars(bstr::BStr::new(text))
+}
+
+pub fn escape_control_chars_multiline(text: &[u8]) -> EscapeControlCharsMultiline<&bstr::BStr> {
+    EscapeControlCharsMultiline(bstr::BStr::new(text))
+}
+
+impl<T: Display> Display for EscapeControlChars<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(EscapeControlCharsWriter(f, false), "{}", self.0)
+    }
+}
+
+impl<T: Display> Display for EscapeControlCharsMultiline<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(EscapeControlCharsWriter(f, true), "{}", self.0)
+    }
+}
+
+/// `.1`: keep `\t`, `\n`, `\r\n`.
+struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>, bool);
+
+impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let Self(f, keep_line_breaks) = self;
+        let mut start = 0;
+        let mut chars = s.char_indices().peekable();
+        while let Some((i, c)) = chars.next() {
+            let pass_through = match c {
+                '\t' | '\n' => *keep_line_breaks,
+                '\r' => *keep_line_breaks && matches!(chars.peek(), Some((_, '\n'))),
+                '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
+                _ => true,
+            };
+            if pass_through {
+                continue;
+            }
+            f.write_str(&s[start..i])?;
+            match c {
+                '\n' => f.write_str("\\n")?,
+                '\r' => f.write_str("\\r")?,
+                '\t' => f.write_str("\\t")?,
+                c if c.is_ascii() => write!(f, "\\x{:02x}", c as u32)?,
+                c => write!(f, "\\u{:04x}", c as u32)?,
+            }
+            start = i + c.len_utf8();
+        }
+        f.write_str(&s[start..])
+    }
 }
 
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs

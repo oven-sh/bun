@@ -9,8 +9,8 @@ use bun_alloc::Arena as Bump;
 use bun_collections::{StringHashMap, index_sort};
 use bun_core::{Global, Output};
 use bun_install::dependency::{self, Behavior};
+use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::options::Do;
 use bun_install::package_manager::{
     LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
@@ -19,8 +19,8 @@ use bun_install::package_manager::{
 use bun_install::package_manager_real::command_line_arguments::UpdateGroups;
 use bun_install::update_scope::selects;
 use bun_install::{
-    CommandLineArguments, GetJsonOptions, GetJsonResult, INVALID_PACKAGE_ID, PackageID,
-    PackageManager, WorkspacePackageJsonCacheEntry, resolution,
+    CommandLineArguments, GetJsonOptions, INVALID_PACKAGE_ID, PackageID, PackageManager,
+    WorkspacePackageJsonCacheEntry, resolution,
 };
 use bun_install_types::DependencyGroup;
 use bun_js_printer::{self as js_printer, BufferPrinter, BufferWriter, PrintJsonOptions};
@@ -181,6 +181,36 @@ impl UpdateInteractiveCommand {
         }
     }
 
+    /// A workspace's package.json through the manager's cache. One that cannot
+    /// be read or parsed is reported and returns `None`, so the caller skips
+    /// that workspace and carries on with the others.
+    fn load_package_json<'m>(
+        manager: &'m mut PackageManager,
+        package_json_path: &[u8],
+    ) -> Option<&'m mut WorkspacePackageJsonCacheEntry> {
+        // `log_mut()` returns a borrow decoupled from `&self`, so it can
+        // overlap the `workspace_package_json_cache` field borrow.
+        let log = manager.log_mut();
+        let result = manager.workspace_package_json_cache.get_with_path(
+            log,
+            package_json_path,
+            GetJsonOptions {
+                guess_indentation: true,
+                ..Default::default()
+            },
+        );
+        match result.entry() {
+            Ok(entry) => Some(entry),
+            Err((step, err)) => {
+                Output::err_generic(
+                    "Failed to {s} package.json at {s}: {s}",
+                    (step.verb(), BStr::new(package_json_path), err.name()),
+                );
+                None
+            }
+        }
+    }
+
     // Helper to update a catalog entry at a specific path in the package.json AST
     // No `*PackageManager` parameter: there is no per-manager allocator,
     // and dropping it avoids overlapping `&mut PackageManager` with the live
@@ -334,36 +364,9 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            // Load and parse the package.json
-            // Reshaped for borrowck — `log_mut()` returns a borrow
-            // decoupled from `&self`, so it can overlap the disjoint
-            // `workspace_package_json_cache` field borrow below.
-            let log = manager.log_mut();
-            let package_json: &mut WorkspacePackageJsonCacheEntry =
-                match manager.workspace_package_json_cache.get_with_path(
-                    log,
-                    package_json_path,
-                    GetJsonOptions {
-                        guess_indentation: true,
-                        ..Default::default()
-                    },
-                ) {
-                    GetJsonResult::ParseErr(err) => {
-                        Output::err_generic(
-                            "Failed to parse package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::ReadErr(err) => {
-                        Output::err_generic(
-                            "Failed to read package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::Entry(entry) => entry,
-                };
+            let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
+                continue;
+            };
 
             let mut modified = false;
 
@@ -464,33 +467,9 @@ impl UpdateInteractiveCommand {
             let package_json_path =
                 Self::build_package_json_path(root_dir, workspace_path, &mut path_buf);
 
-            // Load and parse the package.json properly
-            let log = manager.log_mut();
-            let package_json: &mut WorkspacePackageJsonCacheEntry =
-                match manager.workspace_package_json_cache.get_with_path(
-                    log,
-                    package_json_path,
-                    GetJsonOptions {
-                        guess_indentation: true,
-                        ..Default::default()
-                    },
-                ) {
-                    GetJsonResult::ParseErr(err) => {
-                        Output::err_generic(
-                            "Failed to parse package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::ReadErr(err) => {
-                        Output::err_generic(
-                            "Failed to read package.json at {s}: {s}",
-                            (BStr::new(package_json_path), err.name()),
-                        );
-                        continue;
-                    }
-                    GetJsonResult::Entry(entry) => entry,
-                };
+            let Some(package_json) = Self::load_package_json(manager, package_json_path) else {
+                continue;
+            };
 
             edit_catalog_definitions(
                 &mut updates_for_workspace[..],
@@ -527,24 +506,10 @@ impl UpdateInteractiveCommand {
                 if not_silent
                     && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
                 {
-                    match cause.step {
-                        LoadStep::OpenFile => Output::err_generic(
-                            "failed to open lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ParseFile => Output::err_generic(
-                            "failed to parse lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ReadFile => Output::err_generic(
-                            "failed to read lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::Migrating => Output::err_generic(
-                            "failed to migrate lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                    }
+                    Output::err_generic(
+                        "failed to {s} lockfile: {s}",
+                        (cause.step.verb(), cause.value.name()),
+                    );
                     // SAFETY: `ctx.log` is set by `Command::create_context_data`
                     // for every subcommand and is non-null for the command's
                     // lifetime.
@@ -2478,6 +2443,7 @@ fn preserve_version_prefix(
     original_version: &[u8],
     new_version: &[u8],
 ) -> crate::Result<Box<[u8]>> {
+    let original_version = dependency::trim_literal(original_version);
     if original_version.len() > 1 {
         let mut orig_version: &[u8] = original_version;
         let mut alias: Option<&[u8]> = None;

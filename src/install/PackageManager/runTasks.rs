@@ -27,14 +27,13 @@ use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
-use crate::package_manifest_map::Value as ManifestEntry;
 use bun_core::fmt::PathSep;
 use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path
 // (matches the `Task` module-alias pattern above and `CommandLineArguments.rs`).
 use super::package_manager_options as Options;
-use super::package_manager_options::{Do, Enable};
+use super::package_manager_options::{Do, Enable, RequestKind};
 use crate::isolated_install::store as Store;
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -110,7 +109,11 @@ pub trait RunTasksCallbacks {
     ) {
         unreachable!()
     }
-    fn on_extract_store_installer(_ctx: &mut Self::Ctx, _task_id: Task::Id) {
+    fn on_extract_store_installer(
+        _ctx: &mut Self::Ctx,
+        _task_id: Task::Id,
+        _data: &bun_install::ExtractData,
+    ) {
         unreachable!()
     }
 
@@ -413,6 +416,45 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 }
 
+                let request_failed = task
+                    .response
+                    .metadata
+                    .as_ref()
+                    .is_none_or(|metadata| metadata.response.status_code > 399);
+                // Manifests-only callers (migrations, `bun outdated`) have nothing waiting that could fall back.
+                if request_failed
+                    && is_extended_manifest
+                    && !C::MANIFESTS_ONLY
+                    && fall_back_to_abbreviated_manifest(manager, task.task_id)
+                {
+                    let reason = match task.response.metadata.as_ref() {
+                        Some(metadata) => format!("HTTP {}", metadata.response.status_code),
+                        None => task
+                            .response
+                            .fail
+                            .map(crate::Error::from)
+                            .unwrap_or(crate::Error::HTTPError)
+                            .name()
+                            .to_string(),
+                    };
+                    bun_ast::add_warning_pretty!(
+                        manager.log_mut(),
+                        None,
+                        bun_ast::Loc::EMPTY,
+                        "{} downloading the full package metadata for <b>{}<r>, using the abbreviated metadata: its <b>libc<r> field will not be checked",
+                        reason,
+                        bstr::BStr::new(name),
+                    );
+
+                    process_manifest_task_queue::<C>(
+                        manager,
+                        task.task_id,
+                        extract_ctx,
+                        install_peer,
+                    )?;
+                    continue;
+                }
+
                 let Some(metadata) = task.response.metadata.as_ref() else {
                     // Handle non-retry-able errors.
                     let err = task
@@ -478,23 +520,34 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
+                    // What to configure, on 401/403.
+                    let note = match response.status_code {
+                        401 | 403 => manager.options.missing_credentials_note(
+                            name,
+                            &task.url_buf,
+                            RequestKind::Manifest,
+                        ),
+                        _ => Vec::new(),
+                    };
                     if manager.is_network_task_required(task.task_id) {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>{}",
+                            bun_core::fmt::redacted_npm_url(metadata.url.slice()),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>{}",
+                            bun_core::fmt::redacted_npm_url(metadata.url.slice()),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -542,15 +595,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // reshaped for borrowck —
-                        // `bun_collections::HashMap` lacks `get_or_put` for
-                        // non-`Default` values, so insert by-value (overwriting
-                        // any prior entry) and reborrow.
+                        // `insert` may keep an extended manifest that arrived meanwhile; that one is written back.
                         let name_hash = manifest.pkg.name.hash;
-                        manager
-                            .manifests
-                            .hash_map
-                            .insert(name_hash, ManifestEntry::Manifest(manifest));
+                        manager.manifests.insert(name_hash, manifest)?;
 
                         if manager.options.enable.contains(Enable::MANIFEST_CACHE) {
                             // reshaped for borrowck — compute the
@@ -579,16 +626,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             continue;
                         }
 
-                        let dependency_list_entry = manager
-                            .task_queue
-                            .get_mut(&task.task_id)
-                            .expect("infallible: task queued");
-
-                        let dependency_list = core::mem::take(dependency_list_entry);
-
-                        process_dependency_list_for_ctx::<C>(
+                        process_manifest_task_queue::<C>(
                             manager,
-                            dependency_list,
+                            task.task_id,
                             extract_ctx,
                             install_peer,
                         )?;
@@ -674,12 +714,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 manager.log_mut(),
                                 None,
                                 bun_ast::Loc::EMPTY,
-                                "<r><yellow>warn:<r> {} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
+                                "{} downloading tarball <b>{}@{}<r>. Retrying {}/{}...",
                                 bstr::BStr::new(err.name().as_bytes()),
-                                bstr::BStr::new(extract.name.slice()),
-                                extract
-                                    .resolution
-                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                                bun_core::fmt::escape_control_chars(extract.name.slice()),
+                                bun_core::fmt::for_terminal(
+                                    extract
+                                        .resolution
+                                        .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                                ),
                                 task.retried,
                                 manager.options.max_retry_count,
                             );
@@ -746,10 +788,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
-                            bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                            bun_core::fmt::escape_control_chars(extract.name.slice()),
+                            bun_core::fmt::for_terminal(
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                            ),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
@@ -758,10 +802,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             bun_ast::Loc::EMPTY,
                             "{} downloading tarball <b>{}@{}<r>",
                             err.name(),
-                            bstr::BStr::new(extract.name.slice()),
-                            extract
-                                .resolution
-                                .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto,),
+                            bun_core::fmt::escape_control_chars(extract.name.slice()),
+                            bun_core::fmt::for_terminal(
+                                extract
+                                    .resolution
+                                    .fmt(&manager.lockfile.buffers.string_bytes, PathSep::Auto),
+                            ),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -828,23 +874,37 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
+                    let note = match response.status_code {
+                        401 | 403 => manager.options.missing_credentials_note(
+                            extract.name.slice(),
+                            &task.url_buf,
+                            RequestKind::Tarball(task.authorization),
+                        ),
+                        _ => Vec::new(),
+                    };
                     if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><red><b>GET<r><red> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            "<r><red><b>GET<r><red> {}<d> - {}<r>{}",
+                            bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
+                                metadata.url.slice()
+                            )),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     } else {
                         bun_ast::add_warning_pretty!(
                             manager.log_mut(),
                             None,
                             bun_ast::Loc::EMPTY,
-                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>",
-                            bstr::BStr::new(metadata.url.slice()),
+                            "<r><yellow><b>GET<r><yellow> {}<d> - {}<r>{}",
+                            bun_core::fmt::EscapeControlChars(bun_core::fmt::redacted_npm_url(
+                                metadata.url.slice()
+                            )),
                             response.status_code,
+                            bstr::BStr::new(&note),
                         );
                     }
                     if manager.subcommand != Subcommand::Remove {
@@ -1003,18 +1063,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                let dependency_list_entry = manager
-                    .task_queue
-                    .get_mut(&task.id)
-                    .expect("infallible: task queued");
-                let dependency_list = core::mem::take(dependency_list_entry);
-
-                process_dependency_list_for_ctx::<C>(
-                    manager,
-                    dependency_list,
-                    extract_ctx,
-                    install_peer,
-                )?;
+                process_manifest_task_queue::<C>(manager, task.id, extract_ctx, install_peer)?;
 
                 if let Some(name) = progress_name {
                     manager.set_node_name::<true>(
@@ -1146,13 +1195,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                        C::on_extract_store_installer(extract_ctx, task.id, task.data_extract());
                     } else {
                         unreachable!("unexpected context type");
                     }
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
-                    dependency_id,
                     resolution,
                     // Tag-checked accessor (debug_asserts Extract|LocalTarball);
                     // shared `&task` here coexists with the field-disjoint
@@ -1475,13 +1523,16 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                        C::on_extract_store_installer(
+                            extract_ctx,
+                            task.id,
+                            task.data_git_checkout(),
+                        );
                     } else {
                         unreachable!("unexpected context type");
                     }
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
-                    git_checkout.dependency_id,
                     resolution,
                     // Tag-checked accessor (debug_asserts GitCheckout); shared
                     // `&task` here coexists with the field-disjoint
@@ -1744,6 +1795,73 @@ pub fn has_created_network_task(
     gpe.found_existing
 }
 
+/// `has_created_network_task` per manifest document (abbreviated or extended, see `needs_extended_manifest`);
+/// both responses drain the same `task_queue` entry and `PackageManifestMap::insert` keeps the extended one.
+pub fn has_created_manifest_task(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    is_required: bool,
+    needs_extended_manifest: bool,
+) -> bool {
+    has_created_network_task(this, task_id, is_required);
+    let entry = this
+        .network_dedupe_map
+        .get_mut(&task_id)
+        .expect("inserted by has_created_network_task");
+    core::mem::replace(entry.manifest_requested(needs_extended_manifest), true)
+}
+
+/// The caller of `has_created_manifest_task` resolved from the cache instead of sending the request;
+/// the entry stays while it records anything else (the other kind in flight, a failed extended request).
+pub fn manifest_request_not_sent(
+    this: &mut PackageManager,
+    task_id: Task::Id,
+    needs_extended_manifest: bool,
+) {
+    let Some(entry) = this.network_dedupe_map.get_mut(&task_id) else {
+        return;
+    };
+    *entry.manifest_requested(needs_extended_manifest) = false;
+    if !entry.is_extended_manifest
+        && !entry.has_abbreviated_manifest_request
+        && !entry.extended_manifest_failed
+    {
+        let _ = this.network_dedupe_map.remove(&task_id);
+    }
+}
+
+/// `Options::needs_extended_manifest`, unless the extended request failed and the abbreviated document
+/// stands in (`fall_back_to_abbreviated_manifest`); every lookup on the resolve path goes through this.
+pub fn needs_extended_manifest(
+    this: &PackageManager,
+    dependency: Behavior,
+    task_id: Task::Id,
+) -> bool {
+    if this.options.needs_extended_manifest_to_pick_versions() {
+        return true;
+    }
+    this.options.needs_extended_manifest(dependency)
+        && !this
+            .network_dedupe_map
+            .get(&task_id)
+            .is_some_and(|entry| entry.extended_manifest_failed)
+}
+
+/// The extended request failed for good: dependencies on the package resolve from the abbreviated document
+/// from now on (losing its `libc` filtering); the caller re-enqueues the waiting ones. False when versions are
+/// picked from the extended document (`minimumReleaseAge` needs its publish times).
+pub fn fall_back_to_abbreviated_manifest(this: &mut PackageManager, task_id: Task::Id) -> bool {
+    if this.options.needs_extended_manifest_to_pick_versions() {
+        return false;
+    }
+    let entry = this
+        .network_dedupe_map
+        .get_or_put(task_id)
+        .expect("unreachable");
+    entry.value_ptr.extended_manifest_failed = true;
+    true
+}
+
 pub fn is_network_task_required(this: &PackageManager, task_id: Task::Id) -> bool {
     match this.network_dedupe_map.get(&task_id) {
         Some(v) => v.is_required,
@@ -1822,7 +1940,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // Full struct overwrite that resets
     // every other field (`retried`, `response`, `streaming_committed`,
     // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
-    // `signal_store`) to its struct default. The slot may be uninitialized
+    // `http_proxy_buf`, `signal_store`) to its struct default. The slot may be uninitialized
     // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.
@@ -1951,6 +2069,21 @@ impl PackageManager {
     pub(crate) fn alloc_github_url(&self, repository: &Repository) -> Vec<u8> {
         alloc_github_url(self, repository)
     }
+}
+
+/// Resolves the rows waiting for this manifest; one that needs the extended document re-queues itself on the abbreviated one.
+fn process_manifest_task_queue<C: RunTasksCallbacks>(
+    manager: &mut PackageManager,
+    task_id: Task::Id,
+    extract_ctx: &mut C::Ctx,
+    install_peer: bool,
+) -> crate::Result<()> {
+    let dependency_list_entry = manager
+        .task_queue
+        .get_mut(&task_id)
+        .expect("infallible: task queued");
+    let dependency_list = core::mem::take(dependency_list_entry);
+    process_dependency_list_for_ctx::<C>(manager, dependency_list, extract_ctx, install_peer)
 }
 
 /// Adapter wrapping the existing `PackageManager::process_dependency_list` so

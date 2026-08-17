@@ -5,6 +5,7 @@ use std::time::Instant;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
+use bun_errno::SystemErrno;
 
 use bun_threading::{Mutex, UnboundedQueue};
 use bun_uws as uws;
@@ -1212,8 +1213,31 @@ mod _event_loop_draft {
             Ok(t) => {
                 let _ = HTTP_THREAD_HANDLE.set(t);
             }
-            Err(err) => Output::panic(format_args!("Failed to start HTTP Client thread: {}", err)),
+            Err(err) => exit_spawn_failed(&err),
         }
+    }
+
+    /// Nothing that needs the HTTP thread can go on without it, but a refused
+    /// `pthread_create`/`CreateThread` (`RLIMIT_NPROC`, a container pids limit,
+    /// no memory) is the environment's limit, not a bug: report it like any
+    /// other fatal CLI error rather than through the crash reporter.
+    #[cold]
+    #[inline(never)]
+    fn exit_spawn_failed(err: &std::io::Error) -> ! {
+        match SystemErrno::from_io_error(err) {
+            Some(errno) => {
+                bun_core::err_generic!("Failed to start HTTP Client thread: {}", errno);
+                if errno == SystemErrno::EAGAIN {
+                    bun_core::note!(
+                        "The process or thread limit may have been reached (ulimit -u, or the container's pids limit); raise it or reduce concurrency"
+                    );
+                }
+            }
+            // No errno name for this OS code (most Windows thread-creation
+            // failures): show the OS's own description instead of guessing one.
+            None => bun_core::err_generic!("Failed to start HTTP Client thread: {}", err),
+        }
+        bun_core::Global::crash()
     }
 
     fn on_start(opts: InitOpts) {

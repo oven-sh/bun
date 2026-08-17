@@ -14,6 +14,8 @@ use bun_semver::string::Builder as SemverStringBuilder;
 use bun_sys as Syscall;
 
 use crate::bun_fs::FileSystem;
+use crate::bun_json;
+use crate::initialize_store;
 
 use super::directories;
 use crate::lifecycle_script_runner::{
@@ -23,7 +25,7 @@ use crate::lockfile_real::package::scripts::List as ScriptsList;
 use crate::package_manager_real::Command;
 use crate::resolution_real::Tag as ResolutionTag;
 use bun_install::lockfile::{Lockfile, Package};
-use bun_install::{PackageID, PackageManager, PreinstallState, invalid_package_id};
+use bun_install::{Behavior, PackageID, PackageManager, PreinstallState, invalid_package_id};
 
 impl PackageManager {
     pub(crate) fn ensure_preinstall_state_list_capacity(&mut self, count: usize) {
@@ -61,9 +63,11 @@ impl PackageManager {
     /// A separate `lockfile` parameter would always be `manager.lockfile` at every call
     /// site; collapsed onto `self.lockfile` to avoid the
     /// `&mut self` / `&self.lockfile` aliasing borrowck rejects.
+    /// `dependency` is the dependency `pkg` is being resolved for.
     pub fn determine_preinstall_state(
         &mut self,
         pkg: &Package,
+        dependency: Behavior,
         out_name_and_version_hash: &mut Option<u64>,
         out_patchfile_hash: &mut Option<u64>,
     ) -> PreinstallState {
@@ -71,8 +75,19 @@ impl PackageManager {
             PreinstallState::Unknown => {
                 // Do not automatically start downloading packages which are disabled
                 // i.e. don't download all of esbuild's versions or SWCs
-                if pkg.is_disabled(self.options.cpu, self.options.os) {
+                if !pkg.meta.arch.is_match(self.options.cpu)
+                    || !pkg.meta.os.is_match(self.options.os)
+                {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
+                    return PreinstallState::Done;
+                }
+                // Nor another libc's variant; only for this dependency (`Libc::for_dependency`),
+                // so the state stays untouched and a later regular dependency still installs it.
+                if !pkg
+                    .meta
+                    .libc
+                    .is_match(self.options.libc.for_dependency(dependency))
+                {
                     return PreinstallState::Done;
                 }
 
@@ -140,9 +155,8 @@ impl PackageManager {
                             patch_hash,
                         )
                     }
-                    ResolutionTag::LocalTarball => directories::cached_tarball_folder_name(
-                        self,
-                        *pkg.resolution.local_tarball(),
+                    ResolutionTag::LocalTarball => directories::cached_local_tarball_folder_name(
+                        &pkg.meta.integrity,
                         patch_hash,
                     ),
                     ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name(
@@ -392,6 +406,8 @@ impl PackageManager {
         path.append(original_path.as_slice())?;
         script_env.put(b"PATH", path.slice())?;
 
+        put_npm_package_config_env(&mut script_env, cwd)?;
+
         // Ownership transfers to `LifecycleScriptSubprocess`, which
         // re-uses it across every `spawn_next_script` in the chain. Move the
         // owning `NullDelimitedEnvMap` by value so its `K=V\0` buffers outlive
@@ -468,6 +484,38 @@ impl PackageManager {
     }
 }
 
+/// The package's own `config` strings as `npm_package_config_<key>`, the subset `bun run` exports.
+fn put_npm_package_config_env(
+    script_env: &mut bun_dotenv::Map,
+    package_dir: &[u8],
+) -> Result<(), crate::Error> {
+    let package_json_path = join_abs_string_z::<platform::Auto>(package_dir, &[b"package.json"]);
+    let Ok(json_buf) = Syscall::File::read_from(Syscall::Fd::cwd(), package_json_path.as_bytes())
+    else {
+        return Ok(());
+    };
+    let json_src =
+        bun_ast::Source::init_path_string(package_json_path.as_bytes(), json_buf.as_slice());
+    let mut log = bun_ast::Log::init();
+
+    initialize_store();
+
+    let Ok(parsed) = bun_json::ParsedJson::parse_package_json(&json_src, &mut log) else {
+        return Ok(());
+    };
+    let Some(config) = parsed.root.get(b"config") else {
+        return Ok(());
+    };
+
+    config.try_for_each_property(|key, _, value| match value.as_utf8_string_literal() {
+        Some(value) if !key.is_empty() && !value.is_empty() => {
+            script_env.put(&strings::concat(&[b"npm_package_config_", key]), value)
+        }
+        _ => Ok(()),
+    })?;
+    Ok(())
+}
+
 fn add_package_to_set(
     set: &mut ArrayHashMap<PackageID, ()>,
     lockfile: &Lockfile,
@@ -521,8 +569,14 @@ pub fn get_preinstall_state(this: &PackageManager, package_id: PackageID) -> Pre
 pub fn determine_preinstall_state(
     this: &mut PackageManager,
     pkg: &Package,
+    dependency: Behavior,
     out_name_and_version_hash: &mut Option<u64>,
     out_patchfile_hash: &mut Option<u64>,
 ) -> PreinstallState {
-    this.determine_preinstall_state(pkg, out_name_and_version_hash, out_patchfile_hash)
+    this.determine_preinstall_state(
+        pkg,
+        dependency,
+        out_name_and_version_hash,
+        out_patchfile_hash,
+    )
 }

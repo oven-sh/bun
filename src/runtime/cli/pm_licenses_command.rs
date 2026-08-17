@@ -1,11 +1,10 @@
-use std::borrow::Cow;
 use std::cmp::Ordering;
 use std::io::Write as _;
 
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars, redacted};
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
@@ -44,7 +43,7 @@ struct Entry {
 }
 
 /// Lazily-scanned, sorted entry names of `node_modules/.bun/`; `None` until first needed.
-struct BunStore {
+pub(crate) struct BunStore {
     entries: Option<Vec<Box<[u8]>>>,
 }
 
@@ -154,6 +153,15 @@ impl PmLicensesCommand {
             (selection.ids, false)
         };
 
+        // After the exits above so error output keeps a clean stdout.
+        if pm.options.should_print_command_name() && !json_output {
+            bun_core::pretty!(
+                "<r><b>bun pm licenses <r><d>v{}<r>\n\n",
+                Global::package_json_version_with_sha
+            );
+            Output::flush();
+        }
+
         let options = reachable::Options {
             root: 0,
             dev: features.dev_dependencies,
@@ -161,7 +169,7 @@ impl PmLicensesCommand {
             peer: features.peer_dependencies,
             optional_peer: features.peer_dependencies,
             bundled: true,
-            platform: Some((pm.options.cpu, pm.options.os)),
+            platform: Some((pm.options.cpu, pm.options.os, pm.options.libc)),
         };
         let resolutions = lockfile.buffers.resolutions.as_slice();
         let walk = if flags.dev_only {
@@ -197,7 +205,7 @@ impl PmLicensesCommand {
         let buf = lockfile.buffers.string_bytes.as_slice();
 
         let mut log = Log::init();
-        let mut store = BunStore { entries: None };
+        let mut store = BunStore::init();
         let mut disk = DiskIndex { entries: None };
         let mut entries: Vec<Entry> = Vec::new();
         let mut missing: usize = 0;
@@ -300,7 +308,12 @@ impl PmLicensesCommand {
         if json_output {
             print_json(&entries);
         } else {
-            print_text(&entries, flags.long, checked);
+            print_text(
+                &entries,
+                flags.long,
+                checked,
+                pm.options.should_print_command_name(),
+            );
         }
 
         Output::flush();
@@ -333,19 +346,6 @@ fn license_order(a: &[u8], b: &[u8]) -> Ordering {
                 .cmp(b_key.iter().map(u8::to_ascii_lowercase))
         })
         .then_with(|| a.cmp(b))
-}
-
-fn printable(s: &[u8]) -> Cow<'_, [u8]> {
-    if s.iter().any(u8::is_ascii_control) {
-        Cow::Owned(
-            s.iter()
-                .copied()
-                .filter(|b| !b.is_ascii_control())
-                .collect(),
-        )
-    } else {
-        Cow::Borrowed(s)
-    }
 }
 
 fn tree_locations(lockfile: &Lockfile) -> Vec<Option<Box<[u8]>>> {
@@ -523,6 +523,10 @@ fn author_of(json: &Expr) -> Option<Box<[u8]>> {
 }
 
 impl BunStore {
+    pub(crate) fn init() -> Self {
+        Self { entries: None }
+    }
+
     fn read_info(
         &mut self,
         path: &mut AutoAbsPath,
@@ -543,7 +547,7 @@ impl BunStore {
         read_package_info_at(path, top_len, &segments, log)
     }
 
-    fn lookup(
+    pub(crate) fn lookup(
         &mut self,
         path: &mut AutoAbsPath,
         top_len: usize,
@@ -681,18 +685,29 @@ impl DiskIndex {
     }
 }
 
-fn print_text(entries: &[Entry], long: bool, checked: usize) {
+fn plural(n: usize) -> &'static str {
+    if n == 1 { "" } else { "s" }
+}
+
+fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
     if entries.is_empty() {
-        bun_core::pretty!(
-            "No packages to list <d>(checked {} package{} in bun.lock)<r> ",
-            checked,
-            if checked == 1 { "" } else { "s" }
-        );
-        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("No packages to list");
+        if summary {
+            bun_core::pretty!(
+                " <d>(checked {} package{} in bun.lock)<r> ",
+                checked,
+                plural(checked)
+            );
+            Output::print_start_end_stdout(
+                bun_core::start_time(),
+                bun_core::time::nano_timestamp(),
+            );
+        }
         bun_core::pretty!("\n");
         return;
     }
 
+    let mut licenses = 0;
     let mut start = 0;
     while start < entries.len() {
         let license = &entries[start].license;
@@ -704,9 +719,10 @@ fn print_text(entries: &[Entry], long: bool, checked: usize) {
         if start > 0 {
             Output::print(format_args!("\n"));
         }
+        licenses += 1;
         bun_core::prettyln!(
             "<b>{}<r> <d>({})<r>",
-            BStr::new(&printable(license)),
+            escape_control_chars(license),
             end - start
         );
         for (i, entry) in entries[start..end].iter().enumerate() {
@@ -714,8 +730,8 @@ fn print_text(entries: &[Entry], long: bool, checked: usize) {
             bun_core::pretty!(
                 "<d>{}<r> {}<d>@{}<r>",
                 if last { "└──" } else { "├──" },
-                BStr::new(&entry.name),
-                BStr::new(&entry.version)
+                bun_core::fmt::escape_control_chars(&entry.name),
+                bun_core::fmt::for_terminal(BStr::new(&entry.version))
             );
             if entry.dev_only {
                 bun_core::pretty!(" <d>(dev)<r>");
@@ -727,15 +743,29 @@ fn print_text(entries: &[Entry], long: bool, checked: usize) {
                     .flatten()
                 {
                     if last {
-                        bun_core::prettyln!("    <d>{}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("    <d>{}<r>", escape_control_chars(field));
                     } else {
-                        bun_core::prettyln!("<d>│   {}<r>", BStr::new(&printable(field)));
+                        bun_core::prettyln!("<d>│   {}<r>", escape_control_chars(field));
                     }
                 }
             }
         }
 
         start = end;
+    }
+
+    if summary {
+        bun_core::pretty!(
+            "\n<b>{}<r> package{} across {} license{} <d>(checked {} package{} in bun.lock)<r> ",
+            entries.len(),
+            plural(entries.len()),
+            licenses,
+            plural(licenses),
+            checked,
+            plural(checked)
+        );
+        Output::print_start_end_stdout(bun_core::start_time(), bun_core::time::nano_timestamp());
+        bun_core::pretty!("\n");
     }
 }
 
@@ -801,7 +831,8 @@ fn print_json(entries: &[Entry]) {
                 if i > 0 {
                     out.extend_from_slice(b", ");
                 }
-                json_string(&mut out, &entry.version);
+                let version = redacted(BStr::new(&entry.version)).to_string();
+                json_string(&mut out, version.as_bytes());
             }
             out.extend_from_slice(b"],\n      \"paths\": [");
             for (i, entry) in kept.iter().enumerate() {

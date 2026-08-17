@@ -1401,6 +1401,26 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   expect(await exited2).toBe(0);
 });
 
+// The previous version in the "^ name old -> new" line is copied out of the old
+// lockfile before it is rebuilt. Tags longer than 8 bytes are stored as offsets
+// into that copy, so use a prerelease tag and a build tag that are both longer.
+it("should print the previous prerelease and build tags in the update summary", async () => {
+  const urls: string[] = [];
+  const oldVersion = "1.0.0-canary.20240101+build.20240101";
+  const newVersion = "1.0.0-canary.20240102+build.20240102";
+  // `as` serves the existing baz tarballs for these versions.
+  setHandler(dummyRegistry(urls, { [oldVersion]: { as: "0.0.3" }, latest: oldVersion }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { baz: "^1.0.0-canary.20240101" } }),
+  );
+  expect(await runInPackageDir("install", "--linker=hoisted")).toContain(`+ baz@${oldVersion}`);
+
+  setHandler(dummyRegistry(urls, { [oldVersion]: { as: "0.0.3" }, [newVersion]: { as: "0.0.5" }, latest: newVersion }));
+  const out = await runInPackageDir("update", "--linker=hoisted");
+  expect(out).toContain(`^ baz ${oldVersion} -> ${newVersion}`);
+});
+
 type PerNameManifests = Record<
   string,
   { versions: Record<string, { dependencies?: Record<string, string> }>; latest: string }
@@ -1506,26 +1526,60 @@ it("bun update <name> from the root leaves a member's own entry alone; running i
 it("should update transitive resolutions of a named package", async () => {
   setHandler(
     await perNameRegistry(join(package_dir, ".tarballs"), {
+      shared: { versions: { "1.0.0": {}, "1.0.1": {}, "1.1.0": {} }, latest: "1.1.0" },
+      "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.1" } } }, latest: "1.0.0" },
+    }),
+  );
+  await writeTextLockfileBunfig();
+  // dep-x@1.0.0 depends on shared@^1.0.1, which dedupes onto the root's
+  // exact shared@1.0.1 at install time.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { shared: "1.0.1", "dep-x": "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.1"']);
+
+  // Moving the root down to 1.0.0 leaves dep-x's row where it was: a plain
+  // install never re-resolves a row whose dependent did not change.
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "root", dependencies: { shared: "1.0.0", "dep-x": "^1.0.0" } }),
+  );
+  await runInPackageDir("install");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.0.1"']);
+
+  // The root's exact `1.0.0` cannot move and does not satisfy dep-x's `^1.0.1`,
+  // so dep-x's row must move to 1.1.0 on its own.
+  await runInPackageDir("update", "shared");
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
+  expect(
+    await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
+  ).toMatchObject({ version: "1.1.0" });
+});
+
+// The row re-enters the queue here too, but the root's copy still satisfies it, so it
+// lands back on that copy instead of nesting 1.1.0 next to the root's 1.0.0.
+it("bun update <name> keeps a transitive row on the root's entry while its range allows it", async () => {
+  setHandler(
+    await perNameRegistry(join(package_dir, ".tarballs"), {
       shared: { versions: { "1.0.0": {}, "1.1.0": {} }, latest: "1.1.0" },
       "dep-x": { versions: { "1.0.0": { dependencies: { shared: "^1.0.0" } } }, latest: "1.0.0" },
     }),
   );
   await writeTextLockfileBunfig();
-  // dep-x@1.0.0 depends on shared@^1.0.0, which dedupes onto the root's
-  // exact shared@1.0.0 at install time.
   await writeFile(
     join(package_dir, "package.json"),
     JSON.stringify({ name: "root", dependencies: { shared: "1.0.0", "dep-x": "^1.0.0" } }),
   );
   await runInPackageDir("install");
   expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  const before = await file(join(package_dir, "bun.lock")).text();
 
-  // The root's exact `1.0.0` cannot move; dep-x's `^1.0.0` must move to 1.1.0.
   await runInPackageDir("update", "shared");
-  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"', '"shared@1.1.0"']);
-  expect(
-    await file(join(package_dir, "node_modules", "dep-x", "node_modules", "shared", "package.json")).json(),
-  ).toMatchObject({ version: "1.1.0" });
+  expect(await lockedSharedResolutions()).toEqual(['"shared@1.0.0"']);
+  expect(await file(join(package_dir, "bun.lock")).text()).toBe(before);
+  expect(await exists(join(package_dir, "node_modules", "dep-x", "node_modules"))).toBeFalse();
 });
 
 it("bun update <name> --latest holds back only the root's entry; a transitive edge declared as a dist-tag keeps following it", async () => {
@@ -1779,6 +1833,36 @@ describe("bun update <name> semantics", () => {
       expect(await installedVersion(dir, "no-deps")).toBe("1.0.0");
     });
   }
+
+  // https://github.com/oven-sh/bun/issues/38908
+  it.concurrent("bun update that only rewrites package.json reports the sync instead of (no changes)", async () => {
+    const dir = await setup({ "a-dep": "^1.0.1" });
+    // install already resolved the newest match, so update only moves the declared range
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.10");
+    const first = await update(dir);
+    expect(first.stdout).toContain("(up to date, package.json synced)");
+    expect(first.stdout).not.toContain("(no changes)");
+    await expectInSync(dir, { "a-dep": "^1.0.10" });
+    const second = await update(dir);
+    expect(second.stdout).toContain("(no changes)");
+    expect(second.stdout).not.toContain("package.json synced");
+  });
+
+  // https://github.com/oven-sh/bun/issues/38908
+  it.concurrent("bun update syncing a catalog range reports the package.json write", async () => {
+    const dir = await createDir({
+      "package.json": { name: "mono", private: true, workspaces: ["packages/*"], catalog: { "a-dep": "^1.0.1" } },
+      "packages/web/package.json": { name: "web", version: "1.0.0", dependencies: { "a-dep": "catalog:" } },
+    });
+    await install(dir);
+    const first = await update(dir);
+    expect(first.stdout).toContain("(up to date, package.json synced)");
+    expect(first.stdout).not.toContain("(no changes)");
+    expect((await packageJsonOf(dir)).catalog).toEqual({ "a-dep": "^1.0.10" });
+    const second = await update(dir);
+    expect(second.stdout).toContain("(no changes)");
+    expect(second.stdout).not.toContain("package.json synced");
+  });
 
   it.concurrent("bun update <name> keeps a dist-tag literal as written", async () => {
     const dir = await setup({ "dep-with-tags": "pre-2" });

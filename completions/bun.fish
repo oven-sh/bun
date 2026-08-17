@@ -167,6 +167,9 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from dedupe" -l 'check' -d 'Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything'
 
 complete -c bun \
+	-n "__fish_seen_subcommand_from dedupe" -l 'why' -d "Also list each version's dependents and the ranges they asked for"
+
+complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
 
 complete -c bun \
@@ -220,11 +223,13 @@ complete -c bun -n "__fish_seen_subcommand_from audit" -l "ignore" -r -d "Ignore
 complete -c bun -n "__fish_seen_subcommand_from audit" -l "prod" -d "Omit devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "omit" -r -a "dev optional peer" -d "Omit the given dependency type" -f
 complete -c bun -n "__fish_seen_subcommand_from audit prune" -l "dry-run" -d "Print what would change without changing anything" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "check" -d "Exit with code 1 if node_modules has packages that can be removed, without deleting anything" -f
 complete -c bun -n "__fish_seen_subcommand_from audit; and __fish_seen_subcommand_from fix" -s "L" -l "latest" -d "Also apply fixes that fall outside the ranges declared in package.json or catalogs" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "p" -l "production" -d "Also remove packages that are only needed by devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "P" -l "prod" -d "Also remove packages that are only needed by devDependencies" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "os" -r -d "Prune for a different operating system than the current one" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "cpu" -r -d "Prune for a different CPU architecture than the current one" -f
+complete -c bun -n "__fish_seen_subcommand_from prune" -l "libc" -r -a "glibc musl" -d "Prune for a different libc than the current one" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "linker" -r -a "isolated hoisted" -d "Prune a node_modules installed with the given linker" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -s "F" -l "filter" -r -d "Prune only the matching workspaces" -f
 complete -c bun -n "__fish_seen_subcommand_from prune" -l "silent" -d "Don't log anything" -f

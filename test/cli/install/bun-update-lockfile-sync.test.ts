@@ -280,6 +280,71 @@ describe.concurrent("bun update rewrites bun.lock together with package.json", (
     await expectInSync(dir);
   });
 
+  // Naming a workspace member used to rewrite the entry linking it to `workspace:*` (or, with --latest / an explicit
+  // range, to send the name to the registry), and to add an entry to a root that did not declare the member.
+  test.each([
+    ["workspace:^", ["pkg1"]],
+    ["workspace:~", ["pkg1"]],
+    ["workspace:1.0.0", ["pkg1"]],
+    ["^1.0.0", ["pkg1"]],
+    ["workspace:^", ["pkg1", "--latest"]],
+    ["workspace:^", ["pkg1@^1.0.0"]],
+    ["workspace:^", ["pkg1@latest"]],
+  ])("a %s entry linking a workspace member is kept as written by bun update %j", async (literal, args) => {
+    const dir = await setup(MONOREPO({}, { dependencies: { pkg1: literal } }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", ...args);
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
+  // Same rule for the other non-registry kinds: the registry has a no-deps, so naming this entry with --latest or an
+  // explicit spec used to replace the folder with the registry package (exit 0).
+  test.each([[["no-deps"]], [["no-deps", "--latest"]], [["no-deps@^1.0.0"]], [["no-deps@latest"]]])(
+    "a file: entry is kept as written by bun update %j",
+    async args => {
+      const dir = await setup({
+        "package.json": root({ dependencies: { "no-deps": "file:./local-no-deps" } }),
+        "local-no-deps/package.json": { name: "no-deps", version: "1.0.0" },
+      });
+      const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+      await run(dir, "update", ...args);
+      expect(await pkgText(dir)).toBe(pkgBefore);
+      expect(await lockText(dir)).toBe(lockBefore);
+      expect(await installed(dir, "no-deps")).toMatchObject({ version: "1.0.0" });
+    },
+  );
+
+  test("bun update <workspace member> from a member declaring it keeps the entry as written", async () => {
+    const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:~" } } }));
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir, PKG2), lockText(dir)]);
+    await runIn(dir, PKG2, "update", "pkg1");
+    expect(await pkgText(dir, PKG2)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
+  test("bun update <workspace member> -r keeps every workspace's entry as written", async () => {
+    const dir = await setup(
+      WORKSPACES(
+        { dependencies: { pkg1: "workspace:^" } },
+        { pkg1: {}, pkg2: { dependencies: { pkg1: "workspace:1.0.0" } } },
+      ),
+    );
+    const [rootBefore, pkg2Before, lockBefore] = await Promise.all([pkgText(dir), pkgText(dir, PKG2), lockText(dir)]);
+    await run(dir, "update", "pkg1", "-r");
+    expect(await pkgText(dir)).toBe(rootBefore);
+    expect(await pkgText(dir, PKG2)).toBe(pkg2Before);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
+  test("bun update <workspace member> does not add it to a root that does not declare it", async () => {
+    const dir = await setup(MONOREPO());
+    const [pkgBefore, lockBefore] = await Promise.all([pkgText(dir), lockText(dir)]);
+    await run(dir, "update", "pkg1");
+    expect(await pkgText(dir)).toBe(pkgBefore);
+    expect(await lockText(dir)).toBe(lockBefore);
+  });
+
   test.each([[[]], [["--latest"]]])("bun update %j leaves folder, tarball and workspace literals alone", async args => {
     const dependencies = {
       "no-deps": "^1.0.0",
@@ -597,6 +662,79 @@ describe.concurrent("bun add", () => {
   test("bun add <workspace>@workspace:*", async () => {
     const dir = await setup(MONOREPO());
     await run(dir, "add", "pkg1@workspace:*");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:*" });
+    expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:*" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  // The spelling decides what `bun pm pack` / `bun publish` replace the range with (`^1.0.0`, `~1.0.0`, `1.0.0`); it used to be saved as `workspace:*`.
+  test.each(["workspace:^", "workspace:~", "workspace:1.0.0", "workspace:^1.0.0"])(
+    "bun add <workspace>@%s keeps the spelling",
+    async literal => {
+      const dir = await setup(MONOREPO());
+      await run(dir, "add", `pkg1@${literal}`);
+      expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: literal });
+      expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: literal });
+      await expectInSync(dir, ["", PKG1]);
+    },
+  );
+
+  test("bun add <workspace>@workspace:^ -d without a lockfile", async () => {
+    const dir = await setup(MONOREPO(), { install: false });
+    await run(dir, "add", "pkg1@workspace:^", "-d");
+    const manifest = await pkg(dir);
+    expect(manifest.dependencies).toBeUndefined();
+    expect(manifest.devDependencies).toStrictEqual({ pkg1: "workspace:^" });
+    expect((await lock(dir)).workspaces[""].devDependencies).toStrictEqual({ pkg1: "workspace:^" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun add <workspace>@workspace:~ from another member", async () => {
+    const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: {} }));
+    await runIn(dir, PKG2, "add", "pkg1@workspace:~");
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ pkg1: "workspace:~" });
+    expect((await lock(dir)).workspaces[PKG2].dependencies).toStrictEqual({ pkg1: "workspace:~" });
+    expect((await pkg(dir)).dependencies).toBeUndefined();
+    await expectInSync(dir, ["", PKG1, PKG2]);
+  });
+
+  // The member resolves the same as before, so the install keeps bun.lock's old row; the entry must still take the new spelling.
+  test.each(["workspace:*", "1.0.0"])(
+    "bun add <workspace>@workspace:~ replaces an existing %s entry",
+    async existing => {
+      const dir = await setup(MONOREPO({}, { dependencies: { pkg1: existing } }));
+      await run(dir, "add", "pkg1@workspace:~");
+      expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:~" });
+      expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:~" });
+      await expectInSync(dir, ["", PKG1]);
+    },
+  );
+
+  test("bun add <workspace>@workspace:^ rewrites an entry listed in devDependencies in place", async () => {
+    const dir = await setup(MONOREPO({}, { devDependencies: { pkg1: "workspace:*" } }));
+    await run(dir, "add", "pkg1@workspace:^");
+    const manifest = await pkg(dir);
+    expect(manifest.dependencies).toBeUndefined();
+    expect(manifest.devDependencies).toStrictEqual({ pkg1: "workspace:^" });
+    expect((await lock(dir)).workspaces[""].devDependencies).toStrictEqual({ pkg1: "workspace:^" });
+    await expectInSync(dir, ["", PKG1]);
+  });
+
+  test("bun add <workspace>@workspace:^ --filter keeps the spelling in every target", async () => {
+    const dir = await setup(WORKSPACES({}, { pkg1: {}, pkg2: {} }));
+    await run(dir, "add", "pkg1@workspace:^", "--filter", "pkg2", "--filter", "root");
+    expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:^" });
+    expect((await pkg(dir, PKG2)).dependencies).toStrictEqual({ pkg1: "workspace:^" });
+    const { workspaces } = await lock(dir);
+    expect(workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:^" });
+    expect(workspaces[PKG2].dependencies).toStrictEqual({ pkg1: "workspace:^" });
+    await expectInSync(dir, ["", PKG1, PKG2]);
+  });
+
+  // A member linked through a plain range is still saved as `workspace:*`.
+  test.each(["1.0.0", "^1.0.0"])("bun add <workspace>@%s saves workspace:*", async range => {
+    const dir = await setup(MONOREPO());
+    await run(dir, "add", `pkg1@${range}`);
     expect((await pkg(dir)).dependencies).toStrictEqual({ pkg1: "workspace:*" });
     expect((await lock(dir)).workspaces[""].dependencies).toStrictEqual({ pkg1: "workspace:*" });
     await expectInSync(dir, ["", PKG1]);

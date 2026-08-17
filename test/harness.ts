@@ -24,6 +24,18 @@ export const isFreeBSD = process.platform === "freebsd";
 export const isAndroid = process.platform === "android";
 export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
+/**
+ * Whether the tests are running as uid 0. Root bypasses file and directory
+ * mode bits, so tests that expect EACCES from a `chmod 000` fixture skip on it,
+ * while tests that need to setuid/setgid a child only run on it. Always false
+ * on Windows, where `process.getuid` does not exist.
+ */
+export const isRoot = process.getuid?.() === 0;
+/**
+ * Size of bun's fixed path buffers (`MAX_PATH_BYTES` in `src/bun_core/util.rs`). A path longer than this does not
+ * fit in one, which code taking a path from the user has to report rather than overflow the buffer.
+ */
+export const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux || isAndroid ? 4096 : 1024;
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
 export const isDebug = Bun.version.includes("debug");
@@ -484,6 +496,55 @@ export function tempDirWithFilesAnon(filesOrAbsolutePathToCopyFolderFrom: Direct
   const base = tmpdirSync();
   makeTreeSync(base, filesOrAbsolutePathToCopyFolderFrom);
   return base;
+}
+
+/**
+ * `Bun.spawn` options for a child that must be subject to file permission bits,
+ * for tests where e.g. a `chmod 444` file has to be unwritable.
+ *
+ * Root bypasses permission bits, so when the tests run as root the child is
+ * run as uid/gid 65534 ("nobody" on Linux and macOS): `dir` is handed over to
+ * that user, and every ancestor it could not traverse (CI points TMPDIR at a
+ * mode 0700 directory) gets `o+x` until the returned value is disposed. When
+ * the tests already run unprivileged, the child runs as the current user and
+ * nothing is changed. POSIX only.
+ *
+ * @example
+ * ```ts
+ * using dir = tempDir("read-only", { "package.json": "{}" });
+ * fs.chmodSync(join(String(dir), "package.json"), 0o444);
+ * using unprivileged = unprivilegedSpawnOptions(String(dir));
+ * await using proc = Bun.spawn({ cmd: [bunExe(), "pm", "pack"], cwd: String(dir), env: bunEnv, ...unprivileged });
+ * ```
+ */
+export function unprivilegedSpawnOptions(dir: string): { uid?: number; gid?: number } & Disposable {
+  const restoreModes: [path: string, mode: number][] = [];
+  const options: { uid?: number; gid?: number } & Disposable = {
+    [Symbol.dispose]() {
+      for (const [path, mode] of restoreModes) fs.chmodSync(path, mode);
+    },
+  };
+  if (isWindows || process.getuid!() !== 0) return options;
+
+  const NOBODY = 65534;
+  try {
+    fs.chownSync(dir, NOBODY, NOBODY);
+    for (const entry of fs.readdirSync(dir, { recursive: true, encoding: "utf8" })) {
+      fs.lchownSync(join(dir, entry), NOBODY, NOBODY);
+    }
+    for (let parent = dirname(dir); parent !== dirname(parent); parent = dirname(parent)) {
+      const mode = fs.statSync(parent).mode & 0o7777;
+      if (mode & 0o001) continue;
+      fs.chmodSync(parent, mode | 0o001);
+      restoreModes.push([parent, mode]);
+    }
+  } catch (e) {
+    options[Symbol.dispose]();
+    throw e;
+  }
+  options.uid = NOBODY;
+  options.gid = NOBODY;
+  return options;
 }
 
 export interface BunRunResult {
@@ -1108,6 +1169,16 @@ export function isDockerEnabled(): boolean {
   // TODO: investigate why Docker tests are not working on Linux arm64
   if (isLinux && process.arch === "arm64") {
     return false;
+  }
+
+  // The CI runner sets this once test/docker/coordinator.ts is up; it owns the
+  // daemon from then on and waits for it if the agent started the shard before
+  // dockerd finished coming up (routine on the openrc images). Probing the
+  // daemon here as well would fail the whole file at import time during that
+  // window, and costs a `docker info` per file. describeWithContainer() and
+  // test/js/valkey/test-utils.ts already trust the coordinator the same way.
+  if (process.env.BUN_DOCKER_COORDINATOR) {
+    return true;
   }
 
   try {
@@ -1880,40 +1951,75 @@ export function textLockfile(version: number, pkgs: any): string {
   });
 }
 
+/**
+ * Builds the gzipped tarball GitHub serves for `/repos/<owner>/<repo>/tarball/<ref>`: one
+ * root directory, which GitHub names `<owner>-<repo>-<short sha>`, with the repository's
+ * files inside it. `bun install` reads the dependency's resolved commit (the lockfile's
+ * third tuple element and the installed `.bun-tag`) from the archive's first entry, which
+ * is why the root directory gets an entry of its own ahead of the files.
+ *
+ * Serve the bytes from a local server and pass its URL as `GITHUB_API_URL` to install
+ * `owner/repo#ref` dependencies without contacting api.github.com.
+ */
+export function githubTarball(rootDir: string, files: Record<string, string | Uint8Array>) {
+  const entries: Record<string, string | Uint8Array> = { [`${rootDir}/`]: "" };
+  for (const [path, contents] of Object.entries(files)) entries[`${rootDir}/${path}`] = contents;
+  return new Bun.Archive(entries, { compress: "gzip" }).bytes();
+}
+
 export class VerdaccioRegistry {
-  port: number;
+  #port: number | undefined;
   process: ChildProcess | undefined;
   configPath: string;
   packagesPath: string;
   users: Record<string, string> = {};
 
   constructor(opts?: { configPath?: string; packagesPath?: string; verbose?: boolean }) {
-    this.port = randomPort();
     this.configPath = opts?.configPath ?? join(import.meta.dir, "cli", "install", "registry", "verdaccio.yaml");
     this.packagesPath = opts?.packagesPath ?? join(import.meta.dir, "cli", "install", "registry", "packages");
   }
 
+  /** The port verdaccio is listening on. Only known once `start()` has resolved. */
+  get port(): number {
+    if (this.#port === undefined) {
+      throw new Error("VerdaccioRegistry.port is not known until start() has resolved");
+    }
+    return this.#port;
+  }
+
   async start(silent: boolean = true) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
-    // Bind the IPv4 loopback explicitly: a bare port makes verdaccio listen on
-    // whatever `localhost` resolves to, which is `::1` on hosts that list it first,
-    // while the install client connects to 127.0.0.1 and every request is refused.
-    const listen = `127.0.0.1:${this.port}`;
-    this.process = fork(require.resolve("verdaccio/bin/verdaccio"), ["-c", this.configPath, "-l", listen], {
+    // The fixture listens on port 0 and reports the port the kernel handed it, so there
+    // is no port picked here that another test file, a leftover registry or an outgoing
+    // connection could already be holding.
+    const fixture = join(import.meta.dir, "cli", "install", "registry", "verdaccio-fixture.ts");
+    this.process = fork(fixture, [this.configPath], {
       silent,
       // Prefer using a release build of Bun since it's faster
       execPath: isCI ? bunExe() : Bun.which("bun") || bunExe(),
       env: {
         ...(bunEnv as any),
         NODE_NO_WARNINGS: "1",
+        // Exit together with the test process, whether or not stop() ran.
+        BUN_FEATURE_FLAG_NO_ORPHANS: "1",
       },
     });
+
+    // A failed startup is explained partly by verdaccio's logger, which writes to
+    // stdout, and partly by the fixture's uncaught error on stderr, so collect both
+    // until start() settles and put them in the rejection.
+    let startupOutput = "";
+    const collectStartupOutput = (data: Buffer) => {
+      startupOutput += data;
+    };
+    this.process.stdout?.on("data", collectStartupOutput);
+    this.process.stderr?.on("data", collectStartupOutput);
 
     this.process.stderr?.on("data", data => {
       console.error(`[verdaccio] stderr: ${data}`);
     });
 
-    const started = Promise.withResolvers();
+    const started = Promise.withResolvers<number>();
 
     this.process.on("error", error => {
       console.error(`Failed to start verdaccio: ${error}`);
@@ -1928,13 +2034,30 @@ export class VerdaccioRegistry {
       }
     });
 
-    this.process.on("message", (message: { verdaccio_started: boolean }) => {
-      if (message.verdaccio_started) {
-        started.resolve();
+    // "close" rather than "exit": it fires once stdout/stderr have been read to the
+    // end, so the error carries everything verdaccio printed.
+    this.process.on("close", (code, signal) => {
+      started.reject(
+        new Error(
+          `Verdaccio exited with code ${code} and signal ${signal} before it started listening\n${startupOutput}`,
+        ),
+      );
+    });
+
+    this.process.on("message", (message: { verdaccio_port?: number }) => {
+      if (typeof message.verdaccio_port === "number") {
+        started.resolve(message.verdaccio_port);
       }
     });
 
-    await started.promise;
+    try {
+      this.#port = await started.promise;
+    } finally {
+      // Leave stdout unread from here on, as before: a registry serves thousands of
+      // requests per test file and logs every one of them.
+      this.process.stdout?.off("data", collectStartupOutput).pause();
+      this.process.stderr?.off("data", collectStartupOutput);
+    }
   }
 
   registryUrl() {
@@ -1999,7 +2122,15 @@ export class VerdaccioRegistry {
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir: String(packageDir), packageJson };
+    const dir = String(packageDir);
+    return {
+      packageDir: dir,
+      packageJson,
+      // The `install.cache` writeBunfig sets loses to the BUN_INSTALL_CACHE_DIR the CI runner exports, so
+      // projects spawned with plain bunEnv share one cache per test file. Projects that install concurrently
+      // spawn bun with this env instead: concurrent installs publishing the same entry fail on Windows (#28062).
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") },
+    };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
@@ -2274,6 +2405,51 @@ export function compileFixture(sourcePath: string, options: { flags?: string[] }
   compiledFixtures.set(cacheKey, outPath);
   return outPath;
 }
+
+const dtUnknownReaddirMarker = "dt-unknown-readdir-shim: rewrote getdents64 d_type";
+let dtUnknownReaddirShim: Promise<string> | undefined;
+
+async function compileDtUnknownReaddirShim(): Promise<string> {
+  const cc = which("cc") || which("clang") || which("gcc");
+  if (!cc) throw new Error("dtUnknownReaddir: no C compiler (cc/clang/gcc) found in $PATH");
+  const shim = join(tmpdirSync("dt-unknown-readdir-"), "shim.so");
+  const source = join(import.meta.dir, "fixtures", "dt-unknown-readdir-shim.c");
+  const proc = Bun.spawn({
+    cmd: [cc, "-shared", "-fPIC", "-O2", `-DMARKER="${dtUnknownReaddirMarker}"`, "-o", shim, source, "-ldl"],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  if (exitCode !== 0)
+    throw new Error(`dtUnknownReaddir: compiling the shim failed (exit ${exitCode}):\n${stderr || stdout}`);
+  return shim;
+}
+
+/**
+ * Runs bun as if on a filesystem whose readdir does not report entry types
+ * (FUSE, some NFS servers, XFS formatted with `ftype=0`), without needing such a
+ * mount: `env()` preloads a shim that zeroes `d_type` in every `getdents64`
+ * record. The shim prints `marker` to stderr the first time it does so; assert
+ * on it, otherwise a test here passes vacuously if bun ever stops issuing
+ * `getdents64` through libc's `syscall()` wrapper, which is what the shim hooks.
+ */
+export const dtUnknownReaddir = {
+  /** Linux with a C compiler; `skipIf(!dtUnknownReaddir.available)`. */
+  get available(): boolean {
+    return isLinux && !!(which("cc") || which("clang") || which("gcc"));
+  },
+  marker: dtUnknownReaddirMarker,
+  /**
+   * Compiles the shim the first time it is called. Call it from `beforeAll`
+   * (the compiler can take several seconds on a loaded machine) and spawn bun
+   * with the returned env.
+   */
+  async env(): Promise<NodeJS.Dict<string>> {
+    const shim = await (dtUnknownReaddirShim ??= compileDtUnknownReaddirShim());
+    return { ...bunEnv, LD_PRELOAD: bunEnv.LD_PRELOAD ? `${shim}:${bunEnv.LD_PRELOAD}` : shim };
+  },
+};
 
 export const rss: () => number =
   process.platform === "darwin" && typeof Bun.unsafe.memoryFootprint === "function"

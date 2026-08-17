@@ -322,11 +322,9 @@ pub trait RepositoryExt: Sized {
     fn parse_append_git(input: &[u8], buf: &mut StringBuf<'_>) -> Result<Repository, AllocError>;
     fn parse_append_github(input: &[u8], buf: &mut StringBuf<'_>)
     -> Result<Repository, AllocError>;
-    fn create_dependency_name_from_version_literal(
-        repository: &Repository,
-        string_buf: &[u8],
-        dep: &Install::Dependency,
-    ) -> Vec<u8>;
+    /// `dependency::fallback_package_name` of the repository, for a checkout
+    /// whose package.json has no `name` (or no package.json at all).
+    fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8];
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result;
     fn fmt_store_path<'a>(&'a self, label: &'a str, string_buf: &'a [u8])
     -> StorePathFormatter<'a>;
@@ -469,9 +467,7 @@ impl CacheStaging {
             self.tmp_name(),
             self.cache_dir,
             folder_name,
-            bun_sys::RenameatConcurrentlyOptions {
-                move_fallback: false,
-            },
+            bun_sys::RenameatConcurrentlyOptions::default(),
         );
         // After an exchange the temporary name holds the folder that was replaced.
         self.discard();
@@ -542,45 +538,12 @@ impl RepositoryExt for Repository {
         Ok(result)
     }
 
-    fn create_dependency_name_from_version_literal(
-        repository: &Repository,
-        string_buf: &[u8],
-        dep: &Install::Dependency,
-    ) -> Vec<u8> {
-        // Callers (`parse_with_json`) hold a split `StringBuilder`
-        // borrow on `string_bytes`, so accept the two pieces directly.
-        let buf = string_buf;
-        let repo_name = repository.repo;
-        let repo_name_str = repo_name.slice(buf);
-
-        let name = 'brk: {
-            let mut remain = repo_name_str;
-
-            if let Some(hash_index) = strings::index_of_char(remain, b'#') {
-                remain = &remain[..hash_index as usize];
-            }
-
-            if remain.is_empty() {
-                break 'brk remain;
-            }
-
-            if let Some(slash_index) = strings::last_index_of_char(remain, b'/') {
-                remain = &remain[slash_index + 1..];
-            }
-
-            remain
-        };
-
-        if name.is_empty() {
-            let version_literal = dep.version.literal.slice(buf);
-            let mut name_buf = [0u8; bun_sha::SHA1::DIGEST];
-            let mut sha1 = bun_sha::SHA1::init();
-            sha1.update(version_literal);
-            sha1.r#final(&mut name_buf);
-            return name_buf.to_vec();
+    fn fallback_package_name<'a>(&'a self, string_buf: &'a [u8]) -> &'a [u8] {
+        let mut repo = self.repo.slice(string_buf);
+        if let Some(hash_index) = strings::index_of_char(repo, b'#') {
+            repo = &repo[..hash_index as usize];
         }
-
-        name.to_vec()
+        Dependency::fallback_package_name(repo)
     }
 
     fn format_as(&self, label: &str, buf: &[u8], writer: &mut impl fmt::Write) -> fmt::Result {
@@ -895,7 +858,7 @@ impl RepositoryExt for Repository {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "no commit matching \"{}\" found for \"{}\" (but repository exists)",
-                        BStr::new(committish),
+                        bun_core::fmt::escape_control_chars(committish),
                         BStr::new(name)
                     ),
                 );
@@ -926,7 +889,7 @@ impl RepositoryExt for Repository {
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "invalid git commit \"{}\" for \"{}\"",
-                    BStr::new(resolved),
+                    bun_core::fmt::escape_control_chars(resolved),
                     BStr::new(name)
                 ),
             );

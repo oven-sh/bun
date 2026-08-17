@@ -314,6 +314,42 @@ it("assetPrefix, src, and origin", async () => {
   }
 });
 
+it("src keeps a protocol-relative origin and a one-character host", () => {
+  using dir = tempDir("fsr-origin", {
+    "pages/index.tsx": "export default 1;",
+    "pages/posts/[id].tsx": "export default 1;",
+  });
+
+  const srcFor = (origin: string) =>
+    new Bun.FileSystemRouter({
+      dir: path.join(String(dir), "pages"),
+      style: "nextjs",
+      assetPrefix: "/_next/static/",
+      origin,
+    }).match("/posts/hello-world")!.src;
+
+  // `//host` used to parse with an empty host, and so did `a/` (any second byte
+  // of `/` was taken as the start of a protocol-relative URL). Both silently
+  // dropped the origin and the assetPrefix from `src`.
+  expect({
+    "//nextjs.org": srcFor("//nextjs.org"),
+    "//nextjs.org:8080": srcFor("//nextjs.org:8080"),
+    "//nextjs.org/ignored": srcFor("//nextjs.org/ignored"),
+    "a/": srcFor("a/"),
+    "https://nextjs.org/ignored": srcFor("https://nextjs.org/ignored"),
+    "nextjs.org:8080": srcFor("nextjs.org:8080"),
+    "ab/": srcFor("ab/"),
+  }).toEqual({
+    "//nextjs.org": "//nextjs.org/_next/static/posts/[id].tsx",
+    "//nextjs.org:8080": "//nextjs.org:8080/_next/static/posts/[id].tsx",
+    "//nextjs.org/ignored": "//nextjs.org/_next/static/posts/[id].tsx",
+    "a/": "a/_next/static/posts/[id].tsx",
+    "https://nextjs.org/ignored": "https://nextjs.org/_next/static/posts/[id].tsx",
+    "nextjs.org:8080": "nextjs.org:8080/_next/static/posts/[id].tsx",
+    "ab/": "ab/_next/static/posts/[id].tsx",
+  });
+});
+
 it(".query works", () => {
   // set up the test
   const { dir } = make(["posts.tsx"]);

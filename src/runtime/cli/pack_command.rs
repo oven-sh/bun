@@ -8,9 +8,10 @@ use bun_alloc::AllocError;
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output, Progress, fmt as bun_fmt};
 use bun_glob as glob;
+use bun_install::PackageManager;
 use bun_install::package_manager::LogLevel;
+use bun_install::package_manager::workspace_manifests::WorkspaceManifests;
 use bun_install::package_manager::workspace_package_json_cache as WorkspacePackageJSONCache;
-use bun_install::{Lockfile, PackageManager};
 use bun_parsers::json as JSON;
 // Note: `WorkspacePackageJSONCache` returns the T2 value-subset
 // `bun_ast::Expr` (see `bun_install::bun_json`), not the full T4
@@ -19,7 +20,10 @@ use bun_parsers::json as JSON;
 // lift via `bun_ast::Expr::from(t2_expr)` at the call site.
 use bun_ast::{E, Expr, ExprData};
 use bun_js_printer as js_printer;
-use bun_libarchive::lib::{Archive, Entry as ArchiveEntry, Result as ArchiveStatus};
+use bun_libarchive::lib::{
+    Archive, Entry as ArchiveEntry, GrowingBuffer, Result as ArchiveStatus, WriteArchive,
+    archive_write_open2,
+};
 use bun_paths::{self as path, PathBuffer, SEP_STR};
 // `bun.ptr.CowString = CowSlice(u8)` — the lifetime-free struct port (init_owned/
 // borrow_subslice/length live on `cow_slice::CowSliceZ`).
@@ -28,8 +32,7 @@ type CowString = CowSlice<u8>;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path;
-use bun_semver as Semver;
+use bun_paths::resolve_path::{self, normalize_buf_z_spill};
 use bun_sha_hmac::sha;
 use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
@@ -111,11 +114,8 @@ pub(crate) struct Context<'a> {
     // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) command_ctx: Command::Context<'a>,
 
-    /// `bun pack` does not require a lockfile, but
-    /// it's possible we will need it for finding
-    /// workspace versions. This is the only valid lockfile
-    /// pointer in this file. `manager.lockfile` is incorrect
-    pub(crate) lockfile: Option<&'a Lockfile>,
+    /// Where the command was run from; relative `--destination`/`--filename` resolve against it.
+    pub(crate) original_cwd: &'a [u8],
 
     pub(crate) bundled_deps: Vec<BundledDep>,
 
@@ -201,9 +201,8 @@ impl PackCommand {
     pub(crate) fn exec_with_manager(
         ctx: Command::Context<'_>,
         manager: &mut PackageManager,
+        original_cwd: &[u8],
     ) -> crate::Result<()> {
-        use bun_install::lockfile::{LoadResult, LoadStep};
-
         if manager.options.log_level != LogLevel::Silent
             && manager.options.log_level != LogLevel::Quiet
         {
@@ -214,56 +213,6 @@ impl PackCommand {
             Output::flush();
         }
 
-        let mut lockfile = Lockfile::default();
-        // `log` is non-null after `PackageManager::init()`.
-        let log_ptr: *mut bun_ast::Log = manager.log;
-        let manager_ptr: *mut PackageManager = manager;
-        // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed
-        // disjointly (`log` is a separate allocation from the manager fields
-        // `load_from_cwd` touches).
-        let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
-
-        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            LoadResult::Ok(ok) => Some(&*ok.lockfile),
-            LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic(
-                            "failed to open lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic(
-                            "failed to parse lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic(
-                            "failed to read lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            format_args!("{}", cause.value.name()),
-                        );
-                    }
-                }
-                if pm_log(manager_ptr).has_errors() {
-                    let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                }
-                Global::crash();
-            }
-            LoadResult::NotFound => None,
-        };
-
         // Note: split-borrowing through
         // `Context` would conflict with `&mut PackageManager`, so capture the
         // package.json path before constructing `Context`.
@@ -272,7 +221,7 @@ impl PackCommand {
         let mut pack_ctx = Context {
             manager,
             command_ctx: ctx,
-            lockfile: lockfile_ref,
+            original_cwd,
             bundled_deps: Vec::new(),
             stats: Stats::default(),
         };
@@ -476,6 +425,7 @@ fn iterate_included_project_tree(
         });
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        dir_iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             // On iterator error, treat as end of iteration.
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
@@ -713,6 +663,7 @@ fn add_entire_tree(
         }
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -884,6 +835,7 @@ fn iterate_bundled_deps(
     let mut additional_bundled_deps: Vec<DirInfo> = Vec::new();
 
     let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+    iter.resolve_unknown_entry_types = true;
     while let Some(entry) = iter.next().ok().flatten() {
         if entry.kind != bun_sys::FileKind::Directory {
             continue;
@@ -1023,6 +975,7 @@ fn add_bundled_dep(
         let DirInfo(dir, dir_subpath, dir_depth) = dir_info;
 
         let mut iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        iter.resolve_unknown_entry_types = true;
         while let Some(entry) = iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1285,6 +1238,7 @@ fn iterate_project_tree(
         }
 
         let mut dir_iter = DirIterator::iterate(Fd::from_std_dir(&dir));
+        dir_iter.resolve_unknown_entry_types = true;
         'next_entry: while let Some(entry) = dir_iter.next().ok().flatten() {
             if entry.kind != bun_sys::FileKind::File && entry.kind != bun_sys::FileKind::Directory {
                 continue;
@@ -1447,7 +1401,7 @@ fn get_bundled_deps(
 // ───────────────────────────────────────────────────────────────────────────
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum BinType {
+pub(crate) enum BinType {
     File,
     Dir,
 }
@@ -1461,16 +1415,15 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     let mut bins: Vec<BinInfo> = Vec::new();
 
     let mut path_buf = PathBuffer::uninit();
+    let mut path_spill: Vec<u8> = Vec::new();
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-            let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                bin_str,
-                &mut path_buf,
-            );
-            if !bin_path_escapes_root(normalized) {
+            if let Some(subpath) =
+                bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
+            {
                 bins.push(BinInfo {
-                    path: ZBox::from_bytes(normalized),
+                    path: ZBox::from_bytes(subpath),
                     ty: BinType::File,
                 });
             }
@@ -1485,13 +1438,14 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                            bin_str,
-                            &mut path_buf,
-                        );
-                        if !bin_path_escapes_root(normalized) {
+                        let Some(subpath) =
+                            bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
+                        else {
+                            continue;
+                        };
+                        if !bins.iter().any(|listed| listed.path.as_bytes() == subpath) {
                             bins.push(BinInfo {
-                                path: ZBox::from_bytes(normalized),
+                                path: ZBox::from_bytes(subpath),
                                 ty: BinType::File,
                             });
                         }
@@ -1507,13 +1461,11 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-                    let normalized = resolve_path::normalize_buf::<resolve_path::platform::Posix>(
-                        bin_str,
-                        &mut path_buf,
-                    );
-                    if !bin_path_escapes_root(normalized) {
+                    if let Some(subpath) =
+                        bin_subpath(bin_str, BinType::Dir, &mut path_buf, &mut path_spill)
+                    {
                         bins.push(BinInfo {
-                            path: ZBox::from_bytes(normalized),
+                            path: ZBox::from_bytes(subpath),
                             ty: BinType::Dir,
                         });
                     }
@@ -1525,8 +1477,53 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
     Ok(bins)
 }
 
-fn bin_path_escapes_root(p: &[u8]) -> bool {
-    path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+pub(crate) fn bin_subpath<'a>(
+    value: &[u8],
+    ty: BinType,
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+) -> Option<&'a [u8]> {
+    let normalized = normalize_buf_z_spill::<path::platform::Posix>(buf, spill, value).as_bytes();
+    let subpath = match ty {
+        BinType::Dir => strings::without_trailing_slash(normalized),
+        BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
+            return None;
+        }
+        BinType::File => normalized,
+    };
+    (!is_package_root_or_outside(subpath)).then_some(subpath)
+}
+
+pub(crate) fn is_package_root_or_outside(p: &[u8]) -> bool {
+    p.is_empty() || p == b"." || path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+}
+
+/// `Unknown` if `bin_path` is missing or a parent component is not a real directory.
+fn bin_kind_without_following_symlinks(
+    abs_workspace_path: &[u8],
+    bin_path: &[u8],
+) -> bun_sys::FileKind {
+    // A trailing slash would make `lstat` resolve a symlink to a directory.
+    let bin_path = strings::without_trailing_slash(bin_path);
+    let mut spill: Vec<u8> = Vec::new();
+    let slashes = (bin_path.iter().enumerate()).filter_map(|(i, &c)| (c == b'/').then_some(i));
+    for end in slashes.chain([bin_path.len()]) {
+        // By absolute path: on Windows `lstatat` reports a reparse point as its target's kind.
+        let parts: [&[u8]; 2] = [abs_workspace_path, &bin_path[..end]];
+        let abs_path =
+            resolve_path::join_z_spill::<resolve_path::platform::Auto>(&mut spill, &parts);
+        let Ok(stat) = bun_sys::lstat(abs_path) else {
+            break;
+        };
+        let kind = bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode);
+        if end == bin_path.len() {
+            return kind;
+        }
+        if kind != bun_sys::FileKind::Directory {
+            break;
+        }
+    }
+    bun_sys::FileKind::Unknown
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
@@ -1538,9 +1535,8 @@ fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
                 }
             }
             BinType::Dir => {
-                let bin_without_trailing = strings::without_trailing_slash(bin.path.as_bytes());
-                if maybe_bin_path.starts_with(bin_without_trailing) {
-                    let remain = &maybe_bin_path[bin_without_trailing.len()..];
+                if maybe_bin_path.starts_with(bin.path.as_bytes()) {
+                    let remain = &maybe_bin_path[bin.path.as_bytes().len()..];
                     if remain.len() > 1
                         && remain[0] == b'/'
                         && strings::index_of_char(&remain[1..], b'/').is_none()
@@ -1692,18 +1688,6 @@ const fn zstr_lit(s: &'static [u8]) -> &'static ZStr {
 /// Extension trait wrapping `*mut Archive` so existing `archive.method()` call
 /// sites compile without per-call `unsafe { &* }`.
 trait ArchivePtrExt {
-    fn write_set_format_pax_restricted(self) -> ArchiveResult;
-    fn write_add_filter_gzip(self) -> ArchiveResult;
-    fn write_set_filter_option(
-        self,
-        module: Option<&ZStr>,
-        key: &ZStr,
-        value: &ZStr,
-    ) -> ArchiveResult;
-    fn write_set_options(self, opts: &ZStr) -> ArchiveResult;
-    fn write_open_filename(self, path: &ZStr) -> ArchiveResult;
-    fn write_close(self) -> ArchiveResult;
-    fn write_free(self) -> ArchiveResult;
     fn error_string(self) -> &'static [u8];
     fn read_support_format_tar(self) -> ArchiveResult;
     fn read_support_format_gnutar(self) -> ArchiveResult;
@@ -1717,43 +1701,10 @@ trait ArchivePtrExt {
 }
 impl ArchivePtrExt for *mut Archive {
     #[inline]
-    fn write_set_format_pax_restricted(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_set_format_pax_restricted()
-    }
-    #[inline]
-    fn write_add_filter_gzip(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_add_filter_gzip()
-    }
-    #[inline]
-    fn write_set_filter_option(
-        self,
-        module: Option<&ZStr>,
-        key: &ZStr,
-        value: &ZStr,
-    ) -> ArchiveResult {
-        Archive::opaque_ref(self).write_set_filter_option(module, key, value)
-    }
-    #[inline]
-    fn write_set_options(self, opts: &ZStr) -> ArchiveResult {
-        Archive::opaque_ref(self).write_set_options(opts)
-    }
-    #[inline]
-    fn write_open_filename(self, path: &ZStr) -> ArchiveResult {
-        Archive::opaque_ref(self).write_open_filename(path)
-    }
-    #[inline]
-    fn write_close(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_close()
-    }
-    #[inline]
-    fn write_free(self) -> ArchiveResult {
-        Archive::opaque_ref(self).write_free()
-    }
-    #[inline]
     fn error_string(self) -> &'static [u8] {
         // Every `ArchivePtrExt` call site holds a live `*mut Archive` from
-        // `archive_{read,write}_new()` (the trait exists precisely so those
-        // sites avoid per-call `unsafe { &* }`).
+        // `archive_read_new()` (the trait exists precisely so those sites
+        // avoid per-call `unsafe { &* }`).
         Archive::opaque_ref(self).error_string()
     }
     #[inline]
@@ -1890,6 +1841,38 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // `Some` only when FOR_PUBLISH == true.
 pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
 
+/// Through the manager's cache; exits when it cannot be read or parsed.
+fn package_json_entry<'a>(
+    manager_ptr: *mut PackageManager,
+    abs_package_json_path: &ZStr,
+) -> &'a mut WorkspacePackageJSONCache::MapEntry {
+    let result = pm_workspace_cache(manager_ptr).get_with_path(
+        pm_log(manager_ptr),
+        abs_package_json_path.as_bytes(),
+        WorkspacePackageJSONCache::GetJSONOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    );
+    match result.entry() {
+        Ok(entry) => entry,
+        Err((step, err)) => {
+            Output::err(
+                err,
+                "failed to {} package.json: {}",
+                (
+                    step.verb(),
+                    bstr::BStr::new(abs_package_json_path.as_bytes()),
+                ),
+            );
+            if step == WorkspacePackageJSONCache::GetStep::Parse {
+                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
+            }
+            Global::crash();
+        }
+    }
+}
+
 pub(crate) fn pack<const FOR_PUBLISH: bool>(
     ctx: &mut Context<'_>,
     abs_package_json_path: &ZStr,
@@ -1900,63 +1883,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
     let bump = pack_bump();
-    // Note: `workspace_package_json_cache` and `log` are disjoint fields on
-    // `PackageManager`; route through raw-pointer field projections so the
-    // two `&mut` borrows don't conflict.
-    let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
-        pm_log(manager_ptr),
-        abs_package_json_path.as_bytes(),
-        WorkspacePackageJSONCache::GetJSONOptions {
-            guess_indentation: true,
-            ..Default::default()
-        },
-    ) {
-        WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
-            Output::err(
-                err,
-                "failed to read package.json: {}",
-                format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-            );
-            Global::crash();
-        }
-        WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
-            Output::err(
-                err,
-                "failed to parse package.json: {}",
-                format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-            );
-            let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-            Global::crash();
-        }
-        WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-    };
-
-    if FOR_PUBLISH {
-        if let Some(config) = json.root.get(b"publishConfig") {
-            if ctx.manager.options.publish_config.tag.is_empty() {
-                if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
-                    ctx.manager.options.publish_config.tag = tag;
-                }
-            }
-            if ctx.manager.options.publish_config.access.is_none() {
-                if let Some((access, _)) = config.get_string(bump, b"access")? {
-                    ctx.manager.options.publish_config.access =
-                        match bun_install::Access::from_str(access) {
-                            Some(a) => Some(a),
-                            None => {
-                                Output::err_generic(
-                                    "invalid `access` value: '{}'",
-                                    format_args!("{}", bstr::BStr::new(access)),
-                                );
-                                Global::crash();
-                            }
-                        };
-                }
-            }
-        }
-
-        // maybe otp
-    }
+    let mut json = package_json_entry(manager_ptr, abs_package_json_path);
 
     let mut package_name_expr: Expr = json
         .root
@@ -1968,6 +1895,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     if FOR_PUBLISH {
         let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
             .map_err(|_| PackError::InvalidPackageName)?;
+        ctx.manager
+            .options
+            .apply_publish_config(&json.root, bump, package_name)?;
         if let Some(access) = ctx.manager.options.publish_config.access {
             if access == bun_install::Access::Restricted && !is_scoped {
                 return Err(PackError::RestrictedUnscopedPackage);
@@ -2044,7 +1974,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // not repeated.
         unsafe { (*transpiler_for_deinit).deinit() };
     }
-    ctx.manager.env_mut().map.put(b"npm_command", b"pack")?;
+    let script_env = &mut ctx.manager.env_mut().map;
+    script_env.put(b"npm_command", b"pack")?;
+    // `configure_env_for_run` described the workspace root's package.json, not the one packed.
+    script_env.put(b"npm_package_json", abs_package_json_path.as_bytes())?;
+    script_env.put(b"npm_package_name", package_name)?;
+    script_env.put(b"npm_package_version", package_version)?;
 
     let (postpack_script, publish_script, postpublish_script, ran_scripts): (
         Option<Box<[u8]>>,
@@ -2137,53 +2072,10 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         break 'post_scripts (postpack_script, None, None, did_run_scripts);
     };
 
-    // If any lifecycle scripts ran, they may have modified package.json,
-    // so we need to re-read it from disk to pick up any changes.
+    // The scripts may have edited any package.json in the workspace, and the cache predates them.
     if ran_scripts {
-        // Invalidate the cached entry by removing it.
-        // On Windows, the cache key is stored with POSIX path separators,
-        // so we need to convert the path before removing.
-        #[cfg(windows)]
-        let mut cache_key_buf = PathBuffer::uninit();
-        #[cfg(windows)]
-        let cache_key: &[u8] = {
-            let len = abs_package_json_path.as_bytes().len();
-            cache_key_buf[..len].copy_from_slice(abs_package_json_path.as_bytes());
-            path::dangerously_convert_path_to_posix_in_place::<u8>(&mut cache_key_buf[..len]);
-            &cache_key_buf[..len]
-        };
-        #[cfg(not(windows))]
-        let cache_key: &[u8] = abs_package_json_path.as_bytes();
-        let _ = pm_workspace_cache(manager_ptr).map.remove(cache_key);
-
-        // Re-read package.json from disk
-        json = match pm_workspace_cache(manager_ptr).get_with_path(
-            pm_log(manager_ptr),
-            abs_package_json_path.as_bytes(),
-            WorkspacePackageJSONCache::GetJSONOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        ) {
-            WorkspacePackageJSONCache::GetResult::ReadErr(err) => {
-                Output::err(
-                    err,
-                    "failed to read package.json: {}",
-                    format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-                );
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::ParseErr(err) => {
-                Output::err(
-                    err,
-                    "failed to parse package.json: {}",
-                    format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
-                );
-                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
-                Global::crash();
-            }
-            WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
-        };
+        pm_workspace_cache(manager_ptr).map.clear();
+        json = package_json_entry(manager_ptr, abs_package_json_path);
 
         // Re-validate private flag after scripts may have modified it.
         if FOR_PUBLISH {
@@ -2222,7 +2114,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     }
 
     // Create the edited package.json content after lifecycle scripts have run
-    let edited_package_json = edit_root_package_json(ctx.lockfile, json)?;
+    let workspace_manifests =
+        needs_workspace_manifests(json.root).then(|| WorkspaceManifests::load(ctx.manager));
+    if workspace_manifests.is_some() {
+        // Loading added the other workspaces' package.json files to the cache `json` points into.
+        json = package_json_entry(manager_ptr, abs_package_json_path);
+    }
+    let edited_package_json =
+        edit_root_package_json(workspace_manifests.as_ref(), abs_workspace_path, json)?;
 
     let root_dir: Dir = 'root_dir: {
         let mut path_buf = PathBuffer::uninit();
@@ -2271,6 +2170,16 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let bins = get_package_bins(&json.root)?;
 
     for bin in &bins {
+        let expected_kind = match bin.ty {
+            BinType::File => bun_sys::FileKind::File,
+            BinType::Dir => bun_sys::FileKind::Directory,
+        };
+        if bin_kind_without_following_symlinks(abs_workspace_path, bin.path.as_bytes())
+            != expected_kind
+        {
+            continue;
+        }
+
         match bin.ty {
             BinType::File => {
                 pack_queue.add(PackQueueItem {
@@ -2312,13 +2221,15 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     let mut excludes: Vec<Pattern> = Vec::new();
 
                     let mut path_buf = PathBuffer::uninit();
+                    let mut path_spill: Vec<u8> = Vec::new();
                     while let Some(files_entry) = files_array.next() {
                         if let Some(file_entry_str) = files_entry.as_string(bump) {
-                            let normalized = resolve_path::normalize_buf::<
-                                resolve_path::platform::Posix,
-                            >(
-                                file_entry_str, &mut path_buf
-                            );
+                            let normalized = normalize_buf_z_spill::<path::platform::Posix>(
+                                &mut path_buf,
+                                &mut path_spill,
+                                file_entry_str,
+                            )
+                            .as_bytes();
                             let Some(parsed) = Pattern::from_utf8(normalized)? else {
                                 continue;
                             };
@@ -2405,6 +2316,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 let (abs_tarball_dest, _) = tarball_destination(
                     opt_pack_destination(ctx.manager),
                     opt_pack_filename(ctx.manager),
+                    ctx.original_cwd,
                     abs_workspace_path,
                     package_name,
                     package_version,
@@ -2431,15 +2343,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         }
 
         if FOR_PUBLISH {
-            let mut dest_buf = PathBuffer::uninit();
-            let (abs_tarball_dest, _) = tarball_destination(
-                opt_pack_destination(ctx.manager),
-                opt_pack_filename(ctx.manager),
-                abs_workspace_path,
-                package_name,
-                package_version,
-                &mut dest_buf[..],
-            );
             // Note: `manager`/`command_ctx` reborrowed via raw pointer —
             // both are process-lifetime
             // singletons (see `cli::command::GLOBAL_CLI_CTX`).
@@ -2453,7 +2356,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
                 package_name: package_name.into(),
                 package_version: package_version.into(),
-                abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
                 tarball_bytes: Box::new([]),
                 uses_workspaces: false,
                 publish_script,
@@ -2468,7 +2370,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     let mut print_buf: Vec<u8> = Vec::new();
 
-    let archive = Archive::write_new();
+    // Must outlive `archive`, whose close (also run by its Drop) writes into it.
+    let mut tarball_buffer = GrowingBuffer::init();
+    let archive = WriteArchive::new();
 
     match archive.write_set_format_pax_restricted() {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
@@ -2494,9 +2398,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // default is 9
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
     let compression_level: &[u8] = opt_pack_gzip_level(ctx.manager).unwrap_or(b"9");
-    write!(&mut print_buf, "{}\x00", bstr::BStr::new(compression_level)).expect("OOM");
-    // SAFETY: print_buf[compression_level.len()] == 0 written above
-    let level_z = ZStr::from_buf(&print_buf[..], compression_level.len());
+    print_buf.extend_from_slice(compression_level);
+    print_buf.push(0);
+    let level_z = ZStr::from_slice_with_nul(&print_buf[..]);
     match archive.write_set_filter_option(None, zstr_lit(b"compression-level\0"), level_z) {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic(
@@ -2531,41 +2435,51 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    let mut dest_buf = PathBuffer::uninit();
-    let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
-        opt_pack_destination(ctx.manager),
-        opt_pack_filename(ctx.manager),
-        abs_workspace_path,
-        package_name,
-        package_version,
-        &mut dest_buf[..],
-    );
-    // Note: reshaped for borrowck — abs_tarball_dest borrows dest_buf
-    let abs_tarball_dest_len = abs_tarball_dest.as_bytes().len();
-
-    {
-        // create the directory if it doesn't exist
-        let most_likely_a_slash = dest_buf[abs_tarball_dest_dir_end];
-        dest_buf[abs_tarball_dest_dir_end] = 0;
-        // SAFETY: NUL written above
-        let abs_tarball_dest_dir = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_dir_end);
-        let _ = bun_sys::Dir::cwd().make_path(abs_tarball_dest_dir.as_bytes());
-        dest_buf[abs_tarball_dest_dir_end] = most_likely_a_slash;
-    }
-
-    // SAFETY: dest_buf[abs_tarball_dest_len] == 0 (written by tarball_destination)
-    let abs_tarball_dest = ZStr::from_buf(&dest_buf[..], abs_tarball_dest_len);
-
-    // TODO: experiment with `archive.writeOpenMemory()`
-    match archive.write_open_filename(abs_tarball_dest) {
+    // Same as `archive_write_open_filename` set for a file, so the output stays byte-identical.
+    match archive.write_set_bytes_in_last_block(1) {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic(
-                "failed to open tarball file destination: \"{}\"",
-                format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+                "failed to set archive block padding: {}",
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
             );
             Global::crash();
         }
         _ => {}
+    }
+
+    // `bun publish` uploads the bytes from memory; only `bun pm pack` writes a file.
+    let mut dest_buf = PathBuffer::uninit();
+    let abs_tarball_dest: Option<&ZStr> = if FOR_PUBLISH {
+        None
+    } else {
+        let (abs_tarball_dest, abs_tarball_dest_dir_end) = tarball_destination(
+            opt_pack_destination(ctx.manager),
+            opt_pack_filename(ctx.manager),
+            ctx.original_cwd,
+            abs_workspace_path,
+            package_name,
+            package_version,
+            &mut dest_buf[..],
+        );
+        // create the directory if it doesn't exist
+        let _ = Dir::cwd().make_path(&abs_tarball_dest.as_bytes()[..abs_tarball_dest_dir_end]);
+        Some(abs_tarball_dest)
+    };
+
+    if archive_write_open2(
+        &archive,
+        (&raw mut tarball_buffer).cast(),
+        Some(GrowingBuffer::open_callback),
+        Some(GrowingBuffer::write_callback),
+        Some(GrowingBuffer::close_callback),
+        None,
+    ) != 0
+    {
+        Output::err_generic(
+            "failed to open archive for writing: {}",
+            format_args!("{}", bstr::BStr::new(archive.error_string())),
+        );
+        Global::crash();
     }
 
     // append removed items from `pack_queue` with their file size
@@ -2575,8 +2489,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut file_reader: Box<BufferedFileReader> =
         new_boxed_buffered_file_reader(File::from_fd(Fd::invalid()));
 
-    // SAFETY: `archive` is the live `archive_write_new()` handle opened above.
-    let mut entry = ArchiveEntry::new2(unsafe { &*archive });
+    let mut entry = ArchiveEntry::new2(&archive);
 
     {
         let mut progress = Progress::Progress::default();
@@ -2592,15 +2505,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // uses below, so call `complete_one()` explicitly at every loop-body
         // exit and `end()` once after the loops.
 
-        entry = archive_package_json(
-            ctx,
-            // SAFETY: `archive` is the non-null `*mut Archive` returned by
-            // `Archive::write_new()` above; only this thread accesses it.
-            unsafe { &mut *archive },
-            entry,
-            &root_dir,
-            &edited_package_json,
-        )?;
+        entry = archive_package_json(ctx, &archive, entry, &root_dir, &edited_package_json);
         if log_level.show_progress() {
             node.as_mut()
                 .expect("infallible: progress active")
@@ -2674,13 +2579,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                // SAFETY: `archive` is the non-null `*mut Archive` returned by
-                // `Archive::write_new()` above; only this thread accesses it.
-                unsafe { &mut *archive },
+                &archive,
                 entry,
                 &mut print_buf,
                 &bins,
-            )?;
+            );
 
             if log_level.show_progress() {
                 node.as_mut()
@@ -2729,13 +2632,11 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 &item.path,
                 &mut read_buf,
                 &mut file_reader,
-                // SAFETY: `archive` is the non-null `*mut Archive` returned by
-                // `Archive::write_new()` above; only this thread accesses it.
-                unsafe { &mut *archive },
+                &archive,
                 entry,
                 &mut print_buf,
                 &bins,
-            )?;
+            );
 
             if log_level.show_progress() {
                 node.as_mut()
@@ -2764,101 +2665,25 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         _ => {}
     }
 
-    match archive.write_free() {
-        ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
-            Output::err_generic(
-                "failed to free archive: {}",
-                format_args!("{}", bstr::BStr::new(archive.error_string())),
-            );
-            Global::crash();
-        }
-        _ => {}
-    }
+    drop(archive);
+    // Only fails after a write into the buffer failed, which crashed above.
+    let tarball_bytes = tarball_buffer.to_owned_slice()?;
 
     let mut shasum: [u8; sha::SHA1::DIGEST] = [0; sha::SHA1::DIGEST];
+    let mut sha1 = sha::SHA1::init();
+    sha1.update(&tarball_bytes);
+    sha1.r#final(&mut shasum);
+
     let mut integrity: [u8; sha::SHA512::DIGEST] = [0; sha::SHA512::DIGEST];
+    let mut sha512 = sha::SHA512::init();
+    sha512.update(&tarball_bytes);
+    sha512.r#final(&mut integrity);
 
-    let tarball_bytes: Option<Vec<u8>> = 'tarball_bytes: {
-        let tarball_file = match File::open(abs_tarball_dest, bun_sys::O::RDONLY, 0) {
-            Ok(f) => f,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to open tarball at: \"{}\"",
-                    format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                );
-                Global::crash();
-            }
-        };
+    ctx.stats.packed_size = tarball_bytes.len();
 
-        let mut sha1 = sha::SHA1::init();
-        let mut sha512 = sha::SHA512::init();
-
-        if FOR_PUBLISH {
-            let bytes = match tarball_file.read_to_end() {
-                Ok(b) => b,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to read tarball: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-
-            sha1.update(&bytes);
-            sha512.update(&bytes);
-
-            sha1.r#final(&mut shasum);
-            sha512.r#final(&mut integrity);
-
-            ctx.stats.packed_size = bytes.len();
-
-            break 'tarball_bytes Some(bytes);
-        }
-
-        reset_buffered_file_reader(&mut file_reader, File::from_fd(tarball_file.into_raw()));
-
-        let mut size: usize = 0;
-        let mut read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
-            Ok(n) => n,
-            Err(err) => {
-                Output::err(
-                    err,
-                    "failed to read tarball: \"{}\"",
-                    format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                );
-                Global::crash();
-            }
-        };
-        while read > 0 {
-            sha1.update(&read_buf[..read]);
-            sha512.update(&read_buf[..read]);
-            size += read;
-            read = match buffered_file_reader_read(&mut file_reader, &mut read_buf) {
-                Ok(n) => n,
-                Err(err) => {
-                    Output::err(
-                        err,
-                        "failed to read tarball: \"{}\"",
-                        format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
-                    );
-                    Global::crash();
-                }
-            };
-        }
-
-        sha1.r#final(&mut shasum);
-        sha512.r#final(&mut integrity);
-
-        ctx.stats.packed_size = size;
-        None
-    };
-    let _ = core::mem::replace(
-        &mut file_reader.unbuffered_reader,
-        File::from_fd(Fd::invalid()),
-    );
+    if let Some(abs_tarball_dest) = abs_tarball_dest {
+        write_tarball(abs_tarball_dest, &tarball_bytes);
+    }
 
     let normalized_pkg_info: Option<Box<[u8]>> = if FOR_PUBLISH {
         // The mutated tree is consumed inside `normalized_package` (it prints
@@ -2885,7 +2710,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         edited_package_json.len(),
     );
 
-    if !FOR_PUBLISH {
+    if let Some(abs_tarball_dest) = abs_tarball_dest {
         if opt_pack_destination(ctx.manager).is_empty() && opt_pack_filename(ctx.manager).is_empty()
         {
             Context::print_tarball_path(
@@ -2926,8 +2751,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
             package_name: package_name.into(),
             package_version: package_version.into(),
-            abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
-            tarball_bytes: tarball_bytes.unwrap_or_default().into_boxed_slice(),
+            tarball_bytes: tarball_bytes.into_boxed_slice(),
             uses_workspaces: false,
             publish_script,
             postpublish_script,
@@ -2992,9 +2816,11 @@ fn has_unsafe_tarball_filename_part(value: &[u8]) -> bool {
         || strings::contains_any(value, b"\\:\0")
 }
 
+/// Returns the tarball path and the length of the directory the caller creates (0 for `--filename`).
 fn tarball_destination<'a>(
     pack_destination: &[u8],
     pack_filename: &[u8],
+    original_cwd: &[u8],
     abs_workspace_path: &[u8],
     package_name: &[u8],
     package_version: &[u8],
@@ -3011,26 +2837,41 @@ fn tarball_destination<'a>(
         Global::crash();
     }
     if !pack_filename.is_empty() {
-        if pack_filename.len() + 1 > dest_buf.len() {
+        let Some(tarball_name) = resolve_path::join_abs_string_buf_z_checked::<
+            resolve_path::platform::Auto,
+        >(original_cwd, dest_buf, &[pack_filename]) else {
             Output::err_generic(
                 "archive filename too long: \"{}\"",
                 format_args!("{}", bstr::BStr::new(pack_filename)),
             );
             Global::crash();
-        }
-        dest_buf[..pack_filename.len()].copy_from_slice(pack_filename);
-        dest_buf[pack_filename.len()] = 0;
-        let tarball_name_len = pack_filename.len() + 1;
-
-        // SAFETY: NUL written at pack_filename.len()
-        return (ZStr::from_buf(&dest_buf[..], tarball_name_len - 1), 0);
+        };
+        return (tarball_name, 0);
     } else {
+        let destination_base = if pack_destination.is_empty() {
+            abs_workspace_path
+        } else {
+            original_cwd
+        };
         let (dir_len_trimmed, dir_len_full) = {
-            let tarball_destination_dir = resolve_path::join_abs_string_buf::<
+            let Some(tarball_destination_dir) = resolve_path::join_abs_string_buf_checked::<
                 resolve_path::platform::Auto,
             >(
-                abs_workspace_path, dest_buf, &[pack_destination]
-            );
+                destination_base, dest_buf, &[pack_destination]
+            ) else {
+                Output::err_generic(
+                    "archive destination name too long: \"{}/{}\"",
+                    (
+                        bstr::BStr::new(strings::without_trailing_slash(pack_destination)),
+                        fmt_tarball_filename(
+                            package_name,
+                            package_version,
+                            TarballNameStyle::Normalize,
+                        ),
+                    ),
+                );
+                Global::crash();
+            };
             (
                 strings::without_trailing_slash(tarball_destination_dir).len(),
                 tarball_destination_dir.len(),
@@ -3134,13 +2975,61 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
     }
 }
 
+/// The only write to disk, and so the only failure that has a partial file to remove.
+fn write_tarball(abs_tarball_dest: &ZStr, tarball_bytes: &[u8]) {
+    let file = match File::create(Fd::cwd(), abs_tarball_dest, true) {
+        Ok(file) => file,
+        Err(err) => {
+            Output::err(
+                err,
+                "failed to open tarball file destination: \"{}\"",
+                format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+            );
+            Global::crash();
+        }
+    };
+    if let Err(err) = file.write_all(tarball_bytes) {
+        Output::err(
+            err,
+            "failed to write tarball: \"{}\"",
+            format_args!("{}", bstr::BStr::new(abs_tarball_dest.as_bytes())),
+        );
+        // Windows cannot delete the file while it is open.
+        drop(file);
+        // A `--filename` that is a symlink or a device is not ours to delete.
+        if let Ok(stat) = bun_sys::lstat(abs_tarball_dest) {
+            if bun_sys::kind_from_mode(stat.st_mode as bun_sys::Mode) == bun_sys::FileKind::File {
+                let _ = bun_sys::unlink(abs_tarball_dest);
+            }
+        }
+        Global::crash();
+    }
+}
+
+/// Returns the number of bytes libarchive accepted for the current entry.
+fn write_entry_data(archive: &Archive, pathname: &[u8], data: &[u8]) -> usize {
+    match usize::try_from(archive.write_data(data)) {
+        Ok(written) => written,
+        Err(_) => {
+            Output::err_generic(
+                "failed to write \"{}\" to tarball: {}",
+                (
+                    bstr::BStr::new(pathname),
+                    bstr::BStr::new(archive.error_string()),
+                ),
+            );
+            Global::crash();
+        }
+    }
+}
+
 fn archive_package_json(
     ctx: &mut Context<'_>,
-    archive: &mut Archive,
+    archive: &Archive,
     entry: *mut ArchiveEntry,
     root_dir: &Dir,
     edited_package_json: &[u8],
-) -> Result<*mut ArchiveEntry, AllocError> {
+) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
     let stat = match bun_sys::fstatat(Fd::from_std_dir(root_dir), bun_core::zstr!("package.json")) {
@@ -3168,20 +3057,16 @@ fn archive_package_json(
         ArchiveStatus::Failed | ArchiveStatus::Fatal | ArchiveStatus::Warn => {
             Output::err_generic(
                 "failed to write tarball header: {}",
-                format_args!(
-                    "{}",
-                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
-                ),
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
             );
             Global::crash();
         }
         _ => {}
     }
 
-    ctx.stats.unpacked_size +=
-        usize::try_from(archive.write_data(edited_package_json)).expect("int cast");
+    ctx.stats.unpacked_size += write_entry_data(archive, b"package.json", edited_package_json);
 
-    Ok(entry.clear())
+    entry.clear()
 }
 
 fn add_archive_entry(
@@ -3191,23 +3076,18 @@ fn add_archive_entry(
     filename: &ZStr,
     read_buf: &mut [u8],
     file_reader: &mut BufferedFileReader,
-    archive: &mut Archive,
+    archive: &Archive,
     entry: *mut ArchiveEntry,
     print_buf: &mut Vec<u8>,
     bins: &[BinInfo],
-) -> Result<*mut ArchiveEntry, AllocError> {
+) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
-    write!(
-        print_buf,
-        "{}{}\x00",
-        bstr::BStr::new(PACKAGE_PREFIX),
-        bstr::BStr::new(filename.as_bytes())
-    )
-    .expect("OOM");
-    let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
-    // SAFETY: print_buf[pathname_len] == 0 written above
-    let pathname = ZStr::from_buf(&print_buf[..], pathname_len);
+    // Not formatted through `BStr`: its `Display` rewrites bytes that are not valid UTF-8.
+    print_buf.extend_from_slice(PACKAGE_PREFIX);
+    print_buf.extend_from_slice(filename.as_bytes());
+    print_buf.push(0);
+    let pathname = ZStr::from_slice_with_nul(&print_buf[..]);
     #[cfg(windows)]
     entry.set_pathname_utf8(pathname);
     #[cfg(not(windows))]
@@ -3234,10 +3114,7 @@ fn add_archive_entry(
         ArchiveStatus::Failed | ArchiveStatus::Fatal => {
             Output::err_generic(
                 "failed to write tarball header: {}",
-                format_args!(
-                    "{}",
-                    bstr::BStr::new(std::ptr::from_mut::<Archive>(archive).error_string())
-                ),
+                format_args!("{}", bstr::BStr::new(archive.error_string())),
             );
             Global::crash();
         }
@@ -3259,7 +3136,7 @@ fn add_archive_entry(
     };
     while read > 0 {
         ctx.stats.unpacked_size +=
-            usize::try_from(archive.write_data(&read_buf[..read])).expect("int cast");
+            write_entry_data(archive, filename.as_bytes(), &read_buf[..read]);
         read = match buffered_file_reader_read(file_reader, read_buf) {
             Ok(n) => n,
             Err(err) => {
@@ -3279,167 +3156,236 @@ fn add_archive_entry(
     // close a fd we don't own.
     reset_buffered_file_reader(file_reader, File::from_fd(Fd::invalid()));
 
-    Ok(entry.clear())
+    entry.clear()
 }
 
-/// Strips workspace and catalog protocols from dependency versions then
-/// returns the printed json
-fn edit_root_package_json(
-    maybe_lockfile: Option<&Lockfile>,
-    json: &mut WorkspacePackageJSONCache::MapEntry,
-) -> Result<Box<[u8]>, AllocError> {
+/// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
+enum Substitution<'a> {
+    /// `workspace:^` / `~` / `*`: the workspace's current version behind that prefix.
+    WorkspaceVersion(&'static str),
+    /// `workspace:@acme/core@*` (alias), `workspace:../core`, or `workspace:1.x` on a workspace.
+    WorkspaceRangeOrDirectory(&'a [u8]),
+    /// `catalog:<name>`
+    Catalog(&'a [u8]),
+}
+
+impl<'a> Substitution<'a> {
+    fn for_spec(spec: &'a [u8]) -> Option<Substitution<'a>> {
+        let spec = bun_install::dependency::trim_literal(spec);
+        if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
+            return Some(match range {
+                b"^" => Substitution::WorkspaceVersion("^"),
+                b"~" => Substitution::WorkspaceVersion("~"),
+                b"*" => Substitution::WorkspaceVersion(""),
+                _ => Substitution::WorkspaceRangeOrDirectory(range),
+            });
+        }
+        let catalog_name = strings::without_prefix_if_possible_comptime(spec, b"catalog:")?;
+        Some(Substitution::Catalog(strings::trim(
+            catalog_name,
+            &strings::WHITESPACE_CHARS,
+        )))
+    }
+}
+
+/// Section order is the order errors get reported in.
+fn for_each_dependency(
+    package_json: Expr,
+    mut f: impl FnMut(&'static [u8], &mut bun_ast::G::Property),
+) {
     use bun_install_types::DependencyGroup;
-    // preserve deps→dev→peer→optional order (error-message ordering)
-    for dependency_group in [
+    for group in [
         DependencyGroup::DEPENDENCIES,
         DependencyGroup::DEV,
         DependencyGroup::PEER,
         DependencyGroup::OPTIONAL,
-    ]
-    .map(|g| g.prop)
-    {
-        if let Some(dependencies_expr) = json.root.get(dependency_group) {
-            if let ExprData::EObject(mut dependencies) = dependencies_expr.data {
-                for dependency in dependencies.properties.slice_mut() {
-                    if dependency.key.is_none() {
-                        continue;
-                    }
-                    if dependency.value.is_none() {
-                        continue;
-                    }
-
-                    let Some(package_spec) = dependency
-                        .value
-                        .as_ref()
-                        .expect("infallible: prop has value")
-                        .as_utf8_string_literal()
-                    else {
-                        continue;
-                    };
-                    if let Some(without_workspace_protocol) =
-                        strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
-                    {
-                        // TODO: make semver parsing more strict. `^`, `~` are not valid
-
-                        if without_workspace_protocol.len() == 1 {
-                            // TODO: this might be too strict
-                            let c = without_workspace_protocol[0];
-                            if c == b'^' || c == b'~' || c == b'*' {
-                                let dependency_name = match dependency
-                                    .key
-                                    .as_ref()
-                                    .expect("infallible: prop has key")
-                                    .as_utf8_string_literal()
-                                {
-                                    Some(n) => n,
-                                    None => {
-                                        Output::err_generic(
-                                            "expected string value for dependency name in \"{}\"",
-                                            format_args!("{}", bstr::BStr::new(dependency_group)),
-                                        );
-                                        Global::crash();
-                                    }
-                                };
-
-                                let resolved = 'failed_to_resolve: {
-                                    // find the current workspace version and append to package spec without `workspace:`
-                                    let Some(lockfile) = maybe_lockfile else {
-                                        break 'failed_to_resolve false;
-                                    };
-                                    let Some(workspace_version) = lockfile.workspace_versions.get(
-                                        &Semver::string::Builder::string_hash(dependency_name),
-                                    ) else {
-                                        break 'failed_to_resolve false;
-                                    };
-                                    let prefix: &[u8] = match c {
-                                        b'^' => b"^",
-                                        b'~' => b"~",
-                                        b'*' => b"",
-                                        _ => unreachable!(),
-                                    };
-                                    // Format on the heap then copy into the
-                                    // pack arena; `EString::init` erases the
-                                    // lifetime.
-                                    let tmp = format!(
-                                        "{}{}",
-                                        bstr::BStr::new(prefix),
-                                        workspace_version
-                                            .fmt(lockfile.buffers.string_bytes.as_slice()),
-                                    );
-                                    let data = pack_bump().alloc_slice_copy(tmp.as_bytes());
-                                    dependency.value = Some(Expr::init(
-                                        E::EString::init(data),
-                                        Default::default(),
-                                    ));
-                                    true
-                                };
-                                if resolved {
-                                    continue;
-                                }
-
-                                // only produce this error only when we need to get the workspace version
-                                Output::err_generic(
-                                    "Failed to resolve workspace version for \"{}\" in `{}`. Run <cyan>`bun install`<r> and try again.",
-                                    (
-                                        bstr::BStr::new(dependency_name),
-                                        bstr::BStr::new(dependency_group),
-                                    ),
-                                );
-                                Global::crash();
-                            }
-                        }
-
-                        let dup = pack_bump().alloc_slice_copy(without_workspace_protocol);
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(dup), Default::default()));
-                    } else if let Some(catalog_name_str) =
-                        strings::without_prefix_if_possible_comptime(package_spec, b"catalog:")
-                    {
-                        let dep_name_str = dependency
-                            .key
-                            .as_ref()
-                            .expect("infallible: prop has key")
-                            .as_utf8_string_literal()
-                            .expect("infallible: is_string checked");
-
-                        let lockfile = match maybe_lockfile {
-                            Some(l) => l,
-                            None => {
-                                Output::err_generic(
-                                    "Failed to resolve catalog version for \"{}\" in `{}` (catalogs require a lockfile).",
-                                    (
-                                        bstr::BStr::new(dep_name_str),
-                                        bstr::BStr::new(dependency_group),
-                                    ),
-                                );
-                                Global::crash();
-                            }
-                        };
-
-                        let map_buf: &[u8] = lockfile.buffers.string_bytes.as_slice();
-                        let catalog_name =
-                            strings::trim(catalog_name_str, &strings::WHITESPACE_CHARS);
-                        let Some(dep) = lockfile.catalogs.find(map_buf, catalog_name, dep_name_str)
-                        else {
-                            Output::err_generic(
-                                "Failed to resolve catalog version for \"{}\" in `{}` (no matching catalog dependency).",
-                                (
-                                    bstr::BStr::new(dep_name_str),
-                                    bstr::BStr::new(dependency_group),
-                                ),
-                            );
-                            Global::crash();
-                        };
-
-                        let literal =
-                            pack_bump().alloc_slice_copy(dep.version.literal.slice(map_buf));
-                        dependency.value =
-                            Some(Expr::init(E::EString::init(literal), Default::default()));
-                    }
-                }
-            }
+    ] {
+        let Some(section) = package_json.get(group.prop) else {
+            continue;
+        };
+        let ExprData::EObject(mut dependencies) = section.data else {
+            continue;
+        };
+        for dependency in dependencies.properties.slice_mut() {
+            f(group.prop, dependency);
         }
     }
+}
+
+/// Packages without such specs must pack whatever state the rest of the workspace is in.
+fn needs_workspace_manifests(package_json: Expr) -> bool {
+    let mut needed = false;
+    for_each_dependency(package_json, |_, dependency| {
+        needed |= dependency
+            .value
+            .as_ref()
+            .and_then(Expr::as_utf8_string_literal)
+            .and_then(Substitution::for_spec)
+            .is_some();
+    });
+    needed
+}
+
+/// Alias first, as the installer reads it; directory before range, since only a directory has a version.
+fn publish_spec_for_workspace_range_or_directory(
+    manifests: &WorkspaceManifests,
+    package_dir: &[u8],
+    dependency_name: &[u8],
+    spec: &[u8],
+) -> Result<Vec<u8>, String> {
+    let alias = split_workspace_alias(spec);
+    if let Some((workspace_name, range)) = alias.filter(|(name, _)| manifests.has_workspace(name)) {
+        let range = strings::trim(range, &strings::WHITESPACE_CHARS);
+        // The installer links an empty range like `*`.
+        let prefix = match range {
+            b"" | b"*" => Some(""),
+            b"^" => Some("^"),
+            b"~" => Some("~"),
+            _ => None,
+        };
+        let Some(prefix) = prefix else {
+            return Ok(publish_workspace(
+                dependency_name,
+                workspace_name,
+                bstr::BStr::new(range),
+            ));
+        };
+        let Some(version) = manifests.workspace_version(workspace_name) else {
+            return Err(format!(
+                "the package.json of workspace \"{}\" has no version",
+                bstr::BStr::new(workspace_name),
+            ));
+        };
+        return Ok(publish_workspace(
+            dependency_name,
+            workspace_name,
+            format_args!("{prefix}{version}"),
+        ));
+    }
+    if let Some(workspace_name) = manifests.workspace_name_at_path(package_dir, spec) {
+        let Some(version) = manifests.workspace_version(workspace_name) else {
+            return Err(format!(
+                "the package.json of workspace \"{}\" in the directory \"{}\" has no version",
+                bstr::BStr::new(workspace_name),
+                bstr::BStr::new(spec),
+            ));
+        };
+        return Ok(publish_workspace(dependency_name, workspace_name, version));
+    }
+    if alias.is_none() && manifests.has_workspace(dependency_name) {
+        return Ok(spec.to_vec());
+    }
+    Err(format!(
+        "\"{}\" has no workspace named \"{}\" and no workspace in the directory \"{}\"",
+        bstr::BStr::new(manifests.root_package_json_path()),
+        bstr::BStr::new(alias.map_or(dependency_name, |(workspace_name, _)| workspace_name)),
+        bstr::BStr::new(spec),
+    ))
+}
+
+/// `<name>@<range>` of `workspace:<name>@<range>`; `<name>` may be scoped, so it ends at the last
+/// `@`, and a directory like `../@scope/pkg` is not an alias since `../` is no package name.
+fn split_workspace_alias(spec: &[u8]) -> Option<(&[u8], &[u8])> {
+    let at = strings::last_index_of_char(spec, b'@').filter(|at| *at > 0)?;
+    let (name, range) = (&spec[..at], &spec[at + 1..]);
+    let is_package_name = match bun_install::dependency::is_scoped_package_name(name) {
+        Ok(true) => true,
+        Ok(false) => !strings::contains_char(name, b'/'),
+        Err(_) => false,
+    };
+    is_package_name.then_some((name, range))
+}
+
+/// The version itself under the workspace's own name, otherwise the `npm:` alias pnpm publishes too.
+fn publish_workspace(
+    dependency_name: &[u8],
+    workspace_name: &[u8],
+    version: impl fmt::Display,
+) -> Vec<u8> {
+    if workspace_name == dependency_name {
+        version.to_string().into_bytes()
+    } else {
+        format!("npm:{}@{version}", bstr::BStr::new(workspace_name)).into_bytes()
+    }
+}
+
+/// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.
+fn edit_root_package_json(
+    workspace_manifests: Option<&WorkspaceManifests>,
+    package_dir: &[u8],
+    json: &mut WorkspacePackageJSONCache::MapEntry,
+) -> Result<Box<[u8]>, AllocError> {
+    let bump = pack_bump();
+    for_each_dependency(json.root, |dependency_group, dependency| {
+        let (Some(name), Some(spec)) = (dependency.key.as_ref(), dependency.value.as_ref()) else {
+            return;
+        };
+        let Some(substitution) = spec
+            .as_utf8_string_literal()
+            .and_then(Substitution::for_spec)
+        else {
+            return;
+        };
+        let Some(dependency_name) = name.as_utf8_string_literal() else {
+            Output::err_generic(
+                "expected string value for dependency name in \"{}\"",
+                format_args!("{}", bstr::BStr::new(dependency_group)),
+            );
+            Global::crash();
+        };
+        let manifests =
+            || workspace_manifests.expect("pack() loads the manifests when a spec needs them");
+        let fail = |what: &str, why: fmt::Arguments<'_>| -> ! {
+            Output::err_generic(
+                "Failed to resolve {} version for \"{}\" in `{}` ({}).",
+                (
+                    what,
+                    bstr::BStr::new(dependency_name),
+                    bstr::BStr::new(dependency_group),
+                    why,
+                ),
+            );
+            Global::crash();
+        };
+
+        // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
+        let replacement: &[u8] = match substitution {
+            Substitution::WorkspaceVersion(prefix) => {
+                let Some(version) = manifests().workspace_version(dependency_name) else {
+                    fail(
+                        "workspace",
+                        format_args!(
+                            "\"{}\" has no workspace named \"{}\", or its package.json has no version",
+                            bstr::BStr::new(manifests().root_package_json_path()),
+                            bstr::BStr::new(dependency_name),
+                        ),
+                    )
+                };
+                bump.alloc_slice_copy(format!("{prefix}{version}").as_bytes())
+            }
+            Substitution::WorkspaceRangeOrDirectory(spec) => {
+                match publish_spec_for_workspace_range_or_directory(
+                    manifests(),
+                    package_dir,
+                    dependency_name,
+                    spec,
+                ) {
+                    Ok(published) => bump.alloc_slice_copy(&published),
+                    Err(why) => fail("workspace", format_args!("{why}")),
+                }
+            }
+            Substitution::Catalog(catalog_name) => {
+                match manifests().catalog_version(catalog_name, dependency_name) {
+                    Some(version) => bump.alloc_slice_copy(version),
+                    None => fail("catalog", format_args!("no matching catalog dependency")),
+                }
+            }
+        };
+        dependency.value = Some(Expr::init(
+            E::EString::init(replacement),
+            Default::default(),
+        ));
+    });
 
     let has_trailing_newline = !json.source.contents.is_empty()
         && json.source.contents[json.source.contents.len() - 1] == b'\n';

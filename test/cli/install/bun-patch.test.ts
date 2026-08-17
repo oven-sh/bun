@@ -85,22 +85,25 @@ describe("packages whose label is longer than 1024 bytes", () => {
   // on every platform while the recorded spec stays long.
   const longSpec = (tarball: string) => `./${Buffer.alloc(1050, "x/../").toString()}${tarball}`;
 
-  async function createProject(tarball: string, packageJson: Record<string, unknown>) {
-    const { packageDir } = await registry.createTestDir({
+  type Project = Awaited<ReturnType<VerdaccioRegistry["createTestDir"]>>;
+
+  // Two of these concurrent tests install `bar` from the identical spec, so every command runs with
+  // the project's own cache (`project.env`) rather than the cache CI shares across the whole file.
+  function createProject(tarball: string, packageJson: Record<string, unknown>): Promise<Project> {
+    return registry.createTestDir({
       bunfigOpts: { linker: "hoisted" },
       files: {
         "package.json": JSON.stringify(packageJson),
         [tarball]: readFileSync(join(import.meta.dir, tarball)),
       },
     });
-    return packageDir;
   }
 
-  async function runBun(cwd: string, ...args: string[]) {
+  async function runBun({ packageDir, env }: Project, ...args: string[]) {
     await using proc = Bun.spawn({
       cmd: [bunExe(), ...args],
-      cwd,
-      env: bunEnv,
+      cwd: packageDir,
+      env,
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -108,18 +111,18 @@ describe("packages whose label is longer than 1024 bytes", () => {
     return { stdout, stderr, exitCode };
   }
 
-  async function install(cwd: string) {
-    const { stderr, exitCode } = await runBun(cwd, "install");
+  async function install(project: Project) {
+    const { stderr, exitCode } = await runBun(project, "install");
     expect(stderr).not.toContain("error:");
-    expect(exitCode).toBe(0);
+    expect(exitCode, stderr).toBe(0);
   }
 
   test.concurrent("bun patch <name>@<label>", async () => {
     const spec = longSpec("bar-0.0.2.tgz");
-    const packageDir = await createProject("bar-0.0.2.tgz", { name: "foo", dependencies: { bar: spec } });
-    await install(packageDir);
+    const project = await createProject("bar-0.0.2.tgz", { name: "foo", dependencies: { bar: spec } });
+    await install(project);
 
-    const { stdout, stderr, exitCode } = await runBun(packageDir, "patch", `bar@${spec}`);
+    const { stdout, stderr, exitCode } = await runBun(project, "patch", `bar@${spec}`);
     expect(stderr).not.toContain("error:");
     expect(stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar\n");
     expect(exitCode).toBe(0);
@@ -130,20 +133,21 @@ describe("packages whose label is longer than 1024 bytes", () => {
   // The lockfile lists the long-labeled `bar` before `bar-from-npm`, so both commands
   // format the long label before reaching the package that matches.
   test.concurrent("bun patch <path> when another package with the same name has a long label", async () => {
-    const packageDir = await createProject("bar-0.0.2.tgz", {
+    const project = await createProject("bar-0.0.2.tgz", {
       name: "foo",
       dependencies: { "bar": longSpec("bar-0.0.2.tgz"), "bar-from-npm": "npm:bar@0.0.7" },
     });
-    await install(packageDir);
+    const { packageDir } = project;
+    await install(project);
 
-    const prepare = await runBun(packageDir, "patch", "node_modules/bar-from-npm");
+    const prepare = await runBun(project, "patch", "node_modules/bar-from-npm");
     expect(prepare.stderr).not.toContain("error:");
     expect(prepare.stdout).toContain("To patch bar, edit the following folder:\n\n  node_modules/bar-from-npm\n");
     expect(prepare.exitCode).toBe(0);
 
     await Bun.write(join(packageDir, "node_modules", "bar-from-npm", "index.js"), "module.exports = 'patched';\n");
 
-    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/bar-from-npm");
+    const commit = await runBun(project, "patch", "--commit", "node_modules/bar-from-npm");
     expect(commit.stderr).not.toContain("error:");
     expect(commit.exitCode).toBe(0);
     expect((await Bun.file(join(packageDir, "package.json")).json()).patchedDependencies).toEqual({
@@ -159,16 +163,17 @@ describe("packages whose label is longer than 1024 bytes", () => {
   // system accepts at this length), so what is pinned here is that it fails at that step.
   test.concurrent("bun patch --commit of a long-labeled package exits 1 without recording a patch", async () => {
     const packageJson = { name: "foo", dependencies: { baz: longSpec("baz-0.0.3.tgz") } };
-    const packageDir = await createProject("baz-0.0.3.tgz", packageJson);
-    await install(packageDir);
+    const project = await createProject("baz-0.0.3.tgz", packageJson);
+    const { packageDir } = project;
+    await install(project);
 
-    const prepare = await runBun(packageDir, "patch", "node_modules/baz");
+    const prepare = await runBun(project, "patch", "node_modules/baz");
     expect(prepare.stderr).not.toContain("error:");
     expect(prepare.exitCode).toBe(0);
 
     await Bun.write(join(packageDir, "node_modules", "baz", "index.js"), "console.log('patched baz');\n");
 
-    const commit = await runBun(packageDir, "patch", "--commit", "node_modules/baz");
+    const commit = await runBun(project, "patch", "--commit", "node_modules/baz");
     expect(commit.stderr).toContain("failed renaming patch file to patches dir");
     expect(commit.exitCode).toBe(1);
     expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual(packageJson);

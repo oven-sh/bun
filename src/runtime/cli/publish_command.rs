@@ -11,13 +11,11 @@ use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_dotenv as dotenv;
 use bun_http as http;
-use bun_install::lockfile::{LoadResult, LoadStep};
-use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
+use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
-use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
+use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
 use bun_paths::{self as path, PathBuffer};
-use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
 use bun_sys::dir_iterator as DirIterator;
@@ -97,7 +95,6 @@ pub(crate) struct Context<'a, const DIRECTORY_PUBLISH: bool> {
 
     pub(crate) package_name: Box<[u8]>,
     pub(crate) package_version: Box<[u8]>,
-    pub(crate) abs_tarball_path: Box<ZStr>,
     pub(crate) tarball_bytes: Box<[u8]>,
     pub(crate) uses_workspaces: bool,
 
@@ -138,16 +135,18 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     pub(crate) fn from_tarball_path(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
+        original_cwd: &[u8],
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
-        let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
-            FileSystem::instance().top_level_dir,
+        let abs_tarball_path = join_abs_string_buf_checked::<path::platform::Auto>(
+            original_cwd,
             &mut abs_buf,
             &[tarball_path],
-        );
+        )
+        .ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
 
-        let tarball_bytes = match File::read_from(Fd::cwd(), abs_tarball_path) {
+        let tarball_bytes = match abs_tarball_path.and_then(|p| File::read_from(Fd::cwd(), p)) {
             Ok(b) => b,
             Err(e) => {
                 Output::err(
@@ -348,38 +347,13 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
                 }
             }
 
-            if let Some(config) = json.get(b"publishConfig") {
-                if manager.options.publish_config.tag.is_empty() {
-                    if let Some(tag) = json_get_string_cloned(&config, &bump, b"tag")? {
-                        // Note: `PublishConfig.tag` is `&'static [u8]`; dupe the
-                        // bump-owned slice into the process-lifetime CLI arena.
-                        manager.options.publish_config.tag = crate::cli::cli_dupe(tag);
-                    }
-                }
-
-                if manager.options.publish_config.access.is_none() {
-                    if let Some(access) = json_get_string_cloned(&config, &bump, b"access")? {
-                        manager.options.publish_config.access = match Access::from_str(access) {
-                            Some(a) => Some(a),
-                            None => {
-                                Output::err_generic(
-                                    "invalid `access` value: '{}'",
-                                    (bstr::BStr::new(access),),
-                                );
-                                Global::crash();
-                            }
-                        };
-                    }
-                }
-
-                // maybe otp
-            }
-
             let name: Box<[u8]> = json_get_string_cloned(&json, &bump, b"name")?
                 .ok_or(FromTarballError::MissingPackageName)?
                 .into();
             let is_scoped = dependency::is_scoped_package_name(&name)
                 .map_err(|_| FromTarballError::InvalidPackageName)?;
+
+            manager.options.apply_publish_config(&json, &bump, &name)?;
 
             if let Some(access) = manager.options.publish_config.access {
                 if access == Access::Restricted && !is_scoped {
@@ -438,7 +412,6 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             command_ctx: ctx,
             package_name,
             package_version,
-            abs_tarball_path: ZStr::boxed(abs_tarball_path.as_bytes()),
             tarball_bytes: tarball_bytes.into(),
             uses_workspaces: false,
             normalized_pkg_info,
@@ -457,65 +430,17 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
+        original_cwd: &[u8],
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
-        let mut lockfile = Lockfile::default();
-        let manager_ptr: *mut PackageManager = manager;
-        let log: &mut bun_ast::Log = manager.log_mut();
-        // SAFETY: `manager_ptr` was just derived from `manager: &'a mut PackageManager`;
-        // `log` borrows the disjoint `.log` field, so the re-derived `&mut`
-        // never touches memory the live `log` borrow covers.
-        let load_from_disk_result =
-            lockfile.load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), log);
-
-        let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
-            LoadResult::Ok(ok) => Some(&*ok.lockfile),
-            LoadResult::NotFound => None,
-            LoadResult::Err(cause) => 'err: {
-                match cause.step {
-                    LoadStep::OpenFile => {
-                        if cause.value == bun_install::Error::Sys(bun_errno::SystemErrno::ENOENT) {
-                            break 'err None;
-                        }
-                        Output::err_generic("failed to open lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ParseFile => {
-                        Output::err_generic("failed to parse lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::ReadFile => {
-                        Output::err_generic("failed to read lockfile: {}", (cause.value.name(),));
-                    }
-                    LoadStep::Migrating => {
-                        Output::err_generic(
-                            "failed to migrate lockfile: {}",
-                            (cause.value.name(),),
-                        );
-                    }
-                }
-
-                if log.has_errors() {
-                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
-                }
-
-                Global::crash();
-            }
-        };
-
         // Note: capture the package.json path before constructing
         // `pack::Context` so the `&mut PackageManager` borrow doesn't conflict.
-        // SAFETY: `manager_ptr` came from `&'a mut PackageManager`.
-        let abs_pkg_json = bun_core::ZBox::from_bytes(
-            unsafe { &*manager_ptr }
-                .original_package_json_path
-                .as_bytes(),
-        );
+        let abs_pkg_json =
+            bun_core::ZBox::from_bytes(manager.original_package_json_path.as_bytes());
 
         let mut pack_ctx = pack::Context {
-            // SAFETY: `manager_ptr` came from `&'a mut PackageManager`;
-            // `lockfile_ref` borrows the local `lockfile`, not the manager,
-            // so the re-derived `&mut` is the only live manager borrow.
-            manager: unsafe { &mut *manager_ptr },
+            manager,
             command_ctx: ctx,
-            lockfile: lockfile_ref,
+            original_cwd,
             bundled_deps: Vec::new(),
             stats: pack::Stats::default(),
         };
@@ -549,13 +474,13 @@ impl PublishCommand {
                     Global::crash();
                 }
             };
-        drop(original_cwd);
         let manager_ptr: *mut PackageManager = manager;
 
         if cli.positionals.len() > 1 {
             let context = match Context::<false>::from_tarball_path(
                 ctx,
                 manager,
+                &original_cwd,
                 cli.positionals[1],
             ) {
                 Ok(c) => c,
@@ -619,7 +544,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::<true>::from_workspace(ctx, manager) {
+        let context = match Context::<true>::from_workspace(ctx, manager, &original_cwd) {
             Ok(c) => c,
             Err(err) => {
                 use pack::PackError;
@@ -647,9 +572,6 @@ impl PublishCommand {
                 Global::crash();
             }
         };
-
-        // TODO: read this into memory
-        let _ = bun_sys::unlink(&context.abs_tarball_path);
 
         if let Err(err) = Self::publish::<true>(&context) {
             err.report_and_crash();
@@ -743,6 +665,7 @@ impl PublishCommand {
     }
 
     fn check_package_version_exists(
+        manager: &PackageManager,
         package_name: &[u8],
         version: &[u8],
         registry: &Npm::Registry::Scope,
@@ -807,16 +730,18 @@ impl PublishCommand {
             headers.append(b"authorization", &auth_buf);
         }
 
+        let http_proxy = manager.http_proxy(&package_url);
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::GET,
             package_url,
             headers.entries,
             headers.content.written_slice(),
             b"",
-            None,
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             http::FetchRedirect::Follow,
         );
+        req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
         let Ok(res) = req.send_sync(&mut response_buf) else {
             return false;
@@ -860,6 +785,7 @@ impl PublishCommand {
         if tolerate_republish {
             let version_without_build_tag = dependency::without_build_tag(&ctx.package_version);
             let package_exists = Self::check_package_version_exists(
+                ctx.manager,
                 &ctx.package_name,
                 version_without_build_tag,
                 registry,
@@ -932,6 +858,8 @@ impl PublishCommand {
         // arena so the URL outlives `print_buf.clear()` below.
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
+        let http_proxy = ctx.manager.http_proxy(&publish_url);
+        let reject_unauthorized = ctx.manager.tls_reject_unauthorized();
 
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::PUT,
@@ -939,10 +867,11 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            None,
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             http::FetchRedirect::Follow,
         );
+        req.client.flags.reject_unauthorized = reject_unauthorized;
 
         let res = match req.send_sync(&mut response_buf) {
             Ok(r) => r,
@@ -979,7 +908,7 @@ impl PublishCommand {
 
                         Output::err_generic(
                             "unable to authenticate, need: {}",
-                            (bstr::BStr::new(www_authenticate),),
+                            (bun_fmt::escape_control_chars(www_authenticate),),
                         );
                         Global::crash();
                     } else if strings::contains(&response_buf.list, b"one-time pass") {
@@ -1005,7 +934,7 @@ impl PublishCommand {
                 if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
-                    bun_core::note!("{}", bstr::BStr::new(notice));
+                    bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
                     Output::flush();
                 }
 
@@ -1033,10 +962,11 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    None,
+                    http_proxy.as_ref().map(|proxy| proxy.url()),
                     None,
                     http::FetchRedirect::Follow,
                 );
+                otp_req.client.flags.reject_unauthorized = reject_unauthorized;
 
                 let otp_res = match otp_req.send_sync(&mut response_buf) {
                     Ok(r) => r,
@@ -1065,7 +995,7 @@ impl PublishCommand {
                             otp_res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
                             Output::print_error(format_args!("\n"));
-                            bun_core::note!("{}", bstr::BStr::new(notice));
+                            bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
                             Output::flush();
                         }
                     }
@@ -1251,22 +1181,26 @@ impl PublishCommand {
                     ctx.uses_workspaces,
                     ctx.manager.options.publish_config.auth_type,
                 )?;
+                let reject_unauthorized = ctx.manager.tls_reject_unauthorized();
+
+                let http_proxy = ctx.manager.http_proxy(&done_url);
 
                 loop {
                     response_buf.reset();
 
-                    // Note: `done_url`/`auth_headers.entries` move into
-                    // `init_sync`, so re-clone per iteration.
+                    // Note: `done_url`/`auth_headers.entries`/`http_proxy` move
+                    // into `init_sync`, so re-clone per iteration.
                     let mut req = http::AsyncHTTP::init_sync(
                         http::Method::GET,
                         done_url.clone(),
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        None,
+                        http_proxy.as_ref().map(|proxy| proxy.url()),
                         None,
                         http::FetchRedirect::Follow,
                     );
+                    req.client.flags.reject_unauthorized = reject_unauthorized;
 
                     let res = match req.send_sync(response_buf) {
                         Ok(r) => r,
@@ -1341,7 +1275,7 @@ impl PublishCommand {
                                 res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
                                 Output::print_error(format_args!("\n"));
-                                bun_core::note!("{}", bstr::BStr::new(notice));
+                                bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
                                 Output::flush();
                             }
 
@@ -1571,8 +1505,10 @@ impl PublishCommand {
         });
 
         let mut iter = DirIterator::iterate(workspace_dir);
+        iter.resolve_unknown_entry_types = true;
         while let Some(entry) = iter.next().ok().flatten() {
-            if entry.kind == bun_sys::EntryKind::Directory {
+            // Symlinks are not packed, so a symlinked README is not the readme either.
+            if entry.kind != bun_sys::EntryKind::File {
                 continue;
             }
             // Entry names are UTF-8 on every platform.
@@ -1593,6 +1529,16 @@ impl PublishCommand {
         None
     }
 
+    fn bin_target<'a>(
+        value: &[u8],
+        path_buf: &'a mut [u8],
+        path_spill: &'a mut Vec<u8>,
+    ) -> Option<&'a ZStr> {
+        let target: &'a ZStr =
+            normalize_buf_z_spill::<path::platform::Posix>(path_buf, path_spill, value);
+        (!pack::is_package_root_or_outside(target.as_bytes())).then_some(target)
+    }
+
     fn normalize_bin(
         json: &mut Expr,
         bump: &bun_alloc::Arena,
@@ -1608,35 +1554,33 @@ impl PublishCommand {
             };
         }
         let mut path_buf = PathBuffer::uninit();
+        let mut path_spill: Vec<u8> = Vec::new();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
-                    let normalized = strings::without_prefix_comptime_z(
-                        normalize_buf_z::<path::platform::Posix>(
-                            bin_str.string(bump)?,
-                            &mut *path_buf,
-                        ),
-                        b"./",
-                    );
-                    if !bun_sys::exists_at(workspace_root, normalized) {
-                        bun_core::warn!(
-                            "bin '{}' does not exist",
-                            bstr::BStr::new(normalized.as_bytes()),
-                        );
-                    }
+                    if let Some(value) =
+                        Self::bin_target(bin_str.string(bump)?, &mut *path_buf, &mut path_spill)
+                    {
+                        if !bun_sys::exists_at(workspace_root, value) {
+                            bun_core::warn!(
+                                "bin '{}' does not exist",
+                                bstr::BStr::new(value.as_bytes()),
+                            );
+                        }
 
-                    bin_props.push(G::Property {
-                        key: Some(Expr::init(
-                            E::String::init(leak!(package_name)),
-                            bun_ast::Loc::EMPTY,
-                        )),
-                        value: Some(Expr::init(
-                            E::String::init(leak!(normalized.as_bytes())),
-                            bun_ast::Loc::EMPTY,
-                        )),
-                        ..Default::default()
-                    });
+                        bin_props.push(G::Property {
+                            key: Some(Expr::init(
+                                E::String::init(leak!(package_name)),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            value: Some(Expr::init(
+                                E::String::init(leak!(value.as_bytes())),
+                                bun_ast::Loc::EMPTY,
+                            )),
+                            ..Default::default()
+                        });
+                    }
 
                     json.data
                         .e_object_mut()
@@ -1660,10 +1604,12 @@ impl PublishCommand {
                                     if ks.len() != 0 {
                                         break 'key Some(Box::<[u8]>::from(
                                             strings::without_prefix(
-                                                normalize_buf::<path::platform::Posix>(
-                                                    ks.string(bump)?,
+                                                normalize_buf_z_spill::<path::platform::Posix>(
                                                     &mut *path_buf,
-                                                ),
+                                                    &mut path_spill,
+                                                    ks.string(bump)?,
+                                                )
+                                                .as_bytes(),
                                                 b"./",
                                             ),
                                         ));
@@ -1678,32 +1624,18 @@ impl PublishCommand {
                             continue;
                         }
 
-                        let value: Option<bun_core::ZBox> = 'value: {
-                            if let Some(value) = &bin_prop.value {
-                                if let Some(vs) = value.data.as_e_string() {
-                                    if vs.len() != 0 {
-                                        break 'value Some(bun_core::ZBox::from_bytes(
-                                            strings::without_prefix_comptime_z(
-                                                // replace separators
-                                                normalize_buf_z::<path::platform::Posix>(
-                                                    vs.string(bump)?,
-                                                    &mut *path_buf,
-                                                ),
-                                                b"./",
-                                            )
-                                            .as_bytes(),
-                                        ));
-                                    }
-                                }
-                            }
-                            None
-                        };
-                        let Some(value) = value else { continue };
-                        if value.is_empty() {
+                        let Some(value) =
+                            bin_prop.value.as_ref().and_then(|v| v.data.as_e_string())
+                        else {
                             continue;
-                        }
+                        };
+                        let Some(value) =
+                            Self::bin_target(value.string(bump)?, &mut *path_buf, &mut path_spill)
+                        else {
+                            continue;
+                        };
 
-                        if !bun_sys::exists_at(workspace_root, &value) {
+                        if !bun_sys::exists_at(workspace_root, value) {
                             bun_core::warn!(
                                 "bin '{}' does not exist",
                                 bstr::BStr::new(value.as_bytes()),
@@ -1744,16 +1676,15 @@ impl PublishCommand {
                     return Ok(());
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
-                let normalized_bin_dir = bun_core::ZBox::from_bytes(
-                    strings::without_trailing_slash(strings::without_prefix(
-                        normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),
-                        b"./",
-                    )),
-                );
-
-                if normalized_bin_dir.is_empty() {
+                let Some(bin_dir_subpath) = pack::bin_subpath(
+                    bin_dir_str,
+                    pack::BinType::Dir,
+                    &mut *path_buf,
+                    &mut path_spill,
+                ) else {
                     return Ok(());
-                }
+                };
+                let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);
 
                 let bin_dir = match bun_sys::openat(
                     workspace_root,
@@ -1763,7 +1694,7 @@ impl PublishCommand {
                 ) {
                     Ok(fd) => fd,
                     Err(e) => {
-                        if e.get_errno() == bun_sys::E::ENOENT {
+                        if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENAMETOOLONG) {
                             bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),
@@ -1793,6 +1724,7 @@ impl PublishCommand {
                     });
 
                     let mut iter = DirIterator::iterate(dir);
+                    iter.resolve_unknown_entry_types = true;
                     while let Some(entry) = iter.next().ok().flatten() {
                         let (name, subpath): (&'static ZStr, &'static ZStr) = {
                             // Entry names are UTF-8 on every platform.
@@ -2010,10 +1942,7 @@ impl PublishCommand {
             install::dependency::without_build_tag(&ctx.package_version);
 
         let mut buf: Vec<u8> = Vec::with_capacity(
-            ctx.package_name.len() * 5
-                + version_without_build_tag.len() * 4
-                + ctx.abs_tarball_path.len()
-                + encoded_tarball_len,
+            ctx.package_name.len() * 5 + version_without_build_tag.len() * 4 + encoded_tarball_len,
         );
 
         let _ = write!(

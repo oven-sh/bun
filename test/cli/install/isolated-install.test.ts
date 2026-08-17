@@ -2,10 +2,21 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
+import {
+  VerdaccioRegistry,
+  bunEnv,
+  bunExe,
+  githubTarball,
+  isLinux,
+  isWindows,
+  readdirSorted,
+  runBunInstall,
+  tempDir,
+} from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";
+import { SimpleRegistry } from "./simple-dummy-registry";
 
 const registry = new VerdaccioRegistry();
 
@@ -30,6 +41,21 @@ function entryStoreName(link: string): string {
 // string (see "store entry names of URL dependencies").
 function urlHash(url: string): string {
   return Bun.hash(url).toString(16).padStart(16, "0");
+}
+
+// Every copy of `name` in the tree bun.lock saves, keyed by the node_modules
+// path it is written at, e.g. `{ "no-deps": "no-deps@1.0.1", "nd11": "no-deps@1.1.0" }`.
+// The peer tests below depend on the shape of this tree, not just on which
+// versions were resolved, so they assert it before looking at the store.
+async function savedTreeCopiesOf(packageDir: string, name: string): Promise<Record<string, string>> {
+  const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
+    packages: Record<string, [string, ...unknown[]]>;
+  };
+  return Object.fromEntries(
+    Object.entries(packages)
+      .filter(([, [resolution]]) => resolution.startsWith(`${name}@`))
+      .map(([path, [resolution]]) => [path, resolution]),
+  );
 }
 
 // `<name>@<resolution>`, with the resolution cut and hashed past MAX_RESOLUTION_LEN (see "long store entry names").
@@ -342,6 +368,53 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("a folder dependency without a package.json name is stored under its folder name", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-nameless-folder-dep",
+        dependencies: {
+          "folder-dep": "file:./pkg-1",
+        },
+      }),
+    ),
+    write(join(packageDir, "pkg-1", "package.json"), JSON.stringify({ version: "1.0.0" })),
+    write(join(packageDir, "pkg-1", "index.js"), "module.exports = 'hello from pkg-1';"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  // Without a name the store entry used to be ".bun/@file+pkg-1/node_modules" with the package's
+  // files spilled directly into that node_modules directory.
+  expect(readlinkSync(join(packageDir, "node_modules", "folder-dep"))).toBe(
+    join(".bun", "pkg-1@file+pkg-1", "node_modules", "pkg-1"),
+  );
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "pkg-1@file+pkg-1", "node_modules", "pkg-1", "package.json"),
+    ).json(),
+  ).toEqual({ version: "1.0.0" });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('folder-dep'))"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("hello from pkg-1\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  // The entry bun wrote loads again (runBunInstall fails on "warn: Ignoring lockfile").
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"folder-dep": ["pkg-1@file:pkg-1", {}]');
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+});
+
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
@@ -380,6 +453,472 @@ test("can install folder dependencies on root package", async () => {
     join("..", "..", "..", "node_modules", ".bun", "root-file-dep@root", "node_modules", "root-file-dep"),
     await file(packageJson).json(),
   ]);
+});
+
+describe("link: dependencies", () => {
+  async function runBun(args: string[], cwd: string, env: NodeJS.Dict<string>) {
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The lockfile records a `link:` dependency by name only, so the `bun link`
+  // registration behind that name can be gone by the time the lockfile is
+  // installed: `bun unlink` removes the global link dir entry, deleting the
+  // package leaves the entry dangling.
+  test.concurrent.each([
+    {
+      name: "linked-pkg",
+      gone: "the package was unlinked",
+      async remove(pkgDir: string, env: NodeJS.Dict<string>) {
+        const result = await runBun(["unlink"], pkgDir, env);
+        expect(result.stdout).toContain(`success: unlinked package "linked-pkg"`);
+        expect(result.exitCode).toBe(0);
+      },
+    },
+    {
+      name: "@scope/linked-pkg",
+      gone: "the linked directory was deleted",
+      async remove(pkgDir: string) {
+        await rm(pkgDir, { recursive: true, force: true });
+      },
+    },
+  ])("installing from the lockfile fails when $gone", async ({ name, remove }) => {
+    using dir = tempDir("isolated-link-target", {
+      "pkg/package.json": JSON.stringify({ name, version: "1.0.0" }),
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { [name]: `link:${name}` } }),
+      "app/bunfig.toml": `[install]\nlinker = "isolated"\n`,
+    });
+    const pkgDir = join(String(dir), "pkg");
+    const appDir = join(String(dir), "app");
+    // `bun link` registers into $BUN_INSTALL/install/global; keep it private to this test.
+    const env = { ...bunEnv, BUN_INSTALL: join(String(dir), "bun-install") };
+
+    let result = await runBun(["link"], pkgDir, env);
+    expect(result.stdout).toContain(`Success! Registered "${name}"`);
+    expect(result.exitCode).toBe(0);
+
+    result = await runBun(["install"], appDir, env);
+    expect(result.stderr).toContain("Saved lockfile");
+    expect(result.exitCode).toBe(0);
+    expect(await file(join(appDir, "node_modules", name, "package.json")).json()).toEqual({ name, version: "1.0.0" });
+
+    await remove(pkgDir, env);
+
+    // Both reinstalling over the existing node_modules and installing into a
+    // fresh one (a clone with the lockfile checked in) must report the missing
+    // package and exit 1 instead of silently succeeding. As with every other
+    // failed entry, node_modules/<name> still points at the registration and
+    // resolves again once the package is re-linked.
+    result = await runBun(["install"], appDir, env);
+    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
+    expect(result.stdout).toContain("Failed to install 1 package");
+    expect(result.exitCode).toBe(1);
+
+    await rm(join(appDir, "node_modules"), { recursive: true, force: true });
+    result = await runBun(["install"], appDir, env);
+    expect(result.stderr).toContain("ENOENT");
+    expect(result.stderr).toContain(`failed to link package: ${name}@link:`);
+    expect(result.stdout).toContain("Failed to install 1 package");
+    expect(result.exitCode).toBe(1);
+  });
+});
+
+// A `file:` dependency declared by a registry package points at a folder inside
+// that package (the same fixtures as "transitive file dependencies" in
+// bun-install-registry.test.ts, which covers the hoisted linker).
+describe("transitive file dependencies of registry packages", () => {
+  const dependencies = {
+    // depends on file-dep@1.0.0
+    "dep-file-dep": "1.0.0",
+    // "files": "file:./the-files"
+    "file-dep": "1.0.0",
+    // "files": "file:./missing-folder", which is not in the tarball
+    "missing-file-dep": "1.0.0",
+    // file-dep@1.0.1 has "files": "file:."
+    "aliased-file-dep": "npm:file-dep@1.0.1",
+    // both have "@scoped/files": "file:./the-files", so bun.lock holds one
+    // folder package with two dependents
+    "@scoped/file-dep": "1.0.0",
+    "@another-scope/file-dep": "1.0.0",
+    // "self-file-dep": "file:."
+    "self-file-dep": "1.0.0",
+  };
+
+  const storeEntries = [
+    "@another-scope+file-dep@1.0.0",
+    "@scoped+file-dep@1.0.0",
+    "dep-file-dep@1.0.0",
+    "file-dep@1.0.0",
+    "file-dep@1.0.1",
+    "missing-file-dep@1.0.0",
+    "node_modules",
+    "self-file-dep@1.0.0",
+  ];
+
+  async function checkStore(packageDir: string) {
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const storePackage = (entry: string, ...name: string[]) => join(bunDir, entry, "node_modules", ...name);
+
+    // the folders never become store entries of their own
+    expect(await readdirSorted(bunDir)).toEqual(storeEntries);
+
+    expect([
+      readlinkSync(storePackage("file-dep@1.0.0", "files")),
+      readlinkSync(storePackage("file-dep@1.0.1", "files")),
+      readlinkSync(storePackage("@scoped+file-dep@1.0.0", "@scoped", "files")),
+      readlinkSync(storePackage("@another-scope+file-dep@1.0.0", "@scoped", "files")),
+      readlinkSync(storePackage("self-file-dep@1.0.0", "self-file-dep", "node_modules", "self-file-dep")),
+      await readdirSorted(storePackage("missing-file-dep@1.0.0")),
+      await readdirSorted(storePackage("dep-file-dep@1.0.0")),
+    ]).toEqual([
+      join("file-dep", "the-files"),
+      "file-dep",
+      join("file-dep", "the-files"),
+      join("..", "@another-scope", "file-dep", "the-files"),
+      "..",
+      ["missing-file-dep"],
+      ["dep-file-dep", "file-dep"],
+    ]);
+
+    expect(
+      await Promise.all([
+        file(storePackage("file-dep@1.0.0", "files", "package.json")).json(),
+        file(storePackage("file-dep@1.0.1", "files", "package.json")).json(),
+        file(storePackage("@another-scope+file-dep@1.0.0", "@scoped", "files", "index.js")).text(),
+        file(
+          storePackage("self-file-dep@1.0.0", "self-file-dep", "node_modules", "self-file-dep", "package.json"),
+        ).json(),
+      ]),
+    ).toEqual([
+      { name: "files", version: "1.1.1", dependencies: { "no-deps": "2.0.0" } },
+      { name: "file-dep", version: "1.0.1", dependencies: { files: "file:." } },
+      'console.log("hello files");',
+      { name: "self-file-dep", version: "1.0.0", dependencies: { "self-file-dep": "file:." } },
+    ]);
+
+    // the packages resolve their folders from their real location in the store
+    const fromFileDep = createRequire(storePackage("file-dep@1.0.0", "file-dep", "package.json"));
+    expect(fromFileDep.resolve("files")).toEndWith(
+      join(".bun", "file-dep@1.0.0", "node_modules", "file-dep", "the-files", "index.js"),
+    );
+    const fromMissingFileDep = createRequire(
+      storePackage("missing-file-dep@1.0.0", "missing-file-dep", "package.json"),
+    );
+    expect(() => fromMissingFileDep.resolve("files")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
+  }
+
+  test("are linked from inside the package that declares them", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(packageJson, JSON.stringify({ name: "transitive-file-deps", dependencies }));
+
+    let { out } = await runBunInstall(bunEnv, packageDir);
+    expect(out).toContain("7 packages installed");
+    await checkStore(packageDir);
+
+    // from bun.lock, where the two `@scoped/files` rows load as one package
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    ({ out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false }));
+    expect(out).toContain("7 packages installed");
+    await checkStore(packageDir);
+
+    // relinking an existing node_modules
+    ({ out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false }));
+    expect(out).toContain("no changes");
+    await checkStore(packageDir);
+  });
+
+  test("a folder declared by the root keeps its store entry when a registry package peer-depends on it", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "root-folder-satisfies-peer",
+          dependencies: {
+            // peerDependencies: { "no-deps": "*" }
+            "peer-deps": "1.0.0",
+            "no-deps": "file:./no-deps",
+          },
+        }),
+      ),
+      write(join(packageDir, "no-deps", "package.json"), JSON.stringify({ name: "no-deps", version: "9.9.9" })),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const entries = await readdirSorted(bunDir);
+    expect(entries).toContain("no-deps@file+no-deps");
+    const peerDeps = entries.find(entry => entry.startsWith("peer-deps@1.0.0"))!;
+    expect(readlinkSync(join(bunDir, peerDeps, "node_modules", "no-deps"))).toBe(
+      join("..", "..", "no-deps@file+no-deps", "node_modules", "no-deps"),
+    );
+    expect(await file(join(bunDir, peerDeps, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "9.9.9",
+    });
+  });
+
+  // file-dep-with-peer-on-files@1.0.0 declares `"files": "file:the-files"` and depends on
+  // peer-on-files@1.0.0, which has an optional peer on `files` and ships an unrelated
+  // the-files folder of its own (registry/packages/create-file-dep-with-peer-packages.ts).
+  test("a folder is not bound to a peer dependency below the package containing it", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({ name: "contained-folder-peer", dependencies: { "file-dep-with-peer-on-files": "1.0.0" } }),
+    );
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    const declaring = join(bunDir, "file-dep-with-peer-on-files@1.0.0", "node_modules");
+    const peer = join(bunDir, "peer-on-files@1.0.0", "node_modules");
+    expect(
+      await Promise.all([
+        readdirSorted(bunDir),
+        readdirSorted(declaring),
+        readlink(join(declaring, "files")),
+        file(join(declaring, "files", "index.js")).text(),
+        // nothing provides the peer, so it is not linked even though peer-on-files
+        // ships a folder with the declared path itself
+        readdirSorted(peer),
+      ]),
+    ).toEqual([
+      ["file-dep-with-peer-on-files@1.0.0", "node_modules", "peer-on-files@1.0.0"],
+      ["file-dep-with-peer-on-files", "files", "peer-on-files"],
+      join("file-dep-with-peer-on-files", "the-files"),
+      'module.exports = "the-files shipped by file-dep-with-peer-on-files";\n',
+      ["peer-on-files"],
+    ]);
+    const fromPeer = createRequire(join(peer, "peer-on-files", "package.json"));
+    expect(() => fromPeer.resolve("files")).toThrow(expect.objectContaining({ code: "MODULE_NOT_FOUND" }));
+  });
+
+  test("a folder the root also declares: the root links its store entry, the package links its own copy, fresh and from bun.lock", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "shared-folder-row",
+          dependencies: {
+            "file-dep-with-peer-on-files": "1.0.0",
+            // normalizes to the-files, the path the registry package declares, so the
+            // two rows load from bun.lock as one folder package
+            "files": "file:./the-files",
+          },
+        }),
+      ),
+      write(join(packageDir, "the-files", "package.json"), JSON.stringify({ name: "files", version: "2.0.0" })),
+      write(join(packageDir, "the-files", "index.js"), 'module.exports = "the-files in the project";\n'),
+    ]);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    async function checkLayout() {
+      const entries = await readdirSorted(bunDir);
+      const declaring = join(
+        bunDir,
+        entries.find(entry => entry.startsWith("file-dep-with-peer-on-files@"))!,
+        "node_modules",
+      );
+      const peer = join(bunDir, entries.find(entry => entry.startsWith("peer-on-files@"))!, "node_modules");
+      expect(
+        await Promise.all([
+          entries.map(entry => entry.replace(/\+[0-9a-f]{16}$/, "")),
+          readlink(join(packageDir, "node_modules", "files")),
+          file(join(packageDir, "node_modules", "files", "index.js")).text(),
+          readlink(join(declaring, "files")),
+          file(join(declaring, "files", "index.js")).text(),
+          // the peer is satisfied by the root's folder, not by the copy inside its parent
+          readlink(join(peer, "files")),
+          file(join(peer, "files", "index.js")).text(),
+        ]),
+      ).toEqual([
+        ["file-dep-with-peer-on-files@1.0.0", "files@file+the-files", "node_modules", "peer-on-files@1.0.0"],
+        join(".bun", "files@file+the-files", "node_modules", "files"),
+        'module.exports = "the-files in the project";\n',
+        join("file-dep-with-peer-on-files", "the-files"),
+        'module.exports = "the-files shipped by file-dep-with-peer-on-files";\n',
+        join("..", "..", "files@file+the-files", "node_modules", "files"),
+        'module.exports = "the-files in the project";\n',
+      ]);
+      return entries;
+    }
+
+    await runBunInstall(bunEnv, packageDir);
+    const fresh = await checkLayout();
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+    expect(await checkLayout()).toEqual(fresh);
+  });
+
+  test("does not take the hoist slots of a real package with the same name", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated", publicHoistPattern: ["files"] },
+    });
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "folder-hoist-slots",
+          // file-dep's `files` folder entry is created before mid's `files` below
+          dependencies: { "file-dep": "1.0.0", "mid": "file:./mid" },
+        }),
+      ),
+      write(
+        join(packageDir, "mid", "package.json"),
+        JSON.stringify({ name: "mid", version: "1.0.0", dependencies: { files: "npm:no-deps@1.0.0" } }),
+      ),
+    ]);
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    expect(
+      await Promise.all([
+        readdirSorted(bunDir),
+        // publicHoistPattern and the hidden fallback directory both hold no-deps
+        readlink(join(packageDir, "node_modules", "files")),
+        readdirSorted(join(bunDir, "node_modules")),
+        readlink(join(bunDir, "file-dep@1.0.0", "node_modules", "files")),
+        readlink(join(bunDir, "mid@file+mid", "node_modules", "files")),
+      ]),
+    ).toEqual([
+      ["file-dep@1.0.0", "mid@file+mid", "no-deps@1.0.0", "node_modules"],
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+      ["file-dep", "no-deps"],
+      join("file-dep", "the-files"),
+      join("..", "..", "no-deps@1.0.0", "node_modules", "no-deps"),
+    ]);
+  });
+
+  test("a folder path escaping its package is refused when it comes from bun.lock", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(packageJson, JSON.stringify({ name: "escaping-folder", dependencies: { "file-dep": "1.0.0" } }));
+
+    // the resolver refuses to record such a path, so install first and edit bun.lock
+    await runBunInstall(bunEnv, packageDir);
+    const lockfile = join(packageDir, "bun.lock");
+    const contents = await file(lockfile).text();
+    expect(contents).toContain('"files@file:./the-files"');
+    const bunDir = join(packageDir, "node_modules", ".bun");
+    await Promise.all([
+      write(lockfile, contents.replace('"files@file:./the-files"', '"files@file:../../../the-files"')),
+      // exists, so only the refusal keeps it from being linked: ../../../the-files
+      // from .bun/file-dep@1.0.0/node_modules/file-dep is .bun/the-files
+      write(join(bunDir, "the-files", "package.json"), JSON.stringify({ name: "files" })),
+      rm(join(bunDir, "file-dep@1.0.0"), { recursive: true, force: true }),
+    ]);
+
+    const { out, err } = await runBunInstall(bunEnv, packageDir, {
+      allowErrors: true,
+      expectedExitCode: 1,
+      savesLockfile: false,
+    });
+    expect(err).toContain('error: refusing to install dependency files with unsafe folder path "../../../the-files"');
+    expect(out).toContain("Failed to install 1 package");
+    expect(await readdirSorted(join(bunDir, "file-dep@1.0.0", "node_modules"))).toEqual(["file-dep"]);
+  });
+});
+
+test("a bin that fails to link does not stop the remaining bins of the package or of its siblings from being linked", async () => {
+  // `directories.bin` names a file, so opening it as a directory fails with
+  // ENOTDIR (a missing directory would be skipped silently).
+  const badBinDir = (name: string) => JSON.stringify({ name, version: "1.0.0", directories: { bin: "package.json" } });
+  // Longer than a file name may be, so creating the link itself fails. It is
+  // the first of the package's bins, both as declared and sorted.
+  const longBinName = Buffer.alloc(300, "a").toString();
+  const longBinNameError = isWindows ? "ENOENT" : "ENAMETOOLONG";
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "test-pkg-bin-link-errors",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "a-bin": "file:./deps/a-bin",
+          "bad-bin-dir-1": "file:./deps/bad-bin-dir-1",
+          "bad-bin-dir-2": "file:./deps/bad-bin-dir-2",
+          "multi-bin": "file:./deps/multi-bin",
+          "z-bin": "file:./deps/z-bin",
+        },
+      }),
+      "packages/ws/package.json": JSON.stringify({
+        name: "ws",
+        dependencies: {
+          "bad-bin-dir-1": "file:../../deps/bad-bin-dir-1",
+          "z-bin": "file:../../deps/z-bin",
+        },
+      }),
+      "deps/a-bin/package.json": JSON.stringify({ name: "a-bin", version: "1.0.0", bin: { "a-cli": "cli.js" } }),
+      "deps/a-bin/cli.js": "#!/usr/bin/env node\nconsole.log('a');\n",
+      "deps/z-bin/package.json": JSON.stringify({ name: "z-bin", version: "1.0.0", bin: { "z-cli": "cli.js" } }),
+      "deps/z-bin/cli.js": "#!/usr/bin/env node\nconsole.log('z');\n",
+      "deps/bad-bin-dir-1/package.json": badBinDir("bad-bin-dir-1"),
+      "deps/bad-bin-dir-2/package.json": badBinDir("bad-bin-dir-2"),
+      "deps/multi-bin/package.json": JSON.stringify({
+        name: "multi-bin",
+        version: "1.0.0",
+        bin: { [longBinName]: "cli.js", "multi-b": "cli.js", "multi-c": "cli.js" },
+      }),
+      "deps/multi-bin/cli.js": "#!/usr/bin/env node\nconsole.log('multi');\n",
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const binDir = async (dir: string) => {
+    const path = join(dir, "node_modules", ".bin");
+    return existsSync(path) ? await readdirSorted(path) : [];
+  };
+  const bins = (...names: string[]) => (isWindows ? names.flatMap(n => [`${n}.bunx`, `${n}.exe`]) : names).sort();
+  expect({
+    root: await binDir(packageDir),
+    ws: await binDir(join(packageDir, "packages", "ws")),
+    "multi-bin's own": await binDir(join(packageDir, "node_modules", ".bun", "multi-bin@file+deps+multi-bin")),
+  }).toEqual({
+    root: bins("a-cli", "multi-b", "multi-c", "z-cli"),
+    ws: bins("z-cli"),
+    "multi-bin's own": bins("multi-b", "multi-c"),
+  });
+
+  // Every failing package is reported once for its own `.bin` and once per
+  // package whose `.bin` it could not be linked into. Tasks run in parallel,
+  // so sort.
+  const binErrors = stderr
+    .split("\n")
+    .filter(line => line.includes("failed to link binaries"))
+    .map(line => line.replaceAll("\\", "/"))
+    .sort();
+  expect(binErrors).toEqual(
+    [
+      "ENOTDIR: failed to link binaries for package: bad-bin-dir-1@deps/bad-bin-dir-1",
+      "ENOTDIR: failed to link binaries for package: bad-bin-dir-2@deps/bad-bin-dir-2",
+      `${longBinNameError}: failed to link binaries for package: multi-bin@deps/multi-bin`,
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: test-pkg-bin-link-errors@",
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: ws@workspace:packages/ws",
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-2@deps/bad-bin-dir-2 for package: test-pkg-bin-link-errors@",
+      `${longBinNameError}: failed to link binaries of dependency multi-bin@deps/multi-bin for package: test-pkg-bin-link-errors@`,
+    ].sort(),
+  );
+  expect(exitCode).toBe(1);
 });
 
 describe("isolated workspaces", () => {
@@ -791,39 +1330,10 @@ index 0000000000000000000000000000000000000000..3b18e512dba79e4c8300dd08aeb37f8e
 test("adding and removing a patch for a github dependency in a workspace completes", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 
-  // Minimal gzipped tarball shaped like a github codeload tarball: a single
-  // root directory wrapping the package contents.
-  function tarHeader(name: string, size: number, isDir: boolean): Uint8Array {
-    const header = new Uint8Array(512);
-    const encoder = new TextEncoder();
-    header.set(encoder.encode(name), 0);
-    header.set(encoder.encode(isDir ? "0000755 " : "0000644 "), 100);
-    header.set(encoder.encode("0000000 "), 108);
-    header.set(encoder.encode("0000000 "), 116);
-    header.set(encoder.encode(size.toString(8).padStart(11, "0") + " "), 124);
-    header.set(encoder.encode("00000000000 "), 136);
-    header.set(encoder.encode("        "), 148);
-    header[156] = (isDir ? "5" : "0").charCodeAt(0);
-    header.set(encoder.encode("ustar"), 257);
-    header.set(encoder.encode("00"), 263);
-    let checksum = 0;
-    for (const byte of header) checksum += byte;
-    header.set(encoder.encode(checksum.toString(8).padStart(6, "0") + "\0 "), 148);
-    return header;
-  }
-  const blocks: Uint8Array[] = [];
-  blocks.push(tarHeader("testowner-testrepo-aaaaaaa/", 0, true));
-  for (const [name, contents] of [
-    ["package.json", JSON.stringify({ name: "gh-dep", version: "1.0.0" })],
-    ["index.js", 'console.log("original");\n'],
-  ]) {
-    const bytes = new TextEncoder().encode(contents);
-    blocks.push(tarHeader(`testowner-testrepo-aaaaaaa/${name}`, bytes.length, false));
-    blocks.push(bytes);
-    if (bytes.length % 512 !== 0) blocks.push(new Uint8Array(512 - (bytes.length % 512)));
-  }
-  blocks.push(new Uint8Array(1024));
-  const tarball = Bun.gzipSync(Buffer.concat(blocks));
+  const tarball = await githubTarball("testowner-testrepo-aaaaaaa", {
+    "package.json": JSON.stringify({ name: "gh-dep", version: "1.0.0" }),
+    "index.js": 'console.log("original");\n',
+  });
 
   using server = Bun.serve({
     port: 0,
@@ -1185,13 +1695,19 @@ for (const backend of ["clonefile", "hardlink", "copyfile"]) {
 test("ranged peer dependency resolution is stable across installs from bun.lock", async () => {
   // `peer-deps-fixed` has a peer on `no-deps@^1.0.0`. The graph contains both
   // no-deps@1.0.1 (exact pin via normal-dep-and-dev-dep, hoisted to the root
-  // of the saved tree) and no-deps@1.1.0 (via two-range-deps). The fresh
-  // resolve binds the peer edge to the highest satisfying version (1.1.0) in
-  // its deferred-peer phase; reloading bun.lock used to re-derive the edge
+  // of the saved tree) and no-deps@1.1.0 (exact pin via the `nd11` alias). The
+  // fresh resolve binds the peer edge to the highest satisfying version (1.1.0)
+  // in its deferred-peer phase; reloading bun.lock used to re-derive the edge
   // from the saved tree paths instead, rebinding it to the hoisted 1.0.1.
   // That silently changed the runtime dependency tree on the second install
   // and re-keyed the isolated store entry (`+<peer hash>` suffix) on every
   // warm install.
+  //
+  // Both copies are exact pins so that the graph does not depend on whether
+  // the resolver dedupes a range like two-range-deps' `no-deps@^1.0.0` onto
+  // the 1.0.1 pin. Today that depends on which manifest the registry answers
+  // first: the range only adds 1.1.0 when it is resolved before 1.0.1 is
+  // appended.
   const { packageJson, packageDir } = await registry.createTestDir({
     bunfigOpts: { linker: "isolated" },
   });
@@ -1203,12 +1719,20 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
       dependencies: {
         "peer-deps-fixed": "1.0.0",
         "normal-dep-and-dev-dep": "1.0.0",
-        "two-range-deps": "1.0.0",
+        "nd11": "npm:no-deps@1.1.0",
       },
     }),
   );
 
   await runBunInstall(bunEnv, packageDir);
+
+  // 1.0.1 holds the `no-deps` path the peer edge resolves through; the
+  // edge itself gets no path of its own, which is what made the load-time
+  // path walk rebind it.
+  expect(await savedTreeCopiesOf(packageDir, "no-deps")).toEqual({
+    "nd11": "no-deps@1.1.0",
+    "no-deps": "no-deps@1.0.1",
+  });
 
   const bunDir = join(packageDir, "node_modules", ".bun");
   // highest satisfying ^1.0.0 in the graph; `toContain` prints the full
@@ -1229,6 +1753,122 @@ test("ranged peer dependency resolution is stable across installs from bun.lock"
   });
 });
 
+test("ranged peer rebinds in the install that adds a higher satisfying version, not the one after", async () => {
+  // The first install binds peer-deps-fixed's `no-deps@^1.0.0` to 1.0.0, the
+  // only candidate. Adding `one-dep` brings in no-deps@1.0.1; loading the
+  // lockfile that install writes binds the edge to 1.0.1 (highest satisfying),
+  // so that install has to bind it the same way itself. Otherwise it links the
+  // 1.0.0 peer variant and the next `bun install`, with nothing changed,
+  // re-keys the store entry.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const peerEntries = async () => (await readdirSorted(bunDir)).filter(e => e.startsWith("peer-deps-fixed@"));
+  const peerNoDepsVersion = async (entry: string) =>
+    ((await file(join(bunDir, entry, "node_modules", "no-deps", "package.json")).json()) as { version: string })
+      .version;
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "rebind-ranged-peer",
+      dependencies: { "peer-deps-fixed": "1.0.0", "one-fixed-dep": "1.0.0" },
+    }),
+  );
+  await runBunInstall(bunEnv, packageDir);
+  const [initialEntry] = await peerEntries();
+  expect(await peerNoDepsVersion(initialEntry)).toBe("1.0.0");
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "rebind-ranged-peer",
+      dependencies: { "peer-deps-fixed": "1.0.0", "one-fixed-dep": "1.0.0", "one-dep": "1.0.0" },
+    }),
+  );
+  await runBunInstall(bunEnv, packageDir);
+  const entries = await peerEntries();
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+
+  const { out, err } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  expect(out).toContain("(no changes)");
+  expect(err).not.toContain("Saved lockfile");
+  expect(await peerEntries()).toEqual(entries);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile);
+
+  // The superseded variant stays in the store until `bun prune`, like after any peer bump.
+  const [rebound, ...rest] = entries.filter(entry => entry !== initialEntry);
+  expect(rest).toEqual([]);
+  expect(await peerNoDepsVersion(rebound)).toBe("1.0.1");
+  expect(readlinkSync(join(packageDir, "node_modules", "peer-deps-fixed"))).toBe(
+    join(".bun", rebound, "node_modules", "peer-deps-fixed"),
+  );
+});
+
+test("a ranged peer whose auto-installed version drops out of the saved tree is rebound before linking", async () => {
+  // The first install auto-installs no-deps@1.1.0 for peer-deps-fixed's
+  // `no-deps@^1.0.0`; nothing else depends on it. Adding one-dep pins
+  // no-deps@1.0.1, which is hoisted to the root of the saved tree, so the
+  // peer edge dedupes onto it and 1.1.0 is no longer written to bun.lock.
+  // Reloading that bun.lock binds the edge to 1.0.1, so the install that
+  // writes it has to link 1.0.1 as well, or the next install re-keys the
+  // entry.
+  const { packageJson, packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "dropped-peer-target",
+      dependencies: {
+        "peer-deps-fixed": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const autoInstalledEntry = "peer-deps-fixed@1.0.0+7ff199101204a65d";
+  const reboundEntry = "peer-deps-fixed@1.0.0+f8a822eca018d0a1";
+  expect(await readdirSorted(bunDir)).toContain(autoInstalledEntry);
+  expect(await file(join(bunDir, autoInstalledEntry, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.1.0",
+  });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "dropped-peer-target",
+      dependencies: {
+        "one-dep": "1.0.0",
+        "peer-deps-fixed": "1.0.0",
+      },
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunLock = await file(join(packageDir, "bun.lock")).text();
+  expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+  expect(bunLock).not.toContain("no-deps@1.1.0");
+  expect(await readlink(join(packageDir, "node_modules", "peer-deps-fixed"))).toBe(
+    join(".bun", reboundEntry, "node_modules", "peer-deps-fixed"),
+  );
+  expect(await file(join(bunDir, reboundEntry, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    version: "1.0.1",
+  });
+  const entries = await readdirSorted(bunDir);
+
+  const { out } = await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+  expect(out).toContain("(no changes)");
+  expect(await readdirSorted(bunDir)).toEqual(entries);
+  expect(await file(join(packageDir, "bun.lock")).text()).toBe(bunLock);
+});
+
 test("aliased peer dependency binds to its real package across installs from bun.lock", async () => {
   // The peer alias `no-deps` points at `npm:a-dep@^1.0.2` while the real
   // no-deps package (in two versions) is also in the graph. Loading bun.lock
@@ -1244,7 +1884,7 @@ test("aliased peer dependency binds to its real package across installs from bun
         workspaces: ["packages/*"],
         dependencies: {
           "normal-dep-and-dev-dep": "1.0.0",
-          "two-range-deps": "1.0.0",
+          "nd11": "npm:no-deps@1.1.0",
         },
       }),
       "packages/m/package.json": JSON.stringify({
@@ -1256,6 +1896,12 @@ test("aliased peer dependency binds to its real package across installs from bun
   });
 
   await runBunInstall(bunEnv, packageDir);
+  // no-deps@1.1.0 is the decoy: the only real no-deps version that satisfies
+  // ^1.0.2, so a lookup under the alias name would rebind the edge to it
+  expect(Object.values(await savedTreeCopiesOf(packageDir, "no-deps")).sort()).toEqual([
+    "no-deps@1.0.1",
+    "no-deps@1.1.0",
+  ]);
   const aliasLink = join(packageDir, "packages", "m", "node_modules", "no-deps", "package.json");
   const fresh = await file(aliasLink).json();
   expect(fresh).toMatchObject({ name: "a-dep" });
@@ -1286,12 +1932,19 @@ test("optional ranged peer keeps its hoisted-tree binding across installs from b
       dependencies: {
         "one-optional-peer-dep": "1.0.2",
         "normal-dep-and-dev-dep": "1.0.0",
-        "two-range-deps": "1.0.0",
+        "nd11": "npm:no-deps@1.1.0",
       },
     }),
   );
 
   await runBunInstall(bunEnv, packageDir);
+
+  // 1.0.1 is the hoisted sibling the optional peer was bound to; 1.1.0 is
+  // the higher version a version scan on load would pick instead
+  expect(await savedTreeCopiesOf(packageDir, "no-deps")).toEqual({
+    "nd11": "no-deps@1.1.0",
+    "no-deps": "no-deps@1.0.1",
+  });
 
   const bunDir = join(packageDir, "node_modules", ".bun");
   const freshEntries = (await readdirSorted(bunDir)).filter(e => e.startsWith("one-optional-peer-dep@"));
@@ -1661,6 +2314,238 @@ describe("--linker flag", () => {
 
     expect(lstatSync(join(packageDir, "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
   });
+
+  async function installWithLinker(packageDir: string, linker: "isolated" | "hoisted") {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  // `peer-deps` has a peer dependency on `no-deps`, so it shows which copy of
+  // `no-deps` a dependency resolves to. Both must resolve to the same copy the
+  // root resolves to, whichever linker laid out the tree.
+  async function resolvedNoDeps(packageDir: string) {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const root = require("no-deps");
+         const viaPeer = require("peer-deps").peerDependencies["no-deps"];
+         console.log(JSON.stringify({ root: root.version, viaPeer: viaPeer.version, sameCopy: root === viaPeer }));`,
+      ],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  function rootEntryKinds(packageDir: string, names: string[]) {
+    return Object.fromEntries(
+      names.map(name => {
+        const stat = lstatSync(join(packageDir, "node_modules", name), { throwIfNoEntry: false });
+        return [name, stat === undefined ? "missing" : stat.isSymbolicLink() ? "symlink" : "directory"];
+      }),
+    );
+  }
+
+  test("switching linkers on an existing node_modules replaces the whole tree", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir();
+    const writeRootPackageJson = (noDepsVersion: string) =>
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "linker-switch",
+          dependencies: {
+            "no-deps": noDepsVersion,
+            "peer-deps": "1.0.0",
+          },
+        }),
+      );
+
+    await writeRootPackageJson("1.0.0");
+    await installWithLinker(packageDir, "isolated");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "peer-deps"])).toEqual({
+      ".bun": "directory",
+      "no-deps": "symlink",
+      "peer-deps": "symlink",
+    });
+    expect(await resolvedNoDeps(packageDir)).toEqual({ root: "1.0.0", viaPeer: "1.0.0", sameCopy: true });
+
+    // The store symlink for `peer-deps` still points at a package.json with the
+    // right version, so a hoisted install that only compared versions would keep
+    // it linked into the store next to the old `no-deps`.
+    await writeRootPackageJson("2.0.0");
+    expect(await installWithLinker(packageDir, "hoisted")).toContain("2 packages installed");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "peer-deps"])).toEqual({
+      ".bun": "missing",
+      "no-deps": "directory",
+      "peer-deps": "directory",
+    });
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+    expect(await resolvedNoDeps(packageDir)).toEqual({ root: "2.0.0", viaPeer: "2.0.0", sameCopy: true });
+
+    // Only a tree built by the other linker gets replaced.
+    expect(await installWithLinker(packageDir, "hoisted")).toContain("(no changes)");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+
+    // Back to isolated: the real directory left behind by the hoisted install
+    // must not shadow the store entry for the version the lockfile now has.
+    await writeRootPackageJson("1.0.0");
+    expect(await installWithLinker(packageDir, "isolated")).toContain("2 packages installed");
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "peer-deps"])).toEqual({
+      ".bun": "directory",
+      "no-deps": "symlink",
+      "peer-deps": "symlink",
+    });
+    expect(readlinkSync(join(packageDir, "node_modules", "no-deps"))).toBe(
+      join(".bun", "no-deps@1.0.0", "node_modules", "no-deps"),
+    );
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bun",
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+    expect(await resolvedNoDeps(packageDir)).toEqual({ root: "1.0.0", viaPeer: "1.0.0", sameCopy: true });
+
+    expect(await installWithLinker(packageDir, "isolated")).toContain("(no changes)");
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
+      ".bun",
+      expect.stringContaining(".old_modules-"),
+      "no-deps",
+      "peer-deps",
+    ]);
+  });
+
+  test("switching from isolated to hoisted also replaces workspace node_modules", async () => {
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "linker-switch-workspaces",
+          workspaces: ["packages/*"],
+        }),
+        "packages/pkg1/package.json": JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+        "packages/pkg1/index.js": `console.log(require.resolve("no-deps/package.json"));`,
+      },
+    });
+
+    await installWithLinker(packageDir, "isolated");
+    expect(lstatSync(join(packageDir, "packages", "pkg1", "node_modules", "no-deps")).isSymbolicLink()).toBeTrue();
+
+    await installWithLinker(packageDir, "hoisted");
+    // The workspace's store link would otherwise keep shadowing the hoisted copy.
+    expect(existsSync(join(packageDir, "packages", "pkg1", "node_modules"))).toBeFalse();
+    expect(rootEntryKinds(packageDir, [".bun", "no-deps", "pkg1"])).toEqual({
+      ".bun": "missing",
+      "no-deps": "directory",
+      "pkg1": "symlink",
+    });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "packages/pkg1/index.js"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe(join(packageDir, "node_modules", "no-deps", "package.json"));
+    expect(exitCode).toBe(0);
+  });
+
+  // A security scanner that is not installed yet is installed on its own, with
+  // the hoisted linker, before the real install runs. Finding the store in that
+  // step is not a linker switch.
+  test("installing a missing security scanner into an isolated node_modules keeps the tree", async () => {
+    using scannerRegistry = new SimpleRegistry(false);
+    await scannerRegistry.start();
+
+    const { packageDir } = await registry.createTestDir({
+      files: {
+        "package.json": JSON.stringify({
+          name: "scanner-into-isolated",
+          workspaces: ["packages/*"],
+          devDependencies: {
+            "test-security-scanner": "1.0.0",
+          },
+        }),
+        "packages/app/package.json": JSON.stringify({
+          name: "app",
+          dependencies: {
+            "left-pad": "1.3.0",
+          },
+        }),
+      },
+    });
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          registry: `${scannerRegistry.getUrl()}/`,
+          security: { scanner: "test-security-scanner" },
+        },
+      }),
+    );
+
+    async function installWithScanner() {
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      const output = stdout + stderr;
+      expect(output).toContain("Attempting to install security scanner from npm");
+      expect(output).toContain("SCANNER_RAN:");
+      expect(exitCode).toBe(0);
+    }
+
+    await installWithScanner();
+    const nodeModules = join(packageDir, "node_modules");
+    const entriesAfterFirstInstall = await readdirSorted(nodeModules);
+    expect(entriesAfterFirstInstall).toEqual([
+      ".bun",
+      expect.stringContaining(".old_modules-"),
+      "test-security-scanner",
+    ]);
+
+    // Make the scanner need its own install step again, this time into a tree
+    // that already has a store.
+    await rm(join(nodeModules, "test-security-scanner"), { recursive: true, force: true });
+    await installWithScanner();
+    expect(await readdirSorted(nodeModules)).toEqual(entriesAfterFirstInstall);
+    expect(await readdirSorted(join(packageDir, "packages", "app", "node_modules"))).toEqual(["left-pad"]);
+  });
 });
 test("many transitive dependencies", async () => {
   const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
@@ -1863,6 +2748,110 @@ test("successfully removes and corrects symlinks", async () => {
   );
 });
 
+describe("empty directory where a dependency symlink belongs", () => {
+  // ninja creates the directory of every declared output before running the
+  // command, and bun's own build declares `node_modules/<pkg>/package.json` as
+  // outputs of its `bun install` step, so the install finds an empty
+  // `node_modules/<pkg>/`. Only a directory with contents may be left in
+  // place: that is what `bun patch <pkg>` produces while the user edits it.
+
+  test("new dependency is linked over a pre-created empty directory", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(packageJson, JSON.stringify({ name: "test-pkg-empty-dir", dependencies: { "no-deps": "1.0.0" } }));
+    await runBunInstall(bunEnv, packageDir);
+
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-pkg-empty-dir", dependencies: { "no-deps": "1.0.0", "what-bin": "1.0.0" } }),
+    );
+    await mkdir(join(packageDir, "node_modules", "what-bin"));
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+    expect(out).toContain("what-bin@1.0.0");
+
+    expect(readlinkSync(join(packageDir, "node_modules", "what-bin"))).toBe(
+      join(".bun", "what-bin@1.0.0", "node_modules", "what-bin"),
+    );
+    const bin = process.platform === "win32" ? "what-bin.bunx" : "what-bin";
+    expect(existsSync(join(packageDir, "node_modules", ".bin", bin))).toBe(true);
+  });
+
+  test("re-running install repairs links that became empty directories", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-empty-dir-repair",
+        dependencies: { "no-deps": "1.0.0", "@types/is-number": "1.0.0" },
+      }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    const links = [
+      join(packageDir, "node_modules", "no-deps"),
+      join(packageDir, "node_modules", "@types", "is-number"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "no-deps"),
+      join(packageDir, "node_modules", ".bun", "node_modules", "@types", "is-number"),
+    ];
+    const expected = links.map(link => readlinkSync(link));
+    for (const link of links) {
+      await rm(link);
+      await mkdir(link);
+    }
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(links.map(link => readlinkSync(link))).toEqual(expected);
+  });
+
+  test("workspace dependency is linked over an empty directory", async () => {
+    const { packageDir } = await registry.createTestDir({
+      bunfigOpts: { linker: "isolated" },
+      files: {
+        "package.json": JSON.stringify({ name: "test-pkg-empty-dir-workspace", workspaces: ["packages/*"] }),
+        "packages/pkg-1/package.json": JSON.stringify({
+          name: "pkg-1",
+          version: "1.0.0",
+          dependencies: { "a-dep": "1.0.1" },
+        }),
+      },
+    });
+
+    await runBunInstall(bunEnv, packageDir);
+
+    const link = join(packageDir, "packages", "pkg-1", "node_modules", "a-dep");
+    const expected = readlinkSync(link);
+    expect(expected).toBe(join("..", "..", "..", "node_modules", ".bun", "a-dep@1.0.1", "node_modules", "a-dep"));
+    await rm(link);
+    await mkdir(link);
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(readlinkSync(link)).toBe(expected);
+  });
+
+  test("a directory with contents is left in place", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+    await write(
+      packageJson,
+      JSON.stringify({ name: "test-pkg-dir-with-contents", dependencies: { "no-deps": "1.0.0" } }),
+    );
+    await runBunInstall(bunEnv, packageDir);
+
+    const workspace = join(packageDir, "node_modules", "no-deps");
+    await rm(workspace);
+    await write(join(workspace, "index.js"), "module.exports = 'USER_EDITS';\n");
+
+    await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+
+    expect(lstatSync(workspace).isSymbolicLink()).toBe(false);
+    expect(await file(join(workspace, "index.js")).text()).toBe("module.exports = 'USER_EDITS';\n");
+  });
+});
+
 test("runs lifecycle scripts correctly", async () => {
   // due to binary linking between preinstall and the remaining lifecycle scripts
   // there is special handling for preinstall scripts we should test.
@@ -1935,6 +2924,166 @@ test("runs lifecycle scripts correctly", async () => {
   expect(lifecyclePreinstallDir).toEqual(["lifecycle-preinstall"]);
   expect(lifecyclePostinstallDir).toEqual(["lifecycle-postinstall"]);
   expect(allLifecycleScriptsDir).toEqual(["all-lifecycle-scripts"]);
+});
+
+test("optional dependency with a failing lifecycle script is removed along with the links to it", async () => {
+  // optional-lifecycle-fail@1.1.1 has `lifecycle-fail@1.1.1` in its
+  // optionalDependencies, and lifecycle-fail's preinstall script exits 1.
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-failed-optional-dependency",
+      dependencies: {
+        "optional-lifecycle-fail": "1.1.1",
+      },
+      trustedDependencies: ["lifecycle-fail"],
+    }),
+  );
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  const dependentNodeModules = join(bunDir, "optional-lifecycle-fail@1.1.1", "node_modules");
+
+  async function expectFailedOptionalDependencyRemoved() {
+    expect(
+      await Promise.all([
+        readdirSorted(join(packageDir, "node_modules")),
+        readdirSorted(join(bunDir, "lifecycle-fail@1.1.1", "node_modules")),
+        // Neither the dependent's `node_modules/lifecycle-fail` link nor the
+        // hidden `.bun/node_modules/lifecycle-fail` link may be left behind
+        // pointing at the deleted package.
+        readdirSorted(dependentNodeModules),
+        readdirSorted(join(bunDir, "node_modules")),
+      ]),
+    ).toEqual([[".bun", "optional-lifecycle-fail"], [], ["optional-lifecycle-fail"], ["optional-lifecycle-fail"]]);
+
+    const requireFromDependent = createRequire(join(dependentNodeModules, "optional-lifecycle-fail", "package.json"));
+    let code: string | undefined;
+    try {
+      requireFromDependent.resolve("lifecycle-fail");
+    } catch (e: any) {
+      code = e.code;
+    }
+    expect(code).toBe("MODULE_NOT_FOUND");
+  }
+
+  await runBunInstall(bunEnv, packageDir);
+  await expectFailedOptionalDependencyRemoved();
+
+  // The failed package is installed (and removed) again on the next install;
+  // relinking the packages that depend on it must not leave links behind either.
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+  await expectFailedOptionalDependencyRemoved();
+});
+
+test("direct optional dependency with a failing postinstall script is removed along with the links to it", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "test-pkg-failed-direct-optional-dependency",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+      optionalDependencies: {
+        "lifecycle-failing-postinstall": "1.0.0",
+      },
+      trustedDependencies: ["lifecycle-failing-postinstall"],
+    }),
+  );
+
+  await runBunInstall(bunEnv, packageDir);
+
+  const bunDir = join(packageDir, "node_modules", ".bun");
+  expect(
+    await Promise.all([
+      readdirSorted(join(packageDir, "node_modules")),
+      readdirSorted(join(bunDir, "lifecycle-failing-postinstall@1.0.0", "node_modules")),
+      readdirSorted(join(bunDir, "node_modules")),
+    ]),
+  ).toEqual([[".bun", "no-deps"], [], ["no-deps"]]);
+});
+
+describe("blocked lifecycle scripts", () => {
+  const blockedLine = "Blocked 4 postinstalls. Run `bun pm untrusted` for details.";
+
+  async function createUntrustedScriptsDir(bunfigOpts: { linker: "isolated"; globalStore?: boolean }) {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-blocked-scripts",
+        dependencies: {
+          // one postinstall
+          "lifecycle-postinstall": "1.0.0",
+          // preinstall, install and postinstall
+          "all-lifecycle-scripts": "1.0.0",
+          // no scripts
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+    return packageDir;
+  }
+
+  test.concurrent("are reported in the install summary like the hoisted linker does", async () => {
+    const packageDir = await createUntrustedScriptsDir({ linker: "isolated" });
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+
+    expect(out).toContain(blockedLine);
+    expect(existsSync(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeFalse();
+    expect(existsSync(join(packageDir, "node_modules", "all-lifecycle-scripts", "postinstall.txt"))).toBeFalse();
+  });
+
+  test.concurrent("are not reported for trusted packages", async () => {
+    const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+    await write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-blocked-scripts-trusted",
+        dependencies: { "lifecycle-postinstall": "1.0.0" },
+        trustedDependencies: ["lifecycle-postinstall"],
+      }),
+    );
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+
+    expect(out).not.toContain("Blocked");
+    expect(existsSync(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt"))).toBeTrue();
+  });
+
+  test.concurrent("are still reported with --ignore-scripts", async () => {
+    const packageDir = await createUntrustedScriptsDir({ linker: "isolated" });
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--ignore-scripts"],
+      cwd: packageDir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(out).toContain(blockedLine);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  });
+
+  test.concurrent("are reported for packages installed into the global store", async () => {
+    const packageDir = await createUntrustedScriptsDir({ linker: "isolated", globalStore: true });
+
+    const { out } = await runBunInstall(bunEnv, packageDir);
+
+    expect(out).toContain(blockedLine);
+    // Untrusted packages are eligible for the global store, so this is the
+    // path that bypasses script enqueueing entirely.
+    expect(lstatSync(join(packageDir, "node_modules", ".bun", "lifecycle-postinstall@1.0.0")).isSymbolicLink()).toBe(
+      true,
+    );
+  });
 });
 
 // When an auto-installed peer dependency has its OWN peer deps, those
@@ -3351,7 +4500,8 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   // A (transitively) malicious package.json can use an arbitrary string as a
   // dependency alias. The alias becomes a `node_modules/<alias>` path
   // component in the isolated store layout, so a `..` segment lets it plant
-  // symlinks outside of node_modules.
+  // symlinks outside of node_modules. Such an alias is refused while resolving
+  // (the installer has its own check as well, see the next test).
   await write(
     packageJson,
     JSON.stringify({
@@ -3371,7 +4521,7 @@ test("rejects dependency aliases that traverse outside node_modules", async () =
   });
   const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("is not a valid install folder name");
+  expect(stderr).toContain('Invalid dependency name "../pwned-by-alias"');
   // Nothing may be created outside of node_modules. `lstatSync` instead of
   // `existsSync` because the escaped artifact would be a dangling symlink.
   expect(() => lstatSync(join(packageDir, "pwned-by-alias"))).toThrow();
@@ -3457,6 +4607,164 @@ test("store build timings are printed by --verbose only", async () => {
   const quiet = await install();
   expect(quiet).not.toContain("Resolved peers");
   expect(quiet).not.toContain("Created store");
+});
+
+describe("link: dependencies", () => {
+  // Size of the buffer install paths are built in (`MAX_PATH_BYTES`): PATH_MAX
+  // on Linux and macOS, the UTF-8 worst case of a 32767 character path on Windows.
+  const MAX_PATH_BYTES = isWindows ? 32767 * 3 + 1 : isLinux ? 4096 : 1024;
+
+  // A `link:` target that resolves to the registered `linked` package but is
+  // about `length` bytes as written. The target is stored and joined onto the
+  // global link dir as written, so the `x/..` segments count against the buffer.
+  function linkTarget(length: number): string {
+    const segments = Math.floor((length - "linked".length) / "x/../".length);
+    return Buffer.alloc(segments * "x/../".length, "x/../").toString() + "linked";
+  }
+
+  // `..` segments are resolved before the length check, so only a target still this long
+  // afterwards fails it (here in the resolver already). No directory of this name can exist,
+  // which is the point: the install has to report the length instead of overrunning a buffer.
+  const targetTooLongOnceJoined = Buffer.alloc(MAX_PATH_BYTES - 16, "l").toString();
+
+  const linkedPackageJson = JSON.stringify({ name: "linked", version: "1.0.0" });
+
+  // Registers `<dir>/linked` in a global link dir private to the test, so the
+  // dir every `link:` target is joined onto is `<dir>/global/node_modules`.
+  async function registerLinked(dir: string) {
+    const env = {
+      ...bunEnv,
+      BUN_INSTALL_GLOBAL_DIR: join(dir, "global"),
+      BUN_INSTALL_CACHE_DIR: join(dir, "cache"),
+    };
+    await using proc = spawn({
+      cmd: [bunExe(), "link"],
+      cwd: join(dir, "linked"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toContain('Registered "linked"');
+    expect(exitCode).toBe(0);
+
+    return { env, projectDir: join(dir, "project"), linkDir: join(dir, "global", "node_modules") };
+  }
+
+  async function installIsolated(env: NodeJS.Dict<string>, cwd: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker=isolated"],
+      cwd,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("links the package when the target fits", async () => {
+    using dir = tempDir("isolated-link-fits", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-fits",
+        dependencies: { linked: "link:" + linkTarget(256) },
+      }),
+    });
+    const { env, projectDir } = await registerLinked(String(dir));
+
+    const { stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    expect(lstatSync(join(projectDir, "node_modules", "linked")).isSymbolicLink()).toBeTrue();
+    expect(await file(join(projectDir, "node_modules", "linked", "package.json")).json()).toEqual({
+      name: "linked",
+      version: "1.0.0",
+    });
+  });
+
+  test.concurrent("fails with ENAMETOOLONG when the target in bun.lock does not fit", async () => {
+    // A lockfile resolution is used as-is, so this never passes through the
+    // resolver: the linker is the first thing that builds a path from it.
+    const target = Buffer.alloc(MAX_PATH_BYTES + 64, "l").toString();
+    using dir = tempDir("isolated-link-lockfile-too-long", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-from-lockfile",
+        dependencies: { linked: "link:linked" },
+      }),
+      "project/bun.lock": `{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "name": "link-from-lockfile",
+      "dependencies": {
+        "linked": "link:linked",
+      },
+    },
+  },
+  "packages": {
+    "linked": ["linked@link:${target}", {}],
+  }
+}
+`,
+    });
+    const { env, projectDir } = await registerLinked(String(dir));
+
+    const { stdout, stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).toContain("ENAMETOOLONG: link path for package linked is too long");
+    expect(stdout).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+    expect(() => lstatSync(join(projectDir, "node_modules", "linked"))).toThrow();
+  });
+
+  test.concurrent("fails with ENAMETOOLONG when the target in package.json does not fit", async () => {
+    // Fits on its own, so it resolves; does not fit once joined onto the link dir.
+    const target = targetTooLongOnceJoined;
+    using dir = tempDir("isolated-link-package-json-too-long", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-from-package-json",
+        dependencies: { linked: "link:" + target },
+      }),
+    });
+    const { env, projectDir, linkDir } = await registerLinked(String(dir));
+    expect(linkDir.length + "/".length + target.length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
+
+    const { stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(exitCode).toBe(1);
+    expect(() => lstatSync(join(projectDir, "node_modules", "linked"))).toThrow();
+  });
+
+  test.concurrent("fails the workspace package that depends on a target that does not fit", async () => {
+    const target = targetTooLongOnceJoined;
+    using dir = tempDir("isolated-link-workspace-too-long", {
+      "linked/package.json": linkedPackageJson,
+      "project/package.json": JSON.stringify({
+        name: "link-from-workspace",
+        workspaces: ["packages/*"],
+      }),
+      "project/packages/app/package.json": JSON.stringify({
+        name: "app",
+        dependencies: { linked: "link:" + target },
+      }),
+    });
+    const { env, projectDir, linkDir } = await registerLinked(String(dir));
+    expect(linkDir.length + "/".length + target.length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
+
+    const { stderr, exitCode } = await installIsolated(env, projectDir);
+
+    expect(stderr).toContain("linked@link:");
+    expect(stderr).toContain("failed to resolve");
+    expect(exitCode).toBe(1);
+    expect(() => lstatSync(join(projectDir, "packages", "app", "node_modules", "linked"))).toThrow();
+  });
 });
 
 describe("hoist", () => {

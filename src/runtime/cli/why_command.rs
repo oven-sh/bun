@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::HashMap;
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, escape_control_chars, for_terminal};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
@@ -477,8 +477,8 @@ impl WhyCommand {
             let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
             bun_core::prettyln!(
                 "<b>{}@{}<r>",
-                BStr::new(target_name),
-                BStr::new(&target_version.version)
+                escape_control_chars(target_name),
+                for_terminal(BStr::new(&target_version.version))
             );
 
             if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
@@ -487,7 +487,6 @@ impl WhyCommand {
                 } else if MAX_DEPTH.load(AtomicOrdering::Relaxed) == 0 {
                     bun_core::prettyln!("<d>  └─ (deeper dependencies hidden)<r>");
                 } else {
-                    let _ctx_data = TreeContext::init(&all_dependents);
                     // Clone the slice so it can be sorted while `ctx_data`
                     // still borrows `all_dependents`.
                     let mut sorted: Vec<DependentInfo> = dependents.clone();
@@ -516,8 +515,6 @@ impl WhyCommand {
                             );
                         }
                     }
-
-                    ctx_data.clear_path_tracker();
                 }
             } else {
                 bun_core::prettyln!("<d>  └─ No dependents found<r>");
@@ -546,19 +543,22 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     }
 
     if package.workspace {
-        bun_core::pretty!("<blue>{}<r>", BStr::new(&package.name));
+        bun_core::pretty!("<blue>{}<r>", escape_control_chars(&package.name));
         if !package.version.is_empty() {
             bun_core::pretty!("<d><blue>@workspace<r>");
         }
     } else {
-        bun_core::pretty!("{}", BStr::new(&package.name));
+        bun_core::pretty!("{}", escape_control_chars(&package.name));
         if !package.version.is_empty() {
-            bun_core::pretty!("<d>@{}<r>", BStr::new(&package.version));
+            bun_core::pretty!("<d>@{}<r>", for_terminal(BStr::new(&package.version)));
         }
     }
 
     if !package.spec.is_empty() {
-        bun_core::prettyln!(" <d>(requires {})<r>", BStr::new(&package.spec));
+        bun_core::prettyln!(
+            " <d>(requires {})<r>",
+            for_terminal(BStr::new(&package.spec))
+        );
     } else {
         bun_core::prettyln!("");
     }
@@ -566,7 +566,11 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
 
 pub(crate) struct TreeContext<'a> {
     all_dependents: &'a HashMap<PackageID, Vec<DependentInfo>>,
-    path_tracker: HashMap<PackageID, usize>,
+    /// Packages being expanded right now; the value records whether a `*circular` pointed at it.
+    path_tracker: HashMap<PackageID, bool>,
+    /// `(depth, cutoff)` of subtrees already printed; repeats print `*deduped` (there are
+    /// exponentially many paths) unless shallower than `cutoff`, where a branch cut at `MAX_DEPTH` shows more.
+    expanded: HashMap<PackageID, (usize, usize)>,
 }
 
 impl<'a> TreeContext<'a> {
@@ -574,14 +578,12 @@ impl<'a> TreeContext<'a> {
         TreeContext {
             all_dependents,
             path_tracker: HashMap::default(),
+            expanded: HashMap::default(),
         }
-    }
-
-    fn clear_path_tracker(&mut self) {
-        self.path_tracker.clear();
     }
 }
 
+/// Returns `(lines printed, cutoff)`; see `TreeContext::expanded`.
 fn print_dependency_tree(
     ctx: &mut TreeContext<'_>,
     current_pkg_id: PackageID,
@@ -589,15 +591,23 @@ fn print_dependency_tree(
     depth: usize,
     printed_break_line: bool,
     parent_is_workspace: bool,
-) {
-    if ctx.path_tracker.get(&current_pkg_id).is_some() {
+) -> (usize, usize) {
+    if let Some(pointed_at_by_cycle) = ctx.path_tracker.get_mut(&current_pkg_id) {
+        *pointed_at_by_cycle = true;
         bun_core::prettyln!("<d>{}└─ <yellow>*circular<r>", BStr::new(prefix));
-        return;
+        return (1, 0);
     }
 
-    ctx.path_tracker.insert(current_pkg_id, depth);
+    if let Some(&(_, cutoff)) = ctx.expanded.get(&current_pkg_id).filter(|e| depth >= e.1) {
+        bun_core::prettyln!("<d>{}└─ *deduped<r>", BStr::new(prefix));
+        return (1, cutoff);
+    }
+
+    ctx.path_tracker.insert(current_pkg_id, false);
     // All post-insert exit paths below remove explicitly. Error paths are gone
     // (alloc failures abort under global mimalloc).
+
+    let (mut lines, mut cutoff) = (0usize, 0usize);
 
     if let Some(dependents) = ctx.all_dependents.get(&current_pkg_id) {
         let mut sorted_dependents: Vec<DependentInfo> = dependents.clone();
@@ -611,8 +621,9 @@ fn print_dependency_tree(
 
             if depth >= MAX_DEPTH.load(AtomicOrdering::Relaxed) {
                 bun_core::prettyln!("<d>{}└─ (deeper dependencies hidden)<r>", BStr::new(prefix));
-                ctx.path_tracker.remove(&current_pkg_id);
-                return;
+                lines += 1;
+                cutoff = depth;
+                break;
             }
 
             let is_dep_last = dep_idx == len - 1;
@@ -626,6 +637,7 @@ fn print_dependency_tree(
             full_prefix.extend_from_slice(prefix);
             full_prefix.extend_from_slice(prefix_char);
             print_package_with_type(&full_prefix, dep);
+            lines += 1;
 
             let next_suffix: &[u8] = if is_dep_last {
                 b"   "
@@ -637,7 +649,7 @@ fn print_dependency_tree(
             next_prefix.extend_from_slice(next_suffix);
 
             let print_break_line = is_dep_last && len > 1 && !printed_break_line;
-            print_dependency_tree(
+            let (subtree_lines, subtree_cutoff) = print_dependency_tree(
                 ctx,
                 dep.pkg_id,
                 &next_prefix,
@@ -645,6 +657,9 @@ fn print_dependency_tree(
                 printed_break_line || print_break_line,
                 dep.workspace,
             );
+            lines += subtree_lines;
+            // A dependent repeats one level deeper than this package does.
+            cutoff = cutoff.max(subtree_cutoff.saturating_sub(1));
 
             if print_break_line {
                 bun_core::prettyln!("<d>{}<r>", BStr::new(prefix));
@@ -652,5 +667,19 @@ fn print_dependency_tree(
         }
     }
 
-    ctx.path_tracker.remove(&current_pkg_id);
+    if ctx.path_tracker.remove(&current_pkg_id) == Some(true) && cutoff > 0 {
+        // Their `*circular` stood in for this cut-off subtree; a repeat reaches it one level down.
+        for (their_depth, their_cutoff) in ctx.expanded.values_mut() {
+            if *their_depth > depth {
+                *their_cutoff = (*their_cutoff).max(cutoff - 1);
+            }
+        }
+    }
+
+    // A one-line subtree is no longer than the `*deduped` marker, so it is repeated instead.
+    if lines > 1 {
+        ctx.expanded.insert(current_pkg_id, (depth, cutoff));
+    }
+
+    (lines, cutoff)
 }

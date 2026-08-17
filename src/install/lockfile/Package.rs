@@ -12,12 +12,10 @@ use bun_semver::{self as semver, ExternalString, String, Version as SemverVersio
 
 use crate::bun_json::{E, Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
-use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
-    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
-    invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, TruncatedPackageNameHash, UpdateRequest, bin,
+    default_trusted_dependencies, dependency, initialize_store, invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -111,6 +109,28 @@ pub(crate) fn value_loc_of(source: &bun_ast::Source, key_loc: bun_ast::Loc) -> b
     crate::bun_json::property_value_loc(&source.contents, key_loc).unwrap_or(key_loc)
 }
 
+/// The form `Version.value.folder` has in root, workspace and `file:` packages (`None`: too long for `buf`).
+pub(crate) fn folder_relative_to_top_level_dir<'a>(
+    pkg_dir: &[u8],
+    folder: &[u8],
+    buf: &'a mut [u8],
+) -> Option<&'a [u8]> {
+    let top_level_dir = FileSystem::instance().top_level_dir();
+    let joined = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
+        top_level_dir,
+        buf,
+        &[pkg_dir, folder],
+    )?;
+    let relative = resolve_path::relative(top_level_dir, joined);
+    // empty when the package depends on itself
+    let relative: &[u8] = if relative.is_empty() { b"." } else { relative };
+    let len = relative.len();
+    buf[..len].copy_from_slice(relative);
+    #[cfg(windows)]
+    path::dangerously_convert_path_to_posix_in_place::<u8>(&mut buf[..len]);
+    Some(&buf[..len])
+}
+
 #[cold]
 fn invalid_trusted_dependencies(
     log: &mut bun_ast::Log,
@@ -124,6 +144,38 @@ fn invalid_trusted_dependencies(
         "trustedDependencies expects an array of strings, e.g.\n  <r><green>\"trustedDependencies\"<r>: [\n    <green>\"package_name\"<r>\n  ]"
     );
     crate::Error::InvalidPackageJSON
+}
+
+/// A declared `trustedDependencies` (even `[]`) replaces the default list, so the set becomes `Some` as soon as the field exists.
+pub(crate) fn parse_append_trusted_dependencies(
+    trusted_dependencies: &mut Option<TrustedDependenciesSet>,
+    log: &mut bun_ast::Log,
+    source: &bun_ast::Source,
+    json: Expr,
+    bump: &bun_alloc::Arena,
+) -> crate::Result<()> {
+    let Some(q) = json.as_property(b"trustedDependencies") else {
+        return Ok(());
+    };
+    let count = match &q.expr.data {
+        ExprData::EArray(arr) => arr.items.len_u32() as usize,
+        ExprData::EArrayJSON(arr) => arr.get().items().len(),
+        _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
+    };
+    let trusted = trusted_dependencies.get_or_insert_with(Default::default);
+    trusted.ensure_unused_capacity(count)?;
+    if let Some(mut items) = q.expr.as_array() {
+        while let Some(item) = items.next() {
+            let Some(name) = item.as_string(bump) else {
+                return Err(invalid_trusted_dependencies(log, source, q.loc));
+            };
+            trusted.put_assume_capacity(
+                semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
+                Box::<[u8]>::from(name),
+            );
+        }
+    }
+    Ok(())
 }
 
 // `SemverIntType` defaults to `u64`, the only instantiation the lockfile/PM
@@ -183,7 +235,6 @@ pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 // override what they need. The `()` impl is the no-op resolver.
 pub trait ResolverContext {
     const IS_VOID: bool = false;
-    const IS_GIT_RESOLVER: bool = false;
 
     fn check_bundled_dependencies() -> bool {
         false
@@ -207,34 +258,9 @@ pub trait ResolverContext {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    // ── GitResolver-only surface ────────────────────────────────────────────
-    // Trait methods so non-git
-    // resolvers don't need the fields; default impls are dead code (gated on
-    // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
-    // statically guarded by `if R::IS_GIT_RESOLVER` — so a debug assertion
-    // documents the invariant without panicking in release.
-    fn resolution(&self) -> &ResolutionType<u64> {
-        debug_assert!(
-            false,
-            "ResolverContext::resolution called on non-git resolver"
-        );
-        // SAFETY: unreachable in practice; never dereferenced when the
-        // `IS_GIT_RESOLVER` gate is false. `ZEROED` is an associated const on a
-        // trait-bounded generic impl, which Rust refuses to evaluate in `const`
-        // position; a `static` (with `Sync` POD payload) sidesteps that.
-        static EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
-        &EMPTY
-    }
-    fn dep_id(&self) -> install::DependencyID {
-        debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
-        0
-    }
-    fn new_name(&self) -> &[u8] {
-        b""
-    }
-    fn set_new_name(&mut self, _name: Vec<u8>) {}
-    fn take_new_name(&mut self) -> Vec<u8> {
-        Vec::new()
+    /// Name to store when the package.json has none; git/tarball/folder resolvers derive one from the source.
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        None
     }
 }
 
@@ -266,7 +292,6 @@ impl ResolverContext for () {
 // permitted on object-safe trait methods, only type generics are not.
 trait ResolverContextDyn {
     fn is_void(&self) -> bool;
-    fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
 
     fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr);
@@ -276,21 +301,13 @@ trait ResolverContextDyn {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    fn resolution(&self) -> &ResolutionType<u64>;
-    fn dep_id(&self) -> install::DependencyID;
-    fn new_name(&self) -> &[u8];
-    fn set_new_name(&mut self, name: Vec<u8>);
-    fn take_new_name(&mut self) -> Vec<u8>;
+    fn fallback_name(&self) -> Option<Vec<u8>>;
 }
 
 impl<R: ResolverContext> ResolverContextDyn for R {
     #[inline]
     fn is_void(&self) -> bool {
         R::IS_VOID
-    }
-    #[inline]
-    fn is_git(&self) -> bool {
-        R::IS_GIT_RESOLVER
     }
     #[inline]
     fn check_bundled_dependencies(&self) -> bool {
@@ -311,24 +328,8 @@ impl<R: ResolverContext> ResolverContextDyn for R {
     }
 
     #[inline]
-    fn resolution(&self) -> &ResolutionType<u64> {
-        ResolverContext::resolution(self)
-    }
-    #[inline]
-    fn dep_id(&self) -> install::DependencyID {
-        ResolverContext::dep_id(self)
-    }
-    #[inline]
-    fn new_name(&self) -> &[u8] {
-        ResolverContext::new_name(self)
-    }
-    #[inline]
-    fn set_new_name(&mut self, name: Vec<u8>) {
-        ResolverContext::set_new_name(self, name)
-    }
-    #[inline]
-    fn take_new_name(&mut self) -> Vec<u8> {
-        ResolverContext::take_new_name(self)
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        ResolverContext::fallback_name(self)
     }
 }
 
@@ -443,13 +444,6 @@ impl<SemverIntType: VersionInt> Alphabetizer<SemverIntType> {
         names[lhs as usize]
             .order(names[rhs as usize], buf, buf)
             .then_with(|| resolutions[lhs as usize].order(&resolutions[rhs as usize], buf, buf))
-    }
-}
-
-impl<SemverIntType: VersionInt> Package<SemverIntType> {
-    #[inline]
-    pub(crate) fn is_disabled(&self, cpu: Npm::Architecture, os: Npm::OperatingSystem) -> bool {
-        self.meta.is_disabled(cpu, os)
     }
 }
 
@@ -616,8 +610,12 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
-            // Peer slots must not keep their target alive; bound in `Cloner::flush`.
-            if old_dependencies[i].behavior.is_optional_peer() && !cloner.keep_optional_peer_targets
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`. A target the
+            // loaded lockfile held through optional peers alone is cloned like a dependency.
+            if old_dependencies[i].behavior.is_optional_peer()
+                && old
+                    .held_at_load
+                    .is_set_allow_out_of_bound(*old_resolution as usize, true)
             {
                 cloner.optional_peers.push(pending);
                 continue;
@@ -853,6 +851,7 @@ impl Package<u64> {
 
             package.meta.arch = package_version.cpu;
             package.meta.os = package_version.os;
+            package.meta.libc = package_version.libc;
             package.meta.integrity = package_version.integrity;
             package
                 .meta
@@ -1745,7 +1744,9 @@ impl Package<u64> {
     ) -> crate::Result<Option<Dependency>> {
         #[cfg(windows)]
         let external_version = 'brk: {
-            match tag.unwrap_or_else(|| dependency::version::Tag::infer(version)) {
+            match tag.unwrap_or_else(|| {
+                dependency::version::Tag::infer(dependency::trim_literal(version))
+            }) {
                 dependency::version::Tag::Workspace
                 | dependency::version::Tag::Folder
                 | dependency::version::Tag::Symlink
@@ -1797,9 +1798,10 @@ impl Package<u64> {
                 semver::string::Builder::string_hash(npm_name.slice(buf))
             }
             dependency::version::Tag::Workspace => {
-                if strings::has_prefix(sliced.slice, b"workspace:") {
+                let literal = dependency::trim_literal(sliced.slice);
+                if strings::has_prefix(literal, b"workspace:") {
                     'brk: {
-                        let input = &sliced.slice[b"workspace:".len()..];
+                        let input = &literal[b"workspace:".len()..];
                         let trimmed = strings::trim(input, &strings::WHITESPACE_CHARS);
                         if trimmed.len() != 1
                             || (trimmed[0] != b'*' && trimmed[0] != b'^' && trimmed[0] != b'~')
@@ -1843,13 +1845,16 @@ impl Package<u64> {
         }
 
         match dependency_version.tag {
-            dependency::version::Tag::Folder => {
+            // Cache packages (`Features::NPM`) keep these package-relative, like `from_npm`.
+            dependency::version::Tag::Folder
+                if features.is_main || features.is_workspace || features.is_folder =>
+            {
                 let folder = *dependency_version.folder();
                 let mut folder_buf = PathBuffer::uninit();
-                let Some(joined) = resolve_path::join_abs_string_buf_checked::<path::platform::Auto>(
-                    FileSystem::instance().top_level_dir(),
+                let Some(relative) = folder_relative_to_top_level_dir(
+                    source.path.name().dir,
+                    folder.slice(buf),
                     &mut folder_buf.0,
-                    &[source.path.name().dir, folder.slice(buf)],
                 ) else {
                     log.add_error_fmt(
                         source,
@@ -1861,20 +1866,7 @@ impl Package<u64> {
                     );
                     return Err(crate::Error::InstallFailed);
                 };
-                let relative: &[u8] =
-                    resolve_path::relative(FileSystem::instance().top_level_dir(), joined);
-                #[cfg(windows)]
-                let relative: &[u8] = {
-                    let len = relative.len();
-                    folder_buf.0[..len].copy_from_slice(relative);
-                    path::dangerously_convert_path_to_posix_in_place::<u8>(
-                        &mut folder_buf.0[..len],
-                    );
-                    &folder_buf.0[..len]
-                };
-                // if relative is empty, we are linking the package to itself
-                dependency_version.value.folder = string_builder
-                    .append::<String>(if relative.is_empty() { b"." } else { relative });
+                dependency_version.value.folder = string_builder.append::<String>(relative);
             }
             dependency::version::Tag::Npm => {
                 if let Some(workspace_version) = workspace_version {
@@ -1949,7 +1941,9 @@ impl Package<u64> {
                             format_args!(
                                 "No matching version for workspace dependency \"{}\". Version: \"{}\"",
                                 bstr::BStr::new(external_alias.slice(buf)),
-                                bstr::BStr::new(dependency_version.literal.slice(buf)),
+                                bun_core::fmt::escape_control_chars(
+                                    dependency_version.literal.slice(buf)
+                                ),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -2186,33 +2180,32 @@ impl Package<u64> {
         self.name_hash = 0;
 
         // -- Count the sizes
-        'name: {
+        let name: &[u8] = 'name: {
             if let Some(name_q) = json.as_property(b"name") {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
-                        string_builder.count(name);
-                        break 'name;
+                        // Non-root names become bun.lock `packages` entries, which can
+                        // only be read back if `is_safe_lockfile_package_name` holds.
+                        if !FEATURES.is_main && !dependency::is_safe_lockfile_package_name(name) {
+                            log.add_error_fmt(
+                                source,
+                                value_loc_of(source, name_q.loc),
+                                format_args!("Invalid package name {}", bun_core::fmt::quote(name)),
+                            );
+                            return Err(crate::Error::InvalidPackageJSON);
+                        }
+                        break 'name name;
                     }
                 }
             }
 
-            // name is not validated by npm, so fallback to creating a new from the version literal
-            if resolver.is_git() {
-                let resolution: &Resolution<u64> = resolver.resolution();
-                let repo = match resolution.tag {
-                    ResolutionTag::Git => *resolution.git(),
-                    ResolutionTag::Github => *resolution.github(),
-                    _ => break 'name,
-                };
-
-                resolver.set_new_name(Repository::create_dependency_name_from_version_literal(
-                    &repo,
-                    string_builder.string_bytes.as_slice(),
-                    &lockfile.buffers.dependencies[resolver.dep_id() as usize],
-                ));
-
-                string_builder.count(resolver.new_name());
+            match resolver.fallback_name() {
+                Some(fallback_name) => bump.alloc_slice_copy(&fallback_name),
+                None => b"",
             }
+        };
+        if !name.is_empty() {
+            string_builder.count(name);
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
@@ -2432,7 +2425,7 @@ impl Package<u64> {
                             string_builder.count(value);
 
                             // If it's a folder or workspace, pessimistically assume we will need a maximum path
-                            match dependency::version::Tag::infer(value) {
+                            match dependency::version::Tag::infer(dependency::trim_literal(value)) {
                                 dependency::version::Tag::Folder
                                 | dependency::version::Tag::Workspace => {
                                     string_builder.cap += MAX_PATH_BYTES;
@@ -2465,30 +2458,16 @@ impl Package<u64> {
             }
         }
 
+        workspace_names.warn_skipped(log);
+
         if FEATURES.trusted_dependencies {
-            if let Some(q) = json.as_property(b"trustedDependencies") {
-                let count = match &q.expr.data {
-                    ExprData::EArray(arr) => arr.items.len_u32() as usize,
-                    ExprData::EArrayJSON(arr) => arr.get().items().len(),
-                    _ => return Err(invalid_trusted_dependencies(log, source, q.loc)),
-                };
-                if lockfile.trusted_dependencies.is_none() {
-                    lockfile.trusted_dependencies = Some(Default::default());
-                }
-                let trusted = lockfile.trusted_dependencies.as_mut().unwrap();
-                trusted.ensure_unused_capacity(count)?;
-                if let Some(mut items) = q.expr.as_array() {
-                    while let Some(item) = items.next() {
-                        let Some(name) = item.as_string(&bump) else {
-                            return Err(invalid_trusted_dependencies(log, source, q.loc));
-                        };
-                        trusted.put_assume_capacity(
-                            semver::string::Builder::string_hash(name) as TruncatedPackageNameHash,
-                            Box::<[u8]>::from(name),
-                        );
-                    }
-                }
-            }
+            parse_append_trusted_dependencies(
+                &mut lockfile.trusted_dependencies,
+                log,
+                source,
+                json,
+                &bump,
+            )?;
         }
 
         if FEATURES.is_main {
@@ -2546,28 +2525,10 @@ impl Package<u64> {
         // was reserved above so it does not realloc.
         let mut package_dependencies: Vec<Dependency> = Vec::with_capacity(total_len - off);
 
-        'name: {
-            if resolver.is_git() {
-                if !resolver.new_name().is_empty() {
-                    let new_name = resolver.take_new_name();
-                    let external_string = string_builder.append::<ExternalString>(&new_name);
-                    self.name = external_string.value;
-                    self.name_hash = external_string.hash;
-                    break 'name;
-                }
-            }
-
-            if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8(&bump) {
-                    if !name.is_empty() {
-                        let external_string = string_builder.append::<ExternalString>(name);
-
-                        self.name = external_string.value;
-                        self.name_hash = external_string.hash;
-                        break 'name;
-                    }
-                }
-            }
+        if !name.is_empty() {
+            let external_string = string_builder.append::<ExternalString>(name);
+            self.name = external_string.value;
+            self.name_hash = external_string.hash;
         }
 
         if !FEATURES.is_main {

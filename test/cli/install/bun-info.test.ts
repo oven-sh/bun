@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, tempDir, tempDirWithFiles } from "harness";
 import { join } from "node:path";
 
 describe.concurrent("bun info", () => {
@@ -368,6 +368,166 @@ describe.concurrent("bun info", () => {
         Published: 2016-08-23T17:56:58.976Z
         "
       `);
+    });
+  });
+});
+
+describe.concurrent("bun info with control characters in the packument", () => {
+  // One of each kind of byte the registry must not be able to write to the
+  // terminal: ESC (clear screen, then an OSC title change), BEL, a bare CR
+  // (overwrites the line), CRLF, tab, DEL, and the C1 controls NEL (U+0085)
+  // and CSI (U+009B).
+  const hostile = "\x1b[2J\x1b]0;PWNED\x07\rX\r\nY\tZ\x7f\u0085\u009b[31m";
+  // How the summary view renders it: every control becomes a visible escape.
+  const escaped = String.raw`\x1b[2J\x1b]0;PWNED\x07\rX\r\nY\tZ\x7f\u0085\u009b[31m`;
+  // How `bun pm view <pkg> <field>` renders it: CRLF and tab are kept since
+  // the field itself may be multi-line (readme), everything else is escaped.
+  const escapedMultiline = String.raw`\x1b[2J\x1b]0;PWNED\x07\rX` + "\r\nY\tZ" + String.raw`\x7f\u0085\u009b[31m`;
+
+  const packument = {
+    name: "hostile",
+    "dist-tags": { latest: "1.0.0", ["tag" + hostile]: "1.0.0" },
+    description: "D" + hostile,
+    homepage: "H" + hostile,
+    keywords: ["K" + hostile, "plain"],
+    maintainers: [{ name: "M" + hostile, email: "E" + hostile }, { name: "N" + hostile }],
+    time: { "1.0.0": "P" + hostile },
+    versions: {
+      "1.0.0": {
+        name: "n" + hostile,
+        version: "1.0.0",
+        license: "L" + hostile,
+        description: "D" + hostile,
+        dependencies: { ["dep" + hostile]: "^1" + hostile },
+        dist: { tarball: "T" + hostile, shasum: "S" + hostile, integrity: "I" + hostile },
+      },
+    },
+  };
+
+  async function view(...args: string[]) {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => Response.json(packument),
+    });
+    using dir = tempDir("bun-info-control-chars", {
+      "package.json": JSON.stringify({ name: "app", version: "1.0.0" }),
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, NPM_CONFIG_REGISTRY: server.url.href },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("escapes every field of the summary view", async () => {
+    const { stdout, stderr, exitCode } = await view("info", "hostile");
+
+    // Only the newlines bun itself prints between lines may remain.
+    expect(stdout).not.toMatch(/[\x00-\x09\x0b-\x1f\x7f\u0080-\u009f]/);
+    expect(stdout.replaceAll(escaped, "<escaped>")).toMatchInlineSnapshot(`
+      "n<escaped>@1.0.0 | L<escaped> | deps: 1 | versions: 1
+      D<escaped>
+      H<escaped>
+      keywords: K<escaped>, plain
+
+      dependencies (1):
+      - dep<escaped>: ^1<escaped>
+
+      dist
+       .tarball: T<escaped>
+       .shasum: S<escaped>
+       .integrity: I<escaped>
+
+      dist-tags:
+      latest: 1.0.0
+      tag<escaped>: 1.0.0
+
+      maintainers:
+      - M<escaped> <E<escaped>>
+      - N<escaped>
+
+      Published: P<escaped>
+      "
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps line structure but escapes the rest when printing a single string field", async () => {
+    const { stdout, stderr, exitCode } = await view("pm", "view", "hostile", "description");
+
+    expect(stdout).toBe(`D${escapedMultiline}\n`);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// Semver strings longer than 8 bytes are stored as offsets into the buffer they
+// were parsed from. A range given on the command line is parsed from the
+// argument, so its prerelease tags have to be read back out of the argument and
+// not out of the manifest's string buffer. The manifest buffer starts with the
+// package name, and the name is longer than any range below, so reading the
+// wrong buffer yields a piece of the name rather than the tag by coincidence.
+describe.concurrent("version ranges with prerelease tags longer than 8 bytes", () => {
+  const name = "long-prerelease-tags-pkg";
+  const published = ["1.0.0-beta.20240101", "1.0.0-beta.20240301"];
+  const packument = JSON.stringify({
+    name,
+    "dist-tags": { latest: "1.0.0-beta.20240301" },
+    versions: Object.fromEntries(
+      published.map(version => [
+        version,
+        { name, version, dist: { tarball: `http://localhost/${name}-${version}.tgz` } },
+      ]),
+    ),
+  });
+
+  async function view(subcommand: string[], spec: string) {
+    await using server = Bun.serve({
+      port: 0,
+      fetch: () => new Response(packument, { headers: { "content-type": "application/json" } }),
+    });
+    using dir = tempDir("view-long-prerelease", {
+      "package.json": JSON.stringify({ name: "test", version: "1.0.0" }),
+      "bunfig.toml": `[install]\nregistry = "http://localhost:${server.port}/"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), ...subcommand, `${name}@${spec}`, "version"],
+      cwd: String(dir),
+      env: { ...bunEnv, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  describe.each([
+    ["bun info", ["info"]],
+    ["bun pm view", ["pm", "view"]],
+  ])("%s", (_, subcommand) => {
+    test.each([
+      // resolved through the `latest` dist-tag
+      [">=1.0.0-beta.20240101", "1.0.0-beta.20240301"],
+      ["~1.0.0-beta.20240301", "1.0.0-beta.20240301"],
+      // `latest` is excluded, resolved by walking the prerelease list
+      ["<1.0.0-beta.20240201", "1.0.0-beta.20240101"],
+    ])(`${name}@%s resolves to %s`, async (spec, expected) => {
+      expect(await view(subcommand, spec)).toEqual({ stdout: `${expected}\n`, stderr: "", exitCode: 0 });
+    });
+
+    test(`${name}@<1.0.0-beta.20240101 matches nothing`, async () => {
+      expect(await view(subcommand, "<1.0.0-beta.20240101")).toEqual({
+        stdout: "",
+        stderr: expect.stringContaining(`No version of "${name}" satisfying "<1.0.0-beta.20240101" found`),
+        exitCode: 1,
+      });
     });
   });
 });

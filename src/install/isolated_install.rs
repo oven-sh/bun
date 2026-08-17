@@ -144,8 +144,12 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
     const IS_STORE_INSTALLER: bool = true;
 
-    fn on_extract_store_installer(ctx: &mut Self::Ctx, task_id: Task::Id) {
-        ctx.on_package_extracted(task_id);
+    fn on_extract_store_installer(
+        ctx: &mut Self::Ctx,
+        task_id: Task::Id,
+        data: &install::ExtractData,
+    ) {
+        ctx.on_package_extracted(task_id, data);
     }
 
     fn on_package_download_error_store(
@@ -221,6 +225,85 @@ pub(crate) enum Timings {
     Quiet,
 }
 
+/// `dep` is a `file:` dependency whose path is relative to the package declaring it
+/// (resolved as `declarer`): `Package::from_npm` stores these paths as declared,
+/// `Package::parse` and `overrides` store top-level relative ones. Such a folder is
+/// linked from inside the package and is not a peer provider for the packages below.
+fn dependency_is_contained_folder(
+    lockfile: &Lockfile,
+    declarer: &Resolution,
+    dep: &install::Dependency,
+) -> bool {
+    if declarer.tag.is_local_package() || dep.version.tag != VersionTag::Folder {
+        return false;
+    }
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    !lockfile
+        .overrides
+        .contains_name(dep.name_hash, dep.name.slice(string_buf), string_buf)
+}
+
+/// `dependency_is_contained_folder` for every `DependencyID`, and the `PackageID`s only such
+/// dependencies resolve to: they get no store entry (`store::entry::Entry::nested_folder`).
+fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSet), AllocError> {
+    let pkgs = lockfile.packages.slice();
+    let pkg_resolutions = pkgs.items_resolution();
+    let resolutions = &lockfile.buffers.resolutions[..];
+    let dependencies = &lockfile.buffers.dependencies[..];
+
+    let mut contained = DynamicBitSet::init_empty(dependencies.len())?;
+    let mut nested = DynamicBitSet::init_empty(pkg_resolutions.len())?;
+    for (pkg_id, pkg_res) in pkg_resolutions.iter().enumerate() {
+        if pkg_res.tag == ResolutionTag::Folder {
+            nested.set(pkg_id);
+        }
+    }
+    if nested.count() == 0 {
+        return Ok((contained, nested));
+    }
+
+    for (pkg_id, pkg_deps) in pkgs.items_dependencies().iter().enumerate() {
+        for dep_id in pkg_deps.begin()..pkg_deps.end() {
+            let target = resolutions[dep_id as usize];
+            if target == invalid_package_id
+                || target as usize >= pkg_resolutions.len()
+                || pkg_resolutions[target as usize].tag != ResolutionTag::Folder
+            {
+                continue;
+            }
+            if dependency_is_contained_folder(
+                lockfile,
+                &pkg_resolutions[pkg_id],
+                &dependencies[dep_id as usize],
+            ) {
+                contained.set(dep_id as usize);
+            } else {
+                nested.unset(target as usize);
+            }
+        }
+    }
+
+    Ok((contained, nested))
+}
+
+/// `pkg_id` has a `dependency_is_contained_folder` dependency resolving to `folder_pkg_id`.
+pub(crate) fn folder_is_inside_package(
+    lockfile: &Lockfile,
+    pkg_id: PackageID,
+    folder_pkg_id: PackageID,
+) -> bool {
+    let pkgs = lockfile.packages.slice();
+    let declarer = &pkgs.items_resolution()[pkg_id as usize];
+    let pkg_deps = pkgs.items_dependencies()[pkg_id as usize];
+    let resolutions = &lockfile.buffers.resolutions[..];
+    let dependencies = &lockfile.buffers.dependencies[..];
+
+    (pkg_deps.begin()..pkg_deps.end()).any(|dep_id| {
+        resolutions[dep_id as usize] == folder_pkg_id
+            && dependency_is_contained_folder(lockfile, declarer, &dependencies[dep_id as usize])
+    })
+}
+
 pub(crate) fn build_store(
     manager: &PackageManager,
     lockfile: &Lockfile,
@@ -238,6 +321,9 @@ pub(crate) fn build_store(
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
+
+    let (contained, nested_folders) = contained_folders(lockfile)?;
+    let is_contained_folder = |dep_id: DependencyID| contained.is_set(dep_id as usize);
 
     let mut nodes: store::node::List = store::node::List::default();
 
@@ -313,15 +399,17 @@ pub(crate) fn build_store(
                 };
                 if dep.behavior.is_peer() {
                     own_peers.set(pkg_id as usize, bit);
-                } else if !is_filtered_dependency_or_workspace(
-                    dep_id,
-                    pkg_id,
-                    workspace_filters,
-                    install_root_dependencies,
-                    manager,
-                    lockfile,
-                    resolutions,
-                ) {
+                } else if !is_contained_folder(dep_id)
+                    && !is_filtered_dependency_or_workspace(
+                        dep_id,
+                        pkg_id,
+                        workspace_filters,
+                        install_root_dependencies,
+                        manager,
+                        lockfile,
+                        resolutions,
+                    )
+                {
                     provides.set(pkg_id as usize, bit);
                 }
             }
@@ -512,6 +600,7 @@ pub(crate) fn build_store(
                                         for ids in &node_dependencies[curr_id.get() as usize] {
                                             if dependencies[ids.dep_id as usize].name_hash
                                                 == peer_name_hash
+                                                && !is_contained_folder(ids.dep_id)
                                             {
                                                 break 'resolved ids.pkg_id;
                                             }
@@ -589,7 +678,9 @@ pub(crate) fn build_store(
                         let mut curr_id = entry.parent_id;
                         'walk: while curr_id != store::node::Id::INVALID {
                             for ids in &node_dependencies[curr_id.get() as usize] {
-                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash {
+                                if dependencies[ids.dep_id as usize].name_hash == peer_name_hash
+                                    && !is_contained_folder(ids.dep_id)
+                                {
                                     break 'walk;
                                 }
                             }
@@ -751,6 +842,11 @@ pub(crate) fn build_store(
                         let dep = &dependencies[ids.dep_id as usize];
 
                         if dep.name_hash != peer_dep.name_hash {
+                            continue;
+                        }
+
+                        // private to the ancestor; a package's own one still satisfies its own peer
+                        if curr_id != node_id && is_contained_folder(ids.dep_id) {
                             continue;
                         }
 
@@ -1015,8 +1111,11 @@ pub(crate) fn build_store(
 
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
+        // never hoisted, so it must not claim the hoist slots for its name below
+        let new_entry_nested_folder = nested_folders.is_set(pkg_id as usize);
+
         let hoisted = 'hoisted: {
-            if !manager.options.hoist {
+            if !manager.options.hoist || new_entry_nested_folder {
                 break 'hoisted false;
             }
 
@@ -1047,6 +1146,7 @@ pub(crate) fn build_store(
             parents: new_entry_parents,
             peer_hash: new_entry_peer_hash,
             hoisted,
+            nested_folder: new_entry_nested_folder,
             step: core::sync::atomic::AtomicU32::new(0),
             entry_hash: 0,
             scripts: core::cell::Cell::new(None),
@@ -1088,7 +1188,7 @@ pub(crate) fn build_store(
                             .name
                             .slice(string_buf);
                         public_hoisted.put(dep_name, ())?;
-                    } else {
+                    } else if !new_entry_nested_folder {
                         // transitive dependencies (also direct dependencies of workspaces!)
                         let dep_name = dependencies[new_entry_dep_id as usize]
                             .name
@@ -1118,6 +1218,10 @@ pub(crate) fn build_store(
             peers: node_peers[entry.node_id.get() as usize].clone(),
         });
 
+        debug_assert!(
+            !new_entry_nested_folder || node_nodes[entry.node_id.get() as usize].is_empty(),
+            "a folder declared by a remote package is resolved without dependencies"
+        );
         for &child_node_id in &node_nodes[entry.node_id.get() as usize] {
             entry_queue.write_item(QueuedEntry {
                 node_id: child_node_id,
@@ -1138,6 +1242,73 @@ pub(crate) fn build_store(
         entries: store_entries,
         nodes,
     })
+}
+
+/// Entry by entry rather than renaming `node_modules` itself, which may be a mount point or a symlink.
+pub(crate) fn move_node_modules_aside(lockfile: &Lockfile) {
+    use bun_sys::FdExt as _;
+
+    let mut old_modules = AutoRelPath::from(b"node_modules").assume_ok();
+    let rand = fast_random();
+    old_modules
+        .append_fmt(format_args!(
+            ".old_modules-{}",
+            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
+        ))
+        .assume_ok();
+    if sys::mkdirat(Fd::cwd(), old_modules.slice_z(), 0o755).is_err() {
+        return;
+    }
+    let old_modules_name = old_modules.basename().to_vec();
+
+    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules") else {
+        return;
+    };
+    let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
+    let mut iter = sys::iterate_dir(node_modules);
+    while let Ok(Some(entry)) = iter.next() {
+        let name = entry.name.slice_u8();
+        if name == b".cache" || name == old_modules_name.as_slice() {
+            continue;
+        }
+
+        let entry_path_len = entry_path.len();
+        entry_path.append(name).assume_ok();
+        let old_modules_len = old_modules.len();
+        old_modules.append(name).assume_ok();
+
+        let _ = sys::renameat(
+            Fd::cwd(),
+            entry_path.slice_z(),
+            Fd::cwd(),
+            old_modules.slice_z(),
+        );
+
+        entry_path.set_length(entry_path_len);
+        old_modules.set_length(old_modules_len);
+    }
+    node_modules.close();
+
+    for workspace_path in lockfile.workspace_paths.values() {
+        let mut workspace_node_modules =
+            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes)).assume_ok();
+        let basename = workspace_node_modules.basename().to_vec();
+        workspace_node_modules.append(b"node_modules").assume_ok();
+
+        let old_modules_len = old_modules.len();
+        old_modules
+            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
+            .assume_ok();
+
+        let _ = sys::renameat(
+            Fd::cwd(),
+            workspace_node_modules.slice_z(),
+            Fd::cwd(),
+            old_modules.slice_z(),
+        );
+
+        old_modules.set_length(old_modules_len);
+    }
 }
 
 /// Runs on main thread
@@ -1690,233 +1861,13 @@ pub(crate) fn install_isolated_packages(
         // matches `Installer::NODE_MODULES_BUN`.
         let bun_modules_path = paths::path_literal!("node_modules/.bun");
 
-        match sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
-            Ok(()) => {
-                // fallthrough to creating bun_modules below
+        if sys::mkdirat(Fd::cwd(), node_modules_path, 0o755).is_err() {
+            if sys::directory_exists_at(Fd::cwd(), bun_modules_path).unwrap_or(false) {
+                break 'is_new_bun_modules false;
             }
-            Err(_) => {
-                match sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
-                    Err(_) => break 'is_new_bun_modules false,
-                    Ok(()) => {}
-                }
 
-                // 'node_modules' exists and 'node_modules/.bun' doesn't
-
-                #[cfg(windows)]
-                {
-                    // Windows:
-                    // 1. create 'node_modules/.old_modules-{hex}'
-                    // 2. for each entry in 'node_modules' rename into 'node_modules/.old_modules-{hex}'
-                    // 3. for each workspace 'node_modules' rename into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-
-                    // `sys::mkdirat`/`renameat` take `&ZStr` (u8) and widen
-                    // internally, so a single u8 `AutoRelPath` covers both the
-                    // mkdir and rename targets.
-                    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
-                    let rand = fast_random();
-                    rename_path
-                        .append_fmt(format_args!(
-                            ".old_modules-{}",
-                            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                        ))
-                        .assume_ok();
-
-                    // 1
-                    if sys::mkdirat(Fd::cwd(), rename_path.slice_z(), 0o755).is_err() {
-                        break 'is_new_bun_modules true;
-                    }
-
-                    let Ok(node_modules) = sys::open_dir_for_iteration(Fd::cwd(), b"node_modules")
-                    else {
-                        break 'is_new_bun_modules true;
-                    };
-                    // Windows HANDLE-leak audit: `Fd` is `Copy` (no Drop) and the
-                    // `WrappedIterator` from `sys::iterate_dir` does not own/close it,
-                    // so close explicitly. The guard fires on
-                    // normal fall-through to step 3 and on every
-                    // `break 'is_new_bun_modules true` early exit.
-                    let _close_node_modules = scopeguard::guard(node_modules, |fd| {
-                        use bun_sys::FdExt as _;
-                        fd.close();
-                    });
-
-                    let mut entry_path = AutoRelPath::from(b"node_modules").assume_ok();
-
-                    // 2
-                    let mut node_modules_iter = sys::iterate_dir(node_modules);
-                    loop {
-                        let Some(entry) = (match node_modules_iter.next() {
-                            Ok(v) => v,
-                            Err(_) => break 'is_new_bun_modules true,
-                        }) else {
-                            break;
-                        };
-                        if bun_core::starts_with_char(entry.name.slice_u8(), b'.') {
-                            continue;
-                        }
-
-                        // Capture lengths and truncate manually so
-                        // the paths stay unborrowed across the loop body.
-                        let entry_path_save = entry_path.len();
-                        entry_path.append(entry.name.slice()).assume_ok();
-
-                        let rename_path_save = rename_path.len();
-                        rename_path.append(entry.name.slice()).assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            entry_path.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                        entry_path.set_length(entry_path_save);
-                    }
-
-                    // 3
-                    for workspace_path in lockfile.workspace_paths.values() {
-                        let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
-                                .assume_ok();
-
-                        // Clone basename before mutating
-                        // `workspace_node_modules`.
-                        let basename = workspace_node_modules.basename().to_vec();
-
-                        workspace_node_modules.append(b"node_modules").assume_ok();
-
-                        // Reshaped for borrowck — capture length instead
-                        // of `save()` so `rename_path` stays unborrowed.
-                        let rename_path_save = rename_path.len();
-                        rename_path
-                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
-                            .assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            workspace_node_modules.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                    }
-                }
-                #[cfg(not(windows))]
-                {
-                    // Posix:
-                    // 1. rename existing 'node_modules' to temp location
-                    // 2. create new 'node_modules' directory
-                    // 3. rename temp into 'node_modules/.old_modules-{hex}'
-                    // 4. attempt renaming 'node_modules/.old_modules-{hex}/.cache' to 'node_modules/.cache'
-                    // 5. rename each workspace 'node_modules' into 'node_modules/.old_modules-{hex}/old_{basename}_modules'
-                    let mut temp_node_modules_buf = PathBuffer::uninit();
-                    let temp_node_modules = paths::fs::FileSystem::tmpname(
-                        b"tmp_modules",
-                        &mut temp_node_modules_buf.0,
-                        fast_random(),
-                    )
-                    .expect("unreachable");
-
-                    // 1
-                    if sys::renameat(
-                        Fd::cwd(),
-                        bun_core::zstr!("node_modules"),
-                        Fd::cwd(),
-                        temp_node_modules,
-                    )
-                    .is_err()
-                    {
-                        break 'is_new_bun_modules true;
-                    }
-
-                    // 2
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), node_modules_path, 0o755) {
-                        Output::err(err, "failed to create './node_modules'", format_args!(""));
-                        Global::exit(1);
-                    }
-
-                    if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
-                        Output::err(
-                            err,
-                            "failed to create './node_modules/.bun'",
-                            format_args!(""),
-                        );
-                        Global::exit(1);
-                    }
-
-                    let mut rename_path = AutoRelPath::from(b"node_modules").assume_ok();
-
-                    let rand = fast_random();
-                    rename_path
-                        .append_fmt(format_args!(
-                            ".old_modules-{}",
-                            bun_fmt::hex_lower(bun_core::bytes_of(&rand))
-                        ))
-                        .assume_ok();
-
-                    // 3
-                    if sys::renameat(
-                        Fd::cwd(),
-                        temp_node_modules,
-                        Fd::cwd(),
-                        rename_path.slice_z(),
-                    )
-                    .is_err()
-                    {
-                        break 'is_new_bun_modules true;
-                    }
-
-                    rename_path.append(b".cache").assume_ok();
-
-                    let mut cache_path = AutoRelPath::from(b"node_modules").assume_ok();
-                    cache_path.append(b".cache").assume_ok();
-
-                    // 4
-                    let _ = sys::renameat(
-                        Fd::cwd(),
-                        rename_path.slice_z(),
-                        Fd::cwd(),
-                        cache_path.slice_z(),
-                    );
-
-                    // remove .cache so we can append destination for each workspace
-                    rename_path.undo(1);
-
-                    // 5
-                    for workspace_path in lockfile.workspace_paths.values() {
-                        let mut workspace_node_modules =
-                            AutoRelPath::from(workspace_path.slice(&lockfile.buffers.string_bytes))
-                                .assume_ok();
-
-                        // Clone basename before mutating
-                        // `workspace_node_modules`.
-                        let basename = workspace_node_modules.basename().to_vec();
-
-                        workspace_node_modules.append(b"node_modules").assume_ok();
-
-                        // Capture the length and truncate manually
-                        // so `rename_path` stays unborrowed between save/restore.
-                        let rename_path_save = rename_path.len();
-
-                        rename_path
-                            .append_fmt(format_args!(".old_{}_modules", BStr::new(&basename)))
-                            .assume_ok();
-
-                        let _ = sys::renameat(
-                            Fd::cwd(),
-                            workspace_node_modules.slice_z(),
-                            Fd::cwd(),
-                            rename_path.slice_z(),
-                        );
-
-                        rename_path.set_length(rename_path_save);
-                    }
-                }
-
-                break 'is_new_bun_modules true;
-            }
+            // 'node_modules' exists and 'node_modules/.bun' doesn't
+            move_node_modules_aside(lockfile);
         }
 
         if let Err(err) = sys::mkdirat(Fd::cwd(), bun_modules_path, 0o755) {
@@ -1983,6 +1934,7 @@ pub(crate) fn install_isolated_packages(
         let entry_steps = entries.items_step();
         let entry_dependencies = entries.items_dependencies();
         let entry_hoisted = entries.items_hoisted();
+        let entry_nested_folder = entries.items_nested_folder();
 
         // Reborrow through a
         // `BackRef` so `string_buf` / `pkgs` don't tie up `&mut lockfile` for
@@ -2026,6 +1978,7 @@ pub(crate) fn install_isolated_packages(
                     installer: bun_ptr::BackRef::from(core::ptr::NonNull::dangling()),
                     result: installer::Result::None,
                     relink: installer::Relink::Off,
+                    blocked_scripts: 0,
                     task: bun_threading::thread_pool::Task {
                         callback: installer::Task::callback,
                         node: Default::default(),
@@ -2074,6 +2027,7 @@ pub(crate) fn install_isolated_packages(
             global_store_tmp_suffix: fast_random(),
             summary: Default::default(),
             task_queue: Default::default(),
+            failed_optional_entries: Vec::new(),
         };
         // No long-lived `&mut PackageManager` reborrow here — `installer.start_task()`,
         // `on_task_complete()`, and `on_task_fail()` below all reach the manager through
@@ -2095,7 +2049,7 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // `append_store_path` runs on worker threads via `&Installer` and
+        // `append_dependency_path` runs on worker threads via `&Installer` and
         // can't take `&mut PackageManager` there, so ensure the
         // global link dir once on the main thread before any `.symlink`
         // resolution can be reached by a task. Guarded so installs without
@@ -2146,7 +2100,7 @@ pub(crate) fn install_isolated_packages(
                 if let Some(name) = unsafe_folder_name {
                     Output::err_generic(
                         "\"{}\" is not a valid install folder name",
-                        (BStr::new(name),),
+                        (bun_core::fmt::escape_control_chars(name),),
                     );
                     Output::flush();
                     Global::exit(1);
@@ -2193,10 +2147,56 @@ pub(crate) fn install_isolated_packages(
                     // .monotonic is okay because the task isn't running on another thread.
                     entry_steps[entry_id.get() as usize]
                         .store(installer::Step::Done as u32, Ordering::Relaxed);
-                    installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
+
+                    // Same target check as the hoisted linker's `install_from_link`.
+                    let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
+                    let checked = installer
+                        .append_dependency_path(&mut link_target, entry_id)
+                        .and_then(|()| {
+                            sys::openat(
+                                Fd::cwd(),
+                                link_target.slice_z(),
+                                sys::O::RDONLY | sys::O::DIRECTORY,
+                                0,
+                            )
+                            .map_err(installer::TaskError::LinkPackage)
+                        });
+                    match checked {
+                        Ok(fd) => {
+                            use bun_sys::FdExt as _;
+                            fd.close();
+                            installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
+                        }
+                        Err(err) => installer.on_task_fail(entry_id, &err),
+                    }
                     continue;
                 }
                 ResolutionTag::Folder => {
+                    if entry_nested_folder[entry_id.get() as usize] {
+                        // linked by the packages containing it (`Installer::symlink_dependencies`)
+                        debug_assert!(entry_dependencies[entry_id.get() as usize].list.is_empty());
+                        let folder = pkg_res.folder().slice(string_buf);
+                        let state = if crate::bin::bin_target_escapes_package_dir(folder) {
+                            // the resolver rejects these; only an edited or old lockfile gets here
+                            Output::err_generic(
+                                "refusing to install dependency <b>{}<r> with unsafe folder path \"{}\"",
+                                (BStr::new(pkg_name.slice(string_buf)), BStr::new(folder)),
+                            );
+                            Output::flush();
+                            if installer.manager().options.enable.fail_early() {
+                                Global::exit(1);
+                            }
+                            installer::CompleteState::Fail
+                        } else {
+                            installer::CompleteState::Skipped
+                        };
+                        // .monotonic is okay because the task isn't running on another thread.
+                        entry_steps[entry_id.get() as usize]
+                            .store(installer::Step::Done as u32, Ordering::Relaxed);
+                        installer.on_task_complete(entry_id, state);
+                        continue;
+                    }
+
                     // folders are always hardlinked to keep them up-to-date
                     installer.start_task(entry_id);
                     continue;
@@ -2236,6 +2236,7 @@ pub(crate) fn install_isolated_packages(
                                     .ok()
                                     .unwrap_or(false);
                             }
+                            // Likewise, the package directory appears here only once fully linked.
                             installer.append_real_store_path(&mut store_path, entry_id, installer::Which::Final);
                             // Capture the length instead of a `ResetScope` so
                             // `store_path` stays unborrowed.
@@ -2349,11 +2350,12 @@ pub(crate) fn install_isolated_packages(
                             pkg_res.github(),
                             None,
                         ),
-                        ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
-                            installer.manager(),
-                            *pkg_res.local_tarball(),
-                            None,
-                        ),
+                        ResolutionTag::LocalTarball => {
+                            package_manager::cached_local_tarball_folder_name(
+                                &pkgs.items_meta()[pkg_id as usize].integrity,
+                                None,
+                            )
+                        }
                         ResolutionTag::RemoteTarball => {
                             package_manager::cached_tarball_folder_name(
                                 installer.manager(),
@@ -2370,6 +2372,8 @@ pub(crate) fn install_isolated_packages(
 
                     let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
                     {
+                        // no entry name until extraction records a local tarball's integrity
+                        _ if cache_subpath_z.is_empty() => true,
                         install::PreinstallState::Done => false,
                         _ => {
                             let exists = package_manager::directories::is_package_in_cache_at(
@@ -2441,7 +2445,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue package for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_fmt::EscapeControlChars(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();
@@ -2499,7 +2505,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue github package for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_fmt::EscapeControlChars(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();
@@ -2552,7 +2560,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue tarball for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_core::fmt::for_terminal(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();
@@ -2601,6 +2611,8 @@ pub(crate) fn install_isolated_packages(
                 Global::exit(1);
             }
         }
+
+        installer.unlink_failed_optional_entries();
 
         if installer.manager().options.log_level.show_progress() {
             progress.root.end();

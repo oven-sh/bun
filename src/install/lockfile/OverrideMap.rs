@@ -4,7 +4,6 @@ use core::cmp::Ordering;
 use crate::DependencyID;
 use crate::Error;
 use crate::package_manager::workspace_package_json_cache::{GetJSONOptions, GetResult};
-use crate::resolution::Tag as ResolutionTag;
 use crate::{PackageID, invalid_package_id};
 use bun_collections::{ArrayHashMap, index_sort};
 use bun_install::dependency::{
@@ -38,6 +37,23 @@ pub struct ScopedOverride {
     pub(crate) parent: Option<Dependency>,
     pub(crate) target_range: dependency::Version,
     pub(crate) dep: Dependency,
+}
+
+/// The rule `OverrideMap::lookup` chose for one dependency edge.
+#[derive(Clone, Copy)]
+pub(crate) enum OverrideRule<'a> {
+    Flat(&'a Dependency),
+    Scoped(&'a ScopedOverride),
+}
+
+impl<'a> OverrideRule<'a> {
+    #[inline]
+    pub(crate) fn version(self) -> &'a dependency::Version {
+        match self {
+            OverrideRule::Flat(dep) => &dep.version,
+            OverrideRule::Scoped(rule) => &rule.dep.version,
+        }
+    }
 }
 
 impl ScopedOverride {
@@ -130,6 +146,10 @@ fn is_comment_key(key: &[u8]) -> bool {
 
 struct ParseContext<'a, 'b> {
     field: Field,
+    /// Parsing only appends or replaces in place, so the rules `"overrides"` produced are the first
+    /// `overrides_flat` entries of `map` and the first `overrides_scoped` of `scoped`.
+    overrides_flat: usize,
+    overrides_scoped: usize,
     pm: &'a mut PackageManager,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
@@ -147,24 +167,34 @@ impl OverrideMap {
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
     ) -> Option<dependency::Version> {
+        self.lookup(lockfile, dependency_id, name_hash)
+            .map(|rule| rule.version().clone())
+    }
+
+    pub(crate) fn lookup(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+    ) -> Option<OverrideRule<'_>> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if self.scoped.is_empty() {
             return self.get_flat(name_hash);
         }
         if self.scoped_names.contains(&name_hash) {
             if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash) {
-                return Some(rule.dep.version.clone());
+                return Some(OverrideRule::Scoped(rule));
             }
         }
         self.get_flat(name_hash)
     }
 
     #[inline]
-    fn get_flat(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
+    fn get_flat(&self, name_hash: PackageNameHash) -> Option<OverrideRule<'_>> {
         if self.map.count() == 0 {
             return None;
         }
-        self.map.get(&name_hash).map(|dep| dep.version.clone())
+        self.map.get(&name_hash).map(OverrideRule::Flat)
     }
 
     fn scoped_rule_for<'s>(
@@ -249,15 +279,10 @@ impl OverrideMap {
         if owner_id == invalid_package_id {
             return None;
         }
-        let owner_id = owner_id as usize;
-        let owner_name_hash = lockfile.packages.items_name_hash()[owner_id];
-        let resolution = &lockfile.packages.items_resolution()[owner_id];
-        let owner_version = match resolution.tag {
-            ResolutionTag::Npm => Some(resolution.npm().version),
-            ResolutionTag::Workspace => lockfile.workspace_versions.get(&owner_name_hash).copied(),
-            _ => None,
-        };
-        Some((owner_name_hash, owner_version))
+        Some((
+            lockfile.packages.items_name_hash()[owner_id as usize],
+            lockfile.package_version(owner_id),
+        ))
     }
 
     fn owner_package_id(&self, lockfile: &Lockfile, dependency_id: DependencyID) -> PackageID {
@@ -488,8 +513,13 @@ impl OverrideMap {
 
     /// Replaces the rule with the same (parent, parent range, target, target range); `buf` is the buffer `rule` was appended into.
     pub(crate) fn push_scoped(&mut self, rule: ScopedOverride, buf: &[u8]) {
+        self.put_scoped(rule, buf, 0);
+    }
+
+    /// Like `push_scoped`, except that a matching rule among the first `keep` is kept and `rule` is dropped.
+    fn put_scoped(&mut self, rule: ScopedOverride, buf: &[u8], keep: usize) {
         if self.scoped_names.contains(&rule.dep.name_hash) {
-            if let Some(existing) = self.scoped.iter_mut().find(|existing| {
+            if let Some(index) = self.scoped.iter().position(|existing| {
                 existing.dep.name_hash == rule.dep.name_hash
                     && match (&existing.parent, &rule.parent) {
                         (None, None) => true,
@@ -504,7 +534,9 @@ impl OverrideMap {
                         .literal
                         .eql(rule.target_range.literal, buf, buf)
             }) {
-                *existing = rule;
+                if index >= keep {
+                    self.scoped[index] = rule;
+                }
                 return;
             }
         } else {
@@ -589,65 +621,62 @@ impl OverrideMap {
         expr: Expr,
         builder: &mut StringBuilder,
     ) {
-        let (field, field_expr) = if let Some(overrides) = expr.as_property(b"overrides") {
-            (Field::Overrides, overrides.expr)
-        } else if let Some(resolutions) = expr.as_property(b"resolutions") {
-            (Field::Resolutions, resolutions.expr)
-        } else {
-            return;
-        };
-
-        field_expr.for_each_property(|key, _key_loc, value| {
-            if is_comment_key(key) {
-                return;
-            }
-            builder.count(key);
-            if let Some(value) = value.as_utf8_string_literal() {
-                if let Ok(Selector { parent, target }) = parse_selector(key) {
-                    builder.count(target.name);
-                    builder.count(target.range);
-                    if let Some(parent) = parent {
-                        builder.count(parent.name);
-                        builder.count(parent.range);
-                    }
-                }
-                builder.count(value);
-                count_ref_value(pm, log, json_source, workspace_names, &expr, value, builder);
-                return;
-            }
-            if field != Field::Overrides || !value.is_object() {
-                return;
-            }
-            if let Ok(parent) = parse_package_segment(key) {
-                builder.count(parent.name);
-                builder.count(parent.range);
-            }
-            value.for_each_property(|child_key, _child_key_loc, child_value| {
-                if is_comment_key(child_key) {
+        for field in [Field::Overrides, Field::Resolutions] {
+            let Some(property) = expr.as_property(field.json_name().as_bytes()) else {
+                continue;
+            };
+            property.expr.for_each_property(|key, _key_loc, value| {
+                if is_comment_key(key) {
                     return;
                 }
-                if let Ok(selector) = parse_selector(child_key) {
-                    builder.count(selector.target.name);
-                    builder.count(selector.target.range);
+                builder.count(key);
+                if let Some(value) = value.as_utf8_string_literal() {
+                    if let Ok(Selector { parent, target }) = parse_selector(key) {
+                        builder.count(target.name);
+                        builder.count(target.range);
+                        if let Some(parent) = parent {
+                            builder.count(parent.name);
+                            builder.count(parent.range);
+                        }
+                    }
+                    builder.count(value);
+                    count_ref_value(pm, log, json_source, workspace_names, &expr, value, builder);
+                    return;
                 }
-                if let Some(child_value) = child_value.as_utf8_string_literal() {
-                    builder.count(child_value);
-                    count_ref_value(
-                        pm,
-                        log,
-                        json_source,
-                        workspace_names,
-                        &expr,
-                        child_value,
-                        builder,
-                    );
+                if field != Field::Overrides || !value.is_object() {
+                    return;
                 }
+                if let Ok(parent) = parse_package_segment(key) {
+                    builder.count(parent.name);
+                    builder.count(parent.range);
+                }
+                value.for_each_property(|child_key, _child_key_loc, child_value| {
+                    if is_comment_key(child_key) {
+                        return;
+                    }
+                    if let Ok(selector) = parse_selector(child_key) {
+                        builder.count(selector.target.name);
+                        builder.count(selector.target.range);
+                    }
+                    if let Some(child_value) = child_value.as_utf8_string_literal() {
+                        builder.count(child_value);
+                        count_ref_value(
+                            pm,
+                            log,
+                            json_source,
+                            workspace_names,
+                            &expr,
+                            child_value,
+                            builder,
+                        );
+                    }
+                });
             });
-        });
+        }
     }
 
-    /// Given a package json expression, detect and parse override configuration into the given override map.
-    /// It is assumed the input map is uninitialized (zero entries)
+    /// Parses the root package.json's `"overrides"` and `"resolutions"` into this (empty) map.
+    /// Both fields apply; where they define the same selector the `"overrides"` rule wins.
     pub(crate) fn parse_append(
         &mut self,
         pm: &mut PackageManager,
@@ -660,15 +689,10 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) -> Result<(), Error> {
         debug_assert!(self.map.count() == 0 && self.scoped.is_empty()); // only call parse once
-        let (field, field_expr) = if let Some(overrides) = expr.as_property(b"overrides") {
-            (Field::Overrides, overrides.expr)
-        } else if let Some(resolutions) = expr.as_property(b"resolutions") {
-            (Field::Resolutions, resolutions.expr)
-        } else {
-            return Ok(());
-        };
         let mut ctx = ParseContext {
-            field,
+            field: Field::Overrides,
+            overrides_flat: 0,
+            overrides_scoped: 0,
             pm,
             lockfile_dependencies,
             root_package,
@@ -677,9 +701,13 @@ impl OverrideMap {
             workspace_names,
             builder,
         };
-        match field {
-            Field::Overrides => self.parse_from_overrides(&mut ctx, field_expr)?,
-            Field::Resolutions => self.parse_from_resolutions(&mut ctx, field_expr)?,
+        if let Some(overrides) = expr.as_property(b"overrides") {
+            self.parse_from_overrides(&mut ctx, overrides.expr)?;
+            (ctx.overrides_flat, ctx.overrides_scoped) = (self.map.count(), self.scoped.len());
+        }
+        if let Some(resolutions) = expr.as_property(b"resolutions") {
+            ctx.field = Field::Resolutions;
+            self.parse_from_resolutions(&mut ctx, resolutions.expr)?;
         }
         scoped_log!(
             OverrideMap,
@@ -898,24 +926,37 @@ impl OverrideMap {
             return Ok(());
         }
 
+        let name_hash = SemverBuilder::string_hash(target.name);
         let is_flat = parent.is_none() && target.range.is_empty();
-        let Some(dep) = parse_override_value(ctx, value_loc, target.name, value, is_flat)? else {
+        // Checked before the value is parsed: a flat `npm:` value also registers an alias, which a skipped rule must not do.
+        if is_flat
+            && self
+                .map
+                .get_index(&name_hash)
+                .is_some_and(|index| index < ctx.overrides_flat)
+        {
+            return Ok(());
+        }
+        let Some(dep) =
+            parse_override_value(ctx, value_loc, target.name, name_hash, value, is_flat)?
+        else {
             return Ok(());
         };
         let Some(target_range) = parse_range(ctx, key_loc, dep.name, dep.name_hash, target.range)
         else {
             return Ok(());
         };
-        if parent.is_none() && target_range.tag != VersionTag::Npm {
+        if is_flat {
             self.map.put_assume_capacity(dep.name_hash, dep);
         } else {
-            self.push_scoped(
+            self.put_scoped(
                 ScopedOverride {
                     parent: parent.cloned(),
                     target_range,
                     dep,
                 },
                 ctx.builder.string_bytes.as_slice(),
+                ctx.overrides_scoped,
             );
         }
         Ok(())
@@ -1063,6 +1104,7 @@ fn parse_override_value(
     ctx: &mut ParseContext<'_, '_>,
     loc: bun_ast::Loc,
     key: &[u8],
+    name_hash: PackageNameHash,
     value: &[u8],
     register_aliases: bool,
 ) -> Result<Option<Dependency>, Error> {
@@ -1087,7 +1129,6 @@ fn parse_override_value(
         return Ok(None);
     }
 
-    let name_hash = SemverBuilder::string_hash(key);
     let name = ctx.builder.append_with_hash::<SemverString>(key, name_hash);
 
     // https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides

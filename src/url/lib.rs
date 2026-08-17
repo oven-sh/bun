@@ -390,12 +390,7 @@ impl<'a> URL<'a> {
         }
     }
 
-    /// Formats `<displayProtocol>://<displayHost>/<trimmed pathname>/`.
-    ///
-    /// `display_host()` yields a `bun_core::fmt::HostFormatter` (impls
-    /// `Display`); the other two pieces are raw byte slices, so we assemble
-    /// into a `Vec<u8>` directly rather than going through `format!` and
-    /// risking lossy UTF-8 round-trips.
+    /// The URL without its userinfo, ending in exactly one `/`: `http://host/`, `http://host/npm/`.
     pub fn href_without_auth(&self) -> Box<[u8]> {
         let proto = self.display_protocol();
         let path = strings::trim(self.pathname, b"/");
@@ -407,8 +402,10 @@ impl<'a> URL<'a> {
         // bun_core::io::Write on Vec<u8> is infallible.
         let _ = buf.print(format_args!("{}", self.display_host()));
         buf.push(b'/');
-        buf.extend_from_slice(path);
-        buf.push(b'/');
+        if !path.is_empty() {
+            buf.extend_from_slice(path);
+            buf.push(b'/');
+        }
         buf.into_boxed_slice()
     }
 
@@ -592,9 +589,9 @@ impl<'a> URL<'a> {
                 offset += url.parse_host(base).unwrap_or(0);
             }
             b'/' | b'a'..=b'z' | b'A'..=b'Z' | b'0'..=b'9' | b'-' | b'_' | b':' => {
-                let is_protocol_relative = base.len() > 1 && base[1] == b'/';
+                let is_protocol_relative = base.starts_with(b"//");
                 if is_protocol_relative {
-                    offset += 1;
+                    offset += 2;
                 } else {
                     offset += url.parse_protocol(&base[offset as usize..]).unwrap_or(0);
                 }
@@ -604,19 +601,22 @@ impl<'a> URL<'a> {
                 if !is_relative_path {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        // Userinfo ends at the last `@` before the path (#1390 had one in the
+                        // path). As in `parse_host`, `#` does not end the authority: raw
+                        // .npmrc / bunfig / tarball credentials may contain one unencoded.
+                        let authority =
+                            &rest[..strings::index_of_any(rest, b"/?").unwrap_or(rest.len())];
+                        if let Some(at) = strings::last_index_of_char(authority, b'@') {
+                            let userinfo = &authority[..at];
+                            match strings::index_of_char_usize(userinfo, b':') {
+                                Some(colon) => {
+                                    url.username = &userinfo[..colon];
+                                    url.password = &userinfo[colon + 1..];
+                                }
+                                None => url.username = userinfo,
+                            }
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -700,7 +700,8 @@ impl<'a> URL<'a> {
             url.pathname = &url.pathname[1..];
         }
 
-        url.origin = strings::trim(url.origin, b"/ ?#");
+        // Only the right side: a protocol-relative origin keeps its leading `//`.
+        url.origin = strings::trim_right(url.origin, b"/ ?#");
         url
     }
 
@@ -723,30 +724,6 @@ impl<'a> URL<'a> {
             }
         }
 
-        None
-    }
-
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
         None
     }
 

@@ -437,6 +437,11 @@ fn edit_update_aliases_of_requests(
     )
 }
 
+/// The tag of a package.json literal as `bun install` reads it (leading whitespace ignored).
+fn literal_tag(literal: &[u8]) -> dependency::Tag {
+    dependency::Tag::infer(dependency::trim_literal(literal))
+}
+
 fn edit_update_entries(
     lockfile: &crate::Lockfile,
     arena: &bun_alloc::Arena,
@@ -480,7 +485,7 @@ fn edit_update_entries(
                         let version_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        let tag = dependency::Tag::infer(version_literal);
+                        let tag = literal_tag(version_literal);
 
                         // npm ranges only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
                         if tag != dependency::Tag::Npm
@@ -507,9 +512,7 @@ fn edit_update_entries(
 
                         *entry.value_ptr = PackageUpdateInfo {
                             original_version_literal: version_literal_owned,
-                            written_back: false,
-                            original_version_string_buf: Box::default(),
-                            original_version: None,
+                            ..Default::default()
                         };
 
                         if update_to_latest {
@@ -560,7 +563,7 @@ fn edit_update_entries(
                         let value_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        if dependency::Tag::infer(value_literal) == dependency::Tag::Catalog {
+                        if literal_tag(value_literal) == dependency::Tag::Catalog {
                             continue;
                         }
 
@@ -717,7 +720,7 @@ pub(crate) fn edit_catalogs_before_update(
             let version_literal = value
                 .as_utf8_string_literal()
                 .unwrap_or_else(|| bun_core::out_of_memory());
-            let tag = dependency::Tag::infer(version_literal);
+            let tag = literal_tag(version_literal);
 
             // same tag rule as direct dependencies
             if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
@@ -749,6 +752,56 @@ pub(crate) fn edit_catalogs_before_update(
     })?;
 
     Ok(!manager.updating_catalogs.is_empty())
+}
+
+/// Runs on the loaded lockfile, before the differ: every `catalog:` row of an entry recorded by `edit_catalogs_before_update` registers its name in `updating_packages` with the row's locked version as the original, the way the cwd's own dependency lists register theirs, so the install summary prints the entry's move as an update row; a name those lists already registered keeps their original.
+pub(crate) fn record_catalog_originals(
+    manager: &mut PackageManager,
+) -> Result<(), bun_alloc::AllocError> {
+    let infos: &[CatalogUpdateInfo] = &manager.updating_catalogs;
+    if infos.is_empty() {
+        return Ok(());
+    }
+    let by_name = CatalogInfoIndex::init(infos)?;
+    let lockfile: &Lockfile = &manager.lockfile;
+    let updating_packages = &mut manager.updating_packages;
+    let string_buf = lockfile.buffers.string_bytes.as_slice();
+    let package_resolutions = lockfile.packages.items_resolution();
+
+    let dependencies = lockfile.buffers.dependencies.iter();
+    for (dep, &package_id) in dependencies.zip(lockfile.buffers.resolutions.iter()) {
+        if dep.version.tag != dependency::Tag::Catalog {
+            continue;
+        }
+        let resolution = package_resolutions.get(package_id as usize);
+        let Some(resolution) = resolution.filter(|r| r.tag == resolution::Tag::Npm) else {
+            continue;
+        };
+        let dep_name = dep.name.slice(string_buf);
+        let catalog_name = dep.version.catalog().slice(string_buf);
+        let Some(info) = by_name
+            .candidates(dep_name)
+            .and_then(|candidates| CatalogInfoIndex::pick(candidates, infos, catalog_name))
+            .map(|i| &infos[i])
+        else {
+            continue;
+        };
+        let entry = updating_packages.get_or_put(dep_name)?;
+        if entry.found_existing {
+            continue;
+        }
+        *entry.value_ptr = PackageUpdateInfo {
+            original_version_literal: info.original_version_literal.clone(),
+            // The entry is written by `edit_catalogs_after_update`; `edit_update_entries` has nothing of it to write into the cwd's dependency lists.
+            written_back: true,
+            catalog_entry: true,
+            ..Default::default()
+        };
+        entry
+            .value_ptr
+            .set_original_version(resolution.npm().version, string_buf);
+    }
+    Ok(())
 }
 
 /// Writes each recorded catalog entry's resolved literal (unresolved ones are restored) into the root AST; returns `changed`.
@@ -996,7 +1049,7 @@ pub(crate) fn edit(
                                         == Subcommand::Update
                                         && value.expr.as_utf8_string_literal().is_some_and(
                                             |version_literal| {
-                                                dependency::Tag::infer(version_literal)
+                                                literal_tag(version_literal)
                                                     == dependency::Tag::Catalog
                                             },
                                         );
@@ -1018,7 +1071,7 @@ pub(crate) fn edit(
                                                 else {
                                                     break 'add_packages_to_update;
                                                 };
-                                                let tag = dependency::Tag::infer(version_literal);
+                                                let tag = literal_tag(version_literal);
 
                                                 if tag != dependency::Tag::Npm
                                                     && tag != dependency::Tag::DistTag
@@ -1041,9 +1094,7 @@ pub(crate) fn edit(
 
                                                 *entry.value_ptr = PackageUpdateInfo {
                                                     original_version_literal: version_literal_owned,
-                                                    written_back: false,
-                                                    original_version_string_buf: Box::default(),
-                                                    original_version: None,
+                                                    ..Default::default()
                                                 };
                                             }
                                         }
@@ -1194,10 +1245,18 @@ pub(crate) fn edit(
                     bun_ast::Loc::EMPTY,
                 ));
 
+                // Read by the `workspace:` arm of the write-back below; every other arm overwrites it.
+                let declared: &[u8] = match new_dependencies[k]
+                    .value
+                    .as_ref()
+                    .and_then(Expr::as_utf8_string_literal)
+                {
+                    Some(literal) => arena_dup(arena, literal),
+                    None => b"",
+                };
                 new_dependencies[k].value = Some(Expr::allocate(
                     arena,
-                    // we set it later
-                    E::EString::init(b""),
+                    E::EString::init(declared),
                     bun_ast::Loc::EMPTY,
                 ));
 
@@ -1332,9 +1391,9 @@ pub(crate) fn edit(
             // derived from a `StoreRef` to the same `E::EString` is live inside this loop body,
             // so this is the sole mutable borrow.
             let e_string = unsafe { &mut *e_string };
-            // `bun update <pkg>` keeps a `catalog:` reference; `bun add` still replaces it.
+            // `bun update <pkg>` only moves registry entries, like `edit_update_entries`; `bun add` still replaces any entry.
             if manager.subcommand == Subcommand::Update
-                && dependency::Tag::infer(e_string.data.slice()) == dependency::Tag::Catalog
+                && !literal_tag(e_string.data.slice()).is_npm()
             {
                 continue;
             }
@@ -1447,7 +1506,13 @@ pub(crate) fn edit(
                     arena_dup(arena, installed)
                 }
 
-                resolution::Tag::Workspace => b"workspace:*",
+                // A range that linked a workspace member has nothing to move to; `workspace:*` is what `bun add` writes.
+                resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
+                // Not the bound row: an unchanged resolution keeps the old lockfile row and its previous literal.
+                resolution::Tag::Workspace => match literal_tag(e_string.data.slice()) {
+                    dependency::Tag::Workspace => e_string.data.slice(),
+                    _ => b"workspace:*",
+                },
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
             };
             if e_string.data.slice() != new_literal {

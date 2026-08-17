@@ -13,10 +13,14 @@ use bun_core::{ZStr, strings};
 // SAFETY invariant: each buffer has at most one live mutable borrow per thread;
 // callers must not re-enter the accessor while a previous borrow is alive.
 thread_local! {
-    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; 4096]> = const { UnsafeCell::new([0u8; 4096]) };
+    static PARSER_JOIN_INPUT_BUFFER: UnsafeCell<[u8; PARSER_JOIN_INPUT_BUFFER_LEN]> =
+        const { UnsafeCell::new([0u8; PARSER_JOIN_INPUT_BUFFER_LEN]) };
     static PARSER_BUFFER: UnsafeCell<[u8; PARSER_BUFFER_LEN]> =
         const { UnsafeCell::new([0u8; PARSER_BUFFER_LEN]) };
 }
+
+/// Output capacity of [`join_abs_string`] / [`join_abs_string_z`].
+const PARSER_JOIN_INPUT_BUFFER_LEN: usize = 4096;
 
 /// Output capacity of [`normalize_string`].
 const PARSER_BUFFER_LEN: usize = 1024;
@@ -1285,10 +1289,7 @@ pub fn normalize_string_spill<'a, const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     if needed <= PARSER_BUFFER_LEN {
         return normalize_string::<ALLOW_ABOVE_ROOT, P>(str);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, &mut spill[..])
+    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, grow(spill, needed))
 }
 
 pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -1301,6 +1302,32 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     buf[len] = 0;
     // SAFETY: buf[len] == 0 written above
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
+}
+
+/// [`normalize_buf_z`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
+pub fn normalize_buf_z_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a ZStr {
+    // Normalizing grows a path by at most one byte (`""` -> `.`, `C:` -> `C:.`), plus the NUL.
+    normalize_buf_z::<P>(str, buf_or_spill(buf, spill, str.len() + 2))
+}
+
+/// `buf` when it holds `needed` bytes, otherwise `spill` grown to `needed`.
+pub fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
+    if needed <= buf.len() {
+        buf
+    } else {
+        grow(spill, needed)
+    }
+}
+
+fn grow(spill: &mut Vec<u8>, needed: usize) -> &mut [u8] {
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    spill
 }
 
 pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T]) -> &'a mut [T] {
@@ -1380,6 +1407,21 @@ pub fn join_abs_string<'a, P: PlatformT>(cwd: &'a [u8], parts: &[&[u8]]) -> &'a 
     PARSER_JOIN_INPUT_BUFFER.with(|b| join_abs_string_buf::<P>(cwd, tl_buf_mut(b), parts))
 }
 
+/// [`join_abs_string`] (thread-local buffer) when the result fits, otherwise
+/// into `spill` (grown as needed). `spill` is untouched in the common case.
+pub fn join_abs_string_spill<'a, P: PlatformT>(
+    cwd: &'a [u8],
+    spill: &'a mut Vec<u8>,
+    parts: &[&[u8]],
+) -> &'a [u8] {
+    debug_assert!(!matches!(P::P, Platform::Nt));
+    let needed = join_abs_needed(cwd.len(), parts);
+    if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
+        return join_abs_string::<P>(cwd, parts);
+    }
+    join_abs_string_buf::<P>(cwd, grow(spill, needed), parts)
+}
+
 /// Convert parts of potentially invalid file paths into a single valid filpeath
 /// without querying the filesystem
 /// This is the equivalent of path.resolve
@@ -1416,16 +1458,7 @@ pub fn join_z_buf_spill<'a, P: PlatformT>(
     spill: &'a mut Vec<u8>,
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    let needed = join_needed(parts);
-    let out: &mut [u8] = if needed <= buf.len() {
-        buf
-    } else {
-        if spill.len() < needed {
-            spill.resize(needed, 0);
-        }
-        &mut spill[..]
-    };
-    join_z_buf::<P>(out, parts)
+    join_z_buf::<P>(buf_or_spill(buf, spill, join_needed(parts)), parts)
 }
 
 /// [`join`] (thread-local buffer) when the result fits, otherwise into
@@ -1435,10 +1468,7 @@ pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> 
     if needed <= JOIN_BUF_LEN {
         return join::<P>(parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_string_buf::<P>(&mut spill[..], parts)
+    join_string_buf::<P>(grow(spill, needed), parts)
 }
 
 /// [`join_z`] (thread-local buffer) when the result fits, otherwise into
@@ -1448,10 +1478,7 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
     if needed <= JOIN_BUF_LEN {
         return join_z::<P>(parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_z_buf::<P>(&mut spill[..], parts)
+    join_z_buf::<P>(grow(spill, needed), parts)
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1604,6 +1631,12 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(joined, buf)
 }
 
+/// Fits `_join_abs_string_buf`'s concatenation (a separator per part, one more for a bare Windows root).
+#[inline]
+fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
+    parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2
+}
+
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
 /// Draws from the
 /// thread-local `path_buffer_pool` for the common case and only heap-allocates
@@ -1617,10 +1650,7 @@ enum JoinScratch {
 impl JoinScratch {
     #[inline]
     fn init(base: usize, parts: &[&[u8]]) -> Self {
-        let mut total = base + 2;
-        for p in parts {
-            total += p.len() + 1;
-        }
+        let total = join_abs_needed(base, parts);
         if total <= MAX_PATH_BYTES {
             JoinScratch::Pooled(crate::path_buffer_pool::get())
         } else {
@@ -1658,10 +1688,7 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     debug_assert!(!matches!(P::P, Platform::Nt));
     // Fast path: size check only — don't allocate a JoinScratch here since the
     // inner join_abs_string_buf already has its own (avoids doubling stack usage).
-    let mut total: usize = cwd.len() + 2;
-    for p in parts {
-        total += p.len() + 1;
-    }
+    let total = join_abs_needed(cwd.len(), parts);
     if total < buf.len() {
         return Some(join_abs_string_buf::<P>(cwd, buf, parts));
     }
@@ -1677,6 +1704,19 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     let len = joined.len();
     buf[..len].copy_from_slice(joined);
     Some(&buf[..len])
+}
+
+/// [`join_abs_string_buf_checked`], NUL-terminated; the last byte of `buf` is reserved for the NUL.
+pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
+    cwd: &[u8],
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a ZStr> {
+    debug_assert!(!parts.is_empty());
+    let cap = buf.len() - 1;
+    let len = join_abs_string_buf_checked::<P>(cwd, &mut buf[..cap], parts)?.len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(buf, len))
 }
 
 pub fn join_abs_string_buf_z<'a, P: PlatformT>(
@@ -2468,7 +2508,7 @@ pub use crate::PathChar;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
 // Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
-// are only linked into the full binary, so the two they reference are satisfied
+// are only linked into the full binary, so the ones they reference are satisfied
 // below with scalar stubs (the simdutf counterparts live in string_paths.rs).
 // Under Miri the wrappers take their own scalar path and never call these.
 #[cfg(test)]
@@ -2508,6 +2548,35 @@ mod tests {
         text.iter()
             .position(|b| chars.contains(b))
             .unwrap_or(text_len)
+    }
+
+    /// `n` when `c` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(h: *const u8, n: usize, c: u8) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let h = unsafe { core::slice::from_raw_parts(h, n) };
+        h.iter().rposition(|&b| b == c).unwrap_or(n)
+    }
+
+    /// `usize::MAX` when `nd` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memrmem16(
+        h: *const u16,
+        n: usize,
+        nd: *const u16,
+        k: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (h, nd) = unsafe {
+            (
+                core::slice::from_raw_parts(h, n),
+                core::slice::from_raw_parts(nd, k),
+            )
+        };
+        let last = n
+            .checked_sub(k)
+            .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
+        last.unwrap_or(usize::MAX)
     }
 
     #[test]
@@ -2556,6 +2625,35 @@ mod tests {
     }
 
     #[test]
+    fn join_abs_string_spill_spills_only_results_longer_than_the_thread_local_buffer() {
+        const N: usize = PARSER_JOIN_INPUT_BUFFER_LEN;
+        let join = |cwd: &[u8], part: &[u8]| {
+            let mut spill = Vec::new();
+            let out = join_abs_string_spill::<platform::Posix>(cwd, &mut spill, &[part]).to_vec();
+            (out, !spill.is_empty())
+        };
+        assert_eq!(
+            join(b"/work", b"a/../b.json"),
+            (b"/work/b.json".to_vec(), false)
+        );
+
+        let name = vec![b'a'; N + 1];
+        assert_eq!(
+            join(b"/work", &name),
+            ([b"/work/", &name[..]].concat(), true)
+        );
+
+        let abs = [b"/".as_slice(), &[b'a'; N * 2]].concat();
+        assert_eq!(join(b"/", &abs).0, abs);
+        let cwd = [b"/".as_slice(), &[b'c'; N - 1]].concat();
+        assert_eq!(join(&cwd, b"./x").0, [&cwd[..], b"/x"].concat());
+
+        // `sub/../` repeated past the buffer size resolves back under the cwd.
+        let part = [b"sub/../".repeat(N / 7 + 1), b"sub".to_vec()].concat();
+        assert_eq!(join(b"/work", &part).0, b"/work/sub");
+    }
+
+    #[test]
     fn normalize_string_spill_accounts_for_outputs_that_grow_by_one_byte() {
         // A bare UNC volume exactly as long as the thread-local buffer
         // normalizes to one byte more than its input.
@@ -2573,6 +2671,42 @@ mod tests {
             normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
             b"C:."
         );
+    }
+
+    #[test]
+    fn normalize_buf_z_spill_spills_only_what_does_not_fit_with_its_nul() {
+        let mut buf = [0u8; 32];
+        let mut spill = Vec::new();
+        let norm = |buf: &mut [u8], spill: &mut Vec<u8>, s: &[u8]| {
+            normalize_buf_z_spill::<platform::Posix>(buf, spill, s)
+                .as_bytes_with_nul()
+                .to_vec()
+        };
+        assert_eq!(
+            norm(&mut buf, &mut spill, b"./bins/../cli/./x.js"),
+            b"cli/x.js\0"
+        );
+        assert_eq!(norm(&mut buf, &mut spill, b"./bins/"), b"bins/\0");
+        assert!(spill.is_empty());
+
+        let mut input = b"./".to_vec();
+        input.resize(2 + buf.len() * 3, b'b');
+        input.extend_from_slice(b"/./x.js");
+        let mut expected = vec![b'b'; buf.len() * 3];
+        expected.extend_from_slice(b"/x.js\0");
+        assert_eq!(norm(&mut buf, &mut spill, &input), expected);
+        assert!(!spill.is_empty());
+
+        // Normalizes to exactly `buf.len()` bytes, leaving no room for the NUL.
+        let mut spill = Vec::new();
+        let input = vec![b'a'; buf.len()];
+        assert_eq!(norm(&mut buf, &mut spill, &input)[..buf.len()], input[..]);
+        assert!(!spill.is_empty());
+
+        // `""` grows to `.`.
+        let mut spill = Vec::new();
+        assert_eq!(norm(&mut buf[..1], &mut spill, b""), b".\0");
+        assert_eq!(spill.len(), 2);
     }
 
     #[test]

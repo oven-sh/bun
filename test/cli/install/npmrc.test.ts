@@ -1,7 +1,8 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -172,16 +173,17 @@ registry = http://localhost:${registry.port}/
     const npmrc = (port: number) => `registry=http://localhost:${port}/\n//localhost:${port}/:_authToken=token\n`;
     const pkg = { "pkg/package.json": JSON.stringify({ name: "npmrc-lookup", version: "0.0.1" }) };
 
-    // `publish --dry-run` never contacts the registry, but it still requires a token
-    // for it and prints which registry it picked up, so it shows which .npmrc was read.
-    // bunEnv spreads process.env and CI runners commonly export XDG_CONFIG_HOME, so it
-    // is removed here and each case passes back exactly the value it is testing.
-    async function publishDryRun(dir: string, envOverride: Record<string, string>) {
+    // bunEnv spreads process.env, and CI runners commonly export XDG_CONFIG_HOME or
+    // (via actions/setup-node) NPM_CONFIG_USERCONFIG, so both are removed here and each
+    // case passes back exactly the variables it is testing.
+    async function publish(dir: string, envOverride: Record<string, string>, ...args: string[]) {
       const spawnEnv = { ...env, HOME: join(dir, "home"), USERPROFILE: join(dir, "home") };
       delete spawnEnv.XDG_CONFIG_HOME;
+      delete spawnEnv.NPM_CONFIG_USERCONFIG;
+      delete spawnEnv.npm_config_userconfig;
 
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "publish", "--dry-run"],
+        cmd: [bunExe(), "publish", ...args],
         cwd: join(dir, "pkg"),
         env: { ...spawnEnv, ...envOverride },
         stdout: "pipe",
@@ -190,6 +192,10 @@ registry = http://localhost:${registry.port}/
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       return { stdout, stderr, exitCode };
     }
+
+    // `publish --dry-run` never contacts the registry, but it still requires a token
+    // for it and prints which registry it picked up, so it shows which .npmrc was read.
+    const publishDryRun = (dir: string, envOverride: Record<string, string>) => publish(dir, envOverride, "--dry-run");
 
     const usesRegistry = (port: number) => ({
       stdout: expect.stringContaining(`Registry: http://localhost:${port}/\n`),
@@ -221,6 +227,151 @@ registry = http://localhost:${registry.port}/
       using dir = tempDir("npmrc-xdg-empty", { ...pkg, "home/.npmrc": npmrc(1) });
       const result = await publishDryRun(String(dir), { XDG_CONFIG_HOME: "" });
       expect(result).toEqual(usesRegistry(1));
+    });
+
+    // npm's `userconfig` option: the path of the per-user .npmrc, settable through
+    // NPM_CONFIG_USERCONFIG like any other npm config option.
+    it.concurrent("uses $NPM_CONFIG_USERCONFIG instead of $XDG_CONFIG_HOME/.npmrc and $HOME/.npmrc", async () => {
+      using dir = tempDir("npmrc-userconfig", {
+        ...pkg,
+        "home/.npmrc": npmrc(1),
+        "xdg/.npmrc": npmrc(2),
+        "elsewhere/ci.npmrc": npmrc(3),
+      });
+      const result = await publishDryRun(String(dir), {
+        XDG_CONFIG_HOME: join(String(dir), "xdg"),
+        NPM_CONFIG_USERCONFIG: join(String(dir), "elsewhere", "ci.npmrc"),
+      });
+      expect(result).toEqual(usesRegistry(3));
+    });
+
+    it.concurrent("accepts lowercase $npm_config_userconfig", async () => {
+      using dir = tempDir("npmrc-userconfig-lowercase", {
+        ...pkg,
+        "home/.npmrc": npmrc(1),
+        "elsewhere/ci.npmrc": npmrc(2),
+      });
+      const result = await publishDryRun(String(dir), {
+        npm_config_userconfig: join(String(dir), "elsewhere", "ci.npmrc"),
+      });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    it.concurrent("uses $HOME/.npmrc when $NPM_CONFIG_USERCONFIG is empty", async () => {
+      using dir = tempDir("npmrc-userconfig-empty", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), { NPM_CONFIG_USERCONFIG: "" });
+      expect(result).toEqual(usesRegistry(1));
+    });
+
+    // npm has no user config at all when `userconfig` names a missing file; it does not go back to ~/.npmrc.
+    it.concurrent("does not fall back to $HOME/.npmrc when $NPM_CONFIG_USERCONFIG does not exist", async () => {
+      using dir = tempDir("npmrc-userconfig-missing", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), {
+        NPM_CONFIG_USERCONFIG: join(String(dir), "elsewhere", "missing.npmrc"),
+      });
+      expect(result.stderr).toContain("missing authentication");
+      expect(result.exitCode).toBe(1);
+    });
+
+    it.concurrent("resolves a relative $NPM_CONFIG_USERCONFIG against the directory bun was started in", async () => {
+      using dir = tempDir("npmrc-userconfig-relative", {
+        "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["pkg"] }),
+        ...pkg,
+        "ci.npmrc": npmrc(1),
+        "pkg/ci.npmrc": npmrc(2),
+        "home/.npmrc": npmrc(3),
+      });
+      // `publish` runs from the workspace member `pkg/`.
+      const result = await publishDryRun(String(dir), { NPM_CONFIG_USERCONFIG: "ci.npmrc" });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    it.concurrent("the project .npmrc still overrides $NPM_CONFIG_USERCONFIG", async () => {
+      using dir = tempDir("npmrc-userconfig-project", {
+        ...pkg,
+        "elsewhere/ci.npmrc": npmrc(1),
+        "pkg/.npmrc": npmrc(2),
+      });
+      const result = await publishDryRun(String(dir), {
+        NPM_CONFIG_USERCONFIG: join(String(dir), "elsewhere", "ci.npmrc"),
+      });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
+    // https://github.com/oven-sh/bun/issues/14824: actions/setup-node with `registry-url`
+    // writes $RUNNER_TEMP/.npmrc with the contents below and exports NPM_CONFIG_USERCONFIG
+    // pointing at it; the token itself is only present as $NODE_AUTH_TOKEN.
+    it.concurrent("reads the .npmrc written by actions/setup-node, expanding ${NODE_AUTH_TOKEN}", async () => {
+      const { promise: authorization, resolve } = Promise.withResolvers<string | null>();
+      using mockRegistry = Bun.serve({
+        port: 0,
+        fetch(req) {
+          resolve(req.headers.get("authorization"));
+          return new Response("{}");
+        },
+      });
+      const { port } = mockRegistry;
+      using dir = tempDir("npmrc-setup-node", {
+        ...pkg,
+        "runner-temp/.npmrc": `//localhost:${port}/:_authToken=\${NODE_AUTH_TOKEN}\nregistry=http://localhost:${port}/\nalways-auth=true\n`,
+      });
+      const result = await publish(String(dir), {
+        NPM_CONFIG_USERCONFIG: join(String(dir), "runner-temp", ".npmrc"),
+        NODE_AUTH_TOKEN: "npm_token-from-the-workflow-env",
+      });
+      expect(result).toEqual({
+        stdout: expect.stringContaining(" + npmrc-lookup@0.0.1\n"),
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await authorization).toBe("Bearer npm_token-from-the-workflow-env");
+    });
+
+    // The candidate paths are built in a buffer of MAX_PATH_BYTES (4096 on Linux, 1024 on the
+    // other POSIX platforms; on Windows it is larger than any environment variable can be), so
+    // the longest directory whose "/.npmrc" and NUL terminator still fit is MAX_PATH_BYTES - 8
+    // bytes. A longer directory cannot contain an openable .npmrc and counts as having none.
+    describe.skipIf(isWindows)("$HOME longer than the path buffer", () => {
+      const MAX_PATH_BYTES = isLinux ? 4096 : 1024;
+      const LONGEST_HOME = MAX_PATH_BYTES - 8;
+
+      // xdg/ has no .npmrc, so the lookup falls through to $HOME. The global bunfig.toml lookup
+      // starts at $XDG_CONFIG_HOME too; the bunfig there keeps it away from the oversized $HOME,
+      // which is not what is under test here.
+      const xdg = { "xdg/.bunfig.toml": "" };
+      const envWith = (dir: string, home: string) => ({ XDG_CONFIG_HOME: join(dir, "xdg"), HOME: home });
+
+      // An absolute path of exactly `length` bytes. Nothing exists there.
+      const missingHome = (length: number) => "/" + Buffer.alloc(length - 1, "a").toString();
+
+      it.concurrent("reads $HOME/.npmrc from the longest $HOME that fits", async () => {
+        using dir = tempDir("npmrc-home-longest", { ...pkg, ...xdg });
+        // Pad `<dir>/home/` out to exactly LONGEST_HOME bytes with nested directories of 200
+        // bytes each (NAME_MAX is 255); the last byte is never a separator.
+        const prefix = join(String(dir), "home") + "/";
+        const padding = Buffer.alloc(LONGEST_HOME - Buffer.byteLength(prefix), "a");
+        for (let i = 200; i < padding.length - 1; i += 201) padding[i] = "/".charCodeAt(0);
+        const home = prefix + padding.toString();
+        expect(Buffer.byteLength(home)).toBe(LONGEST_HOME);
+        mkdirSync(home, { recursive: true });
+        writeFileSync(join(home, ".npmrc"), npmrc(1));
+
+        const result = await publishDryRun(String(dir), envWith(String(dir), home));
+        expect(result).toEqual(usesRegistry(1));
+      });
+
+      // The project .npmrc is the only one left, and shows the command still ran normally.
+      it.concurrent("skips a $HOME one byte longer than fits", async () => {
+        using dir = tempDir("npmrc-home-one-too-long", { ...pkg, ...xdg, "pkg/.npmrc": npmrc(3) });
+        const result = await publishDryRun(String(dir), envWith(String(dir), missingHome(LONGEST_HOME + 1)));
+        expect(result).toEqual(usesRegistry(3));
+      });
+
+      it.concurrent("skips a $HOME longer than the whole buffer", async () => {
+        using dir = tempDir("npmrc-home-too-long", { ...pkg, ...xdg, "pkg/.npmrc": npmrc(3) });
+        const result = await publishDryRun(String(dir), envWith(String(dir), missingHome(MAX_PATH_BYTES + 1000)));
+        expect(result).toEqual(usesRegistry(3));
+      });
     });
   });
 
@@ -603,6 +754,97 @@ registry=https://somehost.com/org1/npm/registry/
     });
   });
 
+  describe("protocol-relative registry value", () => {
+    // `registry=//host/path/` is kept as written and matched against the credential
+    // keys by host and pathname. It used to parse with an empty host and `/host/path/`
+    // as its pathname, so no key could match it.
+    test.each([
+      ["host only", "//registry.example.com/", "//registry.example.com/"],
+      ["host with a port and a path", "//registry.example.com:8080/npm/", "//registry.example.com:8080/npm/"],
+      ["key without the trailing slash", "//registry.example.com:8080/npm/", "//registry.example.com:8080/npm"],
+    ])("_authToken is applied: %s", (_, registryUrl, key) => {
+      expect(loadNpmrc(`registry=${registryUrl}\n${key}:_authToken=rel-token\n`)).toEqual({
+        default_registry_url: registryUrl,
+        default_registry_token: "rel-token",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+    });
+
+    test.each([
+      ["a different port", "//registry.example.com:9090/npm/"],
+      ["a different host", "//other.example.com:8080/npm/"],
+      ["the host without the path", "//registry.example.com:8080/"],
+    ])("a key for %s is not applied", (_, key) => {
+      const result = loadNpmrc(`registry=//registry.example.com:8080/npm/\n${key}:_authToken=rel-token\n`);
+      expect(result.default_registry_url).toBe("//registry.example.com:8080/npm/");
+      expect(result.default_registry_token).toBe("");
+    });
+
+    test.each(["http://", "//"])("credentials embedded in a %sregistry value are split out of the URL", prefix => {
+      expect(loadNpmrc(`registry=${prefix}:embedded-token@registry.example.com/npm/\n`)).toEqual({
+        default_registry_url: "http://registry.example.com/npm/",
+        default_registry_token: "embedded-token",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+
+      expect(loadNpmrc(`registry=${prefix}embedded-user:embedded-password@registry.example.com/npm/\n`)).toEqual({
+        default_registry_url: "http://registry.example.com/npm/",
+        default_registry_token: "",
+        default_registry_username: "embedded-user",
+        default_registry_password: "embedded-password",
+        default_registry_email: "",
+      });
+    });
+  });
+
+  test.each(["a", "ab"])("a credential key for the host %j is applied to registry=http://<host>/", host => {
+    // The `//a/` key is stripped to `a/` before it is parsed. A second byte of `/` used to
+    // be taken as the start of a protocol-relative URL, leaving the key with an empty host.
+    expect(loadNpmrc(`registry=http://${host}/\n//${host}/:_authToken=${host}-token\n`)).toEqual({
+      default_registry_url: `http://${host}/`,
+      default_registry_token: `${host}-token`,
+      default_registry_username: "",
+      default_registry_password: "",
+      default_registry_email: "",
+    });
+  });
+
+  describe("credentials written into the registry= URL", () => {
+    // `http://user@host/` is `user` with an empty password (what `new URL()` reports and what npm
+    // authenticates with); it used to be left inside the URL like a URL without credentials.
+    test.each([
+      ["user:pass@ is split into a username and a password", "http://carol:s3cret@example.com/npm/", "carol", "s3cret"],
+      ["user@ is a username with an empty password", "http://carol@example.com/npm/", "carol", ""],
+      ["user:@ is a username with an empty password", "http://carol:@example.com/npm/", "carol", ""],
+    ])("%s", (_, registryUrl, username, password) => {
+      expect(loadNpmrc(`registry=${registryUrl}\n`)).toEqual({
+        default_registry_url: "http://example.com/npm/",
+        default_registry_token: "",
+        default_registry_username: username,
+        default_registry_password: password,
+        default_registry_email: "",
+      });
+    });
+
+    test("a password without a username is a token", () => {
+      expect(loadNpmrc(`registry=http://:s3cret@example.com/npm/\n`)).toEqual({
+        default_registry_url: "http://example.com/npm/",
+        default_registry_token: "s3cret",
+        default_registry_username: "",
+        default_registry_password: "",
+        default_registry_email: "",
+      });
+    });
+
+    test("a URL without credentials is kept as written", () => {
+      expect(loadNpmrc(`registry=http://example.com/npm\n`).default_registry_url).toBe("http://example.com/npm");
+    });
+  });
+
   it("does not print an undecodable _password value", async () => {
     const secret = "s!ecret!pass";
     using dir = tempDir("npmrc-password-decode", {
@@ -623,6 +865,99 @@ registry=https://somehost.com/org1/npm/registry/
     expect(stderr).toContain("_password=" + Buffer.alloc(secret.length, "*").toString());
     expect(stderr).not.toContain(secret);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe.concurrent("registry URL with embedded credentials", () => {
+  // Credentials written into the registry URL are split off and the URL is
+  // stored without them. The stored URL is what requests are built from and
+  // what error messages print, so a registry at the root of its host has to
+  // come back as "http://host/", not "http://host//".
+  test.each([
+    ["http://alice:s3cret@registry.example.com/", "http://registry.example.com/"],
+    ["http://alice:s3cret@registry.example.com", "http://registry.example.com/"],
+    ["http://alice:s3cret@registry.example.com:8080", "http://registry.example.com:8080/"],
+    ["http://alice:s3cret@registry.example.com/npm/", "http://registry.example.com/npm/"],
+    ["http://alice:s3cret@registry.example.com/npm", "http://registry.example.com/npm/"],
+  ])("registry=%s is stored as %s", (registry, url) => {
+    expect(loadNpmrc(`registry=${registry}\n`)).toMatchObject({
+      default_registry_url: url,
+      default_registry_username: "alice",
+      default_registry_password: "s3cret",
+    });
+  });
+
+  test.each([
+    ["http://:tok@registry.example.com/", "http://registry.example.com/"],
+    ["http://:tok@registry.example.com:8080", "http://registry.example.com:8080/"],
+    ["http://:tok@registry.example.com:8080/a/b/", "http://registry.example.com:8080/a/b/"],
+  ])("registry=%s is stored as %s", (registry, url) => {
+    expect(loadNpmrc(`registry=${registry}\n`)).toMatchObject({
+      default_registry_url: url,
+      default_registry_token: "tok",
+    });
+  });
+
+  type Req = { path: string; auth: string | null };
+
+  function mockRegistry(reqs: Req[], respond: () => Response) {
+    return Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        reqs.push({ path: new URL(req.url).pathname, auth: req.headers.get("authorization") });
+        return respond();
+      },
+    });
+  }
+
+  async function run(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stderr, exitCode };
+  }
+
+  // The documented bunfig form for a token: the token rides on the end of the
+  // URL's path. `bun pm whoami` prints the stored URL verbatim when the
+  // registry does not return a username.
+  test.each([
+    ["/", "/-/whoami"],
+    ["/npm/", "/npm/-/whoami"],
+  ])("_authToken= appended to a bunfig.toml registry URL with path %s", async (path, whoami) => {
+    const reqs: Req[] = [];
+    await using server = mockRegistry(reqs, () => Response.json({}));
+    const base = `http://127.0.0.1:${server.port}${path}`;
+    using dir = tempDir("bunfig-authtoken-suffix", {
+      "bunfig.toml": `[install.registry]\nurl = "${base}_authToken=tok"\n`,
+      "package.json": JSON.stringify({ name: "app" }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "pm", "whoami");
+
+    expect(stderr).toBe(`error: failed to authenticate with registry '${base}'\n`);
+    expect(reqs).toEqual([{ path: whoami, auth: "Bearer tok" }]);
+    expect(exitCode).toBe(1);
+  });
+
+  test("username:password in the .npmrc registry URL", async () => {
+    const reqs: Req[] = [];
+    await using server = mockRegistry(reqs, () => new Response("unauthorized", { status: 401 }));
+    using dir = tempDir("npmrc-userinfo", {
+      ".npmrc": `registry=http://alice:s3cret@127.0.0.1:${server.port}/\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "needs-creds": "1.0.0" } }),
+    });
+
+    const { stderr, exitCode } = await run(String(dir), "install");
+
+    expect(stderr.split(/\r?\n/)).toContain(`error: GET http://127.0.0.1:${server.port}/needs-creds - 401`);
+    expect(reqs).toEqual([{ path: "/needs-creds", auth: `Basic ${Buffer.from("alice:s3cret").toString("base64")}` }]);
+    expect(exitCode).toBe(1);
   });
 });
 
@@ -773,6 +1108,47 @@ describe("--registry override", () => {
   });
 });
 
+describe("protocol-relative registry", () => {
+  test("bun install rejects registry=//host:port/path/ instead of requesting http://localhost/host/", async () => {
+    // The `:port` used to be taken for a `:option=value` suffix of the pathname and the
+    // value rewritten to http://localhost/127.0.0.1/, so the manifest was requested from
+    // a different host on port 80. A scheme-less registry is not usable either way; the
+    // server only exists to show that the host actually named in the value is not hit.
+    let hits = 0;
+    await using named = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        hits++;
+        return new Response("not found", { status: 404 });
+      },
+    });
+    const registryUrl = `//127.0.0.1:${named.port}/npm/`;
+
+    using dir = tempDir("npmrc-protocol-relative-registry", {
+      ".npmrc": `registry=${registryUrl}\n`,
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": "1.0.0" },
+      }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", "--no-cache"],
+      cwd: String(dir),
+      env: { ...env, http_proxy: "", https_proxy: "", HTTP_PROXY: "", HTTPS_PROXY: "" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toContain(`Failed to join registry "${registryUrl}" and package "no-deps" URLs`);
+    expect(hits).toBe(0);
+    expect(exitCode).toBe(1);
+  });
+});
+
 describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
   test("sends the token keyed to //[::1]:port/ to the default and the scoped registry", async () => {
     type Req = { path: string; auth: string | null };
@@ -812,5 +1188,393 @@ describe.skipIf(!isIPv6())("registry on a bracketed IPv6 host", () => {
     ]);
     // The registry answers 404 to both manifest requests, so the install itself fails.
     expect(exitCode).not.toBe(0);
+  });
+});
+
+// `//host/path/:_authToken=` lines are keyed by URL, not by a registry declared
+// in the same file. Like npm, they have to apply to whatever request ends up on
+// that host: a registry that only exists on the command line or in the
+// environment, or a tarball served from a different host than the registry.
+describe.concurrent("//host/ credential lines are matched against the request URL", () => {
+  const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+  const basic = (user: string, password: string) => `Basic ${Buffer.from(`${user}:${password}`).toString("base64")}`;
+  const packageJson = JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } });
+
+  type Req = { path: string; auth: string | null };
+
+  type MockRegistryOptions = {
+    /** Serve dist.tarball from another server instead of this one. */
+    tarballOrigin?: () => string;
+    /** Mount the registry under this path prefix instead of `/`. */
+    registryPath?: string;
+    /** Path of the tarball on its server. */
+    tarballPath?: string;
+    /** Let the manifest through without credentials; only the tarball is protected. */
+    publicManifest?: boolean;
+  };
+
+  // Serves no-deps@1.0.0 and answers 401 to any request that does not carry
+  // exactly `expectedAuth`.
+  function mockRegistry(expectedAuth: string, options: MockRegistryOptions = {}) {
+    const { tarballOrigin, registryPath = "", tarballPath = "/no-deps/-/no-deps-1.0.0.tgz", publicManifest } = options;
+    const requests: Req[] = [];
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        const url = new URL(req.url);
+        const auth = req.headers.get("authorization");
+        requests.push({ path: url.pathname, auth });
+        const isManifest = url.pathname === `${registryPath}/no-deps`;
+        if (auth !== expectedAuth && !(isManifest && publicManifest)) {
+          return new Response("unauthorized", { status: 401 });
+        }
+        if (url.pathname === tarballPath) return new Response(Bun.file(tgz));
+        if (isManifest) {
+          const origin = tarballOrigin ? tarballOrigin() : `http://127.0.0.1:${server.port}`;
+          return Response.json({
+            name: "no-deps",
+            "dist-tags": { latest: "1.0.0" },
+            versions: {
+              "1.0.0": {
+                name: "no-deps",
+                version: "1.0.0",
+                dist: { tarball: `${origin}${tarballPath}` },
+              },
+            },
+          });
+        }
+        return new Response("not found", { status: 404 });
+      },
+    });
+    return {
+      requests,
+      host: `127.0.0.1:${server.port}`,
+      origin: `http://127.0.0.1:${server.port}`,
+      [Symbol.dispose]() {
+        server.stop(true);
+      },
+    };
+  }
+
+  async function install(dir: string, args: string[] = [], extraEnv: Record<string, string> = {}) {
+    // bunEnv spreads process.env; the user-level .npmrc of the machine running the
+    // tests must not leak in, and the cache must be cold so the tarball is fetched.
+    const spawnEnv: Record<string, string> = {
+      ...(env as Record<string, string>),
+      HOME: join(dir, "home"),
+      USERPROFILE: join(dir, "home"),
+      BUN_INSTALL_CACHE_DIR: join(dir, ".cache"),
+      ...extraEnv,
+    };
+    delete spawnEnv.XDG_CONFIG_HOME;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: dir,
+      env: spawnEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const manifestPath = "/no-deps";
+  const tarballPath = "/no-deps/-/no-deps-1.0.0.tgz";
+
+  test("--registry uses the token the user-level .npmrc has for that host", async () => {
+    using registry = mockRegistry("Bearer user-npmrc-token");
+    using dir = tempDir("npmrc-url-auth-cli-registry", {
+      "package.json": packageJson,
+      "home/.npmrc": `//${registry.host}/:_authToken=user-npmrc-token\n`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir), ["--registry", `${registry.origin}/`]);
+
+    expect({ requests: registry.requests, exitCode, stderr }).toEqual({
+      requests: [
+        { path: manifestPath, auth: "Bearer user-npmrc-token" },
+        { path: tarballPath, auth: "Bearer user-npmrc-token" },
+      ],
+      exitCode: 0,
+      stderr: expect.not.stringContaining("401"),
+    });
+  });
+
+  test.each(["NPM_CONFIG_REGISTRY", "BUN_CONFIG_REGISTRY"])(
+    "a registry from %s uses the token the project .npmrc has for that host",
+    async variable => {
+      using registry = mockRegistry("Bearer env-registry-token");
+      using dir = tempDir("npmrc-url-auth-env-registry", {
+        "package.json": packageJson,
+        ".npmrc": `//${registry.host}/:_authToken=env-registry-token\n`,
+      });
+
+      const { exitCode } = await install(String(dir), [], { [variable]: `${registry.origin}/` });
+
+      expect({ requests: registry.requests, exitCode }).toEqual({
+        requests: [
+          { path: manifestPath, auth: "Bearer env-registry-token" },
+          { path: tarballPath, auth: "Bearer env-registry-token" },
+        ],
+        exitCode: 0,
+      });
+    },
+  );
+
+  test("username and _password lines for the --registry host are sent as basic auth", async () => {
+    using registry = mockRegistry(basic("alice", "open sesame"));
+    using dir = tempDir("npmrc-url-auth-basic", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `//${registry.host}/:username=alice`,
+        `//${registry.host}/:_password=${Buffer.from("open sesame").toString("base64")}`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir), ["--registry", `${registry.origin}/`]);
+
+    expect({ requests: registry.requests, exitCode }).toEqual({
+      requests: [
+        { path: manifestPath, auth: basic("alice", "open sesame") },
+        { path: tarballPath, auth: basic("alice", "open sesame") },
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("a 401 for credentials that were sent is reported without a suggestion", async () => {
+    using registry = mockRegistry("Bearer the-token-the-registry-wants");
+    using dir = tempDir("npmrc-url-auth-rejected", {
+      "package.json": packageJson,
+      ".npmrc": `//${registry.host}/:_authToken=revoked-token\n`,
+    });
+
+    const { stderr, exitCode } = await install(String(dir), ["--registry", `${registry.origin}/`]);
+
+    expect({ requests: registry.requests, exitCode }).toEqual({
+      requests: [{ path: manifestPath, auth: "Bearer revoked-token" }],
+      exitCode: 1,
+    });
+    expect(stderr).toContain(`error: GET ${registry.origin}${manifestPath} - 401\nerror:`);
+    expect(stderr).not.toContain(".npmrc");
+  });
+
+  // Tarball dependencies written as a URL never carry registry credentials, so
+  // there is no .npmrc line to suggest for them.
+  test("a 401 for a tarball dependency given by URL is reported without a suggestion", async () => {
+    using host = mockRegistry("Bearer something");
+    using dir = tempDir("npmrc-url-auth-url-dependency", {
+      "package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "no-deps": `${host.origin}${tarballPath}` },
+      }),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    expect({ requests: host.requests, exitCode }).toEqual({
+      requests: [{ path: tarballPath, auth: null }],
+      exitCode: 1,
+    });
+    expect(stderr).toContain(`error: GET ${host.origin}${tarballPath} - 401\n`);
+    expect(stderr).not.toContain(".npmrc");
+  });
+
+  test("a tarball on a different host than its registry gets that host's own line", async () => {
+    using cdn = mockRegistry("Bearer cdn-token");
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
+    using dir = tempDir("npmrc-url-auth-tarball-host", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/:_authToken=cdn-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ registry: registry.requests, cdn: cdn.requests, exitCode }).toEqual({
+      registry: [{ path: manifestPath, auth: "Bearer registry-token" }],
+      cdn: [{ path: tarballPath, auth: "Bearer cdn-token" }],
+      exitCode: 0,
+    });
+  });
+
+  test("username and _password lines for the tarball host are sent to it as basic auth", async () => {
+    using cdn = mockRegistry(basic("cdn-user", "cdn-pass"));
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
+    using dir = tempDir("npmrc-url-auth-tarball-host-basic", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/:username=cdn-user`,
+        `//${cdn.host}/:_password=${Buffer.from("cdn-pass").toString("base64")}`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ registry: registry.requests, cdn: cdn.requests, exitCode }).toEqual({
+      registry: [{ path: manifestPath, auth: "Bearer registry-token" }],
+      cdn: [{ path: tarballPath, auth: basic("cdn-user", "cdn-pass") }],
+      exitCode: 0,
+    });
+  });
+
+  test("the line with the deepest path covering the tarball url wins; other paths on the host do not apply", async () => {
+    using cdn = mockRegistry("Bearer deep-token");
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
+    using dir = tempDir("npmrc-url-auth-tarball-path", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/no-deps-other/:_authToken=other-token`,
+        `//${cdn.host}/:_authToken=shallow-token`,
+        `//${cdn.host}/no-deps/:_authToken=deep-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ cdn: cdn.requests, exitCode }).toEqual({
+      cdn: [{ path: tarballPath, auth: "Bearer deep-token" }],
+      exitCode: 0,
+    });
+  });
+
+  test("a line for another path on the tarball host does not authenticate it, even if it is a string prefix", async () => {
+    using cdn = mockRegistry("Bearer other-token");
+    using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });
+    using dir = tempDir("npmrc-url-auth-tarball-wrong-path", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        // "/no" is a prefix of "/no-deps/..." but not a parent directory of it.
+        `//${cdn.host}/no/:_authToken=other-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    expect({ cdn: cdn.requests, exitCode }).toEqual({
+      cdn: [{ path: tarballPath, auth: null }],
+      exitCode: 1,
+    });
+    expect(stderr).toContain(
+      `error: GET ${cdn.origin}${tarballPath} - 401\n` +
+        `  the credentials configured for ${registry.host} are not sent to ${cdn.host}; ` +
+        `add //${cdn.host}/:_authToken=<token> to .npmrc if this host needs them\n`,
+    );
+  });
+
+  test("a 401 from a registry nothing is configured for says which .npmrc line would authenticate it", async () => {
+    using registry = mockRegistry("Bearer some-token");
+    using dir = tempDir("npmrc-url-auth-missing-note", { "package.json": packageJson });
+
+    const { stderr, exitCode } = await install(String(dir), ["--registry", `${registry.origin}/`]);
+
+    expect(registry.requests).toEqual([{ path: manifestPath, auth: null }]);
+    expect(stderr).toContain(
+      `error: GET ${registry.origin}${manifestPath} - 401\n` +
+        `  no credentials are configured for this registry; add //${registry.host}/:_authToken=<token> to .npmrc\n`,
+    );
+    expect(exitCode).toBe(1);
+  });
+
+  // https://github.com/oven-sh/bun/issues/30513: GitLab resolves packages through
+  // an instance-level registry path but serves tarballs from (and keys tokens to)
+  // a project-level path. The token line covers the tarball URL and nothing else.
+  test("a line keyed to the tarball path authenticates the tarball when the registry itself has no credentials", async () => {
+    const registryPath = "/api/v4/packages/npm";
+    const tarballPath = "/api/v4/projects/123/packages/npm/no-deps/-/no-deps-1.0.0.tgz";
+    using registry = mockRegistry("Bearer project-token", { registryPath, tarballPath, publicManifest: true });
+    using dir = tempDir("npmrc-url-auth-divergent-path", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}${registryPath}/`,
+        `//${registry.host}/api/v4/projects/123/packages/npm/:_authToken=project-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ requests: registry.requests, exitCode }).toEqual({
+      requests: [
+        { path: `${registryPath}/no-deps`, auth: null },
+        { path: tarballPath, auth: "Bearer project-token" },
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("a line keyed to a parent path of the registry url applies to the registry", async () => {
+    const registryPath = "/api/v4/packages/npm";
+    const tarballPath = `${registryPath}/no-deps/-/no-deps-1.0.0.tgz`;
+    using registry = mockRegistry("Bearer host-token", { registryPath, tarballPath });
+    using dir = tempDir("npmrc-url-auth-parent-path", {
+      "package.json": packageJson,
+      ".npmrc": [`registry=${registry.origin}${registryPath}/`, `//${registry.host}/:_authToken=host-token`, ""].join(
+        "\n",
+      ),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ requests: registry.requests, exitCode }).toEqual({
+      requests: [
+        { path: `${registryPath}/no-deps`, auth: "Bearer host-token" },
+        { path: tarballPath, auth: "Bearer host-token" },
+      ],
+      exitCode: 0,
+    });
+  });
+
+  test("a lockfile recorded against a registry that has since moved still downloads from the old host", async () => {
+    using oldRegistry = mockRegistry("Bearer old-token");
+    using newRegistry = mockRegistry("Bearer new-token");
+    using dir = tempDir("npmrc-url-auth-moved-registry", {
+      "package.json": packageJson,
+      ".npmrc": [`registry=${oldRegistry.origin}/`, `//${oldRegistry.host}/:_authToken=old-token`, ""].join("\n"),
+    });
+
+    const first = await install(String(dir));
+    expect(first.exitCode).toBe(0);
+    const lockfile = await Bun.file(join(String(dir), "bun.lock")).text();
+    expect(lockfile).toContain(`${oldRegistry.origin}${tarballPath}`);
+    oldRegistry.requests.length = 0;
+
+    // The registry moves; the user keeps credentials for both hosts, as npm
+    // needs them to for the same lockfile.
+    await Bun.write(
+      join(String(dir), ".npmrc"),
+      [
+        `registry=${newRegistry.origin}/`,
+        `//${newRegistry.host}/:_authToken=new-token`,
+        `//${oldRegistry.host}/:_authToken=old-token`,
+        "",
+      ].join("\n"),
+    );
+    await rm(join(String(dir), "node_modules"), { recursive: true, force: true });
+    await rm(join(String(dir), ".cache"), { recursive: true, force: true });
+
+    const second = await install(String(dir), ["--frozen-lockfile"]);
+
+    expect({ old: oldRegistry.requests, new: newRegistry.requests, exitCode: second.exitCode }).toEqual({
+      old: [{ path: tarballPath, auth: "Bearer old-token" }],
+      new: [],
+      exitCode: 0,
+    });
   });
 });

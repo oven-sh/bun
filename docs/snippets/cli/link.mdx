@@ -39,11 +39,11 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--no-save" type="boolean">
-  Has no effect. <code>bun link</code> updates <code>package.json</code> and the lockfile only with <code>--save</code>
+  Don't update <code>package.json</code> or save a lockfile (the default)
 </ParamField>
 
 <ParamField path="--save" type="boolean">
-  Save to <code>package.json</code>
+  Update <code>package.json</code> and save a lockfile (false by default)
 </ParamField>
 
 <ParamField path="--trust" type="boolean">
@@ -93,7 +93,7 @@ bun link <packages>
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
+<ParamField path="--network-concurrency" type="number" default="64">
   Maximum number of concurrent network requests
 </ParamField>
 
@@ -145,6 +145,10 @@ bun link <packages>
 <ParamField path="--os" type="string">
   Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
   all)
+</ParamField>
+
+<ParamField path="--libc" type="string">
+  Override libc for optional dependencies (e.g., <code>glibc</code>, <code>musl</code>, <code>*</code> for all)
 </ParamField>
 
 ### Global Configuration &amp; Context

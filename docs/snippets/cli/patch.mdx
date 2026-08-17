@@ -105,8 +105,8 @@ bun patch <package>@<version>
   variables
 </ParamField>
 
-<ParamField path="--network-concurrency" type="number" default="48">
-  Maximum number of concurrent network requests (default 48)
+<ParamField path="--network-concurrency" type="number" default="64">
+  Maximum number of concurrent network requests (default 64)
 </ParamField>
 
 ### Performance &amp; Resource
@@ -157,6 +157,10 @@ bun patch <package>@<version>
 <ParamField path="--os" type="string">
   Override operating system for optional dependencies (e.g., <code>linux</code>, <code>darwin</code>, <code>*</code> for
   all)
+</ParamField>
+
+<ParamField path="--libc" type="string">
+  Override libc for optional dependencies (e.g., <code>glibc</code>, <code>musl</code>, <code>*</code> for all)
 </ParamField>
 
 ### Global Configuration &amp; Context

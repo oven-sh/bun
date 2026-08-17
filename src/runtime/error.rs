@@ -248,8 +248,6 @@ pub enum Error {
     InvalidRoot,
     #[error("EmptyKey")]
     EmptyKey,
-    #[error("ExpectedObject")]
-    ExpectedObject,
     #[error("FormatFailed")]
     FormatFailed,
     #[error("SelfExePathFailed")]
@@ -694,7 +692,6 @@ impl Error {
             Self::NotFound => "NotFound",
             Self::InvalidRoot => "InvalidRoot",
             Self::EmptyKey => "EmptyKey",
-            Self::ExpectedObject => "ExpectedObject",
             Self::FormatFailed => "FormatFailed",
             Self::SelfExePathFailed => "SelfExePathFailed",
             Self::SpawnFailed => "SpawnFailed",

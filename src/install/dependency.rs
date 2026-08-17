@@ -417,7 +417,7 @@ pub(crate) fn is_scp_like_path(dependency: &[u8]) -> bool {
 ///
 /// This also checks for a github url that ends with ".tar.gz"
 #[inline]
-fn is_github_tarball_path(dependency: &[u8]) -> bool {
+pub(crate) fn is_github_tarball_path(dependency: &[u8]) -> bool {
     if is_tarball(dependency) {
         return true;
     }
@@ -557,9 +557,9 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
 
 /// A dependency name/alias becomes a directory under `node_modules/`. Names
 /// come from untrusted `package.json` / manifest keys, so reject anything that
-/// could resolve outside that directory. `@scope/name` stays valid.
+/// could resolve outside that directory, and terminal control characters. `@scope/name` stays valid.
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
-    if name.is_empty() {
+    if name.is_empty() || contains_control_character(name) {
         return false;
     }
 
@@ -567,12 +567,45 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
-        if strings::contains_any(component, b"\\:\0") {
+        if strings::contains_any(component, b"\\:") {
             return false;
         }
     }
 
     true
+}
+
+/// C0 controls and DEL, plus UTF-8 encoded C1 controls (`C2 80`..`C2 9F`,
+/// U+0080..=U+009F), which terminals interpret too.
+pub(crate) fn contains_control_character(name: &[u8]) -> bool {
+    name.iter().enumerate().any(|(i, &byte)| {
+        byte.is_ascii_control()
+            || (byte == 0xC2
+                && name
+                    .get(i + 1)
+                    .is_some_and(|next| (0x80..=0x9F).contains(next)))
+    })
+}
+
+/// A name bun.lock's `"<name>@<resolution>"` keys can round-trip: a safe folder name with no `@` past the scope marker.
+pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
+    is_safe_install_folder_name(name) && !strings::contains_char(&name[1..], b'@')
+}
+
+/// Name for a package whose package.json has none: the last component of where it came from
+/// (`../pkgs/foo`, `https://host/foo.tgz?token=x`, `https://host/user/foo` all become `foo`).
+pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
+    let without_query = strings::split(location, b"?").next().unwrap_or(location);
+    let basename = bun_paths::basename(without_query);
+    let name = strings::without_suffix_comptime(
+        strings::without_suffix_comptime(basename, b".tgz"),
+        b".tar.gz",
+    );
+    if is_safe_lockfile_package_name(name) {
+        name
+    } else {
+        b"unnamed-package"
+    }
 }
 
 /// assumes version is valid
@@ -871,7 +904,11 @@ impl TagExt for Tag {
                                 }
                             }
                             b'+' => {
-                                if url.starts_with(b"+ssh:") || url.starts_with(b"+file:") {
+                                // bun.lock writes a `git://` dependency's resolution as `git+git:`.
+                                if url.starts_with(b"+ssh:")
+                                    || url.starts_with(b"+file:")
+                                    || url.starts_with(b"+git:")
+                                {
                                     return Tag::Git;
                                 }
                                 if url.starts_with(b"+http") {
@@ -1154,6 +1191,12 @@ pub(crate) fn is_windows_abs_path_with_leading_slashes(dep: &[u8]) -> Option<&[u
     None
 }
 
+/// Literals may carry leading whitespace; classify and parse these bytes, not the raw literal.
+#[inline]
+pub fn trim_literal(literal: &[u8]) -> &[u8] {
+    strings::trim_left(literal, b" \t\n\r")
+}
+
 #[inline]
 pub fn parse<'a, 'b>(
     alias: String,
@@ -1163,7 +1206,7 @@ pub fn parse<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1184,7 +1227,7 @@ pub(crate) fn parse_with_optional_tag<'a, 'b>(
     log: impl Into<Option<&'a mut bun_ast::Log>>,
     package_manager: impl Into<Option<&'b mut PackageManager>>,
 ) -> Option<Version> {
-    let dep = strings::trim_left(dependency, b" \t\n\r");
+    let dep = trim_literal(dependency);
     parse_with_tag(
         alias,
         alias_hash.into(),
@@ -1207,6 +1250,8 @@ pub(crate) fn parse_with_tag(
     log_: Option<&mut bun_ast::Log>,
     package_manager: Option<&mut dyn NpmAliasRegistry>,
 ) -> Option<Version> {
+    // `to_version` (bun.lockb) and `clone_with_different_buffers` pass the stored literal untrimmed.
+    let dependency = trim_literal(dependency);
     match tag {
         Tag::Npm => {
             let mut input = dependency;
@@ -1272,7 +1317,7 @@ pub(crate) fn parse_with_tag(
             Some(result)
         }
         Tag::DistTag => {
-            let mut tag_to_use = sliced.value();
+            let mut tag_to_use = sliced.sub(dependency).value();
 
             let actual = if dependency.starts_with(b"npm:") && dependency.len() > b"npm:".len() {
                 // npm:@foo/bar@latest
@@ -1445,7 +1490,7 @@ pub(crate) fn parse_with_tag(
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "invalid or unsupported dependency \"{}\"",
-                            bstr::BStr::new(dependency)
+                            bun_core::fmt::escape_control_chars(dependency)
                         ),
                     );
                 }
@@ -1457,7 +1502,7 @@ pub(crate) fn parse_with_tag(
                 literal: sliced.value(),
                 value: Value {
                     tarball: TarballInfo {
-                        uri: URI::Local(sliced.value()),
+                        uri: URI::Local(sliced.sub(dependency).value()),
                         package_name: String::default(),
                     },
                 },
@@ -1566,7 +1611,10 @@ pub(crate) fn parse_with_tag(
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
-                        format_args!("Unsupported protocol {}", bstr::BStr::new(dependency)),
+                        format_args!(
+                            "Unsupported protocol {}",
+                            bun_core::fmt::escape_control_chars(dependency)
+                        ),
                     );
                 }
                 return None;
@@ -1574,7 +1622,7 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 value: Value {
-                    folder: sliced.value(),
+                    folder: sliced.sub(dependency).value(),
                 },
                 tag: Tag::Folder,
                 literal: sliced.value(),
@@ -1598,7 +1646,7 @@ pub(crate) fn parse_with_tag(
 
             Some(Version {
                 value: Value {
-                    symlink: sliced.value(),
+                    symlink: sliced.sub(dependency).value(),
                 },
                 tag: Tag::Symlink,
                 literal: sliced.value(),

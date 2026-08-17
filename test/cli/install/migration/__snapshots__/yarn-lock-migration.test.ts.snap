@@ -2,7 +2,7 @@
 
 exports[`yarn.lock migration basic simple yarn.lock migration produces correct bun.lock: simple-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -21,7 +21,7 @@ exports[`yarn.lock migration basic simple yarn.lock migration produces correct b
 
 exports[`yarn.lock migration basic complex yarn.lock with multiple dependencies and versions: complex-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -169,7 +169,7 @@ exports[`yarn.lock migration basic complex yarn.lock with multiple dependencies 
 
 exports[`yarn.lock migration basic yarn.lock with npm aliases: aliases-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -222,7 +222,7 @@ exports[`yarn.lock migration basic yarn.lock with resolutions: resolutions-yarn-
 
 exports[`yarn.lock migration basic yarn.lock with workspace dependencies: workspace-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -231,9 +231,34 @@ exports[`yarn.lock migration basic yarn.lock with workspace dependencies: worksp
         "lodash": "^4.17.21",
       },
     },
+    "packages/a": {
+      "name": "@workspace/a",
+      "version": "1.0.0",
+      "dependencies": {
+        "@workspace/b": "workspace:*",
+        "is-number": "^7.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "@workspace/b",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-odd": "^3.0.1",
+      },
+    },
   },
   "packages": {
+    "@workspace/a": ["@workspace/a@workspace:packages/a"],
+
+    "@workspace/b": ["@workspace/b@workspace:packages/b"],
+
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+
+    "is-odd": ["is-odd@3.0.1", "", { "dependencies": { "is-number": "^6.0.0" } }, "sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA=="],
+
     "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "is-odd/is-number": ["is-number@6.0.0", "", {}, "sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg=="],
   }
 }
 "
@@ -241,7 +266,7 @@ exports[`yarn.lock migration basic yarn.lock with workspace dependencies: worksp
 
 exports[`yarn.lock migration basic yarn.lock with scoped packages and parent/child relationships: scoped-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -269,21 +294,21 @@ exports[`yarn.lock migration basic yarn.lock with scoped packages and parent/chi
 
 exports[`yarn.lock migration basic migration with realistic complex yarn.lock: complex-realistic-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
       "name": "complex-app",
       "dependencies": {
+        "@babel/core": "^7.20.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@babel/core": "^7.20.0",
         "webpack": "^5.75.0",
       },
       "devDependencies": {
         "@types/react": "^18.0.0",
-        "typescript": "^4.9.0",
         "eslint": "^8.0.0",
+        "typescript": "^4.9.0",
       },
       "optionalDependencies": {
         "fsevents": "^2.3.2",
@@ -324,7 +349,7 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
 
 exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -2935,7 +2960,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] 
 
     "class-utils/define-property/is-descriptor/is-data-descriptor/kind-of": ["kind-of@3.2.2", "", { "dependencies": { "is-buffer": "^1.1.5" } }, "sha1-MeohpzS6ubuw8yRm2JOupR5KPGQ="],
 
-    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "http://registry.npmjs.org/onetime/-/onetime-1.1.0.tgz#a1f7838f8314c516f05ecefcbc4ccfe04b4ed789", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
+    "commitizen/inquirer/cli-cursor/restore-cursor/onetime": ["onetime@1.1.0", "http://registry.npmjs.org/onetime/-/onetime-1.1.0.tgz", {}, "sha1-ofeDj4MUxRbwXs78vEzP4EtO14k="],
 
     "eslint/inquirer/chalk/supports-color/has-flag": ["has-flag@3.0.0", "", {}, "sha1-tdRU3CGZriJWmfNGfloH87lVuv0="],
 
@@ -3069,7 +3094,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-cli-repo: yarn-cli-repo 1`] 
 
 exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp: yarn-lock-mkdirp 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3087,7 +3112,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp: yarn-lock-mkdir
 
 exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-file-dep: yarn-lock-mkdirp-file-dep 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3105,7 +3130,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-file-dep: yarn-l
 
 exports[`bun pm migrate for existing yarn.lock yarn-lock-mkdirp-no-resolved: yarn-lock-mkdirp-no-resolved 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3154,7 +3179,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
     "reg": ["abbrev@1.1.1", "", {}, "sha512-nne9/IiQ/hzIhY6pdDnbBtz7DjPTKrY00P/zvPSm5pOFkl6xuGrGnXn/VtTNNfNtAfZ9/1RtehkszU9qcTii0Q=="],
 
-    "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz#f8f2c887ad10bf67f634f005b6987fed3179aac8", {}],
+    "remote": ["abbrev@https://registry.npmjs.org/abbrev/-/abbrev-1.1.1.tgz", {}],
 
     "symlink": ["symlink@file:abbrev-link-target", {}],
 
@@ -3166,7 +3191,7 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff: yarn-stuff 1`] = `
 
 exports[`bun pm migrate for existing yarn.lock yarn-stuff/abbrev-link-target: yarn-stuff/abbrev-link-target 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
@@ -3180,14 +3205,14 @@ exports[`bun pm migrate for existing yarn.lock yarn-stuff/abbrev-link-target: ya
 
 exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have os/cpu requirements: os-cpu-yarn-migration 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {
       "name": "os-cpu-test",
       "dependencies": {
-        "fsevents": "^2.3.2",
         "esbuild": "^0.17.0",
+        "fsevents": "^2.3.2",
       },
     },
   },

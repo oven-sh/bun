@@ -11,7 +11,7 @@ use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{PackageID, Resolution};
+use bun_install::{Integrity, PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 #[cfg(windows)]
@@ -242,6 +242,8 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         match sys::renameat_z(tempdir.fd(), tmpname, cache_directory.fd(), tmpname) {
             Ok(()) => {}
             Err(err) => {
+                // The rename failed, so the probe is still sitting in `tempdir`.
+                let _ = tempdir.delete_file_z(tmpname);
                 if !tried_dot_tmp {
                     tried_dot_tmp = true;
                     tempdir = match cache_directory.make_open_path(b".tmp", Default::default()) {
@@ -306,9 +308,20 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     };
 
+    // `name` must be the directory `handle` is: the node-gyp shim is written via `handle`, put on PATH via `name`.
+    let name: &'static [u8] = if tried_dot_tmp {
+        let joined = path::resolve_path::join::<path::platform::Auto>(&[
+            manager.cache_directory_path.as_bytes(),
+            b".tmp",
+        ]);
+        bun_core::handle_oom(FileSystem::instance().dirname_store().append(joined))
+    } else {
+        temp_dir_name
+    };
+
     TemporaryDirectory {
         handle: tempdir,
-        name: temp_dir_name,
+        name,
         #[cfg(windows)]
         path: ZBox::from_bytes(temp_dir_path.as_bytes()),
     }
@@ -332,11 +345,14 @@ unsafe fn ensure_cache_directory(this: *mut PackageManager) -> Dir {
             // encapsulates the BackRef deref + singleton-liveness invariant.
             let env = unsafe { &*this }.env_mut();
             // SAFETY: shared read of `options`; disjoint from `cache_directory_path`.
-            let cache_dir = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }));
-            // SAFETY: see fn safety contract.
-            unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+            let opened = fetch_cache_directory_path(env, Some(unsafe { &(*this).options }))
+                .and_then(|cache_dir| {
+                    // SAFETY: see fn safety contract.
+                    unsafe { (*this).cache_directory_path = ZBox::from_bytes(&cache_dir.path) };
+                    Dir::cwd().make_open_path(&cache_dir.path, Default::default())
+                });
 
-            match Dir::cwd().make_open_path(&cache_dir.path, Default::default()) {
+            match opened {
                 Ok(d) => return d,
                 Err(_) => {
                     // SAFETY: narrow `&mut enable` projection; disjoint from
@@ -375,46 +391,34 @@ pub struct CacheDir {
     pub path: Vec<u8>,
 }
 
-pub fn fetch_cache_directory_path(env: &mut DotEnvLoader, options: Option<&Options>) -> CacheDir {
-    if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
-        return CacheDir {
-            path: FileSystem::instance().abs(&[dir]).to_vec(),
-        };
-    }
+/// `ENAMETOOLONG` when the configured directory does not fit a `PathBuffer`.
+pub fn fetch_cache_directory_path(
+    env: &mut DotEnvLoader,
+    options: Option<&Options>,
+) -> sys::Maybe<CacheDir> {
+    let parts: &[&[u8]] = if let Some(dir) = env.get(b"BUN_INSTALL_CACHE_DIR") {
+        &[dir]
+    } else if let Some(dir) = options
+        .map(|opts| opts.cache_directory)
+        .filter(|dir| !dir.is_empty())
+    {
+        &[dir]
+    } else if let Some(dir) = env.get(b"BUN_INSTALL") {
+        &[dir, b"install/", b"cache/"]
+    } else if let Some(dir) = env_var::XDG_CACHE_HOME
+        .get()
+        .or_else(|| env_var::HOME.get())
+    {
+        &[dir, b".bun/", b"install/", b"cache/"]
+    } else {
+        &[b"node_modules/.bun-cache"]
+    };
 
-    if let Some(opts) = options {
-        if !opts.cache_directory.is_empty() {
-            return CacheDir {
-                path: FileSystem::instance().abs(&[opts.cache_directory]).to_vec(),
-            };
-        }
-    }
-
-    if let Some(dir) = env.get(b"BUN_INSTALL") {
-        let parts: [&[u8]; 3] = [dir, b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    if let Some(dir) = env_var::XDG_CACHE_HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    if let Some(dir) = env_var::HOME.get() {
-        let parts: [&[u8]; 4] = [dir, b".bun/", b"install/", b"cache/"];
-        return CacheDir {
-            path: FileSystem::instance().abs(&parts).to_vec(),
-        };
-    }
-
-    let fallback_parts: [&[u8]; 1] = [b"node_modules/.bun-cache"];
-    CacheDir {
-        path: FileSystem::instance().abs(&fallback_parts).to_vec(),
-    }
+    let mut buf = path::path_buffer_pool::get();
+    let Some(abs) = FileSystem::instance().abs_buf_checked(parts, &mut buf[..]) else {
+        return Err(sys::Error::from_code(sys::E::ENAMETOOLONG, sys::Tag::open).with_path(parts[0]));
+    };
+    Ok(CacheDir { path: abs.to_vec() })
 }
 
 // ─────────────────────── cached folder name printers ──────────────────────────
@@ -485,6 +489,14 @@ impl<'a> ByteCursor<'a> {
     fn put_u64_hex_var(&mut self, n: u64) {
         let mut tmp = [0u8; 16];
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
+    }
+
+    /// Two lower-hex digits per byte.
+    #[inline(always)]
+    fn put_hex_bytes(&mut self, bytes: &[u8]) {
+        let end = self.at + bytes.len() * 2;
+        bun_fmt::bytes_to_hex_lower(bytes, &mut self.buf[self.at..end]);
+        self.at = end;
     }
 
     /// `@@@{d}` when set.
@@ -725,6 +737,7 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
+/// `@T@<hash of the URL>@@@1`; `file:` tarballs use [`cached_local_tarball_folder_name_print`].
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
@@ -748,6 +761,35 @@ pub fn cached_tarball_folder_name(
         this.lockfile.str(&url),
         patch_hash,
     )
+}
+
+/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a `file:` tarball's path names different bytes
+/// in every project sharing the cache, so it is cached under the integrity bun.lock pins instead.
+/// Empty while that integrity is unknown, which callers treat as a cache miss.
+pub fn cached_local_tarball_folder_name_print<'a>(
+    buf: &'a mut [u8],
+    integrity: &Integrity,
+    patch_hash: Option<u64>,
+) -> &'a ZStr {
+    let Some(algorithm) = integrity.tag.name() else {
+        return ZStr::EMPTY;
+    };
+    let digest = integrity.slice();
+    let mut w = ByteCursor::new(buf);
+    w.put(b"@T@");
+    w.put(algorithm.as_bytes());
+    w.put_byte(b'-');
+    w.put_hex_bytes(&digest[..digest.len().min(16)]);
+    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
+}
+
+pub fn cached_local_tarball_folder_name(
+    integrity: &Integrity,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
+    cached_local_tarball_folder_name_print(cached_package_folder_name_buf(), integrity, patch_hash)
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
@@ -947,6 +989,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
     manager: &mut PackageManager,
     pkg_name: &[u8],
     resolution: &Resolution,
+    integrity: &Integrity,
     folder_path_buf: &'a mut PathBuffer,
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
@@ -986,8 +1029,20 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball => {
-            let tarball = *resolution.local_tarball();
-            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
+            cache_dir_subpath = cached_local_tarball_folder_name(integrity, patch_hash);
+            if cache_dir_subpath.is_empty() {
+                Output::err_generic(
+                    "the lockfile does not record an integrity for <b>{}@{}<r>, run <cyan>bun install<r> first",
+                    (
+                        bun_fmt::s(name),
+                        resolution.fmt(
+                            manager.lockfile.buffers.string_bytes.as_slice(),
+                            bun_fmt::PathSep::Posix,
+                        ),
+                    ),
+                );
+                Global::exit(1);
+            }
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::RemoteTarball => {

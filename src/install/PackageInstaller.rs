@@ -288,6 +288,11 @@ pub struct TreeContext {
 
     /// Number of installed dependencies. Could be successful or failure.
     pub(crate) install_count: usize,
+
+    /// Dependencies whose folder in this tree is replaced by this install.
+    pub(crate) replaced: Vec<DependencyID>,
+    /// Inside an ancestor's `replaced` folder: what is on disk here goes away, so never skip.
+    pub(crate) inside_replaced_folder: bool,
 }
 
 type TreeContextId = lockfile::tree::Id;
@@ -403,24 +408,15 @@ impl<'a> LazyPackageDestinationDir<'a> {
     }
 }
 
-/// A dependency alias becomes the install destination inside `node_modules`
-/// (the existing entry is renamed aside, deleted, and re-created). Reject
-/// anything that could escape `node_modules`: empty names, `.`/`..`
-/// components, absolute paths, drive letters, backslashes, NUL bytes, and any
-/// separator other than the single `/` in a scoped name (`@scope/name`).
+/// The alias is the install destination inside `node_modules` (renamed aside,
+/// deleted and re-created), so on top of `is_safe_install_folder_name` it must
+/// be a single path component, or two for a scoped name.
 pub(crate) fn alias_is_safe_install_target(alias: &[u8]) -> bool {
-    if alias.is_empty() || alias.len() >= MAX_PATH_BYTES || strings::contains_any(alias, b"\\:\0") {
+    if alias.len() >= MAX_PATH_BYTES || !crate::dependency::is_safe_install_folder_name(alias) {
         return false;
     }
 
-    let mut component_count = 0usize;
-    for component in strings::split(alias, b"/") {
-        component_count += 1;
-        if component.is_empty() || component == b"." || component == b".." {
-            return false;
-        }
-    }
-
+    let component_count = strings::split(alias, b"/").count();
     component_count == 1 || (component_count == 2 && alias[0] == b'@')
 }
 
@@ -627,6 +623,7 @@ impl<'a> PackageInstaller<'a> {
                         PostinstallOptimizer::NativeBinlink => {
                             let target_cpu = manager.options.cpu;
                             let target_os = manager.options.os;
+                            let target_libc = manager.options.libc;
                             if let Some(replacement_pkg_id) =
                                 PostinstallOptimizer::get_native_binlink_replacement_package_id(
                                     pkg_resolutions_lists[package_id as usize]
@@ -634,6 +631,7 @@ impl<'a> PackageInstaller<'a> {
                                     pkg_metas,
                                     target_cpu,
                                     target_os,
+                                    target_libc,
                                 )
                             {
                                 let Some(target_tree_id) = find_native_binlink_target_tree(
@@ -926,8 +924,7 @@ impl<'a> PackageInstaller<'a> {
                     self.node_modules.path = context.path;
                     self.current_tree_id = context.tree_id;
 
-                    // Re-verify: a parent reinstall may have deleted a deferred entry.
-                    const NEEDS_VERIFY: bool = true;
+                    const NEEDS_VERIFY: bool = false;
                     const IS_PENDING_PACKAGE_INSTALL: bool = true;
                     self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
                         // This id might be different from the id used to enqueue the task. Important
@@ -1061,6 +1058,28 @@ impl<'a> PackageInstaller<'a> {
         true
     }
 
+    /// Trees are visited in id order, so the parent's `replaced` is complete.
+    pub(crate) fn set_inside_replaced_folder(&mut self, tree_id: lockfile::tree::Id) {
+        let lockfile = self.lockfile();
+        let tree = lockfile.buffers.trees.as_slice()[tree_id as usize];
+        if tree.parent == lockfile::tree::INVALID_ID {
+            return;
+        }
+        debug_assert!(tree.parent < tree_id);
+
+        let parent = &self.trees[tree.parent as usize];
+        let inside = parent.inside_replaced_folder || {
+            let deps = lockfile.buffers.dependencies.as_slice();
+            let string_buf = lockfile.buffers.string_bytes.as_slice();
+            let folder = tree.folder_name(deps, string_buf);
+            parent
+                .replaced
+                .iter()
+                .any(|&dep_id| deps[dep_id as usize].name.slice(string_buf) == folder)
+        };
+        self.trees[tree_id as usize].inside_replaced_folder = inside;
+    }
+
     // `pub fn deinit` dropped. All owned fields (`pending_lifecycle_scripts: Vec`,
     // `completed_trees: Bitset`, `trees: Box<[TreeContext]>`, `tree_ids_to_trees_the_id_depends_on`,
     // `node_modules`, `trusted_dependencies_from_update_requests`) impl Drop. Borrowed fields
@@ -1117,7 +1136,8 @@ impl<'a> PackageInstaller<'a> {
 
         // If a newly computed integrity hash is available (e.g. for a GitHub
         // tarball) and the lockfile doesn't already have one, persist it so
-        // the lockfile gets re-saved with the hash.
+        // the lockfile gets re-saved with the hash. Must happen before the
+        // callbacks below: a local tarball's cache entry is named after it.
         if data.integrity.tag.is_supported() {
             let pkg_metas = self.lockfile_mut().packages.items_meta_mut();
             if !pkg_metas[package_id as usize].integrity.tag.is_supported() {
@@ -1295,7 +1315,7 @@ impl<'a> PackageInstaller<'a> {
             if log_level != Options::LogLevel::Silent {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: refusing to install dependency with unsafe name <b>{}<r>",
-                    bstr::BStr::new(alias.slice(string_buf!())),
+                    bun_core::fmt::escape_control_chars(alias.slice(string_buf!())),
                 );
             }
             self.summary.fail += 1;
@@ -1307,22 +1327,11 @@ impl<'a> PackageInstaller<'a> {
             return;
         }
 
-        // `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`
-        // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes.
-        // Derive BOTH from a single `*mut PathBuffer`
-        // so neither `&mut` invalidates the other under stacked-borrows.
-        let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
-        let destination_dir_subpath: &mut ZStr = {
-            let alias_slice = alias.slice(string_buf!());
-            // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
-            // the lifetime of this fn body.
-            let buf = unsafe { &mut *subpath_buf_ptr };
-            buf[..alias_slice.len()].copy_from_slice(alias_slice);
-            buf[alias_slice.len()] = 0;
-            // SAFETY: buf[alias_slice.len()] == 0 written above; pointer derives from
-            // `subpath_buf_ptr` so it shares provenance with `destination_dir_subpath_buf`
-            // below.
-            unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
+        let destination_dir_subpath = {
+            let alias = alias.slice(string_buf!());
+            self.destination_dir_subpath_buf[..alias.len()].copy_from_slice(alias);
+            self.destination_dir_subpath_buf[alias.len()] = 0;
+            ZStr::from_buf(&self.destination_dir_subpath_buf, alias.len())
         };
 
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
@@ -1414,10 +1423,6 @@ impl<'a> PackageInstaller<'a> {
             },
             cache_dir: Fd::INVALID, // assigned below
             destination_dir_subpath,
-            // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
-            // field outlives `installer`. `destination_dir_subpath` above derives from the
-            // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
-            destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             package_name: pkg_name,
             patch: patch_patch.map(|_| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
@@ -1523,9 +1528,8 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
             resolution::Tag::LocalTarball => {
-                installer.cache_dir_subpath = package_manager::cached_tarball_folder_name(
-                    self.manager_mut(),
-                    *resolution.local_tarball(),
+                installer.cache_dir_subpath = package_manager::cached_local_tarball_folder_name(
+                    &self.metas[package_id as usize].integrity,
                     patch_contents_hash,
                 );
                 installer.cache_dir = package_manager::get_cache_directory(self.manager_mut());
@@ -1568,16 +1572,31 @@ impl<'a> PackageInstaller<'a> {
                     installer.cache_dir = Fd::cwd();
                 } else {
                     let global_link_dir = package_manager::global_link_dir_path(self.manager_mut());
-                    let buf = self.folder_path_buf.as_mut_slice();
-                    let mut len = 0usize;
-                    buf[len..len + global_link_dir.len()].copy_from_slice(global_link_dir);
-                    len += global_link_dir.len();
-                    if global_link_dir[global_link_dir.len() - 1] != SEP {
-                        buf[len] = SEP;
-                        len += 1;
+                    let sep_len = (global_link_dir[global_link_dir.len() - 1] != SEP) as usize;
+                    let len = global_link_dir.len() + sep_len + folder.len();
+                    // `folder` is the `link:` specifier as written in package.json.
+                    if len >= self.folder_path_buf.len() {
+                        if log_level != Options::LogLevel::Silent {
+                            Output::err(
+                                "ENAMETOOLONG",
+                                "link path for package <b>{}<r> is too long",
+                                (bstr::BStr::new(pkg_name.slice(string_buf!())),),
+                            );
+                        }
+                        self.summary.fail += 1;
+                        self.increment_tree_install_count(
+                            !IS_PENDING_PACKAGE_INSTALL,
+                            self.current_tree_id,
+                            log_level,
+                        );
+                        return;
                     }
-                    buf[len..len + folder.len()].copy_from_slice(folder);
-                    len += folder.len();
+                    let buf = self.folder_path_buf.as_mut_slice();
+                    buf[..global_link_dir.len()].copy_from_slice(global_link_dir);
+                    if sep_len != 0 {
+                        buf[global_link_dir.len()] = SEP;
+                    }
+                    buf[global_link_dir.len() + sep_len..len].copy_from_slice(folder);
                     buf[len] = 0;
                     // SAFETY: buf[len] == 0 written above
                     installer.cache_dir_subpath = ZStr::from_buf(&self.folder_path_buf, len);
@@ -1597,11 +1616,30 @@ impl<'a> PackageInstaller<'a> {
             }
         }
 
-        let needs_install = self.force_install
-            || self.skip_verify_installed_version_number
-            || !NEEDS_VERIFY
+        let verifying =
+            NEEDS_VERIFY && !self.force_install && !self.skip_verify_installed_version_number;
+        let inside_replaced_folder =
+            self.trees[self.current_tree_id as usize].inside_replaced_folder;
+        let needs_install = !verifying
             || remove_patch
+            || inside_replaced_folder
             || !installer.verify(resolution, &self.root_node_modules_folder);
+        self.summary.skipped += (!needs_install) as u32;
+
+        // `install_from_link` (symlink/workspace) re-points one symlink; everything else
+        // replaces the folder. Child trees of a replaced folder inherit the flag.
+        if verifying
+            && needs_install
+            && !inside_replaced_folder
+            && !matches!(
+                resolution.tag,
+                resolution::Tag::Symlink | resolution::Tag::Workspace | resolution::Tag::Root
+            )
+        {
+            self.trees[self.current_tree_id as usize]
+                .replaced
+                .push(dependency_id);
+        }
 
         if needs_install {
             if resolution.tag.can_enqueue_install_task()
@@ -1830,14 +1868,16 @@ impl<'a> PackageInstaller<'a> {
                         || (resolution.tag == resolution::Tag::Folder
                             && !self.lockfile().is_workspace_tree_id(self.current_tree_id))
                     {
-                        // This is a transitive folder dependency. It is installed with a single symlink to the target folder/file,
-                        // and is not hoisted.
+                        // This is a transitive folder dependency. It is installed as a directory of symlinks
+                        // to the target's files (see `PackageInstall::install`), and is not hoisted.
                         //
                         // A transitive `Resolution::Folder` declared by a local `file:` package
                         // is relative to the top-level dir (`Package::parse` normalized it), so
                         // install it from `installer.cache_dir` (the cwd, set in the switch above).
+                        // The same holds for a path from a root `overrides`/`resolutions` rule.
                         if resolution.tag == resolution::Tag::Folder
-                            && self.lockfile().is_folder_tree_id(self.current_tree_id)
+                            && (self.lockfile().is_folder_tree_id(self.current_tree_id)
+                                || self.lockfile().is_overridden_dependency(dependency_id))
                         {
                             break 'result installer.install(
                                 self.skip_delete,
@@ -1981,6 +2021,7 @@ impl<'a> PackageInstaller<'a> {
                                     self.lockfile().packages.items_meta(),
                                     self.manager().options.cpu,
                                     self.manager().options.os,
+                                    self.manager().options.libc,
                                 )
                             {
                                 if PackageManager::verbose_install() {
@@ -2057,7 +2098,9 @@ impl<'a> PackageInstaller<'a> {
                                             "Blocked {} scripts for: {}@{}\n",
                                             count,
                                             bstr::BStr::new(alias.slice(string_buf!())),
-                                            resolution.fmt(string_buf!(), PathSep::Posix),
+                                            bun_core::fmt::for_terminal(
+                                                resolution.fmt(string_buf!(), PathSep::Posix)
+                                            ),
                                         );
                                     }
                                     let entry = self
@@ -2220,27 +2263,6 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
         } else {
-            // Same gate as the `needs_install` branch: a pending parent's
-            // `uninstall_before_install` would delete this verified package.
-            if !IS_PENDING_PACKAGE_INSTALL
-                && !Self::can_install_package_for_tree(
-                    &self.completed_trees,
-                    self.lockfile().buffers.trees.as_slice(),
-                    self.current_tree_id,
-                )
-            {
-                self.trees[self.current_tree_id as usize]
-                    .pending_installs
-                    .push(DependencyInstallContext {
-                        dependency_id,
-                        tree_id: self.current_tree_id,
-                        path: self.node_modules.path.clone(),
-                    });
-                return;
-            }
-
-            self.summary.skipped += 1;
-
             if self.bins[package_id as usize].tag != bin::Tag::None {
                 self.trees[self.current_tree_id as usize]
                     .binaries
@@ -2320,6 +2342,7 @@ impl<'a> PackageInstaller<'a> {
                             self.lockfile().packages.items_meta(),
                             self.manager().options.cpu,
                             self.manager().options.os,
+                            self.manager().options.libc,
                         )
                     {
                         if PackageManager::verbose_install() {

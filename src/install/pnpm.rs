@@ -5,9 +5,10 @@ use std::io::Write as _;
 use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
-use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
-use bun_core::strings;
+use bun_ast::{self, self as js_ast, E, Expr, ExprData};
+use bun_core::{Global, strings};
 use bun_semver as semver;
+use bun_semver::query::token::Wildcard;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
 
@@ -17,6 +18,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -43,6 +45,18 @@ macro_rules! string_bytes {
     ($lockfile:expr) => {
         $lockfile.buffers.string_bytes.as_slice()
     };
+}
+
+// Binds a root or workspace edge the way bun.lock's reader does (a linked member's row takes its path).
+macro_rules! bind_importer_dependency {
+    ($lockfile:expr, $dep_id:expr, $pkg_id:expr) => {{
+        let pkg_id: PackageID = $pkg_id;
+        $lockfile.buffers.resolutions[$dep_id as usize] = pkg_id;
+        lockfile::bun_lock::adopt_workspace_resolution(
+            &mut $lockfile.buffers.dependencies[$dep_id as usize],
+            &$lockfile.packages.items_resolution()[pkg_id as usize],
+        );
+    }};
 }
 
 /// returns (peers_index, patch_hash_index)
@@ -139,6 +153,7 @@ fn resolve_peer_like_bun_lock(lockfile: &Lockfile, dep: &Dependency) -> Option<P
         &lockfile.overrides,
         lockfile.packages.items_resolution(),
         string_bytes!(lockfile),
+        |_| true,
     )
 }
 
@@ -175,6 +190,23 @@ fn collect_patch_paths(
     Ok(())
 }
 
+fn root_package_json<'a>(
+    manager: &'a mut PackageManager,
+    log: &mut bun_ast::Log,
+) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
+    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
+    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+    let options = crate::GetJsonOptions {
+        guess_indentation: true,
+        ..Default::default()
+    };
+    let cache = &mut manager.workspace_package_json_cache;
+    cache
+        .get_with_path(log, pkg_json_path.slice(), options)
+        .entry()
+        .ok()
+}
+
 /// Current pnpm records only the patch hash in the lockfile; the patch file path lives in the config.
 fn read_config_patch_paths(
     manager: &mut PackageManager,
@@ -182,12 +214,7 @@ fn read_config_patch_paths(
 ) -> Result<StringArrayHashMap<Box<[u8]>>, AllocError> {
     let mut paths: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
 
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json");
-    if let crate::GetJsonResult::Entry(pkg_json) = manager
-        .workspace_package_json_cache
-        .get_with_path(log, pkg_json_path.slice(), Default::default())
-    {
+    if let Some(pkg_json) = root_package_json(manager, log) {
         if let Some(patched) = pkg_json
             .root
             .get(b"pnpm")
@@ -242,7 +269,9 @@ fn read_named_registries(
                     let key = prop.key.as_ref().expect("infallible: prop has key");
                     let value = prop.value.as_ref().expect("infallible: prop has value");
                     if let (Some(name_str), Some(url_str)) = (as_string(key), as_string(value)) {
-                        registries.put(name_str, Box::from(url_str))?;
+                        // Without its credentials: this URL is recorded in bun.lock as the tarball base.
+                        let url = crate::bun_schema::api::NpmRegistry::from_url(url_str).url;
+                        registries.put(name_str, url)?;
                     }
                 }
             }
@@ -364,8 +393,6 @@ pub enum MigratePnpmLockfileError {
     NonExistentWorkspaceDependency,
     #[error("RelativeLinkDependency")]
     RelativeLinkDependency,
-    #[error("WorkspaceNameMissing")]
-    WorkspaceNameMissing,
     #[error("PnpmLockfileNotObject")]
     PnpmLockfileNotObject,
     #[error("PnpmLockfileMissingVersion")]
@@ -462,22 +489,11 @@ fn e_object_mut(expr: &mut Expr) -> &mut E::Object {
     }
 }
 
-/// Shallow struct copy (`G::Property` lacks `Clone` because of its
-/// `Vec`/`NonNull` fields).
-fn shallow_clone_prop(p: &G::Property) -> G::Property {
-    G::Property {
-        key: p.key,
-        value: p.value,
-        ..Default::default()
-    }
-}
-
 pub(crate) fn migrate_pnpm_lockfile<'a>(
     lockfile: &'a mut Lockfile,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-    dir: Fd,
 ) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
     lockfile.init_empty();
     crate::initialize_store();
@@ -766,9 +782,11 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
             let workspace_root = &importer_pkg_json.root;
 
-            let Some((name, _)) = get_string(workspace_root, b"name") else {
-                // we require workspace names.
-                return Err(MigratePnpmLockfileError::WorkspaceNameMissing);
+            // Nameless importers are skipped like `WorkspaceMap::process_workspace_name` skips them.
+            let Some((name, _)) =
+                get_string(workspace_root, b"name").filter(|(name, _)| !name.is_empty())
+            else {
+                continue;
             };
 
             let name_hash = semver::string::Builder::string_hash(name);
@@ -776,20 +794,15 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let path_str = sbuf!(lockfile).append(importer_path)?;
             lockfile.workspace_paths.put(name_hash, path_str)?;
 
-            if let Some(version_expr) = value.get(b"version") {
-                let Some(version_raw) = as_string(&version_expr) else {
-                    return Err(invalid_pnpm_lockfile());
-                };
+            // As in the `workspaces` array parser, an unparsable or wildcard version leaves the member unversioned.
+            if let Some((version_raw, _)) = get_string(workspace_root, b"version") {
                 let version_str = sbuf!(lockfile).append(version_raw)?;
-
                 let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));
-                if !parsed.valid {
-                    return Err(invalid_pnpm_lockfile());
+                if parsed.valid && parsed.wildcard == Wildcard::None {
+                    lockfile
+                        .workspace_versions
+                        .put(name_hash, parsed.version.min())?;
                 }
-
-                lockfile
-                    .workspace_versions
-                    .put(name_hash, parsed.version.min())?;
             }
         }
 
@@ -1310,7 +1323,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                                         bun_core::warn!(
                                             "fetching pnpm registry \"{}\" packages from {}; add it to bunfig.toml or .npmrc if it needs authentication",
                                             bstr::BStr::new(registry_name),
-                                            bstr::BStr::new(url)
+                                            bun_core::fmt::redacted_npm_url(url)
                                         );
                                     }
                                     &**url
@@ -1374,7 +1387,9 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 if let Some(cpu_expr) = package_obj.get(b"cpu") {
                     pkg.meta.arch = npm::negatable_from_json::<npm::Architecture>(&cpu_expr)?;
                 }
-                // TODO: libc
+                if let Some(libc_expr) = package_obj.get(b"libc") {
+                    pkg.meta.libc = npm::negatable_from_json::<npm::Libc>(&libc_expr)?;
+                }
 
                 let (off, len, has_unbound_peers) = parse_append_package_dependencies(
                     lockfile,
@@ -1436,14 +1451,14 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(workspace_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *workspace_pkg_id;
+                    bind_importer_dependency!(lockfile, dep_id, *workspace_pkg_id);
                     continue;
                 }
             }
 
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                bind_importer_dependency!(lockfile, dep_id, peer_pkg_id);
                 continue;
             }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
@@ -1472,7 +1487,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
+                    bind_importer_dependency!(lockfile, dep_id, *pkg_id);
                     continue;
                 }
             }
@@ -1488,7 +1503,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id as usize] = *pkg_id;
+            bind_importer_dependency!(lockfile, dep_id, *pkg_id);
         }
     }
 
@@ -1510,7 +1525,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let string_buf = string_bytes!(lockfile);
             let dep_name = dep.name.slice(string_buf);
             if let Some(peer_pkg_id) = resolve_peer_like_bun_lock(lockfile, &dep) {
-                lockfile.buffers.resolutions[dep_id as usize] = peer_pkg_id;
+                bind_importer_dependency!(lockfile, dep_id, peer_pkg_id);
                 continue;
             }
             let Some(mut version_maybe_alias) = importer_versions.get(dep_name).map(|v| &**v)
@@ -1540,7 +1555,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 let mut path_buf = bun_paths::AutoAbsPath::init_top_level_dir();
                 let _ = path_buf.join(&[workspace_path, maybe_symlink_or_folder_or_workspace_path]); // path-buffer overflow unreachable for bounded inputs
                 if let Some(link_pkg_id) = pkg_map.get(path_buf.slice()) {
-                    lockfile.buffers.resolutions[dep_id as usize] = *link_pkg_id;
+                    bind_importer_dependency!(lockfile, dep_id, *link_pkg_id);
                     continue;
                 }
             }
@@ -1556,7 +1571,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
                 ));
             };
 
-            lockfile.buffers.resolutions[dep_id as usize] = *res_pkg_id;
+            bind_importer_dependency!(lockfile, dep_id, *res_pkg_id);
         }
     }
 
@@ -1620,12 +1635,13 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     // pnpm records `os`/`cpu` for every `packages:` entry whose manifest
     // declares them, including `file:` folders, tarballs, and git packages.
     crate::migration::clear_non_registry_platform_constraints(lockfile);
+    declare_folder_dependencies_relative_to_their_package(lockfile)?;
 
     lockfile.resolve(log)?;
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
-    update_package_json_after_migration(manager, log, dir, &found_patches)?;
+    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -1778,6 +1794,46 @@ fn declared_package_peers(
     }
 
     Ok(peers)
+}
+
+/// pnpm records a folder package's `file:` dependencies relative to the lockfile (`file:sub-dep/child`
+/// for a declared `file:./child`); bun.lock stores them as declared, relative to the declaring package.
+fn declare_folder_dependencies_relative_to_their_package(
+    lockfile: &mut Lockfile,
+) -> Result<(), AllocError> {
+    let mut literal: Vec<u8> = Vec::new();
+    for pkg_id in 0..lockfile.packages.len() {
+        let pkg_resolution = lockfile.packages.items_resolution()[pkg_id];
+        if pkg_resolution.tag != resolution::Tag::Folder {
+            continue;
+        }
+        let pkg_dir = *pkg_resolution.folder();
+        let rows = lockfile.packages.items_dependencies()[pkg_id];
+
+        for dep_id in rows.begin() as usize..rows.end() as usize {
+            let dep = &lockfile.buffers.dependencies[dep_id];
+            if dep.version.tag != dependency::VersionTag::Folder {
+                continue;
+            }
+            let folder = *dep.version.folder();
+
+            literal.clear();
+            literal.extend_from_slice(b"file:");
+            let relative = bun_paths::resolve_path::relative(
+                pkg_dir.slice(string_bytes!(lockfile)),
+                folder.slice(string_bytes!(lockfile)),
+            );
+            literal.extend_from_slice(if relative.is_empty() { b"." } else { relative });
+            #[cfg(windows)]
+            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(
+                &mut literal[b"file:".len()..],
+            );
+
+            let appended = sbuf!(lockfile).append(&literal)?;
+            lockfile.buffers.dependencies[dep_id].version.literal = appended;
+        }
+    }
+    Ok(())
 }
 
 fn parse_append_package_dependencies(
@@ -1979,36 +2035,27 @@ fn append_importer_dependency(
     specifier_str: &[u8],
     behavior: dependency::Behavior,
 ) -> Result<(), ParseAppendDependenciesError> {
-    if strings::has_prefix(specifier_str, b"catalog:") {
-        let name_hash = semver::string::Builder::string_hash(name_str);
-        let name = sbuf!(lockfile).append_external_with_hash(name_str, name_hash)?;
-        let mut catalog_group_name_str = specifier_str[b"catalog:".len()..].trim_ascii();
-        if catalog_group_name_str == b"default" {
-            catalog_group_name_str = b"";
-        }
-        let catalog_group_name = sbuf!(lockfile).append(catalog_group_name_str)?;
-        // `CatalogMap::get` borrows `&self` and the whole lockfile, so move catalogs out for the call.
-        let catalogs = core::mem::take(&mut lockfile.catalogs);
-        let dep_result = catalogs.get(lockfile, catalog_group_name, name.value);
-        lockfile.catalogs = catalogs;
-        let Some(mut dep) = dep_result else {
-            // catalog is missing an entry in the "catalogs" object in the lockfile
+    // The row keeps its `catalog:` reference (the importer's `version:` binds it); only existence is checked.
+    if let Some(catalog_name) =
+        strings::without_prefix_if_possible_comptime(specifier_str, b"catalog:")
+    {
+        let catalog_name = catalog_name.trim_ascii();
+        if lockfile
+            .catalogs
+            .find(string_bytes!(lockfile), catalog_name, name_str)
+            .is_none()
+        {
             log.add_error_fmt(
                 None,
                 bun_ast::Loc::EMPTY,
                 format_args!(
                     "pnpm-lock.yaml catalog '{}' missing entry for dependency '{}'",
-                    bstr::BStr::new(specifier_str[b"catalog:".len()..].trim_ascii()),
+                    bstr::BStr::new(catalog_name),
                     bstr::BStr::new(name_str)
                 ),
             );
             return Err(ParseAppendDependenciesError::PnpmLockfileMissingCatalogEntry);
-        };
-
-        dep.behavior = behavior;
-
-        lockfile.buffers.dependencies.push(dep);
-        return Ok(());
+        }
     }
 
     append_manifest_dependency(lockfile, log, name_str, specifier_str, behavior)
@@ -2299,64 +2346,101 @@ fn sort_appended_dependencies(lockfile: &mut Lockfile, off: usize) {
     buffers.dependencies.append(&mut appended);
 }
 
-/// bun.lock keys patches by `name@version`; pnpm also allows a bare `name` key.
-fn rewrite_bare_patch_keys(
-    obj: &mut Expr,
-    patches: &StringArrayHashMap<Box<[u8]>>,
-) -> Result<(), AllocError> {
-    if patches.count() == 0 {
-        return Ok(());
-    }
-    let mut join_buf: Vec<u8> = Vec::new();
-    for prop in e_object_mut(obj).properties.slice_mut() {
-        let Some(key_str) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+/// pnpm's allow-list of packages that may run lifecycle scripts, i.e. bun's `trustedDependencies`.
+fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) -> bool {
+    let Some(mut items) = list.as_array() else {
+        return false;
+    };
+    let mut found_any = false;
+    while let Some(item) = items.next() {
+        let Some(name) = as_string(&item).filter(|name| !name.is_empty()) else {
             continue;
         };
-        let Some(res_str) = patches.get(key_str) else {
-            continue;
-        };
-        join_buf.clear();
-        write!(
-            &mut join_buf,
-            "{}@{}",
-            bstr::BStr::new(key_str),
-            bstr::BStr::new(&**res_str)
-        )
-        .map_err(|_| AllocError)?;
-        // Interned into the DATA_STORE backing the cached package.json Expr tree, which outlives this fn.
-        let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
-        prop.key = Some(Expr::init(E::EString::init(interned), bun_ast::Loc::EMPTY));
+        found_any = true;
+        if !out.contains(&name) {
+            out.push(name);
+        }
     }
-    Ok(())
+    found_any
 }
 
-/// Updates package.json with workspace and catalog information after migration
-fn update_package_json_after_migration(
-    manager: &mut PackageManager,
-    log: &mut bun_ast::Log,
-    dir: Fd,
-    patches: &StringArrayHashMap<Box<[u8]>>,
-) -> Result<(), AllocError> {
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+fn add_trusted_dependencies(
+    json: &mut Expr,
+    bump: &bun_alloc::Arena,
+    names: &[&'static [u8]],
+) -> Result<bool, AllocError> {
+    let existing = e_object(json).get(b"trustedDependencies");
+    if existing.is_some_and(|existing| !matches!(existing.data, ExprData::EArray(_))) {
+        return Ok(false);
+    }
 
-    let bump = bun_alloc::Arena::new();
-    let silent = manager.options.log_level.is_silent();
+    let mut items = js_ast::ExprNodeList::init_capacity(names.len());
+    if let Some(mut existing_items) = existing.as_ref().and_then(Expr::as_array) {
+        while let Some(item) = existing_items.next() {
+            VecExt::append(&mut items, item);
+        }
+    }
 
-    let root_pkg_json = match manager
-        .workspace_package_json_cache
-        .get_with_path(
-            log,
-            pkg_json_path.slice(),
-            crate::GetJsonOptions {
-                guess_indentation: true,
+    let existing_len = items.len_u32();
+    for &name in names {
+        if !items
+            .slice()
+            .iter()
+            .any(|item| as_string(item) == Some(name))
+        {
+            let item = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
+            VecExt::append(&mut items, item);
+        }
+    }
+    if items.len_u32() == existing_len {
+        return Ok(false);
+    }
+
+    let is_single_line = items.len_u32() == 1;
+    e_object_mut(json).put(
+        bump,
+        b"trustedDependencies",
+        Expr::init(
+            E::Array {
+                items,
+                is_single_line,
                 ..Default::default()
             },
-        )
-        .unwrap()
-    {
-        Ok(j) => j,
-        Err(_) => return Ok(()),
+            bun_ast::Loc::EMPTY,
+        ),
+    )?;
+    Ok(true)
+}
+
+/// Imports pnpm-workspace.yaml when no pnpm-lock.yaml was migrated; a root `workspaces` field means it already was.
+pub(crate) fn migrate_pnpm_workspace_config(
+    manager: &mut PackageManager,
+) -> Result<(), AllocError> {
+    if !sys::exists_z(bun_core::zstr!("pnpm-workspace.yaml")) {
+        return Ok(());
+    }
+    let log = manager.log_mut();
+    let Some(root_pkg_json) = root_package_json(manager, log) else {
+        return Ok(());
+    };
+    if root_pkg_json.root.get(b"workspaces").is_some() {
+        return Ok(());
+    }
+    update_package_json_after_migration(None, manager, log, &StringArrayHashMap::new())
+}
+
+/// Copies the settings pnpm keeps in `pnpm-workspace.yaml` and the `pnpm` key into the fields bun reads, in the
+/// cached root package.json; `package_json_write_back::write_migrated_root` writes it if the lockfile is saved.
+fn update_package_json_after_migration(
+    lockfile: Option<&mut Lockfile>,
+    manager: &mut PackageManager,
+    log: &mut bun_ast::Log,
+    patches: &StringArrayHashMap<Box<[u8]>>,
+) -> Result<(), AllocError> {
+    let bump = bun_alloc::Arena::new();
+
+    let Some(root_pkg_json) = root_package_json(manager, log) else {
+        return Ok(());
     };
 
     let mut json = root_pkg_json.root;
@@ -2364,148 +2448,38 @@ fn update_package_json_after_migration(
         return Ok(());
     }
 
-    let mut needs_update = false;
-    let mut moved_overrides = false;
-    let mut moved_patched_deps = false;
-    let mut moved: Vec<&'static str> = Vec::new();
+    let mut copied: Vec<&'static str> = Vec::new();
+    let mut trusted_names: Vec<&'static [u8]> = Vec::new();
+    let mut pnpm_only_built_deps = false;
+    let mut workspace_only_built_deps = false;
 
-    if let Some(mut pnpm_prop) = json.as_property(b"pnpm") {
-        if pnpm_prop.expr.is_object() {
-            let pnpm_obj = e_object_mut(&mut pnpm_prop.expr);
-
-            if let Some(overrides_field) = pnpm_obj.get(b"overrides") {
-                if is_non_empty_object(&overrides_field) {
-                    if let Some(mut existing_prop) = json.as_property(b"overrides") {
-                        if existing_prop.expr.is_object() {
-                            let existing_overrides = e_object_mut(&mut existing_prop.expr);
-                            for prop in e_object(&overrides_field).properties.slice() {
-                                let Some(key) =
-                                    as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                                else {
-                                    continue;
-                                };
-                                existing_overrides.put(
-                                    &bump,
-                                    key,
-                                    prop.value.expect("infallible: prop has value"),
-                                )?;
-                            }
-                        }
-                    } else {
-                        e_object_mut(&mut json).put(&bump, b"overrides", overrides_field)?;
-                    }
-                    moved_overrides = true;
-                    needs_update = true;
-                    moved.push("pnpm.overrides to overrides");
-                }
+    // Copied, not moved: pnpm keeps reading this block, bun only reads the root-level fields.
+    if let Some(pnpm_obj) = json.get_object(b"pnpm") {
+        if let Some(overrides) = pnpm_obj.get(b"overrides").filter(is_non_empty_object) {
+            if copy_into_root(&mut json, &bump, b"overrides", &overrides, None)? {
+                copied.push("pnpm.overrides to overrides");
             }
-
-            if let Some(mut patched_field) = pnpm_obj.get(b"patchedDependencies") {
-                if is_non_empty_object(&patched_field) {
-                    rewrite_bare_patch_keys(&mut patched_field, patches)?;
-                    if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
-                        if existing_prop.expr.is_object() {
-                            let existing_patches = e_object_mut(&mut existing_prop.expr);
-                            for prop in e_object(&patched_field).properties.slice() {
-                                let Some(key) =
-                                    as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                                else {
-                                    continue;
-                                };
-                                existing_patches.put(
-                                    &bump,
-                                    key,
-                                    prop.value.expect("infallible: prop has value"),
-                                )?;
-                            }
-                        }
-                    } else {
-                        e_object_mut(&mut json).put(
-                            &bump,
-                            b"patchedDependencies",
-                            patched_field,
-                        )?;
-                    }
-                    moved_patched_deps = true;
-                    needs_update = true;
-                    moved.push("pnpm.patchedDependencies to patchedDependencies");
-                }
+        }
+        if let Some(patched) = pnpm_obj
+            .get(b"patchedDependencies")
+            .filter(is_non_empty_object)
+        {
+            if copy_into_root(
+                &mut json,
+                &bump,
+                b"patchedDependencies",
+                &patched,
+                Some(patches),
+            )? {
+                copied.push("pnpm.patchedDependencies to patchedDependencies");
             }
-
-            if moved_overrides || moved_patched_deps {
-                let mut remaining_count: usize = 0;
-                for prop in pnpm_obj.properties.slice() {
-                    let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                    else {
-                        remaining_count += 1;
-                        continue;
-                    };
-                    if moved_overrides && key == b"overrides" {
-                        continue;
-                    }
-                    if moved_patched_deps && key == b"patchedDependencies" {
-                        continue;
-                    }
-                    remaining_count += 1;
-                }
-
-                if remaining_count == 0 {
-                    let mut new_root_count: usize = 0;
-                    for prop in e_object(&json).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            new_root_count += 1;
-                            continue;
-                        };
-                        if key != b"pnpm" {
-                            new_root_count += 1;
-                        }
-                    }
-
-                    let mut new_root_props = G::PropertyList::init_capacity(new_root_count);
-                    for prop in e_object(&json).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
-                            continue;
-                        };
-                        if key != b"pnpm" {
-                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
-                        }
-                    }
-
-                    e_object_mut(&mut json).properties = new_root_props;
-                } else {
-                    let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count);
-                    for prop in pnpm_obj.properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
-                            continue;
-                        };
-                        if moved_overrides && key == b"overrides" {
-                            continue;
-                        }
-                        if moved_patched_deps && key == b"patchedDependencies" {
-                            continue;
-                        }
-                        VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
-                    }
-
-                    pnpm_obj.properties = new_pnpm_props;
-                }
-                needs_update = true;
-            }
+        }
+        if let Some(only_built) = pnpm_obj.get(b"onlyBuiltDependencies") {
+            pnpm_only_built_deps = collect_only_built_dependencies(&only_built, &mut trusted_names);
         }
     }
 
-    // Each `&'static [u8]` here is interned into the thread-local `DATA_STORE`
-    // (see `data_store_dupe_str` below) so it shares the lifetime of the
-    // `Expr` nodes it ends up backing inside the cached `root_pkg_json.root`.
-    let mut workspace_paths: Option<Vec<&'static [u8]>> = None;
+    let mut workspace_paths: Option<Vec<&[u8]>> = None;
     let mut catalog_obj: Option<Expr> = None;
     let mut catalogs_obj: Option<Expr> = None;
     let mut workspace_overrides_obj: Option<Expr> = None;
@@ -2513,20 +2487,13 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // The `Vec<u8>` would drop at the end of this arm while the
-            // `Expr`s it backs (catalog/catalogs/overrides/patchedDependencies
-            // below) escape into `json` and the
-            // `workspace_package_json_cache`. Intern the bytes into the same
-            // thread-local `DATA_STORE` that owns the surrounding `Expr`
-            // nodes — arena ownership, not a leak (bulk-freed on
-            // `Expr::data_store_reset`).
-            let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
+            // Quoted and block scalars are copied into the parse arena, so it has to outlive the print below.
+            let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let arena = bun_alloc::Arena::new();
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
                 &yaml_source,
                 log,
-                &arena,
+                &bump,
                 bun_parsers::yaml::CyclicAliases::Reject,
             ) else {
                 break 'read_pnpm_workspace_yaml;
@@ -2534,16 +2501,10 @@ fn update_package_json_after_migration(
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
                 if let Some(mut packages) = packages_expr.as_array() {
-                    let mut paths: Vec<&'static [u8]> = Vec::new();
+                    let mut paths: Vec<&[u8]> = Vec::new();
                     while let Some(package_path) = packages.next() {
                         if let Some(package_path_str) = as_string(&package_path) {
-                            // Intern (vs. the prior `Box<[u8]>`) so the
-                            // `EString` nodes built from these paths below do
-                            // not dangle once this function returns and the
-                            // boxes drop — they are stored into
-                            // `root_pkg_json.root` which is cached in
-                            // `manager.workspace_package_json_cache`.
-                            paths.push(js_ast::data_store_dupe_str(package_path_str));
+                            paths.push(package_path_str);
                         }
                     }
                     workspace_paths = Some(paths);
@@ -2552,211 +2513,95 @@ fn update_package_json_after_migration(
 
             catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
             catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
+            // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
+            if let Some(lockfile) = lockfile {
+                let catalogs = &mut lockfile.catalogs;
+                catalogs.put_missing_from_pnpm_workspace(
+                    catalog_obj,
+                    catalogs_obj,
+                    &mut sbuf!(lockfile),
+                )?;
+            }
             workspace_overrides_obj = ws_root.get_object(b"overrides").filter(is_non_empty_object);
             workspace_patched_deps_obj = ws_root
                 .get_object(b"patchedDependencies")
                 .filter(is_non_empty_object);
+            if let Some(only_built) = ws_root.get(b"onlyBuiltDependencies") {
+                workspace_only_built_deps =
+                    collect_only_built_dependencies(&only_built, &mut trusted_names);
+            }
         }
         Err(_) => {}
     }
 
-    let has_workspace_data =
-        workspace_paths.is_some() || catalog_obj.is_some() || catalogs_obj.is_some();
-
-    let mut wrote_workspaces = false;
-    if has_workspace_data {
-        let use_array_format =
-            workspace_paths.is_some() && catalog_obj.is_none() && catalogs_obj.is_none();
-
-        let existing_workspaces = e_object(&json).get(b"workspaces");
-        let is_object_workspaces = existing_workspaces
-            .as_ref()
-            .map(|e| e.is_object())
-            .unwrap_or(false);
-
-        if use_array_format {
-            let paths = workspace_paths.as_ref().unwrap();
+    if catalog_obj.is_none() && catalogs_obj.is_none() {
+        if let Some(paths) = &workspace_paths {
             e_object_mut(&mut json).put(&bump, b"workspaces", paths_array(paths))?;
-            wrote_workspaces = true;
-        } else if is_object_workspaces {
-            let mut existing_workspaces = existing_workspaces.unwrap();
-            let ws_obj = e_object_mut(&mut existing_workspaces);
+            copied.push("pnpm-workspace.yaml to workspaces");
+        }
+    } else {
+        // An existing `workspaces` array is replaced by the object form.
+        let existing = json.get_object(b"workspaces");
+        let mut workspaces =
+            existing.unwrap_or_else(|| Expr::init(E::Object::default(), bun_ast::Loc::EMPTY));
+        let workspaces_obj = e_object_mut(&mut workspaces);
+        if let Some(paths) = workspace_paths.as_ref().filter(|paths| !paths.is_empty()) {
+            workspaces_obj.put(&bump, b"packages", paths_array(paths))?;
+        }
+        if let Some(catalog) = catalog_obj {
+            workspaces_obj.put(&bump, b"catalog", catalog)?;
+        }
+        if let Some(catalogs) = catalogs_obj {
+            workspaces_obj.put(&bump, b"catalogs", catalogs)?;
+        }
+        if existing.is_none() {
+            e_object_mut(&mut json).put(&bump, b"workspaces", workspaces)?;
+        }
+        copied.push("pnpm-workspace.yaml to workspaces");
+    }
 
-            if let Some(paths) = &workspace_paths {
-                if !paths.is_empty() {
-                    ws_obj.put(&bump, b"packages", paths_array(paths))?;
-                    wrote_workspaces = true;
-                }
-            }
-
-            if let Some(catalog) = catalog_obj {
-                ws_obj.put(&bump, b"catalog", catalog)?;
-                wrote_workspaces = true;
-            }
-
-            if let Some(catalogs) = catalogs_obj {
-                ws_obj.put(&bump, b"catalogs", catalogs)?;
-                wrote_workspaces = true;
-            }
-        } else if !use_array_format {
-            let mut ws_props = bun_alloc::AstAlloc::vec();
-
-            if let Some(paths) = &workspace_paths {
-                if !paths.is_empty() {
-                    let value = paths_array(paths);
-                    let key = Expr::init(E::EString::init(b"packages"), bun_ast::Loc::EMPTY);
-
-                    VecExt::append(
-                        &mut ws_props,
-                        G::Property {
-                            key: Some(key),
-                            value: Some(value),
-                            ..Default::default()
-                        },
-                    );
-                }
-            }
-
-            if let Some(catalog) = catalog_obj {
-                let key = Expr::init(E::EString::init(b"catalog"), bun_ast::Loc::EMPTY);
-                VecExt::append(
-                    &mut ws_props,
-                    G::Property {
-                        key: Some(key),
-                        value: Some(catalog),
-                        ..Default::default()
-                    },
-                );
-            }
-
-            if let Some(catalogs) = catalogs_obj {
-                let key = Expr::init(E::EString::init(b"catalogs"), bun_ast::Loc::EMPTY);
-                VecExt::append(
-                    &mut ws_props,
-                    G::Property {
-                        key: Some(key),
-                        value: Some(catalogs),
-                        ..Default::default()
-                    },
-                );
-            }
-
-            if ws_props.len_u32() > 0 {
-                let workspace_obj = Expr::init(
-                    E::Object {
-                        properties: ws_props,
-                        ..Default::default()
-                    },
-                    bun_ast::Loc::EMPTY,
-                );
-                e_object_mut(&mut json).put(&bump, b"workspaces", workspace_obj)?;
-                wrote_workspaces = true;
-            }
+    if let Some(overrides) = workspace_overrides_obj {
+        if copy_into_root(&mut json, &bump, b"overrides", &overrides, None)? {
+            copied.push("pnpm-workspace.yaml overrides to overrides");
         }
     }
-    if wrote_workspaces {
-        needs_update = true;
-        moved.push("pnpm-workspace.yaml to workspaces");
-    }
-
-    // Handle overrides from pnpm-workspace.yaml
-    if let Some(ws_overrides) = &workspace_overrides_obj {
-        if ws_overrides.is_object() {
-            if let Some(mut existing_prop) = json.as_property(b"overrides") {
-                if existing_prop.expr.is_object() {
-                    let existing_overrides = e_object_mut(&mut existing_prop.expr);
-                    for prop in e_object(ws_overrides).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            continue;
-                        };
-                        existing_overrides.put(
-                            &bump,
-                            key,
-                            prop.value.expect("infallible: prop has value"),
-                        )?;
-                    }
-                }
-            } else {
-                e_object_mut(&mut json).put(&bump, b"overrides", *ws_overrides)?;
-            }
-            needs_update = true;
-            moved.push("pnpm-workspace.yaml overrides to overrides");
+    if let Some(patched) = workspace_patched_deps_obj {
+        if copy_into_root(
+            &mut json,
+            &bump,
+            b"patchedDependencies",
+            &patched,
+            Some(patches),
+        )? {
+            copied.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
         }
     }
 
-    // Handle patchedDependencies from pnpm-workspace.yaml
-    if let Some(ws_patched) = &mut workspace_patched_deps_obj {
-        if ws_patched.is_object() {
-            rewrite_bare_patch_keys(ws_patched, patches)?;
-            if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
-                if existing_prop.expr.is_object() {
-                    let existing_patches = e_object_mut(&mut existing_prop.expr);
-                    for prop in e_object(ws_patched).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            continue;
-                        };
-                        existing_patches.put(
-                            &bump,
-                            key,
-                            prop.value.expect("infallible: prop has value"),
-                        )?;
-                    }
-                }
-            } else {
-                e_object_mut(&mut json).put(&bump, b"patchedDependencies", *ws_patched)?;
-            }
-            needs_update = true;
-            moved.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
+    if !trusted_names.is_empty() && add_trusted_dependencies(&mut json, &bump, &trusted_names)? {
+        if pnpm_only_built_deps {
+            copied.push("pnpm.onlyBuiltDependencies to trustedDependencies");
+        }
+        if workspace_only_built_deps {
+            copied.push("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies");
         }
     }
 
-    if needs_update {
-        let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.append_newline = !root_pkg_json.source.contents().is_empty()
-            && root_pkg_json.source.contents()[root_pkg_json.source.contents().len() - 1] == b'\n';
-        let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
+    if copied.is_empty() {
+        return Ok(());
+    }
 
-        if bun_js_printer::print_json(
-            &mut package_json_writer,
-            json,
-            &root_pkg_json.source,
-            bun_js_printer::PrintJsonOptions {
-                indent: root_pkg_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        )
-        .is_err()
-        {
-            return Ok(());
-        }
+    // The spliced-in nodes live in `bump` and the AST store; re-parse so the cache entry owns its tree.
+    print_package_json_into_cache_entry(root_pkg_json, json);
+    if let Err(err) = root_pkg_json.reparse_root(log) {
+        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+        Global::crash();
+    }
 
-        if package_json_writer.flush().is_err() {
-            return Err(AllocError);
-        }
-
-        root_pkg_json.source.contents = std::borrow::Cow::Owned(
-            package_json_writer
-                .ctx
-                .written_without_trailing_zero()
-                .to_vec(),
-        );
-
-        // Write the updated package.json
-        if sys::File::write_file(
-            dir,
-            bun_core::zstr!("package.json"),
-            root_pkg_json.source.contents(),
-        )
-        .is_ok()
-            && !moved.is_empty()
-            && !silent
-        {
-            bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+    // Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) migrate the already
+    // edited entry the second time, so only the pnpm-workspace.yaml copies repeat.
+    for what in copied {
+        if !manager.migrated_package_json_moves.contains(&what) {
+            manager.migrated_package_json_moves.push(what);
         }
     }
 
@@ -2767,7 +2612,38 @@ fn is_non_empty_object(expr: &Expr) -> bool {
     matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
 }
 
-fn paths_array(paths: &[&'static [u8]]) -> Expr {
+/// Merges `src`'s entries into the root-level object `field`, created when absent (merged rather than aliased:
+/// the `pnpm` block stays as it is); `false` if `field` is not an object. With `patches`, a bare `name` key pnpm
+/// allows becomes bun.lock's `name@version`.
+fn copy_into_root(
+    json: &mut Expr,
+    bump: &bun_alloc::Arena,
+    field: &[u8],
+    src: &Expr,
+    patches: Option<&StringArrayHashMap<Box<[u8]>>>,
+) -> Result<bool, AllocError> {
+    let mut dest = match json.get(field) {
+        Some(dest) if !dest.is_object() => return Ok(false),
+        Some(dest) => dest,
+        None => {
+            let dest = Expr::init(E::Object::default(), bun_ast::Loc::EMPTY);
+            e_object_mut(json).put(bump, field, dest)?;
+            dest
+        }
+    };
+    for prop in e_object(src).properties.slice() {
+        let Some(mut key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+            continue;
+        };
+        if let Some(resolved) = patches.and_then(|patches| patches.get(key)) {
+            key = js_ast::data_store_dupe_str(&[key, b"@", resolved].concat());
+        }
+        e_object_mut(&mut dest).put(bump, key, prop.value.expect("infallible: prop has value"))?;
+    }
+    Ok(true)
+}
+
+fn paths_array(paths: &[&[u8]]) -> Expr {
     let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
     for path in paths {
         VecExt::append(

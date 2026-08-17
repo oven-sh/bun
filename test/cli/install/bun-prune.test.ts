@@ -1,6 +1,15 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
-import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, runBunInstall, tempDir, VerdaccioRegistry } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  isRoot,
+  isWindows,
+  normalizeBunSnapshot,
+  runBunInstall,
+  tempDir,
+  VerdaccioRegistry,
+} from "harness";
 import {
   chmodSync,
   closeSync,
@@ -42,9 +51,11 @@ const PRUNED_NOTE = 'note: skipped 1 workspace listed in bun.lock but not on dis
 const BANNER = "bun prune <version> (<revision>)";
 const plural = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 const NOTHING = (packages: number, folders: number) =>
-  `Done! Checked ${plural(packages, "package")} across ${plural(folders, "folder")} (nothing to prune)`;
-const REMOVED = (n: number, checked: number) => `${plural(n, "package")} removed (checked ${checked})`;
-const CAN_BE_REMOVED = (n: number, checked: number) => `${plural(n, "package")} can be removed (checked ${checked})`;
+  `Done! Checked ${plural(packages, "installed package")} across ${plural(folders, "folder")} (nothing to prune)`;
+const REMOVED = (n: number, checked: number) =>
+  `${plural(n, "package")} removed (checked ${plural(checked, "installed package")})`;
+const CAN_BE_REMOVED = (n: number, checked: number) =>
+  `${plural(n, "package")} can be removed (checked ${plural(checked, "installed package")})`;
 // The copy-pasteable line `--dry-run` prints last: the invocation with `--dry-run` taken out.
 const APPLY_HINT = (...flags: string[]) => ["  bun prune", ...flags].join(" ");
 const DURATION = /\) \[\d+(\.\d+)?m?s\]$/m;
@@ -283,9 +294,9 @@ test.concurrent("removes extraneous packages, keeps everything the lockfile inst
     - @other/thing
     - @scoped/junk
     - junk
-    3 packages removed (checked 5)"
+    3 packages removed (checked 5 installed packages)"
   `);
-  expect(first.stdout).toMatch(/\(checked 5\) \[\d+(\.\d+)?m?s\]\n?$/);
+  expect(first.stdout).toMatch(/\(checked 5 installed packages\) \[\d+(\.\d+)?m?s\]\n?$/);
   expect(first.exitCode).toBe(0);
 
   for (const path of planted) {
@@ -316,7 +327,7 @@ test.concurrent("prunes nested node_modules folders the tree installs into", asy
     "bun prune <version> (<revision>)
 
     - junk (node_modules/one-dep/node_modules)
-    1 package removed (checked 4)"
+    1 package removed (checked 4 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -344,7 +355,7 @@ test.concurrent.each([["--production"], ["--prod"], ["--omit=dev"]])(
       - no-deps-bins@1.0.0
       - one-fixed-dep-bins@1.0.0
       - what-bin@1.0.0
-      3 packages removed (checked 5)"
+      3 packages removed (checked 5 installed packages)"
     `);
     expect(exitCode).toBe(0);
 
@@ -375,7 +386,7 @@ test.concurrent("--production keeps a package that prod and dev both need", asyn
     "bun prune <version> (<revision>)
 
     - one-fixed-dep@1.0.0
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(production.exitCode).toBe(0);
   expect(existsSync(join(dir, "node_modules", "no-deps"))).toBeTrue();
@@ -385,7 +396,7 @@ test.concurrent("--production keeps a package that prod and dev both need", asyn
   expect(out(plain.stdout)).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
 
-    Done! Checked 2 packages across 1 folder (nothing to prune)"
+    Done! Checked 2 installed packages across 1 folder (nothing to prune)"
   `);
   expect(plain.exitCode).toBe(0);
   expect(existsSync(join(plainDir, "node_modules", "one-fixed-dep"))).toBeTrue();
@@ -400,7 +411,7 @@ test.concurrent("--dry-run prints without deleting; --silent deletes without pri
     "bun prune <version> (<revision>)
 
     - junk
-    1 package can be removed (checked 2)
+    1 package can be removed (checked 2 installed packages)
       bun prune"
   `);
   expect(dryRun.stdout).toMatch(DURATION);
@@ -436,6 +447,42 @@ test.concurrent("--dry-run prints without deleting; --silent deletes without pri
   expect(clean.exitCode).toBe(0);
 });
 
+// `--check` is the CI gate: the same report as `--dry-run`, but exits 1 when anything would be removed, like `bun dedupe --check`.
+test.concurrent("--check reports and exits 1 without deleting", async () => {
+  const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
+  const junk = plant(dir, "node_modules/junk");
+
+  const check = await prune(dir, "--check");
+  expect(lines(check.stdout)).toStrictEqual([BANNER, "", "- junk", CAN_BE_REMOVED(1, 2), APPLY_HINT()]);
+  expect(check.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(check.exitCode).toBe(1);
+
+  // The report is identical to --dry-run; only the exit code differs.
+  const dryRun = await prune(dir, "--dry-run");
+  expect(out(dryRun.stdout)).toBe(out(check.stdout));
+  expect(dryRun.exitCode).toBe(0);
+
+  // The hint omits both flags, so it stays copy-pasteable.
+  const both = await prune(dir, "--dry-run", "--check");
+  expect(lines(both.stdout)).toStrictEqual(lines(check.stdout));
+  expect(both.exitCode).toBe(1);
+
+  const silent = await prune(dir, "--check", "--silent");
+  expect(silent.stdout).toBe("");
+  expect(silent.stderr).toBe("");
+  expect(existsSync(junk)).toBeTrue();
+  expect(silent.exitCode).toBe(1);
+
+  const apply = await prune(dir);
+  expect(apply.exitCode).toBe(0);
+  expect(existsSync(junk)).toBeFalse();
+
+  const clean = await prune(dir, "--check");
+  expect(lines(clean.stdout)).toStrictEqual([BANNER, "", NOTHING(1, 1)]);
+  expect(clean.exitCode).toBe(0);
+});
+
 test.concurrent("nothing to prune when node_modules is missing or clean", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
@@ -458,7 +505,7 @@ test.concurrent("nothing to prune when node_modules is missing or clean", async 
   expect(out(clean.stdout)).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
 
-    Done! Checked 1 package across 1 folder (nothing to prune)"
+    Done! Checked 1 installed package across 1 folder (nothing to prune)"
   `);
   expect(clean.exitCode).toBe(0);
   expect(existsSync(join(cleanDir, "node_modules", "no-deps"))).toBeTrue();
@@ -479,7 +526,7 @@ test.concurrent("never follows symlinks out of node_modules", async () => {
     "bun prune <version> (<revision>)
 
     - linked-junk
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(() => lstatSync(link)).toThrow();
@@ -563,7 +610,7 @@ test.concurrent("workspaces: prunes workspace folders, keeps workspace links, ru
 
     - a-dep@1.0.1
     - junk (node_modules/a/node_modules)
-    2 packages removed (checked 5)"
+    2 packages removed (checked 5 installed packages)"
   `);
   expect(exitCode).toBe(0);
 
@@ -582,7 +629,7 @@ test.concurrent("keeps dependencies bundled inside a package", async () => {
   expect(out(stdout)).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
 
-    Done! Checked 3 packages across 1 folder (nothing to prune)"
+    Done! Checked 3 installed packages across 1 folder (nothing to prune)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(bundled)).toBeTrue();
@@ -621,7 +668,7 @@ test.concurrent("isolated linker: removes unused store entries and their links",
     - no-deps@1.0.1
     - one-dep@1.0.0
     - zzz@1.0.0
-    6 packages removed (checked 9)"
+    6 packages removed (checked 9 installed packages)"
   `);
   expect(exitCode).toBe(0);
 
@@ -656,7 +703,7 @@ test.concurrent("isolated linker: --verbose does not print the store build timin
 
     - no-deps@1.0.1
     - one-dep@1.0.0
-    2 packages removed (checked 5)"
+    2 packages removed (checked 5 installed packages)"
   `);
   expect(stderr).not.toContain("Resolved peers");
   expect(stderr).not.toContain("Created store");
@@ -691,7 +738,7 @@ test.concurrent("isolated linker: prune removes the peer-hash variants a peer bu
     "",
     "- no-deps@1.0.0",
     `- ${before}`,
-    "2 packages removed (checked 6)",
+    "2 packages removed (checked 6 installed packages)",
   ]);
   expect(exitCode).toBe(0);
   expect(peerEntries()).toStrictEqual([after]);
@@ -715,7 +762,7 @@ test.concurrent("isolated linker + global store: unlinks the store link, never d
 
   const { stdout, exitCode } = await prune(dir, "--production");
   expect(out(stdout)).toContain("- one-dep@1.0.0");
-  expect(out(stdout)).toEndWith("2 packages removed (checked 3)");
+  expect(out(stdout)).toEndWith("2 packages removed (checked 3 installed packages)");
   expect(exitCode).toBe(0);
 
   expect(() => lstatSync(storeEntry)).toThrow();
@@ -734,7 +781,7 @@ test.concurrent("isolated linker: bins of removed packages are removed, live one
   expectBinInstalled(nm, "has-bin-entry");
 
   const { stdout, exitCode } = await prune(dir, "--production", "--linker", "isolated");
-  expect(out(stdout)).toEndWith("- what-bin@1.0.0\n1 package removed (checked 4)");
+  expect(out(stdout)).toEndWith("- what-bin@1.0.0\n1 package removed (checked 4 installed packages)");
   expect(exitCode).toBe(0);
 
   expectBinRemoved(nm, "what-bin");
@@ -773,7 +820,7 @@ test.concurrent("hoisted: dot entries and files are never touched even when the 
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 1)"
+    1 package removed (checked 1 installed package)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -833,7 +880,7 @@ test.concurrent(
     expect(out(stdout)).toMatchInlineSnapshot(`
     "bun prune <version> (<revision>)
 
-    Done! Checked 2 packages across 1 folder (nothing to prune)"
+    Done! Checked 2 installed packages across 1 folder (nothing to prune)"
   `);
     expect(exitCode).toBe(0);
     expect(existsSync(keepMe)).toBeTrue();
@@ -854,7 +901,7 @@ test.concurrent("hoisted: a symlinked scope dir is unlinked, not followed", asyn
 
     - @fake
     - @real/junk
-    2 packages removed (checked 3)"
+    2 packages removed (checked 3 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(() => lstatSync(join(nm, "@fake"))).toThrow();
@@ -888,7 +935,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - junk (node_modules/a/node_modules)
-      1 package can be removed (checked 4)
+      1 package can be removed (checked 4 installed packages)
         bun prune --linker hoisted"
     `);
     expect(dryRun.exitCode).toBe(0);
@@ -899,7 +946,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - junk (node_modules/a/node_modules)
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(junk)).toBeFalse();
@@ -924,7 +971,7 @@ test.concurrent.skipIf(isWindows)("a symlinked .bin directory is never cleaned t
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -944,7 +991,7 @@ test.concurrent("isolated: extraneous symlinks are removed even when the store i
 
     - @ext/thing
     - ext
-    2 packages removed (checked 4)"
+    2 packages removed (checked 4 installed packages)"
   `);
   expect(first.exitCode).toBe(0);
   expect(() => lstatSync(join(nm, "ext"))).toThrow();
@@ -978,7 +1025,7 @@ test.concurrent(
 
     - @scoped/has-bin-entry@1.0.0
     - one-dep@1.0.0
-    2 packages removed (checked 3)"
+    2 packages removed (checked 3 installed packages)"
   `);
     expect(exitCode).toBe(0);
     expect(existsSync(join(nm, "one-dep"))).toBeFalse();
@@ -1004,7 +1051,7 @@ test.concurrent("hoisted: removing only a scoped package also removes its bin li
     "bun prune <version> (<revision>)
 
     - @scoped/has-bin-entry@1.0.0
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(join(nm, "@scoped"))).toBeFalse();
@@ -1032,7 +1079,7 @@ test.concurrent(
     - @scoped/has-bin-entry@1.0.0
     - no-deps@1.0.1
     - one-dep@1.0.0
-    3 packages removed (checked 7)"
+    3 packages removed (checked 7 installed packages)"
   `);
     expect(exitCode).toBe(0);
     expect(() => lstatSync(join(nm, "one-dep"))).toThrow();
@@ -1065,7 +1112,7 @@ test.concurrent("hoisted: --production empties a workspace folder that only held
     "bun prune <version> (<revision>)
 
     - no-deps@1.0.0 (packages/a/node_modules)
-    1 package removed (checked 3)"
+    1 package removed (checked 3 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(nested)).toBeFalse();
@@ -1105,7 +1152,7 @@ test.concurrent(
 
       - a-dep@1.0.1
       - tool@1.0.0 (packages/app/node_modules)
-      2 packages can be removed (checked 6)
+      2 packages can be removed (checked 6 installed packages)
         bun prune --production --linker isolated"
     `);
     expect(dryRun.exitCode).toBe(0);
@@ -1117,7 +1164,7 @@ test.concurrent(
 
       - a-dep@1.0.1
       - tool@1.0.0 (packages/app/node_modules)
-      2 packages removed (checked 6)"
+      2 packages removed (checked 6 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(() => lstatSync(join(appNm, "a-dep"))).toThrow();
@@ -1145,7 +1192,7 @@ test.concurrent("isolated: a real directory named like a workspace is never dele
     "bun prune <version> (<revision>)
 
     - a-dep@1.0.1
-    1 package removed (checked 6)"
+    1 package removed (checked 6 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(join(planted, "package.json"))).toBeTrue();
@@ -1182,7 +1229,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - @scope/tool@1.0.0 (packages/app/node_modules)
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(mixed.exitCode).toBe(0);
     expect(() => lstatSync(join(mixedScope, "tool"))).toThrow();
@@ -1195,7 +1242,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - @scope/tool@1.0.0 (packages/app/node_modules)
-      1 package removed (checked 3)"
+      1 package removed (checked 3 installed packages)"
     `);
     expect(devOnly.exitCode).toBe(0);
     expect(existsSync(devOnlyScope)).toBeFalse();
@@ -1225,7 +1272,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - tool@1.0.0 (packages/app/node_modules)
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(() => lstatSync(appTool)).toThrow();
@@ -1372,7 +1419,7 @@ test.concurrent.each(linkers)("%s: a workspace lifecycle script is not out of sy
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 3)"
+    1 package removed (checked 3 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -1393,7 +1440,7 @@ test.concurrent("trustedDependencies stripped from bun.lock is not out of sync",
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -1449,7 +1496,7 @@ test.concurrent("isolated: a workspace missing from disk no longer keeps its sto
 
     - junk
     - left-pad@1.0.0
-    2 packages removed (checked 4)"
+    2 packages removed (checked 4 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -1478,7 +1525,7 @@ test.concurrent("hoisted: --filter on a pruned checkout does not protect the mis
 
     - left-pad@1.0.0
     - other
-    2 packages removed (checked 4)"
+    2 packages removed (checked 4 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(join(nm, "left-pad"))).toBeFalse();
@@ -1520,7 +1567,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - shared-alias@1.0.0
-      1 package removed (checked 3)"
+      1 package removed (checked 3 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(isSymlink(join(nm, "app"))).toBeTrue();
@@ -1560,7 +1607,7 @@ test.concurrent(
 
       - a-dep@1.0.1
       - junk (node_modules/a/node_modules)
-      2 packages removed (checked 8)"
+      2 packages removed (checked 8 installed packages)"
     `);
     expect(onlyA.exitCode).toBe(0);
     expect(existsSync(aJunk)).toBeFalse();
@@ -1575,7 +1622,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - left-pad@1.0.0
-      1 package removed (checked 5)"
+      1 package removed (checked 5 installed packages)"
     `);
     expect(onlyRoot.exitCode).toBe(0);
     expect(existsSync(bJunk)).toBeTrue();
@@ -1587,7 +1634,7 @@ test.concurrent(
 
       - junk (node_modules/b/node_modules)
       - one-fixed-dep@1.0.0
-      2 packages removed (checked 7)"
+      2 packages removed (checked 7 installed packages)"
     `);
     expect(everything.exitCode).toBe(0);
     expect(existsSync(bJunk)).toBeFalse();
@@ -1615,7 +1662,7 @@ test.concurrent(
 
       - a-dep@1.0.1 (packages/a/node_modules)
       - one-fixed-dep@1.0.0
-      2 packages removed (checked 7)"
+      2 packages removed (checked 7 installed packages)"
     `);
     expect(onlyA.exitCode).toBe(0);
     expect(existsSync(join(store, "a-dep@1.0.1"))).toBeTrue();
@@ -1633,7 +1680,7 @@ test.concurrent(
 
       - a-dep@1.0.1
       - left-pad@1.0.0
-      2 packages removed (checked 6)"
+      2 packages removed (checked 6 installed packages)"
     `);
     expect(everything.exitCode).toBe(0);
     expect(() => lstatSync(join(bNm, "a-dep"))).toThrow();
@@ -1657,7 +1704,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - a-dep@1.0.1 (packages/selected/node_modules)
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(first.exitCode).toBe(0);
     expect(() => lstatSync(selectedADep)).toThrow();
@@ -1669,7 +1716,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - a-dep@1.0.1 (packages/unselected/node_modules)
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(second.exitCode).toBe(0);
     expect(() => lstatSync(unselectedADep)).toThrow();
@@ -1680,7 +1727,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - a-dep@1.0.1
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(everything.exitCode).toBe(0);
     expect(existsSync(storeEntry)).toBeFalse();
@@ -1824,7 +1871,7 @@ test.concurrent("hoisted: --filter with no match is an error; path filters resol
     "bun prune <version> (<revision>)
 
     - junk (node_modules/a/node_modules)
-    1 package removed (checked 4)"
+    1 package removed (checked 4 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -1905,7 +1952,7 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
       "bun prune <version> (<revision>)
 
       - test-postinstall-skip-native@1.0.0
-      1 package removed (checked 2)"
+      1 package removed (checked 2 installed packages)"
     `);
     expect(other.exitCode).toBe(0);
     expect(existsSync(native)).toBeFalse();
@@ -1913,6 +1960,40 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
     expect(await install(dir, flag)).toContain("no changes");
   },
 );
+
+// native-libc-glibc and native-libc-musl differ only in their `libc` field. The libc is passed
+// explicitly throughout because the default differs per host (and non-Linux hosts do not filter).
+test.concurrent("--libc removes the variant of the other libc, pruning for the installed libc keeps it", async () => {
+  const { packageDir: dir, packageJson } = await registry.createTestDir();
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      optionalDependencies: { "native-libc-glibc": "1.0.0", "native-libc-musl": "1.0.0" },
+    }),
+  );
+  expect(await install(dir, "--libc=glibc")).toContain("+ native-libc-glibc@1.0.0");
+  const nm = join(dir, "node_modules");
+  const glibc = join(nm, "native-libc-glibc", "package.json");
+  const musl = join(nm, "native-libc-musl", "package.json");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([true, false]);
+
+  const same = await prune(dir, "--libc=glibc");
+  expect(out(same.stdout)).toEndWith(NOTHING(1, 1));
+  expect(same.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeTrue();
+
+  const other = await prune(dir, "--libc=musl");
+  expect(lines(other.stdout)).toStrictEqual([BANNER, "", "- native-libc-glibc@1.0.0", REMOVED(1, 1)]);
+  expect(other.exitCode).toBe(0);
+  expect(existsSync(glibc)).toBeFalse();
+
+  expect(await install(dir, "--libc=musl")).toContain("+ native-libc-musl@1.0.0");
+  expect([existsSync(glibc), existsSync(musl)]).toStrictEqual([false, true]);
+  const musl2 = await prune(dir, "--libc=musl");
+  expect(out(musl2.stdout)).toEndWith(NOTHING(1, 1));
+  expect(musl2.exitCode).toBe(0);
+});
 
 test.concurrent.each(["hoisted", "isolated"] as Linker[])(
   "%s: an npm: alias is kept under its alias name",
@@ -1929,9 +2010,7 @@ test.concurrent.each(["hoisted", "isolated"] as Linker[])(
     const junk = plant(dir, "node_modules/junk");
 
     const { stdout, exitCode } = await prune(dir, "--linker", linker);
-    expect(out(stdout)).toBe(
-      `bun prune <version> (<revision>)\n\n- junk\n1 package removed (checked ${linker === "hoisted" ? 4 : 6})`,
-    );
+    expect(out(stdout)).toBe(`bun prune <version> (<revision>)\n\n- junk\n${REMOVED(1, linker === "hoisted" ? 4 : 6)}`);
     expect(exitCode).toBe(0);
     expect(existsSync(junk)).toBeFalse();
     expect(await file(join(nm, "my-alias", "package.json")).json()).toMatchObject({
@@ -1966,7 +2045,7 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
 
     - no-deps@1.0.1
     - one-dep@1.0.0
-    2 packages removed (checked 5)"
+    2 packages removed (checked 5 installed packages)"
   `);
   expect(production.exitCode).toBe(0);
   expect(() => lstatSync(join(store, "node_modules", "one-dep"))).toThrow();
@@ -1974,7 +2053,7 @@ test.concurrent("isolated + publicHoistPattern: hoisted links follow their store
   expect(await file(join(nm, "no-deps", "package.json")).json()).toMatchObject({ version: "1.0.0" });
 });
 
-test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+test.concurrent.skipIf(isWindows || isRoot)(
   "a failed deletion is reported, the rest is removed, exit code 1",
   async () => {
     const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });
@@ -1992,7 +2071,7 @@ test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
         "",
         "- junk-a",
         expect.stringMatching(failure),
-        "1 package removed, 1 failed (checked 3)",
+        "1 package removed, 1 failed (checked 3 installed packages)",
       ]);
       expect(exitCode).toBe(1);
       expect(existsSync(junkA)).toBeFalse();
@@ -2013,7 +2092,7 @@ test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
     "bun prune <version> (<revision>)
 
     - junk-b
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
     expect(exitCode).toBe(0);
     expect(existsSync(junkB)).toBeFalse();
@@ -2042,7 +2121,7 @@ test.concurrent("never runs the project's lifecycle scripts", async () => {
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 3)"
+    1 package removed (checked 3 installed packages)"
   `);
   expect(plain.exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -2053,7 +2132,7 @@ test.concurrent("never runs the project's lifecycle scripts", async () => {
     "bun prune <version> (<revision>)
 
     - a-dep@1.0.1
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(production.exitCode).toBe(0);
   expect(existsSync(ran)).toBeFalse();
@@ -2112,7 +2191,7 @@ test.concurrent.each(["peer-deps-fixed", "optional-peer-deps"])(
       "bun prune <version> (<revision>)",
       "",
       "- no-deps@1.0.0",
-      "1 package removed (checked 4)",
+      "1 package removed (checked 4 installed packages)",
     ]);
     expect(exitCode).toBe(0);
     expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.0", entry]);
@@ -2179,7 +2258,7 @@ test.concurrent(
       "",
       "- a-dep@1.0.1",
       "- no-deps@2.0.0",
-      "2 packages removed (checked 10)",
+      "2 packages removed (checked 10 installed packages)",
     ]);
     expect(exitCode).toBe(0);
     expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", "one-dep@1.0.0", productionEntry, fullEntry].toSorted());
@@ -2216,7 +2295,7 @@ test.concurrent("isolated: --production removes the stale peer-hash variant and 
     "- a-dep@1.0.1",
     "- no-deps@1.0.0",
     `- ${before}`,
-    "3 packages removed (checked 8)",
+    "3 packages removed (checked 8 installed packages)",
   ]);
   expect(exitCode).toBe(0);
   expect(storeEntries(dir)).toStrictEqual(["no-deps@1.0.1", after]);
@@ -2250,7 +2329,7 @@ test.concurrent("keeps dependencies bundled inside a file: dependency", async ()
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -2297,7 +2376,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - no-deps@1.0.1 (node_modules/one-dep/node_modules)
-      1 package removed (checked 3)"
+      1 package removed (checked 3 installed packages)"
     `);
     expect(stderr).toBe("");
     expect(exitCode).toBe(0);
@@ -2317,18 +2396,30 @@ test.concurrent(
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
     expect(await file(nestedPkgJson).json()).toMatchObject({ version: "1.0.0" });
 
+    // The root copy is the one a full install hoists there, not a stale tree:
+    // no "is not the version bun.lock expects" warning, no install hint.
     const { stdout, stderr, exitCode } = await prune(dir, "--production");
     expect(out(stdout)).toMatchInlineSnapshot(`
       "bun prune <version> (<revision>)
 
-      Done! Checked 3 packages across 2 folders (nothing to prune)"
+      Done! Checked 3 installed packages across 2 folders (nothing to prune)"
     `);
-    expect(out(stderr)).toBe(
-      `${WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps")}\n${NOTE}`,
-    );
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(await file(nestedPkgJson).json()).toMatchObject({ version: "1.0.0" });
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
+
+    // A root copy whose version the lockfile does not know anywhere is a
+    // genuinely stale tree and still warns under --production.
+    const rootPkg = await file(rootPkgJson).json();
+    await write(rootPkgJson, JSON.stringify({ ...rootPkg, version: "9.9.9" }));
+    const stale = await prune(dir, "--production", "--dry-run");
+    expect(out(stale.stderr)).toBe(
+      `${WARN("node_modules/no-deps", "node_modules/one-fixed-dep/node_modules/no-deps")}\n${NOTE}`,
+    );
+    expect(stale.exitCode).toBe(0);
+    await write(rootPkgJson, JSON.stringify(rootPkg));
+
     await runBunInstall(installEnv(dir), dir, { production: true });
 
     const silent = await prune(silentDir, "--production", "--silent");
@@ -2399,13 +2490,15 @@ test.concurrent(
     expect(await file(rootPkgJson).json()).toMatchObject({ version: "2.0.0" });
     expect(await file(workspacePkgJson).json()).toMatchObject({ version: "1.0.0" });
 
+    // The root copy is the dev version a full install hoists there; not a
+    // stale tree, so no warning under --production.
     const { stdout, stderr, exitCode } = await prune(dir, "--production", "--linker", "hoisted");
     expect(out(stdout)).toMatchInlineSnapshot(`
       "bun prune <version> (<revision>)
 
-      Done! Checked 3 packages across 2 folders (nothing to prune)"
+      Done! Checked 3 installed packages across 2 folders (nothing to prune)"
     `);
-    expect(out(stderr)).toBe(`${WARN("node_modules/no-deps", "packages/a/node_modules/no-deps")}\n${NOTE}`);
+    expect(stderr).toBe("");
     expect(exitCode).toBe(0);
     expect(await file(workspacePkgJson).json()).toMatchObject({ version: "1.0.0" });
     expect(isSymlink(join(nm, "a"))).toBeTrue();
@@ -2433,7 +2526,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - what-bin@1.0.0
-      1 package can be removed (checked 4)
+      1 package can be removed (checked 4 installed packages)
         bun prune --production --linker isolated"
     `);
     expect(dryRun.exitCode).toBe(0);
@@ -2445,7 +2538,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - what-bin@1.0.0
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(() => lstatSync(join(nm, "what-bin"))).toThrow();
@@ -2478,7 +2571,7 @@ test.concurrent("hoisted: nested node_modules of packages without a tree node ar
 
     - @other/thing (node_modules/@scoped/has-bin-entry/node_modules)
     - junk (node_modules/no-deps/node_modules)
-    2 packages removed (checked 4)"
+    2 packages removed (checked 4 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -2534,7 +2627,7 @@ test.concurrent("refuses to prune an isolated install with the hoisted linker", 
 
     - no-deps@1.0.1
     - one-dep@1.0.0
-    2 packages removed (checked 3)"
+    2 packages removed (checked 3 installed packages)"
   `);
   expect(same.exitCode).toBe(0);
   expect(() => lstatSync(join(nm, "one-dep"))).toThrow();
@@ -2653,7 +2746,7 @@ test.concurrent(
       - git-pkg@1.0.0
       - junk@1.0.0
       - local@file+elsewhere
-      3 packages removed (checked 11)"
+      3 packages removed (checked 11 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(storeEntries(dir)).toStrictEqual(installed);
@@ -2665,6 +2758,30 @@ test.concurrent(
     expect(out(production.stdout)).toEndWith(NOTHING(8, 2));
     expect(production.exitCode).toBe(0);
     expect(storeEntries(dir)).toStrictEqual(installed);
+  },
+);
+
+test.concurrent(
+  "isolated: a file: dependency declared by a registry package is not a store entry, a leftover one is removed",
+  async () => {
+    // file-dep@1.0.0 declares `"files": "file:./the-files"`; the installer links the
+    // folder inside the package's own store entry instead of creating one for it.
+    const dir = await setupWithLinker("isolated", { name: "foo", dependencies: { "file-dep": "1.0.0" } });
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    const filesLink = join(dir, "node_modules", ".bun", "file-dep@1.0.0", "node_modules", "files");
+    expect(isSymlink(filesLink)).toBeTrue();
+    plant(dir, "node_modules/.bun/files@file+.+the-files/node_modules/files");
+
+    const { stdout, stderr, exitCode } = await prune(dir, "--linker", "isolated");
+    expect(stderr).not.toContain("warn:");
+    expect(lines(stdout)).toContain("- files@file+.+the-files");
+    expect(exitCode).toBe(0);
+    expect(storeEntries(dir)).toStrictEqual(["file-dep@1.0.0"]);
+    expect(existsSync(join(filesLink, "package.json"))).toBeTrue();
+
+    const again = await prune(dir, "--linker", "isolated");
+    expect(out(again.stdout)).toEndWith(NOTHING(2, 2));
+    expect(again.exitCode).toBe(0);
   },
 );
 
@@ -2688,7 +2805,7 @@ test.concurrent(
 
       - a-dep@1.0.1
       - junk@1.0.0
-      2 packages removed (checked 6)"
+      2 packages removed (checked 6 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(junk)).toBeFalse();
@@ -2731,7 +2848,7 @@ test.concurrent(
 
       - a-dep@1.0.1
       - junk
-      2 packages removed (checked 5)"
+      2 packages removed (checked 5 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(junk)).toBeFalse();
@@ -2763,7 +2880,7 @@ test.concurrent("without --linker, a project without workspaces is pruned with t
 
     - a-dep@1.0.1
     - junk
-    2 packages removed (checked 4)"
+    2 packages removed (checked 4 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -2793,7 +2910,7 @@ test.concurrent.each([["--os=aix"], ["--cpu=s390x"]])(
       "bun prune <version> (<revision>)
 
       - test-postinstall-skip-native@1.0.0
-      1 package removed (checked 4)"
+      1 package removed (checked 4 installed packages)"
     `);
     expect(other.exitCode).toBe(0);
     expect(existsSync(join(store, "test-postinstall-skip-native@1.0.0"))).toBeFalse();
@@ -2849,7 +2966,7 @@ test.concurrent("hoisted: the nested tree of a package with bundled dependencies
     "bun prune <version> (<revision>)
 
     - junk (node_modules/one-dep/node_modules)
-    1 package removed (checked 5)"
+    1 package removed (checked 5 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeTrue();
@@ -2887,7 +3004,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - git-pkg (node_modules/no-deps/node_modules)
-      1 package removed (checked 3)"
+      1 package removed (checked 3 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(nested)).toBeFalse();
@@ -2943,7 +3060,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - left-pad (node_modules/no-deps/node_modules)
-      1 package removed (checked 3)"
+      1 package removed (checked 3 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(nested)).toBeFalse();
@@ -2975,7 +3092,7 @@ test.concurrent("hoisted: a nested copy of a link: dependency is removed when th
     "bun prune <version> (<revision>)
 
     - linked (node_modules/no-deps/node_modules)
-    1 package removed (checked 3)"
+    1 package removed (checked 3 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(nested)).toBeFalse();
@@ -3009,7 +3126,7 @@ test.concurrent("hoisted: a nested copy left behind by an override to a tarball 
     "bun prune <version> (<revision>)
 
     - no-deps@1.0.1 (node_modules/one-dep/node_modules)
-    1 package removed (checked 3)"
+    1 package removed (checked 3 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(nested)).toBeFalse();
@@ -3034,7 +3151,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - no-deps-build-metadata (node_modules/no-deps/node_modules)
-      1 package removed (checked 3)"
+      1 package removed (checked 3 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(nested)).toBeFalse();
@@ -3066,7 +3183,7 @@ test.concurrent(
 
       - no-deps@1.0.1
       - one-dep@1.0.0
-      2 packages removed (checked 6)"
+      2 packages removed (checked 6 installed packages)"
     `);
     expect(production.exitCode).toBe(0);
     expect(existsSync(join(store, "no-deps@1.0.1"))).toBeFalse();
@@ -3105,7 +3222,7 @@ test.concurrent(
       - no-deps@1.0.1
       - one-dep@1.0.0
       - one-dep@1.0.0+0123456789abcdef
-      4 packages removed (checked 7)"
+      4 packages removed (checked 7 installed packages)"
     `);
     expect(exitCode).toBe(0);
     expect(existsSync(variant)).toBeFalse();
@@ -3136,7 +3253,7 @@ test.concurrent("isolated: an emptied scope dir of dangling hidden-hoist links i
     - @scope/zzz@1.0.0
     - no-deps@1.0.1
     - one-dep@1.0.0
-    3 packages removed (checked 6)"
+    3 packages removed (checked 6 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(scopeDir)).toBeFalse();
@@ -3156,7 +3273,7 @@ test.concurrent("isolated: --filter on a pruned checkout does not protect the mi
     "bun prune <version> (<revision>)
 
     - left-pad@1.0.0
-    1 package removed (checked 3)"
+    1 package removed (checked 3 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(join(store, "left-pad@1.0.0"))).toBeFalse();
@@ -3244,7 +3361,7 @@ test.concurrent("missing package.json is an error; --cwd prunes another director
     "bun prune <version> (<revision>)
 
     - junk
-    1 package removed (checked 2)"
+    1 package removed (checked 2 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(junk)).toBeFalse();
@@ -3285,7 +3402,7 @@ test.concurrent(
       "bun prune <version> (<revision>)
 
       - junk
-      1 package removed (checked 2)"
+      1 package removed (checked 2 installed packages)"
     `);
     expect(pruned.exitCode).toBe(0);
     expect(existsSync(junk)).toBeFalse();
@@ -3315,7 +3432,7 @@ test.concurrent("--no-optional is not --omit=optional", async () => {
     "bun prune <version> (<revision>)
 
     - a-dep@1.0.1
-    1 package can be removed (checked 2)
+    1 package can be removed (checked 2 installed packages)
       bun prune --omit=optional"
   `);
   expect(omit.exitCode).toBe(0);
@@ -3340,9 +3457,11 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
     Flags:
       -p, --production      Also remove packages that are only needed by devDependencies (alias: --prod)
           --omit=<val>      Also remove packages that are only needed by the given dependency types
+          --check           Exit with code 1 if node_modules has packages that can be removed, without deleting anything
           --dry-run         Print what would be removed without deleting anything
           --os=<val>        Prune for a different operating system than the current one
           --cpu=<val>       Prune for a different CPU architecture than the current one
+          --libc=<val>      Prune for a different libc than the current one
           --linker=<val>    Prune a node_modules installed with the given linker (one of "isolated" or "hoisted")
       -F, --filter=<val>    Only prune the node_modules folders of the matching workspaces
           --silent          Don't log anything
@@ -3358,6 +3477,9 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
 
       Show what would be removed without deleting anything
       bun prune --dry-run
+
+      Only report what would be removed; exit code 1 if there is anything (for CI)
+      bun prune --check
 
       Only prune what the app workspace no longer needs
       bun prune --production --filter app
@@ -3387,7 +3509,7 @@ test.concurrent("--help lists every flag; -F is --filter, -p is --production", a
     "bun prune <version> (<revision>)
 
     - junk (node_modules/b/node_modules)
-    1 package removed (checked 5)"
+    1 package removed (checked 5 installed packages)"
   `);
   expect(exitCode).toBe(0);
   expect(existsSync(aJunk)).toBeTrue();

@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP, SEP_STR};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -13,7 +13,7 @@ use bun_sys::{self as sys, Dir, EntryKind, Fd, FdExt, walker_skippable};
 use bun_threading::thread_pool::{Batch, Node as ThreadPoolNode};
 use bun_threading::work_pool::Task as WorkPoolTask;
 #[cfg(windows)]
-use bun_threading::{ThreadPool, WaitGroup};
+use bun_threading::{IntrusiveWorkTask, ThreadPool, WaitGroup};
 
 use crate::package_installer::NodeModulesFolder;
 use crate::{
@@ -29,10 +29,7 @@ pub struct PackageInstall<'a> {
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
-    // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
-    // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
     pub(crate) destination_dir_subpath: &'a ZStr,
-    pub(crate) destination_dir_subpath_buf: &'a mut [u8],
 
     pub(crate) progress: Option<&'a mut Progress>,
 
@@ -234,6 +231,7 @@ pub enum Step {
     OpeningCacheDir,
     OpeningDestDir,
     CopyingFiles,
+    MovingIntoPlace,
     LinkingDependency,
 }
 
@@ -244,9 +242,56 @@ impl Step {
             Step::CopyingFiles => b"copying files from cache to destination",
             Step::OpeningCacheDir => b"opening cache/package/version dir",
             Step::OpeningDestDir => b"opening node_modules/package dir",
+            Step::MovingIntoPlace => b"moving copied files into node_modules/package dir",
             Step::LinkingDependency => b"linking dependency/workspace to node_modules",
         }
     }
+}
+
+/// Where a package is linked to before being renamed onto its real path, which
+/// later installs take as proof that it is installed: `@scope/name` becomes
+/// `@scope/.bun-tmp-<hash>`. Hashed because a name may already be NAME_MAX long,
+/// deterministic so the next install of the package removes a stale one.
+pub(crate) struct StagingPath<'a>(pub(crate) &'a [u8]);
+
+impl core::fmt::Display for StagingPath<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let name_start = strings::last_index_of_char(self.0, b'/').map_or(0, |slash| slash + 1);
+        let scope = &self.0[..name_start];
+        write!(
+            f,
+            "{}.bun-tmp-{:016x}",
+            bstr::BStr::new(scope),
+            bun_wyhash::hash(self.0)
+        )
+    }
+}
+
+/// Renames a fully linked `StagingPath` (relative to `dir`) onto `dest`. Fails if
+/// `dest` is occupied.
+pub(crate) fn rename_staging_into_place(dir: Fd, staging: &ZStr, dest: &ZStr) -> sys::Maybe<()> {
+    #[cfg(windows)]
+    {
+        // A scanner still holding a just-written file open fails the rename for a
+        // few milliseconds (#11250 is the same failure for the cache). An occupied
+        // `dest` fails with the same errors and is not worth waiting on.
+        const RETRIES: u32 = 6;
+        for attempt in 0..RETRIES {
+            match sys::renameat(dir, staging, dir, dest) {
+                Err(err)
+                    if matches!(
+                        err.get_errno(),
+                        sys::E::EPERM | sys::E::EACCES | sys::E::EBUSY
+                    ) && !sys::directory_exists_at(dir, dest).unwrap_or(false) =>
+                {
+                    // 10ms, 20ms, ... 320ms: 630ms in total.
+                    std::thread::sleep(std::time::Duration::from_millis(10u64 << attempt));
+                }
+                result => return result,
+            }
+        }
+    }
+    sys::renameat(dir, staging, dir, dest)
 }
 
 // PORTING.md §Global mutable state: install-main-thread enum. `RacyCell`
@@ -450,28 +495,21 @@ impl<TaskType> NewTaskQueue<TaskType> {
     }
 
     /// # Safety
-    /// `task` must point to a live, Box-allocated `TaskType` whose ownership is
-    /// being handed to the thread pool; the worker reclaims it in its callback.
+    /// `task` must be the `heap::into_raw` pointer of a live `TaskType` whose
+    /// ownership is being handed to the thread pool; the worker reclaims it.
     pub(crate) unsafe fn push(&self, task: *mut TaskType)
     where
-        TaskType: HasWorkPoolTask,
+        TaskType: IntrusiveWorkTask,
     {
         self.wait_group.add_one();
-        // SAFETY: caller contract — `task` is a valid Box-allocated task; `.task()`
-        // is the intrusive node field.
-        self.thread_pool.schedule(Batch::from(unsafe {
-            std::ptr::from_mut::<WorkPoolTask>((*task).task())
-        }));
+        // SAFETY: caller contract; projecting through `task` keeps the allocation's provenance.
+        self.thread_pool
+            .schedule(Batch::from(unsafe { TaskType::field_of(task) }));
     }
 
     pub(crate) fn wait(&self) {
         self.wait_group.wait();
     }
-}
-
-#[cfg(windows)]
-pub(crate) trait HasWorkPoolTask {
-    fn task(&mut self) -> &mut WorkPoolTask;
 }
 
 // ───────────────────────────── HardLinkWindowsInstallTask ─────────────────────────────
@@ -490,11 +528,7 @@ struct HardLinkWindowsInstallTask {
 }
 
 #[cfg(windows)]
-impl HasWorkPoolTask for HardLinkWindowsInstallTask {
-    fn task(&mut self) -> &mut WorkPoolTask {
-        &mut self.task
-    }
-}
+bun_threading::intrusive_work_task!(HardLinkWindowsInstallTask, task);
 
 #[cfg(windows)]
 type HardLinkQueue = NewTaskQueue<HardLinkWindowsInstallTask>;
@@ -569,8 +603,8 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: task points to the `task` field of a HardLinkWindowsInstallTask.
-        let self_: *mut Self = unsafe { bun_core::from_field_ptr!(Self, task, task) };
+        // SAFETY: `task` is the `task` field pointer `NewTaskQueue::push` scheduled.
+        let self_: *mut Self = unsafe { Self::from_task_ptr(task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
         scopeguard::defer! { queue.complete_one(); }
@@ -778,23 +812,10 @@ impl<'a> PackageInstall<'a> {
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
     fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
-        let dest_len = self.destination_dir_subpath.len();
-        let suffix: &[u8] = &[SEP, b'.', b'b', b'u', b'n', b'-', b't', b'a', b'g'];
-        // Reshaped for borrowck — write into buf via raw indices.
-        self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b".bun-tag".len()] = 0;
-        // SAFETY: NUL written above.
-        let bun_tag_path = unsafe {
-            ZStr::from_raw_mut(
-                self.destination_dir_subpath_buf.as_mut_ptr(),
-                dest_len + SEP_STR.len() + b".bun-tag".len(),
-            )
-        };
-        let _restore = scopeguard::guard(
-            self.destination_dir_subpath_buf.as_mut_ptr(),
-            // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
-            // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
+        let mut spill = Vec::new();
+        let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[self.destination_dir_subpath.as_bytes(), b".bun-tag"],
         );
 
         let Ok(bun_tag_file) = self
@@ -859,25 +880,10 @@ impl<'a> PackageInstall<'a> {
         mutable.reset();
         mutable.expand_to_capacity();
 
-        let dest_len = self.destination_dir_subpath.len();
-        // Write the literal directly into the path buffer; no intermediate Vec.
-        let suffix: &[u8] = &[
-            SEP, b'p', b'a', b'c', b'k', b'a', b'g', b'e', b'.', b'j', b's', b'o', b'n',
-        ];
-        self.destination_dir_subpath_buf[dest_len..dest_len + suffix.len()].copy_from_slice(suffix);
-        self.destination_dir_subpath_buf[dest_len + SEP_STR.len() + b"package.json".len()] = 0;
-        // SAFETY: NUL written above.
-        let package_json_path = unsafe {
-            ZStr::from_raw_mut(
-                self.destination_dir_subpath_buf.as_mut_ptr(),
-                dest_len + SEP_STR.len() + b"package.json".len(),
-            )
-        };
-        let _restore = scopeguard::guard(
-            self.destination_dir_subpath_buf.as_mut_ptr(),
-            // SAFETY: p points into destination_dir_subpath_buf which outlives this scope;
-            // dest_len < buf capacity (was the prior NUL position).
-            move |p| unsafe { *p.add(dest_len) = 0 },
+        let mut spill = Vec::new();
+        let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[self.destination_dir_subpath.as_bytes(), b"package.json"],
         );
 
         let package_json_file = self
@@ -1091,13 +1097,9 @@ impl<'a> PackageInstall<'a> {
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
-                let slash = slash as usize;
-                self.destination_dir_subpath_buf[slash] = 0;
-                // SAFETY: NUL written above.
-                let subdir = ZStr::from_buf(self.destination_dir_subpath_buf, slash);
-                let _ = sys::mkdirat(destination_dir, subdir, 0o755);
-                self.destination_dir_subpath_buf[slash] = SEP;
+            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, path::SEP) {
+                let subdir = &self.destination_dir_subpath.as_bytes()[..slash as usize];
+                let _ = destination_dir.make_dir(subdir);
             }
         }
 
@@ -1733,8 +1735,8 @@ impl<'a> PackageInstall<'a> {
         {
             let cache_dir_path = sys::get_fd_path(state.walker.root(), &mut buf2)?;
             let cache_len = cache_dir_path.len();
-            if cache_len > 0 && cache_dir_path[cache_len - 1] != SEP {
-                buf2[cache_len] = SEP;
+            if cache_len > 0 && cache_dir_path[cache_len - 1] != path::SEP {
+                buf2[cache_len] = path::SEP;
                 to_copy_buf2_offset = cache_len + 1;
             } else {
                 to_copy_buf2_offset = cache_len;
@@ -2094,7 +2096,11 @@ impl<'a> PackageInstall<'a> {
                 }
             }
         };
-        let dest = bun_paths::basename(dest_path.as_bytes());
+        // The entry name is the NUL-terminated tail of `dest_path`.
+        let dest: &ZStr = ZStr::from_slice_with_nul(
+            &dest_path.as_bytes_with_nul()[subdir.map_or(0, |dir| dir.len() + 1)..],
+        );
+        debug_assert_eq!(dest.as_bytes(), bun_paths::basename(dest_path.as_bytes()));
         // When we're linking on Windows, we want to avoid keeping the source directory handle open
         #[cfg(windows)]
         {
@@ -2145,7 +2151,14 @@ impl<'a> PackageInstall<'a> {
                 dest_buf[offset] = bun_paths::SEP_WINDOWS;
                 offset += 1;
             }
-            dest_buf[offset..offset + dest.len()].copy_from_slice(dest);
+            if offset + dest.len() >= dest_buf.len() {
+                return InstallResult::fail(
+                    crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                    Step::LinkingDependency,
+                    None,
+                );
+            }
+            dest_buf[offset..offset + dest.len()].copy_from_slice(dest.as_bytes());
             offset += dest.len();
             dest_buf[offset] = 0;
 
@@ -2204,19 +2217,13 @@ impl<'a> PackageInstall<'a> {
                 Err(err) => return InstallResult::fail(err.into(), Step::LinkingDependency, None),
             };
 
-            let target = path::resolve_path::relative(dest_dir_path, to_path);
-            // `symlinkat` takes `&ZStr` for both target and dest; build NUL-terminated
-            // copies in stack buffers.
             let mut target_buf = PathBuffer::uninit();
-            target_buf[..target.len()].copy_from_slice(target);
-            target_buf[target.len()] = 0;
-            // SAFETY: NUL written above.
-            let target_z = ZStr::from_buf(&target_buf, target.len());
-            let mut dest_name_buf = [0u8; 512];
-            dest_name_buf[..dest.len()].copy_from_slice(dest);
-            // SAFETY: zero-initialized; NUL at [dest.len()].
-            let dest_z = ZStr::from_buf(&dest_name_buf, dest.len());
-            if let Err(err) = sys::symlinkat(target_z, dest_dir.fd(), dest_z) {
+            let target = path::resolve_path::relative_buf_z(
+                target_buf.as_mut_slice(),
+                dest_dir_path,
+                to_path,
+            );
+            if let Err(err) = sys::symlinkat(target, dest_dir.fd(), dest) {
                 return InstallResult::fail(err.into(), Step::LinkingDependency, None);
             }
         }
@@ -2250,6 +2257,8 @@ impl<'a> PackageInstall<'a> {
     ) -> bool {
         let state = manager.get_preinstall_state(package_id);
         match state {
+            // no entry name until extraction records a local tarball's integrity
+            _ if self.cache_dir_subpath.is_empty() => true,
             crate::PreinstallState::Done => false,
             _ => {
                 let exists = if self.patch.is_none() {
@@ -2308,6 +2317,56 @@ impl<'a> PackageInstall<'a> {
             self.uninstall_before_install(destination_dir);
         }
 
+        let mut staging_buf = path::path_buffer_pool::get();
+        let Ok(staging) = bun_core::fmt::buf_print_z(
+            &mut staging_buf[..],
+            format_args!("{}", StagingPath(self.destination_dir_subpath.as_bytes())),
+        ) else {
+            return InstallResult::fail(
+                crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG),
+                Step::OpeningDestDir,
+                None,
+            );
+        };
+        // A stale one may hold files of another version, which the backends would keep.
+        if let Err(err) = destination_dir.delete_tree(staging.as_bytes()) {
+            return InstallResult::fail(err.into(), Step::OpeningDestDir, None);
+        }
+
+        let staged = PackageInstall {
+            destination_dir_subpath: staging,
+            progress: self.progress.as_deref_mut(),
+            ..*self
+        }
+        .install_into(destination_dir, method_, resolution_tag);
+        if let failure @ InstallResult::Failure(_) = staged {
+            let _ = destination_dir.delete_tree(staging.as_bytes());
+            return failure;
+        }
+
+        let dest = self.destination_dir_subpath;
+        let mut renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
+        if renamed.is_err() && dest.as_bytes() != b"." {
+            // Occupied: a workspace depended on under two names is walked as two trees,
+            // so the packages inside it are installed twice. The later one replaces it.
+            self.uninstall_before_install(destination_dir);
+            renamed = rename_staging_into_place(destination_dir.fd(), staging, dest);
+        }
+        match renamed {
+            Ok(()) => InstallResult::Success,
+            Err(err) => {
+                let _ = destination_dir.delete_tree(staging.as_bytes());
+                InstallResult::fail(err.into(), Step::MovingIntoPlace, None)
+            }
+        }
+    }
+
+    fn install_into(
+        &mut self,
+        destination_dir: &Dir,
+        method_: Method,
+        resolution_tag: resolution::Tag,
+    ) -> InstallResult {
         let mut supported_method_to_use = method_;
 
         if resolution_tag == resolution::Tag::Folder

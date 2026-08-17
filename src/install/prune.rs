@@ -311,7 +311,7 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
                 .filter(|f| matches!(f.kind, FolderKind::NodeModules | FolderKind::Store))
                 .count();
             bun_core::pretty!(
-                "<r><green>Done<r>! Checked <green>{} package{}<r> across {} folder{} <d>(nothing to prune)<r> ",
+                "<r><green>Done<r>! Checked <green>{} installed package{}<r> across {} folder{} <d>(nothing to prune)<r> ",
                 checked,
                 plural(checked),
                 folders,
@@ -333,15 +333,16 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
                 plan.print_row(removal);
             }
             bun_core::pretty!(
-                "<r><b>{}<r> package{} can be removed <d>(checked {})<r> ",
+                "<r><b>{}<r> package{} can be removed <d>(checked {} installed package{})<r> ",
                 n,
                 plural(n),
-                checked
+                checked,
+                plural(checked)
             );
             print_elapsed();
             print_apply_hint();
         }
-        return Ok(());
+        Global::exit(manager.options.check as u32);
     }
 
     let failed = execute(&plan, quiet);
@@ -354,7 +355,11 @@ pub fn prune(manager: &mut PackageManager, original_cwd: &[u8]) -> crate::Result
         if failed > 0 {
             bun_core::pretty!(", <red>{} failed<r>", failed);
         }
-        bun_core::pretty!(" <d>(checked {})<r> ", checked);
+        bun_core::pretty!(
+            " <d>(checked {} installed package{})<r> ",
+            checked,
+            plural(checked)
+        );
         print_elapsed();
     }
     if failed > 0 {
@@ -398,7 +403,7 @@ fn print_apply_hint() {
         .skip_while(|arg| **arg != *b"prune")
         .skip(1)
     {
-        if arg.starts_with(b"--dry-run") {
+        if arg.starts_with(b"--dry-run") || arg.starts_with(b"--check") {
             continue;
         }
         bun_core::pretty!(" {}", BStr::new(arg));
@@ -641,10 +646,11 @@ struct HoistedTree<'a> {
     paths: Vec<u8>,
     expected: Vec<(&'a [u8], PackageID)>,
     quiet: bool,
+    /// The expected tree excludes dev/optional/peer dependencies.
+    filtered: bool,
     kept_mismatched: Cell<bool>,
-    checked: RefCell<DynamicBitSet>,
-    matched: RefCell<DynamicBitSet>,
-    missing: RefCell<DynamicBitSet>,
+    /// Memoized `installed()` per `expected` index.
+    verified: RefCell<Vec<Option<Installed>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -652,10 +658,13 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
+    /// `filtered` only: a version the lockfile installs elsewhere, kept without warning.
+    OtherVersion,
 }
 
 impl<'a> HoistedTree<'a> {
-    fn init(lockfile: &'a Lockfile, quiet: bool) -> HoistedTree<'a> {
+    /// `quiet` and `filtered` start off; callers set them with struct update.
+    fn init(lockfile: &'a Lockfile) -> HoistedTree<'a> {
         let trees = lockfile.buffers.trees.as_slice();
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
@@ -697,20 +706,17 @@ impl<'a> HoistedTree<'a> {
             };
         }
 
-        let checked = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let matched = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let missing = handle_oom(DynamicBitSet::init_empty(expected.len()));
+        let verified = vec![None; expected.len()];
         HoistedTree {
             lockfile,
             trees,
             folders,
             paths,
             expected,
-            quiet,
+            quiet: false,
+            filtered: false,
             kept_mismatched: Cell::new(false),
-            checked: RefCell::new(checked),
-            matched: RefCell::new(matched),
-            missing: RefCell::new(missing),
+            verified: RefCell::new(verified),
         }
     }
 
@@ -750,8 +756,10 @@ impl<'a> HoistedTree<'a> {
         };
         let (alias, pkg_id) = self.expected[idx];
         let installed = self.verified_installed(id, idx, alias, pkg_id);
-        if installed == Installed::Matches {
-            return true;
+        match installed {
+            Installed::Matches => return true,
+            Installed::OtherVersion => return false,
+            Installed::Missing | Installed::Mismatch => {}
         }
         self.kept_mismatched.set(true);
         if !self.quiet {
@@ -784,22 +792,11 @@ impl<'a> HoistedTree<'a> {
         alias: &[u8],
         pkg_id: PackageID,
     ) -> Installed {
-        if self.checked.borrow().is_set(idx) {
-            return if self.matched.borrow().is_set(idx) {
-                Installed::Matches
-            } else if self.missing.borrow().is_set(idx) {
-                Installed::Missing
-            } else {
-                Installed::Mismatch
-            };
+        if let Some(installed) = self.verified.borrow()[idx] {
+            return installed;
         }
         let installed = self.installed(tree_id, alias, pkg_id);
-        self.checked.borrow_mut().set(idx);
-        match installed {
-            Installed::Matches => self.matched.borrow_mut().set(idx),
-            Installed::Missing => self.missing.borrow_mut().set(idx),
-            Installed::Mismatch => {}
-        }
+        self.verified.borrow_mut()[idx] = Some(installed);
         installed
     }
 
@@ -837,12 +834,20 @@ impl<'a> HoistedTree<'a> {
         let expected_name = self.lockfile.packages.items_name()[pkg_id as usize].slice(buf);
         let matches = match res.tag {
             ResolutionTag::Npm => {
-                installed_package_json(&package).is_some_and(|(name, version)| {
-                    let expected = res.npm().version.fmt(buf).to_string();
-                    version.is_some_and(|version| {
-                        without_build(&version) == without_build(expected.as_bytes())
-                    }) && name == expected_name
-                })
+                let Some((name, Some(version))) = installed_package_json(&package) else {
+                    return Installed::Mismatch;
+                };
+                if name != expected_name {
+                    return Installed::Mismatch;
+                }
+                let expected = res.npm().version.fmt(buf).to_string();
+                if without_build(&version) == without_build(expected.as_bytes()) {
+                    return Installed::Matches;
+                }
+                if self.filtered && self.version_in_lockfile(pkg_id, &version) {
+                    return Installed::OtherVersion;
+                }
+                return Installed::Mismatch;
             }
             ResolutionTag::Git | ResolutionTag::Github => {
                 sys::File::read_from(package.fd(), b".bun-tag")
@@ -858,6 +863,22 @@ impl<'a> HoistedTree<'a> {
         } else {
             Installed::Mismatch
         }
+    }
+
+    /// Whether some npm package with the same name in the lockfile resolves
+    /// to `version`.
+    fn version_in_lockfile(&self, pkg_id: PackageID, version: &[u8]) -> bool {
+        let lockfile = self.lockfile;
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let name_hash = lockfile.packages.items_name_hash()[pkg_id as usize];
+        let pkg_res = lockfile.packages.items_resolution();
+        lockfile.packages_named(name_hash).iter().any(|&id| {
+            pkg_res.get(id as usize).is_some_and(|res| {
+                res.tag == ResolutionTag::Npm
+                    && without_build(version)
+                        == without_build(res.npm().version.fmt(buf).to_string().as_bytes())
+            })
+        })
     }
 }
 
@@ -904,8 +925,16 @@ fn plan_hoisted(
     hoist_filtered(manager);
 
     let quiet = manager.options.log_level == LogLevel::Silent;
+    let features = manager.options.local_package_features;
+    let filtered = !features.dev_dependencies
+        || !features.optional_dependencies
+        || !features.peer_dependencies;
     let lockfile: &Lockfile = &manager.lockfile;
-    let hoisted = HoistedTree::init(lockfile, quiet);
+    let hoisted = HoistedTree {
+        quiet,
+        filtered,
+        ..HoistedTree::init(lockfile)
+    };
     let buf = lockfile.buffers.string_bytes.as_slice();
     let deps = lockfile.buffers.dependencies.as_slice();
     let trees = lockfile.buffers.trees.as_slice();
@@ -1089,8 +1118,14 @@ pub(crate) fn remove_collapsed_copies(manager: &PackageManager, before: &Lockfil
         return;
     }
     let quiet = manager.options.log_level == LogLevel::Silent;
-    let old = HoistedTree::init(before, true);
-    let new = HoistedTree::init(after, quiet);
+    let old = HoistedTree {
+        quiet: true,
+        ..HoistedTree::init(before)
+    };
+    let new = HoistedTree {
+        quiet,
+        ..HoistedTree::init(after)
+    };
     let targets = manager.filtered_link_targets.as_ref();
     let selected: Option<Vec<PackageID>> = targets.map(|targets| targets.package_ids(before));
     let importers = selected.as_ref().map(|_| tree_importers(before));
@@ -1498,11 +1533,15 @@ fn push_store_entry_names(
 ) {
     let pkg_res = lockfile.packages.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_nested_folder = store.entries.items_nested_folder();
     names.reserve(store.entries.len());
     let mut name: Vec<u8> = Vec::new();
     for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
         let pkg_id = node_pkg_ids[node_id.get() as usize] as usize;
-        if pkg_res[pkg_id].tag == ResolutionTag::Workspace || !wanted.is_set(pkg_id) {
+        if pkg_res[pkg_id].tag == ResolutionTag::Workspace
+            || entry_nested_folder[entry_idx]
+            || !wanted.is_set(pkg_id)
+        {
             continue;
         }
         name.clear();

@@ -1,7 +1,7 @@
 import { file, write } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chmod, exists, mkdir, rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, isWindows, normalizeBunSnapshot } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, isRoot, isWindows, normalizeBunSnapshot } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -2141,7 +2141,7 @@ test.concurrent("remove --filter --dry-run touches nothing", async () => {
   expect(await exists(join(dir, "node_modules", "no-deps", "package.json"))).toBeTrue();
 });
 
-test.concurrent.skipIf(isWindows || process.getuid?.() === 0)(
+test.concurrent.skipIf(isWindows || isRoot)(
   "an unwritable target is reported by name, the rest is still written, exit code 1",
   async () => {
     const dir = await makeMonorepo();

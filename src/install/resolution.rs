@@ -96,17 +96,6 @@ pub enum TaggedValue<SemverInt: VersionInt> {
 }
 
 impl<SemverInt: VersionInt> ResolutionType<SemverInt> {
-    /// Const-evaluable zeroed sentinel. Mirrors `Default::default()` but usable
-    /// in `const` / `static` position (e.g. dummy `&'static Resolution` returns).
-    /// Only the tag/padding are guaranteed zero — the union payload is the
-    /// `uninitialized` variant, which is the only field a `Tag::Uninitialized`
-    /// reader may legally access.
-    pub(crate) const ZEROED: Self = Self {
-        tag: Tag::Uninitialized,
-        _padding: [0; 7],
-        value: Value { uninitialized: () },
-    };
-
     /// Construct from a tagged value, e.g. `Resolution::init(TaggedValue::Npm(...))`.
     #[inline]
     pub(crate) fn init(value: TaggedValue<SemverInt>) -> Self {
@@ -1012,6 +1001,18 @@ impl Tag {
 impl Tag {
     pub(crate) fn is_git(self) -> bool {
         self == Tag::Git || self == Tag::Github
+    }
+
+    /// The root, a workspace, or a `file:` folder: the project's own package.json, parsed with
+    /// `local_package_features` and its `file:` paths stored relative to the top-level dir.
+    pub(crate) fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
+    }
+
+    /// Cached under a hash of the path or URL, so the folder's contents can
+    /// change from one extraction to the next.
+    pub(crate) fn is_tarball(self) -> bool {
+        self == Tag::LocalTarball || self == Tag::RemoteTarball
     }
 
     pub(crate) fn can_enqueue_install_task(self) -> bool {

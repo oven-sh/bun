@@ -4,7 +4,7 @@ use core::fmt::Write as _;
 
 use crate::bun_json as JSON;
 use bun_ast::{Expr, expr::Data as ExprData};
-use bun_collections::{HashContext, HashMap, StringHashMap, index_sort};
+use bun_collections::{DynamicBitSet, HashContext, HashMap, StringHashMap};
 use bun_core::strings;
 use bun_core::{self};
 use bun_paths::PathBuffer;
@@ -114,6 +114,8 @@ pub enum Version {
     /// - a git `.bun-tag` must be a safe path/checkout component (the same
     ///   check on a `github` tag is enforced at every version, since its
     ///   download path has no checkout-time re-validation)
+    ///
+    /// Same content as v1; only ever preserved, never stamped on a new lockfile.
     V2 = 2,
 
     /// `overrides` values may be objects holding scoped rules (parent-scoped or `name@range` targets); stamped while such rules exist and the package walk in `Stringifier::version_to_write` is v2-clean (object rows themselves parse at every version)
@@ -185,49 +187,25 @@ pub(crate) struct Stringifier;
 impl Stringifier {
     const INDENT_SCALAR: usize = 2;
 
-    /// Pick the `lockfileVersion` to stamp. A lockfile loaded from disk keeps
-    /// the version it already carried — re-saving never silently upgrades an
-    /// existing `bun.lock` to a newer format. `text_lockfile_version` holds the
-    /// parsed version when the lockfile was loaded from text, and defaults to
-    /// `Version::CURRENT` otherwise (a fresh install, or a migration from
-    /// another lockfile format), the "no version previously" case whose stamp
-    /// is decided by the walk below.
-    ///
-    /// The one version that is *not* preserved is v0: v0→v1 was a content-format
-    /// change (v1 stopped listing a workspace package's dependencies as a
-    /// trailing object), and the writer only ever emits the v1+ single-element
-    /// `["name@workspace:path"]` form. Stamping v0 on that output would make the
-    /// next parse fail ("Missing dependencies object"), so a v0 lockfile is
-    /// floored to v1 — the lowest version whose content matches what we write.
-    /// v1→v2, by contrast, only added parse-time strictness on identical
-    /// content, so v1 is preserved as-is.
-    ///
-    /// Scoped overrides (parent-scoped or `name@range` rules) are stamped v3, but
-    /// only after the same walk: a lockfile the walk holds at v1 stays v1 with the
-    /// override objects written as-is, since the parser reads those at every
-    /// version while its v2+ integrity check is evaluated against the *reader's*
-    /// registries — stamping 3 there would make the file config-dependent again.
-    /// A walk-clean lockfile with scoped rules is stamped v3 whatever version was
-    /// loaded. Without scoped rules a lockfile keeps its loaded v1/v2, and a fresh
-    /// or v3-loaded one is walked down to v2, or to v1 on a v2-invariant violation
-    /// (off-registry npm tarball without a supported integrity, unsafe git
-    /// `.bun-tag`); that decision must not depend on the writer's `~/.npmrc`.
-    ///
-    /// Walks the package tree the same way the writer does — only packages that
-    /// are actually serialized are considered, not every entry in the in-memory
-    /// `pkg_resolutions` buffer (migration can leave pruned/unreferenced entries
-    /// there that never reach the written `packages` object).
+    /// The lowest `lockfileVersion` whose readers understand the content being
+    /// written: v1 and v2 are the same content and pre-v2 readers reject the v2
+    /// stamp, so a new lockfile is v1; v3 is stamped only while scoped overrides
+    /// (which older readers would silently drop) exist.
     fn version_to_write(lockfile: &BinaryLockfile) -> Version {
-        let loaded = lockfile.text_lockfile_version;
-        let has_scoped = lockfile.overrides.has_scoped();
-        if !has_scoped && !loaded.at_least(Version::V3) {
-            return if loaded.at_least(Version::V1) {
-                loaded
-            } else {
-                Version::V1
+        if !lockfile.overrides.has_scoped() {
+            return match lockfile.text_lockfile_version {
+                loaded @ (Version::V1 | Version::V2) => loaded,
+                // v0: the writer only emits the v1+ workspace entry shape. v3: a
+                // lockfile that was never loaded sits at `Version::CURRENT`.
+                Version::V0 | Version::V3 => Version::V1,
             };
         }
 
+        // v3 implies the v2 parse checks, which a reader evaluates against its
+        // own registry config. Any serialized row that some reader could reject
+        // holds the file at v1 instead; the override objects parse at every
+        // version. Walk the tree rather than `pkg_resolutions`, which migration
+        // can leave holding entries the writer never emits.
         let buf = lockfile.buffers.string_bytes.as_slice();
         let deps_buf = lockfile.buffers.dependencies.as_slice();
         let resolution_buf = lockfile.buffers.resolutions.as_slice();
@@ -255,29 +233,19 @@ impl Stringifier {
                         if pkg_metas[i].integrity.tag.is_supported() {
                             continue;
                         }
-                        // No supported integrity: only v2-clean if the tarball
-                        // URL is under the *default* registry, the one case the
-                        // writer normalizes to `""` (see the npm URL
-                        // serialization in `save_from_binary`). An empty
-                        // URL never sets the parser's `npm_url_needs_integrity`,
-                        // so that round-trips for any reader. A URL under a
-                        // configured-but-not-default scope is written verbatim,
-                        // and the parser's integrity check is evaluated against
-                        // the *reader's* scope config, so it is not
-                        // config-independent: a writer with a private `@scope`
-                        // registry could stamp v2 on a lockfile a teammate
-                        // without that scope then fails to parse. Stay at v1 for
-                        // those so the file keeps loading everywhere.
+                        // Only a default-registry URL is config-independent: the
+                        // writer serializes it as `""`, which never trips the
+                        // parser's `npm_url_needs_integrity`. A URL under one of
+                        // the writer's own scopes is written verbatim and a reader
+                        // without that scope would reject it.
                         let url = res.npm().url.slice(buf);
                         if !url_is_under_registry(url, Npm::Registry::DEFAULT_URL.as_bytes()) {
                             return Version::V1;
                         }
                     }
                     ResolutionTag::Git => {
-                        // An unsafe git `.bun-tag` is only rejected at v2, so
-                        // staying at v1 keeps it loading. (A `github` tag is
-                        // rejected at every version, so no lockfile version can
-                        // round-trip an unsafe one — nothing to gate here.)
+                        // A `github` tag is rejected at every version, so there is
+                        // nothing to gate for it.
                         if !crate::repository::is_safe_resolved_tag(
                             res.repository().resolved.slice(buf),
                         ) {
@@ -288,7 +256,7 @@ impl Stringifier {
                 }
             }
         }
-        if has_scoped { Version::V3 } else { Version::V2 }
+        Version::V3
     }
 
     pub(crate) fn save_from_binary(
@@ -412,7 +380,7 @@ impl Stringifier {
                 }
 
                 // local Sorter struct → closure
-                index_sort::sort_indices(&mut workspace_sort_buf, &mut |l, r| {
+                workspace_sort_buf.sort_by(|&l, &r| {
                     let l_res = &pkg_resolutions[l as usize];
                     let r_res = &pkg_resolutions[r as usize];
                     l_res.workspace().order(*r_res.workspace(), buf, buf)
@@ -531,7 +499,7 @@ impl Stringifier {
 
             pkgs_iter.reset();
 
-            index_sort::sort_slice_by(&mut tree_sort_buf, tree_sort_is_less_than);
+            tree_sort_buf.sort_by(tree_sort_is_less_than);
 
             if found_trusted_dependencies.len() > 0 {
                 Self::write_indent(writer, *indent)?;
@@ -676,7 +644,7 @@ impl Stringifier {
                         string_buf: buf,
                         deps_buf,
                     };
-                    index_sort::sort_indices(&mut tree_deps_sort_buf, &mut |a, b| {
+                    tree_deps_sort_buf.sort_by(|&a, &b| {
                         if ctx.is_less_than(a, b) {
                             core::cmp::Ordering::Less
                         } else if ctx.is_less_than(b, a) {
@@ -775,7 +743,7 @@ impl Stringifier {
                             string_buf: buf,
                             deps_buf,
                         };
-                        index_sort::sort_indices(&mut pkg_deps_sort_buf, &mut |a, b| {
+                        pkg_deps_sort_buf.sort_by(|&a, &b| {
                             if ctx.is_less_than(a, b) {
                                 core::cmp::Ordering::Less
                             } else if ctx.is_less_than(b, a) {
@@ -786,7 +754,7 @@ impl Stringifier {
                         });
                     }
 
-                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc (TODO), bin, binDir }
+                    // INFO = { prod/dev/optional/peer dependencies, os, cpu, libc, bin, binDir }
 
                     // first index is resolution for each type of package
                     // npm         -> [ "name@version", registry (TODO: remove if default), INFO, integrity]
@@ -1063,7 +1031,7 @@ impl Stringifier {
         Ok(())
     }
 
-    /// Writes a single line object. Contains dependencies, os, cpu, libc (soon), and bin
+    /// Writes a single line object. Contains dependencies, os, cpu, libc, and bin
     /// { "devDependencies": { "one": "1.1.1", "two": "2.2.2" }, "os": "none" }
     fn write_package_info_object(
         writer: &mut Writer,
@@ -1178,15 +1146,6 @@ impl Stringifier {
             writer.write_all(b" \"bundled\": true")?;
         }
 
-        // TODO(dylan-conway)
-        // if (meta.libc != .all) {
-        //     try writer.writeAll(
-        //         \\"libc": [
-        //     );
-        //     try Negatable(Npm.Libc).toJson(meta.libc, writer);
-        //     try writer.writeAll("], ");
-        // }
-
         if meta.os != Npm::OperatingSystem::ALL {
             if any {
                 writer.write_byte(b',')?;
@@ -1205,6 +1164,18 @@ impl Stringifier {
             }
             writer.write_all(b" \"cpu\": ")?;
             Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
+        }
+
+        // Only a restriction to one libc matters at install time; written by name rather than `Negatable`'s "!musl".
+        if let Some(libc) = meta.libc.single_name() {
+            if any {
+                writer.write_byte(b',')?;
+            } else {
+                any = true;
+            }
+            writer.write_all(b" \"libc\": \"")?;
+            writer.write_all(libc)?;
+            writer.write_byte(b'"')?;
         }
 
         if bin.tag != BinTag::None {
@@ -1674,6 +1645,23 @@ pub(crate) enum ResolveError {
     Unresolvable,
 }
 
+/// Which row's `find_resolution` binds an edge of a package printed at several paths (each row
+/// binds the same edges again and can walk into a different copy of a peer): a row overwrites an
+/// earlier binding only with at least as much evidence. `Tree::hoist_dependency` puts an edge's
+/// target in the dependent's own path or at the root, never at an enclosing path in between (a
+/// copy there was placed for another edge and this one merely deduped onto it).
+#[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
+enum RowEvidence {
+    Unbound,
+    /// Found by walking up; every walked find of an optional peer too, since the hoister rebinds
+    /// those to whatever each placement dedupes onto (`HoistDependencyResult::Rebind`).
+    Walked,
+    /// The root's copy, which may be this edge's own binding, placed there from this row.
+    WalkedToRoot,
+    /// The copy printed in the package's own path, which is only there for the package's own edge.
+    OwnEntry,
+}
+
 impl<T> PkgMap<T> {
     // No `Entry` alias — inherent associated types are
     // unstable; callers name `T` directly.
@@ -1714,7 +1702,7 @@ impl<T> PkgMap<T> {
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
     }
 
@@ -1735,7 +1723,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: &PkgPathSet,
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
     }
 
@@ -1746,7 +1734,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: Option<&PkgPathSet>,
-    ) -> Result<&T, ResolveError> {
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
@@ -1757,6 +1745,7 @@ impl<T> PkgMap<T> {
         path_buf[pkg_path.len()] = b'/';
         let mut offset = pkg_path.len() + 1;
 
+        let mut own_path = true;
         let mut at_bundle_root = false;
         let mut valid = true;
         while valid {
@@ -1764,7 +1753,14 @@ impl<T> PkgMap<T> {
             let res_path = &path_buf[0..offset + dep_name.len()];
 
             if let Some(entry) = self.map.get(res_path) {
-                return Ok(entry);
+                let evidence = if own_path {
+                    RowEvidence::OwnEntry
+                } else if offset == 0 && !dep.behavior.is_optional_peer() {
+                    RowEvidence::WalkedToRoot
+                } else {
+                    RowEvidence::Walked
+                };
+                return Ok((entry, evidence));
             }
 
             if offset == 0 || at_bundle_root {
@@ -1774,6 +1770,7 @@ impl<T> PkgMap<T> {
             if let Some(bundled_pkgs) = bundled_pkgs {
                 at_bundle_root = bundled_pkgs.contains(&path_buf[0..offset - 1]);
             }
+            own_path = false;
 
             let Some(slash) = strings::last_index_of_char(&path_buf[0..offset - 1], b'/') else {
                 offset = 0;
@@ -1814,6 +1811,22 @@ impl<T> PkgMap<T> {
         }
 
         Err(ResolveError::InvalidPackageKey)
+    }
+}
+
+impl PkgMap<PackageID> {
+    /// Whether a folder on the way down to `pkg_path` holds `pkg_id` too. Each of those
+    /// folders is a key of its own; a prefix ending inside a scoped name matches nothing.
+    fn is_below_copy_of(&self, pkg_path: &[u8], pkg_id: PackageID) -> bool {
+        let mut end: usize = 0;
+        while let Some(i) = strings::index_of_char_usize(&pkg_path[end..], b'/') {
+            end += i;
+            if self.get(&pkg_path[..end]) == Some(&pkg_id) {
+                return true;
+            }
+            end += 1;
+        }
+        false
     }
 }
 
@@ -2844,10 +2857,9 @@ pub(crate) fn parse_into_binary_lockfile(
                                 pkg.meta.arch =
                                     Npm::negatable_from_json_value::<Npm::Architecture>(arch);
                             }
-                            // TODO(dylan-conway)
-                            // if (os_cpu_libc_obj.get("libc")) |libc| {
-                            //     pkg.meta.libc = Negatable(Npm.Libc).fromJson(allocator, libc);
-                            // }
+                            if let Some(libc) = deps_os_cpu_libc_bin_bundle_obj.get(b"libc") {
+                                pkg.meta.libc = Npm::negatable_from_json_value::<Npm::Libc>(libc);
+                            }
                         }
                     }
                     ResolutionTag::Root => {
@@ -3051,10 +3063,6 @@ pub(crate) fn parse_into_binary_lockfile(
             .resize(lockfile.buffers.dependencies.len(), invalid_package_id);
         lockfile.buffers.resolutions.fill(invalid_package_id);
 
-        // a package can list the same dependency in each dependnecy group, but only the first
-        // is chosen (dev -> optional -> prod -> peer)
-        let mut seen_deps: bun_collections::StringArrayHashMap<()> = Default::default();
-
         // The two `[0]` writes are done first via
         // sequential `&mut` accessors so the loops can take all column views
         // immutably without overlapping exclusive borrows or `unsafe`.
@@ -3065,6 +3073,7 @@ pub(crate) fn parse_into_binary_lockfile(
         let pkgs = lockfile.packages.slice();
         let pkg_deps = pkgs.items_dependencies();
         let pkg_names = pkgs.items_name();
+        let pkg_name_hashes: &[PackageNameHash] = pkgs.items_name_hash();
         let pkg_resolutions: &[Resolution] = pkgs.items_resolution();
 
         // Populated by `append_package_dedupe` while the packages object was
@@ -3073,6 +3082,10 @@ pub(crate) fn parse_into_binary_lockfile(
         let package_index = &lockfile.package_index;
         let overrides = &lockfile.overrides;
         let catalogs: &CatalogMap = &lockfile.catalogs;
+        let workspace_versions: &VersionHashMap = &lockfile.workspace_versions;
+        let link_workspace_packages = manager
+            .as_deref()
+            .is_none_or(|manager| manager.options.link_workspace_packages);
 
         // Disjoint-field split of `lockfile.buffers` so each loop body can hold
         // `&mut dependencies[i]` and `&mut resolutions[i]` together with a shared
@@ -3081,6 +3094,42 @@ pub(crate) fn parse_into_binary_lockfile(
         let string_buf: &[u8] = buffers.string_bytes.as_slice();
         let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
+
+        // Whether `Package::parse_dependency` links `dep` to the workspace bun.lock bound it to, so
+        // `Diff::generate` sees the loaded and parsed rows as equal. With `linkWorkspacePackages` off it
+        // links no range (a range still bound to a workspace is loaded as linked so the diff re-resolves
+        // it); peers, overridden entries (never `npm:` aliases) and dist-tags bind to a workspace either way.
+        let links_workspace = |dep: &Dependency, workspace_pkg_id: PackageID| -> bool {
+            if dep.version.tag == DependencyVersionTag::Workspace {
+                return true;
+            }
+            let is_alias =
+                dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias;
+            let range = if link_workspace_packages {
+                &dep.version
+            } else if dep.behavior.is_peer()
+                || (!is_alias && overrides.has_rule_for_name(dep.name_hash))
+            {
+                return false;
+            } else {
+                catalogs.resolve_range(string_buf, dep)
+            };
+            if range.tag != DependencyVersionTag::Npm {
+                return false;
+            }
+            let npm = range.npm();
+            let workspace_pkg = workspace_pkg_id as usize;
+            // `workspace_versions` and a peer's binding are keyed by name hash; the names must match too.
+            npm.name
+                .eql(pkg_names[workspace_pkg], string_buf, string_buf)
+                && (!link_workspace_packages
+                    || workspace_versions
+                        .get(&pkg_name_hashes[workspace_pkg])
+                        .is_some_and(|workspace_version| {
+                            npm.version
+                                .satisfies(*workspace_version, string_buf, string_buf)
+                        }))
+        };
 
         {
             // first the root dependencies are resolved
@@ -3095,6 +3144,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     overrides,
                     pkg_resolutions,
                     string_buf,
+                    |_| true,
                 );
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
@@ -3113,15 +3163,6 @@ pub(crate) fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                if !dep.behavior.is_workspace()
-                    && seen_deps
-                        .get_or_put(dep.name.slice(string_buf))?
-                        .found_existing
-                {
-                    resolutions[dep_id as usize] = res_id;
-                    continue;
-                }
-
                 map_dep_to_pkg(
                     dep,
                     dep_id,
@@ -3129,6 +3170,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    links_workspace,
                 );
             }
         }
@@ -3140,8 +3182,6 @@ pub(crate) fn parse_into_binary_lockfile(
             for _pkg_id in workspace_pkgs_off..workspace_pkgs_off + workspace_pkgs_len {
                 let pkg_id: PackageID = _pkg_id;
                 let workspace_name = pkg_names[pkg_id as usize].slice(string_buf);
-
-                seen_deps.clear_retaining_capacity();
 
                 let deps = pkg_deps[pkg_id as usize];
                 for _dep_id in deps.begin()..deps.end() {
@@ -3177,6 +3217,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         overrides,
                         pkg_resolutions,
                         string_buf,
+                        |_| true,
                     );
                     let Some(res_id) = peer_res_id.or_else(|| {
                         pkg_map
@@ -3198,11 +3239,6 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    if seen_deps.get_or_put(dep_name)?.found_existing {
-                        resolutions[dep_id as usize] = res_id;
-                        continue;
-                    }
-
                     map_dep_to_pkg(
                         dep,
                         dep_id,
@@ -3210,12 +3246,15 @@ pub(crate) fn parse_into_binary_lockfile(
                         resolutions,
                         lockfile_version,
                         pkg_resolutions,
+                        links_workspace,
                     );
                 }
             }
         }
 
-        // then each package dependency
+        // then each package dependency; a package printed at several paths comes through once per
+        // path (see `RowEvidence`; edges bound by version do not depend on the path).
+        let mut bound_by: Vec<RowEvidence> = vec![RowEvidence::Unbound; dependencies.len()];
         for row in pkg_rows {
             let pkg_path = row.key.slice();
 
@@ -3227,6 +3266,12 @@ pub(crate) fn parse_into_binary_lockfile(
 
             if res.tag == ResolutionTag::Workspace {
                 // we've already resolved the workspace dependencies above
+                continue;
+            }
+
+            // A copy below another copy of itself has no node_modules of its own (`Tree::process_subtree`);
+            // the copy above binds the package's edges.
+            if pkg_map.is_below_copy_of(pkg_path, pkg_id) {
                 continue;
             }
 
@@ -3248,6 +3293,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     overrides,
                     pkg_resolutions,
                     string_buf,
+                    |_| true,
                 );
                 let res_id = match peer_res_id {
                     Some(id) => id,
@@ -3267,7 +3313,13 @@ pub(crate) fn parse_into_binary_lockfile(
                             pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
                         };
                         match found {
-                            Ok(&id) => id,
+                            Ok((&id, evidence)) => {
+                                if bound_by[dep_id as usize] > evidence {
+                                    continue 'deps;
+                                }
+                                bound_by[dep_id as usize] = evidence;
+                                id
+                            }
                             Err(ResolveError::InvalidPackageKey) => {
                                 log.add_error(Some(source), row.key_loc, b"Invalid package path");
                                 return Err(ParseError::InvalidPackageKey);
@@ -3297,6 +3349,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    |_, _| true,
                 );
             }
         }
@@ -3309,26 +3362,18 @@ pub(crate) fn parse_into_binary_lockfile(
     Ok(())
 }
 
-/// The catalog-resolved range of a peer edge the fresh resolver defers to its second phase
-/// (`install_peer`) and binds by version there. Two exemptions, matching
-/// `enqueue_dependency_with_main_and_success_fn`: optional peers return
-/// before the deferred phase and are bound to the hoisted-tree sibling by
-/// `process_subtree` instead, and `*` peers express no version preference
-/// and bind to whatever sibling pin existed first. Both of those are
-/// exactly what the printed tree's path walk reproduces, so they keep it.
+/// The catalog-resolved range of a peer edge the fresh resolver binds by version in its `install_peer`
+/// pass. Optional peers (bound to the hoisted-tree sibling by `process_subtree`) and bundled peers (always
+/// printed under their own package) keep the path walk, which reproduces their saved binding exactly.
 fn deferred_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
     string_buf: &[u8],
 ) -> Option<&'a DependencyVersion> {
-    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() {
+    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() || dep.behavior.is_bundled() {
         return None;
     }
-    let range = catalogs.resolve_range(string_buf, dep);
-    if range.tag == DependencyVersionTag::Npm && range.npm().version.is_star() {
-        return None;
-    }
-    Some(range)
+    Some(catalogs.resolve_range(string_buf, dep))
 }
 
 /// Resolve a peer dependency edge the way the fresh resolver's
@@ -3336,13 +3381,9 @@ fn deferred_peer_range<'a>(
 /// `install_peer`): scan the package ids recorded for the dependency's
 /// name — `package_index` lists are kept ordered by descending
 /// `Resolution::order` — and take the first whose resolution satisfies
-/// the range. When nothing satisfies, fall back to the highest-ordered
-/// candidate, and only when it is the same kind as the dependency (the
-/// "incorrect peer dependency" case; the fresh resolver inspects only
-/// `list[0]` there, and reproducing its choice exactly is the point of
-/// this helper). Returns `None` when no package with the name exists
-/// or the fallback is a different kind; the caller then falls back to
-/// the path walk. Edges `deferred_peer_range` rejects also return `None`.
+/// the range. Returns `None` when no candidate satisfies it (the tree the
+/// caller falls back to is the only record of the resolver's "incorrect
+/// peer dependency" pick) and for the edges `deferred_peer_range` rejects.
 ///
 /// Peer edges cannot be resolved from the printed tree the way regular
 /// edges are: a peer never materializes its own `node_modules` path when
@@ -3353,6 +3394,9 @@ fn deferred_peer_range<'a>(
 /// re-keys isolated-linker store entries (and global-store entry hashes)
 /// on warm installs.
 ///
+/// The hoister applies the same binding to every peer edge it processes
+/// (`tree::Builder::bind_peer`), so a saved tree is the tree its reload rebuilds.
+///
 /// Peers whose name matches a workspace package need no special casing
 /// even though the fresh resolver binds them to the workspace before any
 /// deferral (`'resolve_from_workspace`): the version scan below picks an
@@ -3360,6 +3404,8 @@ fn deferred_peer_range<'a>(
 /// so the isolated store's ancestor walk and the hoisted tree's dedupe
 /// both resolve the name through the root's workspace entry before the
 /// edge value is ever consulted.
+///
+/// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
     dep: &Dependency,
     catalogs: &CatalogMap,
@@ -3367,25 +3413,10 @@ pub(crate) fn resolve_peer_dep_version_based(
     overrides: &OverrideMap,
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
+    is_candidate: impl Fn(PackageID) -> bool,
 ) -> Option<PackageID> {
     let range = deferred_peer_range(dep, catalogs, string_buf)?;
-    // `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
-    let name_hash = match range.tag {
-        DependencyVersionTag::Npm => StringBuilder::string_hash(range.npm().name.slice(string_buf)),
-        DependencyVersionTag::DistTag => {
-            StringBuilder::string_hash(range.dist_tag().name.slice(string_buf))
-        }
-        DependencyVersionTag::Git => {
-            StringBuilder::string_hash(range.git().package_name.slice(string_buf))
-        }
-        DependencyVersionTag::Github => {
-            StringBuilder::string_hash(range.github().package_name.slice(string_buf))
-        }
-        DependencyVersionTag::Tarball => {
-            StringBuilder::string_hash(range.tarball().package_name.slice(string_buf))
-        }
-        _ => dep.name_hash,
-    };
+    let name_hash = peer_candidate_name_hash(dep, range, string_buf);
 
     // The fresh resolver rewrites the name and range through
     // `lockfile.overrides` (and any catalog entry an override points at)
@@ -3407,29 +3438,112 @@ pub(crate) fn resolve_peer_dep_version_based(
         return None;
     }
 
+    resolve_peer_dep_by_range(
+        range,
+        name_hash,
+        package_index,
+        pkg_resolutions,
+        string_buf,
+        is_candidate,
+    )
+}
+
+/// `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
+pub(crate) fn peer_candidate_name_hash(
+    dep: &Dependency,
+    range: &DependencyVersion,
+    string_buf: &[u8],
+) -> PackageNameHash {
+    match range.tag {
+        DependencyVersionTag::Npm => StringBuilder::string_hash(range.npm().name.slice(string_buf)),
+        DependencyVersionTag::DistTag => {
+            StringBuilder::string_hash(range.dist_tag().name.slice(string_buf))
+        }
+        DependencyVersionTag::Git => {
+            StringBuilder::string_hash(range.git().package_name.slice(string_buf))
+        }
+        DependencyVersionTag::Github => {
+            StringBuilder::string_hash(range.github().package_name.slice(string_buf))
+        }
+        DependencyVersionTag::Tarball => {
+            StringBuilder::string_hash(range.tarball().package_name.slice(string_buf))
+        }
+        _ => dep.name_hash,
+    }
+}
+
+/// The scan itself; the yarn.lock migration also binds `*` and overridden peers with it.
+pub(crate) fn resolve_peer_dep_by_range(
+    range: &DependencyVersion,
+    name_hash: PackageNameHash,
+    package_index: &PackageIndexMap,
+    pkg_resolutions: &[Resolution],
+    string_buf: &[u8],
+    is_candidate: impl Fn(PackageID) -> bool,
+) -> Option<PackageID> {
     let candidates = package_index.get(&name_hash)?.as_slice();
-    for &id in candidates {
-        if (id as usize) < pkg_resolutions.len()
-            && pkg_resolutions[id as usize]
-                .satisfies_dependency_version(range, string_buf, string_buf)
-        {
-            return Some(id);
+    candidates.iter().copied().find(|&id| {
+        pkg_resolutions
+            .get(id as usize)
+            .is_some_and(|res| res.satisfies_dependency_version(range, string_buf, string_buf))
+            && is_candidate(id)
+    })
+}
+
+/// Call after hoisting: a package reached only by ranged peers the hoister deduped onto another version is
+/// in no tree, so a reload would bind those edges elsewhere; bind them now over the packages the print will
+/// contain. Such edges are not in `hoisted_dependencies`, so the tree stays valid; `clean` drops the old target.
+pub(crate) fn rebind_peers_to_printed_packages(
+    lockfile: &mut BinaryLockfile,
+) -> Result<(), bun_alloc::AllocError> {
+    let pkg_resolutions: &[Resolution] = lockfile.packages.items_resolution();
+    let package_index = &lockfile.package_index;
+    let catalogs = &lockfile.catalogs;
+    let overrides = &lockfile.overrides;
+    let super::Buffers {
+        hoisted_dependencies,
+        resolutions,
+        dependencies,
+        string_bytes,
+        ..
+    } = &mut lockfile.buffers;
+    let string_buf: &[u8] = string_bytes.as_slice();
+
+    // Root and workspaces are printed from the `workspaces` section, everything else from the tree.
+    let mut printed = DynamicBitSet::init_empty(pkg_resolutions.len())?;
+    for (pkg_id, res) in pkg_resolutions.iter().enumerate() {
+        if matches!(res.tag, ResolutionTag::Root | ResolutionTag::Workspace) {
+            printed.set(pkg_id);
+        }
+    }
+    for &dep_id in hoisted_dependencies.iter() {
+        let pkg_id = resolutions[dep_id as usize];
+        if (pkg_id as usize) < pkg_resolutions.len() {
+            printed.set(pkg_id as usize);
         }
     }
 
-    let &first = candidates.first()?;
-    if (first as usize) < pkg_resolutions.len() {
-        let res_tag = pkg_resolutions[first as usize].tag;
-        let ver_tag = range.tag;
-        if (res_tag == ResolutionTag::Npm && ver_tag == DependencyVersionTag::Npm)
-            || (res_tag == ResolutionTag::Git && ver_tag == DependencyVersionTag::Git)
-            || (res_tag == ResolutionTag::Github && ver_tag == DependencyVersionTag::Github)
+    for (dep, target) in dependencies.iter().zip(resolutions.iter_mut()) {
+        if (*target as usize) >= pkg_resolutions.len()
+            || printed.is_set(*target as usize)
+            || !dep.behavior.is_peer()
         {
-            return Some(first);
+            continue;
+        }
+        if let Some(printed_target) = resolve_peer_dep_version_based(
+            dep,
+            catalogs,
+            package_index,
+            overrides,
+            pkg_resolutions,
+            string_buf,
+            |id| printed.is_set(id as usize),
+        ) {
+            *target = printed_target;
         }
     }
 
-    None
+    Ok(())
 }
 
 // Taking `&mut BinaryLockfile` plus a `&mut Dependency` that
@@ -3444,29 +3558,40 @@ fn map_dep_to_pkg(
     resolutions: &mut [PackageID],
     text_lockfile_version: Version,
     pkg_resolutions: &[Resolution],
+    links_workspace: impl Fn(&Dependency, PackageID) -> bool,
 ) {
     resolutions[dep_id as usize] = pkg_id;
 
-    if text_lockfile_version != Version::V0 {
-        let res = &pkg_resolutions[pkg_id as usize];
-        if res.tag == ResolutionTag::Workspace {
-            // Whole-struct assign so `DependencyVersion::Drop` frees any prior
-            // npm chain. SAFETY: `res.tag == Workspace` checked above.
-            let literal = dep.version.literal;
-            dep.version = DependencyVersion {
-                tag: DependencyVersionTag::Workspace,
-                literal,
-                value: DependencyVersionValue {
-                    workspace: *res.workspace(),
-                },
-            };
-        }
+    let res = &pkg_resolutions[pkg_id as usize];
+    if text_lockfile_version != Version::V0
+        && res.tag == ResolutionTag::Workspace
+        && links_workspace(dep, pkg_id)
+    {
+        adopt_workspace_resolution(dep, res);
     }
 }
 
 /// Edges a fresh install may itself leave unresolved, so bun.lock lists them without a package.
 fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
+}
+
+/// An edge bound to a workspace member takes the shape `Package::parse_dependency` gives it (`workspace`
+/// tag carrying the member's path, literal kept), so the differ compares equal against a fresh parse.
+pub(crate) fn adopt_workspace_resolution(dep: &mut Dependency, res: &Resolution) {
+    if res.tag != ResolutionTag::Workspace {
+        return;
+    }
+    // Whole-struct assign so `DependencyVersion::Drop` frees any prior
+    // npm chain. SAFETY: `res.tag == Workspace` checked above.
+    let literal = dep.version.literal;
+    dep.version = DependencyVersion {
+        tag: DependencyVersionTag::Workspace,
+        literal,
+        value: DependencyVersionValue {
+            workspace: *res.workspace(),
+        },
+    };
 }
 
 fn dependency_resolution_failure(
@@ -3496,8 +3621,8 @@ fn dependency_resolution_failure(
             format_args!(
                 "Failed to resolve {} dependency '{}' for package '{}'",
                 behavior_str,
-                bstr::BStr::new(dep.name.slice(buf)),
-                bstr::BStr::new(path),
+                bun_core::fmt::escape_control_chars(dep.name.slice(buf)),
+                bun_core::fmt::escape_control_chars(path),
             ),
         );
     } else {
@@ -3507,7 +3632,7 @@ fn dependency_resolution_failure(
             format_args!(
                 "Failed to resolve root {} dependency '{}'",
                 behavior_str,
-                bstr::BStr::new(dep.name.slice(buf)),
+                bun_core::fmt::escape_control_chars(dep.name.slice(buf)),
             ),
         );
     }
@@ -3708,10 +3833,9 @@ fn parse_append_dependencies<const CHECK_FOR_BUNDLED: bool, const IS_ROOT: bool>
 
     {
         let bytes = lockfile.buffers.string_bytes.as_slice();
-        // `Dependency::cmp` is the total-order form of `isLessThan` (behavior group, then name ASC).
-        index_sort::sort_slice_by(&mut lockfile.buffers.dependencies[off..], |a, b| {
-            Dependency::cmp(bytes, a, b)
-        });
+        // `slice::sort_by` is pattern-defeating quicksort; `Dependency::cmp` is the
+        // total-order form of `isLessThan` (behavior group, then name ASC).
+        lockfile.buffers.dependencies[off..].sort_by(|a, b| Dependency::cmp(bytes, a, b));
     }
 
     optional_peers_buf.clear();

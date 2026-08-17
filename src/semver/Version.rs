@@ -114,13 +114,16 @@ impl<T: VersionInt> VersionType<T> {
         Self::parse(SlicedString { buf: slice, slice })
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Self {
+    /// Copies the pre/build tag strings out of `buf` (the buffer `self` was
+    /// parsed against) onto the end of `dest`. The returned version slices
+    /// against the whole of `dest`.
+    pub fn clone_into(self, buf: &[u8], dest: &mut Vec<u8>) -> Self {
         Self {
             major: self.major,
             minor: self.minor,
             patch: self.patch,
             _tag_padding: Default::default(),
-            tag: self.tag.clone_into(slice, buf),
+            tag: self.tag.clone_into(buf, dest),
         }
     }
 
@@ -836,14 +839,9 @@ impl<'a, T: VersionInt> fmt::Display for DiffFormatter<'a, T> {
                 }
             } else {
                 if !set_color {
-                    write!(
-                        writer,
-                        concat!(bun_core::pretty_fmt!("<r><b><red>", true), "+{}"),
-                        self.version.tag.build.fmt(self.buf),
-                    )?;
-                } else {
-                    write!(writer, "+{}", self.version.tag.build.fmt(self.other_buf))?;
+                    writer.write_str(bun_core::pretty_fmt!("<r><b><red>", true))?;
                 }
+                write!(writer, "+{}", self.version.tag.build.fmt(self.buf))?;
             }
         }
 
@@ -1016,39 +1014,21 @@ impl Tag {
         self.pre.order(&rhs.pre, lhs_buf, rhs_buf)
     }
 
-    pub fn clone_into(self, slice: &[u8], buf: &mut &mut [u8]) -> Tag {
-        let pre: SemverString;
-        let build: SemverString;
-
-        if self.pre.is_inline() {
-            pre = self.pre.value;
-        } else {
-            let pre_slice = self.pre.slice(slice);
-            buf[..pre_slice.len()].copy_from_slice(pre_slice);
-            // reshaped for borrowck —
-            // capture the init args before advancing `buf`.
-            pre = SemverString::init(buf, &buf[0..pre_slice.len()]);
-            *buf = &mut core::mem::take(buf)[pre_slice.len()..];
-        }
-
-        if self.build.is_inline() {
-            build = self.build.value;
-        } else {
-            let build_slice = self.build.slice(slice);
-            buf[..build_slice.len()].copy_from_slice(build_slice);
-            build = SemverString::init(buf, &buf[0..build_slice.len()]);
-            *buf = &mut core::mem::take(buf)[build_slice.len()..];
-        }
-
+    /// See `VersionType::clone_into`.
+    pub(crate) fn clone_into(self, buf: &[u8], dest: &mut Vec<u8>) -> Tag {
         Tag {
-            pre: ExternalString {
-                value: pre,
-                hash: self.pre.hash,
-            },
-            build: ExternalString {
-                value: build,
-                hash: self.build.hash,
-            },
+            pre: Self::clone_string_into(self.pre, buf, dest),
+            build: Self::clone_string_into(self.build, buf, dest),
+        }
+    }
+
+    fn clone_string_into(str: ExternalString, buf: &[u8], dest: &mut Vec<u8>) -> ExternalString {
+        if str.is_inline() {
+            return str;
+        }
+        ExternalString {
+            value: bun_core::handle_oom(SemverString::init_append_if_needed(dest, str.slice(buf))),
+            hash: str.hash,
         }
     }
 
@@ -1198,7 +1178,8 @@ pub struct ParseResult<T: VersionInt> {
     pub wildcard: Wildcard,
     pub valid: bool,
     pub version: Partial<T>,
-    pub(crate) len: u32,
+    /// Where parsing stopped; shorter than the input when trailing bytes are not part of the version.
+    pub len: u32,
 }
 
 impl<T: VersionInt> Default for ParseResult<T> {

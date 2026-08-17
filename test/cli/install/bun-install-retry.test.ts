@@ -94,16 +94,20 @@ it("retries a manifest whose redirect target 500s once", async () => {
   });
 });
 
-// A cross-origin redirect strips Authorization from the request (per the fetch
-// spec). The install retry restarts from the original registry URL and must
-// carry the original headers, including Authorization, again.
-it("retries an authorized manifest whose cross-origin redirect target 500s once", async () => {
-  const token = "test-registry-token";
+// The registry (reached as `localhost`) redirects the manifest to a second
+// server standing in for a CDN, and the retry restarts from the registry URL.
+// 127.0.0.1 is a different hostname, so that hop strips the token and the
+// retry must carry the original headers again; localhost:<other port> keeps
+// it, and the retry must apply the same rule. Which redirects keep the token
+// is covered by "registry token across redirects" in bun-install.test.ts.
+const token = "test-registry-token";
+it.each([
+  { cdnHost: "localhost", expectedCdnAuth: [`Bearer ${token}`, `Bearer ${token}`] },
+  { cdnHost: "127.0.0.1", expectedCdnAuth: [null, null] },
+])("retries an authorized manifest redirected to $cdnHost when it 500s once", async ({ cdnHost, expectedCdnAuth }) => {
   const registryUrls: string[] = [];
   const cdnAuth: (string | null)[] = [];
   let cdnHits = 0;
-  // A second server on its own port stands in for the CDN the registry
-  // redirects to; a different port makes the redirect cross-origin.
   await using cdn = Bun.serve({
     port: 0,
     fetch(request) {
@@ -133,7 +137,7 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
       }
       return new Response(null, {
         status: 302,
-        headers: { Location: `http://localhost:${cdn.port}/cdn/BaR` },
+        headers: { Location: `http://${cdnHost}:${cdn.port}/cdn/BaR` },
       });
     }
     if (pathname === "/BaR-0.0.2.tgz") {
@@ -168,10 +172,9 @@ it("retries an authorized manifest whose cross-origin redirect target 500s once"
   expect(err).toContain("Saved lockfile");
   expect(out).toContain("1 package installed");
   expect(exitCode).toBe(0);
-  // Both registry hits carried the token (the handler 401s otherwise); the
-  // cross-origin CDN hops must NOT have (the spec strips it for that hop).
+  // Both registry hits carried the token (the handler 401s otherwise).
   expect(registryUrls).toEqual(["/BaR", "/BaR", "/BaR-0.0.2.tgz"]);
-  expect(cdnAuth).toEqual([null, null]);
+  expect(cdnAuth).toEqual(expectedCdnAuth);
 });
 
 // Sibling retry site (tarball downloads in runTasks): the tarball URL
@@ -230,6 +233,48 @@ it("retries a tarball whose redirect target 500s once", async () => {
     name: "bar",
     version: "0.0.2",
   });
+});
+
+// The retry notice is added to the log as a warning, and the log printer
+// prefixes it with `warn: ` when it prints it. The message itself used to carry
+// a second `warn: `, so every retry printed as `warn: warn: ...`.
+it("prints each verbose tarball retry as a single warn: line", async () => {
+  setHandler(async request => {
+    const { pathname } = new URL(request.url);
+    if (pathname === "/BaR") {
+      return Response.json({
+        name: "BaR",
+        "dist-tags": { latest: "0.0.2" },
+        versions: {
+          "0.0.2": { name: "BaR", version: "0.0.2", dist: { tarball: `${root_url}/BaR-0.0.2.tgz` } },
+        },
+      });
+    }
+    if (pathname === "/BaR-0.0.2.tgz") {
+      return new Response("no", { status: 500 });
+    }
+    return new Response("unexpected", { status: 404 });
+  });
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", version: "0.0.1", dependencies: { BaR: "0.0.2" } }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--verbose", "--no-progress", "--ignore-scripts"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env: { ...env, BUN_CONFIG_HTTP_RETRY_COUNT: "2" },
+  });
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+  expect(err.split(/\r?\n/).filter(line => line.includes("downloading tarball"))).toEqual([
+    "warn: TarballFailedToDownload downloading tarball BaR@0.0.2. Retrying 1/2...",
+    "warn: TarballFailedToDownload downloading tarball BaR@0.0.2. Retrying 2/2...",
+  ]);
+  expect(err).toContain(`error: GET ${root_url}/BaR-0.0.2.tgz - 500`);
+  expect(out).not.toContain("installed");
+  expect(exitCode).toBe(1);
 });
 
 it("retries on 500", async () => {

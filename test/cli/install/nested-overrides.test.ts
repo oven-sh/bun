@@ -2,7 +2,7 @@ import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -554,6 +554,128 @@ describe.concurrent("syntax", () => {
       expect(await versionSeenBy(dir, "ofd2", "no-deps")).toBe("2.0.0");
       expect(await lock(dir)).not.toContain('"overrides"');
     });
+  });
+});
+
+// two-range-deps declares no-deps ^1.0.0 (1.1.0 without a rule) and @types/is-number >=1.0.0 (2.0.0 without a rule).
+describe.concurrent("overrides and resolutions in the same package.json", () => {
+  test("rules from both fields apply", async () => {
+    const dir = await project({
+      dependencies: { "two-range-deps": "1.0.0" },
+      overrides: { "no-deps": "1.0.0" },
+      resolutions: { "@types/is-number": "1.0.0" },
+    });
+    const { err } = await installOk(dir);
+    expect(err).not.toContain("warn:");
+    expect(await versionSeenBy(dir, "two-range-deps", "no-deps")).toBe("1.0.0");
+    expect(await versionSeenBy(dir, "two-range-deps", "@types/is-number")).toBe("1.0.0");
+    const first = await lock(dir);
+    expect(overridesSection(first)).toMatchInlineSnapshot(`
+      ""overrides": {
+        "@types/is-number": "1.0.0",
+        "no-deps": "1.0.0",
+      },"
+    `);
+    await installOk(dir, "--frozen-lockfile");
+    const again = await installOk(dir);
+    expect(again.err).not.toContain("Saved lockfile");
+    expect(await lock(dir)).toBe(first);
+  });
+
+  test("a scoped rule in resolutions applies next to a flat rule in overrides", async () => {
+    const dir = await project({
+      dependencies: { "two-range-deps": "1.0.0", "one-range-dep": "1.0.0" },
+      overrides: { "@types/is-number": "1.0.0" },
+      resolutions: { "one-range-dep/no-deps": "2.0.0" },
+    });
+    const { err } = await installOk(dir);
+    expect(err).not.toContain("warn:");
+    expect(await versionSeenBy(dir, "two-range-deps", "@types/is-number")).toBe("1.0.0");
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("2.0.0");
+    expect(await versionSeenBy(dir, "two-range-deps", "no-deps")).toBe("1.1.0");
+    expect(overridesSection(await lock(dir))).toMatchInlineSnapshot(`
+      ""overrides": {
+        "@types/is-number": "1.0.0",
+        "one-range-dep": {
+          "no-deps": "2.0.0",
+        },
+      },"
+    `);
+    await installOk(dir, "--frozen-lockfile");
+  });
+
+  test("the same name in both fields: overrides wins", async () => {
+    const dir = await project({
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "no-deps": "1.0.0" },
+      resolutions: { "no-deps": "1.0.1" },
+    });
+    await installOk(dir);
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.0.0");
+    expect(overridesSection(await lock(dir))).toMatchInlineSnapshot(`
+      ""overrides": {
+        "no-deps": "1.0.0",
+      },"
+    `);
+  });
+
+  // A flat `npm:` rule also registers an alias that redirects matching edges before overrides are consulted,
+  // so a resolutions rule that loses to overrides must not be parsed at all.
+  test("a losing resolutions rule with an npm: value does not redirect the edge", async () => {
+    const dir = await project({
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "no-deps": "1.0.0" },
+      resolutions: { "no-deps": "npm:a-dep@1.0.1" },
+    });
+    await installOk(dir);
+    expect(await packageSeenBy(dir, "one-range-dep", "no-deps")).toBe("no-deps@1.0.0");
+    expect(await lock(dir)).not.toContain("a-dep");
+  });
+
+  test("the same scoped selector in both fields: overrides wins", async () => {
+    const dir = await project({
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep": { "no-deps": "1.0.0" } },
+      resolutions: { "one-range-dep/no-deps": "1.0.1" },
+    });
+    await installOk(dir);
+    expect(await versionSeenBy(dir, "one-range-dep", "no-deps")).toBe("1.0.0");
+    expect(overridesSection(await lock(dir))).toMatchInlineSnapshot(`
+      ""overrides": {
+        "one-range-dep": {
+          "no-deps": "1.0.0",
+        },
+      },"
+    `);
+  });
+
+  test("within resolutions the last spelling of a rule still wins", async () => {
+    const dir = await project({
+      dependencies: { "two-range-deps": "1.0.0" },
+      overrides: { "@types/is-number": "1.0.0" },
+      resolutions: { "**/no-deps": "1.0.0", "no-deps": "1.0.1" },
+    });
+    await installOk(dir);
+    expect(await versionSeenBy(dir, "two-range-deps", "no-deps")).toBe("1.0.1");
+    expect(await versionSeenBy(dir, "two-range-deps", "@types/is-number")).toBe("1.0.0");
+  });
+
+  test("editing resolutions is a frozen-lockfile change that names both fields", async () => {
+    const pkg = {
+      dependencies: { "two-range-deps": "1.0.0" },
+      overrides: { "no-deps": "1.0.0" },
+      resolutions: { "@types/is-number": "1.0.0" },
+    };
+    const dir = await project(pkg);
+    await installOk(dir);
+    pkg.resolutions["@types/is-number"] = "2.0.0";
+    await write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", ...pkg }));
+    const frozen = await install(dir, "--frozen-lockfile");
+    expect(frozen.err).toContain("error: lockfile had changes, but lockfile is frozen");
+    expect(frozen.err).toContain("note: overrides or resolutions in package.json changed since bun.lock was saved");
+    expect(frozen.exitCode).toBe(1);
+    await installOk(dir);
+    expect(await versionSeenBy(dir, "two-range-deps", "@types/is-number")).toBe("2.0.0");
   });
 });
 
@@ -1126,7 +1248,7 @@ describe.concurrent("lockfile", () => {
     ]);
     await Promise.all([installOk(x), installOk(y), installOk(z)]);
     const xLock = await lock(x);
-    expect(xLock).toContain('"lockfileVersion": 2');
+    expect(xLock).toContain('"lockfileVersion": 1');
     expect(xLock).toContain('\n    "no-deps": "1.0.0",\n');
     expect(await lock(y)).toContain('"lockfileVersion": 3');
     expect(await lock(z)).toContain('"lockfileVersion": 3');
@@ -1144,10 +1266,10 @@ describe.concurrent("lockfile", () => {
     const dir = await project({ dependencies: walkFallbackDeps });
     await installOk(dir);
     const text = await lock(dir);
-    expect(text).toContain('"lockfileVersion": 2');
+    expect(text).toContain('"lockfileVersion": 1');
     expect(text).toContain('one-dep-1.0.0.tgz", ');
     const stripped = text
-      .replace('"lockfileVersion": 2', `"lockfileVersion": ${stampVersion}`)
+      .replace('"lockfileVersion": 1', `"lockfileVersion": ${stampVersion}`)
       .replace(/, "sha512-[^"]*"\]/g, ', ""]');
     expect(stripped).not.toContain("sha512-");
     await write(join(dir, "bun.lock"), stripped);
@@ -1286,8 +1408,127 @@ describe.concurrent("lockfile", () => {
     const after = await lock(dir);
     expect(after).not.toContain('"overrides"');
     expect(after).not.toContain("no-deps@2.0.0");
-    expect(after).toContain('"lockfileVersion": 2');
+    expect(after).toContain('"lockfileVersion": 1');
     await installOk(dir, "--frozen-lockfile");
+  });
+
+  // An overrides change re-resolves every row naming a previously or newly overridden package. By then the root's
+  // rows from bun.lock have been replaced by freshly parsed ones and belong to no package; they must not be
+  // re-resolved as well: a range that is no longer in package.json would add a package the current row then dedupes
+  // onto, and a file: path outside the project is only accepted on a row the root (or a workspace) owns. The
+  // root's current rows also have to be resolved before everybody else's, as on a fresh install, since a row
+  // resolved later dedupes onto a same-major package an earlier one added.
+  describe.concurrent("removing a flat rule re-resolves only the root's current rows", () => {
+    test("the root's row resolves before a dependency's row of the same name", async () => {
+      const deps = { "no-deps": "^1.0.0", "one-dep": "1.0.0" }; // one-dep@1.0.0 depends on no-deps@1.0.1
+      const [dir, fresh] = await Promise.all([
+        project({ dependencies: deps, overrides: { "no-deps": "2.0.0" } }),
+        project({ dependencies: deps }),
+      ]);
+      await Promise.all([installOk(dir), installOk(fresh)]);
+      expect(await lock(dir)).toContain("no-deps@2.0.0");
+
+      await write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", dependencies: deps }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+      expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
+      // Same packages as installing this package.json from scratch.
+      expect(await lock(dir)).toBe(await lock(fresh));
+    });
+
+    test("a range changed in the same edit resolves on its own", async () => {
+      const dir = await project({ dependencies: { "no-deps": "~1.0.0" }, overrides: { "no-deps": "2.0.0" } });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("2.0.0");
+
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "nested-overrides", dependencies: { "no-deps": "^1.0.0" } }),
+      );
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      // 1.0.1 is what the dropped ~1.0.0 range would pick.
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+      const after = await lock(dir);
+      expect(after).not.toContain('"overrides"');
+      expect(after).not.toContain("no-deps@1.0.1");
+      expect(after).not.toContain("no-deps@2.0.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+
+    const outside = {
+      "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "project/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+    };
+    const rootPackageJson = (pkg: Record<string, unknown>) => JSON.stringify({ name: "nested-overrides", ...pkg });
+    const before = rootPackageJson({
+      dependencies: { x: "file:../x", y: "file:./y" },
+      overrides: { x: "file:../x2" },
+    });
+
+    test("a file: dependency outside the project re-resolves to its own path", async () => {
+      using root = tempDir("override-removed-file-dep", { ...outside, "project/package.json": before });
+      const dir = join(String(root), "project");
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "x")).toBe("2.0.0");
+
+      await write(join(dir, "package.json"), rootPackageJson({ dependencies: { x: "file:../x", y: "file:./y" } }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(await versionSeenBy(dir, undefined, "x")).toBe("1.0.0");
+      expect(normalizeBunSnapshot(await lock(dir), dir)).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 1,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "nested-overrides",
+              "dependencies": {
+                "x": "file:../x",
+                "y": "file:./y",
+              },
+            },
+          },
+          "packages": {
+            "x": ["x@file:../x", {}],
+
+            "y": ["y@file:y", {}],
+          }
+        }"
+      `);
+      await installOk(dir, "--frozen-lockfile");
+    });
+
+    test("a file: dependency outside the project removed together with its rule", async () => {
+      using root = tempDir("override-and-file-dep-removed", { ...outside, "project/package.json": before });
+      const dir = join(String(root), "project");
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "x")).toBe("2.0.0");
+
+      await write(join(dir, "package.json"), rootPackageJson({ dependencies: { y: "file:./y" } }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(normalizeBunSnapshot(await lock(dir), dir)).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 1,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "nested-overrides",
+              "dependencies": {
+                "y": "file:./y",
+              },
+            },
+          },
+          "packages": {
+            "y": ["y@file:y", {}],
+          }
+        }"
+      `);
+      await installOk(dir, "--frozen-lockfile");
+    });
   });
 
   test("changing only the parent's range text is a frozen-lockfile change", async () => {
@@ -1513,6 +1754,47 @@ one-dep@1.0.0:
     expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("2.0.0");
   });
 
+  test("yarn.lock migration carries both overrides and resolutions", async () => {
+    const url = registry.registryUrl();
+    const [aDep, noDeps] = await Promise.all([integrityOf("a-dep", "1.0.2"), integrityOf("no-deps", "1.0.0")]);
+    const dir = await project(
+      {
+        dependencies: { "a-dep": "^1.0.1", "no-deps": "^1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+        resolutions: { "a-dep": "1.0.2" },
+      },
+      "hoisted",
+      {
+        "yarn.lock": `# THIS IS AN AUTOGENERATED FILE. DO NOT EDIT THIS FILE DIRECTLY.
+# yarn lockfile v1
+
+
+a-dep@^1.0.1:
+  version "1.0.2"
+  resolved "${url}a-dep/-/a-dep-1.0.2.tgz"
+  integrity ${aDep}
+
+no-deps@^1.0.0:
+  version "1.0.0"
+  resolved "${url}no-deps/-/no-deps-1.0.0.tgz"
+  integrity ${noDeps}
+`,
+      },
+    );
+    const migrated = await migrate(dir);
+    expect(migrated.err).not.toContain("error:");
+    expect(migrated.exitCode).toBe(0);
+    expect(overridesSection(await lock(dir))).toMatchInlineSnapshot(`
+      ""overrides": {
+        "a-dep": "1.0.2",
+        "no-deps": "1.0.0",
+      },"
+    `);
+    await installOk(dir, "--frozen-lockfile");
+    expect(await versionSeenBy(dir, undefined, "a-dep")).toBe("1.0.2");
+    expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.0.0");
+  });
+
   // one-dep@1.0.0 declares no-deps@1.0.1; a lockfile snapshot on 2.0.0 is only consistent with an override.
   async function pnpmLock({ overrides, noDepsVersion = "2.0.0" }: { overrides?: string[]; noDepsVersion?: string }) {
     const [oneDep, noDeps] = await Promise.all([
@@ -1553,7 +1835,7 @@ snapshots:
   }
 
   const migratedLine = /\[[\d.]+m?s\] migrated lockfile from pnpm-lock\.yaml\n/;
-  const movedOverridesLine = "moved pnpm.overrides to overrides in package.json";
+  const copiedOverridesLine = "copied pnpm.overrides to overrides in package.json";
 
   test("pnpm-lock.yaml parent>child overrides become nested rules that package.json agrees with", async () => {
     const dir = await project(
@@ -1565,7 +1847,7 @@ snapshots:
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
     expect(migrated.err).toMatch(migratedLine);
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.exitCode).toBe(0);
     const text = await lock(dir);
     expect(text).toContain('"one-dep": {');
@@ -1575,6 +1857,7 @@ snapshots:
     expect(JSON.parse(packageJson)).toStrictEqual({
       name: "nested-overrides",
       dependencies: { "one-dep": "1.0.0" },
+      pnpm: { overrides: { "one-dep>no-deps": "2.0.0" } },
       overrides: { "one-dep>no-deps": "2.0.0" },
     });
     await installOk(dir, "--frozen-lockfile");
@@ -1589,7 +1872,7 @@ snapshots:
     const migrated = await migrate(dir);
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.exitCode).toBe(0);
     const text = await lock(dir);
     expect(text).toContain('"one-dep": {');
@@ -1607,7 +1890,7 @@ snapshots:
     const migrated = await migrate(dir);
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.exitCode).toBe(0);
     const text = await lock(dir);
     expect(text).toContain('"lockfileVersion": 3');
@@ -1638,7 +1921,7 @@ snapshots:
       })
       .then(({ packageDir }) => packageDir);
     const migrated = await migrate(dir);
-    expect(occurrences(migrated.err, movedOverridesLine)).toBe(1);
+    expect(occurrences(migrated.err, copiedOverridesLine)).toBe(1);
     expect(migrated.err).not.toContain("error:");
     expect(migrated.exitCode).toBe(0);
     const packageJson = await packageJsonText(dir);
@@ -1649,10 +1932,11 @@ snapshots:
       name: "nested-overrides",
       dependencies: { "one-dep": "1.0.0" },
       overrides: { "a-dep": "1.0.1", "one-dep>no-deps": "2.0.0" },
+      pnpm: { overrides: { "one-dep>no-deps": "2.0.0" } },
     });
   });
 
-  test("an empty pnpm.overrides is not moved and package.json is not announced as modified", async () => {
+  test("an empty pnpm.overrides is not copied and package.json is not announced as modified", async () => {
     const dir = await project({ dependencies: { "one-dep": "1.0.0" }, pnpm: { overrides: {} } }, "hoisted", {
       "pnpm-lock.yaml": await pnpmLock({ noDepsVersion: "1.0.1" }),
     });
@@ -1660,7 +1944,7 @@ snapshots:
     const migrated = await migrate(dir);
     expect(migrated.err).not.toContain("warn:");
     expect(migrated.err).not.toContain("error:");
-    expect(migrated.err).not.toContain(movedOverridesLine);
+    expect(migrated.err).not.toContain(copiedOverridesLine);
     expect(migrated.err).toMatch(migratedLine);
     expect(migrated.exitCode).toBe(0);
     expect(await packageJsonText(dir)).toBe(before);
@@ -1696,14 +1980,14 @@ snapshots:
       ),
     );
 
-  test("bun install warns once per rejected rule that the migration moved into package.json", async () => {
+  test("bun install warns once per rejected rule that the migration copied into package.json", async () => {
     const dir = await rejectedRulesProject();
     const { err, exitCode } = await install(dir);
     expect(occurrences(err, 'warn: Removing "left-pad" with "-" is not supported')).toBe(1);
     expect(occurrences(err, 'warn: Bun currently only supports one level of nested "overrides"')).toBe(1);
     expect(occurrences(err, "warn:")).toBe(2);
     expect(err).toMatch(migratedLine);
-    expect(occurrences(err, movedOverridesLine)).toBe(1);
+    expect(occurrences(err, copiedOverridesLine)).toBe(1);
     expect(err).not.toContain("error:");
     expect(exitCode).toBe(0);
     expect((await file(join(dir, "package.json")).json()).overrides).toStrictEqual({

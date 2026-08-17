@@ -11,7 +11,7 @@ Yes
 
 #### Generate a lockfile without installing?
 
-To generate a lockfile without installing to `node_modules`, use the `--lockfile-only` flag. Bun always saves the lockfile to disk, even if it is already up to date with your project's `package.json`(s). The exception is when `--frozen-lockfile` (or `--production`) is set.
+To generate a lockfile without installing to `node_modules`, use the `--lockfile-only` flag. Bun always saves the lockfile to disk, even if it is already up to date with your project's `package.json`(s). The exceptions are `--frozen-lockfile` (or `--production`), `--dry-run`, and `--no-save`, which save nothing.
 
 ```bash terminal icon="terminal"
 bun install --lockfile-only
@@ -54,14 +54,22 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To mi
 
 For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-lockfile).
 
+#### `lockfileVersion`
+
+The `lockfileVersion` field at the top of `bun.lock` records its format version. A new `bun.lock` is written as `lockfileVersion` 1, which every Bun release since v1.2 can read, and re-saving a `lockfileVersion` 1 or 2 lockfile keeps its version. The exception is [nested or version-scoped overrides](/pm/overrides#limitations): while a lockfile contains those it is written as `lockfileVersion` 3, which requires Bun v1.4 or later, and it goes back to 1 once they are removed.
+
 #### Automatic lockfile migration
 
 When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:
 
 - `yarn.lock` (v1)
-- `package-lock.json` (npm, `lockfileVersion` 2, 3 or 4)
+- `npm-shrinkwrap.json` and `package-lock.json` (npm, `lockfileVersion` 2, 3 or 4)
 - `pnpm-lock.yaml` (pnpm)
 
-Bun does not migrate a `package-lock.json` from npm 6 or older (`lockfileVersion` 1); it prints a warning and resolves from `package.json` instead.
+When a project has both npm lockfiles, Bun reads `npm-shrinkwrap.json` and ignores `package-lock.json`, as npm does.
+
+Bun does not migrate an npm lockfile from npm 6 or older (`lockfileVersion` 1); it prints a warning and resolves from `package.json` instead.
 
 Bun preserves the original lockfile. You can remove it manually after verification.
+
+Bun writes the migrated `bun.lock` only when the command saves a lockfile. `bun install --frozen-lockfile` (and `bun ci`), `--dry-run`, `--no-save`, and read-only commands such as `bun outdated` use the migrated lockfile in memory and write nothing. Under `--frozen-lockfile`, Bun prints a `note:` asking you to run `bun install` and commit the result. To migrate without installing, run `bun pm migrate` or `bun install --lockfile-only`.

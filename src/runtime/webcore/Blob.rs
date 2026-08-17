@@ -29,12 +29,9 @@ use crate::webcore::{self, Lifetime, ReadableStream, Request, Response, streams}
 
 bun_core::define_scoped_log!(debug, Blob, visible);
 
-/// `bunVM().transpiler.env.getHttpProxy(true, null, null)?.href` as an owned
-/// buffer. Owned (not borrowed) because the env loader's `URL<'_>` ties the
-/// `href` slice to a `&mut Loader` borrow that we cannot keep open across the
-/// S3 request setup.
+/// The `http_proxy` href S3 requests go through, if one is configured.
 #[inline]
-fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
+fn http_proxy_href(global: &JSGlobalObject) -> Option<Box<[u8]>> {
     // `Transpiler::env_mut` is the safe accessor for the process-singleton
     // dotenv loader (initialised before any JS runs).
     global
@@ -43,7 +40,7 @@ fn http_proxy_href(global: &JSGlobalObject) -> Option<Vec<u8>> {
         .transpiler
         .env_mut()
         .get_http_proxy(true, None, None)
-        .map(|p| p.href.to_vec())
+        .map(bun_url::OwnedURL::into_href)
 }
 
 #[path = "blob/Store.rs"]
@@ -1410,12 +1407,8 @@ impl BlobExt for Blob {
             };
 
             let path = s3.path();
-            // SAFETY: bun_vm() never returns null for a Bun-owned global; `env`
-            // is a live `*mut Loader` owned by the transpiler.
-            let proxy = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
-            let proxy_url = proxy.map(|p| p.href);
+            let proxy = http_proxy_href(global_this);
+            let proxy_url = proxy.as_deref();
 
             // When no JS overrides were supplied, hand the store's *base*
             // credentials to the upload (`upload_stream` consumes an
@@ -1698,15 +1691,7 @@ impl BlobExt for Blob {
             // content-type writes below don't conflict.
             let s3 = store.data.as_s3();
             let path = s3.path();
-            // SAFETY: `bun_vm()` returns the live per-global VM; `transpiler.env`
-            // is the process-singleton dotenv loader, never null once init'd.
-            let proxy_url: Option<bun_url::URL<'_>> = unsafe {
-                (*global_this.bun_vm().as_mut().transpiler.env).get_http_proxy(true, None, None)
-            };
-            // Copy the href out of the env map before any reentrant JS (the
-            // `get_truthy`/credential getters below) can mutate `process.env`
-            // and free the backing allocation.
-            let proxy_owned: Option<Vec<u8>> = proxy_url.as_ref().map(|p| p.href.to_vec());
+            let proxy_owned = http_proxy_href(global_this);
             let proxy = proxy_owned.as_deref();
 
             if has_args && arg0.is_object() {

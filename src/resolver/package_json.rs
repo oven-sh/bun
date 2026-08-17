@@ -812,9 +812,11 @@ impl PackageJSON {
                                 Some(&mut *r_log),
                             ) {
                                 if dependency_version.is_exact_npm() {
-                                    if let Some(resolved) =
-                                        pm.lockfile_resolve(&package_json.name, &dependency_version)
-                                    {
+                                    if let Some(resolved) = pm.lockfile_resolve(
+                                        &package_json.name,
+                                        &dependency_version,
+                                        &package_json.version,
+                                    ) {
                                         package_json.package_manager_package_id = resolved;
                                         if resolved > 0 {
                                             break 'update_dependencies;
@@ -905,25 +907,30 @@ impl PackageJSON {
                                     let Some(version_str) = prop.value.as_str() else {
                                         continue;
                                     };
-                                    let sliced_str =
-                                        Semver::SlicedString::init(version_str, version_str);
+                                    // Like the key above: a value with JSON escapes is
+                                    // decoded outside the source buffer and cannot be
+                                    // stored as an offset into it.
+                                    if !bun_alloc::is_slice_in_buffer(
+                                        version_str,
+                                        package_json.dependencies.source_buf,
+                                    ) {
+                                        continue;
+                                    }
+                                    // The strings inside the parsed version are offsets
+                                    // into this buffer; every reader of the map slices
+                                    // them with `dependencies.source_buf`.
+                                    let sliced_str = Semver::SlicedString::init(
+                                        package_json.dependencies.source_buf,
+                                        version_str,
+                                    );
 
-                                    // The parser body lives in install-tier so route through
-                                    // the AutoInstaller vtable when one is wired. When it
-                                    // isn't, still record the dependency name (with an
-                                    // uninitialized-tag version) — `bun run --filter` reads
-                                    // only the map keys to compute workspace ordering.
-                                    let dependency_version = match r.auto_installer() {
-                                        Some(pm) => pm.parse_dependency(
-                                            name,
-                                            Some(name_hash),
-                                            version_str,
-                                            &sliced_str,
-                                            Some(&mut *r_log),
-                                        ),
-                                        None => Some(DependencyVersion::default()),
-                                    };
-                                    if let Some(dependency_version) = dependency_version {
+                                    if let Some(dependency_version) = r.parse_dependency(
+                                        name,
+                                        name_hash,
+                                        version_str,
+                                        &sliced_str,
+                                        Some(&mut *r_log),
+                                    ) {
                                         let dependency = Dependency {
                                             name,
                                             version: dependency_version,

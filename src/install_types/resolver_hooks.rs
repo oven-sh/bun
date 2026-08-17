@@ -873,6 +873,13 @@ negatable_names! { OperatingSystem: u16, OPERATING_SYSTEM_NAMES => [
 
 // ──────────────────────────────────────────────────────────────────────────
 
+/// https://docs.npmjs.com/cli/v10/configuring-npm/package-json#libc
+///
+/// Unlike `os`/`cpu`, the zero value does not mean "matches nothing": it is
+/// what a package without a `libc` field gets, and what every manifest cache
+/// entry, `bun.lockb` and `bun.lock` written before this field was read
+/// contains. [`is_match`](Self::is_match) treats it as "not declared", so
+/// such packages install on every libc.
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub struct Libc(pub u8);
@@ -886,11 +893,52 @@ impl Libc {
 
     pub(crate) const ALL_VALUE: u8 = Self::GLIBC | Self::MUSL;
 
-    // TODO: runtime libc detection
+    /// The libc that packages are filtered against by default. Bun is
+    /// statically tied to one libc (the musl build is a separate binary, see
+    /// `bun_core::Environment::IS_MUSL`), so the build target is the host libc.
+    /// Other operating systems have no libc in the npm sense, so nothing is
+    /// filtered there.
+    #[cfg(all(target_os = "linux", target_env = "musl"))]
+    pub const CURRENT: Self = Self(Self::MUSL);
+    #[cfg(all(target_os = "linux", not(target_env = "musl")))]
+    pub const CURRENT: Self = Self(Self::GLIBC);
+    #[cfg(not(target_os = "linux"))]
+    pub const CURRENT: Self = Self::ALL;
 
+    /// `self` is the package's declaration, `target` the libc being installed for.
+    #[inline]
+    pub fn is_match(self, target: Self) -> bool {
+        self.0 == 0 || (self.0 & target.0) != 0
+    }
+
+    /// The libc to filter a package against when it is reached through a
+    /// dependency with `behavior`, `self` being the target libc (`--libc`).
+    ///
+    /// A package's `libc` is only requested from the registry for optional
+    /// dependencies (the abbreviated manifest used for everything else does not
+    /// carry it), so it is also only enforced on them. Through a regular
+    /// dependency a package installs on every libc, whether or not its `libc`
+    /// happens to be known from an optional edge, a migrated lockfile or the
+    /// manifest cache; otherwise what gets installed would depend on that.
+    #[inline]
+    pub fn for_dependency(self, behavior: Behavior) -> Self {
+        if behavior.is_optional() {
+            self
+        } else {
+            Self::ALL
+        }
+    }
     #[inline]
     pub(crate) fn has(self, other: u8) -> bool {
         (self.0 & other) != 0
+    }
+    /// The declared libc when the package is restricted to exactly one
+    /// (`"glibc"` / `"musl"`); `None` when undeclared or unrestricted.
+    pub fn single_name(self) -> Option<&'static [u8]> {
+        Self::NAME_MAP_KVS
+            .iter()
+            .find(|(_, bit)| *bit == self.0)
+            .map(|(name, _)| *name)
     }
 }
 
@@ -1204,6 +1252,7 @@ pub struct Features {
     pub dev_dependencies: bool,
     pub is_main: bool,
     pub is_workspace: bool,
+    pub is_folder: bool,
     pub optional_dependencies: bool,
     pub peer_dependencies: bool,
     pub trusted_dependencies: bool,
@@ -1218,6 +1267,7 @@ impl Default for Features {
             dev_dependencies: false,
             is_main: false,
             is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1240,6 +1290,7 @@ impl Features {
             dev_dependencies: false,
             is_main: false,
             is_workspace: false,
+            is_folder: false,
             optional_dependencies: false,
             peer_dependencies: true,
             trusted_dependencies: false,
@@ -1262,6 +1313,7 @@ impl Features {
 
     pub const FOLDER: Self = Self {
         dev_dependencies: true,
+        is_folder: true,
         optional_dependencies: true,
         ..Self::base()
     };
@@ -1291,45 +1343,21 @@ pub struct TaskCallbackContext {
     pub root_request_id: u32,
 }
 
-/// Opaque
-/// (ctx-ptr + 2 fn-ptrs) handle the runtime installs to nudge the JS event
-/// loop when a network task completes. The resolver only stores and forwards
-/// it; the fields are `Option` so `Default` is all-None.
-///
+/// Opaque (ctx-ptr + fn-ptr) handle the runtime installs to nudge the JS
+/// event loop when a network task completes. The resolver only stores and
+/// forwards it; `Default` is unregistered (`None`).
+// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
+// installed; the fn-ptr is POD.
+#[derive(Default, Copy, Clone)]
+pub struct WakeHandler(pub Option<WakeTarget>);
+
 /// `handler`'s second parameter (`*PackageManager`) is erased to
 /// `*mut c_void` because that concrete type lives in `bun_install` (a higher
-/// tier); `bun_install::PackageManager::wake` casts at the call site.
-/// `on_dependency_error`'s `Dependency` parameter is *not* erased — the type
-/// lives in this crate — so callers pass the borrow directly.
-// Clone: bitwise OK — `context` is a non-owning opaque backref the runtime
-// installed; the handler fn-ptrs are POD.
-#[derive(Default, Copy, Clone)]
-pub struct WakeHandler {
-    pub context: Option<NonNull<c_void>>,
-    pub handler: Option<fn(*mut c_void, *mut c_void)>,
-    pub on_dependency_error:
-        Option<unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str)>,
-}
-
-impl WakeHandler {
-    #[inline]
-    pub fn get_handler(&self) -> fn(*mut c_void, *mut c_void) {
-        // `handler` is Some whenever `context` is Some: the sole installer
-        // (runtime::jsc_hooks) sets `context`, `handler`, and
-        // `on_dependency_error` together in one struct literal, and callers
-        // gate on `context.is_some()` before invoking — so this unwrap cannot
-        // fire.
-        self.handler.unwrap()
-    }
-
-    #[inline]
-    pub fn get_on_dependency_error(
-        &self,
-    ) -> unsafe fn(*mut c_void, &Dependency, DependencyID, &'static str) {
-        // Same invariant as `get_handler`: set together with `context` by the
-        // sole installer; callers gate on `context.is_some()`.
-        self.on_dependency_error.unwrap()
-    }
+/// tier); `bun_install::PackageManager::wake_raw` casts at the call site.
+#[derive(Copy, Clone)]
+pub struct WakeTarget {
+    pub context: NonNull<c_void>,
+    pub handler: fn(*mut c_void, *mut c_void),
 }
 
 // ─── DependencyGroup (lockfile::Package::DependencyGroup) ─────────────────
@@ -1446,7 +1474,15 @@ pub trait AutoInstaller {
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
+    /// `version_buf` holds the strings `version` was parsed against (a
+    /// package.json's bytes, the lockfile's string buffer, or the import
+    /// specifier itself).
+    fn lockfile_resolve(
+        &self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+    ) -> Option<PackageID>;
     fn lockfile_legacy_package_to_dependency_id(
         &self,
         package_id: PackageID,

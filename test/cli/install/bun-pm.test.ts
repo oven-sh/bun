@@ -1,7 +1,18 @@
 import { spawn } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, expect, it, test } from "bun:test";
-import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
+import { chmod, exists, mkdir, rm, writeFile } from "fs/promises";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  readdirSorted,
+  tempDir,
+  tls,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -73,7 +84,7 @@ it("should list top-level dependency", async () => {
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── moo@moo
 `);
   expect(await exited).toBe(0);
@@ -140,6 +151,188 @@ it("should list all dependencies", async () => {
   expect(requested).toBe(2);
 });
 
+// A tarball package's label is the URL it was installed from, which has no length
+// limit. `--all` prints a label in two places: the header of a package that has its own
+// nested node_modules (moo, whose bar/baz conflict with the root's), and the line of a
+// package that has none (bar).
+it("should list all dependencies when a resolution is longer than 512 bytes", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls, { "0.0.2": {}, "0.0.3": {}, "0.0.5": {}, latest: "0.0.3" }));
+  const barUrl = `${root_url}/${Buffer.alloc(600, "a").toString()}/bar-0.0.2.tgz`;
+  const mooUrl = `${root_url}/${Buffer.alloc(600, "b").toString()}/moo-0.1.0.tgz`;
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: barUrl,
+        baz: "0.0.5",
+        // moo-0.1.0.tgz depends on bar@0.0.2 and baz@latest
+        moo: mooUrl,
+      },
+    }),
+  );
+  {
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [err, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(exitCode).toBe(0);
+  }
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "ls", "--all"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe(`${package_dir} node_modules
+├── bar@${barUrl}
+├── baz@0.0.5
+└── moo@${mooUrl}
+    ├── bar@0.0.2
+    └── baz@0.0.3
+`);
+  expect(exitCode).toBe(0);
+});
+
+it("should not list packages missing from node_modules", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "latest",
+        moo: "./moo",
+      },
+    }),
+  );
+  await mkdir(join(package_dir, "moo"));
+  await writeFile(
+    join(package_dir, "moo", "package.json"),
+    JSON.stringify({
+      name: "moo",
+      version: "0.1.0",
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
+├── bar@0.0.2
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+  // simulates `bun prune --production` or a platform-mismatched optional
+  // dependency: the package is in the lockfile but not on disk
+  await rm(join(package_dir, "node_modules", "bar"), { recursive: true });
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+  {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "pm", "ls", "--all"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    expect(await stderr.text()).toBe("");
+    expect(await stdout.text()).toBe(`${package_dir} node_modules
+└── moo@moo
+`);
+    expect(await exited).toBe(0);
+  }
+});
+
+it("should error when node_modules does not exist", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "0.0.1",
+      dependencies: {
+        bar: "latest",
+      },
+    }),
+  );
+  {
+    const { stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: package_dir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(err).toContain("Saved lockfile");
+    expect(await exited).toBe(0);
+  }
+  await rm(join(package_dir, "node_modules"), { recursive: true });
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "pm", "ls"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  expect(await stderr.text()).toContain("node_modules not found");
+  expect(await stdout.text()).toBe("");
+  expect(await exited).toBe(1);
+});
+
 it("should list top-level aliased dependency", async () => {
   const urls: string[] = [];
   setHandler(dummyRegistry(urls));
@@ -190,7 +383,7 @@ it("should list top-level aliased dependency", async () => {
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── moo-1@moo
 `);
   expect(await exited).toBe(0);
@@ -316,7 +509,7 @@ it("should list only trusted dependencies with --trusted", async () => {
       env,
     });
     expect(await stderr.text()).toBe("");
-    expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 └── bar@0.0.2
 `);
     expect(await exited).toBe(0);
@@ -333,7 +526,7 @@ it("should list only trusted dependencies with --trusted", async () => {
       env,
     });
     expect(await stderr.text()).toBe("");
-    expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 ├── bar@0.0.2
 └── moo@moo
 `);
@@ -525,7 +718,7 @@ it("should list nothing with --trusted when no dependencies are trusted", async 
     env,
   });
   expect(await stderr.text()).toBe("");
-  expect(await stdout.text()).toBe(`${package_dir} node_modules (1)
+  expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
 `);
   expect(await exited).toBe(0);
 });
@@ -718,13 +911,62 @@ test("bun pm whoami still works", async () => {
   expect(exitCode).toBe(1);
 });
 
+describe.concurrent("bun pm whoami against a registry with a self-signed certificate", () => {
+  async function whoami(env: NodeJS.Dict<string>) {
+    const requests: string[] = [];
+    using server = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname}`);
+        return Response.json({ username: "self-signed-user" });
+      },
+    });
+    using dir = tempDir("pm-whoami-self-signed", {
+      "package.json": JSON.stringify({ name: "whoami-self-signed", version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `https://localhost:${server.port}`, token: "self-signed-token" },
+        },
+      }),
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", "whoami"],
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, requests };
+  }
+
+  test("NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off", async () => {
+    const { stdout, stderr, exitCode, requests } = await whoami({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+
+    expect(stderr).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(stdout).toBe("self-signed-user\n");
+    expect(requests).toEqual(["GET /-/whoami"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("verification stays on when the variable is unset", async () => {
+    const { stderr, exitCode, requests } = await whoami({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: undefined });
+
+    expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
+  });
+});
+
 test.each([
   {
     name: "bun list executes pm ls",
     cmd: ["list"],
     packageName: "test-list",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: true,
   },
   {
@@ -732,7 +974,7 @@ test.each([
     cmd: ["pm", "list"],
     packageName: "test-pm-list",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: false,
   },
   {
@@ -740,7 +982,7 @@ test.each([
     cmd: ["pm", "ls"],
     packageName: "test-pm-ls",
     dependencies: { bar: "latest" },
-    expectedOutput: (dir: string) => `${dir} node_modules (1)\n└── bar@0.0.2\n`,
+    expectedOutput: (dir: string) => `${dir} node_modules (1 installed)\n└── bar@0.0.2\n`,
     checkReservationMessage: false,
   },
 ])("$name", async ({ cmd, packageName, dependencies, expectedOutput, checkReservationMessage }) => {
@@ -935,4 +1177,495 @@ test("bun pm cache rm does not create the directory named by a project-local .en
   expect(stdout).toInclude("Cleared 'bun install' cache");
   expect(stderr).not.toContain("error");
   expect(exitCode).toBe(0);
+});
+
+// The cache directory setting (the first one set of $BUN_INSTALL_CACHE_DIR, --cache-dir,
+// $BUN_INSTALL/install/cache, $XDG_CACHE_HOME/.bun/install/cache, $HOME/.bun/install/cache) is
+// joined into a path buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024 on macOS. A value that
+// does not fit is unusable in the same way as a directory the OS refuses to create, and bun falls
+// back to node_modules/.cache of the project like it does for those. On Windows the buffer holds
+// more than an environment variable or argument can carry.
+describe.concurrent.skipIf(isWindows)("cache directory setting longer than the path buffer", () => {
+  // Longer than the buffer on every POSIX platform (the Linux one is the largest).
+  const tooLong = "/" + Buffer.alloc(2 * 4096, "a").toString();
+
+  const project = {
+    "package.json": JSON.stringify({ name: "pm-cache-too-long", version: "1.0.0" }),
+    // $XDG_CONFIG_HOME stands in for $HOME when bun looks for .npmrc and .bunfig.toml, so the
+    // oversized $HOME below is only ever used as a cache directory candidate.
+    "config/.npmrc": "",
+  };
+
+  // Every lower precedence setting points at a usable directory: the fallback must be
+  // node_modules/.cache, not the next candidate.
+  function cacheEnv(dir: string, setting: Record<string, string>): NodeJS.Dict<string> {
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      HOME: join(dir, "home"),
+      XDG_CONFIG_HOME: join(dir, "config"),
+    };
+    delete spawnEnv.BUN_INSTALL_CACHE_DIR;
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.XDG_CACHE_HOME;
+    return { ...spawnEnv, ...setting };
+  }
+
+  async function runPm(dir: string, args: string[], setting: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "pm", ...args],
+      cwd: dir,
+      env: cacheEnv(dir, setting),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.each(["BUN_INSTALL_CACHE_DIR", "BUN_INSTALL", "XDG_CACHE_HOME", "HOME"])(
+    "bun pm cache falls back to node_modules/.cache when $%s does not fit",
+    async name => {
+      using dir = tempDir("pm-cache-too-long", project);
+
+      const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache"], { [name]: tooLong });
+
+      expect(stderr).toBe("");
+      expect(stdout).toBe(join(String(dir), "node_modules", ".cache"));
+      expect(exitCode).toBe(0);
+    },
+  );
+
+  test("bun pm cache falls back to node_modules/.cache when --cache-dir does not fit", async () => {
+    using dir = tempDir("pm-cache-too-long-flag", project);
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["--cache-dir", tooLong, "cache"], {});
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(String(dir), "node_modules", ".cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  // A directory that fits the buffer but that the OS rejects (one name longer than NAME_MAX) has
+  // always been handled this way; the oversized values above take the same route.
+  test("bun pm cache falls back to node_modules/.cache when the OS rejects the directory", async () => {
+    using dir = tempDir("pm-cache-os-rejects", project);
+    const tooLongForTheOS = join(String(dir), Buffer.alloc(300, "a").toString());
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache"], {
+      BUN_INSTALL_CACHE_DIR: tooLongForTheOS,
+    });
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(String(dir), "node_modules", ".cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  // What has to fit the buffer is the normalized directory, not the value as written.
+  test("bun pm cache uses a directory that only fits the path buffer once normalized", async () => {
+    using dir = tempDir("pm-cache-long-normalized", project);
+    const cacheDir = `${String(dir)}/${Buffer.alloc("x/../".length * 2000, "x/../").toString()}cache`;
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache"], { BUN_INSTALL_CACHE_DIR: cacheDir });
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(String(dir), "cache"));
+    expect(exitCode).toBe(0);
+  });
+
+  // `bun pm cache rm` has no fallback: it reports the directory it could not open.
+  test("bun pm cache rm reports ENAMETOOLONG when $BUN_INSTALL_CACHE_DIR does not fit", async () => {
+    using dir = tempDir("pm-cache-rm-too-long", project);
+
+    const { stdout, stderr, exitCode } = await runPm(String(dir), ["cache", "rm"], { BUN_INSTALL_CACHE_DIR: tooLong });
+
+    expect(stderr).toContain("ENAMETOOLONG getting cache directory");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+    expect(await exists(join(String(dir), "node_modules"))).toBeFalse();
+  });
+
+  test("bun install falls back to node_modules/.cache when $BUN_INSTALL_CACHE_DIR does not fit", async () => {
+    using dir = tempDir("pm-cache-too-long-install", {
+      ...project,
+      "package.json": JSON.stringify({ name: "pm-cache-too-long", dependencies: { moo: "./moo" } }),
+      "moo/package.json": JSON.stringify({ name: "moo", version: "0.1.0" }),
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: cacheEnv(String(dir), { BUN_INSTALL_CACHE_DIR: tooLong }),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
+    expect(await exists(join(String(dir), "node_modules", "moo", "package.json"))).toBeTrue();
+    expect(await exists(join(String(dir), "node_modules", ".cache"))).toBeTrue();
+  });
+});
+
+async function runInDir(dir: string, ...args: string[]) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: dir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  return await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+}
+
+test("bun pm untrusted and bun pm trust escape control characters in dependency scripts", async () => {
+  // Both lines of the script are a shell comment after the echo, so only the echo runs once
+  // the package is trusted. Printed raw, though, the first comment erases the listing line
+  // (ESC[2K) and returns to column 1 (ESC[1G), and the newline lets the second one pose as
+  // a further listing entry. `\r`, `\t`, DEL and the 8-bit CSI (U+009B) are the remaining
+  // kinds of control character a terminal acts on.
+  const script = 'echo "real command" #\x1b[2K\x1b[1G\r\x7f\u009b\n#\t» [postinstall]: node scripts/postinstall.js';
+  const shown =
+    'echo "real command" #\\x1b[2K\\x1b[1G\\r\\x7f\\u009b\\n#\\t» [postinstall]: node scripts/postinstall.js';
+
+  using dir = tempDir("pm-untrusted-control-chars", {
+    "package.json": JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "nice-pkg": "file:./nice-pkg",
+      },
+    }),
+    "nice-pkg/package.json": JSON.stringify({
+      name: "nice-pkg",
+      version: "1.0.0",
+      scripts: {
+        postinstall: script,
+      },
+    }),
+  });
+
+  let [stdout, stderr, exitCode] = await runInDir(String(dir), "install");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("Blocked 1 postinstall");
+  expect(exitCode).toBe(0);
+
+  [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "untrusted");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain(` » [postinstall]: ${shown}\n`);
+  expect(stdout).not.toContain("\x1b");
+  expect(stdout).not.toContain("\x7f");
+  expect(stdout).not.toContain("\u009b");
+  expect(exitCode).toBe(0);
+
+  [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "trust", "nice-pkg");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain(` ✓ [postinstall]: ${shown}\n`);
+  expect(stdout).toContain("1 script ran across 1 package");
+  expect(stdout).not.toContain("\x1b");
+  expect(stdout).not.toContain("\x7f");
+  expect(stdout).not.toContain("\u009b");
+  expect(exitCode).toBe(0);
+});
+
+// The file: target becomes the resolution, so a dependent can put control characters in it (an
+// alias containing them is rejected before anything is installed). Windows does not allow them in
+// file names, so the package cannot be installed there in the first place.
+test.skipIf(isWindows)("bun pm untrusted escapes control characters in the package path and resolution", async () => {
+  using dir = tempDir("pm-untrusted-control-chars-path", {
+    "package.json": JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "nice-pkg": "file:./real\rpkg",
+      },
+    }),
+    "real\rpkg/package.json": JSON.stringify({
+      name: "real-pkg",
+      version: "1.0.0",
+      scripts: {
+        postinstall: "exit 0",
+      },
+    }),
+  });
+
+  let [stdout, stderr, exitCode] = await runInDir(String(dir), "install");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("Blocked 1 postinstall");
+  expect(exitCode).toBe(0);
+
+  [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "untrusted");
+  expect(stderr).not.toContain("error:");
+  expect(stdout).toContain("./node_modules/nice-pkg @real\\rpkg\n » [postinstall]: exit 0\n");
+  expect(stdout).not.toContain("\x1b");
+  expect(stdout).not.toContain("\r");
+  expect(exitCode).toBe(0);
+});
+
+// The global directory (`$BUN_INSTALL/install/global`, otherwise `.bun/install/global` under
+// $XDG_CACHE_HOME or $HOME) and the global bin directory (`$BUN_INSTALL/bin`, otherwise `.bun/bin`
+// under the same two) are each joined in a path buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024
+// on macOS. On Windows the buffer holds more than an environment variable can, so this is POSIX only.
+describe.concurrent.skipIf(isWindows)("global directories longer than the path buffer", () => {
+  const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
+  const LONG_VALUE = "/" + Buffer.alloc(8192, "a").toString();
+
+  type GlobalDirectory = "global directory" | "global bin directory";
+  type Variable = "BUN_INSTALL" | "XDG_CACHE_HOME" | "HOME";
+
+  // A -g command opens the global directory (which has to contain a package.json) and then the
+  // global bin directory; `bun pm bin -g` prints the latter. Every variable the two lookups read is
+  // set, so that a case reaches exactly the arm it names: the directory not under test is named
+  // outright ($BUN_INSTALL_GLOBAL_DIR and $BUN_INSTALL_BIN are opened as given, not joined), and
+  // $XDG_CONFIG_HOME holds an .npmrc so that neither the bunfig nor the .npmrc lookup joins $HOME.
+  async function runGlobal(
+    args: string[],
+    directory: GlobalDirectory,
+    variable: Variable,
+    value: string | ((dir: string) => string),
+  ) {
+    using dir = tempDir("pm-global-dir-too-long", {
+      "global/package.json": JSON.stringify({ name: "global" }),
+      "xdg-config/.npmrc": "",
+    });
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      HOME: String(dir),
+      XDG_CONFIG_HOME: join(String(dir), "xdg-config"),
+    };
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+    delete spawnEnv.BUN_INSTALL_BIN;
+    delete spawnEnv.XDG_CACHE_HOME;
+    if (directory === "global directory") {
+      spawnEnv.BUN_INSTALL_BIN = join(String(dir), "bin");
+    } else {
+      spawnEnv.BUN_INSTALL_GLOBAL_DIR = join(String(dir), "global");
+    }
+    spawnEnv[variable] = typeof value === "string" ? value : value(String(dir));
+
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: spawnEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { dir: String(dir), stdout, stderr, exitCode };
+  }
+
+  function expectNameTooLong({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof runGlobal>>) {
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  }
+
+  test.each<[GlobalDirectory, Variable]>([
+    ["global directory", "BUN_INSTALL"],
+    ["global directory", "XDG_CACHE_HOME"],
+    ["global directory", "HOME"],
+    ["global bin directory", "BUN_INSTALL"],
+    ["global bin directory", "XDG_CACHE_HOME"],
+    ["global bin directory", "HOME"],
+  ])("bun pm bin -g: %s from $%s", async (directory, variable) => {
+    expectNameTooLong(await runGlobal(["pm", "bin", "-g"], directory, variable, LONG_VALUE));
+  });
+
+  test("bun install -g: global directory from $BUN_INSTALL", async () => {
+    expectNameTooLong(await runGlobal(["install", "-g"], "global directory", "BUN_INSTALL", LONG_VALUE));
+  });
+
+  // A joined path of exactly the buffer size is already one byte longer than the OS accepts; one
+  // byte more and it does not fit the buffer either.
+  test.each([
+    ["exactly", 0],
+    ["one byte above", 1],
+  ])("global directory path %s the path buffer size", async (_, offset) => {
+    const suffix = "/install/global";
+    const value = "/" + Buffer.alloc(PATH_BUFFER_BYTES + offset - "/".length - suffix.length, "a").toString();
+    expect(Buffer.byteLength(value + suffix)).toBe(PATH_BUFFER_BYTES + offset);
+
+    expectNameTooLong(await runGlobal(["pm", "bin", "-g"], "global directory", "BUN_INSTALL", value));
+  });
+
+  // What has to fit the buffer is the normalized path, not the value as written.
+  test("a value that only fits the path buffer once normalized is used", async () => {
+    const { dir, stdout, stderr, exitCode } = await runGlobal(
+      ["pm", "bin", "-g"],
+      "global bin directory",
+      "BUN_INSTALL",
+      // `${dir}/x/../x/../...` normalizes to `${dir}` (path.join would normalize it here already).
+      dir => `${dir}/${Buffer.alloc(100_000, "x/../").toString()}`,
+    );
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(dir, "bin") + "\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A package.json that is readable but not writable (a read-only checkout, a file owned by
+// another user) must only stop the commands that actually rewrite it.
+describe.skipIf(isWindows)("read-only package.json", () => {
+  // Nothing here may reach a registry.
+  const offlineEnv = { ...env, npm_config_registry: "http://127.0.0.1:1/" };
+
+  function run(cwd: string, unprivileged: ReturnType<typeof unprivilegedSpawnOptions>, ...args: string[]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: offlineEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    return Promise.all([stdout.text(), stderr.text(), exited]);
+  }
+
+  // An installed project whose package.json was made read-only afterwards. `dep` is a
+  // local dependency whose postinstall was blocked, so there is something to trust; `other`
+  // is a local package that is not a dependency yet, so there is something to add.
+  async function installedProject() {
+    const dir = tempDir("pm-read-only-package-json", {
+      "package.json": JSON.stringify({ name: "read-only", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: { postinstall: "echo ran > ran.txt" },
+      }),
+      "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+    });
+    const unprivileged = unprivilegedSpawnOptions(String(dir));
+    const project = {
+      dir: String(dir),
+      run: (...args: string[]) => run(String(dir), unprivileged, ...args),
+      [Symbol.dispose]() {
+        unprivileged[Symbol.dispose]();
+        dir[Symbol.dispose]();
+      },
+    };
+    try {
+      const [, err, exitCode] = await project.run("install");
+      expect(err).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      await chmod(join(project.dir, "package.json"), 0o444);
+    } catch (e) {
+      project[Symbol.dispose]();
+      throw e;
+    }
+    return project;
+  }
+
+  test("commands that only read package.json work", async () => {
+    using project = await installedProject();
+
+    const results: { args: string[]; out: string; err: string; exitCode: number }[] = [];
+    for (const args of [["pm", "bin"], ["pm", "ls"], ["pm", "pkg", "get", "name"], ["why", "dep"], ["outdated"]]) {
+      const [out, err, exitCode] = await project.run(...args);
+      results.push({ args, out, err, exitCode });
+    }
+
+    expect(results).toEqual([
+      { args: ["pm", "bin"], out: join(project.dir, "node_modules", ".bin") + "\n", err: "", exitCode: 0 },
+      { args: ["pm", "ls"], out: expect.stringContaining("dep@dep"), err: "", exitCode: 0 },
+      { args: ["pm", "pkg", "get", "name"], out: '"read-only"\n', err: "", exitCode: 0 },
+      { args: ["why", "dep"], out: expect.stringContaining("dep@dep"), err: "", exitCode: 0 },
+      { args: ["outdated"], out: expect.stringMatching(/^bun outdated v/), err: "", exitCode: 0 },
+    ]);
+  });
+
+  test("bun pm trust refuses before running any script", async () => {
+    using project = await installedProject();
+    const packageJson = join(project.dir, "package.json");
+    const lockfile = join(project.dir, "bun.lock");
+    const ranMarker = join(project.dir, "node_modules", "dep", "ran.txt");
+    const lockfileBefore = await Bun.file(lockfile).text();
+
+    {
+      const [out, err, exitCode] = await project.run("pm", "trust", "dep");
+      expect(err).toContain(`EACCES: Permission denied: could not open "${packageJson}" for writing`);
+      expect(out).toBe("");
+      expect(exitCode).toBe(1);
+      expect(await exists(ranMarker)).toBeFalse();
+      expect(await Bun.file(lockfile).text()).toBe(lockfileBefore);
+    }
+
+    // Once package.json is writable again the same command runs the script and records the trust.
+    await chmod(packageJson, 0o644);
+    {
+      const [out, err, exitCode] = await project.run("pm", "trust", "dep");
+      expect(err).not.toContain("error");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+      expect(await exists(ranMarker)).toBeTrue();
+      expect(await Bun.file(packageJson).json()).toMatchObject({ trustedDependencies: ["dep"] });
+      expect(await Bun.file(lockfile).text()).toContain("trustedDependencies");
+    }
+  });
+
+  test("commands that rewrite package.json still refuse up front", async () => {
+    using project = await installedProject();
+
+    const results: { args: string[]; out: string; err: string; exitCode: number }[] = [];
+    for (const args of [["add", "./other"], ["remove", "dep"], ["update"]]) {
+      const [out, err, exitCode] = await project.run(...args);
+      results.push({ args, out, err, exitCode });
+    }
+
+    const refused = {
+      out: "",
+      err: expect.stringContaining(
+        `EACCES: Permission denied while opening "${join(project.dir, "package.json")}"\nnote: package.json must be writable`,
+      ),
+      exitCode: 1,
+    };
+    expect(results).toEqual([
+      { args: ["add", "./other"], ...refused },
+      { args: ["remove", "dep"], ...refused },
+      { args: ["update"], ...refused },
+    ]);
+  });
+
+  // --dry-run and --no-save turn the same commands into readers of package.json.
+  test("--dry-run and --no-save do not need a writable package.json", async () => {
+    using project = await installedProject();
+    const packageJson = join(project.dir, "package.json");
+    const packageJsonBefore = await Bun.file(packageJson).text();
+
+    const results: { args: string[]; err: string; exitCode: number }[] = [];
+    for (const args of [
+      ["add", "./other", "--dry-run"],
+      ["remove", "dep", "--dry-run"],
+      ["update", "--dry-run"],
+      ["add", "./other", "--no-save"],
+    ]) {
+      const [, err, exitCode] = await project.run(...args);
+      results.push({ args, err, exitCode });
+    }
+
+    expect(results).toEqual([
+      { args: ["add", "./other", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["remove", "dep", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["update", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["add", "./other", "--no-save"], err: "", exitCode: 0 },
+    ]);
+    expect(await Bun.file(packageJson).text()).toBe(packageJsonBefore);
+  });
+
+  test("a read-only root package.json is still found from a workspace member", async () => {
+    using dir = tempDir("pm-read-only-workspace-root", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+    });
+    await chmod(join(String(dir), "package.json"), 0o444);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+    const [out, err, exitCode] = await run(join(String(dir), "packages", "member"), unprivileged, "pm", "bin");
+
+    expect(err).toBe("");
+    expect(out).toBe(join(String(dir), "node_modules", ".bin") + "\n");
+    expect(exitCode).toBe(0);
+  });
 });

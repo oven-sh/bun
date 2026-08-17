@@ -298,10 +298,14 @@ pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarge
     match File::write_file(Fd::cwd(), path, &entry.source.contents) {
         Ok(()) => true,
         Err(err) => {
-            Output::err_generic(
-                "failed to write package.json for workspace '{}': {}",
-                (BStr::new(&target.name), BStr::new(err.name())),
-            );
+            if target.name.is_empty() {
+                Output::err_generic("failed to write package.json: {}", (BStr::new(err.name()),));
+            } else {
+                Output::err_generic(
+                    "failed to write package.json for workspace '{}': {}",
+                    (BStr::new(&target.name), BStr::new(err.name())),
+                );
+            }
             false
         }
     }

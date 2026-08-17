@@ -57,28 +57,26 @@ impl ExtractTarball {
                 return Err(crate::Error::IntegrityCheckFailed);
             }
         }
-        let mut result = self.extract(log, bytes)?;
+        let integrity = self.lockfile_integrity(|| Integrity::for_bytes(bytes));
+        let mut result = self.extract(log, bytes, &integrity)?;
+        result.integrity = integrity;
+        Ok(result)
+    }
 
-        // Compute and store SHA-512 integrity hash for GitHub / URL / local tarballs
-        // so the lockfile can pin the exact tarball content. On subsequent installs
-        // the hash stored in the lockfile is forwarded via this.integrity and verified
-        // above, preventing a compromised server from silently swapping the tarball.
+    /// What the lockfile pins for a GitHub / URL / local tarball so later installs verify the
+    /// same bytes: the already pinned value, else `compute`d on first install. Settled before
+    /// extracting because a local tarball's cache entry is named after it.
+    pub(crate) fn lockfile_integrity(&self, compute: impl FnOnce() -> Integrity) -> Integrity {
         match self.resolution.tag {
             ResolutionTag::Github | ResolutionTag::RemoteTarball | ResolutionTag::LocalTarball => {
                 if self.integrity.tag.is_supported() {
-                    // Re-installing with an existing lockfile: integrity was already
-                    // verified above, propagate the known value to ExtractData so that
-                    // the lockfile keeps it on re-serialisation.
-                    result.integrity = self.integrity;
+                    self.integrity
                 } else {
-                    // First install (no integrity in the lockfile yet): compute it.
-                    result.integrity = Integrity::for_bytes(bytes);
+                    compute()
                 }
             }
-            _ => {}
+            _ => Integrity::default(),
         }
-
-        Ok(result)
     }
 }
 
@@ -181,7 +179,38 @@ pub(crate) fn uses_streaming_extraction() -> bool {
         .unwrap_or(false)
 }
 
+/// What `move_to_cache_directory` does with an existing cache folder of the same name.
+/// Decided before extracting, while "pre-existing" and "published meanwhile" still differ.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum CachePublish {
+    /// npm and GitHub: swap ours in; leave the old one in the temp dir for concurrent readers.
+    Replace,
+    /// Tarball re-extracted over its own folder: swap ours in, delete the old one.
+    Supersede,
+    /// Tarball whose folder did not exist: one there now is a concurrent identical extraction.
+    KeepExisting,
+}
+
 impl ExtractTarball {
+    pub(crate) fn cache_publish(&self) -> CachePublish {
+        if !self.resolution.tag.is_tarball() {
+            return CachePublish::Replace;
+        }
+        let name_taken = TL_BUFS.with_borrow_mut(|bufs| {
+            let folder_name = directories::cached_tarball_folder_name_print(
+                &mut bufs.folder_name_buf,
+                self.url.slice(),
+                None,
+            );
+            sys::exists_at_type(self.cache_dir, folder_name).is_ok()
+        });
+        if name_taken {
+            CachePublish::Supersede
+        } else {
+            CachePublish::KeepExisting
+        }
+    }
+
     /// Derive the display name and a filesystem-safe basename for this
     /// package. Shared by the buffered `extract()` path below and the
     /// streaming extractor in `TarballStream.rs` so both pick identical
@@ -201,12 +230,20 @@ impl ExtractTarball {
         let basename: &[u8] = 'brk: {
             let mut tmp = name;
             if strings::has_prefix(tmp, b"https://") || strings::has_prefix(tmp, b"http://") {
+                // A URL name is the placeholder `bun add <url>` uses until package.json is read.
+                if let Some(i) = strings::index_of_any(tmp, b"?#") {
+                    tmp = &tmp[0..i];
+                }
                 tmp = bun_paths::basename(tmp);
                 if strings::ends_with(tmp, b".tgz") {
                     tmp = &tmp[0..tmp.len() - 4];
                 } else if strings::ends_with(tmp, b".tar.gz") {
                     tmp = &tmp[0..tmp.len() - 7];
                 }
+                if !bun_install::dependency::is_safe_install_folder_name(tmp) {
+                    tmp = b"package";
+                }
+                break 'brk tmp;
             } else if tmp[0] == b'@' {
                 if let Some(i) = strings::index_of_char(tmp, b'/') {
                     tmp = &tmp[i as usize + 1..];
@@ -225,7 +262,12 @@ impl ExtractTarball {
         (name, basename)
     }
 
-    fn extract(&self, log: &mut bun_ast::Log, tgz_bytes: &[u8]) -> Result<ExtractData, Error> {
+    fn extract(
+        &self,
+        log: &mut bun_ast::Log,
+        tgz_bytes: &[u8],
+        integrity: &Integrity,
+    ) -> Result<ExtractData, Error> {
         let _tracer = bun_core::perf::trace("ExtractTarball.extract");
 
         let tmpdir = Dir::borrow(&self.temp_dir);
@@ -247,7 +289,7 @@ impl ExtractTarball {
                     bun_ast::Loc::EMPTY,
                     format_args!(
                         "Refusing to install package with invalid name \"{}\"",
-                        bun_fmt::s(name),
+                        bun_fmt::escape_control_chars(name),
                     ),
                 );
                 return Err(crate::Error::InstallFailed);
@@ -256,6 +298,7 @@ impl ExtractTarball {
         let mut resolved: &'static [u8] = b"";
         let tmpname =
             FileSystem::tmpname(tmpname_suffix, &mut tmpname_buf.0, bun_core::fast_random())?;
+        let publish = self.cache_publish();
         {
             let extract_destination = match bun_sys::make_path::make_open_path(
                 tmpdir,
@@ -439,12 +482,13 @@ impl ExtractTarball {
             }
         }
 
-        self.move_to_cache_directory(log, tmpname, name, basename, resolved)
+        self.move_to_cache_directory(log, tmpname, name, basename, resolved, integrity, publish)
     }
 
     /// Rename the freshly-extracted temp directory into the cache, read
     /// `package.json` if required, and build the `ExtractData` result. Shared
-    /// between the buffered and streaming extraction paths.
+    /// between the buffered and streaming extraction paths. `resolved` names a
+    /// GitHub cache entry, `integrity` a local tarball's.
     pub(crate) fn move_to_cache_directory(
         &self,
         log: &mut bun_ast::Log,
@@ -452,6 +496,8 @@ impl ExtractTarball {
         name: &[u8],
         basename: &[u8],
         resolved: &[u8],
+        integrity: &Integrity,
+        publish: CachePublish,
     ) -> Result<ExtractData, Error> {
         let package_manager = self.package_manager.get();
 
@@ -466,7 +512,7 @@ impl ExtractTarball {
                             bun_ast::Loc::EMPTY,
                             format_args!(
                                 "Refusing to install package with invalid name \"{}\"",
-                                bun_fmt::s(name),
+                                bun_fmt::escape_control_chars(name),
                             ),
                         );
                         return Err(crate::Error::InstallFailed);
@@ -500,14 +546,18 @@ impl ExtractTarball {
                     )
                     .as_bytes()
                 }
-                ResolutionTag::LocalTarball | ResolutionTag::RemoteTarball => {
-                    directories::cached_tarball_folder_name_print(
-                        &mut bufs.folder_name_buf,
-                        self.url.slice(),
-                        None,
-                    )
-                    .as_bytes()
-                }
+                ResolutionTag::LocalTarball => directories::cached_local_tarball_folder_name_print(
+                    &mut bufs.folder_name_buf,
+                    integrity,
+                    None,
+                )
+                .as_bytes(),
+                ResolutionTag::RemoteTarball => directories::cached_tarball_folder_name_print(
+                    &mut bufs.folder_name_buf,
+                    self.url.slice(),
+                    None,
+                )
+                .as_bytes(),
                 _ => unreachable!(),
             };
             if folder_name.is_empty() || (folder_name.len() == 1 && folder_name[0] == b'/') {
@@ -521,7 +571,7 @@ impl ExtractTarball {
 
             // Now that we've extracted the archive, we rename.
             #[cfg(windows)]
-            {
+            let moved: Result<(), Error> = 'moved: {
                 // Windows EBUSY/SHARING_VIOLATION on `NtSetInformationFile` is
                 // transient when a concurrent process (another `bun install`
                 // sharing the cache, AV, the Search Indexer) is closing its
@@ -537,6 +587,10 @@ impl ExtractTarball {
                 }
 
                 let path_to_use = path2;
+                let mut folder_name_z_buf = PathBuffer::uninit();
+                folder_name_z_buf[0..folder_name.len()].copy_from_slice(folder_name);
+                folder_name_z_buf[folder_name.len()] = 0;
+                let folder_name_z = ZStr::from_buf(&folder_name_z_buf, folder_name.len());
 
                 loop {
                     let dir_to_move = match sys::open_dir_at_windows_a(
@@ -562,7 +616,7 @@ impl ExtractTarball {
                                     bun_fmt::s(folder_name),
                                 ),
                             );
-                            return Err(crate::Error::InstallFailed);
+                            break 'moved Err(crate::Error::InstallFailed);
                         }
                     };
 
@@ -582,6 +636,16 @@ impl ExtractTarball {
                                         // before we attempt to delete the destination, let's close the source dir.
                                         let _ = sys::close(dir_to_move);
 
+                                        if publish == CachePublish::KeepExisting
+                                            && sys::directory_exists_at(
+                                                cache_dir.fd(),
+                                                folder_name_z,
+                                            )
+                                            .unwrap_or(false)
+                                        {
+                                            break;
+                                        }
+
                                         // We tried to move the folder over
                                         // but it didn't work!
                                         // so instead of just simply deleting the folder
@@ -595,12 +659,6 @@ impl ExtractTarball {
                                             .copy_from_slice(&[b't', b'm', b'p', 0]);
                                         let tempdest =
                                             ZStr::from_buf(&tempdest_buf, tmpname.len() + 3);
-                                        let mut folder_name_z_buf = PathBuffer::uninit();
-                                        folder_name_z_buf[0..folder_name.len()]
-                                            .copy_from_slice(folder_name);
-                                        folder_name_z_buf[folder_name.len()] = 0;
-                                        let folder_name_z =
-                                            ZStr::from_buf(&folder_name_z_buf, folder_name.len());
                                         match sys::renameat(
                                             Fd::from_std_dir(cache_dir),
                                             folder_name_z,
@@ -637,7 +695,7 @@ impl ExtractTarball {
                                     bun_fmt::s(folder_name),
                                 ),
                             );
-                            return Err(crate::Error::InstallFailed);
+                            break 'moved Err(crate::Error::InstallFailed);
                         }
                         bun_sys::Result::Ok(_) => {
                             let _ = sys::close(dir_to_move);
@@ -646,33 +704,27 @@ impl ExtractTarball {
 
                     break;
                 }
-            }
+                Ok(())
+            };
             #[cfg(not(windows))]
-            {
-                // Attempt to gracefully handle duplicate concurrent `bun install` calls
-                //
-                // By:
-                // 1. Rename from temporary directory to cache directory and fail if it already exists
-                // 2a. If the rename fails, swap the cache directory with the temporary directory version
-                // 2b. Delete the temporary directory version ONLY if we're not using a provided temporary directory
-                // 3. If rename still fails, fallback to racily deleting the cache directory version and then renaming the temporary directory version again.
-                //
-
+            let moved: Result<(), Error> = {
                 if create_subdir {
                     if let Some(folder) = bun_paths::Dirname::dirname(folder_name) {
                         let _ = bun_sys::make_path::make_path(cache_dir, folder);
                     }
                 }
 
-                if let Err(err) = sys::renameat_concurrently_a(
+                sys::renameat_concurrently_a(
                     tmpdir.fd(),
                     tmpname.as_bytes(),
                     cache_dir.fd(),
                     folder_name,
                     sys::RenameatConcurrentlyOptions {
                         move_fallback: true,
+                        keep_existing_destination: publish == CachePublish::KeepExisting,
                     },
-                ) {
+                )
+                .map_err(|err| {
                     log.add_error_fmt(
                         None,
                         bun_ast::Loc::EMPTY,
@@ -684,9 +736,15 @@ impl ExtractTarball {
                             bun_fmt::s(folder_name),
                         ),
                     );
-                    return Err(crate::Error::InstallFailed);
-                }
+                    crate::Error::InstallFailed
+                })
+            };
+
+            // `tmpname` now holds our own copy (failed or lost) or the swapped-out folder.
+            if moved.is_err() || publish != CachePublish::Replace {
+                let _ = tmpdir.delete_tree(tmpname.as_bytes());
             }
+            moved?;
 
             // We return a resolved absolute absolute file path to the cache dir.
             // To get that directory, we open the directory again.

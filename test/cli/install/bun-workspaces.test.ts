@@ -1,12 +1,13 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers } from "bun:internal-for-testing";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "fs";
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from "fs";
 import { cp, exists, mkdir, rm } from "fs/promises";
 import {
   assertManifestsPopulated,
   bunEnv as baseEnv,
   bunExe,
+  isWindows,
   readdirSorted,
   runBunInstall,
   toMatchNodeModulesAt,
@@ -230,6 +231,96 @@ test.concurrent("allowing negative workspace patterns", async () => {
   expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
     name: "no-deps",
     version: "1.0.0",
+  });
+});
+
+// pnpm and npm accept workspace members whose package.json has no "name" (vite's
+// pnpm-workspace.yaml matches dozens of test fixtures shaped like `{"type":"module"}`).
+describe("workspace member package.json without a name", () => {
+  const skippedWarning =
+    'warn: Skipping workspace "packages/fixture": its package.json has no "name", so its dependencies will not be installed\n';
+
+  async function setupMonorepo(packageDir: string, workspaces: string[], fixturePackageJson: object) {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "root",
+          workspaces,
+          dependencies: {
+            pkg1: "workspace:*",
+          },
+        }),
+      ),
+      write(join(packageDir, "packages", "pkg1", "package.json"), JSON.stringify({ name: "pkg1", version: "1.0.0" })),
+      write(join(packageDir, "packages", "fixture", "package.json"), JSON.stringify(fixturePackageJson)),
+    ]);
+  }
+
+  async function expectFixtureSkipped(packageDir: string) {
+    expect(await file(join(packageDir, "node_modules", "pkg1", "package.json")).json()).toEqual({
+      name: "pkg1",
+      version: "1.0.0",
+    });
+    expect(await exists(join(packageDir, "node_modules", "fixture"))).toBeFalse();
+    const lockfile = await file(join(packageDir, "bun.lock")).text();
+    expect(lockfile).toContain('"packages/pkg1"');
+    expect(lockfile).not.toContain("packages/fixture");
+  }
+
+  const patterns = {
+    glob: ["packages/*"],
+    listed: ["packages/pkg1", "packages/fixture"],
+    // The fixture matches three times; it must still be warned about once.
+    overlapping: ["packages/fixture", "packages/*", "packages/**"],
+  };
+
+  for (const [kind, workspaces] of Object.entries(patterns)) {
+    test.concurrent(`is skipped (${kind})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      await setupMonorepo(packageDir, workspaces, { type: "module" });
+
+      // runBunInstall asserts nothing was warned about.
+      await runBunInstall(env, packageDir);
+      await expectFixtureSkipped(packageDir);
+    });
+
+    test.concurrent(`is skipped with a warning when it declares dependencies (${kind})`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      // Resolving this dependency would fail the install, so a successful install
+      // proves the fixture's dependencies were never looked at.
+      await setupMonorepo(packageDir, workspaces, { devDependencies: { "doesnt-exist-oops": "1.2.3" } });
+
+      const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+      expect(err).toContain(skippedWarning);
+      expect(err.split(skippedWarning)).toHaveLength(2);
+      await expectFixtureSkipped(packageDir);
+    });
+  }
+
+  test.concurrent("an empty name counts as no name", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setupMonorepo(packageDir, patterns.glob, { name: "", dependencies: { "doesnt-exist-oops": "1.2.3" } });
+
+    const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    expect(err).toContain(skippedWarning);
+    await expectFixtureSkipped(packageDir);
+  });
+
+  test.concurrent("does not stop a member from finding the workspace root", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await setupMonorepo(packageDir, patterns.glob, { dependencies: { "doesnt-exist-oops": "1.2.3" } });
+
+    const { err } = await runBunInstall(env, join(packageDir, "packages", "pkg1"), { allowWarnings: true });
+
+    expect(await exists(join(packageDir, "packages", "pkg1", "bun.lock"))).toBeFalse();
+    // Both the root lookup and the root package.json parse scan the workspaces; only the latter warns.
+    expect(err.split(skippedWarning)).toHaveLength(2);
+    await expectFixtureSkipped(packageDir);
   });
 });
 
@@ -510,6 +601,8 @@ describe("workspace aliases", async () => {
     "workspace:@org/b@*",
     // missing version after `@`
     "workspace:@org/b@",
+    // leading whitespace is not part of the specifier
+    " workspace:@org/b@*",
   ];
   for (const version of shouldPass) {
     test.concurrent(`version range ${version} and workspace with no version`, async () => {
@@ -550,7 +643,13 @@ describe("workspace aliases", async () => {
       expect(files).toMatchObject([{ name: "@org/a" }, { name: "@org/b" }, { name: "@org/b" }]);
     });
   }
-  let shouldFail: string[] = ["workspace:@org/b@1.0.0", "workspace:@org/b@1", "workspace:@org/b"];
+  let shouldFail: string[] = [
+    "workspace:@org/b@1.0.0",
+    "workspace:@org/b@1",
+    "workspace:@org/b",
+    // leading whitespace is not part of the specifier
+    " workspace:@org/b@1.0.0",
+  ];
   for (const version of shouldFail) {
     test.concurrent(`version range ${version} and workspace with no version (should fail)`, async () => {
       using ctx = await setupTest();
@@ -591,6 +690,7 @@ describe("workspace aliases", async () => {
       const err = await stderr.text();
       if (version === "workspace:@org/b") {
         expect(err).toContain('Workspace dependency "a1" not found');
+        expect(err).toMatch(/Searched in "\.[\\/]packages[\\/]pkg1[\\/]@org[\\/]b"/);
       } else {
         expect(err).toContain(`No matching version for workspace dependency "a1". Version: "${version}"`);
       }
@@ -2505,7 +2605,7 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234"))
     .toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 2,
+      "lockfileVersion": 1,
       "configVersion": 1,
       "workspaces": {
         "": {
@@ -2551,6 +2651,352 @@ test("matching workspace devDependency and npm peerDependency", async () => {
   expect(err).not.toContain("Saved lockfile");
   expect(err).not.toContain("updated");
   expect(out).toContain("no changes");
+});
+
+// bun.lock stores a workspace's dependencies as the specifiers written in its package.json, so
+// loading it has to rebuild exactly the dependencies parsing that package.json produces: on the
+// next install the two are diffed, and any dependency that differs makes the install report the
+// workspace as updated and re-resolve it, on every install, with nothing changed on disk.
+//
+// Parsing makes a dependency a workspace dependency (version = the workspace's path) only when its
+// specifier links the workspace: `workspace:` or an npm range the workspace's version satisfies.
+// Anything else that ends up resolved to the workspace keeps its parsed version. Every entry is
+// classified on its own, including a name listed in more than one dependency group.
+//
+// With linkWorkspacePackages off, parsing links no range, so a range (written out or through a
+// catalog) that bun.lock still binds to a workspace was linked while the setting was on: it keeps
+// loading as linked and the difference gets it re-resolved. Peers, overridden entries, catalog
+// entries holding `workspace:` and dist-tags the registry does not have are bound to the workspace
+// either way and load as parsed.
+describe("dependencies on a workspace load from bun.lock the way package.json parses them", () => {
+  const linked = "workspace packages/pkg2";
+
+  // setupTest's bunfig.toml, plus linkWorkspacePackages = false
+  async function disableLinking(packageDir: string) {
+    await write(
+      join(packageDir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(packageDir, ".bun-cache"),
+          registry: verdaccio.registryUrl(),
+          linker: "hoisted",
+          linkWorkspacePackages: false,
+        },
+      }),
+    );
+  }
+
+  // One line per dependency on `depName` declared by `pkgName`, in lockfile order (dev, optional,
+  // prod, peer): the groups it is declared in, the specifier, and what it was loaded as. Every one
+  // of them must also resolve to the workspace package.
+  function loadedDependencies(packageDir: string, pkgName: string, depName: string): string[] {
+    const lockfile = parseLockfile(packageDir);
+    const pkg = lockfile.packages.find((p: any) => p.name === pkgName);
+    const workspacePkg = lockfile.packages.find((p: any) => p.resolution.value === "workspace:packages/pkg2");
+    return pkg.dependencies
+      .map((id: number) => lockfile.dependencies[id])
+      .filter((dep: any) => dep.name === depName)
+      .map((dep: any) => {
+        expect(dep.package_id).toBe(workspacePkg.id);
+        const loadedAs =
+          "workspace" in dep
+            ? `workspace ${dep.workspace}`
+            : "npm" in dep
+              ? "npm"
+              : "catalog" in dep
+                ? "catalog"
+                : "dist_tag" in dep
+                  ? "dist-tag"
+                  : JSON.stringify(dep);
+        return `${Object.keys(dep.behavior).join("+")} ${JSON.stringify(dep.literal)} -> ${loadedAs}`;
+      });
+  }
+
+  const cases: {
+    label: string;
+    /** dependency groups of packages/pkg1 */
+    pkg1: Record<string, Record<string, string>>;
+    /** packages/pkg2 is `no-deps@1.0.0` unless given */
+    pkg2?: Record<string, string>;
+    /** root `workspaces.catalog` */
+    catalog?: Record<string, string>;
+    /** root `overrides` */
+    overrides?: Record<string, string>;
+    linkWorkspacePackages?: false;
+    /** the name pkg1 declares the dependency under, when not `no-deps` itself */
+    declaredAs?: string;
+    loaded: string[];
+  }[] = [
+    {
+      label: "workspace:* in dependencies and devDependencies",
+      pkg1: { dependencies: { "no-deps": "workspace:*" }, devDependencies: { "no-deps": "workspace:*" } },
+      loaded: [`dev "workspace:*" -> ${linked}`, `prod "workspace:*" -> ${linked}`],
+    },
+    {
+      label: "workspace:* in dependencies and peerDependencies",
+      pkg1: { dependencies: { "no-deps": "workspace:*" }, peerDependencies: { "no-deps": "workspace:*" } },
+      loaded: [`prod "workspace:*" -> ${linked}`, `peer "workspace:*" -> ${linked}`],
+    },
+    {
+      label: "workspace:* in dependencies and optionalDependencies",
+      pkg1: { dependencies: { "no-deps": "workspace:*" }, optionalDependencies: { "no-deps": "workspace:*" } },
+      loaded: [`optional "workspace:*" -> ${linked}`, `prod "workspace:*" -> ${linked}`],
+    },
+    {
+      label: "workspace:* in dependencies, devDependencies and peerDependencies",
+      pkg1: {
+        dependencies: { "no-deps": "workspace:*" },
+        devDependencies: { "no-deps": "workspace:*" },
+        peerDependencies: { "no-deps": "workspace:*" },
+      },
+      loaded: [`dev "workspace:*" -> ${linked}`, `prod "workspace:*" -> ${linked}`, `peer "workspace:*" -> ${linked}`],
+    },
+    {
+      label: "a satisfied range in dependencies and devDependencies",
+      pkg1: { dependencies: { "no-deps": "^1.0.0" }, devDependencies: { "no-deps": "^1.0.0" } },
+      loaded: [`dev "^1.0.0" -> ${linked}`, `prod "^1.0.0" -> ${linked}`],
+    },
+    {
+      // the range names the workspace, the entry does not
+      label: "a satisfied range aliased in dependencies and devDependencies",
+      pkg1: {
+        dependencies: { "deps-alias": "npm:no-deps@^1.0.0" },
+        devDependencies: { "deps-alias": "npm:no-deps@^1.0.0" },
+      },
+      declaredAs: "deps-alias",
+      loaded: [`dev "npm:no-deps@^1.0.0" -> ${linked}`, `prod "npm:no-deps@^1.0.0" -> ${linked}`],
+    },
+    {
+      label: "workspace:* in devDependencies and a satisfied range in peerDependencies",
+      pkg1: { devDependencies: { "no-deps": "workspace:*" }, peerDependencies: { "no-deps": "^1.0.0" } },
+      loaded: [`dev "workspace:*" -> ${linked}`, `peer "^1.0.0" -> ${linked}`],
+    },
+    {
+      label: "workspace:* in devDependencies and an unsatisfied range in peerDependencies",
+      pkg1: { devDependencies: { "no-deps": "workspace:*" }, peerDependencies: { "no-deps": "2.0.0" } },
+      loaded: [`dev "workspace:*" -> ${linked}`, `peer "2.0.0" -> npm`],
+    },
+    {
+      label: "an unsatisfied range in peerDependencies",
+      pkg1: { peerDependencies: { "no-deps": "2.0.0" } },
+      loaded: [`peer "2.0.0" -> npm`],
+    },
+    {
+      label: "a range on a workspace without a version",
+      pkg1: { dependencies: { "no-deps": "*" } },
+      pkg2: { name: "no-deps" },
+      loaded: [`prod "*" -> npm`],
+    },
+    {
+      label: "a catalog entry pointing at the workspace",
+      pkg1: { dependencies: { "no-deps": "catalog:" } },
+      catalog: { "no-deps": "workspace:*" },
+      loaded: [`prod "catalog:" -> catalog`],
+    },
+    {
+      // the registry has no such tag, so the resolver links the workspace
+      label: "a dist-tag the registry does not have",
+      pkg1: { dependencies: { "no-deps": "no-such-tag" } },
+      loaded: [`prod "no-such-tag" -> dist-tag`],
+    },
+    {
+      label: "an override sends an unsatisfied range to the workspace",
+      pkg1: { dependencies: { "no-deps": "^5.0.0" } },
+      overrides: { "no-deps": "workspace:*" },
+      loaded: [`prod "^5.0.0" -> npm`],
+    },
+    {
+      label: "linkWorkspacePackages off: workspace:* in dependencies and devDependencies",
+      pkg1: { dependencies: { "no-deps": "workspace:*" }, devDependencies: { "no-deps": "workspace:*" } },
+      linkWorkspacePackages: false,
+      loaded: [`dev "workspace:*" -> ${linked}`, `prod "workspace:*" -> ${linked}`],
+    },
+    {
+      label: "linkWorkspacePackages off: an unsatisfied range in peerDependencies",
+      pkg1: { peerDependencies: { "no-deps": "2.0.0" } },
+      linkWorkspacePackages: false,
+      loaded: [`peer "2.0.0" -> npm`],
+    },
+    {
+      label: "linkWorkspacePackages off: workspace:* in devDependencies and an unsatisfied range in peerDependencies",
+      pkg1: { devDependencies: { "no-deps": "workspace:*" }, peerDependencies: { "no-deps": "2.0.0" } },
+      linkWorkspacePackages: false,
+      loaded: [`dev "workspace:*" -> ${linked}`, `peer "2.0.0" -> npm`],
+    },
+    {
+      label: "linkWorkspacePackages off: a catalog entry pointing at the workspace",
+      pkg1: { dependencies: { "no-deps": "catalog:" } },
+      catalog: { "no-deps": "workspace:*" },
+      linkWorkspacePackages: false,
+      loaded: [`prod "catalog:" -> catalog`],
+    },
+    {
+      label: "linkWorkspacePackages off: a dist-tag the registry does not have",
+      pkg1: { dependencies: { "no-deps": "no-such-tag" } },
+      linkWorkspacePackages: false,
+      loaded: [`prod "no-such-tag" -> dist-tag`],
+    },
+    {
+      label: "linkWorkspacePackages off: an override sends an unsatisfied range to the workspace",
+      pkg1: { dependencies: { "no-deps": "^5.0.0" } },
+      overrides: { "no-deps": "workspace:*" },
+      linkWorkspacePackages: false,
+      loaded: [`prod "^5.0.0" -> npm`],
+    },
+  ];
+
+  for (const {
+    label,
+    pkg1,
+    pkg2 = { name: "no-deps", version: "1.0.0" },
+    catalog,
+    overrides,
+    linkWorkspacePackages,
+    declaredAs = "no-deps",
+    loaded,
+  } of cases) {
+    test.concurrent(label, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      if (linkWorkspacePackages === false) await disableLinking(packageDir);
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            workspaces: catalog ? { packages: ["packages/*"], catalog } : ["packages/*"],
+            overrides,
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({ name: "pkg1", version: "1.0.0", ...pkg1 }),
+        ),
+        write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify(pkg2)),
+      ]);
+
+      // A peer range the workspace does not satisfy is bound to it anyway, with a warning.
+      const allowWarnings = label.includes("unsatisfied range in peerDependencies");
+      await runBunInstall(env, packageDir, { allowWarnings });
+      // parseLockfile loads with this test process's settings (linking on); for the linking-off rows the
+      // install below, which reads the fixture's bunfig.toml, is what exercises that setting.
+      expect(loadedDependencies(packageDir, "pkg1", declaredAs)).toEqual(loaded);
+
+      // nothing changed, so the second install must not report pkg1 as changed
+      // ("Workspace package "packages/pkg1" has added 0 dependencies, removed 0 dependencies, and updated 1 dependencies")
+      const { err } = await runBunInstall(env, packageDir, { savesLockfile: false, verbose: true, allowWarnings });
+      expect(err).not.toContain('Workspace package "packages/pkg1"');
+    });
+  }
+
+  test.concurrent("the root lists a workspace in dependencies and devDependencies", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    await Promise.all([
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          workspaces: ["packages/*"],
+          dependencies: { "no-deps": "workspace:*" },
+          devDependencies: { "no-deps": "workspace:*" },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+      ),
+    ]);
+
+    // the root warns "Duplicate dependency" and keeps both entries, next to the entry every
+    // workspace gets
+    const { err } = await runBunInstall(env, packageDir, { allowWarnings: true });
+    expect(err).toContain('Duplicate dependency: "no-deps"');
+    expect(loadedDependencies(packageDir, "foo", "no-deps")).toEqual([
+      `workspace "" -> ${linked}`,
+      `dev "workspace:*" -> ${linked}`,
+      `prod "workspace:*" -> ${linked}`,
+    ]);
+
+    // (the root has no per-package "has added ..." message; what it loads as, above, is what gets diffed)
+    await runBunInstall(env, packageDir, { allowWarnings: true, savesLockfile: false });
+  });
+
+  // The range is checked against the version bun.lock recorded, so a workspace that moved out of
+  // range is still noticed and the dependency re-resolved.
+  test.concurrent("a workspace bumped out of a range is re-resolved", async () => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson, env } = ctx;
+    const pkg2Json = join(packageDir, "packages", "pkg2", "package.json");
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["packages/*"] })),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": "^1.0.0" } }),
+      ),
+      write(pkg2Json, JSON.stringify({ name: "no-deps", version: "1.0.0" })),
+    ]);
+
+    await runBunInstall(env, packageDir);
+    expect(loadedDependencies(packageDir, "pkg1", "no-deps")).toEqual([`prod "^1.0.0" -> ${linked}`]);
+
+    await write(pkg2Json, JSON.stringify({ name: "no-deps", version: "3.0.0" }));
+    const { err } = await runBunInstall(env, packageDir, { verbose: true });
+    expect(err).toContain(
+      'Workspace package "packages/pkg1" has added 0 dependencies, removed 0 dependencies, and updated 1 dependencies',
+    );
+
+    // ^1.0.0 now comes from the registry
+    expect(pkg1Resolution(packageDir)).toMatchObject({ tag: "npm", value: "1.1.0" });
+  });
+
+  // A range the lockfile linked keeps loading as linked after linkWorkspacePackages is turned off;
+  // package.json no longer parses it as linked, and that difference is what gets it re-resolved
+  // against the registry.
+  for (const [spec, root, loadedWhileLinking] of [
+    ["^1.0.0", {}, `prod "^1.0.0" -> ${linked}`],
+    // a catalog entry stays a catalog entry while linking; the range behind it is what is stale
+    ["catalog:", { catalog: { "no-deps": "^1.0.0" } }, `prod "catalog:" -> catalog`],
+  ] as const) {
+    test.concurrent(`a linked range (${spec}) is re-resolved after linkWorkspacePackages is turned off`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, packageJson, env } = ctx;
+      await Promise.all([
+        write(packageJson, JSON.stringify({ name: "foo", workspaces: { packages: ["packages/*"], ...root } })),
+        write(
+          join(packageDir, "packages", "pkg1", "package.json"),
+          JSON.stringify({ name: "pkg1", version: "1.0.0", dependencies: { "no-deps": spec } }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg2", "package.json"),
+          JSON.stringify({ name: "no-deps", version: "1.0.0" }),
+        ),
+      ]);
+
+      await runBunInstall(env, packageDir);
+      expect(loadedDependencies(packageDir, "pkg1", "no-deps")).toEqual([loadedWhileLinking]);
+
+      await disableLinking(packageDir);
+      const { err } = await runBunInstall(env, packageDir, { verbose: true });
+      expect(err).toContain(
+        'Workspace package "packages/pkg1" has added 0 dependencies, removed 0 dependencies, and updated 1 dependencies',
+      );
+      expect(pkg1Resolution(packageDir)).toMatchObject({ tag: "npm", value: "1.1.0" });
+
+      // and only once
+      const again = await runBunInstall(env, packageDir, { savesLockfile: false, verbose: true });
+      expect(again.err).not.toContain('Workspace package "packages/pkg1"');
+    });
+  }
+
+  /** what pkg1's only dependency resolves to */
+  function pkg1Resolution(packageDir: string) {
+    const lockfile = parseLockfile(packageDir);
+    const pkg1 = lockfile.packages.find((p: any) => p.name === "pkg1");
+    expect(pkg1.dependencies).toHaveLength(1);
+    const dep = lockfile.dependencies[pkg1.dependencies[0]];
+    return lockfile.packages.find((p: any) => p.id === dep.package_id).resolution;
+  }
 });
 
 // While linking, the hoisted installer formats each package's version label (its
@@ -2668,5 +3114,324 @@ describe("packages whose version label is longer than 512 bytes", () => {
     expect(await file(join(packageDir, "node_modules", "baz", "index.js")).text()).toBe(
       '#! /usr/bin/env node\n\nconsole.log("patched baz");\n',
     );
+  });
+});
+
+// The hoisted installer links a workspace package into node_modules under its name. A name
+// too long for the buffer that symlink is given used to abort the whole install instead of
+// failing that one package with ENAMETOOLONG. On POSIX that buffer held 512 bytes. On
+// Windows the name is appended to the absolute node_modules path in a 98302 byte buffer
+// (bun refuses names of 98302 bytes and up), so the name has to come within a node_modules
+// path (`\\?\C:\x\node_modules\` at the very least) of that size to overflow it.
+describe("workspace packages whose name is too long to link", () => {
+  const longName = Buffer.alloc(isWindows ? 98302 - 20 : 600, "a").toString();
+
+  // A scoped package is linked inside a separately opened `node_modules/@scope` directory.
+  test.concurrent.each([
+    ["unscoped", longName],
+    ["scoped", `@scope/${longName}`],
+  ])("%s name fails with ENAMETOOLONG", async (_, name) => {
+    using ctx = await setupTest();
+    const { packageDir, packageJson } = ctx;
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", workspaces: ["pkgs/*"] })),
+      write(join(packageDir, "pkgs", "pkg1", "package.json"), JSON.stringify({ name, version: "1.0.0" })),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", "hoisted"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).toContain(`ENAMETOOLONG: failed linking dependency/workspace to node_modules for package ${name}`);
+    expect(out).toContain("Failed to install 1 package");
+    expect(exitCode).toBe(1);
+  });
+});
+
+// Both linkers only create or repoint the `node_modules/<name>` links the current
+// lockfile asks for. When a workspace is renamed or removed, its name leaves the
+// lockfile and the links bun had created under that name (in the root's node_modules
+// and, with the isolated linker, in the node_modules of the workspaces depending on
+// it) used to stay behind, still resolving to the workspace folder.
+describe("links of a renamed or removed workspace", () => {
+  type Linker = "hoisted" | "isolated";
+  const linkers: Linker[] = ["hoisted", "isolated"];
+
+  async function install(ctx: TestCtx, linker: Linker, ...args: string[]): Promise<string> {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--linker", linker, ...args],
+      cwd: ctx.packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: ctx.env,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return out;
+  }
+
+  function writeProject(
+    packageDir: string,
+    rootDependencies: Record<string, string>,
+    packages: Record<string, Record<string, unknown>>,
+  ) {
+    return Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({ name: "foo", workspaces: ["packages/*"], devDependencies: rootDependencies }),
+      ),
+      ...Object.entries(packages).map(([dir, packageJson]) =>
+        write(join(packageDir, "packages", dir, "package.json"), JSON.stringify({ version: "1.0.0", ...packageJson })),
+      ),
+    ]);
+  }
+
+  // Package entries of a node_modules directory (no `.bun`/`.bin`), or [] when it does
+  // not exist. A listing (rather than `exists`) also sees links whose target is gone.
+  async function entries(nodeModules: string): Promise<string[]> {
+    try {
+      return (await readdirSorted(nodeModules)).filter(name => !name.startsWith("."));
+    } catch (err: any) {
+      if (err.code !== "ENOENT") throw err;
+      return [];
+    }
+  }
+
+  for (const linker of linkers) {
+    test.concurrent(`${linker}: renaming a workspace removes the links under its old name`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const rootNodeModules = join(packageDir, "node_modules");
+      const bNodeModules = join(packageDir, "packages", "b", "node_modules");
+
+      await writeProject(
+        packageDir,
+        { a: "*", b: "*" },
+        { a: { name: "a" }, b: { name: "b", dependencies: { a: "*" } } },
+      );
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+      expect(await entries(bNodeModules)).toEqual(linker === "isolated" ? ["a"] : []);
+
+      await writeProject(
+        packageDir,
+        { "a-renamed": "*", b: "*" },
+        { a: { name: "a-renamed" }, b: { name: "b", dependencies: { "a-renamed": "*" } } },
+      );
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a-renamed", "b"]);
+      expect(await entries(bNodeModules)).toEqual(linker === "isolated" ? ["a-renamed"] : []);
+      expect(await file(join(rootNodeModules, "a-renamed", "package.json")).json()).toMatchObject({
+        name: "a-renamed",
+      });
+
+      expect(await install(ctx, linker)).toContain("(no changes)");
+      expect(await entries(rootNodeModules)).toEqual(["a-renamed", "b"]);
+      expect(await entries(bNodeModules)).toEqual(linker === "isolated" ? ["a-renamed"] : []);
+    });
+
+    test.concurrent(`${linker}: renaming a scoped workspace removes the link under its old name`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const scopeDir = join(packageDir, "node_modules", "@repo");
+
+      await writeProject(
+        packageDir,
+        { "@repo/a": "*", "@repo/b": "*" },
+        { a: { name: "@repo/a" }, b: { name: "@repo/b" } },
+      );
+      await install(ctx, linker);
+      expect(await entries(scopeDir)).toEqual(["a", "b"]);
+
+      await writeProject(
+        packageDir,
+        { "@repo/a-renamed": "*", "@repo/b": "*" },
+        { a: { name: "@repo/a-renamed" }, b: { name: "@repo/b" } },
+      );
+      await install(ctx, linker);
+      expect(await entries(scopeDir)).toEqual(["a-renamed", "b"]);
+      expect(await file(join(scopeDir, "a-renamed", "package.json")).json()).toMatchObject({ name: "@repo/a-renamed" });
+    });
+
+    test.concurrent(`${linker}: removing a workspace from the project removes its link`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const rootNodeModules = join(packageDir, "node_modules");
+
+      await writeProject(packageDir, { a: "*", b: "*" }, { a: { name: "a" }, b: { name: "b" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+
+      await rm(join(packageDir, "packages", "a"), { recursive: true });
+      await writeProject(packageDir, { b: "*" }, { b: { name: "b" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["b"]);
+    });
+
+    // The old name is unlinked before the linker runs, so a dependency that still
+    // wants that name (here an alias of the renamed workspace) is linked again.
+    test.concurrent(`${linker}: the old name is linked again when a dependency still uses it`, async () => {
+      using ctx = await setupTest();
+      const { packageDir } = ctx;
+      const rootNodeModules = join(packageDir, "node_modules");
+
+      await writeProject(packageDir, { a: "*" }, { a: { name: "a" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(["a"]);
+
+      await writeProject(packageDir, { a: "workspace:a-renamed@*" }, { a: { name: "a-renamed" } });
+      await install(ctx, linker);
+      expect(await entries(rootNodeModules)).toEqual(linker === "isolated" ? ["a"] : ["a", "a-renamed"]);
+      expect(await file(join(rootNodeModules, "a", "package.json")).json()).toMatchObject({ name: "a-renamed" });
+    });
+  }
+
+  // The isolated linker only links the workspaces the root depends on, so nothing is
+  // ever linked for `a` here and the directory under its name is not bun's to remove.
+  test.concurrent("a directory under the old name is left alone", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const rootNodeModules = join(packageDir, "node_modules");
+    const marker = join(rootNodeModules, "a", "marker.txt");
+
+    await writeProject(packageDir, { b: "*" }, { a: { name: "a" }, b: { name: "b" } });
+    await install(ctx, "isolated");
+    expect(await entries(rootNodeModules)).toEqual(["b"]);
+
+    await write(marker, "not a workspace link");
+    await writeProject(packageDir, { b: "*" }, { a: { name: "a-renamed" }, b: { name: "b" } });
+    await install(ctx, "isolated");
+    expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+    expect(await file(marker).text()).toBe("not a workspace link");
+  });
+
+  test.concurrent("--dry-run does not touch the links", async () => {
+    using ctx = await setupTest();
+    const { packageDir } = ctx;
+    const rootNodeModules = join(packageDir, "node_modules");
+
+    await writeProject(packageDir, { a: "*", b: "*" }, { a: { name: "a" }, b: { name: "b" } });
+    await install(ctx, "hoisted");
+    expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+
+    await writeProject(packageDir, { "a-renamed": "*", b: "*" }, { a: { name: "a-renamed" }, b: { name: "b" } });
+    await install(ctx, "hoisted", "--dry-run");
+    expect(await entries(rootNodeModules)).toEqual(["a", "b"]);
+
+    await install(ctx, "hoisted");
+    expect(await entries(rootNodeModules)).toEqual(["a-renamed", "b"]);
+  });
+});
+
+// #39357: `bun install` must identify the project root by the path it was
+// invoked through. It used to realpath the root package.json fd, so workspace
+// discovery and lockfile keys were computed against a different root than
+// `top_level_dir` (the cwd). On Windows a subst drive or cross-drive junction
+// put the two roots on different drive letters, where no relative path exists:
+// the hoisted linker wrote machine-absolute workspace keys into bun.lock and
+// the isolated linker looped forever. On POSIX a symlinked root package.json
+// made workspace discovery run in the symlink target's directory.
+describe("aliased project root", () => {
+  test.concurrent.skipIf(isWindows)("workspaces install when the root package.json is a symlink", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "real", "package.json"),
+        JSON.stringify({
+          name: "ws-root",
+          private: true,
+          workspaces: ["packages/*"],
+          devDependencies: { "pkg-a": "workspace:*" },
+        }),
+      ),
+      write(
+        join(packageDir, "ws", "packages", "a", "package.json"),
+        JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+      ),
+    ]);
+    symlinkSync(join("..", "real", "package.json"), join(packageDir, "ws", "package.json"));
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "ws"),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(stdout).not.toContain("No packages!");
+    expect(exitCode).toBe(0);
+
+    const lockfile = await file(join(packageDir, "ws", "bun.lock")).text();
+    expect(lockfile).toContain('"packages/a"');
+    expect(lockfile).not.toContain("real/packages");
+    expect(await exists(join(packageDir, "ws", "node_modules", "pkg-a", "package.json"))).toBe(true);
+  });
+
+  test.skipIf(!isWindows)("workspaces install when cwd is a subst drive for the project's real path", async () => {
+    using ctx = await setupTest();
+    const { packageDir, env } = ctx;
+    await Promise.all([
+      write(
+        join(packageDir, "ws", "package.json"),
+        JSON.stringify({
+          name: "ws-root",
+          private: true,
+          workspaces: ["packages/*"],
+          devDependencies: { "pkg-a": "workspace:*" },
+        }),
+      ),
+      write(
+        join(packageDir, "ws", "packages", "a", "package.json"),
+        JSON.stringify({ name: "pkg-a", version: "1.0.0" }),
+      ),
+    ]);
+
+    // Map a free drive letter onto packageDir so the cwd's drive letter
+    // differs from the files' physical drive.
+    let drive: string | undefined;
+    for (const letter of "ZYXWVUTSRQONMLKJIHGFE") {
+      const { exitCode } = Bun.spawnSync({ cmd: ["cmd", "/c", "subst", `${letter}:`, packageDir], env });
+      if (exitCode === 0) {
+        drive = letter;
+        break;
+      }
+    }
+    if (!drive) throw new Error("no free drive letter available for subst");
+
+    try {
+      for (const linker of ["hoisted", "isolated"]) {
+        rmSync(join(packageDir, "ws", "node_modules"), { recursive: true, force: true });
+        rmSync(join(packageDir, "ws", "bun.lock"), { force: true });
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "install", `--linker=${linker}`],
+          cwd: `${drive}:\\ws`,
+          env,
+          stdout: "pipe",
+          stderr: "pipe",
+          // the unfixed isolated linker spins forever; kill instead of hanging the runner
+          timeout: 120_000,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ linker, stderr }).toEqual({ linker, stderr: expect.not.stringContaining("error:") });
+        expect({ linker, exitCode }).toEqual({ linker, exitCode: 0 });
+
+        const lockfile = await file(join(packageDir, "ws", "bun.lock")).text();
+        // workspace keys must stay relative, never the machine-absolute realpath
+        expect(lockfile).toContain('"packages/a"');
+        expect(lockfile).not.toContain(packageDir.replaceAll("\\", "/"));
+        expect(await exists(join(packageDir, "ws", "node_modules", "pkg-a", "package.json"))).toBe(true);
+      }
+    } finally {
+      Bun.spawnSync({ cmd: ["cmd", "/c", "subst", `${drive}:`, "/d"], env });
+    }
   });
 });

@@ -62,7 +62,7 @@ Bun only reads overrides from the root `package.json`, not from workspace packag
 
 ## `"resolutions"`
 
-`"resolutions"` is Yarn's alternative to `"overrides"`, with similar syntax. Bun supports it to help projects migrate from Yarn.
+`"resolutions"` is Yarn's alternative to `"overrides"`, with similar syntax. Bun supports it to help projects migrate from Yarn. When a `package.json` has both fields, Bun applies the rules from both. If the same package (or the same nested selector) appears in both, the `"overrides"` rule wins.
 
 {/* prettier-ignore */}
 ```json package.json icon="file-json"

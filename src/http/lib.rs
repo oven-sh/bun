@@ -106,6 +106,17 @@ pub enum Protocol {
     Http3,
 }
 
+/// Which redirects the request's credential headers survive.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum RedirectCredentialsPolicy {
+    /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+    #[default]
+    SameOrigin,
+    /// npm's rule, used by `bun install`: port and scheme changes keep them, except https -> http.
+    SameHostname,
+}
+
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
     HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
@@ -214,6 +225,7 @@ pub struct Flags {
     pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
+    pub redirect_credentials: RedirectCredentialsPolicy,
 }
 
 impl Default for Flags {
@@ -235,6 +247,7 @@ impl Default for Flags {
             forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
+            redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
         }
     }
 }
@@ -662,54 +675,35 @@ pub struct ProxySettings {
 }
 
 impl ProxySettings {
-    /// Returns `None` when neither proxy is set: no re-evaluation is needed.
-    pub(crate) fn new(
-        http_proxy: Option<&[u8]>,
-        https_proxy: Option<&[u8]>,
-        no_proxy: Option<&[u8]>,
+    /// An empty href is "no proxy for that scheme"; `None` when neither is set.
+    fn new(
+        http_proxy: Box<[u8]>,
+        https_proxy: Box<[u8]>,
+        env: &bun_dotenv::Loader,
     ) -> Option<Box<Self>> {
-        let http_proxy = http_proxy.unwrap_or(b"");
-        let https_proxy = https_proxy.unwrap_or(b"");
         if http_proxy.is_empty() && https_proxy.is_empty() {
             return None;
         }
         Some(Box::new(Self {
-            http_proxy: http_proxy.into(),
-            https_proxy: https_proxy.into(),
-            no_proxy: no_proxy.unwrap_or(b"").into(),
+            http_proxy,
+            https_proxy,
+            no_proxy: env.get_no_proxy().unwrap_or(b"").into(),
         }))
     }
 
     /// Capture `http_proxy` / `https_proxy` / `no_proxy` from the process env.
     pub fn from_env(env: &bun_dotenv::Loader) -> Option<Box<Self>> {
-        #[inline]
-        fn is_emptyish(v: &[u8]) -> bool {
-            v.is_empty() || v == b"\"\"" || v == b"''"
-        }
-        // lowercase first; an empty lowercase value falls through to uppercase.
-        let read = |lower: &[u8], upper: &[u8]| -> Option<&[u8]> {
-            let v = env
-                .get(lower)
-                .filter(|v| !v.is_empty())
-                .or_else(|| env.get(upper))?;
-            if is_emptyish(v) { None } else { Some(v) }
+        let proxy_href = |is_http: bool| -> Box<[u8]> {
+            env.get_http_proxy(is_http, None, None)
+                .map_or_else(Box::default, bun_url::OwnedURL::into_href)
         };
-        Self::new(
-            read(b"http_proxy", b"HTTP_PROXY"),
-            read(b"https_proxy", b"HTTPS_PROXY"),
-            read(b"no_proxy", b"NO_PROXY"),
-        )
+        Self::new(proxy_href(true), proxy_href(false), env)
     }
 
     /// Build from an explicit `fetch(url, { proxy })` option. The same proxy is
     /// used for both schemes; NO_PROXY is still consulted per hop.
     pub fn from_explicit(proxy_href: &[u8], env: &bun_dotenv::Loader) -> Option<Box<Self>> {
-        let no_proxy = env
-            .get(b"no_proxy")
-            .filter(|v| !v.is_empty())
-            .or_else(|| env.get(b"NO_PROXY"))
-            .filter(|v| !(v.is_empty() || *v == b"\"\"" || *v == b"''"));
-        Self::new(Some(proxy_href), Some(proxy_href), no_proxy)
+        Self::new(proxy_href.into(), proxy_href.into(), env)
     }
 
     /// Proxy href to use for `url`, or `None` for a direct connection.
@@ -999,6 +993,7 @@ use bstr::BStr;
 use bun_boringssl as boringssl;
 use bun_collections::{ArrayHashMap, VecExt};
 use bun_core::StringBuilder;
+use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{FeatureFlags, Global, Output};
 use bun_core::{OwnedString, String as BunString, Tag as BunStringTag, strings};
 use bun_http_types::ETag::StringPointer;
@@ -1083,6 +1078,27 @@ bun_core::comptime_string_map! {
         b"cookie" => (),
         b"host" => (),
     };
+}
+
+#[derive(Copy, Clone)]
+struct RedirectHop {
+    same_origin: bool,
+    /// What `RedirectCredentialsPolicy::SameHostname` keeps credentials on: never https -> http.
+    same_hostname_no_downgrade: bool,
+}
+
+impl RedirectHop {
+    fn between(from: &URL<'_>, to: &URL<'_>) -> Self {
+        Self {
+            same_origin: strings::eql_case_insensitive_ascii(
+                strings::without_trailing_slash(to.origin),
+                strings::without_trailing_slash(from.origin),
+                true,
+            ),
+            same_hostname_no_downgrade: !(from.is_https() && !to.is_https())
+                && strings::eql_case_insensitive_ascii(to.hostname, from.hostname, true),
+        }
+    }
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
@@ -1440,7 +1456,7 @@ pub(crate) fn print_request(
         "> {} {} {}",
         ver,
         BStr::new(request.method),
-        bun_core::fmt::redacted_npm_url(url),
+        EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
     );
     for header in request.headers {
         let name = header.name();
@@ -1451,8 +1467,8 @@ pub(crate) fn print_request(
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);
             bun_core::pretty_errorln!(
                 "> <r><cyan>{}<r><d>: <r>{}<d>[redacted]<r>",
-                BStr::new(name),
-                BStr::new(&value[..scheme_len]),
+                escape_control_chars(name),
+                escape_control_chars(&value[..scheme_len]),
             );
         } else {
             bun_core::pretty_errorln!("> {}", header);
@@ -5021,7 +5037,7 @@ impl<'a> HTTPClient<'a> {
                 {
                     return Err(crate::Error::RequestBodyNotReusable);
                 }
-                let is_same_origin;
+                let hop: RedirectHop;
 
                 {
                     if let Some(i) = strings::index_of(location, b"://") {
@@ -5085,11 +5101,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(new_url.origin),
-                            strings::without_trailing_slash(self.url.origin),
-                            true,
-                        );
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         // connected_url still borrows from the previous hop's buffer
                         // until doRedirect releases the socket, so park it in
@@ -5140,11 +5152,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(new_url.origin),
-                            strings::without_trailing_slash(self.url.origin),
-                            true,
-                        );
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect =
@@ -5168,11 +5176,7 @@ impl<'a> HTTPClient<'a> {
                         // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                         // below, which lives as long as `self` (≥ `'a`).
                         self.url = unsafe { parsed_url.erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(self.url.origin),
-                            strings::without_trailing_slash(original_url.origin),
-                            true,
-                        );
+                        hop = RedirectHop::between(&original_url, &self.url);
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);
                     }
@@ -5212,7 +5216,7 @@ impl<'a> HTTPClient<'a> {
                 // Cross-origin redirect: re-derive SNI / cert
                 // verification / Host from the redirect target. See
                 // `InternalStateFlags::clear_hostname_on_redirect`.
-                if !is_same_origin {
+                if !hop.same_origin {
                     self.state.flags.clear_hostname_on_redirect = true;
                 }
 
@@ -5221,13 +5225,19 @@ impl<'a> HTTPClient<'a> {
                 // locationURL's origin, then for each headerName of CORS
                 // non-wildcard request-header name, delete headerName from
                 // request's header list.
-                if !is_same_origin && self.header_entries.len() > 0 {
+                // The credential headers (all but `host`) follow `Flags::redirect_credentials`.
+                if !hop.same_origin && self.header_entries.len() > 0 {
+                    let strip_credentials = match self.flags.redirect_credentials {
+                        RedirectCredentialsPolicy::SameOrigin => true,
+                        RedirectCredentialsPolicy::SameHostname => !hop.same_hostname_no_downgrade,
+                    };
                     let mut i = 0;
                     while i < self.header_entries.len() {
                         let name = self.header_str(self.header_entries.items_name()[i]);
                         if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
                             .get_ascii_case_insensitive(name)
                             .is_some()
+                            && (strip_credentials || name.eq_ignore_ascii_case(b"host"))
                         {
                             let _ = self.header_entries.ordered_remove(i);
                         } else {

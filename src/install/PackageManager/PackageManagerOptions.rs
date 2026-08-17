@@ -1,12 +1,15 @@
 use crate::bun_schema::api as Api;
+use bun_alloc::{AllocError, Arena};
+use bun_ast::Expr;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Global, Output, env_var};
 use bun_paths::PathBuffer;
 
 use super::Subcommand;
 use super::command_line_arguments::{self, CommandLineArguments};
+use crate::network_task::Authorization;
 use bun_dotenv::Loader as DotEnvLoader;
-use bun_install::{Features, Npm};
+use bun_install::{Behavior, Features, Npm};
 
 // `string` fields are `[]const u8` borrowed from CLI args / bunfig config,
 // which live for the process lifetime. There is no `deinit` on Options. Mapped to
@@ -23,9 +26,13 @@ pub struct Options {
     pub bin_path: &'static ZStr,
 
     pub(crate) did_override_default_scope: bool,
+    /// `--registry` was given, so `publishConfig.registry` is ignored (as in npm).
+    pub(crate) registry_from_command_line: bool,
     pub scope: Npm::registry::Scope,
 
     pub(crate) registries: Npm::registry::Map,
+    /// `.npmrc` `//host/path/` credential lines, resolved by request URL.
+    pub(crate) url_auth: Vec<Npm::registry::UrlAuth>,
     pub(crate) cache_directory: &'static [u8],
     pub enable: Enable,
     pub do_: Do,
@@ -33,6 +40,7 @@ pub struct Options {
     pub(crate) update: DependencyGroup,
     pub dry_run: bool,
     pub check: bool,
+    pub why: bool,
     pub(crate) link_workspace_packages: bool,
     pub(crate) remote_package_features: Features,
     pub local_package_features: Features,
@@ -87,15 +95,30 @@ pub struct Options {
     // Minimum release age in ms (security feature)
     // Only install packages published at least N ms ago
     pub minimum_release_age_ms: Option<f64>,
-    // Packages to exclude from minimum release age checking
-    pub minimum_release_age_excludes: Option<&'static [&'static [u8]]>,
+    // Packages and package versions to exclude from minimum release age checking
+    pub minimum_release_age_excludes: Option<&'static Npm::MinimumReleaseAgeExcludes>,
 
     /// Override CPU architecture for optional dependencies filtering
     pub cpu: Npm::Architecture,
     /// Override OS for optional dependencies filtering
     pub os: Npm::OperatingSystem,
+    /// Override libc for optional dependencies filtering
+    pub libc: Npm::Libc,
 
     pub(crate) config_version: Option<ConfigVersion>,
+}
+
+impl Options {
+    /// Only the full registry document has the publish times `minimumReleaseAge` filters on.
+    pub(crate) fn needs_extended_manifest_to_pick_versions(&self) -> bool {
+        self.minimum_release_age_ms.is_some()
+    }
+
+    /// The abbreviated document also lacks `libc`, which is only enforced for optional
+    /// dependencies (`Libc::for_dependency`); host-independent so lockfiles stay portable.
+    pub(crate) fn needs_extended_manifest(&self, dependency: Behavior) -> bool {
+        self.needs_extended_manifest_to_pick_versions() || dependency.is_optional()
+    }
 }
 
 impl Default for Options {
@@ -107,9 +130,11 @@ impl Default for Options {
             explicit_global_directory: b"",
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
+            registry_from_command_line: false,
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
+            url_auth: Vec::new(),
             cache_directory: b"",
             enable: Enable::default(),
             do_: Do::default(),
@@ -117,6 +142,7 @@ impl Default for Options {
             update: DependencyGroup::default(),
             dry_run: false,
             check: false,
+            why: false,
             link_workspace_packages: true,
             remote_package_features: Features {
                 optional_dependencies: true,
@@ -161,6 +187,7 @@ impl Default for Options {
             minimum_release_age_excludes: None,
             cpu: Npm::Architecture::CURRENT,
             os: Npm::OperatingSystem::CURRENT,
+            libc: Npm::Libc::CURRENT,
             config_version: None,
         }
     }
@@ -258,6 +285,206 @@ impl Options {
             _ => &self.scope,
         }
     }
+
+    /// `scope`'s credentials only go to its own origin (the registry controls `dist.tarball`);
+    /// any other origin gets exactly what `.npmrc` configures for it, or nothing.
+    pub(crate) fn tarball_credentials<'a>(
+        &'a self,
+        scope: &'a Npm::registry::Scope,
+        tarball: &bun_url::URL,
+    ) -> Option<&'a Npm::registry::Scope> {
+        if scope.has_credentials() && is_same_origin(tarball, &scope.url.url()) {
+            return Some(scope);
+        }
+        Npm::registry::UrlAuth::find(&self.url_auth, tarball)
+    }
+
+    /// Appended to the `GET <url> - 401` line of a request bun sent without `Authorization`:
+    /// which `.npmrc` line would have supplied one. Empty when credentials were sent.
+    pub(crate) fn missing_credentials_note(
+        &self,
+        package_name: &[u8],
+        url: &[u8],
+        request: RequestKind,
+    ) -> Vec<u8> {
+        use std::io::Write as _;
+
+        let scope = self.scope_for_package_name(package_name);
+        let mut note = Vec::new();
+        match request {
+            RequestKind::Manifest if !scope.has_credentials() => {
+                let registry = scope.url.url();
+                let path = registry
+                    .pathname
+                    .strip_suffix(b"/")
+                    .unwrap_or(registry.pathname);
+                let _ = write!(
+                    note,
+                    "\n  no credentials are configured for this registry; add //{}{}/:_authToken=<token> to .npmrc",
+                    bstr::BStr::new(registry.host),
+                    bstr::BStr::new(path),
+                );
+            }
+            RequestKind::Tarball(Authorization::AllowAuthorization) => {
+                let url = bun_url::URL::parse(url);
+                if self.tarball_credentials(scope, &url).is_some() {
+                    return note;
+                }
+                if scope.has_credentials() {
+                    let _ = write!(
+                        note,
+                        "\n  the credentials configured for {} are not sent to {}; add //{}/:_authToken=<token> to .npmrc if this host needs them",
+                        bstr::BStr::new(scope.url.url().host),
+                        bstr::BStr::new(url.host),
+                        bstr::BStr::new(url.host),
+                    );
+                } else {
+                    let _ = write!(
+                        note,
+                        "\n  no credentials are configured for {}; add //{}/:_authToken=<token> to .npmrc",
+                        bstr::BStr::new(url.host),
+                        bstr::BStr::new(url.host),
+                    );
+                }
+            }
+            _ => {}
+        }
+        note
+    }
+
+    /// How `--registry` and `$NPM_CONFIG_REGISTRY` pick up a `//host/:_authToken=` line.
+    fn fill_credentials_from_url_auth(&mut self) {
+        let url_auth = &self.url_auth;
+        for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
+            if !scope.has_credentials() {
+                if let Some(found) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
+                    scope.copy_credentials_from(found);
+                }
+            }
+        }
+    }
+}
+
+/// Component-wise, so `https://host:443/` in `dist.tarball` matches `https://host/` in `.npmrc`.
+fn is_same_origin(a: &bun_url::URL, b: &bun_url::URL) -> bool {
+    a.protocol.eq_ignore_ascii_case(b.protocol)
+        && a.hostname.eq_ignore_ascii_case(b.hostname)
+        && a.get_port_auto() == b.get_port_auto()
+}
+
+#[derive(Clone, Copy)]
+pub(crate) enum RequestKind {
+    Manifest,
+    /// What the request was enqueued with (`NetworkTask::authorization`).
+    Tarball(Authorization),
+}
+
+impl Options {
+    /// The scope for `url` once it replaces `current`, with the credentials configured for `url`.
+    fn scope_for_registry_url(
+        &self,
+        name: &[u8],
+        current: &Npm::registry::Scope,
+        url: &[u8],
+    ) -> Npm::registry::Scope {
+        let mut scope = Npm::registry::Scope {
+            name: name.into(),
+            ..Default::default()
+        };
+        scope.set_url(url.into());
+        let configured = core::iter::once(&self.scope)
+            .chain(self.registries.values())
+            .find(|configured| configured.url_hash == scope.url_hash)
+            .or_else(|| Npm::registry::UrlAuth::find(&self.url_auth, &scope.url.url()));
+        if let Some(configured) = configured {
+            scope.copy_credentials_from(configured);
+            return scope;
+        }
+        // Unconfigured `url`: `current`'s credentials follow it only same-host, and never to http.
+        let (new_url, current_url) = (scope.url.url(), current.url.url());
+        if bun_core::without_trailing_slash(new_url.host)
+            == bun_core::without_trailing_slash(current_url.host)
+            && (new_url.is_https() || !current_url.is_https())
+        {
+            scope.copy_credentials_from(current);
+        }
+        scope
+    }
+
+    fn set_default_registry(&mut self, url: &[u8]) {
+        self.scope = self.scope_for_registry_url(b"", &self.scope, url);
+        self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
+    }
+
+    /// Applies the `publishConfig` of the package being published; command-line flags win over it.
+    pub fn apply_publish_config(
+        &mut self,
+        package_json: &Expr,
+        bump: &Arena,
+        package_name: &[u8],
+    ) -> Result<(), AllocError> {
+        let Some(config) = package_json.get(b"publishConfig") else {
+            return Ok(());
+        };
+
+        if self.publish_config.tag.is_empty() {
+            if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
+                self.publish_config.tag = leak_static(tag);
+            }
+        }
+
+        if self.publish_config.access.is_none() {
+            if let Some(access) = config.get_string_cloned(bump, b"access")? {
+                self.publish_config.access = Some(Access::from_str(access).unwrap_or_else(|| {
+                    Output::err_generic("invalid `access` value: '{}'", (bstr::BStr::new(access),));
+                    Global::crash();
+                }));
+            }
+        }
+
+        // As in npm, `registry` replaces only the default registry; `@scope:registry` the scope's.
+        if !self.registry_from_command_line {
+            if let Some(url) = publish_config_registry(&config, bump, b"registry")? {
+                self.set_default_registry(url);
+            }
+        }
+
+        if package_name.starts_with(b"@") {
+            let scope_name = Npm::registry::Scope::get_name(package_name);
+            let key = [b"@".as_slice(), scope_name, b":registry"].concat();
+            if let Some(url) = publish_config_registry(&config, bump, &key)? {
+                let current = self.scope_for_package_name(package_name);
+                let scope = self.scope_for_registry_url(scope_name, current, url);
+                self.registries
+                    .put(Npm::registry::Scope::hash(scope_name), scope)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// `publishConfig[key]` as an http(s) URL; anything else errors rather than publishing elsewhere.
+fn publish_config_registry<'b>(
+    config: &Expr,
+    bump: &'b Arena,
+    key: &[u8],
+) -> Result<Option<&'b [u8]>, AllocError> {
+    let Some(value) = config.get(key) else {
+        return Ok(None);
+    };
+    match value.as_string_cloned(bump)? {
+        Some(url) if url.starts_with(b"https://") || url.starts_with(b"http://") => Ok(Some(url)),
+        not_a_url => {
+            let got =
+                not_a_url.map_or_else(String::new, |v| format!(": {}", bun_core::fmt::quote(v)));
+            Output::err_generic(
+                "invalid `{}` value in `publishConfig`{}, expected a URL starting with 'https://' or 'http://'",
+                (bstr::BStr::new(key), got),
+            );
+            Global::crash();
+        }
+    }
 }
 
 #[derive(Copy, Clone, PartialEq, Eq, Default, Debug)]
@@ -298,9 +525,23 @@ pub use crate::config_version::ConfigVersion;
 pub use bun_install_types::DependencyGroup;
 pub use bun_install_types::NodeLinker::NodeLinker;
 
+/// mkdir -p + open `<base>/<parts...>`; `base` is an environment value of any length.
+fn make_open_dir_under(base: &[u8], parts: &[&[u8]]) -> crate::Result<bun_sys::Fd> {
+    use bun_paths::{platform, resolve_path::join_abs_string_buf_checked};
+    use bun_sys::{Dir, OpenDirOptions};
+
+    let mut buf = PathBuffer::uninit();
+    let Some(path) = join_abs_string_buf_checked::<platform::Auto>(base, &mut buf.0, parts) else {
+        return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+    };
+    Dir::cwd()
+        .make_open_path(path, OpenDirOptions::default())
+        .map(|d| d.into_raw())
+        .map_err(Into::into)
+}
+
 // mkdir -p + open the dir. Callers store the raw `Fd` (`options.global_bin_dir: Fd`).
 pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_GLOBAL_DIR.get() {
@@ -318,33 +559,20 @@ pub fn open_global_dir(explicit_global_dir: &[u8]) -> crate::Result<bun_sys::Fd>
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
-        let parts: [&[u8]; 2] = [b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir_under(home_dir, &[b"install", b"global"]);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
-        let parts: [&[u8]; 3] = [b".bun", b"install", b"global"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir_under(home_dir, &[b".bun", b"install", b"global"]);
     }
 
     Err(crate::Error::NoGlobalDirectoryFound)
 }
 
 pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Result<bun_sys::Fd> {
-    use bun_paths::{platform, resolve_path::join_abs_string_buf};
     use bun_sys::{Dir, OpenDirOptions};
 
     if let Some(home_dir) = env_var::BUN_INSTALL_BIN.get() {
@@ -366,26 +594,14 @@ pub(crate) fn open_global_bin_dir(opts_: Option<&Api::BunInstall>) -> crate::Res
     }
 
     if let Some(home_dir) = env_var::BUN_INSTALL.get() {
-        let mut buf = PathBuffer::uninit();
-        let parts: [&[u8]; 1] = [b"bin"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir_under(home_dir, &[b"bin"]);
     }
 
     if let Some(home_dir) = env_var::XDG_CACHE_HOME
         .get()
         .or_else(|| env_var::HOME.get())
     {
-        let mut buf = PathBuffer::uninit();
-        let parts: [&[u8]; 2] = [b".bun", b"bin"];
-        let path = join_abs_string_buf::<platform::Auto>(home_dir, &mut buf.0, &parts);
-        return Dir::cwd()
-            .make_open_path(path, OpenDirOptions::default())
-            .map(|d| d.into_raw())
-            .map_err(Into::into);
+        return make_open_dir_under(home_dir, &[b".bun", b"bin"]);
     }
 
     Err(crate::Error::MissingGlobalBinDirectoryTrySettingBUNINSTALL)
@@ -447,6 +663,12 @@ impl Options {
                         Npm::registry::Scope::hash(name),
                         Npm::registry::Scope::from_api(name, registry, env)?,
                     )?;
+                }
+            }
+
+            for url_auth in &config.url_auth {
+                if let Some(url_auth) = Npm::registry::UrlAuth::from_api(url_auth, env)? {
+                    self.url_auth.push(url_auth);
                 }
             }
 
@@ -564,8 +786,9 @@ impl Options {
                     exclusions.iter().map(|e| leak_static(e)).collect();
                 // Parked for the lifetime of the install command (config arena
                 // equivalent), same as `leak_static` above.
-                self.minimum_release_age_excludes =
-                    Some(&*bun_core::heap::release(leaked.into_boxed_slice()));
+                self.minimum_release_age_excludes = Some(&*bun_core::heap::release(Box::new(
+                    Npm::MinimumReleaseAgeExcludes::parse(&leaked, log),
+                )));
             }
 
             // `PnpmMatcher` is move-only; `config` is `&` here so the matchers
@@ -632,20 +855,9 @@ impl Options {
                 if api_registry.has_credentials() {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
                 } else {
-                    let new_url = bun_url::URL::parse(&api_registry.url);
-                    let same_origin = {
-                        let prev_url = self.scope.url.url();
-                        bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                    };
-                    if !same_origin {
-                        self.scope.token = Box::default();
-                        self.scope.auth = Box::default();
-                        self.scope.user = Box::default();
-                    }
-                    self.scope.set_url(api_registry.url);
+                    self.set_default_registry(&api_registry.url);
                 }
+                self.registry_from_command_line = true;
             }
         }
 
@@ -691,7 +903,7 @@ impl Options {
         }
 
         if let Some(check_bool) = env.get(b"BUN_CONFIG_NO_VERIFY") {
-            self.do_.set(Do::VERIFY_INTEGRITY, check_bool != b"0");
+            self.do_.set(Do::VERIFY_INTEGRITY, check_bool == b"0");
         }
 
         // Update should never read from manifest cache
@@ -729,6 +941,7 @@ impl Options {
                 self.do_.set(Do::SAVE_LOCKFILE, false);
             }
             self.check = cli.check;
+            self.why = cli.why;
 
             if cli.no_summary || cli.log_level.is_silent() {
                 self.do_.set(Do::SUMMARY, false);
@@ -817,9 +1030,10 @@ impl Options {
                     .store(backend as u8, core::sync::atomic::Ordering::Relaxed);
             }
 
-            // CPU and OS are now parsed as enums in CommandLineArguments, just copy them
+            // CPU, OS and libc are now parsed as enums in CommandLineArguments, just copy them
             self.cpu = cli.cpu;
             self.os = cli.os;
+            self.libc = cli.libc;
 
             self.do_.set(Do::UPDATE_TO_LATEST, cli.latest);
             self.do_.set(Do::RECURSIVE, cli.recursive);
@@ -904,6 +1118,8 @@ impl Options {
             self.do_.set(Do::SAVE_LOCKFILE, false);
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
         }
+
+        self.fill_credentials_from_url_auth();
 
         // moved from `defer { ... }` after scope assignment (see note above).
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;

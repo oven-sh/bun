@@ -2,7 +2,7 @@ import { file, spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { rm, writeFile } from "fs/promises";
 import { bunExe, bunEnv as env, readdirSorted, tempDir } from "harness";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import { gzipSync } from "node:zlib";
 import { join } from "path";
 import {
@@ -38,6 +38,33 @@ async function withContext(
 
 // Default context options for most tests
 const defaultOpts = { linker: "hoisted" as const };
+
+/** A .tgz with the given files under the usual `package/` root. */
+function tarball(files: Record<string, Buffer>): Buffer {
+  function octal(n: number, width: number) {
+    return n.toString(8).padStart(width - 1, "0") + "\0";
+  }
+  const blocks: Buffer[] = [];
+  for (const [name, body] of Object.entries(files)) {
+    const header = Buffer.alloc(512, 0);
+    header.write(`package/${name}`, 0, 100, "utf8");
+    header.write(octal(0o644, 8), 100);
+    header.write(octal(0, 8), 108);
+    header.write(octal(0, 8), 116);
+    header.write(octal(body.length, 12), 124);
+    header.write(octal(0, 12), 136);
+    header.fill(" ", 148, 156);
+    header.write("0", 156);
+    header.write("ustar\0", 257);
+    header.write("00", 263);
+    let sum = 0;
+    for (let i = 0; i < 512; i++) sum += header[i];
+    header.write(octal(sum, 8), 148);
+    blocks.push(header, body, Buffer.alloc((512 - (body.length % 512)) % 512, 0));
+  }
+  blocks.push(Buffer.alloc(1024, 0));
+  return gzipSync(Buffer.concat(blocks));
+}
 
 describe.concurrent("tarball integrity", () => {
   it("should store integrity hash for tarball URL in text lockfile", async () => {
@@ -493,6 +520,132 @@ describe.concurrent("tarball integrity", () => {
   });
 });
 
+// A `file:` tarball's resolution is the path written in package.json (`pkg.tgz`),
+// which names a different tarball in every project sharing the cache, and an
+// install from a lockfile never reads the tarball itself. So the cache entry is
+// keyed by the integrity the lockfile pins, not by that path: two projects (or two
+// branches of one project) with different tarballs at the same path get separate
+// entries, and a lockfile that does not pin an integrity cannot name an entry and
+// has the tarball read instead.
+describe.concurrent.each(["hoisted", "isolated"] as const)("local tarball cache entries (%s)", linker => {
+  async function tarball(exported: string) {
+    const tgz = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "package/index.js": `module.exports = ${JSON.stringify(exported)};\n`,
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const digest = createHash("sha512").update(tgz).digest();
+    return {
+      file: Buffer.from(tgz),
+      integrity: "sha512-" + digest.toString("base64"),
+      cacheEntry: `@T@sha512-${digest.subarray(0, 16).toString("hex")}@@@1`,
+    };
+  }
+
+  function project(tgz: Buffer, extraFiles: Record<string, string> = {}) {
+    return {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:pkg.tgz" } }),
+      "pkg.tgz": tgz,
+      "bunfig.toml": Bun.TOML.stringify({ install: { linker } }),
+      ...extraFiles,
+    };
+  }
+
+  // The projects under `root` share `root/cache`.
+  async function install(root: string, name: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: join(root, name),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const installedExport = (root: string, name: string) =>
+    file(join(root, name, "node_modules", "pkg", "index.js")).text();
+  const lockfile = (root: string, name: string) => file(join(root, name, "bun.lock")).text();
+  const reinstall = (root: string, name: string, ...args: string[]) =>
+    rm(join(root, name, "node_modules"), { recursive: true }).then(() => install(root, name, ...args));
+  const cacheEntries = async (root: string) =>
+    (await readdirSorted(join(root, "cache"))).filter(entry => entry.startsWith("@T@"));
+
+  it("keeps the tarballs of two projects that both depend on file:pkg.tgz apart", async () => {
+    const one = await tarball("one");
+    const two = await tarball("two");
+    using root = tempDir("local-tarball-two-projects", { one: project(one.file), two: project(two.file) });
+
+    await install(String(root), "one");
+    await install(String(root), "two");
+    expect(await lockfile(String(root), "one")).toContain(one.integrity);
+
+    await reinstall(String(root), "one");
+    expect(await installedExport(String(root), "one")).toBe('module.exports = "one";\n');
+    expect(await installedExport(String(root), "two")).toBe('module.exports = "two";\n');
+    expect(await cacheEntries(String(root))).toEqual([one.cacheEntry, two.cacheEntry].sort());
+  });
+
+  it("installs the tarball the lockfile pins after another build of it was extracted from the same path", async () => {
+    const v1 = await tarball("v1");
+    const v2 = await tarball("v2");
+    using root = tempDir("local-tarball-two-builds", { app: project(v1.file) });
+    const app = join(String(root), "app");
+
+    await install(String(root), "app");
+    const v1Lockfile = await lockfile(String(root), "app");
+    expect(v1Lockfile).toContain(v1.integrity);
+
+    // Like checking out a branch that ships v2: the rebuilt tarball is resolved and extracted.
+    await writeFile(join(app, "pkg.tgz"), v2.file);
+    await rm(join(app, "bun.lock"));
+    await reinstall(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "v2";\n');
+    expect(await lockfile(String(root), "app")).toContain(v2.integrity);
+
+    // Back on the v1 branch, pkg.tgz and bun.lock are v1's again.
+    await writeFile(join(app, "pkg.tgz"), v1.file);
+    await writeFile(join(app, "bun.lock"), v1Lockfile);
+    await reinstall(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "v1";\n');
+    expect(await cacheEntries(String(root))).toEqual([v1.cacheEntry, v2.cacheEntry].sort());
+  });
+
+  it("reads the tarball when the lockfile does not record its integrity, then records it", async () => {
+    const other = await tarball("other");
+    const mine = await tarball("mine");
+    using root = tempDir("local-tarball-unpinned", {
+      other: project(other.file),
+      app: project(mine.file, {
+        // Written before bun recorded the integrity of tarball packages.
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "app", dependencies: { pkg: "file:pkg.tgz" } } },
+          packages: { pkg: ["pkg@pkg.tgz", {}] },
+        }),
+      }),
+    });
+
+    await install(String(root), "other");
+    await install(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "mine";\n');
+    expect(await lockfile(String(root), "app")).toContain(mine.integrity);
+    expect(await cacheEntries(String(root))).toEqual([mine.cacheEntry, other.cacheEntry].sort());
+
+    // The recorded integrity names the entry that extraction created: this
+    // install is served from it without reading pkg.tgz (which would no longer
+    // match the pin).
+    await writeFile(join(String(root), "app", "pkg.tgz"), other.file);
+    await reinstall(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "mine";\n');
+  });
+});
+
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mismatch (%s)", linker => {
   // Regression test for #29646 — with the isolated linker, a SHA-512 mismatch
   // during the resolve-phase tarball extract left `task_queue` /
@@ -506,37 +659,8 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
   // callback is the void `onPackageDownloadError = {}` — i.e. the branch the
   // fix in runTasks.zig now cleans up.
   it("should fail (not hang) when tarball bytes don't match manifest SHA-512", { timeout: 60_000 }, async () => {
-    function octal(n: number, width: number) {
-      return n.toString(8).padStart(width - 1, "0") + "\0";
-    }
-    function tarHeader(name: string, size: number) {
-      const buf = Buffer.alloc(512, 0);
-      buf.write(name, 0, 100, "utf8");
-      buf.write(octal(0o644, 8), 100);
-      buf.write(octal(0, 8), 108);
-      buf.write(octal(0, 8), 116);
-      buf.write(octal(size, 12), 124);
-      buf.write(octal(0, 12), 136);
-      buf.fill(" ", 148, 156);
-      buf.write("0", 156);
-      buf.write("ustar\0", 257);
-      buf.write("00", 263);
-      let sum = 0;
-      for (let i = 0; i < 512; i++) sum += buf[i];
-      buf.write(octal(sum, 8), 148);
-      return buf;
-    }
-    function pad512(len: number) {
-      return Buffer.alloc((512 - (len % 512)) % 512, 0);
-    }
     function buildTarball(body: Buffer) {
-      const tar = Buffer.concat([
-        tarHeader("package/package.json", body.length),
-        body,
-        pad512(body.length),
-        Buffer.alloc(1024, 0),
-      ]);
-      const tgz = gzipSync(tar);
+      const tgz = tarball({ "package.json": body });
       return { tgz, integrity: "sha512-" + createHash("sha512").update(tgz).digest("base64") };
     }
 
@@ -617,41 +741,17 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mi
 });
 
 describe.concurrent("tarball integrity metadata forms", () => {
-  function octal(n: number, width: number) {
-    return n.toString(8).padStart(width - 1, "0") + "\0";
-  }
-  function tarHeader(name: string, size: number) {
-    const buf = Buffer.alloc(512, 0);
-    buf.write(name, 0, 100, "utf8");
-    buf.write(octal(0o644, 8), 100);
-    buf.write(octal(0, 8), 108);
-    buf.write(octal(0, 8), 116);
-    buf.write(octal(size, 12), 124);
-    buf.write(octal(0, 12), 136);
-    buf.fill(" ", 148, 156);
-    buf.write("0", 156);
-    buf.write("ustar\0", 257);
-    buf.write("00", 263);
-    let sum = 0;
-    for (let i = 0; i < 512; i++) sum += buf[i];
-    buf.write(octal(sum, 8), 148);
-    return buf;
-  }
   function buildTarball(body: Buffer) {
-    const tar = Buffer.concat([
-      tarHeader("package/package.json", body.length),
-      body,
-      Buffer.alloc((512 - (body.length % 512)) % 512, 0),
-      Buffer.alloc(1024, 0),
-    ]);
-    const tgz = gzipSync(tar);
+    const tgz = tarball({ "package.json": body });
     return {
       tgz,
       sha512: "sha512-" + createHash("sha512").update(tgz).digest("base64"),
       sha384: "sha384-" + createHash("sha384").update(tgz).digest("base64"),
+      sha1: "sha1-" + createHash("sha1").update(tgz).digest("base64"),
+      shasum: createHash("sha1").update(tgz).digest("hex"),
     };
   }
-  function serveManifest(integrity: string, tgz: Buffer) {
+  function serveManifest(dist: { integrity?: string; shasum?: string }, tgz: Buffer) {
     const server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
@@ -666,7 +766,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
                 name: "pkg",
                 version: "1.0.0",
                 dist: {
-                  integrity,
+                  ...dist,
                   tarball: `http://127.0.0.1:${server.port}/pkg/-/pkg-1.0.0.tgz`,
                 },
               },
@@ -700,7 +800,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(`${other.sha512} ${real.sha384}`, real.tgz);
+    await using server = serveManifest({ integrity: `${other.sha512} ${real.sha384}` }, real.tgz);
     using dir = projectDir("integrity-multi-hash", server.port);
 
     await using proc = spawn({
@@ -720,7 +820,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(`${real.sha512} ${other.sha384}`, real.tgz);
+    await using server = serveManifest({ integrity: `${real.sha512} ${other.sha384}` }, real.tgz);
     using dir = projectDir("integrity-multi-hash-lock", server.port);
 
     await using proc = spawn({
@@ -743,7 +843,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(`${other.sha512}?vcs=git`, real.tgz);
+    await using server = serveManifest({ integrity: `${other.sha512}?vcs=git` }, real.tgz);
     using dir = projectDir("integrity-option-suffix", server.port);
 
     await using proc = spawn({
@@ -757,6 +857,162 @@ describe.concurrent("tarball integrity metadata forms", () => {
     expect(stderr + stdout).toContain("Integrity check failed");
     expect(stdout).not.toContain("1 package installed");
     expect(exitCode).not.toBe(0);
+  });
+
+  it("--no-verify installs a tarball whose bytes don't match the advertised integrity", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
+    using dir = projectDir("integrity-no-verify-flag", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--no-verify"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(stdout).toContain("1 package installed");
+    expect(await file(join(String(dir), "node_modules", "pkg", "package.json")).json()).toEqual({
+      name: "pkg",
+      version: "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("BUN_CONFIG_NO_VERIFY=1 skips the integrity check like --no-verify", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
+    using dir = projectDir("integrity-no-verify-env-1", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).not.toContain("Integrity check failed");
+    expect(stdout).toContain("1 package installed");
+    expect(await file(join(String(dir), "node_modules", "pkg", "package.json")).json()).toEqual({
+      name: "pkg",
+      version: "1.0.0",
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("BUN_CONFIG_NO_VERIFY=0 keeps the integrity check enabled", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
+    using dir = projectDir("integrity-no-verify-env-0", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache"), BUN_CONFIG_NO_VERIFY: "0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("verifies the tarball against the manifest shasum when there is no integrity field", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+    const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
+
+    await using server = serveManifest({ shasum: other.shasum }, real.tgz);
+    using dir = projectDir("integrity-shasum-mismatch", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("Unsupported or malformed integrity hash");
+    expect(stderr + stdout).toContain("Integrity check failed");
+    expect(stdout).not.toContain("1 package installed");
+    expect(exitCode).not.toBe(0);
+  });
+
+  it("falls back to the manifest shasum when the integrity field is unusable, without warning", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = serveManifest({ integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==", shasum: real.shasum }, real.tgz);
+    using dir = projectDir("integrity-shasum-fallback", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("Unsupported or malformed integrity hash");
+    expect(stdout).toContain("1 package installed");
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(real.sha1);
+    expect(exitCode).toBe(0);
+  });
+
+  it.each([
+    // Same length as a sha1 hex digest, but not hex.
+    ["malformed shasum", { shasum: Buffer.alloc(40, "x").toString() }],
+    ["unsupported integrity algorithm", { integrity: "md5-AAAAAAAAAAAAAAAAAAAAAA==" }],
+    ["malformed integrity and empty shasum", { integrity: "sha512-!!!", shasum: "" }],
+  ] as const)("warns instead of silently skipping verification: %s", async (_label, dist) => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = serveManifest(dist, real.tgz);
+    using dir = projectDir("integrity-unusable", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install", "--save-text-lockfile"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).toContain(
+      "warn: Unsupported or malformed integrity hash in registry metadata for pkg@1.0.0; its tarball will not be verified",
+    );
+    expect(stdout).toContain("1 package installed");
+    // Nothing usable was advertised, so the lockfile carries no pin for it.
+    expect(await file(join(String(dir), "bun.lock")).text()).not.toMatch(/sha\d+-/);
+    expect(exitCode).toBe(0);
+  });
+
+  it("stays quiet when the manifest advertises no hash at all", async () => {
+    const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
+
+    await using server = serveManifest({}, real.tgz);
+    using dir = projectDir("integrity-absent", server.port);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, stdout, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+    expect(stderr).not.toContain("Unsupported or malformed integrity hash");
+    expect(stdout).toContain("1 package installed");
+    expect(exitCode).toBe(0);
   });
 });
 
@@ -852,5 +1108,100 @@ describe.concurrent.each(["hoisted", "isolated"] as const)("tarball download fai
         expect(exitCode).not.toBe(0);
       }
     });
+  });
+});
+
+// A `file:` or URL tarball is cached under a folder named after its path or
+// URL, so installing without a lockfile extracts it again over the folder from
+// the previous install. The fresh copy must win (the tarball may have been
+// repacked) and the copy it displaces must not be left behind in the temp dir,
+// which used to grow by one extracted tarball per install.
+describe.concurrent("tarball re-extraction over an existing cache folder", () => {
+  function tarballOfVersion(version: string, padding: Record<string, Buffer> = {}) {
+    return tarball({ "package.json": Buffer.from(JSON.stringify({ name: "pkg", version }) + "\n"), ...padding });
+  }
+
+  function project(name: string, spec: string) {
+    return tempDir(name, {
+      "app/package.json": JSON.stringify({ name: "app", dependencies: { pkg: spec } }),
+      // The install extracts into tmp/ and renames into cache/; both are inside
+      // the test directory, so anything left in tmp/ after an install is a leak.
+      cache: {},
+      tmp: {},
+    });
+  }
+
+  /** `bun install` from scratch (no node_modules, no lockfile); returns the installed version of `pkg`. */
+  async function installFresh(dir: string) {
+    const app = join(dir, "app");
+    await Promise.all([
+      rm(join(app, "node_modules"), { recursive: true, force: true }),
+      rm(join(app, "bun.lock"), { force: true }),
+    ]);
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: app,
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(dir, "cache"), BUN_TMPDIR: join(dir, "tmp") },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toMatchObject({ exitCode: 0 });
+    const { version } = await file(join(app, "node_modules", "pkg", "package.json")).json();
+    return version as string;
+  }
+
+  async function cacheState(dir: string) {
+    const [tmp, cache] = await Promise.all([readdirSorted(join(dir, "tmp")), readdirSorted(join(dir, "cache"))]);
+    return { tmp, tarballFolders: cache.filter(name => name.startsWith("@T@")).length };
+  }
+
+  it("file: tarball", async () => {
+    using dir = project("tarball-reextract-file", "file:../pkg.tgz");
+    await writeFile(join(String(dir), "pkg.tgz"), tarballOfVersion("1.0.0"));
+
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+
+    // A file: tarball is cached under its integrity, so the new contents get a folder of their own.
+    await writeFile(join(String(dir), "pkg.tgz"), tarballOfVersion("2.0.0"));
+    expect(await installFresh(String(dir))).toBe("2.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 2 });
+  });
+
+  it("tarball URL", async () => {
+    // Incompressible padding, served without a Content-Length in several
+    // chunks, makes the download take the streaming extractor rather than
+    // being buffered and extracted in one go.
+    const padding = { "blob.bin": randomBytes(256 * 1024) };
+    let tgz = tarballOfVersion("1.0.0", padding);
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch() {
+        let offset = 0;
+        return new Response(
+          new ReadableStream({
+            pull(controller) {
+              if (offset >= tgz.length) return controller.close();
+              controller.enqueue(tgz.subarray(offset, offset + 64 * 1024));
+              offset += 64 * 1024;
+            },
+          }),
+        );
+      },
+    });
+    using dir = project("tarball-reextract-url", `${server.url}pkg.tgz`);
+
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await installFresh(String(dir))).toBe("1.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+
+    tgz = tarballOfVersion("2.0.0", padding);
+    expect(await installFresh(String(dir))).toBe("2.0.0");
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
   });
 });

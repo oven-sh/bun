@@ -72,13 +72,15 @@ The JSON is unfiltered — `--audit-level` and `--ignore` only affect the exit c
 bun audit fix
 ```
 
-Runs the audit, then upgrades each vulnerable package to the lowest non-vulnerable version that every dependent's range allows, and installs. Only `bun.lock` and `node_modules` change, with one exception: Bun treats a direct dependency pinned to an exact version as `^version`. If Bun finds a fix, it rewrites the pin in `package.json` (or the catalog entry).
+Runs the audit, then upgrades each vulnerable package to the lowest non-vulnerable version that every dependent's range allows, and installs. Only `bun.lock` and `node_modules` change, with one exception: Bun treats an exact version pin in your own `package.json` (a dependency, a catalog entry, or an [`overrides`](/pm/overrides) rule) as `^version`. If Bun finds a fix, it rewrites the pin.
 
 ```
 fixing:
   ms@0.7.0 → 0.7.1
   lodash@4.17.20 → 4.17.21
     package.json: 4.17.20 → 4.17.21
+  tar@6.1.11 → 6.1.12
+    package.json (overrides): 6.1.11 → 6.1.12
 
 blocked by a dependent's range:
   minimatch@0.3.0 → 3.0.2
@@ -86,18 +88,21 @@ blocked by a dependent's range:
   semver@5.7.1 → 6.3.1
     my-app depends on semver@^5.0.0
     bun audit fix --latest
+  qs@6.5.2 → 6.11.0
+    package.json overrides qs@~6.5.0 (express>qs)
+    bun audit fix --latest
 
 no published version fixes:
   left-pad@1.3.0  GHSA-xxxx-xxxx-xxxx
     bun audit fix --ignore GHSA-xxxx-xxxx-xxxx
 
-Fixed 2 vulnerabilities in 2 packages
+Fixed 3 vulnerabilities in 3 packages
 5 vulnerabilities remaining
 ```
 
-- **blocked by a dependent's range** — no safe version fits a dependent's declared range. If the range is in your own `package.json` or catalog, `bun audit fix --latest` gets past it. Otherwise, update the dependent or add an [`overrides`](/pm/overrides) entry.
-- **no published version fixes** — every published version is vulnerable. Replace the package, or silence the advisory with the printed `--ignore` command.
-- If no newer version is safe but an older one is, Bun downgrades and marks the row `(downgrade)`.
+- **blocked by a dependent's range** — no safe version fits a dependent's declared range. If the range is your own (a `package.json` dependency, a catalog entry, or an `overrides` rule, reported as `package.json overrides ...`), `bun audit fix --latest` gets past it. Otherwise, update the dependent or add an [`overrides`](/pm/overrides) entry.
+- **no published version fixes** — every version Bun would install is vulnerable. Replace the package, or silence the advisory with the printed `--ignore` command.
+- If no newer version is safe but an older one is, Bun downgrades and marks the row `(downgrade)`. Bun only downgrades within the installed major version (within the installed minor version below 1.0.0), with or without `--latest`. When an advisory covers every `2.x` release, Bun lists the package under **no published version fixes** instead of installing a `1.x` release.
 - Bun still installs a safe version newer than `--minimum-release-age` and marks the row `(newer than --minimum-release-age)`.
 - Bun upgrades patched dependencies (`patchedDependencies`) like any other package. Re-create the patch afterwards with `bun patch`.
 - After installing, Bun re-audits the new lockfile. The `remaining` count and exit code reflect that second audit, so they match what a follow-up `bun audit` would report.
@@ -112,10 +117,10 @@ Fixed 2 vulnerabilities in 2 packages
 bun audit fix --latest
 ```
 
-Same as `bun audit fix`, but ranges in your own `package.json` files and catalogs no longer block a fix. Bun rewrites them to accept the new version, keeping their style (`^5.0.0` → `^6.3.1`, `~5.7.1` → `~6.3.1`, exact stays exact). Ranges declared by third-party packages still block; use `overrides` for those.
+Same as `bun audit fix`, but ranges in your own `package.json` files, catalogs, and `overrides` no longer block a fix. Bun rewrites them to accept the new version, keeping their style (`^5.0.0` → `^6.3.1`, `~5.7.1` → `~6.3.1`, exact stays exact). Ranges declared by third-party packages still block; use `overrides` for those.
 
 ### Exit code
 
 `0` if no vulnerabilities remain after Bun applies `--audit-level` and `--ignore`, `1` otherwise. For `bun audit fix`, this is based on the re-audit after installing (or the plan, with `--dry-run`).
 
-If the registry request fails, both commands print `audit request failed` to stderr and exit `1`.
+If the registry request fails, both commands print `audit request failed` to stderr and exit `1`. The same goes for a response that is not an advisory report (for example, a registry or proxy that answers the audit request with an HTML page or an error object): a response Bun cannot read never counts as a clean audit.

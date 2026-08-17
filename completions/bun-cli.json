@@ -373,7 +373,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -427,7 +427,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -694,7 +694,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -748,7 +748,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1025,7 +1025,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1079,7 +1079,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1296,7 +1296,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1351,7 +1351,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1406,6 +1406,14 @@
         {
           "name": "os",
           "description": "Override operating system for optional dependencies (e.g., linux, darwin, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1528,6 +1536,38 @@
           "description": "Ignore advisories by GHSA or numeric advisory ID (repeatable)",
           "hasValue": true,
           "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "production",
+          "shortName": "p",
+          "description": "Skip packages that are only needed by devDependencies (alias: --prod)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "omit",
+          "description": "Skip packages that are only needed by the given dependency types: dev, optional, or peer (repeatable)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "cwd",
+          "description": "Set a specific cwd",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "help",
+          "shortName": "h",
+          "description": "Print this help menu",
+          "hasValue": false,
           "required": false,
           "multiple": false
         }
@@ -1714,7 +1754,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1769,7 +1809,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1830,6 +1870,14 @@
           "multiple": false
         },
         {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "help",
           "shortName": "h",
           "description": "Print this help menu",
@@ -1840,6 +1888,13 @@
         {
           "name": "check",
           "description": "Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "why",
+          "description": "Also list each version's dependents and the ranges they asked for",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -1886,6 +1941,13 @@
           "multiple": false
         },
         {
+          "name": "check",
+          "description": "Exit with code 1 if node_modules has packages that can be removed, without deleting anything",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "os",
           "description": "Prune for a different operating system than the current one",
           "hasValue": true,
@@ -1896,6 +1958,14 @@
         {
           "name": "cpu",
           "description": "Prune for a different CPU architecture than the current one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Prune for a different libc than the current one",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -1950,7 +2020,7 @@
           "type": "string"
         }
       ],
-      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run"],
+      "examples": ["bun prune", "bun prune --production", "bun prune --dry-run", "bun prune --check"],
       "usage": "Usage: bun prune [flags]",
       "documentationUrl": "https://bun.com/docs/pm/cli/prune.",
       "dynamicCompletions": {}
@@ -2095,7 +2165,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2149,7 +2219,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2269,14 +2339,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2378,7 +2448,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2432,7 +2502,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2492,7 +2562,7 @@
           "completionType": "package"
         }
       ],
-      "examples": ["bun link", "bun link <package>"],
+      "examples": ["bun link", "bun link <package>", "bun link --save <package>"],
       "usage": "Usage: bun link [flags] [<packages>]",
       "documentationUrl": "https://bun.com/docs/cli/link.",
       "dynamicCompletions": {}
@@ -2528,14 +2598,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2637,7 +2707,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2691,7 +2761,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -2889,7 +2959,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2943,7 +3013,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3194,7 +3264,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3248,7 +3318,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,
@@ -3368,7 +3438,7 @@
         },
         "ls": {
           "name": "ls",
-          "description": "list the dependency tree according to the current lockfile",
+          "description": "list the tree of installed dependencies",
           "flags": [],
           "positionalArgs": []
         },
@@ -3623,7 +3693,7 @@
         },
         {
           "name": "ignore-scripts",
-          "description": "Skip lifecycle scripts in the project's package.json (dependency scripts are never run)",
+          "description": "Skip lifecycle scripts for all packages, including the project's package.json and trusted dependencies",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -3677,7 +3747,7 @@
         },
         {
           "name": "network-concurrency",
-          "description": "Maximum number of concurrent network requests (default 48)",
+          "description": "Maximum number of concurrent network requests (default 64)",
           "hasValue": true,
           "valueType": "val",
           "required": false,

@@ -1,6 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
-import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
+import { appendFileSync, chmodSync, existsSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
+import {
+  VerdaccioRegistry,
+  bunEnv,
+  bunExe,
+  isWindows,
+  nodeModulesPackages,
+  tempDir,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { dirname, join } from "path";
 
 const verdaccio = new VerdaccioRegistry();
@@ -39,12 +47,31 @@ async function bunLockOf(dir: string) {
   return await Bun.file(join(dir, "bun.lock")).text();
 }
 
+// A migrated bun.lock is complete when the install after it finds nothing to save.
+async function expectInstallToLeaveUnchanged(dir: string, migratedBunLock: string) {
+  const install = await run(dir, "install");
+
+  expect(install.stderr).not.toContain("Saved lockfile");
+  expect(install.stderr).not.toContain("error:");
+  expect(install.exitCode).toBe(0);
+  expect(await bunLockOf(dir)).toBe(migratedBunLock);
+}
+
 function workspacesSection(bunLock: string) {
   const start = bunLock.indexOf(`  "workspaces": {`);
   const end = bunLock.indexOf(`  "packages": {`);
   expect(start).not.toBe(-1);
   expect(end).not.toBe(-1);
   return bunLock.slice(start, end);
+}
+
+// bun.lock writes `catalog` and `catalogs` between the workspaces and packages sections.
+function catalogSections(bunLock: string) {
+  const workspacesEnd = bunLock.indexOf("\n  },\n", bunLock.indexOf(`  "workspaces": {`));
+  const packagesStart = bunLock.indexOf(`  "packages": {`);
+  expect(workspacesEnd).not.toBe(-1);
+  expect(packagesStart).not.toBe(-1);
+  return bunLock.slice(workspacesEnd + "\n  },\n".length, packagesStart);
 }
 
 function workspaceBlock(bunLock: string, key: string) {
@@ -65,6 +92,8 @@ const NO_DEPS_1_0_0_INTEGRITY =
   "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
 const NO_DEPS_1_0_1_INTEGRITY =
   "sha512-3X6cn4+UJdXJuLPu11v8i/fGLe2PdI6v1yKTELam04lY5esCAFdG/qQts6N6rLrL6g1YRq+MKBAwxbmUQk355A==";
+const NO_DEPS_1_1_0_INTEGRITY =
+  "sha512-ebG2pipYAKINcNI3YxdsiAgFvNGp2gdRwxAKN2LYBm9+YxuH/lHH2sl+GKQTuGiNfCfNZRMHUyyLPEJD6HWm7w==";
 const NO_DEPS_2_0_0_INTEGRITY =
   "sha512-W3duJKZPcMIG5rA1io5cSK/bhW9rWFz+jFxZsKS/3suK4qHDkQNxUTEXee9/hTaAoDCeHWQqogukWYKzfr6X4g==";
 const ONE_DEP_1_0_0_INTEGRITY =
@@ -79,6 +108,10 @@ const PEER_DEPS_TOO_1_0_0_INTEGRITY =
   "sha512-sBx0TKrsB8FkRN2lzkDjMuctPGEKn1TmNUBv3dJOtnZM8nd255o5ZAPRpAI2XFLHZAavBlK/e73cZNwnUxlRog==";
 const ONE_OPTIONAL_PEER_DEP_1_0_2_INTEGRITY =
   "sha512-S25U8/QXGIKfn/AWtsce1aVMnDjDL+ykFtAufpsuKGad32NlsCpi9TDuXvzoTQ+MdaZpGV3c4xghUZUsNeMp4A==";
+const STRICT_PEER_DEP_1_0_0_INTEGRITY =
+  "sha512-bz2RC/Fp4Nvc9aIiHB6Szko9m6sxNy/clIHnTAGeD9VSpQJTvlPAJqJ09lWo7N3q4JNLEqDTf3Mn+zNUsYOKWQ==";
+const NORMAL_DEP_AND_DEV_DEP_1_0_1_INTEGRITY =
+  "sha512-MzZS9lLNBdqXf/lI+TKlXGeWrcDkOjzdSPJtvkRUN1FUjXg2DcGVldEqx9D8kNwF87Hxf2cRLvLv4a8GqZ6zPg==";
 const LOCAL_TARBALL_INTEGRITY =
   "sha512-HP/5Rgt3pVFLzjmN9qJJ6vZMgCwoCIl/m2bPndYT283CUqnmFiMx0GeeIJ7SyK6TYoJM78SEvFEOQie++caHqw==";
 
@@ -234,6 +267,111 @@ describe("pnpm-lock.yaml v9", () => {
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
   });
 
+  // pnpm lists every directory matched by pnpm-workspace.yaml as an importer, including
+  // test fixtures whose package.json has no "name" (vite has dozens). Those are not
+  // workspace packages to bun; the migration and the later workspace scan both skip them.
+  describe("importer whose package.json has no name", () => {
+    const fixtureDir = "packages/a/__tests__/fixtures/esm";
+    const files = {
+      "package.json": JSON.stringify({
+        name: "nameless-importer-root",
+        private: true,
+        dependencies: { a: "workspace:*" },
+      }),
+      "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n  - 'packages/**/__tests__/**'\n",
+      "packages/a/package.json": JSON.stringify({ name: "a" }),
+    };
+    const rootImporter = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      a:
+        specifier: workspace:*
+        version: link:packages/a
+
+  packages/a: {}
+`;
+
+    async function migrateThenFrozenInstall(dir: string) {
+      const { stderr, exitCode } = await migrate(dir);
+      expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).not.toContain("warn:");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(dir);
+      expect(workspacesSection(migrated)).toBe(`  "workspaces": {
+    "": {
+      "name": "nameless-importer-root",
+      "dependencies": {
+        "a": "workspace:*",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+    },
+  },
+`);
+      expect((await Bun.file(join(dir, "package.json")).json()).workspaces).toStrictEqual([
+        "packages/*",
+        "packages/**/__tests__/**",
+      ]);
+
+      // The migrated package.json now matches the fixture through the glob; the
+      // workspace scan has to agree with the migration for a frozen install to pass.
+      const install = await run(dir, "install", "--frozen-lockfile", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(dir)).toBe(migrated);
+      expect(await installedPackageJson(dir, "", "a")).toStrictEqual({ name: "a" });
+      return { migrated, install };
+    }
+
+    test.concurrent("is skipped", async () => {
+      using dir = tempDir("pnpm-v9-nameless-importer", {
+        ...files,
+        [`${fixtureDir}/package.json`]: JSON.stringify({ type: "module" }),
+        "pnpm-lock.yaml": `${rootImporter}
+  ${fixtureDir}: {}
+`,
+      });
+
+      const { install } = await migrateThenFrozenInstall(String(dir));
+      expect(install.stderr).not.toContain("warn:");
+    });
+
+    test.concurrent("its dependencies are not migrated, and bun install warns about them", async () => {
+      using dir = tempDir("pnpm-v9-nameless-importer-with-deps", {
+        ...files,
+        [`${fixtureDir}/package.json`]: JSON.stringify({ type: "module", dependencies: { "no-deps": "^1.0.0" } }),
+        "pnpm-lock.yaml": `${rootImporter}
+  ${fixtureDir}:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+      });
+
+      const { migrated, install } = await migrateThenFrozenInstall(String(dir));
+      expect(migrated).not.toContain("no-deps");
+      expect(install.stderr).toContain(
+        `warn: Skipping workspace "${fixtureDir}": its package.json has no "name", so its dependencies will not be installed\n`,
+      );
+    });
+  });
+
   test("registry-qualified dep path resolves from the configured registry with a warning", async () => {
     // shape from pnpm11/deps/path/test/index.ts parse() `foo@work:1.0.0`
     const { packageDir } = await verdaccio.createTestDir({
@@ -385,6 +523,65 @@ snapshots:
         "node_modules/no-deps/no-deps@1.0.1
         node_modules/peer-deps-fixed/peer-deps-fixed@1.0.0"
       `);
+    });
+
+    test("credentials in a namedRegistries URL stay out of bun.lock and a token in its path is masked in the warning", async () => {
+      const password = "s3cret";
+      const token = "npm_" + "a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6q7r8";
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "named-registry-secrets", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: http://carol:${password}@127.0.0.1:1/${token}/\n`,
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain(
+        'warn: fetching pnpm registry "work" packages from http://127.0.0.1:1/***/; add it to bunfig.toml or .npmrc if it needs authentication',
+      );
+      expect(stderr).not.toContain(password);
+      expect(stderr).not.toContain(token);
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      // The token is part of the tarball location; the credentials are not.
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(
+        `["no-deps@1.0.1", "http://127.0.0.1:1/${token}/no-deps/-/no-deps-1.0.1.tgz", {}, "${NO_DEPS_1_0_1_INTEGRITY}"]`,
+      );
+      expect(bunLock).not.toContain(password);
+    });
+
+    test("namedRegistries entry naming the configured registry with credentials in the URL needs no warning", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "named-registry-same-creds", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `namedRegistries:\n  work: ${verdaccio.registryUrl().replace("http://", "http://carol:s3cret@")}\n`,
+          "pnpm-lock.yaml": registryQualifiedNoDepsLockfile("work"),
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("pnpm registry");
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("s3cret");
+      expect(bunLock).not.toContain("work:");
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`"node_modules/no-deps/no-deps@1.0.1"`);
     });
 
     test("two packages from one unknown registry warn once", async () => {
@@ -785,16 +982,19 @@ snapshots:
       const { stderr, exitCode } = await migrate(packageDir);
 
       expect(stderr).not.toContain("is not in patchedDependencies");
+      expect(stderr).toContain("copied pnpm.patchedDependencies to patchedDependencies in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       const bunLock = await bunLockOf(packageDir);
       expect(bunLock).toContain(`"patchedDependencies": {\n    "no-deps@1.0.1": "patches/no-deps.patch",\n  }`);
 
+      // The versioned key only goes to the root; pnpm keeps reading the bare key from its own block.
       const packageJson = await Bun.file(join(packageDir, "package.json")).json();
       expect(packageJson).toStrictEqual({
         name: "patch-path-in-package-json",
         dependencies: { "no-deps": "^1.0.0" },
+        pnpm: { patchedDependencies: { "no-deps": "patches/no-deps.patch" } },
         patchedDependencies: { "no-deps@1.0.1": "patches/no-deps.patch" },
       });
 
@@ -805,6 +1005,55 @@ snapshots:
       expect(await Bun.file(join(packageDir, "node_modules/no-deps/index.js")).text()).toStartWith(
         "globalThis.patchedByMigration = true;\n",
       );
+    });
+
+    // `bun update` migrates, then edits the cached root package.json that the migration rewrote, so the cached
+    // copy has to be re-read from the rewritten contents (a stale copy pointed into the freed previous contents).
+    test("bun update straight from pnpm-lock.yaml edits the package.json the migration rewrote", async () => {
+      const pnpm = {
+        patchedDependencies: { "no-deps": "patches/no-deps.patch" },
+        overrides: { "a-dep": "1.0.1" },
+      };
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "update-after-migration",
+            dependencies: { "no-deps": "^1.0.0" },
+            pnpm,
+          }),
+          "patches/no-deps.patch": NO_DEPS_INDEX_PATCH,
+          "pnpm-lock.yaml": bareHashNoDepsLockfile("no-deps").replace(
+            "importers:",
+            "overrides:\n  a-dep: 1.0.1\n\nimporters:",
+          ),
+        },
+      });
+
+      const update = await run(packageDir, "update");
+
+      expect(update.stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies in package.json",
+      );
+      expect(update.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(update.stderr).not.toContain("error:");
+      expect(update.stdout).toContain("no-deps@1.0.1");
+      expect(update.exitCode).toBe(0);
+      expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+        name: "update-after-migration",
+        dependencies: { "no-deps": "^1.0.1" },
+        pnpm,
+        overrides: pnpm.overrides,
+        patchedDependencies: { "no-deps@1.0.1": "patches/no-deps.patch" },
+      });
+      expect(await Bun.file(join(packageDir, "node_modules/no-deps/index.js")).text()).toStartWith(
+        "globalThis.patchedByMigration = true;\n",
+      );
+
+      const frozen = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
     });
 
     test("versioned lockfile key falls back to the bare config key", async () => {
@@ -948,6 +1197,63 @@ snapshots:
         );
       },
     );
+
+    // `bun patch --commit` loads the lockfile before it edits package.json, so the migration's rewrite of
+    // package.json (and of its cache entry) happens underneath the command.
+    test("bun patch --commit that has to migrate the lockfile keeps the migration's package.json edits", async () => {
+      const packageJson = { name: "patch-commit-migrates", dependencies: { "no-deps": "^1.0.0" } };
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify(packageJson),
+          "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+          "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+  packages/a: {}
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      // `bun patch` installs and unlinks node_modules/no-deps from the cache copy that `--commit` diffs against;
+      // the repo is then put back to how it was checked out, so `--commit` is the command that migrates.
+      expect((await run(packageDir, "patch", "no-deps")).exitCode).toBe(0);
+      rmSync(join(packageDir, "bun.lock"));
+      writeFileSync(join(packageDir, "package.json"), JSON.stringify(packageJson));
+      appendFileSync(join(packageDir, "node_modules/no-deps/index.js"), "globalThis.patchedAtCommit = true;\n");
+
+      const { stderr, exitCode } = await run(packageDir, "patch", "--commit", "node_modules/no-deps");
+      expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual({
+        ...packageJson,
+        workspaces: ["packages/*"],
+        patchedDependencies: { "no-deps@1.0.1": "patches/no-deps@1.0.1.patch" },
+      });
+      expect(await Bun.file(join(packageDir, "patches/no-deps@1.0.1.patch")).text()).toContain(
+        "+globalThis.patchedAtCommit = true;",
+      );
+      expect(await bunLockOf(packageDir)).toContain(`"no-deps@1.0.1": "patches/no-deps@1.0.1.patch"`);
+    });
   });
 
   test("catalog:default is the default catalog", async () => {
@@ -999,7 +1305,8 @@ snapshots:
     expect(exitCode).toBe(0);
 
     const bunLock = await bunLockOf(String(dir));
-    expect(bunLock).toContain(`"config": "file:shared/config"`);
+    // as outer/package.json declares it, not pnpm's lockfile-relative `file:shared/config`
+    expect(bunLock).toContain(`"config": "file:../shared/config"`);
     expect(bunLock).toContain(
       `"fork": "https://codeload.github.com/o/bar/tar.gz/aeb6b15f9c9957c8fa56f9731e914c4d8a6d2f2b"`,
     );
@@ -1081,8 +1388,15 @@ snapshots:
 
     const bunLock = await bunLockOf(String(dir));
     expect(bunLock).toContain(`"sub-dep": "file:./sub-dep"`);
-    expect(bunLock).toContain(`["sub-dep@file:sub-dep", { "dependencies": { "nested-child": "file:sub-dep/child" } }]`);
+    // pnpm-lock.yaml has `nested-child: file:sub-dep/child`; bun.lock stores the path relative to
+    // sub-dep, the way sub-dep/package.json declares it, and resolves it from there when loaded.
+    expect(bunLock).toContain(`["sub-dep@file:sub-dep", { "dependencies": { "nested-child": "file:child" } }]`);
     expect(bunLock).toContain(`["nested-child@file:sub-dep/child", {}]`);
+
+    const update = await run(String(dir), "update", "nested-child");
+    expect(update.stderr).not.toContain("error:");
+    expect(update.exitCode).toBe(0);
+    expect(await bunLockOf(String(dir))).toBe(bunLock);
   });
 
   test.concurrent("codeload tarballs with and without gitHosted: true", async () => {
@@ -1471,6 +1785,185 @@ snapshots:
       `);
     });
 
+    test("a peer nothing in the lockfile satisfies keeps the version pnpm resolved it to", async () => {
+      // strict-peer-dep wants no-deps@^2.0.0; pnpm resolved it to 1.0.0 (the snapshot suffix) while
+      // one-dep brings in 1.0.1. Neither satisfies the range, so there is nothing to rebind the
+      // peer by; binding it to the highest version present would drop pnpm's 1.0.0 from the tree.
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "unsatisfied-peer",
+            dependencies: { "one-dep": "1.0.0", "strict-peer-dep": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+      strict-peer-dep:
+        specifier: 1.0.0
+        version: 1.0.0(no-deps@1.0.0)
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  strict-peer-dep@1.0.0:
+    resolution: {integrity: ${STRICT_PEER_DEP_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^2.0.0
+
+snapshots:
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  strict-peer-dep@1.0.0(no-deps@1.0.0):
+    dependencies:
+      no-deps: 1.0.0
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      expect(bunLock).toContain(`"strict-peer-dep/no-deps": ["no-deps@1.0.0"`);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+        "node_modules/no-deps/no-deps@1.0.1
+        node_modules/one-dep/one-dep@1.0.0
+        node_modules/strict-peer-dep/node_modules/no-deps/no-deps@1.0.0
+        node_modules/strict-peer-dep/strict-peer-dep@1.0.0"
+      `);
+    });
+
+    test("a peer nothing in the lockfile satisfies and pnpm left unmet is not given a copy of the highest version", async () => {
+      // pnpm recorded no resolution for strict-peer-dep's no-deps@^2.0.0 (no snapshot suffix),
+      // so in pnpm's layout the package sees whatever no-deps sits at the root: 1.0.1, hoisted
+      // there from one-dep. Binding the peer to the highest version present instead (1.1.0,
+      // nested under normal-dep-and-dev-dep) would add a strict-peer-dep/no-deps copy to the
+      // migrated tree that pnpm's tree does not have. Left unbound, the peer is bound to the
+      // root copy when the migrated bun.lock is loaded, like any other peer the file prints
+      // nothing for.
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "unmet-peer",
+            // one-dep is a devDependency so that its no-deps@1.0.1 takes the root slot.
+            dependencies: { "normal-dep-and-dev-dep": "1.0.1", "strict-peer-dep": "1.0.0" },
+            devDependencies: { "one-dep": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      normal-dep-and-dev-dep:
+        specifier: 1.0.1
+        version: 1.0.1
+      strict-peer-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+    devDependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  no-deps@1.1.0:
+    resolution: {integrity: ${NO_DEPS_1_1_0_INTEGRITY}}
+
+  normal-dep-and-dev-dep@1.0.1:
+    resolution: {integrity: ${NORMAL_DEP_AND_DEV_DEP_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  strict-peer-dep@1.0.0:
+    resolution: {integrity: ${STRICT_PEER_DEP_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^2.0.0
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  no-deps@1.1.0: {}
+
+  normal-dep-and-dev-dep@1.0.1:
+    dependencies:
+      no-deps: 1.1.0
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  strict-peer-dep@1.0.0: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      expect(bunLock).toContain(`"normal-dep-and-dev-dep/no-deps": ["no-deps@1.1.0"`);
+      expect(bunLock).not.toContain(`"strict-peer-dep/no-deps"`);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(nodeModulesPackages(packageDir)).toMatchInlineSnapshot(`
+        "node_modules/no-deps/no-deps@1.0.1
+        node_modules/normal-dep-and-dev-dep/node_modules/no-deps/no-deps@1.1.0
+        node_modules/normal-dep-and-dev-dep/normal-dep-and-dev-dep@1.0.1
+        node_modules/one-dep/one-dep@1.0.0
+        node_modules/strict-peer-dep/strict-peer-dep@1.0.0"
+      `);
+    });
+
     // pnpm11/lockfile/fs convertToLockfileObject: every variant joins packages[removeSuffix(key)]
     const peerVariantPackageJsons = {
       "package.json": JSON.stringify({ name: "v9-peer-variants", workspaces: ["apps/*"] }),
@@ -1627,6 +2120,90 @@ ${variants}`;
       expect(peerDepsDirs[0]).not.toBe(peerDepsDirs[1]);
     });
 
+    test("the migrating install links the peer version its bun.lock reloads with the isolated linker", async () => {
+      // pnpm auto-installed no-deps@1.1.0 for peer-deps-fixed's `no-deps: ^1.0.0` while one-dep pins
+      // no-deps@1.0.1, so 1.1.0 is only reachable through the peer edge. The hoisted tree dedupes that
+      // edge onto 1.0.1, bun.lock never records 1.1.0, and reloading binds the edge to 1.0.1. The
+      // migrating install has to link the same binding, or the next install relinks the entry.
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "v9-auto-installed-peer",
+            dependencies: { "one-dep": "1.0.0", "peer-deps-fixed": "1.0.0" },
+          }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+      peer-deps-fixed:
+        specifier: 1.0.0
+        version: 1.0.0(no-deps@1.1.0)
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  no-deps@1.1.0:
+    resolution: {integrity: ${NO_DEPS_1_1_0_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  peer-deps-fixed@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_FIXED_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: ^1.0.0
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  no-deps@1.1.0: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  peer-deps-fixed@1.0.0(no-deps@1.1.0):
+    dependencies:
+      no-deps: 1.1.0
+`,
+        },
+      });
+
+      const migrating = await run(packageDir, "install");
+
+      expect(migrating.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(migrating.stderr).not.toContain("error:");
+      expect(migrating.exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(bunLock).toContain(`"no-deps": ["no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("no-deps@1.1.0");
+
+      const storeDir = join(packageDir, "node_modules", ".bun");
+      const peerDepsFixedDir = realpathSync(join(packageDir, "node_modules", "peer-deps-fixed"));
+      expect((await Bun.file(join(dirname(peerDepsFixedDir), "no-deps", "package.json")).json()).version).toBe("1.0.1");
+      const store = readdirSync(storeDir).sort();
+      expect(store).not.toContain("no-deps@1.1.0");
+
+      const reinstall = await run(packageDir, "install");
+
+      expect(reinstall.stderr).not.toContain("error:");
+      expect(reinstall.stdout).toContain("(no changes)");
+      expect(reinstall.exitCode).toBe(0);
+      expect(readdirSync(storeDir).sort()).toEqual(store);
+      expect(realpathSync(join(packageDir, "node_modules", "peer-deps-fixed"))).toBe(peerDepsFixedDir);
+      expect(await bunLockOf(packageDir)).toBe(bunLock);
+    });
+
     test("a peer met in one importer and unmet in another is bound from the met variant", async () => {
       // pnpm sorts the unsuffixed (peer-unmet) variant first; the met variant must still bind the peer
       const { packageDir } = await verdaccio.createTestDir({
@@ -1661,6 +2238,205 @@ ${variants}`;
       expect(
         existsSync(join(packageDir, "node_modules", ".bun", entry!, "node_modules", "peer", "package.json")),
       ).toBeTrue();
+    });
+
+    describe("a peer pnpm left unmet is bound by the install that migrates", () => {
+      // pnpm records a met peer as a suffix on the dependent's snapshot key; an unmet one (autoInstallPeers
+      // off) has no suffix, so the migration has nothing to bind peer-deps-too's `no-deps` edge to. Loading
+      // the migrated bun.lock binds it to the no-deps hoisted to the root, and the isolated store keys
+      // peer-deps-too by that binding, so the migrating install has to bind it the same way or the next
+      // install re-keys the entry (bun.lock itself is identical either way).
+      const unmetPeerProject = (importer: string, packageJson: Record<string, unknown>) => ({
+        "package.json": JSON.stringify({ name: "unmet-peer", ...packageJson }),
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+${importer}
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+  peer-deps-too@1.0.0:
+    resolution: {integrity: ${PEER_DEPS_TOO_1_0_0_INTEGRITY}}
+    peerDependencies:
+      no-deps: '*'
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+
+  peer-deps-too@1.0.0: {}
+`,
+      });
+
+      const storeEntries = (dir: string) =>
+        readdirSync(join(dir, "node_modules", ".bun"))
+          .filter(name => name !== "node_modules")
+          .sort();
+
+      // Hoisting places a package's dependencies breadth-first in dependency-group order. With both in
+      // `dependencies`, one-dep's no-deps reaches the root before peer-deps-too's peer is looked at; as a
+      // devDependency peer-deps-too is processed first, and the peer is bound when no-deps arrives later.
+      test.concurrent.each([
+        {
+          group: "dependencies",
+          packageJson: { dependencies: { "one-dep": "1.0.0", "peer-deps-too": "1.0.0" } },
+          importer: `    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+      peer-deps-too:
+        specifier: 1.0.0
+        version: 1.0.0`,
+        },
+        {
+          group: "devDependencies",
+          packageJson: { dependencies: { "one-dep": "1.0.0" }, devDependencies: { "peer-deps-too": "1.0.0" } },
+          importer: `    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+    devDependencies:
+      peer-deps-too:
+        specifier: 1.0.0
+        version: 1.0.0`,
+        },
+      ])(
+        "peer-deps-too in $group keys its isolated store entry like a reinstall and like a fresh install",
+        async ({ packageJson, importer }) => {
+          const files = unmetPeerProject(importer, packageJson);
+          const { packageDir } = await verdaccio.createTestDir({ bunfigOpts: { linker: "isolated" }, files });
+
+          const install = await run(packageDir, "install");
+
+          expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+          expect(install.exitCode).toBe(0);
+          const migrated = await bunLockOf(packageDir);
+          expect(migrated).toContain(`{ "peerDependencies": { "no-deps": "*" } }`);
+          const store = storeEntries(packageDir);
+          expect(store).toEqual([
+            "no-deps@1.0.1",
+            "one-dep@1.0.0",
+            expect.stringMatching(/^peer-deps-too@1\.0\.0\+[0-9a-f]{16}$/),
+          ]);
+
+          const reinstall = await run(packageDir, "install");
+
+          expect(reinstall.stdout).toContain("(no changes)");
+          expect(reinstall.exitCode).toBe(0);
+          expect(await bunLockOf(packageDir)).toBe(migrated);
+          expect(storeEntries(packageDir)).toEqual(store);
+
+          const { packageDir: fresh } = await verdaccio.createTestDir({
+            bunfigOpts: { linker: "isolated" },
+            files: { "package.json": files["package.json"] },
+          });
+
+          const freshInstall = await run(fresh, "install");
+
+          expect(freshInstall.stderr).toContain("Saved lockfile");
+          expect(freshInstall.exitCode).toBe(0);
+          expect(storeEntries(fresh)).toEqual(store);
+        },
+      );
+
+      // The root's and a workspace's own peers come from package.json and are unbound the same way; the
+      // isolated linker links a bound peer into the importer's node_modules.
+      test.concurrent("the root's and a workspace's own peers are linked by the migrating install", async () => {
+        const manifests = {
+          "package.json": JSON.stringify({
+            name: "importer-peers",
+            workspaces: ["apps/*"],
+            dependencies: { "one-dep": "1.0.0" },
+            peerDependencies: { "no-deps": "*" },
+          }),
+          "apps/a/package.json": JSON.stringify({ name: "a", peerDependencies: { "no-deps": "*" } }),
+        };
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: {
+            ...manifests,
+            "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: false
+
+importers:
+
+  .:
+    dependencies:
+      one-dep:
+        specifier: 1.0.0
+        version: 1.0.0
+
+  apps/a: {}
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+          },
+        });
+        const linked = (dir: string) => ({
+          root: readdirSync(join(dir, "node_modules"))
+            .filter(name => name !== ".bun")
+            .sort(),
+          a: existsSync(join(dir, "apps/a/node_modules")) ? readdirSync(join(dir, "apps/a/node_modules")).sort() : [],
+        });
+
+        const install = await run(packageDir, "install");
+
+        expect(install.stderr).toContain('skipped peer "no-deps" of the root package');
+        expect(install.stderr).toContain('skipped peer "no-deps" of workspace "apps/a"');
+        expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(install.exitCode).toBe(0);
+        const migrated = await bunLockOf(packageDir);
+        expect(linked(packageDir)).toEqual({ root: ["no-deps", "one-dep"], a: ["no-deps"] });
+
+        const reinstall = await run(packageDir, "install");
+
+        expect(reinstall.stdout).toContain("(no changes)");
+        expect(reinstall.exitCode).toBe(0);
+        expect(await bunLockOf(packageDir)).toBe(migrated);
+        expect(linked(packageDir)).toEqual({ root: ["no-deps", "one-dep"], a: ["no-deps"] });
+
+        const { packageDir: fresh } = await verdaccio.createTestDir({
+          bunfigOpts: { linker: "isolated" },
+          files: manifests,
+        });
+
+        const freshInstall = await run(fresh, "install");
+
+        expect(freshInstall.stderr).toContain("Saved lockfile");
+        expect(freshInstall.exitCode).toBe(0);
+        expect(linked(fresh)).toEqual({ root: ["no-deps", "one-dep"], a: ["no-deps"] });
+      });
     });
 
     const linkedPeerFiles = {
@@ -2144,12 +2920,7 @@ snapshots:
       expect(root).toContain(`      "dependencies": {\n        "no-deps": "~1.0.0",\n      },`);
       expect(root.split(`"a-dep"`).length - 1).toBe(1);
 
-      const install = await run(packageDir, "install");
-
-      expect(install.stderr).not.toContain("Saved lockfile");
-      expect(install.stderr).not.toContain("error:");
-      expect(install.exitCode).toBe(0);
-      expect(await bunLockOf(packageDir)).toBe(migrated);
+      await expectInstallToLeaveUnchanged(packageDir, migrated);
       expect(await installedPackageJson(packageDir, "", "a-dep")).toStrictEqual({ name: "a-dep", version: "1.0.1" });
     });
 
@@ -2494,6 +3265,77 @@ snapshots:
     });
   });
 
+  // #23694: `bun update -i` migrates once to list the outdated packages, edits the root package.json through the
+  // cache, then installs, which migrates again because bun.lock is still not on disk. The editor and the second
+  // migration both used the tree the first migration had edited, which pointed into the contents it had freed.
+  test("bun update -i in a pnpm workspace migrates twice and keeps package.json intact", async () => {
+    const { packageDir } = await verdaccio.createTestDir({
+      bunfigOpts: { linker: "hoisted" },
+      files: {
+        "package.json": JSON.stringify({
+          name: "update-interactive",
+          dependencies: { "no-deps": "^1.0.0" },
+          pnpm: { overrides: { "a-dep": "1.0.1" } },
+        }),
+        "packages/a/package.json": JSON.stringify({ name: "a" }),
+        "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+overrides:
+  a-dep: 1.0.1
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/a: {}
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+`,
+      },
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "update", "-i"],
+      cwd: packageDir,
+      env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache") },
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write("a\r");
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).not.toContain("error:");
+    expect(stdout).toContain("no-deps");
+    expect(exitCode).toBe(0);
+    expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+      name: "update-interactive",
+      dependencies: { "no-deps": "^1.1.0" },
+      pnpm: { overrides: { "a-dep": "1.0.1" } },
+      overrides: { "a-dep": "1.0.1" },
+      workspaces: ["packages/*"],
+    });
+    expect(existsSync(join(packageDir, "bun.lock"))).toBe(true);
+
+    const frozen = await run(packageDir, "install", "--frozen-lockfile");
+
+    expect(frozen.stderr).not.toContain("error:");
+    expect(frozen.exitCode).toBe(0);
+  });
+
   describe("overrides", () => {
     function overridesLockfile(overrides: string) {
       return `lockfileVersion: '9.0'
@@ -2515,7 +3357,7 @@ importers:
       return bunLock.slice(start, end + "\n  },".length);
     }
 
-    // pnpm/pnpm#5928 (`-` removes the dependency) is warned once, with a location, when bun install reads the moved package.json overrides; pnpm/pnpm#6774 (`name@range` keys) migrates as ranged rules
+    // pnpm/pnpm#5928 (`-` removes the dependency) is warned once, with a location, when bun install reads the copied package.json overrides; pnpm/pnpm#6774 (`name@range` keys) migrates as ranged rules
     test.concurrent("removal values are dropped; name@range keys migrate as ranged rules", async () => {
       const overrides = {
         "left-pad": "-",
@@ -2538,12 +3380,13 @@ importers:
       const { stderr, exitCode } = await migrate(String(dir));
 
       expect(stderr).not.toContain("warn:");
-      expect(stderr).toContain("moved pnpm.overrides to overrides in package.json");
+      expect(stderr).toContain("copied pnpm.overrides to overrides in package.json");
       expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(exitCode).toBe(0);
 
       expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
         name: "overrides-unsupported",
+        pnpm: { overrides },
         overrides,
       });
 
@@ -2572,6 +3415,104 @@ importers:
       expect(install.stderr).toMatch(/package\.json:\d+:\d+/);
       expect(install.stderr.split("warn:").length - 1).toBe(1);
       expect(install.exitCode).toBe(0);
+    });
+
+    // pnpm reads `pnpm.overrides` and `pnpm.patchedDependencies` from package.json and ignores the root-level
+    // fields, so removing them from the `pnpm` block breaks `pnpm install --frozen-lockfile` for everyone still on
+    // pnpm (ERR_PNPM_LOCKFILE_CONFIG_MISMATCH). The block has to survive the migration as it was.
+    test.concurrent("the pnpm block in package.json is left as it was", async () => {
+      const pnpm = {
+        overrides: { "no-deps": "1.0.0" },
+        patchedDependencies: { "one-dep@1.0.0": "patches/one-dep.patch" },
+        onlyBuiltDependencies: ["one-dep"],
+      };
+      using dir = tempDir("pnpm-v9-pnpm-block-kept", {
+        "package.json": JSON.stringify({ name: "pnpm-block-kept", private: true, pnpm }),
+        "pnpm-lock.yaml": overridesLockfile("  no-deps: 1.0.0"),
+      });
+      using onlyMigratedKeys = tempDir("pnpm-v9-pnpm-block-only-migrated-keys", {
+        "package.json": JSON.stringify({ name: "pnpm-block-only-migrated-keys", pnpm: { overrides: pnpm.overrides } }),
+        "pnpm-lock.yaml": overridesLockfile("  no-deps: 1.0.0"),
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm.patchedDependencies to patchedDependencies, pnpm.onlyBuiltDependencies to trustedDependencies in package.json",
+      );
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "pnpm-block-kept",
+        private: true,
+        pnpm,
+        overrides: pnpm.overrides,
+        patchedDependencies: pnpm.patchedDependencies,
+        trustedDependencies: pnpm.onlyBuiltDependencies,
+      });
+
+      const onlyMigrated = await migrate(String(onlyMigratedKeys));
+
+      expect(onlyMigrated.stderr).toContain("copied pnpm.overrides to overrides in package.json");
+      expect(onlyMigrated.exitCode).toBe(0);
+      expect(await Bun.file(join(String(onlyMigratedKeys), "package.json")).json()).toStrictEqual({
+        name: "pnpm-block-only-migrated-keys",
+        pnpm: { overrides: pnpm.overrides },
+        overrides: pnpm.overrides,
+      });
+    });
+
+    // pnpm 10 merges `pnpm.overrides` with the `overrides` of pnpm-workspace.yaml, and the lockfile records the
+    // merged set. The yaml entries belong in the root-level copy only.
+    test.concurrent("pnpm-workspace.yaml overrides go into the root copy, not into the pnpm block", async () => {
+      using dir = tempDir("pnpm-v9-overrides-package-json-and-workspace-yaml", {
+        "package.json": JSON.stringify({
+          name: "overrides-package-json-and-workspace-yaml",
+          pnpm: { overrides: { "no-deps": "1.0.0" } },
+        }),
+        "pnpm-workspace.yaml": "overrides:\n  a-dep: 1.0.1\n",
+        "pnpm-lock.yaml": overridesLockfile("  no-deps: 1.0.0\n  a-dep: 1.0.1"),
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain(
+        "copied pnpm.overrides to overrides, pnpm-workspace.yaml overrides to overrides in package.json",
+      );
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "overrides-package-json-and-workspace-yaml",
+        pnpm: { overrides: { "no-deps": "1.0.0" } },
+        overrides: { "no-deps": "1.0.0", "a-dep": "1.0.1" },
+      });
+    });
+
+    // Unquoted yaml scalars point into the file contents; quoted ones (the usual spelling for scoped names) are
+    // copied into the arena the yaml was parsed with, which has to stay alive until package.json is printed.
+    test.concurrent("quoted pnpm-workspace.yaml scalars are written to package.json", async () => {
+      using dir = tempDir("pnpm-v9-workspace-yaml-quoted", {
+        "package.json": JSON.stringify({ name: "workspace-yaml-quoted" }),
+        "pnpm-workspace.yaml": `overrides:
+  '@scope/pkg': "1.0.0"
+catalog:
+  '@scope/other': '^2.0.0'
+`,
+        "pnpm-lock.yaml": overridesLockfile("  '@scope/pkg': 1.0.0"),
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("warn:");
+      expect(stderr).toContain(
+        "copied pnpm-workspace.yaml to workspaces, pnpm-workspace.yaml overrides to overrides in package.json",
+      );
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "workspace-yaml-quoted",
+        workspaces: { catalog: { "@scope/other": "^2.0.0" } },
+        overrides: { "@scope/pkg": "1.0.0" },
+      });
     });
 
     test.concurrent("parent selectors become nested rules", async () => {
@@ -2611,7 +3552,7 @@ importers:
       const deep = await migrate(String(tooDeep));
 
       expect(deep.stderr).not.toContain("warn:");
-      expect(deep.stderr).toContain("moved pnpm.overrides to overrides in package.json");
+      expect(deep.stderr).toContain("copied pnpm.overrides to overrides in package.json");
       expect(deep.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
       expect(deep.exitCode).toBe(0);
       expect(await bunLockOf(String(tooDeep))).not.toContain("a>b");
@@ -2651,6 +3592,274 @@ importers:
       expect(stderr).toContain("pnpm-lock.yaml override 'foo' must be a string");
       expect(exitCode).toBe(1);
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    });
+
+    // The copied fields are written before bun.lock, so a read-only package.json fails the migration outright
+    // rather than leaving a bun.lock whose overrides the next install cannot see in package.json.
+    test.concurrent.skipIf(isWindows)(
+      "a read-only package.json fails the migration before bun.lock is written",
+      async () => {
+        const packageJson = JSON.stringify({ name: "overrides-read-only", pnpm: { overrides: { plain: "1.0.0" } } });
+        using dir = tempDir("pnpm-v9-overrides-read-only", {
+          "package.json": packageJson,
+          "pnpm-lock.yaml": overridesLockfile("  plain: 1.0.0"),
+        });
+        chmodSync(join(String(dir), "package.json"), 0o444);
+        using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "pm", "migrate"],
+          cwd: String(dir),
+          env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") },
+          stdout: "pipe",
+          stderr: "pipe",
+          ...unprivileged,
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+        expect(stderr).toContain("error: failed to write package.json: EACCES");
+        expect(stderr).not.toContain("copied");
+        expect(stdout).toBe("");
+        expect(exitCode).toBe(1);
+        expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
+        expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+      },
+    );
+  });
+
+  // The settings moved out of `pnpm` / pnpm-workspace.yaml are edited into package.json in memory while the
+  // lockfile loads; the file is only written together with bun.lock.
+  describe("package.json edits", () => {
+    const packageJson = `{
+  "name": "root",
+  "private": true,
+  "dependencies": {
+    "a": "workspace:*",
+    "foo": "file:vendor/foo"
+  },
+  "pnpm": {
+    "overrides": {
+      "left-pad": "1.3.0"
+    }
+  }
+}
+`;
+    const migratedPackageJson = {
+      name: "root",
+      private: true,
+      dependencies: { a: "workspace:*", foo: "file:vendor/foo" },
+      pnpm: { overrides: { "left-pad": "1.3.0" } },
+      overrides: { "left-pad": "1.3.0" },
+      workspaces: ["packages/*"],
+    };
+    const files = {
+      "package.json": packageJson,
+      "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+      "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+      "vendor/foo/package.json": JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        scripts: { postinstall: "echo foo-postinstall" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+overrides:
+  left-pad: 1.3.0
+
+importers:
+
+  .:
+    dependencies:
+      a:
+        specifier: workspace:*
+        version: link:packages/a
+      foo:
+        specifier: file:vendor/foo
+        version: file:vendor/foo
+
+  packages/a: {}
+
+packages:
+
+  foo@file:vendor/foo:
+    resolution: {directory: vendor/foo, type: directory}
+    version: 1.0.0
+
+snapshots:
+
+  foo@file:vendor/foo: {}
+`,
+    };
+    const movedLine = "copied pnpm.overrides to overrides, pnpm-workspace.yaml to workspaces in package.json";
+    const frozenNote =
+      "note: the lockfile is frozen, so the migration from pnpm-lock.yaml was not written to bun.lock and package.json; run 'bun install' and commit the result";
+
+    async function expectUntouched(dir: string) {
+      expect(await Bun.file(join(dir, "package.json")).text()).toBe(packageJson);
+      expect(existsSync(join(dir, "bun.lock"))).toBe(false);
+    }
+
+    test.concurrent.each([
+      ["install --frozen-lockfile", ["install", "--frozen-lockfile"]],
+      ["ci", ["ci"]],
+      ["install --production", ["install", "--production"]],
+    ])("bun %s installs the migrated lockfile without writing package.json or bun.lock", async (_, args) => {
+      using dir = tempDir("pnpm-v9-package-json-frozen", files);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).toContain(frozenNote);
+      expect(stderr).not.toContain(movedLine);
+      expect(stdout + stderr).not.toContain("Saved");
+      await expectUntouched(String(dir));
+      expect(await installedPackageJson(String(dir), "", "foo")).toMatchObject({ name: "foo", version: "1.0.0" });
+      expect(await installedPackageJson(String(dir), "", "a")).toStrictEqual({ name: "a", version: "1.0.0" });
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("install --frozen-lockfile fails once the lockfile and package.json disagree", async () => {
+      using dir = tempDir("pnpm-v9-package-json-frozen-stale", {
+        ...files,
+        "pnpm-lock.yaml": files["pnpm-lock.yaml"].replace("left-pad: 1.3.0", "left-pad: 1.2.0"),
+      });
+
+      const { stderr, exitCode } = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(stderr).toContain("error: lockfile had changes, but lockfile is frozen");
+      expect(stderr).toContain("note: overrides in package.json changed since pnpm-lock.yaml was saved");
+      expect(exitCode).toBe(1);
+      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(packageJson);
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    });
+
+    test.concurrent.each([
+      ["install --dry-run", ["install", "--dry-run"]],
+      ["install --no-save", ["install", "--no-save"]],
+      ["outdated", ["outdated"]],
+      ["pm why a", ["pm", "why", "a"]],
+      ["pm untrusted", ["pm", "untrusted"]],
+    ])("bun %s leaves package.json and bun.lock alone", async (_, args) => {
+      using dir = tempDir("pnpm-v9-package-json-read-only", files);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).not.toContain("note:");
+      expect(stdout + stderr).not.toContain("copied ");
+      expect(stdout + stderr).not.toContain("Saved");
+      await expectUntouched(String(dir));
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent.each([
+      ["install", ["install"]],
+      ["install --lockfile-only", ["install", "--lockfile-only"]],
+      ["pm migrate", ["pm", "migrate"]],
+      // pm migrate saves bun.lock whatever install flags are passed, so package.json has to follow it.
+      ["pm migrate --dry-run", ["pm", "migrate", "--dry-run"]],
+    ])("bun %s writes the edited package.json together with bun.lock", async (_, args) => {
+      using dir = tempDir("pnpm-v9-package-json-written", files);
+
+      const { stderr, exitCode } = await run(String(dir), ...args);
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr.split(movedLine).length - 1).toBe(1);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(migratedPackageJson);
+      expect(await bunLockOf(String(dir))).toContain(`"packages/a": {`);
+      expect(exitCode).toBe(0);
+
+      const written = await Bun.file(join(String(dir), "package.json")).text();
+      const frozen = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.stderr).not.toContain("migrated lockfile");
+      expect(frozen.exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).text()).toBe(written);
+    });
+
+    test.concurrent("remove keeps the edits the migration made to package.json", async () => {
+      using dir = tempDir("pnpm-v9-package-json-remove", files);
+
+      const { stderr, exitCode } = await run(String(dir), "remove", "foo");
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr.split(movedLine).length - 1).toBe(1);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        ...migratedPackageJson,
+        dependencies: { a: "workspace:*" },
+      });
+      expect(await bunLockOf(String(dir))).not.toContain("foo");
+      expect(exitCode).toBe(0);
+
+      const frozen = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+    });
+
+    test.concurrent("add writes its own edit and the migration's edits in one package.json", async () => {
+      using dir = tempDir("pnpm-v9-package-json-add", {
+        ...files,
+        "vendor/bar/package.json": JSON.stringify({ name: "bar", version: "1.0.0" }),
+      });
+
+      const { stderr, exitCode } = await run(String(dir), "add", "./vendor/bar");
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr.split(movedLine).length - 1).toBe(1);
+      const written = await Bun.file(join(String(dir), "package.json")).json();
+      expect(written).toMatchObject({
+        overrides: migratedPackageJson.overrides,
+        workspaces: migratedPackageJson.workspaces,
+      });
+      expect(written.pnpm).toStrictEqual(migratedPackageJson.pnpm);
+      expect(Object.keys(written.dependencies).sort()).toStrictEqual(["a", "bar", "foo"]);
+      expect(await bunLockOf(String(dir))).toContain(`"bar":`);
+      expect(exitCode).toBe(0);
+
+      const frozen = await run(String(dir), "install", "--frozen-lockfile");
+
+      expect(frozen.stderr).not.toContain("error:");
+      expect(frozen.exitCode).toBe(0);
+    });
+
+    test.concurrent("install --silent writes both files without printing", async () => {
+      using dir = tempDir("pnpm-v9-package-json-silent", files);
+
+      const { stdout, stderr, exitCode } = await run(String(dir), "install", "--silent");
+
+      expect(stdout).toBe("");
+      expect(stderr).toBe("");
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(migratedPackageJson);
+      expect(existsSync(join(String(dir), "bun.lock"))).toBe(true);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("pm trust writes the edited package.json along with the lockfile it saves", async () => {
+      using dir = tempDir("pnpm-v9-package-json-pm-trust", files);
+
+      const install = await run(String(dir), "install", "--frozen-lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      await expectUntouched(String(dir));
+
+      const { stdout, stderr, exitCode } = await run(String(dir), "pm", "trust", "foo");
+
+      expect(stderr).not.toContain("error:");
+      expect(stderr).toContain(movedLine);
+      expect(stdout).toContain("1 script ran across 1 package");
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        ...migratedPackageJson,
+        trustedDependencies: ["foo"],
+      });
+      const bunLock = await bunLockOf(String(dir));
+      expect(bunLock).toContain(`"packages/a": {`);
+      expect(bunLock).toContain(`"trustedDependencies": [`);
+      expect(exitCode).toBe(0);
     });
   });
 
@@ -2706,6 +3915,294 @@ importers:
     expect(await bunLockOf(String(formatted))).toBe(await bunLockOf(String(plain)));
   });
 
+  // The install after a migration diffs each importer's rows against a fresh package.json parse. A row
+  // in a different shape re-resolves the whole importer, and a range with two versions in the lockfile
+  // then moves: below, the members lock `no-deps` at 1.0.0 while `one-dep` brings in 1.0.1.
+  describe("importer rows match a package.json parse", () => {
+    const catalogFiles = {
+      "pnpm-workspace.yaml": `packages:
+  - packages/*
+
+catalog:
+  a-dep: ^1.0.1
+
+catalogs:
+  tooling:
+    one-dep: ^1.0.0
+`,
+      "package.json": JSON.stringify({
+        name: "catalog-rows",
+        private: true,
+        devDependencies: { "one-dep": "catalog:tooling" },
+      }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { "a-dep": "catalog:", "no-deps": "^1.0.0" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    a-dep:
+      specifier: ^1.0.1
+      version: 1.0.1
+  tooling:
+    one-dep:
+      specifier: ^1.0.0
+      version: 1.0.0
+
+importers:
+
+  .:
+    devDependencies:
+      one-dep:
+        specifier: catalog:tooling
+        version: 1.0.0
+
+  packages/app:
+    dependencies:
+      a-dep:
+        specifier: 'catalog:'
+        version: 1.0.1
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+    };
+
+    const workspaceRowFiles = {
+      "pnpm-workspace.yaml": `packages:
+  - packages/*
+`,
+      "package.json": JSON.stringify({
+        name: "workspace-rows",
+        private: true,
+        devDependencies: { "one-dep": "^1.0.0" },
+      }),
+      "packages/lib/package.json": JSON.stringify({ name: "lib", version: "1.2.3" }),
+      "packages/app/package.json": JSON.stringify({
+        name: "app",
+        version: "1.0.0",
+        dependencies: { lib: "workspace:*", "no-deps": "^1.0.0" },
+      }),
+      // link-workspace-packages shape: a plain range pnpm linked to the member; the version is not semver
+      "packages/cli/package.json": JSON.stringify({
+        name: "cli",
+        version: "unversioned",
+        dependencies: { lib: "^1.0.0", "no-deps": "^1.0.0" },
+      }),
+      "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    devDependencies:
+      one-dep:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/app:
+    dependencies:
+      lib:
+        specifier: workspace:*
+        version: link:../lib
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/cli:
+    dependencies:
+      lib:
+        specifier: ^1.0.0
+        version: link:../lib
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.0
+
+  packages/lib: {}
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+  one-dep@1.0.0:
+    resolution: {integrity: ${ONE_DEP_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+
+  no-deps@1.0.1: {}
+
+  one-dep@1.0.0:
+    dependencies:
+      no-deps: 1.0.1
+`,
+    };
+
+    const noDeps100 = { name: "no-deps", version: "1.0.0" };
+
+    // `bun install` on a pnpm checkout migrates in-process and installs from the migrated rows directly.
+    async function installStraightFromPnpmLock(files: Record<string, string>) {
+      const { packageDir: viaMigrate } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+      const { packageDir: viaInstall } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files });
+
+      const [migrated, install] = await Promise.all([migrate(viaMigrate), run(viaInstall, "install")]);
+
+      expect(migrated.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(migrated.exitCode).toBe(0);
+      expect(install.stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(viaInstall)).toBe(await bunLockOf(viaMigrate));
+
+      return viaInstall;
+    }
+
+    test("catalog: rows keep the reference and a frozen install accepts bun pm migrate's lockfile", async () => {
+      const { packageDir } = await verdaccio.createTestDir({ bunfigOpts: { linker: "hoisted" }, files: catalogFiles });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(workspacesSection(migrated)).toMatchInlineSnapshot(`
+        "  "workspaces": {
+            "": {
+              "name": "catalog-rows",
+              "devDependencies": {
+                "one-dep": "catalog:tooling",
+              },
+            },
+            "packages/app": {
+              "name": "app",
+              "version": "1.0.0",
+              "dependencies": {
+                "a-dep": "catalog:",
+                "no-deps": "^1.0.0",
+              },
+            },
+          },
+          "catalog": {
+            "a-dep": "^1.0.1",
+          },
+          "catalogs": {
+            "tooling": {
+              "one-dep": "^1.0.0",
+            },
+          },
+        "
+      `);
+
+      const install = await run(packageDir, "install", "--frozen-lockfile");
+
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(packageDir)).toBe(migrated);
+      expect(await installedPackageJson(packageDir, "packages/app", "no-deps")).toStrictEqual(noDeps100);
+    });
+
+    test("bun install straight from pnpm-lock.yaml keeps the versions locked for a catalog: user", async () => {
+      const dir = await installStraightFromPnpmLock(catalogFiles);
+
+      expect(await installedPackageJson(dir, "packages/app", "no-deps")).toStrictEqual(noDeps100);
+      expect(await installedPackageJson(dir, "packages/app", "a-dep")).toStrictEqual({
+        name: "a-dep",
+        version: "1.0.1",
+      });
+    });
+
+    test("workspace: and linked rows keep their specifiers; members get their package.json version", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: workspaceRowFiles,
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const bunLock = await bunLockOf(packageDir);
+      expect(workspacesSection(bunLock)).toMatchInlineSnapshot(`
+        "  "workspaces": {
+            "": {
+              "name": "workspace-rows",
+              "devDependencies": {
+                "one-dep": "^1.0.0",
+              },
+            },
+            "packages/app": {
+              "name": "app",
+              "version": "1.0.0",
+              "dependencies": {
+                "lib": "workspace:*",
+                "no-deps": "^1.0.0",
+              },
+            },
+            "packages/cli": {
+              "name": "cli",
+              "dependencies": {
+                "lib": "^1.0.0",
+                "no-deps": "^1.0.0",
+              },
+            },
+            "packages/lib": {
+              "name": "lib",
+              "version": "1.2.3",
+            },
+          },
+        "
+      `);
+      expect(bunLock).toContain(`"lib": ["lib@workspace:packages/lib"]`);
+      expect(bunLock).toContain(`"no-deps@1.0.0"`);
+      expect(bunLock).toContain(`"no-deps@1.0.1"`);
+      expect(bunLock).not.toContain("link:");
+    });
+
+    test("bun install straight from pnpm-lock.yaml keeps the versions locked for workspace: and linked users", async () => {
+      const dir = await installStraightFromPnpmLock(workspaceRowFiles);
+
+      for (const member of ["packages/app", "packages/cli"]) {
+        expect(await installedPackageJson(dir, member, "no-deps")).toStrictEqual(noDeps100);
+        expect(await installedPackageJson(dir, member, "lib")).toStrictEqual({ name: "lib", version: "1.2.3" });
+      }
+    });
+  });
+
   describe("catalogs", () => {
     // pnpm/pnpm#10551: pruned Docker contexts ship the lockfile without pnpm-workspace.yaml
     test("lockfile catalogs: section is enough without pnpm-workspace.yaml", async () => {
@@ -2725,6 +4222,288 @@ importers:
       expect(bunLock).toContain(`"no-deps@1.0.1"`);
     });
 
+    // pnpm-lock.yaml only records the catalog entries some importer uses; the migration copies the whole
+    // pnpm-workspace.yaml catalog into package.json, so bun.lock has to get the whole catalog too or the
+    // next `bun install` sees a catalog change and rewrites it.
+    test("entries no importer uses are migrated into bun.lock", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "unused-catalog", dependencies: { "no-deps": "^1.0.0" } }),
+          "pnpm-workspace.yaml": `catalog:
+  unused-default: ^9.0.0
+
+catalogs:
+  tools:
+    unused-tool: ^8.0.0
+`,
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(catalogSections(migrated)).toBe(
+        [
+          `  "catalog": {`,
+          `    "unused-default": "^9.0.0",`,
+          `  },`,
+          `  "catalogs": {`,
+          `    "tools": {`,
+          `      "unused-tool": "^8.0.0",`,
+          `    },`,
+          `  },`,
+          ``,
+        ].join("\n"),
+      );
+      expect((await Bun.file(join(packageDir, "package.json")).json()).workspaces).toEqual({
+        catalog: { "unused-default": "^9.0.0" },
+        catalogs: { tools: { "unused-tool": "^8.0.0" } },
+      });
+
+      await expectInstallToLeaveUnchanged(packageDir, migrated);
+    });
+
+    // Peers keep their catalog: reference through the migration, so the install afterwards is a no-op
+    // exactly when the catalog sections match what package.json declares.
+    test("declared entries are merged into the groups the lockfile recorded", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "merged-catalog",
+            peerDependencies: { "a-dep": "catalog:tools", "no-deps": "catalog:" },
+          }),
+          "pnpm-workspace.yaml": `catalog:
+  no-deps: ^1.0.0
+  unused-default: ^9.0.0
+
+catalogs:
+  tools:
+    a-dep: ^1.0.0
+    unused-tool: ^8.0.0
+`,
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+
+catalogs:
+  default:
+    no-deps:
+      specifier: ^1.0.0
+      version: 1.0.1
+  tools:
+    a-dep:
+      specifier: ^1.0.0
+      version: 1.0.1
+
+importers:
+
+  .:
+    dependencies:
+      a-dep:
+        specifier: catalog:tools
+        version: 1.0.1
+      no-deps:
+        specifier: 'catalog:'
+        version: 1.0.1
+
+packages:
+
+  a-dep@1.0.1:
+    resolution: {integrity: ${A_DEP_1_0_1_INTEGRITY}}
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  a-dep@1.0.1: {}
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("missing entry");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(catalogSections(migrated)).toBe(
+        [
+          `  "catalog": {`,
+          `    "no-deps": "^1.0.0",`,
+          `    "unused-default": "^9.0.0",`,
+          `  },`,
+          `  "catalogs": {`,
+          `    "tools": {`,
+          `      "a-dep": "^1.0.0",`,
+          `      "unused-tool": "^8.0.0",`,
+          `    },`,
+          `  },`,
+          ``,
+        ].join("\n"),
+      );
+      expect(workspaceBlock(migrated, "")).toContain(
+        `      "peerDependencies": {\n        "a-dep": "catalog:tools",\n        "no-deps": "catalog:",\n      },`,
+      );
+
+      await expectInstallToLeaveUnchanged(packageDir, migrated);
+      expect(await installedPackageJson(packageDir, "", "a-dep")).toStrictEqual({ name: "a-dep", version: "1.0.1" });
+    });
+
+    // pnpm-lock.yaml records the default catalog as `catalogs.default` whether pnpm-workspace.yaml spelled it
+    // `catalog:` or `catalogs.default:`; bun.lock and package.json keep the two spellings apart.
+    test("a default catalog declared as catalogs.default stays catalogs.default", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "catalogs-default", peerDependencies: { "no-deps": "catalog:" } }),
+          "pnpm-workspace.yaml": `catalogs:
+  default:
+    no-deps: ^1.0.0
+    unused-default: ^9.0.0
+`,
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+settings:
+  autoInstallPeers: true
+
+catalogs:
+  default:
+    no-deps:
+      specifier: ^1.0.0
+      version: 1.0.1
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: 'catalog:'
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).not.toContain("missing entry");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(catalogSections(migrated)).toBe(
+        [
+          `  "catalogs": {`,
+          `    "default": {`,
+          `      "no-deps": "^1.0.0",`,
+          `      "unused-default": "^9.0.0",`,
+          `    },`,
+          `  },`,
+          ``,
+        ].join("\n"),
+      );
+      expect((await Bun.file(join(packageDir, "package.json")).json()).workspaces).toEqual({
+        catalogs: { default: { "no-deps": "^1.0.0", "unused-default": "^9.0.0" } },
+      });
+
+      await expectInstallToLeaveUnchanged(packageDir, migrated);
+    });
+
+    // The lockfile's specifier is the one its resolutions were made with: taking the yaml's would hide the
+    // edit from the next install and leave no-deps@1.0.0 locked under a range it does not satisfy.
+    test("an entry edited in pnpm-workspace.yaml after the last pnpm install keeps the lockfile's specifier", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify({ name: "edited-catalog", dependencies: { "no-deps": "catalog:" } }),
+          "pnpm-workspace.yaml": `catalog:
+  no-deps: ^1.0.1
+`,
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+catalogs:
+  default:
+    no-deps:
+      specifier: ^1.0.0
+      version: 1.0.0
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: 'catalog:'
+        version: 1.0.0
+
+packages:
+
+  no-deps@1.0.0:
+    resolution: {integrity: ${NO_DEPS_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.0: {}
+`,
+        },
+      });
+
+      const { stderr, exitCode } = await migrate(packageDir);
+
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(packageDir);
+      expect(catalogSections(migrated)).toBe(`  "catalog": {\n    "no-deps": "^1.0.0",\n  },\n`);
+      expect(migrated).toContain(`"no-deps@1.0.0"`);
+
+      const install = await run(packageDir, "install");
+
+      expect(install.stderr).toContain("Saved lockfile");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      const updated = await bunLockOf(packageDir);
+      expect(catalogSections(updated)).toBe(`  "catalog": {\n    "no-deps": "^1.0.1",\n  },\n`);
+      expect(updated).toContain(`"no-deps@1.1.0"`);
+      expect(updated).not.toContain(`"no-deps@1.0.0"`);
+    });
+
     // pnpm/pnpm#10456: `pnpm remove` can drop the catalogs: section while importers still say catalog:
     test.concurrent("importer catalog: reference without a catalogs: section is reported", async () => {
       using dir = fixture("v9-catalog-default");
@@ -2740,6 +4519,180 @@ importers:
       expect(stderr).toContain("pnpm-lock.yaml catalog 'default' missing entry for dependency 'no-deps'");
       expect(exitCode).toBe(1);
       expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
+    });
+  });
+
+  // pnpm's `onlyBuiltDependencies` is the allow-list of packages whose lifecycle
+  // scripts may run, which is `trustedDependencies` in bun.
+  describe("onlyBuiltDependencies", () => {
+    const LIFECYCLE_POSTINSTALL_1_0_0_INTEGRITY =
+      "sha512-+frsFSxvy+pkm5fjAsAHptt2NiMMMnU07dan43rZO1yCqxy8vU0X8wNTOYlgkViD7HCHT/bIpPhoki935Nc2pg==";
+
+    // `lifecycle-postinstall`'s postinstall writes postinstall.txt next to itself.
+    const lifecyclePostinstallLockfile = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      lifecycle-postinstall:
+        specifier: 1.0.0
+        version: 1.0.0
+
+packages:
+
+  lifecycle-postinstall@1.0.0:
+    resolution: {integrity: ${LIFECYCLE_POSTINSTALL_1_0_0_INTEGRITY}}
+
+snapshots:
+
+  lifecycle-postinstall@1.0.0: {}
+`;
+
+    function postinstallRan(dir: string) {
+      return existsSync(join(dir, "node_modules", "lifecycle-postinstall", "postinstall.txt"));
+    }
+
+    for (const linker of ["hoisted", "isolated"] as const) {
+      test.concurrent(`pnpm-workspace.yaml list becomes trustedDependencies (${linker})`, async () => {
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({
+              name: "only-built-workspace-yaml",
+              dependencies: { "lifecycle-postinstall": "1.0.0" },
+            }),
+            "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - lifecycle-postinstall\n",
+            "pnpm-lock.yaml": lifecyclePostinstallLockfile,
+          },
+        });
+
+        const { stderr, exitCode } = await migrate(packageDir);
+
+        expect(stderr).toContain("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json");
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(exitCode).toBe(0);
+
+        expect(await Bun.file(join(packageDir, "package.json")).json()).toStrictEqual({
+          name: "only-built-workspace-yaml",
+          dependencies: { "lifecycle-postinstall": "1.0.0" },
+          trustedDependencies: ["lifecycle-postinstall"],
+        });
+        expect(await bunLockOf(packageDir)).toContain(`"trustedDependencies": [\n    "lifecycle-postinstall",\n  ]`);
+
+        const install = await run(packageDir, "install");
+
+        expect(install.stderr).not.toContain("error:");
+        expect(install.stdout).not.toContain("Blocked");
+        expect(postinstallRan(packageDir)).toBe(true);
+        expect(install.exitCode).toBe(0);
+      });
+
+      // Without an allow-list the scripts stay blocked, and the install has to say so.
+      test.concurrent(`blocked scripts are reported after migrating (${linker})`, async () => {
+        const { packageDir } = await verdaccio.createTestDir({
+          bunfigOpts: { linker },
+          files: {
+            "package.json": JSON.stringify({
+              name: "only-built-missing",
+              dependencies: { "lifecycle-postinstall": "1.0.0" },
+            }),
+            "pnpm-lock.yaml": lifecyclePostinstallLockfile,
+          },
+        });
+
+        const { stdout, stderr, exitCode } = await run(packageDir, "install");
+
+        expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+        expect(stderr).not.toContain("trustedDependencies");
+        expect(stdout).toContain("Blocked 1 postinstall. Run `bun pm untrusted` for details.");
+        expect(postinstallRan(packageDir)).toBe(false);
+        expect(exitCode).toBe(0);
+      });
+    }
+
+    test.concurrent("bun install migrates the list and runs the scripts in the same run", async () => {
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "isolated" },
+        files: {
+          "package.json": JSON.stringify({
+            name: "only-built-install",
+            dependencies: { "lifecycle-postinstall": "1.0.0" },
+          }),
+          "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - lifecycle-postinstall\n",
+          "pnpm-lock.yaml": lifecyclePostinstallLockfile,
+        },
+      });
+
+      const { stdout, stderr, exitCode } = await run(packageDir, "install");
+
+      expect(stderr).toContain("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stdout).not.toContain("Blocked");
+      expect(postinstallRan(packageDir)).toBe(true);
+      expect(exitCode).toBe(0);
+      expect((await Bun.file(join(packageDir, "package.json")).json()).trustedDependencies).toEqual([
+        "lifecycle-postinstall",
+      ]);
+    });
+
+    // pnpm 9 kept the list in package.json. Both sources merge into an existing list, and
+    // the pnpm block keeps its copy for anyone still running pnpm on the project.
+    test.concurrent("package.json pnpm.onlyBuiltDependencies merges into an existing trustedDependencies", async () => {
+      const pnpm = { onlyBuiltDependencies: ["esbuild", "from-package-json"] };
+      using dir = tempDir("pnpm-v9-only-built-pnpm-field", {
+        "package.json": JSON.stringify({
+          name: "only-built-pnpm-field",
+          trustedDependencies: ["already-trusted", "esbuild"],
+          pnpm,
+        }),
+        "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - from-workspace-yaml\n  - esbuild\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).toContain(
+        "pnpm.onlyBuiltDependencies to trustedDependencies, pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies in package.json",
+      );
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual({
+        name: "only-built-pnpm-field",
+        trustedDependencies: ["already-trusted", "esbuild", "from-package-json", "from-workspace-yaml"],
+        pnpm,
+      });
+    });
+
+    test.concurrent("a list that adds nothing leaves package.json alone", async () => {
+      const packageJson = {
+        name: "only-built-nothing-new",
+        trustedDependencies: ["esbuild"],
+        pnpm: { onlyBuiltDependencies: [] },
+      };
+      using dir = tempDir("pnpm-v9-only-built-nothing-new", {
+        "package.json": JSON.stringify(packageJson),
+        "pnpm-workspace.yaml": "onlyBuiltDependencies:\n  - esbuild\n",
+        "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .: {}
+`,
+      });
+
+      const { stderr, exitCode } = await migrate(String(dir));
+
+      expect(stderr).not.toContain("onlyBuiltDependencies");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+      expect(await Bun.file(join(String(dir), "package.json")).json()).toStrictEqual(packageJson);
     });
   });
 });

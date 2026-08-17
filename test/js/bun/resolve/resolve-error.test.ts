@@ -1,8 +1,38 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
+  it("carries what the resolver logged while failing as notes", async () => {
+    // The resolver records the reason it gave up (here: the dependency's
+    // package.json does not parse) in the log of the failing resolve. That
+    // used to be discarded, leaving a bare "Cannot find package".
+    using dir = tempDir("resolve-error-notes", {
+      "index.js": `import "badjson";\n`,
+      "node_modules/badjson/package.json": `{ "name": "badjson", "main":\n`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "index.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+      "error: Cannot find package 'badjson' from '<dir>/index.js'
+
+      1 | { "name": "badjson", "main":
+                                      ^
+      note: Unexpected end of file
+         at <dir>/node_modules/badjson/package.json:1:29
+
+      Bun v<bun-version>"
+    `);
+    expect(exitCode).toBe(1);
+  });
+
   it("position object does not segfault", async () => {
     try {
       await import("./file-importing-nonexistent-file.js");

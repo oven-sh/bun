@@ -5211,10 +5211,6 @@ bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* gl
     return JSC::getVM(globalObject).hasPendingTerminationException();
 }
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0)
-{
-    (*arg0).setExecutionForbidden();
-}
 
 // These may be called concurrently from another thread — or from the VM's own thread inside a host call,
 // API lock held: VMTraps::fireTrap is CONCURRENT_SAFE and needs no lock either way (releasing the API lock

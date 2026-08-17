@@ -79,6 +79,10 @@ struct Http3Context {
     }
 
     void free() {
+        /* Freeing the context destroys the engine, which closes every connection it still holds; those
+         * closes must not reach the (destructed) filter handlers or re-enter the app's owner mid-teardown. */
+        us_quic_socket_context_on_open((us_quic_socket_context_t *) this, nullptr);
+        us_quic_socket_context_on_close((us_quic_socket_context_t *) this, nullptr);
         getContextData()->~Http3ContextData();
         us_quic_socket_context_free((us_quic_socket_context_t *) this);
     }

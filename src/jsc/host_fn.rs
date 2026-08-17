@@ -671,7 +671,11 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
             let _ = global.throw_out_of_memory_value();
             core::ptr::null_mut()
         }
-        Err(_) => core::ptr::null_mut(),
+        Err(JsError::Terminated) => {
+            let _ = terminated_beneath_script(global);
+            core::ptr::null_mut()
+        }
+        Err(JsError::Thrown) => core::ptr::null_mut(),
     };
     scope.assert_exception_presence_matches(ptr.is_null());
     ptr

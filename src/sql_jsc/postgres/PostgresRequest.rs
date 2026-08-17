@@ -159,11 +159,39 @@ pub(crate) fn write_bind<Context: WriterContext>(
         // for mistakes on our end, such as stripping the timezone
         // differently than what Postgres does when given a timestamp with
         // timezone.
-        let effective_tag = if tag.is_binary_format_supported() && value.is_string() {
+        let mut effective_tag = if tag.is_binary_format_supported() && value.is_string() {
             types::Tag::text
         } else {
             tag
         };
+
+        // OID 0 means Parse told the server to infer this parameter's type
+        // (Signature::generate emits it for every non-numeric value), and it
+        // reaches here whenever Bind is written before the server's
+        // ParameterDescription arrives — the unnamed-statement path
+        // (prepare: false). These parameters are text format, but the generic
+        // toString() arm below would send Date.prototype.toString() output and
+        // "[object Object]", which the server cannot parse. Encode from the JS
+        // type instead: Dates as ISO-8601, objects/arrays as JSON.
+        if effective_tag == types::Tag(0) {
+            if value.is_date() {
+                let mut buf = [0u8; 64];
+                if let Some(iso) = value.to_iso_string(global, &mut buf) {
+                    let l = writer.length()?;
+                    writer.write(iso)?;
+                    l.write_excluding_self()?;
+                    i += 1;
+                    continue;
+                }
+                // Invalid Date: fall through to toString(); the server
+                // rejects it with a descriptive error.
+            } else if crate::postgres::types::tag_jsc::from_js(global, value)
+                .map_err(js_error_to_postgres)?
+                == types::Tag::json
+            {
+                effective_tag = types::Tag::json;
+            }
+        }
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
                 let mut str = BunString::empty();

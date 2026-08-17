@@ -803,15 +803,10 @@ impl RewriterPipe {
         bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
     }
 
-    /// The JS-pump controller detached and can never dispatch into the pipe
-    /// again: release its ref. Releasing the last ref is deferred to the
-    /// event loop because the C++ caller keeps using the allocation in the
-    /// same frame (the destructor's trailing `__finalize`, the close/end host
-    /// fns' `__close`/`__endWithSink` on the saved pointer).
-    fn release_pump_ref(&self) {
-        if !self.pump_controller_attached.replace(false) {
-            return;
-        }
+    /// Release one ref, deferring the release of the *last* ref to the event
+    /// loop: the native caller on the stack keeps dispatching into the
+    /// allocation in the same frame after the call that dropped it returns.
+    fn deref_outside_caller(&self) {
         if self.ref_count.get() > 1 {
             Self::deref_nn(NonNull::from(self));
             return;
@@ -820,6 +815,18 @@ impl RewriterPipe {
             core::ptr::from_ref(self).cast_mut().cast(),
             native_promise_context::Tag::HTMLRewriterPipeFree,
         );
+    }
+
+    /// The JS-pump controller detached and can never dispatch into the pipe
+    /// again: release its ref. Deferred if last: the C++ caller keeps using
+    /// the allocation in the same frame (the destructor's trailing
+    /// `__finalize`, the close/end host fns' `__close`/`__endWithSink` on the
+    /// saved pointer).
+    fn release_pump_ref(&self) {
+        if !self.pump_controller_attached.replace(false) {
+            return;
+        }
+        self.deref_outside_caller();
     }
 
     /// Queued by the `NativePromiseContext` destructor (via
@@ -1271,11 +1278,13 @@ impl RewriterPipe {
 
     /// Hold a ref on the pipe across an externally-entered call whose work
     /// (user handlers, body resolution) can drop the last GC path to the
-    /// Transform cell and sweep it, releasing the cell's ref mid-call.
-    fn pin(&self) -> bun_ptr::ScopedRef<Self> {
-        // SAFETY: `self` is live; the guard's own ref keeps the allocation
-        // valid until it drops.
-        unsafe { bun_ptr::ScopedRef::new(core::ptr::from_ref(self).cast_mut()) }
+    /// Transform cell and sweep it, releasing the cell's ref mid-call. If the
+    /// pin ends up holding the last ref, the free is deferred past the
+    /// caller's frame: a source delivering a chunk follows a `Done` answer
+    /// from `write` with `end`, on the same sink snapshot.
+    fn pin(&self) -> PipePin {
+        self.ref_();
+        PipePin(BackRef::new(self))
     }
 
     /// Nothing is draining the output, so nothing will signal `resume()`:
@@ -1778,6 +1787,16 @@ impl RewriterPipe {
             let _ = body_value.to_error_instance(err, &self.global);
         }
         self.release_input_roots(src);
+    }
+}
+
+/// Guard returned by [`RewriterPipe::pin`].
+#[must_use = "dropping immediately releases the ref"]
+struct PipePin(BackRef<RewriterPipe>);
+
+impl Drop for PipePin {
+    fn drop(&mut self) {
+        self.0.deref_outside_caller();
     }
 }
 

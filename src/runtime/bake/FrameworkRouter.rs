@@ -11,9 +11,7 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, StrongOptional};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
 
@@ -612,50 +610,32 @@ pub enum ParsedPatternKind {
     Extra,
 }
 
+#[derive(Copy, Clone)]
 pub enum Style {
     NextjsPages,
     NextjsAppUi,
     NextjsAppRoutes,
-    JavascriptDefined(Strong),
-}
-
-// The built-in styles are trivially copyable; the `JavascriptDefined` arm owns
-// a `Strong` (Drop type), so a shallow copy would double-free. That arm is an
-// unimplemented feature (`Style::from_js` never produces it), so cloning it is
-// unreachable today.
-impl Clone for Style {
-    fn clone(&self) -> Self {
-        match self {
-            Style::NextjsPages => Style::NextjsPages,
-            Style::NextjsAppUi => Style::NextjsAppUi,
-            Style::NextjsAppRoutes => Style::NextjsAppRoutes,
-            Style::JavascriptDefined(_) => {
-                panic!("TODO: customizable Style")
-            }
-        }
-    }
 }
 
 bun_core::comptime_string_map! {
-    pub(crate) static STYLE_MAP: fn() -> Style = {
-        b"nextjs-pages" => || Style::NextjsPages,
-        b"nextjs-app-ui" => || Style::NextjsAppUi,
-        b"nextjs-app-routes" => || Style::NextjsAppRoutes,
+    pub(crate) static STYLE_MAP: Style = {
+        b"nextjs-pages" => Style::NextjsPages,
+        b"nextjs-app-ui" => Style::NextjsAppUi,
+        b"nextjs-app-routes" => Style::NextjsAppRoutes,
     };
 }
 
-const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+const STYLE_ERROR_MESSAGE: &str =
+    "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", or \"nextjs-app-routes\"";
 
 impl Style {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
             let utf8 = bun_string.to_utf8();
-            if let Some(style) = STYLE_MAP.get(utf8.slice()) {
-                return Ok(style());
+            if let Some(&style) = STYLE_MAP.get(utf8.slice()) {
+                return Ok(style);
             }
-        } else if value.is_callable() {
-            return Ok(Style::JavascriptDefined(Strong::create(value, global)));
         }
 
         Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))
@@ -676,7 +656,7 @@ enum NextRoutingConvention {
 
 impl Style {
     pub(crate) fn parse<'bump>(
-        &self,
+        self,
         file_path: &'bump [u8],
         ext: &[u8],
         log: &mut TinyLog,
@@ -703,11 +683,6 @@ impl Style {
                 allow_layouts,
                 arena,
             ),
-
-            // The strategy for this should be to collect a list of candidates,
-            // then batch-call the javascript handler and collect all results.
-            // This will avoid most of the back-and-forth native<->js overhead.
-            Style::JavascriptDefined(_) => panic!("TODO: customizable Style"),
         }
     }
 
@@ -1794,8 +1769,6 @@ impl JSFrameworkRouter {
             opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
-        // `Style` owns a `Strong` (Drop type), so `?` on any error path below
-        // drops it automatically.
 
         let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
             paths::platform::Auto,
@@ -1991,7 +1964,6 @@ impl JSFrameworkRouter {
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
         let filepath = filepath_js.to_slice(global)?;
         let style = Style::from_js(style_js, global)?;
-        // errdefer style.deinit() — Drop handles this
 
         let mut log = TinyLog::empty();
         let parsed = match style.parse(

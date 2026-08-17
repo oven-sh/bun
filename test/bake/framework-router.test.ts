@@ -1,6 +1,6 @@
 import { frameworkRouterInternals } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { tempDir } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
@@ -76,6 +76,11 @@ describe("pattern parse", () => {
   testApp("/route/(group)/page.tsx", "/route/(group)", "page");
   testApp("/route/[param]/not-found.tsx", "/route/:param", "extra");
   testApp.isNull("/route/_layout.tsx");
+
+  const testAppRoutes = testRoutePattern("nextjs-app-routes");
+  testAppRoutes("/route.ts", "", "page");
+  testAppRoutes("/api/[id]/route.ts", "/api/:id", "page");
+  testAppRoutes.isNull("/api/page.tsx");
 });
 
 test("discovers from filesystem paths", () => {
@@ -131,5 +136,89 @@ test("discovers from filesystem paths", () => {
         children: [],
       },
     ],
+  });
+});
+
+// Custom router styles are not implemented: a function is rejected at option parsing, like any unknown name.
+describe.concurrent("a style that is not a built-in style name", () => {
+  const message = `'style' must be either "nextjs-pages", "nextjs-app-ui", or "nextjs-app-routes"`;
+  const error = expect.objectContaining({ name: "TypeError", code: "ERR_INVALID_ARG_TYPE", message });
+  const invalidStyles: [description: string, style: any][] = [
+    ["a function", () => null],
+    ["an unknown name", "remix"],
+  ];
+
+  test.each(invalidStyles)("parseRoutePattern rejects %s", (_, style) => {
+    expect(() => parseRoutePattern(style, "/index.tsx")).toThrow(error);
+  });
+
+  test.each(invalidStyles)("new FrameworkRouter() rejects %s", (_, style) => {
+    using dir = tempDir("fsr-style", { "index.tsx": "1" });
+    expect(() => new FrameworkRouter({ root: String(dir), style })).toThrow(error);
+  });
+
+  test.each(invalidStyles)("Bun.serve() rejects %s in a directory route", (_, style) => {
+    using dir = tempDir("fsr-style-dir-route", { "pages/index.tsx": "1" });
+    expect(() =>
+      Bun.serve({
+        port: 0,
+        development: true,
+        routes: { "/*": { dir: path.join(String(dir), "pages"), style } },
+      }),
+    ).toThrow(error);
+  });
+
+  // The `app` option shared by `Bun.serve()` and `bun build --app`; `style` is JS source.
+  const app = (style: string) => `{
+    framework: {
+      fileSystemRouterTypes: [{ root: "pages", style: ${style}, serverEntryPoint: "./server.ts" }],
+    },
+  }`;
+  const appFiles = {
+    "server.ts": "export default {};",
+    "pages/index.tsx": "export default () => null;",
+  };
+
+  async function run(dir: string, args: string[], env = bunEnv) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: dir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("Bun.serve({ app }) rejects it", async () => {
+    using dir = tempDir("fsr-style-serve", {
+      ...appFiles,
+      "start.ts": `
+        for (const app of [${app("() => null")}, ${app('"remix"')}]) {
+          try {
+            Bun.serve({ port: 0, development: true, app }).stop(true);
+            console.log("started");
+          } catch (e) {
+            console.log("threw: " + e.message);
+          }
+        }
+      `,
+    });
+    expect(await run(String(dir), ["start.ts"])).toStrictEqual({
+      stdout: `threw: ${message}\nthrew: ${message}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("bun build --app rejects a function", async () => {
+    using dir = tempDir("fsr-style-build", {
+      ...appFiles,
+      "bun.app.ts": `export default { app: ${app("() => null")} };`,
+    });
+    const { stderr, exitCode } = await run(String(dir), ["build", "--app", "./bun.app.ts"]);
+    expect(stderr).toContain(`TypeError: ${message}`);
+    expect(exitCode).toBe(1);
   });
 });

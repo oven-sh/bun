@@ -293,7 +293,7 @@ declare module "bun" {
        *
        * Eventually, an API will be added to add custom styles.
        */
-      style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes" | CustomFileSystemRouterFunction;
+      style: "nextjs-pages" | "nextjs-app-ui" | "nextjs-app-routes";
       /**
        * If true, this will track route layouts and provide them as an array during SSR.
        * @default false
@@ -326,31 +326,6 @@ declare module "bun" {
           source: string;
           /** The prefix to serve this directory on. */
           prefix: string;
-        };
-
-    /**
-     * Bun will call this function for every found file. This
-     * function classifies each file's role in the file system routing.
-     */
-    type CustomFileSystemRouterFunction = (candidatePath: string) => CustomFileSystemRouterResult;
-
-    type CustomFileSystemRouterResult =
-      /** Skip this file */
-      | undefined
-      | null
-      /**
-       * Use this file as a route. Routes may nest, where a framework
-       * can use parent routes to implement layouts.
-       */
-      | {
-          /**
-           * Route pattern can include `:param` for parameters, '*' for
-           * catch-all, and '*?' for optional catch-all. Parameters must take
-           * the full component of a path segment. Parameters cannot have
-           * constraints at this moment.
-           */
-          pattern: string;
-          type: "route" | "layout" | "extra";
         };
 
     /**

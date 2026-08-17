@@ -1131,12 +1131,6 @@ mod _async_tasks {
             Ok(JSValue::js_boolean(*self))
         }
     }
-    impl FsReturn for Null {
-        #[inline]
-        fn fs_to_js(&mut self, _global: &JSGlobalObject) -> JsResult<JSValue> {
-            Ok(JSValue::NULL)
-        }
-    }
     impl FsReturn for Stats {
         #[inline]
         fn fs_to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
@@ -4432,18 +4426,10 @@ impl StringOrUndefined {
     }
 }
 
-/// For use in `Return`'s definitions to act as `void` while returning `null` to JavaScript
-pub struct Null;
-impl Null {
-    pub fn to_js(&self, _: &JSGlobalObject) -> JSValue {
-        JSValue::NULL
-    }
-}
-
 pub mod ret {
     use super::*;
 
-    pub(crate) type Access = Null;
+    pub(crate) type Access = ();
     pub(crate) type AppendFile = ();
     pub type Close = ();
     pub(crate) type CopyFile = ();
@@ -4623,7 +4609,7 @@ impl NodeFS {
                 if (mode & sys::posix::W_OK) != 0 || ((mode & sys::posix::X_OK) != 0 && !is_dir) {
                     return Err(sys::Error::from_code(E::EACCES, sys::Tag::access).with_path(p));
                 }
-                return Ok(Null);
+                return Ok(());
             }
         }
         // The `bun_sys::access` Windows
@@ -4637,7 +4623,7 @@ impl NodeFS {
         };
         match Syscall::access(path, args.mode.as_int()) {
             Err(err) => Err(err.with_path(args.path.slice())),
-            Ok(_) => Ok(Null),
+            Ok(_) => Ok(()),
         }
     }
 

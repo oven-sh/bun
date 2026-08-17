@@ -3011,7 +3011,7 @@ Ref<Texture> Device::createTexture(const WGPUTextureDescriptor& descriptor)
     }
 
     setOwnerWithIdentity(texture);
-    texture.label = fromAPI(descriptor.label).createNSString().get();
+    texture.label = createNSString(fromAPI(descriptor.label)).get();
 
     return Texture::create(texture, descriptor, WTF::move(viewFormats), *this);
 }
@@ -3347,7 +3347,7 @@ Ref<TextureView> Texture::createView(const WGPUTextureViewDescriptor& inputDescr
     if (!texture)
         return TextureView::createInvalid(*this, device.get());
 
-    texture.label = fromAPI(descriptor->label).createNSString().get();
+    texture.label = createNSString(fromAPI(descriptor->label)).get();
     if (!texture.label.length)
         texture.label = m_texture.label;
 
@@ -3624,7 +3624,7 @@ void Texture::destroy()
 
 void Texture::setLabel(String&& label)
 {
-    m_texture.label = label.createNSString().get();
+    m_texture.label = createNSString(label).get();
 }
 
 WGPUExtent3D Texture::logicalMiplevelSpecificTextureExtent(uint32_t mipLevel)

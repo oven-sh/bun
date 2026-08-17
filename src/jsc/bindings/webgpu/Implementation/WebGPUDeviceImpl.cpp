@@ -40,13 +40,10 @@
 #include "WebGPUComputePipelineImpl.h"
 #include "WebGPUConvertToBackingContext.h"
 #include "WebGPUExtent3D.h"
-#include "WebGPUExternalTextureDescriptor.h"
-#include "WebGPUExternalTextureImpl.h"
 #include "WebGPUInternalError.h"
 #include "WebGPUOutOfMemoryError.h"
 #include "WebGPUPipelineLayoutDescriptor.h"
 #include "WebGPUPipelineLayoutImpl.h"
-#include "WebGPUPresentationContextImpl.h"
 #include "WebGPUQuerySetDescriptor.h"
 #include "WebGPUQuerySetImpl.h"
 #include "WebGPURenderBundleEncoderDescriptor.h"
@@ -61,11 +58,8 @@
 #include "WebGPUTextureImpl.h"
 #include "WebGPUTextureViewImpl.h"
 #include "WebGPUValidationError.h"
-#include "WebGPUXRBindingImpl.h"
-#include <CoreGraphics/CGColorSpace.h>
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/BlockPtr.h>
-#include <wtf/SegmentedVector.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore::WebGPU {
@@ -99,11 +93,6 @@ Ref<Queue> DeviceImpl::queue()
 void DeviceImpl::destroy()
 {
     wgpuDeviceDestroy(m_backing.get());
-}
-
-RefPtr<XRBinding> DeviceImpl::createXRBinding()
-{
-    return XRBindingImpl::create(adoptWebGPU(wgpuDeviceCreateXRBinding(m_backing.get())), m_convertToBackingContext);
 }
 
 RefPtr<Buffer> DeviceImpl::createBuffer(const BufferDescriptor& descriptor)
@@ -167,43 +156,6 @@ RefPtr<Sampler> DeviceImpl::createSampler(const SamplerDescriptor& descriptor)
     return SamplerImpl::create(adoptWebGPU(wgpuDeviceCreateSampler(m_backing.get(), &backingDescriptor)), convertToBackingContext);
 }
 
-static WGPUColorSpace NODELETE convertToWGPUColorSpace(const PredefinedColorSpace& colorSpace)
-{
-    switch (colorSpace) {
-    case PredefinedColorSpace::SRGB:
-        return WGPUColorSpace::SRGB;
-    case PredefinedColorSpace::SRGBLinear:
-        return WGPUColorSpace::SRGBLinear;
-#if ENABLE(PREDEFINED_COLOR_SPACE_DISPLAY_P3)
-    case PredefinedColorSpace::DisplayP3:
-        return WGPUColorSpace::DisplayP3;
-    case PredefinedColorSpace::DisplayP3Linear:
-        return WGPUColorSpace::DisplayP3Linear;
-#endif
-    }
-
-    ASSERT_NOT_REACHED();
-    return WGPUColorSpace::SRGB;
-}
-
-void DeviceImpl::updateExternalTexture(const WebCore::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&)
-{
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
-RefPtr<ExternalTexture> DeviceImpl::importExternalTexture(const ExternalTextureDescriptor& descriptor)
-{
-    auto label = descriptor.label.utf8();
-
-    auto pixelBuffer = std::get_if<RetainPtr<CVPixelBufferRef>>(&descriptor.videoBacking);
-    WGPUExternalTextureDescriptor backingDescriptor {
-        .label = label.data(),
-        .pixelBuffer = pixelBuffer ? pixelBuffer->get() : nullptr,
-        .colorSpace = convertToWGPUColorSpace(descriptor.colorSpace),
-    };
-    return ExternalTextureImpl::create(adoptWebGPU(wgpuDeviceImportExternalTexture(m_backing.get(), &backingDescriptor)), descriptor, m_convertToBackingContext);
-}
-
 RefPtr<BindGroupLayout> DeviceImpl::createBindGroupLayout(const BindGroupLayoutDescriptor& descriptor)
 {
     auto label = descriptor.label.utf8();
@@ -223,9 +175,9 @@ RefPtr<BindGroupLayout> DeviceImpl::createBindGroupLayout(const BindGroupLayoutD
                 .type = entry.sampler ? m_convertToBackingContext->convertToBacking(entry.sampler->type) : WGPUSamplerBindingType_Undefined,
             },
             .texture = {
-                .sampleType = entry.externalTexture ? static_cast<WGPUTextureSampleType>(WGPUTextureSampleType_ExternalTexture) : (entry.texture ? m_convertToBackingContext->convertToBacking(entry.texture->sampleType) : WGPUTextureSampleType_Undefined),
-                .viewDimension = (!entry.externalTexture && entry.texture) ? m_convertToBackingContext->convertToBacking(entry.texture->viewDimension) : WGPUTextureViewDimension_Undefined,
-                .multisampled = (!entry.externalTexture && entry.texture) ? entry.texture->multisampled : false,
+                .sampleType = entry.texture ? m_convertToBackingContext->convertToBacking(entry.texture->sampleType) : WGPUTextureSampleType_Undefined,
+                .viewDimension = entry.texture ? m_convertToBackingContext->convertToBacking(entry.texture->viewDimension) : WGPUTextureViewDimension_Undefined,
+                .multisampled = entry.texture ? entry.texture->multisampled : false,
             },
             .storageTexture = {
                 .access = entry.storageTexture ? m_convertToBackingContext->convertToBacking(entry.storageTexture->access) : WGPUStorageTextureAccess_Undefined,
@@ -269,7 +221,6 @@ RefPtr<BindGroup> DeviceImpl::createBindGroup(const BindGroupDescriptor& descrip
     auto label = descriptor.label.utf8();
 
     Ref convertToBackingContext = m_convertToBackingContext;
-    SegmentedVector<WGPUExternalTexture, 1> chainedEntries;
     auto backingEntries = descriptor.entries.map([&](const auto& bindGroupEntry) {
         return WGPUBindGroupEntry {
             .binding = bindGroupEntry.binding,
@@ -279,7 +230,6 @@ RefPtr<BindGroup> DeviceImpl::createBindGroup(const BindGroupDescriptor& descrip
             .sampler = std::holds_alternative<std::reference_wrapper<Sampler>>(bindGroupEntry.resource) ? convertToBackingContext->convertToBacking(std::get<std::reference_wrapper<Sampler>>(bindGroupEntry.resource).get()) : nullptr,
             .texture = std::holds_alternative<std::reference_wrapper<Texture>>(bindGroupEntry.resource) ? convertToBackingContext->convertToBacking(std::get<std::reference_wrapper<Texture>>(bindGroupEntry.resource).get()) : nullptr,
             .textureView = std::holds_alternative<std::reference_wrapper<TextureView>>(bindGroupEntry.resource) ? convertToBackingContext->convertToBacking(std::get<std::reference_wrapper<TextureView>>(bindGroupEntry.resource).get()) : nullptr,
-            .externalTexture = std::holds_alternative<std::reference_wrapper<ExternalTexture>>(bindGroupEntry.resource) ? convertToBackingContext->convertToBacking(std::get<std::reference_wrapper<ExternalTexture>>(bindGroupEntry.resource).get()) : nullptr,
         };
     });
 

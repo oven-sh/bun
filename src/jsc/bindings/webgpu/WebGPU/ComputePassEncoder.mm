@@ -167,8 +167,6 @@ static bool addResourceToActiveResources(const BindGroupEntryUsageData::Resource
         if (textureView.get())
             return addResourceToActiveResources(*textureView.get(), resourceUsage, bindGroup, textureUsagesForResource);
         return true;
-    }, [&](const RefPtr<const ExternalTexture>& externalTexture) {
-        return addResourceToActiveResources(externalTexture.get(), resourceUsage, usagesForResource);
     });
 }
 
@@ -372,7 +370,7 @@ void ComputePassEncoder::insertDebugMarker(String&& markerLabel)
     if (!prepareTheEncoderState())
         return;
 
-    [m_computeCommandEncoder insertDebugSignpost:markerLabel.createNSString().get()];
+    [m_computeCommandEncoder insertDebugSignpost:createNSString(markerLabel).get()];
 }
 
 bool ComputePassEncoder::validatePopDebugGroup() const
@@ -428,7 +426,7 @@ void ComputePassEncoder::pushDebugGroup(String&& groupLabel)
         return;
 
     ++m_debugGroupStackSize;
-    [m_computeCommandEncoder pushDebugGroup:groupLabel.createNSString().get()];
+    [m_computeCommandEncoder pushDebugGroup:createNSString(groupLabel).get()];
 }
 
 static void setCommandEncoder(const BindGroupEntryUsageData::Resource& resource, CommandEncoder& parentEncoder)
@@ -442,9 +440,6 @@ static void setCommandEncoder(const BindGroupEntryUsageData::Resource& resource,
         }, [&](const RefPtr<const TextureView>& textureView) {
             if (textureView)
                 textureView->setCommandEncoder(parentEncoder);
-        }, [&](const RefPtr<const ExternalTexture>& externalTexture) {
-            if (externalTexture)
-                externalTexture->setCommandEncoder(parentEncoder);
     });
 }
 
@@ -524,7 +519,7 @@ void ComputePassEncoder::setPipeline(const ComputePipeline& pipeline)
 
 void ComputePassEncoder::setLabel(String&& label)
 {
-    m_computeCommandEncoder.label = label.createNSString().get();
+    m_computeCommandEncoder.label = createNSString(label).get();
 }
 
 bool ComputePassEncoder::isValid() const

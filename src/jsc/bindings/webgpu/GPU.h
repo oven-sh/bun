@@ -35,11 +35,6 @@
 namespace WebCore {
 
 class GPUAdapter;
-class GPUCompositorIntegration;
-class GPUPresentationContext;
-struct GPUPresentationContextDescriptor;
-class GraphicsContext;
-class NativeImage;
 class WGSLLanguageFeatures;
 
 enum class GPUTextureFormat : uint8_t;
@@ -60,11 +55,6 @@ public:
     GPUTextureFormat NODELETE getPreferredCanvasFormat() const;
     WGSLLanguageFeatures& wgslLanguageFeatures() const { return m_wgslLanguageFeatures; }
 
-    RefPtr<GPUPresentationContext> createPresentationContext(const GPUPresentationContextDescriptor&);
-
-    RefPtr<GPUCompositorIntegration> createCompositorIntegration();
-
-    void paintToCanvas(NativeImage&, const IntSize&, GraphicsContext&);
     const WebGPU::GPU& backing() const { return m_backing; }
     WebGPU::GPU& backing() { return m_backing; }
 

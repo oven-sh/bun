@@ -51,6 +51,7 @@ using namespace JSC;
     macro(atimeMs) \
     macro(attributes) \
     macro(autoAllocateChunkSize) \
+    macro(backingSet) \
     macro(basename) \
     macro(birthtimeMs) \
     macro(blob) \

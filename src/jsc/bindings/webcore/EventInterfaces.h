@@ -32,6 +32,7 @@ enum EventInterface {
     CustomEventInterfaceType = 56,
     ErrorEventInterfaceType = 58,
     EventInterfaceType = 59,
+    GPUUncapturedErrorEventInterfaceType = 62,
     MessageEventInterfaceType = 67,
 };
 

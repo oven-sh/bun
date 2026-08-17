@@ -34,14 +34,11 @@
 #include "WebGPUBufferImpl.h"
 #include "WebGPUCommandBufferImpl.h"
 #include "WebGPUCommandEncoderImpl.h"
-#include "WebGPUCompositorIntegrationImpl.h"
 #include "WebGPUComputePassEncoderImpl.h"
 #include "WebGPUComputePipelineImpl.h"
 #include "WebGPUDeviceImpl.h"
-#include "WebGPUExternalTextureImpl.h"
 #include "WebGPUImpl.h"
 #include "WebGPUPipelineLayoutImpl.h"
-#include "WebGPUPresentationContextImpl.h"
 #include "WebGPUQuerySetImpl.h"
 #include "WebGPUQueueImpl.h"
 #include "WebGPURenderBundleEncoderImpl.h"
@@ -52,10 +49,6 @@
 #include "WebGPUShaderModuleImpl.h"
 #include "WebGPUTextureImpl.h"
 #include "WebGPUTextureViewImpl.h"
-#include "WebGPUXRBindingImpl.h"
-#include "WebGPUXRProjectionLayerImpl.h"
-#include "WebGPUXRSubImageImpl.h"
-#include "WebGPUXRViewImpl.h"
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore::WebGPU {
@@ -107,11 +100,6 @@ WGPUDevice DowncastConvertToBackingContext::convertToBacking(const Device& devic
     return downcast<DeviceImpl>(device).backing();
 }
 
-WGPUExternalTexture DowncastConvertToBackingContext::convertToBacking(const ExternalTexture& externalTexture)
-{
-    return downcast<ExternalTextureImpl>(externalTexture).backing();
-}
-
 WGPUInstance DowncastConvertToBackingContext::convertToBacking(const GPU& gpu)
 {
     return downcast<GPUImpl>(gpu).backing();
@@ -120,11 +108,6 @@ WGPUInstance DowncastConvertToBackingContext::convertToBacking(const GPU& gpu)
 WGPUPipelineLayout DowncastConvertToBackingContext::convertToBacking(const PipelineLayout& pipelineLayout)
 {
     return downcast<PipelineLayoutImpl>(pipelineLayout).backing();
-}
-
-WGPUSurface DowncastConvertToBackingContext::convertToBacking(const PresentationContext& presentationContext)
-{
-    return downcast<PresentationContextImpl>(presentationContext).backing();
 }
 
 WGPUQuerySet DowncastConvertToBackingContext::convertToBacking(const QuerySet& querySet)
@@ -175,31 +158,6 @@ WGPUTexture DowncastConvertToBackingContext::convertToBacking(const Texture& tex
 WGPUTextureView DowncastConvertToBackingContext::convertToBacking(const TextureView& textureView)
 {
     return downcast<TextureViewImpl>(textureView).backing();
-}
-
-CompositorIntegrationImpl& DowncastConvertToBackingContext::convertToBacking(CompositorIntegration& compositorIntegration)
-{
-    return downcast<CompositorIntegrationImpl>(compositorIntegration);
-}
-
-WGPUXRBinding DowncastConvertToBackingContext::convertToBacking(const XRBinding& xrBinding)
-{
-    return downcast<XRBindingImpl>(xrBinding).backing();
-}
-
-WGPUXRProjectionLayer DowncastConvertToBackingContext::convertToBacking(const XRProjectionLayer& layer)
-{
-    return downcast<XRProjectionLayerImpl>(layer).backing();
-}
-
-WGPUXRSubImage DowncastConvertToBackingContext::convertToBacking(const XRSubImage& subImage)
-{
-    return downcast<XRSubImageImpl>(subImage).backing();
-}
-
-WGPUXRView DowncastConvertToBackingContext::convertToBacking(const XRView& xrView)
-{
-    return downcast<XRViewImpl>(xrView).backing();
 }
 
 } // namespace WebCore::WebGPU

@@ -32,7 +32,6 @@
 #import <wtf/FastMalloc.h>
 #import <wtf/HashMap.h>
 #import <wtf/Lock.h>
-#import <wtf/MachSendRight.h>
 #import <wtf/Ref.h>
 #import <wtf/TZoneMalloc.h>
 #import <wtf/ThreadSafeRefCounted.h>
@@ -44,15 +43,10 @@
 struct WGPUInstanceImpl {
 };
 
-namespace WTF {
-class MachSendRight;
-}
-
 namespace WebGPU {
 
 class Adapter;
 class Device;
-class PresentationContext;
 class Texture;
 
 // https://gpuweb.github.io/gpuweb/#gpu
@@ -67,7 +61,6 @@ public:
 
     virtual ~Instance();
 
-    Ref<PresentationContext> createSurface(const WGPUSurfaceDescriptor&);
     void processEvents();
     void requestAdapter(const WGPURequestAdapterOptions&, CompletionHandler<void(WGPURequestAdapterStatus, Ref<Adapter>&&, String&&)>&& callback);
 
@@ -77,11 +70,10 @@ public:
     // This can be called on a background thread.
     using WorkItem = Function<void()>;
     void scheduleWork(WorkItem&&);
-    const std::optional<const MachSendRight>& NODELETE webProcessID() const;
     id<MTLDevice> device() const;
 
 private:
-    Instance(WGPUScheduleWorkBlock, const WTF::MachSendRight* webProcessResourceOwner);
+    explicit Instance(WGPUScheduleWorkBlock);
     explicit Instance();
 
     // This can be called on a background thread.
@@ -91,7 +83,6 @@ private:
     Deque<WGPUWorkItem> m_pendingWork WTF_GUARDED_BY_LOCK(m_lock);
     using CommandBufferContainer = Vector<WeakObjCPtr<id<MTLCommandBuffer>>>;
     HashMap<Ref<Device>, CommandBufferContainer> retainedDeviceInstances WTF_GUARDED_BY_LOCK(m_lock);
-    const std::optional<const MachSendRight> m_webProcessID;
     const WGPUScheduleWorkBlock m_scheduleWorkBlock;
     Lock m_lock;
     bool m_isValid { true };

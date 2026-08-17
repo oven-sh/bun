@@ -27,8 +27,6 @@
 #include "GPU.h"
 
 #include "GPUAdapter.h"
-#include "GPUPresentationContext.h"
-#include "GPUPresentationContextDescriptor.h"
 #include "GPURequestAdapterOptions.h"
 #include "GPUTextureFormat.h"
 #include "JSDOMPromiseDeferred.h"
@@ -73,22 +71,6 @@ void GPU::requestAdapter(const std::optional<GPURequestAdapterOptions>& options,
 GPUTextureFormat GPU::getPreferredCanvasFormat() const
 {
     return GPUTextureFormat::Bgra8unorm;
-}
-
-RefPtr<GPUPresentationContext> GPU::createPresentationContext(const GPUPresentationContextDescriptor& presentationContextDescriptor)
-{
-    RefPtr context = m_backing->createPresentationContext(presentationContextDescriptor.convertToBacking());
-    if (!context)
-        return nullptr;
-    return GPUPresentationContext::create(context.releaseNonNull());
-}
-
-RefPtr<GPUCompositorIntegration> GPU::createCompositorIntegration()
-{
-    RefPtr integration = m_backing->createCompositorIntegration();
-    if (!integration)
-        return nullptr;
-    return GPUCompositorIntegration::create(integration.releaseNonNull());
 }
 
 } // namespace WebCore

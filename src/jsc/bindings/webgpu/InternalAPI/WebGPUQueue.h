@@ -27,9 +27,7 @@
 
 #include "WebGPUCommandBuffer.h"
 #include "WebGPUExtent3D.h"
-#include "WebGPUImageCopyExternalImage.h"
 #include "WebGPUImageCopyTexture.h"
-#include "WebGPUImageCopyTextureTagged.h"
 #include "WebGPUImageDataLayout.h"
 #include "WebGPUIntegralTypes.h"
 #include <cstdint>
@@ -41,11 +39,6 @@
 #include <wtf/Vector.h>
 #include <wtf/WeakPtr.h>
 #include <wtf/text/WTFString.h>
-
-namespace WebCore {
-class NativeImage;
-class VideoFrame;
-}
 
 namespace WebCore::WebGPU {
 
@@ -93,12 +86,6 @@ public:
         const ImageDataLayout&,
         const Extent3D& size) = 0;
 
-    virtual void copyExternalImageToTexture(
-        const ImageCopyExternalImage& source,
-        const ImageCopyTextureTagged& destination,
-        const Extent3D& copySize) = 0;
-
-    virtual RefPtr<WebCore::NativeImage> getNativeImage(WebCore::VideoFrame&) = 0;
     virtual bool isRemoteQueueProxy() const { return false; }
     virtual bool isQueueImpl() const { return false; }
 

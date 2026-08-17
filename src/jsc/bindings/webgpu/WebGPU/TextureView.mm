@@ -54,7 +54,7 @@ TextureView::~TextureView() = default;
 
 void TextureView::setLabel(String&& label)
 {
-    m_texture.label = label.createNSString().get();
+    m_texture.label = createNSString(label).get();
 }
 
 id<MTLTexture> TextureView::parentTexture() const

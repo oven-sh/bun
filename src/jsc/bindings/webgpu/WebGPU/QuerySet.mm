@@ -66,7 +66,7 @@ Ref<QuerySet> Device::createQuerySet(const WGPUQuerySetDescriptor& descriptor)
 #endif
     } case WGPUQueryType_Occlusion: {
         auto buffer = safeCreateBuffer(sizeof(uint64_t) * count, MTLStorageModePrivate);
-        buffer.label = fromAPI(label).createNSString().get();
+        buffer.label = createNSString(fromAPI(label)).get();
         return QuerySet::create(buffer, count, type, *this);
     }
     case WGPUQueryType_Force32:
@@ -127,7 +127,7 @@ void QuerySet::destroy()
 
 void QuerySet::setLabel(String&& label)
 {
-    m_visibilityBuffer.label = label.createNSString().get();
+    m_visibilityBuffer.label = createNSString(label).get();
     // MTLCounterSampleBuffer's label property is read-only.
 }
 

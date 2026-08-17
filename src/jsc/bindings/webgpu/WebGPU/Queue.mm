@@ -1238,7 +1238,7 @@ void Queue::writeTexture(const WGPUImageCopyTexture& destination, std::span<uint
 
 void Queue::setLabel(String&& label)
 {
-    m_commandQueue.label = label.createNSString().get();
+    m_commandQueue.label = createNSString(label).get();
 }
 
 void Queue::scheduleWork(Instance::WorkItem&& workItem)

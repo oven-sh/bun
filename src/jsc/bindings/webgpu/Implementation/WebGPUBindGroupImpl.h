@@ -28,7 +28,6 @@
 #if HAVE(WEBGPU_IMPLEMENTATION)
 
 #include "WebGPUBindGroup.h"
-#include "WebGPUExternalTexture.h"
 #include "WebGPUPtr.h"
 #include <WebGPU/WebGPU.h>
 #include <wtf/TZoneMalloc.h>
@@ -61,7 +60,6 @@ private:
     bool isBindGroupImpl() const final { return true; }
 
     void setLabelInternal(const String&) final;
-    bool updateExternalTextures(ExternalTexture&) final;
 
     WebGPUPtr<WGPUBindGroup> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;

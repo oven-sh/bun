@@ -56,14 +56,11 @@ class CommandBuffer;
 class CommandEncoder;
 enum class CompareFunction : uint8_t;
 enum class CompilationMessageType : uint8_t;
-class CompositorIntegration;
-class CompositorIntegrationImpl;
 class ComputePassEncoder;
 class ComputePipeline;
 enum class CullMode : uint8_t;
 class Device;
 enum class ErrorFilter : uint8_t;
-class ExternalTexture;
 enum class FeatureName : uint8_t;
 enum class FilterMode : uint8_t;
 enum class FrontFace : uint8_t;
@@ -73,7 +70,6 @@ enum class LoadOp : uint8_t;
 enum class MipmapFilterMode : uint8_t;
 class PipelineLayout;
 enum class PowerPreference : bool;
-class PresentationContext;
 enum class PrimitiveTopology : uint8_t;
 class QuerySet;
 enum class QueryType : uint8_t;
@@ -97,11 +93,6 @@ class TextureView;
 enum class TextureViewDimension : uint8_t;
 enum class VertexFormat : uint8_t;
 enum class VertexStepMode : uint8_t;
-enum class XREye : uint8_t;
-class XRBinding;
-class XRProjectionLayer;
-class XRSubImage;
-class XRView;
 
 class ConvertToBackingContext : public RefCounted<ConvertToBackingContext> {
     WTF_MAKE_TZONE_ALLOCATED(ConvertToBackingContext);
@@ -154,11 +145,9 @@ public:
     virtual WGPUBuffer convertToBacking(const Buffer&) = 0;
     virtual WGPUCommandBuffer convertToBacking(const CommandBuffer&) = 0;
     virtual WGPUCommandEncoder convertToBacking(const CommandEncoder&) = 0;
-    virtual CompositorIntegrationImpl& convertToBacking(CompositorIntegration&) = 0;
     virtual WGPUComputePassEncoder convertToBacking(const ComputePassEncoder&) = 0;
     virtual WGPUComputePipeline convertToBacking(const ComputePipeline&) = 0;
     virtual WGPUDevice convertToBacking(const Device&) = 0;
-    virtual WGPUExternalTexture convertToBacking(const ExternalTexture&) = 0;
     virtual WGPUInstance convertToBacking(const GPU&) = 0;
     virtual WGPUPipelineLayout convertToBacking(const PipelineLayout&) = 0;
     virtual WGPUQuerySet convertToBacking(const QuerySet&) = 0;
@@ -169,13 +158,8 @@ public:
     virtual WGPURenderPipeline convertToBacking(const RenderPipeline&) = 0;
     virtual WGPUSampler convertToBacking(const Sampler&) = 0;
     virtual WGPUShaderModule convertToBacking(const ShaderModule&) = 0;
-    virtual WGPUSurface convertToBacking(const PresentationContext&) = 0;
     virtual WGPUTexture convertToBacking(const Texture&) = 0;
     virtual WGPUTextureView convertToBacking(const TextureView&) = 0;
-    virtual WGPUXRBinding convertToBacking(const XRBinding&) = 0;
-    virtual WGPUXRProjectionLayer convertToBacking(const XRProjectionLayer&) = 0;
-    virtual WGPUXRSubImage convertToBacking(const XRSubImage&) = 0;
-    virtual WGPUXRView convertToBacking(const XRView&) = 0;
 };
 
 } // namespace WebCore::WebGPU

@@ -55,7 +55,6 @@
 #include "WebGPUTextureViewDimension.h"
 #include "WebGPUVertexFormat.h"
 #include "WebGPUVertexStepMode.h"
-#include "WebGPUXREye.h"
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/TZoneMallocInlines.h>
 

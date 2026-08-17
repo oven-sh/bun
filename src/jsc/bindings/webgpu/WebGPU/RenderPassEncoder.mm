@@ -31,7 +31,6 @@
 #import "BindableResource.h"
 #import "Buffer.h"
 #import "CommandEncoder.h"
-#import "ExternalTexture.h"
 #import "IsValidToUseWith.h"
 #import "Pipeline.h"
 #import "QuerySet.h"
@@ -388,8 +387,6 @@ void RenderPassEncoder::addResourceToActiveResources(const BindGroupEntryUsageDa
         }, [&](const RefPtr<const TextureView>& textureView) {
             if (textureView.get())
                 addResourceToActiveResources(*textureView.get(), resourceUsage);
-        }, [&](const RefPtr<const ExternalTexture>& externalTexture) {
-            addResourceToActiveResources(externalTexture.get(), resourceUsage);
     });
 }
 
@@ -1211,9 +1208,6 @@ bool RenderPassEncoder::setCommandEncoder(const BindGroupEntryUsageData::Resourc
         }, [&](const RefPtr<const TextureView>& textureView) {
             if (textureView)
                 textureView->setCommandEncoder(m_parentEncoder);
-        }, [&](const RefPtr<const ExternalTexture>& externalTexture) {
-            if (externalTexture)
-                externalTexture->setCommandEncoder(m_parentEncoder);
     });
     return !!renderCommandEncoder();
 }
@@ -1376,7 +1370,7 @@ void RenderPassEncoder::insertDebugMarker(String&& markerLabel)
     if (!prepareTheEncoderState())
         return;
 
-    [m_renderCommandEncoder insertDebugSignpost:markerLabel.createNSString().get()];
+    [m_renderCommandEncoder insertDebugSignpost:createNSString(markerLabel).get()];
 }
 
 bool RenderPassEncoder::validatePopDebugGroup() const
@@ -1430,7 +1424,7 @@ void RenderPassEncoder::pushDebugGroup(String&& groupLabel)
         return;
 
     ++m_debugGroupStackSize;
-    [m_renderCommandEncoder pushDebugGroup:groupLabel.createNSString().get()];
+    [m_renderCommandEncoder pushDebugGroup:createNSString(groupLabel).get()];
 }
 
 void RenderPassEncoder::setBindGroup(uint32_t groupIndex, const BindGroup* groupPtr, std::optional<Vector<uint32_t>>&& dynamicOffsets)
@@ -1679,7 +1673,7 @@ void RenderPassEncoder::setViewport(float x, float y, float width, float height,
 
 void RenderPassEncoder::setLabel(String&& label)
 {
-    m_renderCommandEncoder.label = label.createNSString().get();
+    m_renderCommandEncoder.label = createNSString(label).get();
 }
 
 #undef CHECKED_SET_PSO

@@ -33,9 +33,7 @@
 #import "Buffer.h"
 #import "CommandEncoder.h"
 #import "ComputePipeline.h"
-#import "MetalSPI.h"
 #import "PipelineLayout.h"
-#import "PresentationContext.h"
 #import "QuerySet.h"
 #import "Queue.h"
 #import "RenderBundleEncoder.h"
@@ -43,7 +41,6 @@
 #import "Sampler.h"
 #import "ShaderModule.h"
 #import "Texture.h"
-#import "XRSubImage.h"
 #import <algorithm>
 #import <notify.h>
 #import <ranges>
@@ -290,7 +287,6 @@ static uint32_t computeAppleGPUFamily(id<MTLDevice> device)
 Device::Device(id<MTLDevice> device, id<MTLCommandQueue> defaultQueue, HardwareCapabilities&& capabilities, Adapter& adapter)
     : m_device(device)
     , m_defaultQueue(Queue::create(defaultQueue, adapter, *this))
-    , m_xrSubImage(XRSubImage::create(*this))
     , m_capabilities(WTF::move(capabilities))
     , m_adapter(adapter)
     , m_instance(adapter.weakInstance())
@@ -327,12 +323,6 @@ Device::Device(id<MTLDevice> device, id<MTLCommandQueue> defaultQueue, HardwareC
 #endif
 #endif
 
-#if HAVE(COREVIDEO_METAL_SUPPORT)
-    CVMetalTextureCacheRef coreVideoTextureCache;
-    CVReturn result = CVMetalTextureCacheCreate(nullptr, nullptr, device, nullptr, &coreVideoTextureCache);
-    ASSERT_UNUSED(result, result == kCVReturnSuccess);
-    m_coreVideoTextureCache = coreVideoTextureCache;
-#endif
     GPUFrameCapture::registerForFrameCapture(m_device);
 
     m_placeholderBuffer = safeCreateBuffer(1, MTLStorageModeShared);
@@ -387,27 +377,6 @@ Device::~Device()
     }
 }
 
-RefPtr<XRSubImage> Device::getXRViewSubImage(XRProjectionLayer& projectionLayer)
-{
-    protect(m_xrSubImage)->update(projectionLayer);
-    return m_xrSubImage;
-}
-
-RefPtr<XRSubImage> Device::getXRViewSubImage() const
-{
-    return m_xrSubImage;
-}
-
-id<MTLTexture> Device::getXRViewSubImageDepthTexture() const
-{
-    if (auto subImage = getXRViewSubImage()) {
-        if (RefPtr depthTexture = subImage->depthTexture())
-            return depthTexture->texture();
-    }
-
-    return nil;
-}
-
 void Device::makeInvalid()
 {
     m_device = nil;
@@ -429,26 +398,9 @@ void Device::loseTheDevice(WGPUDeviceLostReason reason)
     m_isLost = true;
 }
 
-static void setOwnerWithIdentity(id<MTLResourceSPI> resource, auto webProcessID)
+void Device::setOwnerWithIdentity(id<MTLResource>) const
 {
-    if (!resource)
-        return;
-
-    if (![resource respondsToSelector:@selector(setOwnerWithIdentity:)])
-        return;
-
-    [resource setOwnerWithIdentity:webProcessID];
-}
-
-void Device::setOwnerWithIdentity(id<MTLResource> resource) const
-{
-    if (auto optionalWebProcessID = webProcessID()) {
-        auto webProcessID = optionalWebProcessID->sendRight();
-        if (!webProcessID)
-            return;
-
-        WebGPU::setOwnerWithIdentity((id<MTLResourceSPI>)resource, webProcessID);
-    }
+    // Attributes Metal allocations to another process; WebKit needs this in its GPU process, bun is a single process.
 }
 
 void Device::destroy()
@@ -496,7 +448,7 @@ auto Device::currentErrorScope(WGPUErrorFilter type) -> ErrorScope*
 
 void Device::generateAValidationError(NSString * message)
 {
-    generateAValidationError(String { message });
+    generateAValidationError(createString(message));
 }
 
 void Device::generateAValidationError(String&& message)
@@ -576,13 +528,6 @@ id<MTLBuffer> Device::newBufferWithBytesNoCopy(void* pointer, size_t length, MTL
     return buffer;
 }
 
-id<MTLTexture> Device::newTextureWithDescriptor(MTLTextureDescriptor *textureDescriptor, IOSurfaceRef ioSurface, NSUInteger plane) const
-{
-    id<MTLTexture> texture = ioSurface ? [m_device newTextureWithDescriptor:textureDescriptor iosurface:ioSurface plane:plane] : [m_device newTextureWithDescriptor:textureDescriptor];
-    setOwnerWithIdentity(texture);
-    return texture;
-}
-
 void Device::captureFrameIfNeeded() const
 {
     GPUFrameCapture::captureSingleFrameIfNeeded(m_device);
@@ -655,12 +600,6 @@ void Device::setUncapturedErrorCallback(Function<void(WGPUErrorType, String&&)>&
 void Device::setLabel(String&&)
 {
     // Because MTLDevices are process-global, we can't set the label on it, because 2 contexts' labels would fight each other.
-}
-
-const std::optional<const MachSendRight> Device::webProcessID() const
-{
-    auto scheduler = instance();
-    return scheduler ? scheduler->webProcessID() : std::nullopt;
 }
 
 id<MTLBuffer> Device::dispatchCallBuffer()
@@ -1116,11 +1055,6 @@ WGPUBindGroupLayout wgpuDeviceCreateBindGroupLayout(WGPUDevice device, const WGP
     return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createBindGroupLayout(*descriptor));
 }
 
-WGPUXRBinding wgpuDeviceCreateXRBinding(WGPUDevice device)
-{
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createXRBinding());
-}
-
 WGPUBuffer wgpuDeviceCreateBuffer(WGPUDevice device, const WGPUBufferDescriptor* descriptor)
 {
     return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createBuffer(*descriptor));
@@ -1194,19 +1128,9 @@ WGPUSampler wgpuDeviceCreateSampler(WGPUDevice device, const WGPUSamplerDescript
     return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createSampler(*descriptor));
 }
 
-WGPUExternalTexture wgpuDeviceImportExternalTexture(WGPUDevice device, const WGPUExternalTextureDescriptor* descriptor)
-{
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createExternalTexture(*descriptor));
-}
-
 WGPUShaderModule wgpuDeviceCreateShaderModule(WGPUDevice device, const WGPUShaderModuleDescriptor* descriptor)
 {
     return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createShaderModule(*descriptor));
-}
-
-WGPUSwapChain wgpuDeviceCreateSwapChain(WGPUDevice device, WGPUSurface surface, const WGPUSwapChainDescriptor* descriptor)
-{
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(device))->createSwapChain(protect(WebGPU::fromAPI(surface)), *descriptor));
 }
 
 WGPUTexture wgpuDeviceCreateTexture(WGPUDevice device, const WGPUTextureDescriptor* descriptor)

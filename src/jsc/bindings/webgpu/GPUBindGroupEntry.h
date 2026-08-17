@@ -26,7 +26,6 @@
 #pragma once
 
 #include "GPUBufferBinding.h"
-#include "GPUExternalTexture.h"
 #include "GPUIntegralTypes.h"
 #include "GPUSampler.h"
 #include "GPUTexture.h"
@@ -41,8 +40,7 @@ using GPUBindingResource = Variant<
     Ref<GPUTexture>,
     Ref<GPUTextureView>,
     Ref<GPUBuffer>,
-    GPUBufferBinding,
-    Ref<GPUExternalTexture>
+    GPUBufferBinding
 >;
 
 inline WebGPU::BindingResource convertToBacking(const GPUBindingResource& bindingResource)
@@ -67,9 +65,6 @@ inline WebGPU::BindingResource convertToBacking(const GPUBindingResource& bindin
         },
         [](const GPUBufferBinding& bufferBinding) -> WebGPU::BindingResource {
             return bufferBinding.convertToBacking();
-        },
-        [](const Ref<GPUExternalTexture>& externalTexture) -> WebGPU::BindingResource {
-            return externalTexture->backing();
         }
     );
 }
@@ -81,161 +76,6 @@ struct GPUBindGroupEntry {
             binding,
             WebCore::convertToBacking(resource),
         };
-    }
-
-    static bool equal(const GPUSampler& entry, const GPUBindingResource& otherEntry)
-    {
-        return WTF::switchOn(otherEntry,
-            [&](const Ref<GPUSampler>& sampler) {
-                return sampler.ptr() == &entry;
-            },
-            [](const Ref<GPUTexture>&) {
-                return false;
-            },
-            [](const Ref<GPUTextureView>&) {
-                return false;
-            },
-            [](const Ref<GPUBuffer>&) {
-                return false;
-            },
-            [](const GPUBufferBinding&) {
-                return false;
-            },
-            [](const Ref<GPUExternalTexture>&) {
-                return false;
-            }
-        );
-    }
-    static bool equal(const GPUTexture& entry, const GPUBindingResource& otherEntry)
-    {
-        return WTF::switchOn(otherEntry,
-            [](const Ref<GPUSampler>&) {
-                return false;
-            },
-            [&](const Ref<GPUTexture>& texture) {
-                return texture.ptr() == &entry;
-            },
-            [](const Ref<GPUTextureView>&) {
-                return false;
-            },
-            [](const Ref<GPUBuffer>&) {
-                return false;
-            },
-            [](const GPUBufferBinding&) {
-                return false;
-            },
-            [](const Ref<GPUExternalTexture>&) {
-                return false;
-            }
-        );
-    }
-    static bool equal(const GPUTextureView& entry, const GPUBindingResource& otherEntry)
-    {
-        return WTF::switchOn(otherEntry,
-            [](const Ref<GPUSampler>&) {
-                return false;
-            },
-            [](const Ref<GPUTexture>&) {
-                return false;
-            },
-            [&](const Ref<GPUTextureView>& textureView) {
-                return textureView.ptr() == &entry;
-            },
-            [](const Ref<GPUBuffer>&) {
-                return false;
-            },
-            [](const GPUBufferBinding&) {
-                return false;
-            },
-            [](const Ref<GPUExternalTexture>&) {
-                return false;
-            }
-        );
-    }
-    static bool equalSizes(const std::optional<GPUSize64>& a, const std::optional<GPUSize64>& b)
-    {
-        return (!a && !b) || (a && b && *a == *b);
-    }
-    static bool equalSizes(const GPUSize64& a, const std::optional<GPUSize64>& b)
-    {
-        return (!a && !b) || (b && a == *b);
-    }
-    static bool equal(const GPUBufferBinding& entry, const GPUBindingResource& otherEntry)
-    {
-        return WTF::switchOn(otherEntry,
-            [](const Ref<GPUSampler>&) {
-                return false;
-            },
-            [](const Ref<GPUTexture>&) {
-                return false;
-            },
-            [](const Ref<GPUTextureView>&) {
-                return false;
-            },
-            [&](const Ref<GPUBuffer>& bufferBinding) {
-                return bufferBinding.ptr() == entry.buffer.ptr() && !entry.offset && equalSizes(bufferBinding->size(), entry.size);
-            },
-            [&](const GPUBufferBinding& bufferBinding) {
-                return bufferBinding.buffer.ptr() == entry.buffer.ptr() && bufferBinding.offset == entry.offset && equalSizes(bufferBinding.size, entry.size);
-            },
-            [](const Ref<GPUExternalTexture>&) {
-                return false;
-            }
-        );
-    }
-    static bool equal(const GPUExternalTexture& entry, const GPUBindingResource& otherEntry)
-    {
-        return WTF::switchOn(otherEntry,
-            [](const Ref<GPUSampler>&) {
-                return false;
-            },
-            [](const Ref<GPUTexture>&) {
-                return false;
-            },
-            [](const Ref<GPUTextureView>&) {
-                return false;
-            },
-            [](const Ref<GPUBuffer>&) {
-                return false;
-            },
-            [](const GPUBufferBinding&) {
-                return false;
-            },
-            [&](const Ref<GPUExternalTexture>& externalTexture) {
-                return externalTexture.ptr() == &entry;
-            }
-        );
-    }
-    static bool equal(const GPUBindGroupEntry& entry, const GPUBindGroupEntry& otherEntry)
-    {
-        if (entry.binding != otherEntry.binding)
-            return false;
-
-        return WTF::switchOn(entry.resource,
-            [&](const Ref<GPUSampler>& sampler) {
-                return equal(sampler, otherEntry.resource);
-            },
-            [&](const Ref<GPUTexture>& texture) {
-                return equal(texture, otherEntry.resource);
-            },
-            [&](const Ref<GPUTextureView>& textureView) {
-                return equal(textureView, otherEntry.resource);
-            },
-            [](const Ref<GPUBuffer>&) {
-                return false;
-            },
-            [&](const GPUBufferBinding& bufferBinding) {
-                return equal(bufferBinding, otherEntry.resource);
-            },
-            [&](const Ref<GPUExternalTexture>& externalTexture) {
-                return equal(externalTexture, otherEntry.resource);
-            }
-        );
-    }
-
-    const Ref<GPUExternalTexture>* externalTexture() const
-    {
-        return std::get_if<Ref<GPUExternalTexture>>(&resource);
     }
 
     GPUIndex32 binding { 0 };

@@ -30,7 +30,6 @@
 #include "GPUCommandBuffer.h"
 #include "GPUExtent3DDict.h"
 #include "GPUImageCopyTexture.h"
-#include "GPUImageCopyTextureTagged.h"
 #include "GPUImageDataLayout.h"
 #include "GPUIntegralTypes.h"
 #include "WebGPUQueue.h"
@@ -46,7 +45,6 @@ namespace WebCore {
 
 class GPUBuffer;
 class GPUDevice;
-struct GPUImageCopyExternalImage;
 
 class GPUQueue : public RefCountedAndCanMakeWeakPtr<GPUQueue> {
 public:
@@ -75,12 +73,6 @@ public:
         BufferSource&& data,
         const GPUImageDataLayout&,
         const GPUExtent3D& size);
-
-    ExceptionOr<void> copyExternalImageToTexture(
-        ScriptExecutionContext&,
-        const GPUImageCopyExternalImage& source,
-        const GPUImageCopyTextureTagged& destination,
-        const GPUExtent3D& copySize);
 
     WebGPU::Queue& backing() { return m_backing; }
     const WebGPU::Queue& backing() const { return m_backing; }

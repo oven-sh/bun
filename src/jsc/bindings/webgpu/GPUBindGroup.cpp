@@ -28,7 +28,6 @@
 
 #include "GPUBindGroupLayout.h"
 #include "GPUDevice.h"
-#include "GPUExternalTexture.h"
 
 namespace WebCore {
 
@@ -51,11 +50,6 @@ String GPUBindGroup::label() const
 void GPUBindGroup::setLabel(String&& label)
 {
     m_backing->setLabel(WTF::move(label));
-}
-
-bool GPUBindGroup::updateExternalTextures(GPUExternalTexture& externalTexture)
-{
-    return m_backing->updateExternalTextures(externalTexture.backing());
 }
 
 GPUBindGroup::GPUBindGroup(Ref<WebGPU::BindGroup>&& backing, Ref<GPUBindGroupLayout>&& layout, GPUDevice& device)

@@ -1067,7 +1067,7 @@ static std::pair<Ref<RenderPipeline>, NSString*> returnInvalidRenderPipeline(Web
 
 static std::pair<Ref<RenderPipeline>, NSString*> returnInvalidRenderPipeline(WebGPU::Device &object, bool isAsync, String&& error)
 {
-    return returnInvalidRenderPipeline(object, isAsync, error.createNSString().get());
+    return returnInvalidRenderPipeline(object, isAsync, createNSString(error).get());
 }
 
 static constexpr ASCIILiteral name(WGPUCompareFunction compare)
@@ -1496,7 +1496,7 @@ std::pair<Ref<RenderPipeline>, NSString*> Device::createRenderPipeline(const WGP
     mtlRenderPipelineDescriptor.shaderValidation = shaderValidationState();
 #endif
 
-    auto label = fromAPI(descriptor.label).createNSString();
+    auto label = createNSString(fromAPI(descriptor.label));
     auto& deviceLimits = limits();
 
     RefPtr<PipelineLayout> pipelineLayout;
@@ -1777,10 +1777,10 @@ void Device::createRenderPipelineAsync(const WGPURenderPipelineDescriptor& descr
     auto pipelineAndError = createRenderPipeline(descriptor, true);
     if (auto inst = instance(); inst.get()) {
         inst->scheduleWork([protectedThis = protect(*this), pipeline = WTF::move(pipelineAndError.first), callback = WTF::move(callback), error = WTF::move(pipelineAndError.second)]() mutable {
-            callback((protectedThis->isDestroyed() || pipeline->isValid()) ? WGPUCreatePipelineAsyncStatus_Success : WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipeline), WTF::move(error));
+            callback((protectedThis->isDestroyed() || pipeline->isValid()) ? WGPUCreatePipelineAsyncStatus_Success : WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipeline), createString(error));
         });
     } else
-        callback(WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipelineAndError.first), WTF::move(pipelineAndError.second));
+        callback(WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipelineAndError.first), createString(pipelineAndError.second));
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(RenderPipeline);

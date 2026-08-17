@@ -29,11 +29,9 @@
 #import "APIConversions.h"
 #import "Adapter.h"
 #import "HardwareCapabilities.h"
-#import "PresentationContext.h"
 #import <cstring>
 #import <dlfcn.h>
 #import <wtf/BlockPtr.h>
-#import <wtf/MachSendRight.h>
 #import <wtf/StdLibExtras.h>
 #import <wtf/TZoneMallocInlines.h>
 
@@ -57,12 +55,11 @@ Ref<Instance> Instance::create(const WGPUInstanceDescriptor& descriptor)
 {
     const WGPUInstanceCocoaDescriptor& cocoaDescriptor = descriptor.cocoaDescriptor;
 
-    return adoptRef(*new Instance(cocoaDescriptor.scheduleWorkBlock, reinterpret_cast<const WTF::MachSendRight*>(cocoaDescriptor.webProcessResourceOwner)));
+    return adoptRef(*new Instance(cocoaDescriptor.scheduleWorkBlock));
 }
 
-Instance::Instance(WGPUScheduleWorkBlock scheduleWorkBlock, const MachSendRight* webProcessResourceOwner)
-    : m_webProcessID(webProcessResourceOwner ? std::optional<MachSendRight>(*webProcessResourceOwner) : std::nullopt)
-    , m_scheduleWorkBlock(scheduleWorkBlock ? WTF::move(scheduleWorkBlock) : ^(WGPUWorkItem workItem) { defaultScheduleWork(WTF::move(workItem)); })
+Instance::Instance(WGPUScheduleWorkBlock scheduleWorkBlock)
+    : m_scheduleWorkBlock(scheduleWorkBlock ? WTF::move(scheduleWorkBlock) : ^(WGPUWorkItem workItem) { defaultScheduleWork(WTF::move(workItem)); })
 {
 }
 
@@ -74,19 +71,9 @@ Instance::Instance()
 
 Instance::~Instance() = default;
 
-Ref<PresentationContext> Instance::createSurface(const WGPUSurfaceDescriptor& descriptor)
-{
-    return PresentationContext::create(descriptor, *this);
-}
-
 void Instance::scheduleWork(WorkItem&& workItem)
 {
     m_scheduleWorkBlock(makeBlockPtr(WTF::move(workItem)).get());
-}
-
-const std::optional<const MachSendRight>& Instance::webProcessID() const
-{
-    return m_webProcessID;
 }
 
 void Instance::defaultScheduleWork(WGPUWorkItem&& workItem)
@@ -154,8 +141,6 @@ static NSArray<id<MTLDevice>> *sortedDevices(NSArray<id<MTLDevice>> *devices, WG
 void Instance::requestAdapter(const WGPURequestAdapterOptions& options, CompletionHandler<void(WGPURequestAdapterStatus, Ref<Adapter>&&, String&&)>&& callback)
 {
     auto devices = getDevices();
-
-    // FIXME: Deal with options.compatibleSurface.
 
     auto sortedDevices = WebGPU::sortedDevices(devices, options.powerPreference);
 
@@ -240,11 +225,6 @@ WGPUProc NODELETE wgpuGetProcAddress(WGPUDevice, const char*)
     return nullptr;
 }
 
-WGPUSurface wgpuInstanceCreateSurface(WGPUInstance instance, const WGPUSurfaceDescriptor* descriptor)
-{
-    return WebGPU::releaseToAPI(protect(WebGPU::fromAPI(instance))->createSurface(*descriptor));
-}
-
 void wgpuInstanceProcessEvents(WGPUInstance instance)
 {
     protect(WebGPU::fromAPI(instance))->processEvents();
@@ -320,19 +300,9 @@ WGPUBool wgpuDeviceIsValid(WGPUDevice device)
     return protect(WebGPU::fromAPI(device))->isValid();
 }
 
-WGPUBool wgpuExternalTextureIsValid(WGPUExternalTexture externalTexture)
-{
-    return protect(WebGPU::fromAPI(externalTexture))->isValid();
-}
-
 WGPUBool wgpuPipelineLayoutIsValid(WGPUPipelineLayout pipelineLayout)
 {
     return protect(WebGPU::fromAPI(pipelineLayout))->isValid();
-}
-
-WGPUBool wgpuPresentationContextIsValid(WGPUSurface presentationContext)
-{
-    return protect(WebGPU::fromAPI(presentationContext))->isValid();
 }
 
 WGPUBool wgpuQuerySetIsValid(WGPUQuerySet querySet)
@@ -383,24 +353,4 @@ WGPUBool wgpuTextureIsValid(WGPUTexture texture)
 WGPUBool wgpuTextureViewIsValid(WGPUTextureView textureView)
 {
     return protect(WebGPU::fromAPI(textureView))->isValid();
-}
-
-WGPUBool wgpuXRBindingIsValid(WGPUXRBinding binding)
-{
-    return protect(WebGPU::fromAPI(binding))->isValid();
-}
-
-WGPUBool wgpuXRSubImageIsValid(WGPUXRSubImage subImage)
-{
-    return protect(WebGPU::fromAPI(subImage))->isValid();
-}
-
-WGPUBool wgpuXRProjectionLayerIsValid(WGPUXRProjectionLayer layer)
-{
-    return protect(WebGPU::fromAPI(layer))->isValid();
-}
-
-WGPUBool wgpuXRViewIsValid(WGPUXRView view)
-{
-    return protect(WebGPU::fromAPI(view))->isValid();
 }

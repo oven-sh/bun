@@ -30,7 +30,6 @@
 #include "WebGPUDevice.h"
 #include "WebGPUPtr.h"
 #include "WebGPUQueueImpl.h"
-#include "MediaPlayerIdentifier.h"
 #include <WebGPU/WebGPU.h>
 #include <wtf/Deque.h>
 #include <wtf/TZoneMalloc.h>
@@ -68,12 +67,9 @@ private:
 
     void destroy() final;
 
-    RefPtr<XRBinding> createXRBinding() final;
     RefPtr<Buffer> createBuffer(const BufferDescriptor&) final;
     RefPtr<Texture> createTexture(const TextureDescriptor&) final;
     RefPtr<Sampler> createSampler(const SamplerDescriptor&) final;
-    RefPtr<ExternalTexture> importExternalTexture(const ExternalTextureDescriptor&) final;
-    void NODELETE updateExternalTexture(const WebCore::WebGPU::ExternalTexture&, const WebCore::MediaPlayerIdentifier&) final;
 
     RefPtr<BindGroupLayout> createBindGroupLayout(const BindGroupLayoutDescriptor&) final;
     RefPtr<PipelineLayout> createPipelineLayout(const PipelineLayoutDescriptor&) final;

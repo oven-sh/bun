@@ -26,7 +26,6 @@
 #pragma once
 
 #include "WebGPUBufferBinding.h"
-#include "WebGPUExternalTexture.h"
 #include "WebGPUIntegralTypes.h"
 #include "WebGPUSampler.h"
 #include "WebGPUTexture.h"
@@ -35,7 +34,7 @@
 
 namespace WebCore::WebGPU {
 
-using BindingResource = Variant<std::reference_wrapper<Sampler>, std::reference_wrapper<Texture>, std::reference_wrapper<TextureView>, BufferBinding, std::reference_wrapper<ExternalTexture>>;
+using BindingResource = Variant<std::reference_wrapper<Sampler>, std::reference_wrapper<Texture>, std::reference_wrapper<TextureView>, BufferBinding>;
 
 struct BindGroupEntry {
     Index32 binding { 0 };

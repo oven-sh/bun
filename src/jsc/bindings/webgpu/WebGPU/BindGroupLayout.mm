@@ -432,7 +432,7 @@ Ref<BindGroupLayout> Device::createBindGroupLayout(const WGPUBindGroupLayoutDesc
         }];
         argumentDescriptors[stage] = sortedArray;
         argumentEncoders[stage] = arguments[stage].get().count ? [m_device newArgumentEncoderWithArguments:sortedArray] : nil;
-        argumentEncoders[stage].label = label.createNSString().get();
+        argumentEncoders[stage].label = createNSString(label).get();
         if (arguments[stage].get().count && !argumentEncoders[stage])
             return BindGroupLayout::createInvalid(*this);
     }
@@ -654,7 +654,7 @@ BindGroupLayout::~BindGroupLayout()
 
 void BindGroupLayout::setLabel(String&& label)
 {
-    RetainPtr labelString = label.createNSString();
+    RetainPtr labelString = createNSString(label);
     m_vertexArgumentEncoder.label = labelString.get();
     m_fragmentArgumentEncoder.label = labelString.get();
     m_computeArgumentEncoder.label = labelString.get();

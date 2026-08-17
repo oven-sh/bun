@@ -161,7 +161,7 @@ Ref<Buffer> Device::createBuffer(const WGPUBufferDescriptor& descriptor)
         return Buffer::createInvalid(*this);
     }
 
-    buffer.label = fromAPI(descriptor.label).createNSString().get();
+    buffer.label = createNSString(fromAPI(descriptor.label)).get();
 
     auto initialMapState = Buffer::State::Unmapped;
     auto initialMappingRange = Buffer::MappingRange {
@@ -460,7 +460,7 @@ void Buffer::unmap()
 
 void Buffer::setLabel(String&& label)
 {
-    m_buffer.label = label.createNSString().get();
+    m_buffer.label = createNSString(label).get();
 }
 
 void Buffer::generateAValidationError(String&& message)

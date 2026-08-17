@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ * Copyright (C) 2023 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -25,10 +25,7 @@
 
 #pragma once
 
-#include "PredefinedColorSpace.h"
-
-namespace WebCore::WebGPU {
-
-using PredefinedColorSpace = WebCore::PredefinedColorSpace;
-
-} // namespace WebCore::WebGPU
+// ContextDestructionObserver::scriptExecutionContext() is defined inside the class here,
+// so this header only exists for sources that include it the way WebKit's do.
+#include "ContextDestructionObserver.h"
+#include "ScriptExecutionContext.h"

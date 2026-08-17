@@ -51,10 +51,8 @@ public:
     WGPUComputePassEncoder convertToBacking(const ComputePassEncoder&) final;
     WGPUComputePipeline convertToBacking(const ComputePipeline&) final;
     WGPUDevice convertToBacking(const Device&) final;
-    WGPUExternalTexture convertToBacking(const ExternalTexture&) final;
     WGPUInstance convertToBacking(const GPU&) final;
     WGPUPipelineLayout convertToBacking(const PipelineLayout&) final;
-    WGPUSurface convertToBacking(const PresentationContext&) final;
     WGPUQuerySet convertToBacking(const QuerySet&) final;
     WGPUQueue convertToBacking(const Queue&) final;
     WGPURenderBundleEncoder convertToBacking(const RenderBundleEncoder&) final;
@@ -65,11 +63,6 @@ public:
     WGPUShaderModule convertToBacking(const ShaderModule&) final;
     WGPUTexture convertToBacking(const Texture&) final;
     WGPUTextureView convertToBacking(const TextureView&) final;
-    CompositorIntegrationImpl& convertToBacking(CompositorIntegration&) final;
-    WGPUXRBinding convertToBacking(const XRBinding&) final;
-    WGPUXRProjectionLayer convertToBacking(const XRProjectionLayer&) final;
-    WGPUXRSubImage convertToBacking(const XRSubImage&) final;
-    WGPUXRView convertToBacking(const XRView&) final;
 
 private:
     DowncastConvertToBackingContext() = default;

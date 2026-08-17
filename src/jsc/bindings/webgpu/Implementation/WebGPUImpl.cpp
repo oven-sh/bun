@@ -29,13 +29,7 @@
 #if HAVE(WEBGPU_IMPLEMENTATION)
 
 #include "WebGPUAdapterImpl.h"
-#include "WebGPUCompositorIntegrationImpl.h"
 #include "WebGPUDowncastConvertToBackingContext.h"
-#include "WebGPUPresentationContextDescriptor.h"
-#include "WebGPUPresentationContextImpl.h"
-#include "GraphicsContext.h"
-#include "IntSize.h"
-#include "NativeImage.h"
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/BlockPtr.h>
 #include <wtf/TZoneMallocInlines.h>
@@ -64,7 +58,6 @@ void GPUImpl::requestAdapter(const RequestAdapterOptions& options, CompletionHan
     Ref convertToBackingContext = m_convertToBackingContext;
 
     WGPURequestAdapterOptions backingOptions {
-        .compatibleSurface = nullptr,
 #if CPU(X86_64)
         .powerPreference = WGPUPowerPreference_HighPerformance,
 #else
@@ -82,52 +75,6 @@ void GPUImpl::requestAdapter(const RequestAdapterOptions& options, CompletionHan
             callback(nullptr);
     });
     wgpuInstanceRequestAdapter(m_backing.get(), &backingOptions, &requestAdapterCallback, Block_copy(blockPtr.get())); // Block_copy is matched with Block_release above in requestAdapterCallback().
-}
-
-static WTF::Function<void(CompletionHandler<void()>&&)> convert(WGPUOnSubmittedWorkScheduledCallback&& onSubmittedWorkScheduledCallback)
-{
-    return [onSubmittedWorkScheduledCallback = makeBlockPtr(WTF::move(onSubmittedWorkScheduledCallback))](CompletionHandler<void()>&& completionHandler) {
-        onSubmittedWorkScheduledCallback(makeBlockPtr(WTF::move(completionHandler)).get());
-    };
-}
-
-RefPtr<PresentationContext> GPUImpl::createPresentationContext(const PresentationContextDescriptor& presentationContextDescriptor)
-{
-    Ref compositorIntegration { m_convertToBackingContext->convertToBacking(protect(presentationContextDescriptor.compositorIntegration)) };
-
-    auto registerCallbacksBlock = makeBlockPtr([&](WGPURenderBuffersWereRecreatedBlockCallback renderBuffersWereRecreatedCallback, WGPUOnSubmittedWorkScheduledCallback onSubmittedWorkScheduledCallback) {
-        compositorIntegration->registerCallbacks(makeBlockPtr(WTF::move(renderBuffersWereRecreatedCallback)), convert(WTF::move(onSubmittedWorkScheduledCallback)));
-    });
-
-    WGPUSurfaceDescriptor surfaceDescriptor {
-        .label = nullptr,
-        .cocoaDescriptor = WGPUSurfaceDescriptorCocoaCustomSurface {
-            .compositorIntegrationRegister = registerCallbacksBlock.get(),
-        }
-    };
-
-    auto result = PresentationContextImpl::create(adoptWebGPU(wgpuInstanceCreateSurface(m_backing.get(), &surfaceDescriptor)), m_convertToBackingContext);
-    compositorIntegration->setPresentationContext(result);
-    return result;
-}
-
-RefPtr<CompositorIntegration> GPUImpl::createCompositorIntegration()
-{
-    return CompositorIntegrationImpl::create(m_convertToBackingContext);
-}
-
-void GPUImpl::paintToCanvas(WebCore::NativeImage& image, const WebCore::IntSize& canvasSize, WebCore::GraphicsContext& context)
-{
-    auto imageSize = image.size();
-    FloatRect canvasRect(FloatPoint(), canvasSize);
-    GraphicsContextStateSaver stateSaver(context);
-    context.setImageInterpolationQuality(InterpolationQuality::DoNotInterpolate);
-    context.drawNativeImage(image, canvasRect, FloatRect(FloatPoint(), imageSize), { CompositeOperator::Copy });
-}
-
-bool GPUImpl::isValid(const CompositorIntegration&) const
-{
-    return true;
 }
 
 bool GPUImpl::isValid(const Buffer& buffer) const
@@ -184,22 +131,10 @@ bool GPUImpl::isValid(const Device& device) const
     return wgpuDeviceIsValid(wgpuDevice);
 }
 
-bool GPUImpl::isValid(const ExternalTexture& externalTexture) const
-{
-    WGPUExternalTexture wgpuExternalTexture = m_convertToBackingContext.get().convertToBacking(externalTexture);
-    return wgpuExternalTextureIsValid(wgpuExternalTexture);
-}
-
 bool GPUImpl::isValid(const PipelineLayout& pipelineLayout) const
 {
     WGPUPipelineLayout wgpuPipelineLayout = m_convertToBackingContext.get().convertToBacking(pipelineLayout);
     return wgpuPipelineLayoutIsValid(wgpuPipelineLayout);
-}
-
-bool GPUImpl::isValid(const PresentationContext& presentationContext) const
-{
-    WGPUSurface wgpuPresentationContext = m_convertToBackingContext.get().convertToBacking(presentationContext);
-    return wgpuPresentationContextIsValid(wgpuPresentationContext);
 }
 
 bool GPUImpl::isValid(const QuerySet& querySet) const
@@ -260,30 +195,6 @@ bool GPUImpl::isValid(const TextureView& textureView) const
 {
     WGPUTextureView wgpuTextureView = m_convertToBackingContext.get().convertToBacking(textureView);
     return wgpuTextureViewIsValid(wgpuTextureView);
-}
-
-bool GPUImpl::isValid(const XRBinding& binding) const
-{
-    WGPUXRBinding wgpuBinding = m_convertToBackingContext.get().convertToBacking(binding);
-    return wgpuXRBindingIsValid(wgpuBinding);
-}
-
-bool GPUImpl::isValid(const XRSubImage& subImage) const
-{
-    WGPUXRSubImage wgpuSubImage = m_convertToBackingContext.get().convertToBacking(subImage);
-    return wgpuXRSubImageIsValid(wgpuSubImage);
-}
-
-bool GPUImpl::isValid(const XRProjectionLayer& layer) const
-{
-    WGPUXRProjectionLayer wgpuLayer = m_convertToBackingContext.get().convertToBacking(layer);
-    return wgpuXRProjectionLayerIsValid(wgpuLayer);
-}
-
-bool GPUImpl::isValid(const XRView& view) const
-{
-    WGPUXRView wgpuView = m_convertToBackingContext.get().convertToBacking(view);
-    return wgpuXRViewIsValid(wgpuView);
 }
 
 } // namespace WebCore::WebGPU

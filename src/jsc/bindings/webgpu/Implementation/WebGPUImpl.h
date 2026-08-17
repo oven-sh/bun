@@ -37,28 +37,19 @@
 #include <wtf/Function.h>
 #include <wtf/TZoneMalloc.h>
 
-namespace WebCore {
-class GraphicsContext;
-class IntSize;
-class NativeImage;
-}
-
 namespace WebCore::WebGPU {
 
 class Adapter;
 class Buffer;
 class BindGroup;
 class BindGroupLayout;
-class CompositorIntegration;
 class CommandBuffer;
 class CommandEncoder;
 class ComputePassEncoder;
 class ComputePipeline;
 class ConvertToBackingContext;
 class Device;
-class ExternalTexture;
 class PipelineLayout;
-class PresentationContext;
 class QuerySet;
 class Queue;
 class RenderBundleEncoder;
@@ -69,9 +60,6 @@ class Sampler;
 class ShaderModule;
 class Texture;
 class TextureView;
-class XRBinding;
-class XRProjectionLayer;
-class XRSubImage;
 
 class GPUImpl final : public GPU, public RefCounted<GPUImpl> {
     WTF_MAKE_TZONE_ALLOCATED(GPUImpl);
@@ -85,8 +73,6 @@ public:
     }
 
     virtual ~GPUImpl();
-
-    void paintToCanvas(WebCore::NativeImage&, const WebCore::IntSize&, WebCore::GraphicsContext&) final;
 
 private:
     friend class DowncastConvertToBackingContext;
@@ -103,10 +89,6 @@ private:
 
     void requestAdapter(const RequestAdapterOptions&, CompletionHandler<void(RefPtr<Adapter>&&)>&&) final;
 
-    RefPtr<PresentationContext> createPresentationContext(const PresentationContextDescriptor&) final;
-
-    RefPtr<CompositorIntegration> createCompositorIntegration() final;
-    bool NODELETE isValid(const CompositorIntegration&) const final;
     bool isValid(const Buffer&) const final;
     bool isValid(const Adapter&) const final;
     bool isValid(const BindGroup&) const final;
@@ -116,9 +98,7 @@ private:
     bool isValid(const ComputePassEncoder&) const final;
     bool isValid(const ComputePipeline&) const final;
     bool isValid(const Device&) const final;
-    bool isValid(const ExternalTexture&) const final;
     bool isValid(const PipelineLayout&) const final;
-    bool isValid(const PresentationContext&) const final;
     bool isValid(const QuerySet&) const final;
     bool isValid(const Queue&) const final;
     bool isValid(const RenderBundleEncoder&) const final;
@@ -129,10 +109,6 @@ private:
     bool isValid(const ShaderModule&) const final;
     bool isValid(const Texture&) const final;
     bool isValid(const TextureView&) const final;
-    bool isValid(const XRBinding&) const final;
-    bool isValid(const XRSubImage&) const final;
-    bool isValid(const XRProjectionLayer&) const final;
-    bool isValid(const XRView&) const final;
 
     WebGPUPtr<WGPUInstance> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;

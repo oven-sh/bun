@@ -192,7 +192,7 @@ static MTLSamplerDescriptor *createMetalDescriptorFromDescriptor(const WGPUSampl
     // https://developer.apple.com/documentation/metal/mtlsamplerdescriptor/1516164-maxanisotropy?language=objc
     // "Values must be between 1 and 16, inclusive."
     samplerDescriptor.maxAnisotropy = std::min<uint16_t>(descriptor.maxAnisotropy, 16);
-    samplerDescriptor.label = descriptor.label.createNSString().get();
+    samplerDescriptor.label = createNSString(descriptor.label).get();
 
     return samplerDescriptor;
 }

@@ -62,13 +62,10 @@ class GPUCommandEncoder;
 struct GPUCommandEncoderDescriptor;
 class GPUComputePipeline;
 struct GPUComputePipelineDescriptor;
-class GPUExternalTexture;
-struct GPUExternalTextureDescriptor;
 class GPURenderPipeline;
 struct GPURenderPipelineDescriptor;
 class GPUPipelineLayout;
 struct GPUPipelineLayoutDescriptor;
-class GPUPresentationContext;
 class GPUQuerySet;
 struct GPUQuerySetDescriptor;
 class GPURenderBundleEncoder;
@@ -83,14 +80,7 @@ class GPUSupportedFeatures;
 class GPUSupportedLimits;
 class GPUTexture;
 struct GPUTextureDescriptor;
-class HTMLVideoElement;
-class WebXRSession;
-class XRGPUBinding;
 template<typename T> struct UniquelyAnnotatedDescriptor;
-
-namespace WebGPU {
-class XRBinding;
-}
 
 class GPUDevice : public RefCounted<GPUDevice>, public ActiveDOMObject, public EventTarget {
     WTF_MAKE_TZONE_ALLOCATED(GPUDevice);
@@ -120,12 +110,10 @@ public:
 
     void destroy(ScriptExecutionContext&);
 
-    RefPtr<WebGPU::XRBinding> createXRBinding(const WebXRSession&);
     ExceptionOr<Ref<GPUBuffer>> createBuffer(GPUBufferDescriptor&&);
     ExceptionOr<Ref<GPUTexture>> createTexture(GPUTextureDescriptor&&);
     std::optional<String> errorValidatingSupportedFormat(GPUTextureFormat) const;
     ExceptionOr<Ref<GPUSampler>> createSampler(std::optional<GPUSamplerDescriptor>&&);
-    ExceptionOr<Ref<GPUExternalTexture>> importExternalTexture(GPUExternalTextureDescriptor&&);
 
     ExceptionOr<Ref<GPUBindGroupLayout>> createBindGroupLayout(GPUBindGroupLayoutDescriptor&&);
     ExceptionOr<Ref<GPUPipelineLayout>> createPipelineLayout(GPUPipelineLayoutDescriptor&&);
@@ -163,10 +151,6 @@ public:
     void addBufferToUnmap(GPUBuffer&);
     Ref<GPUAdapterInfo> NODELETE adapterInfo() const;
 
-#if ENABLE(VIDEO)
-    WeakPtr<GPUExternalTexture> takeExternalTextureForVideoElement(const HTMLVideoElement&);
-#endif
-
     bool hasActiveInspectorCanvasCallTracer() const { return m_hasActiveInspectorCanvasCallTracer; }
     void setHasActiveInspectorCanvasCallTracer(bool active) { m_hasActiveInspectorCanvasCallTracer = active; }
 
@@ -177,7 +161,7 @@ private:
     RefPtr<GPUPipelineLayout> createAutoPipelineLayout();
 
     // EventTarget.
-    enum EventTargetInterfaceType eventTargetInterface() const final { return EventTargetInterfaceType::GPUDevice; }
+    EventTargetInterface eventTargetInterface() const final { return GPUDeviceEventTargetInterfaceType; }
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
@@ -189,13 +173,6 @@ private:
     RefPtr<GPUPipelineLayout> m_autoPipelineLayout;
     WeakHashSet<GPUBuffer> m_buffersToUnmap;
 
-#if ENABLE(VIDEO)
-    GPUExternalTexture* externalTextureForDescriptor(const GPUExternalTextureDescriptor&);
-
-    WeakHashMap<HTMLVideoElement, WeakPtr<GPUExternalTexture>> m_videoElementToExternalTextureMap;
-    std::pair<RefPtr<HTMLVideoElement>, RefPtr<GPUExternalTexture>> m_previouslyImportedExternalTexture;
-    std::pair<Vector<GPUBindGroupEntry>, RefPtr<GPUBindGroup>> m_lastCreatedExternalTextureBindGroup;
-#endif
     const Ref<GPUSupportedFeatures> m_features;
     const Ref<GPUSupportedLimits> m_limits;
     const Ref<GPUAdapterInfo> m_adapterInfo;
@@ -207,5 +184,3 @@ private:
 };
 
 } // namespace WebCore
-
-SPECIALIZE_TYPE_TRAITS_EVENTTARGET(GPUDevice)

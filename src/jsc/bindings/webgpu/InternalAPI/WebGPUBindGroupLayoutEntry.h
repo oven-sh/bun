@@ -26,7 +26,6 @@
 #pragma once
 
 #include "WebGPUBufferBindingLayout.h"
-#include "WebGPUExternalTextureBindingLayout.h"
 #include "WebGPUIntegralTypes.h"
 #include "WebGPUSamplerBindingLayout.h"
 #include "WebGPUShaderStage.h"
@@ -44,7 +43,6 @@ struct BindGroupLayoutEntry {
     std::optional<SamplerBindingLayout> sampler;
     std::optional<TextureBindingLayout> texture;
     std::optional<StorageTextureBindingLayout> storageTexture;
-    std::optional<ExternalTextureBindingLayout> externalTexture;
 };
 
 } // namespace WebCore::WebGPU

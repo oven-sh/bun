@@ -112,7 +112,6 @@ typedef struct WGPUCommandEncoderImpl* WGPUCommandEncoder WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUComputePassEncoderImpl* WGPUComputePassEncoder WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUComputePipelineImpl* WGPUComputePipeline WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUDeviceImpl* WGPUDevice WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUExternalTextureImpl* WGPUExternalTexture;
 typedef struct WGPUInstanceImpl* WGPUInstance WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUPipelineLayoutImpl* WGPUPipelineLayout WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUQuerySetImpl* WGPUQuerySet WGPU_OBJECT_ATTRIBUTE;
@@ -123,14 +122,8 @@ typedef struct WGPURenderPassEncoderImpl* WGPURenderPassEncoder WGPU_OBJECT_ATTR
 typedef struct WGPURenderPipelineImpl* WGPURenderPipeline WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUSamplerImpl* WGPUSampler WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUShaderModuleImpl* WGPUShaderModule WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUSurfaceImpl* WGPUSurface WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUSwapChainImpl* WGPUSwapChain WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUTextureImpl* WGPUTexture WGPU_OBJECT_ATTRIBUTE;
 typedef struct WGPUTextureViewImpl* WGPUTextureView WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUXRBindingImpl* WGPUXRBinding WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUXRSubImageImpl* WGPUXRSubImage WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUXRProjectionLayerImpl* WGPUXRProjectionLayer WGPU_OBJECT_ATTRIBUTE;
-typedef struct WGPUXRViewImpl* WGPUXRView WGPU_OBJECT_ATTRIBUTE;
 
 // Structure forward declarations
 struct WGPUAdapterProperties;
@@ -164,15 +157,6 @@ struct WGPUShaderModuleCompilationHint;
 struct WGPUShaderModuleSPIRVDescriptor;
 struct WGPUStencilFaceState;
 struct WGPUStorageTextureBindingLayout;
-struct WGPUSurfaceDescriptor;
-struct WGPUSurfaceDescriptorFromAndroidNativeWindow;
-struct WGPUSurfaceDescriptorFromCanvasHTMLSelector;
-struct WGPUSurfaceDescriptorFromMetalLayer;
-struct WGPUSurfaceDescriptorFromWaylandSurface;
-struct WGPUSurfaceDescriptorFromWindowsHWND;
-struct WGPUSurfaceDescriptorFromXcbWindow;
-struct WGPUSurfaceDescriptorFromXlibWindow;
-struct WGPUSwapChainDescriptor;
 struct WGPUTextureBindingLayout;
 struct WGPUTextureDataLayout;
 struct WGPUTextureViewDescriptor;
@@ -827,7 +811,6 @@ typedef struct WGPUBindGroupEntry {
     WGPU_NULLABLE WGPUSampler sampler;
     WGPU_NULLABLE WGPUTexture texture;
     WGPU_NULLABLE WGPUTextureView textureView;
-    WGPU_NULLABLE WGPUExternalTexture externalTexture;
 } WGPUBindGroupEntry WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUBlendComponent {
@@ -897,10 +880,6 @@ typedef struct WGPUExtent3D {
 typedef void (^WGPUWorkItem)(void);
 typedef void (^WGPUScheduleWorkBlock)(WGPUWorkItem workItem);
 typedef void (^WGPUDeviceLostBlockCallback)(WGPUDeviceLostReason reason, char const * message);
-
-typedef void (^WGPURenderBuffersWereRecreatedBlockCallback)(CFArrayRef ioSurfaces);
-typedef void (^WGPUOnSubmittedWorkScheduledCallback)(WGPUWorkItem);
-typedef void (^WGPUCompositorIntegrationRegisterBlockCallback)(WGPURenderBuffersWereRecreatedBlockCallback renderBuffersWereRecreated, WGPUOnSubmittedWorkScheduledCallback onSubmittedWorkScheduledCallback);
 
 typedef struct WGPUInstanceCocoaDescriptor {
     // The API contract is: callers must call WebGPU's functions in a non-racey way with respect
@@ -1030,7 +1009,6 @@ typedef struct WGPURenderPassTimestampWrites {
 } WGPURenderPassTimestampWrites WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPURequestAdapterOptions {
-    WGPU_NULLABLE WGPUSurface compatibleSurface;
     WGPUPowerPreference powerPreference;
     WGPUBackendType backendType;
     WGPUBool forceFallbackAdapter;
@@ -1072,75 +1050,6 @@ typedef struct WGPUStorageTextureBindingLayout {
     WGPUTextureFormat format;
     WGPUTextureViewDimension viewDimension;
 } WGPUStorageTextureBindingLayout WGPU_STRUCTURE_ATTRIBUTE;
-
-typedef struct WGPUSurfaceDescriptorCocoaCustomSurface {
-    WGPUCompositorIntegrationRegisterBlockCallback compositorIntegrationRegister;
-} WGPUSurfaceDescriptorCocoaCustomSurface;
-
-typedef struct WGPUSurfaceDescriptor {
-    WGPU_NULLABLE char const * label;
-    WGPUSurfaceDescriptorCocoaCustomSurface cocoaDescriptor;
-} WGPUSurfaceDescriptor WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromAndroidNativeWindow {
-    WGPUChainedStruct chain;
-    void * window;
-} WGPUSurfaceDescriptorFromAndroidNativeWindow WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromCanvasHTMLSelector {
-    WGPUChainedStruct chain;
-    char const * selector;
-} WGPUSurfaceDescriptorFromCanvasHTMLSelector WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromMetalLayer {
-    WGPUChainedStruct chain;
-    void * layer;
-} WGPUSurfaceDescriptorFromMetalLayer WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromWaylandSurface {
-    WGPUChainedStruct chain;
-    void * display;
-    void * surface;
-} WGPUSurfaceDescriptorFromWaylandSurface WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromWindowsHWND {
-    WGPUChainedStruct chain;
-    void * hinstance;
-    void * hwnd;
-} WGPUSurfaceDescriptorFromWindowsHWND WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromXcbWindow {
-    WGPUChainedStruct chain;
-    void * connection;
-    uint32_t window;
-} WGPUSurfaceDescriptorFromXcbWindow WGPU_STRUCTURE_ATTRIBUTE;
-
-// Can be chained in WGPUSurfaceDescriptor
-typedef struct WGPUSurfaceDescriptorFromXlibWindow {
-    WGPUChainedStruct chain;
-    void * display;
-    uint64_t window;
-} WGPUSurfaceDescriptorFromXlibWindow WGPU_STRUCTURE_ATTRIBUTE;
-
-typedef struct WGPUSwapChainDescriptor {
-    WGPU_NULLABLE char const * label;
-    WGPUTextureUsageFlags usage;
-    WGPUTextureFormat format;
-    uint32_t width;
-    uint32_t height;
-    WGPUPresentMode presentMode;
-    Vector<WGPUTextureFormat> viewFormats;
-    WGPUColorSpace colorSpace;
-    WGPUToneMappingMode toneMappingMode;
-    WGPUCompositeAlphaMode compositeAlphaMode;
-    WGPUBool reportValidationErrors;
-} WGPUSwapChainDescriptor WGPU_STRUCTURE_ATTRIBUTE;
 
 typedef struct WGPUTextureBindingLayout {
     WGPUTextureSampleType sampleType;
@@ -1497,7 +1406,6 @@ typedef void (*WGPUProcDeviceReference)(WGPUDevice device) WGPU_FUNCTION_ATTRIBU
 typedef void (*WGPUProcDeviceRelease)(WGPUDevice device) WGPU_FUNCTION_ATTRIBUTE;
 
 // Procs of Instance
-typedef WGPUSurface (*WGPUProcInstanceCreateSurface)(WGPUInstance instance, WGPUSurfaceDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcInstanceProcessEvents)(WGPUInstance instance) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcInstanceRequestAdapter)(WGPUInstance instance, WGPU_NULLABLE WGPURequestAdapterOptions const * options, WGPURequestAdapterCallback callback, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcInstanceReference)(WGPUInstance instance) WGPU_FUNCTION_ATTRIBUTE;
@@ -1587,17 +1495,6 @@ typedef void (*WGPUProcShaderModuleGetCompilationInfo)(WGPUShaderModule shaderMo
 typedef void (*WGPUProcShaderModuleSetLabel)(WGPUShaderModule shaderModule, char const * label) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcShaderModuleReference)(WGPUShaderModule shaderModule) WGPU_FUNCTION_ATTRIBUTE;
 typedef void (*WGPUProcShaderModuleRelease)(WGPUShaderModule shaderModule) WGPU_FUNCTION_ATTRIBUTE;
-
-// Procs of Surface
-typedef WGPUTextureFormat (*WGPUProcSurfaceGetPreferredFormat)(WGPUSurface surface, WGPUAdapter adapter) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUProcSurfaceReference)(WGPUSurface surface) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUProcSurfaceRelease)(WGPUSurface surface) WGPU_FUNCTION_ATTRIBUTE;
-
-// Procs of SwapChain
-typedef WGPUTextureView (*WGPUProcSwapChainGetCurrentTextureView)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUProcSwapChainPresent)(WGPUSwapChain swapChain, uint32_t frameIndex) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUProcSwapChainReference)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-typedef void (*WGPUProcSwapChainRelease)(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
 
 // Procs of Texture
 typedef WGPUTextureView (*WGPUProcTextureCreateView)(WGPUTexture texture, WGPU_NULLABLE WGPUTextureViewDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
@@ -1715,7 +1612,6 @@ WGPU_EXPORT WGPURenderPipeline wgpuDeviceCreateRenderPipeline(WGPUDevice device,
 WGPU_EXPORT void wgpuDeviceCreateRenderPipelineAsync(WGPUDevice device, WGPURenderPipelineDescriptor const * descriptor, WGPUCreateRenderPipelineAsyncCallback callback, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUSampler wgpuDeviceCreateSampler(WGPUDevice device, WGPU_NULLABLE WGPUSamplerDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUShaderModule wgpuDeviceCreateShaderModule(WGPUDevice device, WGPUShaderModuleDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT WGPUSwapChain wgpuDeviceCreateSwapChain(WGPUDevice device, WGPUSurface surface, WGPUSwapChainDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUTexture wgpuDeviceCreateTexture(WGPUDevice device, WGPUTextureDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuDeviceDestroy(WGPUDevice device) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT size_t wgpuDeviceEnumerateFeatures(WGPUDevice device, WGPUFeatureName * features) WGPU_FUNCTION_ATTRIBUTE;
@@ -1730,7 +1626,6 @@ WGPU_EXPORT void wgpuDeviceReference(WGPUDevice device) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuDeviceRelease(WGPUDevice device) WGPU_FUNCTION_ATTRIBUTE;
 
 // Methods of Instance
-WGPU_EXPORT WGPUSurface wgpuInstanceCreateSurface(WGPUInstance instance, WGPUSurfaceDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuInstanceProcessEvents(WGPUInstance instance) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuInstanceRequestAdapter(WGPUInstance instance, WGPU_NULLABLE WGPURequestAdapterOptions const * options, WGPURequestAdapterCallback callback, void * userdata) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuInstanceReference(WGPUInstance instance) WGPU_FUNCTION_ATTRIBUTE;
@@ -1821,17 +1716,6 @@ WGPU_EXPORT void wgpuShaderModuleSetLabel(WGPUShaderModule shaderModule, char co
 WGPU_EXPORT void wgpuShaderModuleReference(WGPUShaderModule shaderModule) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuShaderModuleRelease(WGPUShaderModule shaderModule) WGPU_FUNCTION_ATTRIBUTE;
 
-// Methods of Surface
-WGPU_EXPORT WGPUTextureFormat wgpuSurfaceGetPreferredFormat(WGPUSurface surface, WGPUAdapter adapter) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuSurfaceReference(WGPUSurface surface) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuSurfaceRelease(WGPUSurface surface) WGPU_FUNCTION_ATTRIBUTE;
-
-// Methods of SwapChain
-WGPU_EXPORT WGPUTextureView wgpuSwapChainGetCurrentTextureView(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuSwapChainPresent(WGPUSwapChain swapChain, uint32_t frameIndex) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuSwapChainReference(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuSwapChainRelease(WGPUSwapChain swapChain) WGPU_FUNCTION_ATTRIBUTE;
-
 // Methods of Texture
 WGPU_EXPORT WGPUTextureView wgpuTextureCreateView(WGPUTexture texture, WGPU_NULLABLE WGPUTextureViewDescriptor const * descriptor) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT void wgpuTextureDestroy(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
@@ -1864,7 +1748,6 @@ WGPU_EXPORT WGPUBool wgpuComputePassEncoderIsValid(WGPUComputePassEncoder comput
 WGPU_EXPORT WGPUBool wgpuComputePipelineIsValid(WGPUComputePipeline computePipeline) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuDeviceIsValid(WGPUDevice device) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuPipelineLayoutIsValid(WGPUPipelineLayout pipelineLayout) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT WGPUBool wgpuPresentationContextIsValid(WGPUSurface presentationContext) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuQuerySetIsValid(WGPUQuerySet querySet) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuQueueIsValid(WGPUQueue queue) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuRenderBundleEncoderIsValid(WGPURenderBundleEncoder renderBundleEncoder) WGPU_FUNCTION_ATTRIBUTE;
@@ -1875,26 +1758,6 @@ WGPU_EXPORT WGPUBool wgpuSamplerIsValid(WGPUSampler sampler) WGPU_FUNCTION_ATTRI
 WGPU_EXPORT WGPUBool wgpuShaderModuleIsValid(WGPUShaderModule shaderModule) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuTextureIsValid(WGPUTexture texture) WGPU_FUNCTION_ATTRIBUTE;
 WGPU_EXPORT WGPUBool wgpuTextureViewIsValid(WGPUTextureView textureView) WGPU_FUNCTION_ATTRIBUTE;
-
-// XRBinding functions
-WGPU_EXPORT void wgpuXRBindingReference(WGPUXRBinding binding) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuXRBindingRelease(WGPUXRBinding binding) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT WGPUBool wgpuXRBindingIsValid(WGPUXRBinding binding) WGPU_FUNCTION_ATTRIBUTE;
-
-// XRSubImage functions
-WGPU_EXPORT void wgpuXRSubImageReference(WGPUXRSubImage binding) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuXRSubImageRelease(WGPUXRSubImage binding) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT WGPUBool wgpuXRSubImageIsValid(WGPUXRSubImage binding) WGPU_FUNCTION_ATTRIBUTE;
-
-// XRProjectionLayer functions
-WGPU_EXPORT void wgpuXRProjectionLayerReference(WGPUXRProjectionLayer binding) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuXRProjectionLayerRelease(WGPUXRProjectionLayer binding) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT WGPUBool wgpuXRProjectionLayerIsValid(WGPUXRProjectionLayer binding) WGPU_FUNCTION_ATTRIBUTE;
-
-// XRView functions
-WGPU_EXPORT void wgpuXRViewReference(WGPUXRView view) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT void wgpuXRViewRelease(WGPUXRView view) WGPU_FUNCTION_ATTRIBUTE;
-WGPU_EXPORT WGPUBool wgpuXRViewIsValid(WGPUXRView view) WGPU_FUNCTION_ATTRIBUTE;
 
 #endif  // !defined(WGPU_SKIP_DECLARATIONS)
 

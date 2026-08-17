@@ -34,7 +34,6 @@
 #include "GPUQuerySet.h"
 #include "GPURenderBundle.h"
 #include "GPURenderPipeline.h"
-#include "InspectorInstrumentation.h"
 
 namespace WebCore {
 
@@ -84,8 +83,6 @@ void GPURenderPassEncoder::setVertexBuffer(GPUIndex32 slot, const GPUBuffer* buf
 void GPURenderPassEncoder::draw(GPUSize32 vertexCount, GPUSize32 instanceCount,
     GPUSize32 firstVertex, GPUSize32 firstInstance)
 {
-    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
-        return;
     protect(backing())->draw(vertexCount, instanceCount, firstVertex, firstInstance);
 }
 
@@ -94,22 +91,16 @@ void GPURenderPassEncoder::drawIndexed(GPUSize32 indexCount, GPUSize32 instanceC
     GPUSignedOffset32 baseVertex,
     GPUSize32 firstInstance)
 {
-    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
-        return;
     protect(backing())->drawIndexed(indexCount, instanceCount, firstIndex, baseVertex, firstInstance);
 }
 
 void GPURenderPassEncoder::drawIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
-    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
-        return;
     protect(backing())->drawIndirect(indirectBuffer.backing(), indirectOffset);
 }
 
 void GPURenderPassEncoder::drawIndexedIndirect(const GPUBuffer& indirectBuffer, GPUSize64 indirectOffset)
 {
-    if (RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled(*pipeline)) [[unlikely]]
-        return;
     protect(backing())->drawIndexedIndirect(indirectBuffer.backing(), indirectOffset);
 }
 

@@ -61,7 +61,6 @@ class BindGroup;
 class Buffer;
 class CommandBuffer;
 class ComputePassEncoder;
-class ExternalTexture;
 class QuerySet;
 class RenderPassEncoder;
 class Sampler;
@@ -146,7 +145,6 @@ public:
     bool trackEncoderForBuffer(const Buffer&, TrackedResourceContainer&);
     void trackEncoderForTexture(const Texture&, TrackedResourceContainer&);
     void trackEncoderForTextureView(const TextureView&, TrackedResourceContainer&);
-    void trackEncoderForExternalTexture(const ExternalTexture&, TrackedResourceContainer&);
     void trackEncoderForQuerySet(const QuerySet&, TrackedResourceContainer&);
     static void trackEncoder(CommandEncoder&, HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>&);
     static size_t computeSize(TrackedResourceContainer&, const Device&);
@@ -199,7 +197,6 @@ private:
     Vector<Ref<const Buffer>> m_trackedBuffers;
     Vector<Ref<const Texture>> m_trackedTextures;
     Vector<Ref<const TextureView>> m_trackedTextureViews;
-    Vector<Ref<const ExternalTexture>> m_trackedExternalTextures;
     Vector<Ref<const QuerySet>> m_trackedQuerySets;
 
     int m_bufferMapCount { 0 };

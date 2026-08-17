@@ -32,14 +32,11 @@
 
 namespace WebCore::WebGPU {
 
-class ExternalTexture;
-
 class BindGroup : public RefCountedAndCanMakeWeakPtr<BindGroup> {
 public:
     virtual ~BindGroup() = default;
 
     String label() const { return m_label; }
-    virtual bool updateExternalTextures(ExternalTexture&) = 0;
 
     void setLabel(String&& label)
     {

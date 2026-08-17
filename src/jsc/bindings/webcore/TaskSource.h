@@ -34,6 +34,7 @@ enum class TaskSource : uint8_t {
     PerformanceTimeline,
     PostedMessageQueue,
     Timer,
+    WebGPU,
     WebSocket,
 
     // Internal to WebCore

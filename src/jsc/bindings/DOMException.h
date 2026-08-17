@@ -41,6 +41,8 @@ public:
     // For DOM bindings.
     static Ref<DOMException> create(const String& message, const String& name);
 
+    virtual ~DOMException() {}
+
     using LegacyCode = uint8_t;
     LegacyCode legacyCode() const { return m_legacyCode; }
 
@@ -55,10 +57,15 @@ public:
 
     WEBCORE_EXPORT static const Description& description(ExceptionCode);
 
+    enum class Type : uint8_t { Default,
+        GPUPipelineError };
+    Type type() const { return m_type; }
+
 protected:
-    DOMException(LegacyCode, const String& name, const String& message);
+    DOMException(LegacyCode, const String& name, const String& message, Type = Type::Default);
 
 private:
+    Type m_type;
     LegacyCode m_legacyCode;
     String m_name;
     String m_message;

@@ -37,6 +37,7 @@ enum EventTargetInterface {
     WebSocketEventTargetInterfaceType = 70,
     WorkerEventTargetInterfaceType = 71,
     BunWebViewEventTargetInterfaceType = 75,
+    GPUDeviceEventTargetInterfaceType = 76,
 };
 
 } // namespace WebCore

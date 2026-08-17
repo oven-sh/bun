@@ -65,7 +65,7 @@ CommandBuffer::~CommandBuffer()
 
 void CommandBuffer::setLabel(String&& label)
 {
-    m_commandBuffer.label = label.createNSString().get();
+    m_commandBuffer.label = createNSString(label).get();
 }
 
 void CommandBuffer::makeInvalid(NSString* lastError)

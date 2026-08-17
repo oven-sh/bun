@@ -28,26 +28,16 @@
 
 #if HAVE(WEBGPU_IMPLEMENTATION)
 
-#include "ProcessIdentity.h"
 #include "WebGPUDowncastConvertToBackingContext.h"
 #include "WebGPUImpl.h"
 #include "WebGPUPtr.h"
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/BlockPtr.h>
 
-#if 1 /* PLATFORM(COCOA) */
-#include <wtf/darwin/WeakLinking.h>
-
-WTF_WEAK_LINK_FORCE_IMPORT(wgpuCreateInstance);
-#endif
-
 namespace WebCore::WebGPU {
 
-RefPtr<GPU> create(ScheduleWorkFunction&& scheduleWorkFunction, const WebCore::ProcessIdentity* webProcessIdentity)
+RefPtr<GPU> create(ScheduleWorkFunction&& scheduleWorkFunction)
 {
-#if !HAVE(TASK_IDENTITY_TOKEN)
-    UNUSED_PARAM(webProcessIdentity);
-#endif
     auto scheduleWorkBlock = makeBlockPtr([scheduleWorkFunction = WTF::move(scheduleWorkFunction)](WGPUWorkItem workItem)
     {
         scheduleWorkFunction(Function<void()>(makeBlockPtr(WTF::move(workItem))));
@@ -56,16 +46,10 @@ RefPtr<GPU> create(ScheduleWorkFunction&& scheduleWorkFunction, const WebCore::P
     WGPUInstanceDescriptor descriptor = {
         .cocoaDescriptor = WGPUInstanceCocoaDescriptor {
             .scheduleWorkBlock = scheduleWorkBlock.get(),
-#if HAVE(TASK_IDENTITY_TOKEN)
-            .webProcessResourceOwner = webProcessIdentity ? &webProcessIdentity->taskId() : nullptr,
-#else
             .webProcessResourceOwner = nullptr,
-#endif
         }
     };
 
-    if (!&wgpuCreateInstance)
-        return nullptr;
     auto instance = adoptWebGPU(wgpuCreateInstance(&descriptor));
     if (!instance)
         return nullptr;

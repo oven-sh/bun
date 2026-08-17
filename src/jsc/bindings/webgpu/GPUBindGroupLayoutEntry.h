@@ -26,7 +26,6 @@
 #pragma once
 
 #include "GPUBufferBindingLayout.h"
-#include "GPUExternalTextureBindingLayout.h"
 #include "GPUIntegralTypes.h"
 #include "GPUSamplerBindingLayout.h"
 #include "GPUShaderStage.h"
@@ -47,7 +46,6 @@ struct GPUBindGroupLayoutEntry {
             sampler ? std::optional { sampler->convertToBacking() } : std::nullopt,
             texture ? std::optional { texture->convertToBacking() } : std::nullopt,
             storageTexture ? std::optional { storageTexture->convertToBacking() } : std::nullopt,
-            externalTexture ? std::optional { externalTexture->convertToBacking() } : std::nullopt,
         };
     }
 
@@ -58,7 +56,6 @@ struct GPUBindGroupLayoutEntry {
     std::optional<GPUSamplerBindingLayout> sampler;
     std::optional<GPUTextureBindingLayout> texture;
     std::optional<GPUStorageTextureBindingLayout> storageTexture;
-    std::optional<GPUExternalTextureBindingLayout> externalTexture;
 };
 
 }

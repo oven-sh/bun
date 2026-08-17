@@ -127,24 +127,9 @@ void QueueImpl::writeTexture(
     wgpuQueueWriteTexture(m_backing.get(), &backingDestination, source, &backingDataLayout, &backingSize);
 }
 
-void QueueImpl::copyExternalImageToTexture(
-    const ImageCopyExternalImage& source,
-    const ImageCopyTextureTagged& destination,
-    const Extent3D& copySize)
-{
-    UNUSED_PARAM(source);
-    UNUSED_PARAM(destination);
-    UNUSED_PARAM(copySize);
-}
-
 void QueueImpl::setLabelInternal(const String& label)
 {
     wgpuQueueSetLabel(m_backing.get(), label.utf8().data());
-}
-
-RefPtr<WebCore::NativeImage> QueueImpl::getNativeImage(WebCore::VideoFrame&)
-{
-    RELEASE_ASSERT_NOT_REACHED();
 }
 
 } // namespace WebCore::WebGPU

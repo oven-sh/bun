@@ -116,7 +116,7 @@ Ref<CommandEncoder> Device::createCommandEncoder(const WGPUCommandEncoderDescrip
     if (!commandBuffer)
         return CommandEncoder::createInvalid(*this);
 
-    commandBuffer.label = fromAPI(descriptor.label).createNSString().get();
+    commandBuffer.label = createNSString(fromAPI(descriptor.label)).get();
 
     auto commandEncoder = CommandEncoder::create(commandBuffer, *this, m_commandEncoderId++);
     m_commandEncoderMap.set(commandEncoder->uniqueId(), commandEncoder.ptr());
@@ -302,7 +302,7 @@ Ref<ComputePassEncoder> CommandEncoder::beginComputePass(const WGPUComputePassDe
 
     id<MTLComputeCommandEncoder> computeCommandEncoder = [m_commandBuffer computeCommandEncoderWithDescriptor:computePassDescriptor];
     setExistingEncoder(computeCommandEncoder);
-    computeCommandEncoder.label = descriptor.label.createNSString().get();
+    computeCommandEncoder.label = createNSString(descriptor.label).get();
 
     return ComputePassEncoder::create(computeCommandEncoder, descriptor, *this, m_device);
 }
@@ -584,7 +584,6 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
     uint32_t textureWidth = 0, textureHeight = 0, sampleCount = 0;
     using SliceSet = HashSet<uint64_t, DefaultHash<uint64_t>, WTF::UnsignedWithZeroKeyHashTraits<uint64_t>>;
     HashMap<void*, SliceSet> depthSlices;
-    NSUInteger compositorTextureSlice = 0;
     for (auto [ i, attachment ] : indexedRange(descriptor.colorAttachmentsSpan())) {
         if (!attachment.view && !attachment.texture)
             continue;
@@ -688,10 +687,8 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
                 return RenderPassEncoder::createInvalid(*this, m_device, [NSString stringWithFormat:@"resolve target dimensions (%u x %u) don't match expected dimensions (%u x %u)", resolveTarget.width(), resolveTarget.height(), texture.width(), texture.height()]);
         }
 
-        if (id<MTLRasterizationRateMap> rateMap = compositorTexture.apiParentTexture().rasterizationMapForSlice(compositorTexture.parentRelativeSlice())) {
+        if (id<MTLRasterizationRateMap> rateMap = compositorTexture.apiParentTexture().rasterizationMapForSlice(compositorTexture.parentRelativeSlice()))
             mtlDescriptor.rasterizationRateMap = rateMap;
-            compositorTextureSlice = compositorTexture.parentRelativeSlice();
-        }
 
         if (textureToClear) {
             TextureAndClearColor *textureWithResolve = [[TextureAndClearColor alloc] initWithTexture:textureToClear];
@@ -740,16 +737,6 @@ Ref<RenderPassEncoder> CommandEncoder::beginRenderPass(const WGPURenderPassDescr
             mtlAttachment.level = 0;
             mtlAttachment.loadAction = loadAction(attachment->depthLoadOp, attachment->depthReadOnly);
             mtlAttachment.storeAction = storeAction(attachment->depthStoreOp);
-
-            if (mtlDescriptor.rasterizationRateMap && metalDepthStencilTexture.sampleCount > 1) {
-                if (auto xrSubImage = m_device->getXRViewSubImage()) {
-                    if (RefPtr depthTexture = xrSubImage->depthTexture()) {
-                        mtlAttachment.resolveTexture = depthTexture->texture();
-                        mtlAttachment.storeAction = storeAction(attachment->depthStoreOp, true);
-                        mtlAttachment.resolveSlice = compositorTextureSlice;
-                    }
-                }
-            }
 
             if (mtlAttachment.loadAction == MTLLoadActionLoad && mtlAttachment.storeAction == MTLStoreActionDontCare && !textureView.previouslyCleared()) {
                 depthStencilAttachmentToClear = mtlAttachment.texture;
@@ -2150,7 +2137,7 @@ Ref<CommandBuffer> CommandEncoder::finish(const WGPUCommandBufferDescriptor& des
     m_commandBuffer = nil;
     m_existingCommandEncoder = nil;
 
-    commandBuffer.label = descriptor.label.createNSString().get();
+    commandBuffer.label = createNSString(descriptor.label).get();
 
 #if CPU(X86_64) && (1 /* PLATFORM(MAC) */ || 0 /* PLATFORM(MACCATALYST) */)
     ALLOW_DEPRECATED_DECLARATIONS_BEGIN
@@ -2187,7 +2174,7 @@ void CommandEncoder::insertDebugMarker(String&& markerLabel)
     finalizeBlitCommandEncoder();
 
     // There's no direct way of doing this, so we just push/pop an empty debug group.
-    [m_commandBuffer pushDebugGroup:markerLabel.createNSString().get()];
+    [m_commandBuffer pushDebugGroup:createNSString(markerLabel).get()];
     [m_commandBuffer popDebugGroup];
 }
 
@@ -2231,7 +2218,7 @@ void CommandEncoder::pushDebugGroup(String&& groupLabel)
     finalizeBlitCommandEncoder();
 
     ++m_debugGroupStackSize;
-    [m_commandBuffer pushDebugGroup:groupLabel.createNSString().get()];
+    [m_commandBuffer pushDebugGroup:createNSString(groupLabel).get()];
 }
 
 static bool NODELETE validateResolveQuerySet(const QuerySet& querySet, uint32_t firstQuery, uint32_t queryCount, const Buffer& destination, uint64_t destinationOffset)
@@ -2332,7 +2319,7 @@ void CommandEncoder::writeTimestamp(QuerySet& querySet, uint32_t queryIndex)
 
 void CommandEncoder::setLabel(String&& label)
 {
-    m_commandBuffer.label = label.createNSString().get();
+    m_commandBuffer.label = createNSString(label).get();
 }
 
 void CommandEncoder::lock(bool shouldLock)
@@ -2362,15 +2349,12 @@ void CommandEncoder::clearTracking()
         resource->removeEncoder(identifier);
     for (auto& resource : m_trackedTextureViews)
         resource->removeEncoder(identifier);
-    for (auto& resource : m_trackedExternalTextures)
-        resource->removeEncoder(identifier);
     for (auto& resource : m_trackedQuerySets)
         resource->removeEncoder(identifier);
 
     m_trackedBuffers.clear();
     m_trackedTextures.clear();
     m_trackedTextureViews.clear();
-    m_trackedExternalTextures.clear();
     m_trackedQuerySets.clear();
 }
 
@@ -2390,11 +2374,6 @@ void CommandEncoder::trackEncoderForTextureView(const TextureView& textureView, 
 {
     if (encoderContainer.add(uniqueId()).isNewEntry)
         m_trackedTextureViews.append(textureView);
-}
-void CommandEncoder::trackEncoderForExternalTexture(const ExternalTexture& externalTexture, TrackedResourceContainer& encoderContainer)
-{
-    if (encoderContainer.add(uniqueId()).isNewEntry)
-        m_trackedExternalTextures.append(externalTexture);
 }
 void CommandEncoder::trackEncoderForQuerySet(const QuerySet& querySet, TrackedResourceContainer& encoderContainer)
 {

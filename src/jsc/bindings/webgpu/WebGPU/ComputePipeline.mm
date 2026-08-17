@@ -97,12 +97,12 @@ std::pair<Ref<ComputePipeline>, NSString*> Device::createComputePipeline(const W
         return returnInvalidComputePipeline(*this, isAsync, @"GPUDevice.createComputePipeline: Pipeline layout is invalid");
 
     auto& deviceLimits = limits();
-    auto label = fromAPI(descriptor.label).createNSString();
+    auto label = createNSString(fromAPI(descriptor.label));
     auto entryPointName = descriptor.compute.entryPoint ? fromAPI(descriptor.compute.entryPoint) : shaderModule->defaultComputeEntryPoint();
     NSError *error;
     BufferBindingSizesForPipeline minimumBufferSizes;
     String shaderSource;
-    auto libraryCreationResult = createLibrary(m_device, shaderModule.get(), &pipelineLayout.get(), entryPointName.createNSString().get(), label.get(), descriptor.compute.constantsSpan(), minimumBufferSizes, &error, shaderSource);
+    auto libraryCreationResult = createLibrary(m_device, shaderModule.get(), &pipelineLayout.get(), entryPointName, label.get(), descriptor.compute.constantsSpan(), minimumBufferSizes, &error, shaderSource);
     if (!libraryCreationResult || &pipelineLayout->device() != this)
         return returnInvalidComputePipeline(*this, isAsync, error.localizedDescription ?: @"Compute library failed creation");
 
@@ -164,10 +164,10 @@ void Device::createComputePipelineAsync(const WGPUComputePipelineDescriptor& des
     auto pipelineAndError = createComputePipeline(descriptor, true);
     if (auto inst = instance(); inst.get()) {
         inst->scheduleWork([pipeline = WTF::move(pipelineAndError.first), callback = WTF::move(callback), protectedThis = protect(*this), error = WTF::move(pipelineAndError.second)]() mutable {
-            callback((pipeline->isValid() || protectedThis->isDestroyed()) ? WGPUCreatePipelineAsyncStatus_Success : WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipeline), WTF::move(error));
+            callback((pipeline->isValid() || protectedThis->isDestroyed()) ? WGPUCreatePipelineAsyncStatus_Success : WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipeline), createString(error));
         });
     } else
-        callback(WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipelineAndError.first), WTF::move(pipelineAndError.second));
+        callback(WGPUCreatePipelineAsyncStatus_ValidationError, WTF::move(pipelineAndError.first), createString(pipelineAndError.second));
 }
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(ComputePipeline);

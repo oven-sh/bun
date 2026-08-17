@@ -87,7 +87,35 @@ const idlRules: Rule[] = [
   { from: / or GPUExternalTexture\)/g, to: ")" },
   { from: /^\s*GPUExternalTextureBindingLayout externalTexture;\n/m, to: "" },
   { from: /^\s*GPUExternalTexture importExternalTexture\([^)]*\);\n\n?/m, to: "" },
-  { from: /\n\s*\[CallWith=CurrentScriptExecutionContext\] undefined copyExternalImageToTexture\([^;]*;\n/m, to: "" },
+  { from: /\n\s*\[CallWith=CurrentScriptExecutionContext\] undefined copyExternalImageToTexture\([^;]*;\n/m, to: "\n" },
+];
+
+// Bun has no Web Inspector. The canvas recording hooks in the GPU* objects are
+// self-contained statements and guards, so they are stripped mechanically.
+// Order matters: the `if (device)` form has to go before the bare statements,
+// otherwise the bare-statement rule would leave the `if` guarding the next line.
+const inspectorRules: Rule[] = [
+  { from: /#include "InspectorInstrumentation\.h"\n/g, to: "" },
+  { from: /\n[ \t]*if \(device\)\n[ \t]*InspectorInstrumentation::\w+\([^;]*\);\n/g, to: "" },
+  { from: /^[ \t]*InspectorInstrumentation::\w+\([^;]*\);\n\n?/gm, to: "" },
+  {
+    from: /^[ \t]*if \(RefPtr pipeline = m_currentPipeline; pipeline && InspectorInstrumentation::isWebGPURenderPipelineDisabled\(\*pipeline\)\) \[\[unlikely\]\]\n[ \t]*return;\n/gm,
+    to: "",
+  },
+];
+
+// webcore/EventInterfaces.h and webcore/EventTargetInterfaces.h are plain enums
+// (`FooInterfaceType`, `FooEventTargetInterfaceType`) rather than WebKit's
+// current `EventInterfaceType::Foo` / `EventTargetInterfaceType::Foo` enum
+// classes, and there is no SPECIALIZE_TYPE_TRAITS_EVENTTARGET. The enumerators
+// themselves (GPUUncapturedErrorEvent, GPUDevice) are added to those headers by hand.
+const eventRules: Rule[] = [
+  { from: /\bEventInterfaceType::(\w+)/g, to: "$1InterfaceType" },
+  {
+    from: /\benum EventTargetInterfaceType eventTargetInterface\(\) const final \{ return EventTargetInterfaceType::(\w+); \}/g,
+    to: "EventTargetInterface eventTargetInterface() const final { return $1EventTargetInterfaceType; }",
+  },
+  { from: /\nSPECIALIZE_TYPE_TRAITS_EVENTTARGET\(\w+\)\n/g, to: "" },
 ];
 
 function shouldDrop(name: string, dropPatterns: RegExp[]): boolean {
@@ -113,14 +141,16 @@ function copyDir(src: string, dst: string, opts: { keep: RegExp; drop?: RegExp[]
 
 const sourceExt = /\.(cpp|h|mm|idl)$/;
 
-// Files that the import replaces with bun-specific versions; see the
+// Files that the import replaces with bun-specific versions, or adds; see the
 // corresponding files in the output tree. They are never overwritten.
-const bunOwned = new Set(["config.h"]);
+const bunOwned = new Set(["config.h", "StringCocoa.h"]);
 
 const dropXR = [/^XR/, /^WebGPUXR/, /XRBinding/, /XRProjectionLayer/, /XRSubImage/, /XRView/, /XREye/, /XRLayerBacking/];
 const dropPresentation = [/PresentationContext/, /CompositorIntegration/, /^GPUCanvas/, /^WebGPUCanvas/];
 const dropExternalTexture = [/ExternalTexture/];
 const dropImageCopy = [/ImageCopyExternalImage/, /ImageCopyTextureTagged/];
+// Only referenced by the canvas configuration, external texture and tagged image copy descriptors.
+const dropColorSpace = [/PredefinedColorSpace/];
 const dropDom = [...dropXR, ...dropPresentation, ...dropExternalTexture, ...dropImageCopy, /^NavigatorGPU/];
 
 for (const dir of ["WGSL", "WGSL/AST", "WGSL/Metal", "WebGPU", "InternalAPI", "Implementation", "bindings"]) {
@@ -157,7 +187,15 @@ console.log("     generated WGSL/TypeDeclarations.h, WGSL/TypeOverloads.h");
 
 copyDir(join(webkit, "Source/WebGPU/WebGPU"), join(out, "WebGPU"), {
   keep: /\.(h|mm)$/,
-  drop: [...dropXR, ...dropExternalTexture, /^PresentationContextIOSurface/, /^config\.h$/, /^WebGPUPrefix\.h$/],
+  drop: [...dropXR, ...dropExternalTexture, /^PresentationContext/, /^config\.h$/, /^WebGPUPrefix\.h$/],
+  rules: [
+    // String::createNSString() only exists in the Cocoa builds of WTF; WebGPU/StringCocoa.h
+    // (pulled in by WebGPU/config.h) provides it as a free function instead.
+    {
+      from: /((?:[A-Za-z_]\w*(?:\([^()]*\))?)(?:(?:\.|->)[A-Za-z_]\w*(?:\([^()]*\))?)*)\.createNSString\(\)/g,
+      to: "createNSString($1)",
+    },
+  ],
 });
 
 // ─── WebCore glue ──────────────────────────────────────────────────────────
@@ -165,13 +203,13 @@ copyDir(join(webkit, "Source/WebGPU/WebGPU"), join(out, "WebGPU"), {
 const modules = join(webkit, "Source/WebCore/Modules/WebGPU");
 copyDir(join(modules, "InternalAPI"), join(out, "InternalAPI"), {
   keep: /\.h$/,
-  drop: [...dropXR, ...dropPresentation, ...dropExternalTexture, ...dropImageCopy],
+  drop: [...dropXR, ...dropPresentation, ...dropExternalTexture, ...dropImageCopy, ...dropColorSpace],
 });
 copyDir(join(modules, "Implementation"), join(out, "Implementation"), {
   keep: /\.(cpp|h)$/,
   drop: [...dropXR, ...dropPresentation, ...dropExternalTexture],
 });
-copyDir(modules, out, { keep: sourceExt, drop: dropDom });
+copyDir(modules, out, { keep: sourceExt, drop: dropDom, rules: [...inspectorRules, ...eventRules] });
 
 // ─── JS bindings ───────────────────────────────────────────────────────────
 
@@ -244,10 +282,51 @@ writeFileSync(
 console.log(`imported from WebKit ${webkitCommit}`);
 
 // Hand edits expected after a fresh import (the diff against the previous
-// import shows them; this list is what to look for):
-//   - GPU / WebGPU / WebGPUImpl: presentation context and compositor integration factories
-//   - GPUDevice / WebGPUDevice / DeviceImpl / Device.mm: importExternalTexture, XR binding
-//   - GPUQueue / WebGPUQueue / QueueImpl: copyExternalImageToTexture
-//   - GPUBindGroupEntry, GPUBindGroupLayoutEntry and the backend BindGroup*.mm: external texture bindings
-//   - Instance.mm: createSurface (IOSurface presentation)
-//   - WebGPUCreateImpl: ProcessIdentity (GPU process resource ownership)
+// import shows them; this list is what to look for). Everything below is a
+// deletion of a dropped feature unless it says otherwise.
+//
+// Metal backend (webgpu/WebGPU):
+//   - Device.mm, BindGroup*.mm: importExternalTexture, XR binding, external texture bindings
+//   - Instance.*, Device.*, APIConversions.h, WebGPU.h, WebGPUExt.h: surface / swap chain, XR and external
+//     texture entry points; MachSendRight resource ownership (setOwnerWithIdentity is left as a no-op)
+//   - BindGroup.*, BindableResource.h, CommandEncoder.*, ComputePassEncoder.mm, RenderPassEncoder.mm: the
+//     ExternalTexture object and its CoreVideo plane import (the texture_external binding layout stays)
+//   - Device.mm, Pipeline.mm, ComputePipeline.mm, RenderPipeline.mm: String(NSString *) -> createString()
+//
+// InternalAPI:
+//   - WebGPU.h: PresentationContext / CompositorIntegration / paintToCanvas, and the isValid() overloads
+//     for CompositorIntegration, ExternalTexture, PresentationContext and the XR types (plus their
+//     forward declarations and the NativeImage / IntSize / GraphicsContext ones)
+//   - WebGPUDevice.h: createXRBinding, importExternalTexture, updateExternalTexture (MediaPlayerIdentifier)
+//   - WebGPUQueue.h: copyExternalImageToTexture, getNativeImage
+//   - WebGPUBindGroup.h: updateExternalTextures; WebGPUBindGroupEntry.h: the ExternalTexture alternative of
+//     BindingResource; WebGPUBindGroupLayoutEntry.h: externalTexture
+//
+// Implementation (every Impl counterpart of the InternalAPI removals above, namely):
+//   - WebGPUPtr.h: ref/deref traits for Surface, SwapChain, ExternalTexture and the XR handles
+//   - WebGPUImpl.*: createPresentationContext (and its block-conversion helper), createCompositorIntegration,
+//     paintToCanvas, the dropped isValid() overloads, `.compatibleSurface` in requestAdapter
+//   - WebGPUConvertToBackingContext.h / WebGPUDowncastConvertToBackingContext.*: the ExternalTexture,
+//     PresentationContext, CompositorIntegration and XR conversions (and the WebGPUXREye.h include in
+//     WebGPUConvertToBackingContext.cpp)
+//   - WebGPUDeviceImpl.*: createXRBinding, importExternalTexture + convertToWGPUColorSpace, updateExternalTexture,
+//     the externalTexture branches in createBindGroupLayout, `chainedEntries` and `.externalTexture` in
+//     createBindGroup
+//   - WebGPUBindGroupImpl.*: updateExternalTextures; WebGPUQueueImpl.*: copyExternalImageToTexture, getNativeImage
+//   - WebGPUCreateImpl.*: the ProcessIdentity parameter (create() takes only the ScheduleWorkFunction and passes
+//     a null webProcessResourceOwner) and the weak-link check of wgpuCreateInstance, which is linked statically
+//
+// GPU* objects (webgpu/*.cpp|h; InspectorInstrumentation and the Event enum spellings are handled by the
+// rules above):
+//   - GPU.*: createPresentationContext, createCompositorIntegration, paintToCanvas
+//   - GPUDevice.*: createXRBinding, importExternalTexture and all of the HTMLVideoElement / external texture
+//     bookkeeping (the ENABLE(VIDEO) blocks, which are live because the prebuilt WTF's cmakeconfig.h turns
+//     VIDEO on), the external texture bind group reuse in createBindGroup; the queueTaskToDispatchEvent()
+//     call in listenForUncapturedErrors is rewritten onto queueTaskKeepingObjectAlive(), which is what
+//     webcore/ActiveDOMObject.h has
+//   - GPUQueue.*: copyExternalImageToTexture and everything behind it (GPUQueue.cpp ends after writeTexture);
+//     the three BufferSource accesses in writeBuffer / writeTexture are rewritten onto webcore/BufferSource.h's
+//     older API (computeElementSize(), bytes())
+//   - GPUBindGroupEntry.h: the GPUExternalTexture alternative and the equal() helpers that only served the
+//     external texture bind group cache; GPUBindGroupDescriptor.h: externalTextureMatches;
+//     GPUBindGroupLayoutEntry.h: externalTexture; GPUBindGroup.*: updateExternalTextures

@@ -90,13 +90,7 @@ private:
         const ImageDataLayout&,
         const Extent3D& size) final;
 
-    void NODELETE copyExternalImageToTexture(
-        const ImageCopyExternalImage& source,
-        const ImageCopyTextureTagged& destination,
-        const Extent3D& copySize) final;
-
     void setLabelInternal(const String&) final;
-    RefPtr<WebCore::NativeImage> NODELETE getNativeImage(WebCore::VideoFrame&) final;
 
     WebGPUPtr<WGPUQueue> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;

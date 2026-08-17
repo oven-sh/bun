@@ -84,15 +84,8 @@ template <> struct WebGPURefDerefTraits<WGPURenderPassEncoder> : public BaseWebG
 template <> struct WebGPURefDerefTraits<WGPURenderPipeline> : public BaseWebGPURefDerefTraits<WGPURenderPipeline, wgpuRenderPipelineReference, wgpuRenderPipelineRelease> { };
 template <> struct WebGPURefDerefTraits<WGPUSampler> : public BaseWebGPURefDerefTraits<WGPUSampler, wgpuSamplerReference, wgpuSamplerRelease> { };
 template <> struct WebGPURefDerefTraits<WGPUShaderModule> : public BaseWebGPURefDerefTraits<WGPUShaderModule, wgpuShaderModuleReference, wgpuShaderModuleRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUSurface> : public BaseWebGPURefDerefTraits<WGPUSurface, wgpuSurfaceReference, wgpuSurfaceRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUSwapChain> : public BaseWebGPURefDerefTraits<WGPUSwapChain, wgpuSwapChainReference, wgpuSwapChainRelease> { };
 template <> struct WebGPURefDerefTraits<WGPUTexture> : public BaseWebGPURefDerefTraits<WGPUTexture, wgpuTextureReference, wgpuTextureRelease> { };
 template <> struct WebGPURefDerefTraits<WGPUTextureView> : public BaseWebGPURefDerefTraits<WGPUTextureView, wgpuTextureViewReference, wgpuTextureViewRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUExternalTexture> : public BaseWebGPURefDerefTraits<WGPUExternalTexture, wgpuExternalTextureReference, wgpuExternalTextureRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUXRBinding> : public BaseWebGPURefDerefTraits<WGPUXRBinding, wgpuXRBindingReference, wgpuXRBindingRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUXRProjectionLayer> : public BaseWebGPURefDerefTraits<WGPUXRProjectionLayer, wgpuXRProjectionLayerReference, wgpuXRProjectionLayerRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUXRSubImage> : public BaseWebGPURefDerefTraits<WGPUXRSubImage, wgpuXRSubImageReference, wgpuXRSubImageRelease> { };
-template <> struct WebGPURefDerefTraits<WGPUXRView> : public BaseWebGPURefDerefTraits<WGPUXRView, wgpuXRViewReference, wgpuXRViewRelease> { };
 
 template <typename T> using WebGPUPtr = RefPtr<std::remove_pointer_t<T>, WebGPUPtrTraits<T>, WebGPURefDerefTraits<T>>;
 

@@ -99,8 +99,9 @@ Ref<DOMException> DOMException::create(const String& message, const String& name
     return adoptRef(*new DOMException(legacyCodeFromName(name), name, message));
 }
 
-DOMException::DOMException(LegacyCode legacyCode, const String& name, const String& message)
-    : m_legacyCode(legacyCode)
+DOMException::DOMException(LegacyCode legacyCode, const String& name, const String& message, Type type)
+    : m_type(type)
+    , m_legacyCode(legacyCode)
     , m_name(name)
     , m_message(message)
 {

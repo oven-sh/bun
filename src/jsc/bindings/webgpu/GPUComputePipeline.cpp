@@ -28,7 +28,6 @@
 
 #include "GPUBindGroupLayout.h"
 #include "GPUDevice.h"
-#include "InspectorInstrumentation.h"
 #include <wtf/Locker.h>
 #include <wtf/NeverDestroyed.h>
 
@@ -39,9 +38,6 @@ Lock GPUComputePipeline::s_instancesLock;
 Ref<GPUComputePipeline> GPUComputePipeline::create(Ref<WebGPU::ComputePipeline>&& backing, uint64_t uniqueId, GPUDevice* device, const String& shaderSource)
 {
     Ref result = adoptRef(*new GPUComputePipeline(WTF::move(backing), uniqueId, device, shaderSource));
-
-    if (device)
-        InspectorInstrumentation::didCreateWebGPUComputePipeline(*device, result);
 
     return result;
 }
@@ -84,8 +80,6 @@ GPUComputePipeline::GPUComputePipeline(Ref<WebGPU::ComputePipeline>&& backing, u
 
 GPUComputePipeline::~GPUComputePipeline()
 {
-    InspectorInstrumentation::willDestroyWebGPUComputePipeline(*this);
-
     Locker locker { instancesLock() };
     instances().remove(this);
 }

@@ -121,7 +121,7 @@ A few value types are also parsed differently:
 
 - `inf` / `-inf` / `nan` are numbers (`Infinity` / `-Infinity` / `NaN`), not the strings `"inf"` / `"-inf"` / `"nan"`.
 - Integers outside `Number.MAX_SAFE_INTEGER` throw instead of silently losing precision.
-- Date and time literals (previously rejected) parse as `Temporal` objects: offset date-times as `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`, local dates as `Temporal.PlainDate`, and local times as `Temporal.PlainTime`. `bun build` emits them as `Temporal.<Type>.from(...)` calls for every target, so a bundle that imports such a file needs a `Temporal` global where it runs.
+- Date and time literals (previously rejected) parse as `Temporal` objects: offset date-times as `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`, local dates as `Temporal.PlainDate`, and local times as `Temporal.PlainTime`. `bun build` emits them as `Temporal.<Type>.from(...)` calls for every target, so a bundle that imports such a file needs a `Temporal` global where it runs. Parsing such a file with `BUN_JSC_useTemporal=0` set throws `Date/time values require Temporal, which is disabled in this process`.
 - `Bun.TOML.parse()` throws a `SyntaxError` instead of a `BuildMessage`.
 
 See the [TOML docs](/runtime/toml) for the full supported syntax.
@@ -275,7 +275,6 @@ Bun 1.4 also ships the corresponding Node.js 26 semver-major changes, including:
 
 - `node:http`: `response.writeHeader()` (deprecated alias for `writeHead()`) is removed.
 - `node:stream`: `readable.read()` in paused mode returns one chunk at a time instead of concatenating the internal buffer.
-- `node:dgram`: `bind()` on an already-bound socket and calls after `close()` throw synchronously.
 
 ### `process.env` coerces values to strings
 
@@ -310,7 +309,8 @@ As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on 
 - An exception thrown inside a `node:fs`, `node:dns`, or `crypto.pbkdf2()` callback is reported as `uncaughtException`, not `unhandledRejection`.
 - `node:http`: after an explicit `res.writeHead()`, `res.end(chunk)` sends the body chunked instead of computing a `Content-Length`, as Node does. `http.Server` now enforces `maxConnections` and emits `"drop"`.
 - `node:cluster` and `child_process` IPC: internal `{ cmd: "NODE_..." }` messages are delivered to the `"internalMessage"` event instead of `"message"`.
-- `worker_threads`: `process.exit()` inside a worker no longer drains microtasks or `nextTick` callbacks queued before it; a parent's `worker.terminate()` does not run the worker's `"exit"` handlers and resolves with the exit code; `postMessage()` to a terminated worker is a no-op.
+- `node:dgram`: `bind()` on a socket that is already bound (or still binding) throws `ERR_SOCKET_ALREADY_BOUND` synchronously instead of emitting `"error"`, and `send()`, `address()`, `bind()` and similar calls after `close()` throw `ERR_SOCKET_DGRAM_NOT_RUNNING` (1.3 threw an error without a `code`).
+- `worker_threads`: `await worker.terminate()` on a running worker resolves with exit code `1`, and the worker's `"exit"` event reports `1`, as in Node (1.3 reported `0`); `postMessage()` to a terminated worker is a no-op instead of throwing. A worker's own `process.exit()` still runs its `"exit"` handlers, but `process.nextTick()` callbacks queued before it may no longer run (promise jobs queued before it still do; Node runs neither), so work that must happen before the worker exits belongs in an `"exit"` handler.
 - Recursive `fs.watch()` on Linux emits an `"error"` event (for example `ENOSPC`) when the tree cannot be fully watched, instead of silently watching part of it. An unhandled `"error"` event throws.
 - `process.title` defaults to the executable name as invoked (`argv[0]`) instead of the fixed string `"bun"`.
 
@@ -320,7 +320,7 @@ As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on 
 
 The [`Temporal`](https://tc39.es/proposal-temporal/docs/) global and `Date.prototype.toTemporalInstant()` are now available without a flag, as in Node 26. Code that polyfills conditionally (`globalThis.Temporal ??= polyfill`) now gets the native implementation. `structuredClone()` and `postMessage()` of `Temporal` objects throw `DataCloneError`, the same as in Node.
 
-To disable it, set `BUN_JSC_useTemporal=0` in the environment.
+To disable it, set `BUN_JSC_useTemporal=0` in the environment. TOML files containing date or time values fail to parse while it is disabled (see the TOML section above).
 
 ---
 
@@ -350,10 +350,12 @@ Related `fetch` correctness changes:
 
 ### `Bun.Socket#setKeepAlive` delay is milliseconds
 
-The second argument to `socket.setKeepAlive(enable, initialDelay)` is now interpreted as **milliseconds** (matching `node:net`). In Bun 1.3 the value was passed to the kernel as seconds, so the effective delay was 1000× longer than requested.
+The second argument to `socket.setKeepAlive(enable, initialDelay)` is now interpreted as **milliseconds** (matching `node:net`). Bun 1.3 passed the value to the kernel as seconds, so a millisecond value was either applied as a delay 1000× longer than requested or, on Linux (which caps the idle time at 32767 seconds), rejected: the call returned `false` and the kernel default of 2 hours stayed in effect.
 
 ```ts
-socket.setKeepAlive(true, 60_000); // 1.3: ~16.7 hours; 1.4: 60 seconds
+socket.setKeepAlive(true, 60_000);
+// 1.3: requests 60,000 seconds (on Linux: rejected, returns false, 2-hour default applies)
+// 1.4: 60 seconds, returns true
 ```
 
 `setKeepAlive(true)` with no delay now returns `true` instead of `false`.
@@ -377,9 +379,9 @@ To keep the 1.3 behavior for a specific connection, add `?sslmode=disable` (or t
 
 ### `bun:sqlite` `close()` finalizes `query()` statements
 
-`db.close()` now finalizes every statement created with `db.query()`, whether or not it is still in the statement cache, and `db.close(true)` finalizes `db.prepare()` statements too. In 1.3 these statements stayed usable until garbage collection, which kept the database file open (and undeletable on Windows) after `close()`, and made `close(true)` throw `database is locked` once more than `MAX_QUERY_CACHE_SIZE` distinct queries had been run.
+`db.close()` now finalizes every statement created with `db.query()`, whether or not it is still in the statement cache, and `db.close(true)` finalizes `db.prepare()` statements too. In 1.3 these statements stayed usable until garbage collection, which kept the database file open (and undeletable on Windows) after `close()`, and made `close(true)` throw `database is locked` whenever any of them was still alive: a single live `db.prepare()` statement was enough, as was a `db.query()` statement that had not fit in the cache (more than `MAX_QUERY_CACHE_SIZE` distinct queries).
 
-Using a finalized statement now throws `Database has closed`. If you need a statement to outlive a graceful `db.close()`, create it with `db.prepare()`; those keep working after `close()` (not `close(true)`) until they are finalized. The `query()` cache is now an LRU of `Database.MAX_QUERY_CACHE_SIZE` entries rather than "the first 20 distinct strings".
+Using a statement that `close()` finalized now throws `Database has closed`. If you need a statement to outlive a graceful `db.close()`, create it with `db.prepare()`; those keep working after `close()` (not `close(true)`) until they are finalized. The `query()` cache is now an LRU of `Database.MAX_QUERY_CACHE_SIZE` entries rather than "the first 20 distinct strings".
 
 ---
 
@@ -388,7 +390,7 @@ Using a finalized statement now throws `Database has closed`. If you need a stat
 `HTMLRewriter.transform()` now streams the input through the rewriter and suspends on handlers that return a promise, instead of buffering the whole body and spinning the event loop inside the handler. Two things change for callers:
 
 - `transform()` with a **string or `ArrayBuffer`** input and a handler whose promise needs the event loop to settle throws a `TypeError`. Wrap the input in a `Response` and read the transformed body asynchronously instead.
-- With a `Response` input, errors thrown by handlers always reject the output body (1.3 sometimes threw synchronously from `transform()`). In `Bun.serve`, a handler that fails before the first byte is written is routed to `error()` instead of committing a 200 response.
+- With a `Response` input, errors thrown by handlers always reject the output body (1.3 threw synchronously from `transform()` when the input body was already in memory). In `Bun.serve`, when the input body is itself still streaming (for example a `fetch()` response), a handler that fails before the first byte of output is routed to `error()`, and one that fails after output has started cuts the response off; 1.3 answered with an empty `200` in both cases.
 
 The `Blob` overload of `transform()` was removed from the type definitions.
 
@@ -414,7 +416,7 @@ These are correctness fixes that tighten validation or align with a specificatio
 **`Bun.serve` and WebSocket**
 
 - An out-of-range `port` throws `RangeError` instead of being clamped.
-- A `Response` status outside `100..=999` is routed through the `error()` handler as a 500 instead of writing an invalid status line.
+- A `Response` whose status is outside `100..=999` (in practice `Response.error()`, whose status is `0`) is routed through the `error()` handler as a 500 instead of being written as an invalid `HTTP/1.1 0` status line, and such a `Response` used as a static route is rejected when `Bun.serve()` is called.
 - Per-method route objects (`{ GET, POST, ... }`) serve `HEAD` with the `GET` handler.
 - `ServerWebSocket#publish()` and `server.publish()` return `0` / `-1` when a subscriber hits backpressure, instead of always returning the payload length.
 - The client `WebSocket` rejects `close()` with an invalid code (`InvalidAccessError`) or a reason over 123 UTF-8 bytes (`SyntaxError`). Client and server WebSockets reject `ping()` / `pong()` payloads over 125 bytes (`RangeError`), and the server rejects unmasked client frames per RFC 6455.
@@ -435,7 +437,7 @@ These are correctness fixes that tighten validation or align with a specificatio
 - `structuredClone` / `postMessage`: transfer lists are validated before serialization instead of silently dropping invalid entries.
 - `FileSystemRouter#match()` returns `null` for paths that do not start with `/`.
 - `Bun.mmap()` returns a view starting at the requested `offset` instead of the page-aligned offset.
-- `Bun.color`: `"ansi-16"` output is a real SGR escape sequence; `"ansi-256"`, `"hsl"`, and `"lab"` output is now round-trip parseable.
+- `Bun.color`: `"ansi-16"` output is a real SGR escape sequence (`\x1b[91m` for red; 1.3 emitted a `38;5;` sequence containing a raw control byte), `"ansi-256"` no longer emits an out-of-range palette index for near-black colors, and `"hsl"` / `"lab"` output is valid CSS that `Bun.color` parses back (`hsl(0, 100%, 50%)` instead of `hsl(0, 1, 0.5)`). `"ansi-256"` output for other colors is unchanged.
 - `Bun.Cookie`: `Expires` is serialized as an IMF-fixdate.
 - `Bun.randomUUIDv7()`: timestamps at or above 2⁴⁸, or `NaN`, throw instead of being truncated.
 - `Bun.YAML.parse()` rejects NUL bytes with `SyntaxError` instead of silently truncating.

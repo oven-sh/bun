@@ -32,6 +32,70 @@ afterEach(async () => {
   await dummyAfterEach();
 });
 
+const workspaceDependencyGroups = [
+  "dependencies",
+  "devDependencies",
+  "optionalDependencies",
+  "peerDependencies",
+] as const;
+
+async function createLinkWorkspace(rootDir: string, dependencyGroup: (typeof workspaceDependencyGroups)[number]) {
+  const workspacePackageDir = join(rootDir, "foo");
+  const rootManifest = { workspaces: ["foo", "bar"] };
+  const workspaceManifest = {
+    name: "foo",
+    [dependencyGroup]: {
+      bar: "workspace:*",
+    },
+  };
+
+  await mkdir(workspacePackageDir, { recursive: true });
+  await mkdir(join(rootDir, "bar"), { recursive: true });
+  await Promise.all([
+    writeFile(join(rootDir, "package.json"), JSON.stringify(rootManifest)),
+    writeFile(join(workspacePackageDir, "package.json"), JSON.stringify(workspaceManifest)),
+    writeFile(
+      join(rootDir, "bar", "package.json"),
+      JSON.stringify({
+        name: "bar",
+        version: "1.0.0",
+      }),
+    ),
+  ]);
+
+  return { rootManifest, workspaceManifest, workspacePackageDir };
+}
+
+async function runLink(cwd: string, args: string[], processEnv: NodeJS.Dict<string>) {
+  await using proc = spawn({
+    cmd: [bunExe(), "link", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: processEnv,
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
+async function registerLinkedPackage(linkName: string, processEnv: NodeJS.Dict<string>) {
+  await writeFile(
+    join(link_dir, "package.json"),
+    JSON.stringify({
+      name: linkName,
+      version: "1.0.0",
+    }),
+  );
+
+  const { stdout, stderr, exitCode } = await runLink(link_dir, [], processEnv);
+  expect({ stdout: stdout.includes(`Success! Registered "${linkName}"`), stderr, exitCode }).toEqual({
+    stdout: true,
+    stderr: "",
+    exitCode: 0,
+  });
+}
+
 it("should link and unlink workspace package", async () => {
   await writeFile(
     join(link_dir, "package.json"),
@@ -170,6 +234,79 @@ it("should link and unlink workspace package", async () => {
   expect(err.split(/\r?\n/)).toEqual([""]);
   expect(await stdout.text()).toContain(`success: unlinked package "foo"`);
   expect(await exited).toBe(0);
+});
+
+for (const dependencyGroup of workspaceDependencyGroups) {
+  it(`should link a package from a workspace with sibling ${dependencyGroup}`, async () => {
+    const linkName = basename(link_dir).slice("bun-link.".length);
+    const testEnv = { ...env, BUN_INSTALL_GLOBAL_DIR: join(link_dir, "global") };
+    const { rootManifest, workspaceManifest, workspacePackageDir } = await createLinkWorkspace(
+      package_dir,
+      dependencyGroup,
+    );
+    await registerLinkedPackage(linkName, testEnv);
+
+    const { stdout, stderr, exitCode } = await runLink(workspacePackageDir, [linkName, "--linker=hoisted"], testEnv);
+
+    expect({ stdout: stdout.replace(/\s*\[[0-9.]+ms\]\s*$/, "").split(/\r?\n/), stderr, exitCode }).toEqual({
+      stdout: [
+        expect.stringContaining("bun link v1."),
+        "",
+        "+ bar@workspace:bar",
+        "",
+        `installed ${linkName}@link:${linkName}`,
+        "",
+        "3 packages installed",
+      ],
+      stderr: "",
+      exitCode: 0,
+    });
+    expect(await file(join(package_dir, "package.json")).json()).toEqual(rootManifest);
+    expect(await file(join(workspacePackageDir, "package.json")).json()).toEqual(workspaceManifest);
+    expect(await file(join(package_dir, "node_modules", "bar", "package.json")).json()).toEqual({
+      name: "bar",
+      version: "1.0.0",
+    });
+    expect(await file(join(package_dir, "node_modules", linkName, "package.json")).json()).toEqual({
+      name: linkName,
+      version: "1.0.0",
+    });
+  });
+}
+
+it("should save a linked package only to the child workspace manifest", async () => {
+  const linkName = basename(link_dir).slice("bun-link.".length);
+  const testEnv = { ...env, BUN_INSTALL_GLOBAL_DIR: join(link_dir, "global") };
+  const { rootManifest, workspacePackageDir } = await createLinkWorkspace(package_dir, "dependencies");
+  await registerLinkedPackage(linkName, testEnv);
+
+  const { stdout, stderr, exitCode } = await runLink(
+    workspacePackageDir,
+    [linkName, "--linker=hoisted", "--save"],
+    testEnv,
+  );
+
+  expect({ stdout: stdout.replace(/\s*\[[0-9.]+ms\]\s*$/, "").split(/\r?\n/), stderr, exitCode }).toEqual({
+    stdout: [
+      expect.stringContaining("bun link v1."),
+      "",
+      "+ bar@workspace:bar",
+      "",
+      `installed ${linkName}@link:${linkName}`,
+      "",
+      "3 packages installed",
+    ],
+    stderr: "Saved lockfile\n",
+    exitCode: 0,
+  });
+  expect(await file(join(package_dir, "package.json")).json()).toEqual(rootManifest);
+  expect(await file(join(workspacePackageDir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      bar: "workspace:*",
+      [linkName]: `link:${linkName}`,
+    },
+  });
 });
 
 it("should link package", async () => {

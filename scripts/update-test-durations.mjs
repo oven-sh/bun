@@ -57,22 +57,43 @@ const api = async path => {
   }
 };
 
+// awaitService (test/docker/index.ts; describeWithContainer goes through it)
+// prints this from the test process with how long it sat blocked waiting for
+// docker-compose to bring the service up. That wait is inside the file's
+// measured time but is a cost of the shard, not the file (whichever file first
+// touches a cold service pays it, and the packing this table drives decides
+// which file that is), so it comes off the file's cost instead of being
+// committed as a 15-40 s test. The reported number is the only usable signal: a
+// file with several container describes runs real tests between its lines, so
+// the line's timestamp says nothing about the wait.
+const containerWaitLine = /Container ready via docker-compose: .*\(waited (\d+)ms\)/;
+// In the parallel bucket, `bun test --parallel` flushes each file's output as a
+// block introduced by `<path>:`; that is what attributes a wait printed there.
+const bucketOutputHeader = /^(\S+\.(?:[cm]?[jt]sx?)):$/;
+
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
-// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). Serial tests
-// prefix the header with `--- `; the parallel-safe phase (runner.node.mjs)
-// prints the bare form. For that concurrent phase the gap is an inter-dispatch
-// delta, not wall clock; we clamp it so the last-dispatched file on each shard
-// does not absorb the N-wide tail drain or a sibling's 5-15 s retry backoff.
+// consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL), or for the
+// parallel bucket the per-file figure on its summary line, minus the container
+// wait above. Serial tests prefix the header with `--- `; the parallel-safe
+// phase (runner.node.mjs) prints the bare form. For that concurrent phase the
+// gap is an inter-dispatch delta, not wall clock; we clamp it so the
+// last-dispatched file on each shard does not absorb the N-wide tail drain or
+// a sibling's 5-15 s retry backoff.
 export function parseLog(raw) {
   const out = [];
   const lines = raw.replace(/\x1b\[[0-9;]*m/g, "").split(/\r?\n/);
   let path = null;
   let start = null;
+  let containerMs = 0;
   let concurrent = false;
   let lastTs = null;
+  let inBucket = false;
+  let bucketFile = null;
+  const bucketWaits = new Map();
   const emit = ts => {
     if (path === null || start === null || ts === null) return;
-    out.push([path, concurrent ? Math.min(ts - start, 500) : ts - start]);
+    const own = Math.max(0, ts - start - containerMs);
+    out.push([path, concurrent ? Math.min(own, 500) : own]);
   };
   for (let line of lines) {
     if (line.endsWith("\r")) line = line.slice(0, -1);
@@ -82,12 +103,17 @@ export function parseLog(raw) {
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(text);
     if (hdr) {
       emit(ts);
+      containerMs = 0;
+      inBucket = false;
+      bucketFile = null;
       // Retry/error headers (`... - code 1`, `... [attempt #2]`) are not file
       // paths; treat them as a delimiter so the preceding span closes cleanly.
       const title = hdr[2].trim();
       const timed = /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {
-        out.push([timed[1], Math.round(parseFloat(timed[2]) * 1000)]);
+        const waited = bucketWaits.get(timed[1]) ?? 0;
+        bucketWaits.delete(timed[1]);
+        out.push([timed[1], Math.max(0, Math.round(parseFloat(timed[2]) * 1000) - waited)]);
         path = start = null;
         concurrent = false;
         continue;
@@ -112,8 +138,25 @@ export function parseLog(raw) {
     ) {
       emit(ts);
       path = start = null;
+      containerMs = 0;
       concurrent = false;
+      // `[N/M]` headers were handled above, so `--- [` here is the bucket's
+      // `[A-B/M] K files in parallel`.
+      inBucket = text.startsWith("--- [");
+      bucketFile = null;
+      continue;
     }
+    if (inBucket) {
+      const block = bucketOutputHeader.exec(text);
+      if (block) {
+        bucketFile = block[1].replaceAll("\\", "/");
+        continue;
+      }
+    }
+    const wait = containerWaitLine.exec(text);
+    if (!wait) continue;
+    if (path !== null) containerMs += Number(wait[1]);
+    else if (bucketFile !== null) bucketWaits.set(bucketFile, (bucketWaits.get(bucketFile) ?? 0) + Number(wait[1]));
   }
   emit(lastTs);
   return out;

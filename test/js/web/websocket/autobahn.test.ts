@@ -12,8 +12,7 @@ async function load() {
 
   console.log("Loading Autobahn via docker-compose...");
   // Use docker-compose to start Autobahn
-  const autobahnInfo = await dockerCompose.ensure("autobahn");
-  console.log("Autobahn info:", autobahnInfo);
+  const autobahnInfo = await dockerCompose.awaitService("autobahn");
 
   // Autobahn expects port 9002 in the Host header, but we might be on a different port
   const actualPort = autobahnInfo.ports[9002];

@@ -28,7 +28,7 @@ const allCredentials: S3Credentials[] = [
 
 if (isDockerEnabled()) {
   // Use docker-compose to start MinIO
-  const minioInfo = await dockerCompose.ensure("minio");
+  const minioInfo = await dockerCompose.awaitService("minio");
 
   // Get container name for docker exec
   const containerName = child_process

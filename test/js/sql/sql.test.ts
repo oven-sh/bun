@@ -27,8 +27,7 @@ if (isDockerEnabled()) {
     let login_scram: Bun.SQL.PostgresOrMySQLOptions;
     let options: Bun.SQL.PostgresOrMySQLOptions;
 
-    const info = await dockerCompose.ensure("postgres_plain");
-    console.log("PostgreSQL container ready at:", info.host + ":" + info.ports[5432]);
+    const info = await dockerCompose.awaitService("postgres_plain");
     container = {
       port: info.ports[5432],
       host: info.host,

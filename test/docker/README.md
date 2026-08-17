@@ -303,7 +303,8 @@ A: This tells Docker to pick any available port, preventing conflicts.
 2. **Use health checks**: Add healthcheck configurations for reliable startup
 3. **Clean up in tests**: Delete test data after each test (but keep containers running)
 4. **Prefer ensure()**: Always use `dockerCompose.ensure()` instead of assuming services are running
-5. **Handle failures gracefully**: Services might fail to start; handle errors appropriately
+5. **Block through `awaitService()`**: `describeWithContainer` does this for you. A test file that calls `ensure()` itself should `await dockerCompose.awaitService("postgres_plain")` instead: it prints the `Container ready via docker-compose: ... (waited Nms)` line that the CI slow-test and shard-duration scripts use to keep container start-up out of the file's measured time
+6. **Handle failures gracefully**: Services might fail to start; handle errors appropriately
 
 ## Troubleshooting
 

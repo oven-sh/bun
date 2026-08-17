@@ -1406,6 +1406,7 @@ describe("bundler", () => {
     files: {
       "/entry.js": /* js */ `
         export function newTarget(c) { let a = c; return new a(); }
+        export function newArgs(c, v) { let a = v; return new c(1, a); }
         export function spread(v) { let a = v; return [...a]; }
         export async function awaited(v) { let a = v; return await a; }
         export function* yielded(v) { let a = v; yield a; }
@@ -1426,7 +1427,8 @@ describe("bundler", () => {
         export function templateTag(t) { let a = t; return a\`x\`; }
         export function templateParts(v) { let a = v; return \`1-\${v}-\${a}\`; }
 
-        export function newArgsAfterSideEffect() { let keep = g(); return new Foo(keep); }
+        export function newArgsWithSideEffect(c) { let keep = g(); return new c(keep); }
+        export function* yieldWithoutOperand(v) { let keep = v; yield; return keep; }
         export function mutatingUnary(v) { let keep = v; return keep++; }
         export function binaryRightAfterSideEffect(w) { let keep = g(); return w.z + keep; }
         export function updateAssignment() { let keep = g(); total += keep; }
@@ -1444,6 +1446,7 @@ describe("bundler", () => {
       expect(code).not.toContain("let a");
       for (const substituted of [
         "new c;",
+        "new c(1, v)",
         "[...v]",
         "await v",
         "yield v",
@@ -1466,7 +1469,7 @@ describe("bundler", () => {
       }
       // indexTarget and indexIndex both end up here.
       expect(code.match(/return v\[i\];/g)).toHaveLength(2);
-      expect(code.match(/let keep = /g)).toHaveLength(9);
+      expect(code.match(/let keep = /g)).toHaveLength(10);
     },
   });
 });

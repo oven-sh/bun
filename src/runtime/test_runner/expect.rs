@@ -1186,7 +1186,13 @@ impl Expect {
             }
         }
 
-        if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
+        if let Err(err) = value.jest_snapshot_pretty_format(pretty_value, global_this) {
+            // With an exception pending (e.g. the stack overflow thrown for a
+            // value too deep to serialize), the wrapper below could not render
+            // the value anyway; report the exception itself.
+            if global_this.has_exception() {
+                return Err(err);
+            }
             let mut formatter = ConsoleObject::Formatter::new(global_this);
             return Err(global_this.throw(format_args!(
                 "Failed to pretty format value: {}",

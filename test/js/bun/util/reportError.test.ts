@@ -123,21 +123,30 @@ test("native error printer handles lone surrogates in message and stack frame na
   expect(exitCode).toBe(1);
 });
 
-describe.each([
-  ["array", "[a]", "throw a;"],
-  ["array", "[a]", "Promise.reject(a);"],
-  ["Proxy", "new Proxy(a,{})", "throw a;"],
-])("%s / %s / %s", (_, wrap, stmt) => {
-  test.concurrent("native error printer survives a deeply nested thrown value", async () => {
-    const src = `
-      let a = {};
-      for (let i = 0; i < 50000; i++) a = ${wrap};
-      ${stmt}
-    `;
+// The uncaught exception printer used to recurse into a deeply nested value
+// until the native stack overflowed and the process died with SIGSEGV. Each
+// shape recurses through a different path: arrays through the value formatter,
+// a Proxy through its target (a tag the formatter does not track for circular
+// references), error.cause through the error printer itself.
+describe("native error printer survives a deeply nested uncaught value", () => {
+  const cases: [name: string, src: string][] = [
+    ["throw array", "let a = []; for (let i = 0; i < 50000; i++) a = [a]; throw a;"],
+    ["reject with array", "let a = []; for (let i = 0; i < 50000; i++) a = [a]; Promise.reject(a);"],
+    ["throw Proxy chain", "let a = {}; for (let i = 0; i < 50000; i++) a = new Proxy(a, {}); throw a;"],
+    [
+      "throw error.cause chain",
+      "let e = new Error('root'); for (let i = 0; i < 10000; i++) e = new Error('wrap', { cause: e }); throw e;",
+    ],
+  ];
+
+  test.concurrent.each(cases)("%s", async (_, src) => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
       env: bunEnv,
       stdout: "ignore",
+      // Everything that fits on the stack is still printed. For the array that
+      // is hundreds of megabytes of indentation on a release build, so don't
+      // pipe it; the assertion is that the printer gave up instead of crashing.
       stderr: "ignore",
     });
     await proc.exited;

@@ -1640,7 +1640,12 @@ pub mod formatter {
         pub ordered_properties: bool,
         pub(crate) custom_formatted_object: CustomFormattedObject,
         pub(crate) disable_inspect_custom: bool,
+        /// Seated by `new()`. `StackCheck::default()` has no stack bound and
+        /// would let a deep enough value recurse until the native stack
+        /// overflows.
         pub(crate) stack_check: StackCheck,
+        /// On an exhausted stack, throw a `RangeError` instead of silently
+        /// truncating the output.
         pub(crate) can_throw_stack_overflow: bool,
         pub(crate) error_display_level: ErrorDisplayLevel,
         /// If `ArrayBuffer`-like objects contain ASCII text, the buffer is

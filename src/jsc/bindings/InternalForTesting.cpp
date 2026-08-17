@@ -12,11 +12,13 @@
 #include <mimalloc.h>
 #include <openssl/err.h>
 #include <openssl/mem.h>
+#include <unicode/uidna.h>
 #if OS(WINDOWS)
 #include <uv.h>
 #endif
 
 extern "C" void BunString__toThreadSafe(BunString* str);
+extern "C" size_t Bun__boringsslSystemMallocCount();
 
 namespace Bun {
 
@@ -81,19 +83,31 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_thirdPartyAllocationsUseMimalloc, (JSC::JSGl
 
     // The error queue keeps its strings off OPENSSL_malloc; with
     // patches/boringssl/system-malloc-hooks.patch they come from
-    // OPENSSL_system_malloc instead of the CRT.
+    // OPENSSL_system_malloc instead of the CRT. ERR_add_error_dataf formats
+    // into a 64 byte buffer first, so a longer string also goes through
+    // OPENSSL_system_realloc and the pointer checked below is the one it
+    // returned.
     ERR_clear_error();
     ERR_put_error(ERR_LIB_USER, 0, ERR_R_INTERNAL_ERROR, __FILE__, __LINE__);
-    ERR_add_error_data(1, "bun:internal-for-testing");
+    ERR_add_error_dataf("%s", "bun:internal-for-testing thirdPartyAllocationsUseMimalloc, long enough to outgrow the initial buffer");
     const char* errorData = nullptr;
     int errorFlags = 0;
     ERR_peek_last_error_line_data(nullptr, nullptr, &errorData, &errorFlags);
     bool boringsslErrorQueue = errorData && (errorFlags & ERR_FLAG_STRING) && mi_is_in_heap_region(errorData);
     ERR_clear_error();
 
+    // ICU objects are allocated with uprv_malloc, i.e. by whatever
+    // u_setMemoryFunctions installed (bun_icu_malloc.cpp).
+    UErrorCode status = U_ZERO_ERROR;
+    UIDNA* idna = uidna_openUTS46(UIDNA_DEFAULT, &status);
+    bool icu = U_SUCCESS(status) && idna && mi_is_in_heap_region(idna);
+    if (idna)
+        uidna_close(idna);
+
     auto* result = JSC::constructEmptyObject(globalObject);
     result->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsBoolean(boringssl));
     result->putDirect(vm, JSC::Identifier::fromString(vm, "boringsslErrorQueue"_s), JSC::jsBoolean(boringsslErrorQueue));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "icu"_s), JSC::jsBoolean(icu));
 
 #if OS(WINDOWS)
     // uv_os_environ allocates the array with uv__calloc, i.e. whatever
@@ -109,6 +123,14 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_thirdPartyAllocationsUseMimalloc, (JSC::JSGl
 #endif
 
     return JSC::JSValue::encode(result);
+}
+
+// Number of OPENSSL_system_malloc calls BoringSSL has made on this thread
+// (src/boringssl/lib.rs), so a test can see TLS record processing reach the
+// hook rather than the CRT.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_boringsslSystemMallocCount, (JSC::JSGlobalObject*, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(JSC::jsNumber(static_cast<double>(Bun__boringsslSystemMallocCount())));
 }
 
 // Returns the net refcount change on the *original* StringImpl after a

@@ -210,8 +210,9 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
 /// The two dependencies not switched here:
 /// - c-ares: `ares_library_init_mem(.., mi_malloc, mi_free, mi_realloc)` in
 ///   `bun_cares_sys`, because it is part of the (lazy) library init.
-/// - BoringSSL: link-time `OPENSSL_memory_alloc/free/get_size` definitions in
-///   `bun_boringssl` (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).
+/// - BoringSSL: link-time `OPENSSL_memory_alloc/free/get_size` and
+///   `OPENSSL_system_malloc/realloc/free` definitions in `bun_boringssl`
+///   (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).
 fn use_mimalloc_in_dependencies() {
     // ICU: `u_setMemoryFunctions` (bun_icu_malloc.cpp; no-op under ASAN and
     // on macOS, where ICU is the system libicucore).

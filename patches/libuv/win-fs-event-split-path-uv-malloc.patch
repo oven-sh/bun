@@ -1,6 +1,6 @@
 --- a/src/win/fs-event.c
 +++ b/src/win/fs-event.c
-@@ -114,7 +114,14 @@
+@@ -114,7 +114,15 @@
        }
      }
  
@@ -12,7 +12,8 @@
 +    if (!*file) {
 +      uv_fatal_error(ERROR_OUTOFMEMORY, "uv__malloc");
 +    }
-+    memcpy(*file, filename, (len + 1) * sizeof(WCHAR));
++    wcsncpy(*file, filename, len);
++    (*file)[len] = L'\0';
    } else {
      if (dir) {
        *dir = (WCHAR*)uv__malloc((i + 2) * sizeof(WCHAR));

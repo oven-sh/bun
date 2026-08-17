@@ -33,7 +33,12 @@ export const mimalloc: Dependency = {
     //            including WebKit's bmalloc when it falls back to system malloc.
     //   Windows: OFF — Bun links the static CRT and calls mi_* directly;
     //            alloc-override.c emits _expand/_msize/free which duplicate
-    //            against libucrt(d) at link time.
+    //            against libucrt(d) at link time. The C deps that would
+    //            otherwise sit on the uCRT heap are pointed at mimalloc one
+    //            by one instead (ICU and libuv in bun_bin's
+    //            use_mimalloc_in_dependencies, BoringSSL via the hooks in
+    //            boringssl.ts, c-ares via ares_library_init_mem);
+    //            test/internal/third-party-allocators.test.ts checks it.
     const override = cfg.linux && !cfg.asan;
 
     const defines: Record<string, string | number | true> = {

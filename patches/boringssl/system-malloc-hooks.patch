@@ -182,7 +182,7 @@
      OPENSSL_PRINTF_FORMAT_FUNC(2, 0);
 --- a/crypto/mem.cc
 +++ b/crypto/mem.cc
-@@ -483,10 +483,12 @@
+@@ -483,8 +483,10 @@
  
  int bssl::OPENSSL_vasprintf_internal(char **str, const char *format,
                                       va_list args, int system_malloc) {
@@ -196,8 +196,6 @@
 -      system_malloc ? realloc : OPENSSL_realloc;
 +      system_malloc ? OPENSSL_system_realloc : OPENSSL_realloc;
    char *candidate = nullptr;
-   size_t candidate_len = 64;  // TODO(bbe) what's the best initial size?
-   int ret;
 --- a/crypto/thread_pthread.cc
 +++ b/crypto/thread_pthread.cc
 @@ -71,7 +71,7 @@

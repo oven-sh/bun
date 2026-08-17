@@ -662,8 +662,19 @@ export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.
 export const thirdPartyAllocationsUseMimalloc: () => {
   boringssl: boolean;
   boringsslErrorQueue: boolean;
+  icu: boolean;
   libuv: boolean | null;
 } = $newCppFunction("InternalForTesting.cpp", "jsFunction_thirdPartyAllocationsUseMimalloc", 0);
+
+/**
+ * How many times BoringSSL has allocated through `OPENSSL_system_malloc` (TLS
+ * record buffers, error queue) on the calling thread.
+ */
+export const boringsslSystemMallocCount: () => number = $newCppFunction(
+  "InternalForTesting.cpp",
+  "jsFunction_boringsslSystemMallocCount",
+  0,
+);
 
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",

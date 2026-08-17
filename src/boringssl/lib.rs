@@ -36,6 +36,7 @@ pub fn load() {
                 OPENSSL_system_malloc,
                 OPENSSL_system_realloc,
                 OPENSSL_system_free,
+                Bun__boringsslSystemMallocCount,
             );
         }
     }}
@@ -143,7 +144,22 @@ pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
 // NULL.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_system_malloc(size: usize) -> *mut c_void {
+    SYSTEM_MALLOC_COUNT.with(|count| count.set(count.get() + 1));
     bun_alloc::default_alloc::malloc(size)
+}
+
+std::thread_local! {
+    // Per thread rather than a shared atomic: record buffers are allocated on
+    // every TLS thread, and the test only needs the calling thread's count.
+    static SYSTEM_MALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
+}
+
+/// How many times BoringSSL has called `OPENSSL_system_malloc` on the calling
+/// thread; lets `bun:internal-for-testing` check that TLS record processing
+/// really goes through the hook. Read by InternalForTesting.cpp.
+#[unsafe(no_mangle)]
+pub(crate) extern "C" fn Bun__boringsslSystemMallocCount() -> usize {
+    SYSTEM_MALLOC_COUNT.with(Cell::get)
 }
 
 /// # Safety

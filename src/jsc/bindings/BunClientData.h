@@ -78,6 +78,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+class HeapSizeLimitObserver;
 
 // JSC measures the live size of the heap at the end of each collection, but only
 // publishes it per scope: an eden collection updates
@@ -214,6 +215,9 @@ public:
     // `worker` is the WorkerMessagingProxy this VM is being created for, or null on the main thread.
     static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
+    // Registers the --max-old-space-size observer with this VM's heap.
+    void enforceMaxOldSpaceSize(JSC::VM&, size_t limitBytes);
+
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
     JSBuiltinFunctions& builtinFunctions() { return *m_builtinFunctions; }
@@ -324,6 +328,11 @@ private:
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };
     bool m_isNodeWorkerVM { false };
+
+    // Enforces --max-old-space-size. Registered with the heap by
+    // enforceMaxOldSpaceSize() (main thread VM only), unregistered in
+    // ~JSVMClientData (which ~VM runs while `heap` is alive).
+    std::unique_ptr<Bun::HeapSizeLimitObserver> m_heapSizeLimitObserver;
 
 public:
     // upstream's `&vm != commonVMOrNull()`

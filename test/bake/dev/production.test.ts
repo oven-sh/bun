@@ -1108,4 +1108,121 @@ export default function IndexPage() {
       timeout,
     );
   });
+
+  // BUN_JSC_validateExceptionChecks=1 aborts the child on the first unchecked JSC exception (debug/ASAN builds only).
+  describe.concurrent("exception checks", () => {
+    async function buildApp(cwd: string, ...args: string[]) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", ...args],
+        cwd,
+        env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1", BUN_JSC_dumpSimulatedThrows: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      // The two report lines that name the throwing scope and the one that failed to check it.
+      const uncheckedScopes = stderr
+        .split("\n")
+        .map(line => line.trim())
+        .filter(line => line.startsWith("This scope can throw") || line.startsWith("But the exception was unchecked"));
+      return { stdout, stderr, exitCode, signalCode: proc.signalCode, uncheckedScopes };
+    }
+
+    test("loading the config file", async () => {
+      // No routes directory: the build stops after reading the config's default export.
+      using dir = tempDir("bake-production-validate-config", {
+        "bun.app.ts": `export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+            },
+          },
+        };`,
+        "server.ts": `export function render() { return new Response("unused"); }`,
+      });
+
+      const { stdout, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
+      expect({ stdout: normalizeBunSnapshot(stdout), exitCode, signalCode, uncheckedScopes }).toStrictEqual({
+        stdout: "done",
+        exitCode: 0,
+        signalCode: null,
+        uncheckedScopes: [],
+      });
+    });
+
+    test("loading the server entry point and prerendering routes", async () => {
+      // Loads the server entry point, reads prerender/getParams, and (via the client component) has a "bake:/" module call import().
+      const dir = await tempDirWithBakeDeps("bake-production-validate-prerender", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import Greeting from "../components/Greeting";
+
+export default function IndexPage() {
+  return (
+    <main>
+      <h1>Static Home</h1>
+      <Greeting />
+    </main>
+  );
+}`,
+        "components/Greeting.tsx": `"use client";
+
+export default function Greeting() {
+  return <p>Hello from the client</p>;
+}`,
+        "pages/posts/[slug].tsx": `export default function Post({ params }) {
+  return <h1>{"Post " + params.slug}</h1>;
+}
+
+export function getStaticPaths() {
+  return { paths: [{ params: { slug: "first" } }, { params: { slug: "second" } }], fallback: false };
+}`,
+      });
+
+      const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
+      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({ exitCode: 0, signalCode: null, uncheckedScopes: [] });
+
+      const rendered = await Promise.all(
+        ["index.html", "posts/first/index.html", "posts/second/index.html"].map(file =>
+          Bun.file(path.join(dir, "dist", file)).text(),
+        ),
+      );
+      expect(rendered[0]).toContain("<h1>Static Home</h1>");
+      expect(rendered[0]).toContain("<p>Hello from the client</p>");
+      expect(rendered[1]).toContain("<h1>Post first</h1>");
+      expect(rendered[2]).toContain("<h1>Post second</h1>");
+    });
+
+    test("a config import that fails to resolve", async () => {
+      // A specifier the bake resolve hook cannot resolve falls through to the regular resolver, which throws.
+      using dir = tempDir("bake-production-validate-unresolved", {
+        "bun.app.ts": `import "./does-not-exist";
+          export default { app: { framework: "react" } };`,
+      });
+
+      const { stderr, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
+      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({ exitCode: 1, signalCode: null, uncheckedScopes: [] });
+      expect(stderr).toContain("Cannot find module './does-not-exist'");
+    });
+
+    test("a route importing a file outside the bundle while rendering", async () => {
+      // A "bake:/" key that is not in the output map is handed to the regular loader to read from disk.
+      const dir = await tempDirWithBakeDeps("bake-production-validate-disk-import", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "extra/banner.mjs": `export const banner = "read from disk while rendering";`,
+        "pages/index.tsx": `import { join } from "node:path";
+
+export default async function IndexPage() {
+  // A computed specifier, so the bundler leaves this import() for the runtime.
+  const { banner } = await import(join(import.meta.dir, "../extra/banner.mjs"));
+  return <p>{banner}</p>;
+}`,
+      });
+
+      const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
+      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({ exitCode: 0, signalCode: null, uncheckedScopes: [] });
+      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
+        "<p>read from disk while rendering</p>",
+      );
+    });
+  });
 });

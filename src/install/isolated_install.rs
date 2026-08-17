@@ -2061,7 +2061,7 @@ pub(crate) fn install_isolated_packages(
             task.installer = installer_backref;
         }
 
-        // `append_store_path` runs on worker threads via `&Installer` and
+        // `append_dependency_path` runs on worker threads via `&Installer` and
         // can't take `&mut PackageManager` there, so ensure the
         // global link dir once on the main thread before any `.symlink`
         // resolution can be reached by a task. Guarded so installs without

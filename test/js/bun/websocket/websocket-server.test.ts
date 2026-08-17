@@ -756,16 +756,13 @@ describe("ServerWebSocket", () => {
     test(
       "(benchmark)",
       (done, connect) => {
-        // On debug/ASAN builds each echo client takes ~2s to start and every round trip is
-        // ~50x slower than release: 10 clients x 10_000 messages runs right up to the 30s timeout.
-        const maxClients = isDebug || isASAN ? 4 : 10;
+        const maxClients = 10;
+        // A round trip takes ~75us on a debug+ASAN build (vs <1us on release), so 10_000 runs for ~25s there.
         const maxMessages = isDebug || isASAN ? 1_000 : 10_000;
         let count = 0;
         return {
           open(ws) {
-            // test() spawned the first client; each client spawns the next one until maxClients
-            // are connected. Spawning them all at once would trip the pid limit of small containers:
-            // this file's concurrent tests already keep ~20 echo clients (14 threads each) alive.
+            // test() spawned the first client; each client spawns the next until maxClients are connected.
             if (ws.data.id < maxClients - 1) {
               connect();
             }

@@ -233,7 +233,7 @@ impl DependencyExt for Dependency {
                 Some(Semver::string::Builder::string_hash(
                     new_name.slice(out_slice),
                 )),
-                new_literal.slice(out_slice),
+                trim_literal(new_literal.slice(out_slice)),
                 self.version.tag,
                 &sliced,
                 None,
@@ -694,7 +694,7 @@ impl VersionExt for Version {
         parse_with_tag(
             alias,
             Some(alias_hash),
-            sliced.slice,
+            trim_literal(sliced.slice),
             tag,
             &sliced,
             Some(ctx.log),

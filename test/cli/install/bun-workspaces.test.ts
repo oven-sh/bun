@@ -511,6 +511,8 @@ describe("workspace aliases", async () => {
     "workspace:@org/b@*",
     // missing version after `@`
     "workspace:@org/b@",
+    // leading whitespace is not part of the specifier
+    " workspace:@org/b@*",
   ];
   for (const version of shouldPass) {
     test.concurrent(`version range ${version} and workspace with no version`, async () => {
@@ -551,7 +553,13 @@ describe("workspace aliases", async () => {
       expect(files).toMatchObject([{ name: "@org/a" }, { name: "@org/b" }, { name: "@org/b" }]);
     });
   }
-  let shouldFail: string[] = ["workspace:@org/b@1.0.0", "workspace:@org/b@1", "workspace:@org/b"];
+  let shouldFail: string[] = [
+    "workspace:@org/b@1.0.0",
+    "workspace:@org/b@1",
+    "workspace:@org/b",
+    // leading whitespace is not part of the specifier
+    " workspace:@org/b@1.0.0",
+  ];
   for (const version of shouldFail) {
     test.concurrent(`version range ${version} and workspace with no version (should fail)`, async () => {
       using ctx = await setupTest();

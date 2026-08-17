@@ -480,7 +480,7 @@ fn edit_update_entries(
                         let version_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        let tag = dependency::Tag::infer(version_literal);
+                        let tag = dependency::Tag::infer(dependency::trim_literal(version_literal));
 
                         // npm ranges only (and dist-tags with --latest); `catalog:` is handled by edit_catalogs_*.
                         if tag != dependency::Tag::Npm
@@ -558,7 +558,9 @@ fn edit_update_entries(
                         let value_literal = value
                             .as_utf8_string_literal()
                             .unwrap_or_else(|| bun_core::out_of_memory());
-                        if dependency::Tag::infer(value_literal) == dependency::Tag::Catalog {
+                        if dependency::Tag::infer(dependency::trim_literal(value_literal))
+                            == dependency::Tag::Catalog
+                        {
                             continue;
                         }
 
@@ -715,7 +717,7 @@ pub(crate) fn edit_catalogs_before_update(
             let version_literal = value
                 .as_utf8_string_literal()
                 .unwrap_or_else(|| bun_core::out_of_memory());
-            let tag = dependency::Tag::infer(version_literal);
+            let tag = dependency::Tag::infer(dependency::trim_literal(version_literal));
 
             // same tag rule as direct dependencies
             if tag != dependency::Tag::Npm && (tag != dependency::Tag::DistTag || !update_to_latest)
@@ -1050,8 +1052,9 @@ pub(crate) fn edit(
                                         == Subcommand::Update
                                         && value.expr.as_utf8_string_literal().is_some_and(
                                             |version_literal| {
-                                                dependency::Tag::infer(version_literal)
-                                                    == dependency::Tag::Catalog
+                                                dependency::Tag::infer(dependency::trim_literal(
+                                                    version_literal,
+                                                )) == dependency::Tag::Catalog
                                             },
                                         );
 
@@ -1072,7 +1075,7 @@ pub(crate) fn edit(
                                                 else {
                                                     break 'add_packages_to_update;
                                                 };
-                                                let tag = dependency::Tag::infer(version_literal);
+                                                let tag = dependency::Tag::infer(dependency::trim_literal(version_literal));
 
                                                 if tag != dependency::Tag::Npm
                                                     && tag != dependency::Tag::DistTag
@@ -1394,7 +1397,7 @@ pub(crate) fn edit(
             let e_string = unsafe { &mut *e_string };
             // `bun update <pkg>` only moves registry entries, like `edit_update_entries`; `bun add` still replaces any entry.
             if manager.subcommand == Subcommand::Update
-                && !dependency::Tag::infer(e_string.data.slice()).is_npm()
+                && !dependency::Tag::infer(dependency::trim_literal(e_string.data.slice())).is_npm()
             {
                 continue;
             }
@@ -1510,7 +1513,7 @@ pub(crate) fn edit(
                 // A range that linked a workspace member has nothing to move to; `workspace:*` is what `bun add` writes.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
                 // Not the bound row: an unchanged resolution keeps the old lockfile row and its previous literal.
-                resolution::Tag::Workspace => match dependency::Tag::infer(e_string.data.slice()) {
+                resolution::Tag::Workspace => match dependency::Tag::infer(dependency::trim_literal(e_string.data.slice())) {
                     dependency::Tag::Workspace => e_string.data.slice(),
                     _ => b"workspace:*",
                 },

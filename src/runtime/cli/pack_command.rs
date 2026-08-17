@@ -3265,6 +3265,7 @@ fn edit_root_package_json(
                     else {
                         continue;
                     };
+                    let package_spec = bun_install::dependency::trim_literal(package_spec);
                     if let Some(without_workspace_protocol) =
                         strings::without_prefix_if_possible_comptime(package_spec, b"workspace:")
                     {

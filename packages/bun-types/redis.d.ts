@@ -3323,7 +3323,7 @@ declare module "bun" {
     bitop(operation: "NOT" | "not", destkey: RedisClient.KeyLike, key: RedisClient.KeyLike): Promise<number>;
     /**
      * Perform a bitwise operation between multiple keys and store the result in the destination key
-     * @param operation The bitwise operation to perform (AND, OR, XOR)
+     * @param operation The bitwise operation to perform: AND, OR, XOR, or (Redis 8.2+) DIFF, DIFF1, ANDOR, ONE
      * @param destkey The destination key to store the result
      * @param key The first source key
      * @param moreKeys Additional source keys
@@ -3337,7 +3337,21 @@ declare module "bun" {
      * ```
      */
     bitop(
-      operation: "AND" | "OR" | "XOR" | "and" | "or" | "xor",
+      operation:
+        | "AND"
+        | "OR"
+        | "XOR"
+        | "DIFF"
+        | "DIFF1"
+        | "ANDOR"
+        | "ONE"
+        | "and"
+        | "or"
+        | "xor"
+        | "diff"
+        | "diff1"
+        | "andor"
+        | "one",
       destkey: RedisClient.KeyLike,
       key: RedisClient.KeyLike,
       ...moreKeys: RedisClient.KeyLike[]
@@ -3673,16 +3687,17 @@ declare module "bun" {
      * Sort the elements in a list, set or sorted set
      * @param key The key to sort
      * @param args Optional BY, LIMIT, GET, ASC/DESC, ALPHA, STORE modifiers
-     * @returns Promise that resolves with the sorted elements (or count if STORE is used)
+     * @returns Promise that resolves with the sorted elements (`null` for a GET pattern whose key is missing), or the count if STORE is used
      *
      * @example
      * ```ts
      * await redis.rpush("mylist", "3", "1", "2");
      * await redis.sort("mylist"); // ["1", "2", "3"]
      * await redis.sort("mylist", "DESC"); // ["3", "2", "1"]
+     * await redis.sort("mylist", "GET", "missing:*"); // [null, null, null]
      * ```
      */
-    sort(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<string[] | number>;
+    sort(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<(string | null)[] | number>;
 
     /**
      * Block until all write commands are acknowledged by at least the specified number of replicas

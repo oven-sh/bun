@@ -614,8 +614,8 @@ export default [
       lastsave: { fn: "lastsave", length: 0 },
       client: { fn: "jsClient", length: 1 },
       config: { fn: "config", length: 1 },
-      debug: { fn: "jsDebug", length: 1 },
-      command: { fn: "jsCommand", length: 0 },
+      debug: { fn: "debug", length: 1 },
+      command: { fn: "command", length: 0 },
 
       object: { fn: "object", length: 2 },
       sort: { fn: "sort", length: 1 },

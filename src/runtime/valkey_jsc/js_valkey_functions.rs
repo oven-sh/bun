@@ -355,26 +355,11 @@ macro_rules! cmd_key_value_value2 {
     };
 }
 
-/// How `cmd_strings_varargs!` treats an explicit `undefined` argument.
-enum UndefinedArg {
-    /// `flushdb(undefined)` sends the same thing as `flushdb()`.
-    Omitted,
-    /// Throws; a bare PUNSUBSCRIBE would drop every pattern.
-    Rejected,
-}
-
 macro_rules! cmd_strings_varargs {
     ($fn_name:ident, $name:literal, $command:literal, $state:ident) => {
-        cmd_strings_varargs!(
-            $fn_name,
-            $name,
-            $command,
-            $state,
-            CommandMeta::default(),
-            UndefinedArg::Omitted
-        );
+        cmd_strings_varargs!($fn_name, $name, $command, $state, CommandMeta::default());
     };
-    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr, $undefined:expr) => {
+    ($fn_name:ident, $name:literal, $command:literal, $state:ident, $meta:expr) => {
         #[bun_jsc::host_fn(method)]
         pub fn $fn_name(
             this: &Self,
@@ -388,10 +373,6 @@ macro_rules! cmd_strings_varargs {
             let mut args: Vec<JSArgument> = Vec::with_capacity(frame.arguments().len());
 
             for arg in frame.arguments() {
-                if matches!($undefined, UndefinedArg::Omitted) && arg.is_undefined() {
-                    continue;
-                }
-
                 let Some(another) = from_js(global, *arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         bname($name),
@@ -1717,16 +1698,14 @@ impl JSValkeyClient {
         b"psubscribe",
         "PSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
-        UndefinedArg::Rejected
+        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
     );
     cmd_strings_varargs!(
         punsubscribe,
         b"punsubscribe",
         "PUNSUBSCRIBE",
         DontCare,
-        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
-        UndefinedArg::Rejected
+        CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST
     );
     cmd_strings_varargs!(pubsub, b"pubsub", "PUBSUB", DontCare);
     cmd_strings_varargs!(copy, b"copy", "COPY", NotSubscriber);
@@ -1780,8 +1759,8 @@ impl JSValkeyClient {
     cmd_noargs!(lastsave, b"lastsave", "LASTSAVE", NotSubscriber);
     cmd_strings_varargs!(js_client, b"client", "CLIENT", DontCare);
     cmd_strings_varargs!(config, b"config", "CONFIG", NotSubscriber);
-    cmd_strings_varargs!(js_debug, b"debug", "DEBUG", NotSubscriber);
-    cmd_strings_varargs!(js_command, b"command", "COMMAND", NotSubscriber);
+    cmd_strings_varargs!(debug, b"debug", "DEBUG", NotSubscriber);
+    cmd_strings_varargs!(command, b"command", "COMMAND", NotSubscriber);
 
     // Generic key commands
     cmd_strings_varargs!(object, b"object", "OBJECT", NotSubscriber);

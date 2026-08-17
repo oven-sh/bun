@@ -6381,13 +6381,22 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(await redis.get(key)).toBeNull();
       });
 
-      test("an explicit undefined optional argument is treated as omitted", async () => {
+      test("an explicit undefined argument throws before anything is sent", async () => {
         const redis = ctx.redis;
-        const key = "flushdb-undefined:" + randomUUIDv7();
-        await redis.set(key, "x");
-        expect(await redis.flushdb(undefined)).toBe("OK");
-        expect(await redis.get(key)).toBeNull();
-        expect(await redis.info(undefined as any)).toContain("redis_version");
+        const src = "undefined-arg:src:" + randomUUIDv7();
+        const dst = "undefined-arg:dst:" + randomUUIDv7();
+        const other = "undefined-arg:other:" + randomUUIDv7();
+        await redis.set(src, "x");
+
+        // An interior undefined must not shift the later arguments into its place.
+        expect(() => redis.mset(other, undefined as any, "b")).toThrow("string or buffer");
+        expect(() => redis.copy(src, undefined as any, dst)).toThrow("string or buffer");
+        // The new commands follow the same rule, optional argument or not.
+        expect(() => redis.flushdb(undefined)).toThrow("string or buffer");
+        expect(() => redis.bitop("AND", dst, undefined as any, src)).toThrow("string or buffer");
+
+        expect(await redis.mget(other, dst)).toEqual([null, null]);
+        expect(await redis.get(src)).toBe("x");
       });
 
       test("FLUSHALL clears all databases", async () => {
@@ -6420,6 +6429,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(await redis.sort(key)).toEqual(["1", "2", "3"]);
         expect(await redis.sort(key, "DESC")).toEqual(["3", "2", "1"]);
         expect(await redis.sort(key, "LIMIT", 0, 2)).toEqual(["1", "2"]);
+        expect(await redis.sort(key, "GET", `${key}:missing:*`)).toEqual([null, null, null]);
       });
 
       test("LCS returns longest common subsequence", async () => {
@@ -7475,7 +7485,9 @@ describe("RedisClient argument validation", () => {
     }
   });
 
-  test("variadic commands reject an explicit null argument", () => {
+  test("variadic commands reject an explicit null or undefined argument", () => {
+    // Skipping the argument instead would shift the ones after it (mset, copy),
+    // or change what the command does (a bare PUNSUBSCRIBE drops every pattern).
     const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
     try {
       for (const call of [
@@ -7483,25 +7495,13 @@ describe("RedisClient argument validation", () => {
         () => client.geoadd("geo", null as any),
         () => client.xadd("stream", "*", "field", null as any),
         () => client.lcs("a", null as any),
-      ]) {
-        expect(syncThrow(call)).toMatchObject({ message: expect.stringContaining("string or buffer") });
-      }
-    } finally {
-      client.close();
-    }
-  });
-
-  test("pattern subscription commands reject an explicit undefined argument", () => {
-    // PUNSUBSCRIBE with no patterns drops every pattern subscription, so an
-    // undefined pattern must not be treated as "no patterns" the way an
-    // undefined optional argument is for the other variadic commands.
-    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
-    try {
-      for (const call of [
+        () => client.mset("a", undefined as any, "b"),
+        () => client.copy("src", undefined as any, "dst"),
+        () => client.flushdb(undefined),
+        () => client.bitop("AND", "dest", undefined as any, "src"),
         () => client.punsubscribe(undefined as any),
         () => client.punsubscribe("news.*", undefined as any),
         () => client.psubscribe(undefined as any),
-        () => client.psubscribe("news.*", undefined as any),
       ]) {
         expect(syncThrow(call)).toMatchObject({ message: expect.stringContaining("string or buffer") });
       }

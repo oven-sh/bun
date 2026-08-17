@@ -2263,17 +2263,23 @@ where
     let result = match cb.call(global, this.this_object(), &[Z::to_js(wrapper, global)]) {
         Ok(v) => v,
         Err(_) => {
-            if let Some(exc) = scope.exception() {
+            // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
+            // error: it stays pending to unwind whatever drives the rewriter.
+            if let Some(exc) = scope.exception()
+                && !JSValue::from_cell(exc.as_ptr()).is_termination_exception()
+            {
                 record_handler_error(&sink, exception_value(exc));
             }
-            scope.clear_exception();
+            scope.clear_exception_except_termination();
             return HandlerOutcome::Stop;
         }
     };
 
     if let Some(exc) = scope.exception() {
-        record_handler_error(&sink, exception_value(exc));
-        scope.clear_exception();
+        if !JSValue::from_cell(exc.as_ptr()).is_termination_exception() {
+            record_handler_error(&sink, exception_value(exc));
+        }
+        scope.clear_exception_except_termination();
         return HandlerOutcome::Stop;
     }
 

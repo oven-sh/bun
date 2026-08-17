@@ -84,6 +84,12 @@ extern "C" void TopExceptionScope__clearException(void* ptr)
     scope->clearException();
 }
 
+extern "C" void TopExceptionScope__clearExceptionExceptTermination(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
+    static_cast<TopExceptionScope*>(ptr)->clearExceptionExceptTermination();
+}
+
 extern "C" void TopExceptionScope__destruct(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);

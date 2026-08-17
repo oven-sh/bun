@@ -60,6 +60,12 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
         return;
 
     vm.cancelTermination();
+    // A stop requested between the check above and the withdrawal went with it. Its trap fired after this
+    // run's, so it forbade execution as it landed (or will, re-requested here): the stop still wins.
+    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+        vm.notifyNeedTermination();
+        return;
+    }
     {
         // Whatever else the cut-short run may have left pending: the timeout / interrupt error replaces it.
         auto top = DECLARE_TOP_EXCEPTION_SCOPE(vm);

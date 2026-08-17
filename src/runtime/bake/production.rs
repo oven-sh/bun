@@ -233,6 +233,12 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
     vm.global_exit()
 }
 
+fn print_log(vm: &VirtualMachine) {
+    if let Some(log) = vm.log_ref() {
+        let _ = log.print(std::ptr::from_mut(Output::error_writer()));
+    }
+}
+
 fn write_sourcemap_to_disk(
     file: &OutputFile,
     bundled_outputs: &[OutputFile],
@@ -498,9 +504,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
             bun_core::err_generic!("Failed to resolve all imports required by the framework");
             Output::flush();
-            let _ = server_transpiler
-                .log()
-                .print(std::ptr::from_mut(Output::error_writer()));
+            print_log(vm);
             return Err(crate::Error::BakeBuildFailed);
         }
     };
@@ -602,11 +606,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Lives in this block's stack frame, outliving the bundle call.
         let mut any_loop = bun_event_loop::AnyEventLoop::js(vm.event_loop().cast());
 
-        // Propagate via `?`. Do NOT
-        // catch-and-exit here: the bake path expects this call to succeed for
-        // valid inputs, and any `BuildFailed` indicates a bug upstream
-        // (in the bundler), not a user-facing diagnostic to swallow.
-        BundleV2::generate_from_bake_production_cli(
+        match BundleV2::generate_from_bake_production_cli(
             &entry_points,
             // SAFETY: see `server_ptr` comment above.
             unsafe { &mut *server_ptr },
@@ -618,7 +618,17 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             },
             &options.arena,
             Some(NonNull::from(&mut any_loop)),
-        )?
+        ) {
+            Ok(outputs) => outputs,
+            // The bundler's diagnostics are in the log; `BuildFailed` with an empty log stays an internal error.
+            Err(bun_bundler::Error::BuildFailed)
+                if vm.log_ref().is_some_and(bun_ast::Log::has_errors) =>
+            {
+                print_log(vm);
+                return Err(crate::Error::BakeBuildFailed);
+            }
+            Err(e) => return Err(e.into()),
+        }
     };
     if bundled_outputs_list.is_empty() {
         bun_core::prettyln!("done");

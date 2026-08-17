@@ -23,6 +23,9 @@ bun upgrade
 | --------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `bun install`         | New lockfiles are written as `lockfileVersion: 2`                | Upgrade CI and teammates to Bun ≥ 1.4, or keep your existing `bun.lock` |
 | `bun install`         | Nested overrides now apply; their `bun.lock` becomes version 3   | Run `bun install` once and commit `bun.lock` before upgrading CI        |
+| `bun install`         | `--frozen-lockfile` fails on any `overrides` / catalog edit      | Run `bun install` and commit `bun.lock` after editing them              |
+| `bun install`         | Project `bunfig.toml` now takes precedence over `.npmrc`         | Delete whichever duplicate setting you do not want                      |
+| `bun update`          | Also moves transitive dependencies; `<name>` is no longer added  | Use `bun add` to add a dependency; expect larger `bun.lock` diffs       |
 | `bunfig.toml` / TOML  | Strict TOML parsing; unquoted string values are rejected         | Quote string values                                                     |
 | JSX                   | `"jsx": "react-jsx"` now emits the production runtime            | Use `"jsx": "react-jsxdev"` for development output                      |
 | TypeScript            | `useDefineForClassFields: false` is now honored                  | Remove the option to keep 1.3 class-field output                        |
@@ -108,7 +111,23 @@ Separately, a dependency declared as `npm:<target>` inside a package is no longe
 
 A plain `bun update` now re-resolves transitive dependencies too, moving each one to the newest version its dependents' declared ranges allow; 1.3 only re-resolved your direct dependencies and left the rest of the lockfile as it was. Expect larger lockfile diffs from `bun update` than before.
 
-`bun update <name>` now updates every occurrence of `<name>` in the lockfile in place (transitive dependencies and, when run from a workspace root, workspace members' dependencies, each within its declared range). In 1.3, `bun update <name>` for a package that was not one of your direct dependencies added it to `package.json` like `bun add`; 1.4 updates the existing entries instead, and exits 1 with `error: "<name>" is not in bun.lock` when the package is not installed at all. Use `bun add <name>` to add a package.
+`bun update <name>` now updates every occurrence of `<name>` that the current workspace reaches in place (transitive dependencies included, each within its declared range; other workspaces' own entries are only updated with `--recursive` or `--filter`). In 1.3, `bun update <name>` for a package that was not one of your direct dependencies added it to `package.json` like `bun add`; 1.4 updates the existing entries instead, and exits 1 with `error: "<name>" is not in bun.lock` when the package is not installed at all. Use `bun add <name>` to add a package.
+
+Three smaller `bun update` differences: `--recursive` / `--filter` now apply (1.3 accepted and ignored them), and a `--filter` that matches no workspace exits 1. `--production` / `--prod` now means "only update `dependencies` and `optionalDependencies`", a group filter like `--dev`; in 1.3 it was the install flag (skip `devDependencies`, implying `--frozen-lockfile`). A plain update leaves dist-tag literals and ranges such as `*`, `1.x`, or `^1 || ^2` in `package.json` as written and only moves `bun.lock`, where 1.3 rewrote most of them to `^x.y.z`; `bun update --latest` still rewrites them.
+
+### `--frozen-lockfile` also checks `overrides` and catalogs
+
+`bun install --frozen-lockfile` (and `bun ci` and `--production`, which imply it) now fails whenever `overrides` / `resolutions`, `catalog`, or `catalogs` in `package.json` differ from what `bun.lock` recorded, even if the edit would not change any resolved version; the error is followed by a note naming the field (`note: overrides in package.json changed since bun.lock was saved`). Bun 1.3 applied the edit during the frozen install and only failed if the resulting tree differed.
+
+`bun install --lockfile-only` combined with `--frozen-lockfile` or `--production` now only verifies the lockfile and writes nothing; 1.3 rewrote `bun.lock` (and created it if it was missing). Check the exit code rather than the file.
+
+**What to do:** after editing overrides or a catalog, run `bun install` and commit `bun.lock` together with `package.json`.
+
+### `bunfig.toml` takes precedence over `.npmrc`
+
+When the same install setting (the default registry, a scoped registry, `exact`, `ignoreScripts`, the cache directory, the linker, and so on) appears both in an `.npmrc` (the project's or `~/.npmrc`) and in the project's `bunfig.toml`, Bun 1.4 uses the `bunfig.toml` value. Bun 1.3 applied `.npmrc` last, so the `.npmrc` value won. The order is now `~/.npmrc`, `./.npmrc`, `bunfig.toml`, environment variables, command-line flags. `_authToken` and other credential lines in `.npmrc` still apply to a registry declared in `bunfig.toml`.
+
+**What to do:** if a setting appears in both files, keep the one you want and delete the other.
 
 ### `trustedDependencies` matches the resolved package name
 
@@ -496,6 +515,7 @@ These are correctness fixes that tighten validation or align with a specificatio
 **Node.js compatibility**
 
 - `tls.Server` with `requestCert: true` now enforces the default `rejectUnauthorized: true` for client certificates.
+- `process.exit(code)`: if a `process.on("exit")` listener assigns `process.exitCode`, the process (or worker) now exits with that value, as in Node.js; 1.3 exited with `code`.
 
 **Bundler**
 
@@ -504,7 +524,9 @@ These are correctness fixes that tighten validation or align with a specificatio
 **CLI and package manager**
 
 - `bun init` templates declare `"typescript": "^7"` in `peerDependencies` (1.3 declared `^5`; the React templates declared no TypeScript dependency).
-- `bun update --recursive` / `--filter` are now applied (they were previously ignored), and a plain `bun update` from a workspace root also re-resolves `catalog:` entries.
+- A non-interactive `bun update` now also updates `catalog:` entries within their ranges; 1.3 only did this in `bun update -i`.
+- `bun add` and `bun remove` accept `--filter` / `-F`, and `bun install <pkg> --filter` honors it. 1.3 ignored the flag on these commands, so `bun add y --filter x` added both `y` and a package named `x` to the current `package.json`; 1.4 edits the matching workspaces instead. For these two commands `--filter '*'` does not include the root package; name it explicitly to include it.
+- `bun add <name>` in a workspace whose root `catalog` lists `<name>` writes `"<name>": "catalog:"` and installs the catalog's version; 1.3 wrote the resolved `^x.y.z`. Pass an explicit version (`bun add <name>@2`) to get a concrete range; named catalogs still require `--catalog=<catalog>`.
 
 See [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792) for the tracking list, including narrow protocol and bounds checks not repeated here.
 

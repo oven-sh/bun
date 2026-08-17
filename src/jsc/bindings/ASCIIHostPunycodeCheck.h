@@ -58,12 +58,13 @@ inline int32_t digitValue(unsigned c)
     return -1;
 }
 
-// RFC 3492 decoding with u_strFromPunycode's failure conditions. Returns the number of code points, or -1.
+// RFC 3492 decoding with u_strFromPunycode's failure conditions. Returns the number of code points, -1 if the input is
+// not valid Punycode, or -2 if it is merely too long to judge here.
 template<typename CharacterType>
 inline int32_t decode(const CharacterType* source, size_t sourceLength, char32_t (&destination)[maxCodePoints])
 {
     if (sourceLength > maxCodePoints)
-        return -1;
+        return -2;
     // Everything before the last '-' (if any) is literal; a '-' at index 0 leaves nothing literal and is then
     // itself read as a digit, which fails, as in u_strFromPunycode.
     size_t basicLength = sourceLength;
@@ -114,7 +115,7 @@ inline int32_t decode(const CharacterType* source, size_t sourceLength, char32_t
         if (n > 0x10ffff || (n & 0xfffff800) == 0xd800)
             return -1;
         if (static_cast<size_t>(destLength) >= maxCodePoints)
-            return -1;
+            return -2;
         for (int32_t move = destLength; move > i; --move)
             destination[move] = destination[move - 1];
         destination[i] = n;
@@ -145,7 +146,7 @@ inline ASCIIHostPunycodeVerdict checkLabel(const CharacterType* label, size_t le
     char32_t codePoints[maxCodePoints];
     int32_t count = decode(label + 4, length - 4, codePoints);
     if (count < 0)
-        return length - 4 > maxCodePoints ? ASCIIHostPunycodeVerdict::NeedsFullCheck : ASCIIHostPunycodeVerdict::Invalid;
+        return count == -2 ? ASCIIHostPunycodeVerdict::NeedsFullCheck : ASCIIHostPunycodeVerdict::Invalid;
     if (!count)
         return ASCIIHostPunycodeVerdict::NeedsFullCheck;
 

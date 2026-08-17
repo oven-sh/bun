@@ -59,12 +59,6 @@ public:
     URLSearchParams& searchParams();
     void markSearchParamsDirty() { m_searchParamsDirty = true; }
 
-    const String& toJSON() const
-    {
-        flushPendingSearchParamsUpdate();
-        return m_url.string();
-    }
-
     size_t memoryCost() const
     {
         return sizeof(DOMURL) + m_url.string().sizeInBytes();

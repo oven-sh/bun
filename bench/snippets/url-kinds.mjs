@@ -60,6 +60,18 @@ group("URL.canParse", () => {
   });
 });
 
+group("literal punycode host", () => {
+  bench("canParse valid (xn--ls8h.com)", () => URL.canParse("https://xn--ls8h.com/p"));
+  bench("canParse invalid (xn--a.com)", () => URL.canParse("https://xn--a.com/p"));
+});
+
+group("same string base every call", () => {
+  const base = "https://example.com/app/index.html";
+  bench("new URL(path, base)", () => new URL("/api/v1/items?limit=10", base));
+  bench("URL.parse(path, base)", () => URL.parse("/api/v1/items?limit=10", base));
+  bench("URL.canParse(path, base)", () => URL.canParse("/api/v1/items?limit=10", base));
+});
+
 group("URL.parse", () => {
   bench("path + query + hash", () => URL.parse(kinds["path + query + hash"]));
   bench("invalid", () => URL.parse("https://exa mple.com/"));

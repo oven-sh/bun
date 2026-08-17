@@ -196,6 +196,7 @@ describe("url", () => {
     ];
     for (const [input, ok] of cases) {
       expect([input, URL.canParse(input)]).toEqual([input, ok]);
+      expect([input, URL.parse(input)?.href ?? null]).toEqual([input, ok ? input.toLowerCase() : null]);
       if (ok) expect(new URL(input).href).toBe(input.toLowerCase());
       else expect(() => new URL(input)).toThrow(TypeError);
     }
@@ -232,10 +233,13 @@ describe("url", () => {
     const s = "https://example.com/a?b#c";
     const u = new URL(s);
     expect(u.href).toBe(s);
+    Bun.gc(true);
     expect(u.toString()).toBe(s);
     expect(u.toJSON()).toBe(s);
+    Bun.gc(true);
     expect(`${u}`).toBe(s);
     u.pathname = "/z";
+    Bun.gc(true);
     expect(u.href).toBe("https://example.com/z?b#c");
     expect(u.toString()).toBe(u.href);
     u.searchParams.append("d", "1");

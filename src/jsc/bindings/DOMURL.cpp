@@ -172,7 +172,7 @@ ExceptionOr<void> DOMURL::setHref(const String& url)
 // The update steps invoked on URLSearchParams::{append,set,delete,sort} set
 // m_searchParamsDirty instead of eagerly re-serializing m_url on every call so
 // that N appends through url.searchParams stay O(N) instead of O(N^2). All
-// reads of m_url (href/toJSON/fullURL) call this first to reconcile.
+// reads of m_url (href/fullURL) call this first to reconcile.
 void DOMURL::flushPendingSearchParamsUpdate() const
 {
     if (!m_searchParamsDirty) [[likely]]

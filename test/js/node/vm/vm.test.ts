@@ -1,9 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { inspect } from "node:util";
 import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1117,6 +1119,62 @@ describe("context options with throwing getters", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
+  });
+});
+
+describe("constants", () => {
+  test("symbols use Node's descriptions", () => {
+    const { DONT_CONTEXTIFY, USE_MAIN_CONTEXT_DEFAULT_LOADER } = constants;
+
+    expect({
+      DONT_CONTEXTIFY: DONT_CONTEXTIFY.description,
+      USE_MAIN_CONTEXT_DEFAULT_LOADER: USE_MAIN_CONTEXT_DEFAULT_LOADER.description,
+    }).toEqual({
+      DONT_CONTEXTIFY: "vm_context_no_contextify",
+      USE_MAIN_CONTEXT_DEFAULT_LOADER: "vm_dynamic_import_main_context_default",
+    });
+
+    expect(String(DONT_CONTEXTIFY)).toBe("Symbol(vm_context_no_contextify)");
+    expect(String(USE_MAIN_CONTEXT_DEFAULT_LOADER)).toBe("Symbol(vm_dynamic_import_main_context_default)");
+    expect(inspect(constants)).toBe(
+      "[Object: null prototype] {\n" +
+        "  USE_MAIN_CONTEXT_DEFAULT_LOADER: Symbol(vm_dynamic_import_main_context_default),\n" +
+        "  DONT_CONTEXTIFY: Symbol(vm_context_no_contextify)\n" +
+        "}",
+    );
+  });
+
+  test("symbols are echoed with Node's descriptions in ERR_INVALID_ARG_TYPE messages", () => {
+    const { DONT_CONTEXTIFY, USE_MAIN_CONTEXT_DEFAULT_LOADER } = constants;
+
+    expect(() => isContext(DONT_CONTEXTIFY as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "object" argument must be of type object. Received type symbol (Symbol(vm_context_no_contextify))',
+      }),
+    );
+    expect(() => isContext(USE_MAIN_CONTEXT_DEFAULT_LOADER as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "object" argument must be of type object. Received type symbol (Symbol(vm_dynamic_import_main_context_default))',
+      }),
+    );
+    expect(() => new Script("1", { importModuleDynamically: DONT_CONTEXTIFY as any })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "options.importModuleDynamically" property must be of type function. Received type symbol (Symbol(vm_context_no_contextify))',
+      }),
+    );
+    expect(() => runInContext("1", USE_MAIN_CONTEXT_DEFAULT_LOADER as any)).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message:
+          'The "object" argument must be of type object. Received type symbol (Symbol(vm_dynamic_import_main_context_default))',
+      }),
+    );
   });
 });
 

@@ -349,7 +349,8 @@ impl TopExceptionScope {
     }
 
     /// If no exception, returns.
-    /// If the termination exception is pending, `Err(Thrown)`: it is an exception, so unwind (`?`).
+    /// If the termination exception is pending, `Err` ([`err_for_pending`](Self::err_for_pending): `Thrown`
+    /// beneath script, so unwind with `?`; taken and `Terminated` once it has left script).
     /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         if let Some(e) = self.exception() {
@@ -559,7 +560,7 @@ impl ExceptionValidationScope {
     }
 
     /// If no exception, returns.
-    /// If the termination exception is pending, `Err(Thrown)` (so you can `?`).
+    /// If the termination exception is pending, `Err` (see [`TopExceptionScope::err_for_pending`]).
     /// If a non-termination exception, assertion failure.
     pub(crate) fn assert_no_exception_except_termination(&mut self) -> Result<(), JsError> {
         #[cfg(any(debug_assertions, bun_asan))]

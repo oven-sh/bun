@@ -1706,8 +1706,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                 .or_else(|| self.h3_draining_listener.take())
             {
                 // Abrupt (also after a graceful stop): abort the live connections and close the fd now.
+                // Their `-2`s reach `on_connection_filter` from in here; `deinit_running` keeps it from
+                // re-entering `deinit_if_we_can` under this `&mut self` (as around the app closes below).
+                self.deinit_running.set(true);
                 // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
                 bun_opaque::opaque_deref_mut(h3l).close();
+                self.deinit_running.set(false);
             }
         }
 

@@ -43,8 +43,8 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
         // before the native side borrows characters from any argument.
         if (Function != Bun__Path__format) {
             if (arg.isCell()) {
-                const JSType type = arg.asCell()->type();
-                if (type == StringObjectType || type == DerivedStringObjectType) {
+                const JSC::JSType type = arg.asCell()->type();
+                if (type == JSC::StringObjectType || type == JSC::DerivedStringObjectType) {
                     arg = arg.toString(globalObject);
                     RETURN_IF_EXCEPTION(scope, {});
                 }

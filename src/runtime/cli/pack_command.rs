@@ -2465,9 +2465,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     // default is 9
     // https://github.com/npm/cli/blob/ec105f400281a5bfd17885de1ea3d54d0c231b27/node_modules/pacote/lib/util/tar-create-options.js#L12
     let compression_level: &[u8] = opt_pack_gzip_level(ctx.manager).unwrap_or(b"9");
-    write!(&mut print_buf, "{}\x00", bstr::BStr::new(compression_level)).expect("OOM");
-    // SAFETY: print_buf[compression_level.len()] == 0 written above
-    let level_z = ZStr::from_buf(&print_buf[..], compression_level.len());
+    print_buf.extend_from_slice(compression_level);
+    print_buf.push(0);
+    let level_z = ZStr::from_slice_with_nul(&print_buf[..]);
     match archive.write_set_filter_option(None, zstr_lit(b"compression-level\0"), level_z) {
         ArchiveResult::Failed | ArchiveResult::Fatal | ArchiveResult::Warn => {
             Output::err_generic(
@@ -3163,16 +3163,11 @@ fn add_archive_entry(
 ) -> *mut ArchiveEntry {
     // `entry` is the same pointer after `.clear()`.
     let entry = ArchiveEntry::opaque_ref(entry);
-    write!(
-        print_buf,
-        "{}{}\x00",
-        bstr::BStr::new(PACKAGE_PREFIX),
-        bstr::BStr::new(filename.as_bytes())
-    )
-    .expect("OOM");
-    let pathname_len = PACKAGE_PREFIX.len() + filename.as_bytes().len();
-    // SAFETY: print_buf[pathname_len] == 0 written above
-    let pathname = ZStr::from_buf(&print_buf[..], pathname_len);
+    // Not formatted through `BStr`: its `Display` rewrites bytes that are not valid UTF-8.
+    print_buf.extend_from_slice(PACKAGE_PREFIX);
+    print_buf.extend_from_slice(filename.as_bytes());
+    print_buf.push(0);
+    let pathname = ZStr::from_slice_with_nul(&print_buf[..]);
     #[cfg(windows)]
     entry.set_pathname_utf8(pathname);
     #[cfg(not(windows))]

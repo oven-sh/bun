@@ -173,8 +173,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
     RETURN_IF_EXCEPTION(scope, );
 
-    // Match V8: remove all frames up to and including the caller. Name matching
-    // covers resumed async functions, whose frame callee is the generator's `next`.
     std::optional<size_t> removeCount;
     for (size_t i = 0; i < stackTrace.size(); i++) {
         const auto& frame = stackTrace.at(i);

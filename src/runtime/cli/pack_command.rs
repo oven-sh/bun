@@ -3162,14 +3162,11 @@ fn add_archive_entry(
 /// What the tarball's package.json gets in place of a `workspace:` or `catalog:` spec.
 enum Substitution<'a> {
     /// `workspace:^` / `~` / `*`: the workspace's current version behind that prefix.
-    WorkspaceVersion {
-        prefix: &'static str,
-    },
+    WorkspaceVersion(&'static str),
     /// `workspace:@acme/core@*` (alias), `workspace:../core`, or `workspace:1.x` on a workspace.
     WorkspaceRangeOrDirectory(&'a [u8]),
-    Catalog {
-        catalog_name: &'a [u8],
-    },
+    /// `catalog:<name>`
+    Catalog(&'a [u8]),
 }
 
 impl<'a> Substitution<'a> {
@@ -3177,16 +3174,17 @@ impl<'a> Substitution<'a> {
         let spec = bun_install::dependency::trim_literal(spec);
         if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
             return Some(match range {
-                b"^" => Substitution::WorkspaceVersion { prefix: "^" },
-                b"~" => Substitution::WorkspaceVersion { prefix: "~" },
-                b"*" => Substitution::WorkspaceVersion { prefix: "" },
+                b"^" => Substitution::WorkspaceVersion("^"),
+                b"~" => Substitution::WorkspaceVersion("~"),
+                b"*" => Substitution::WorkspaceVersion(""),
                 _ => Substitution::WorkspaceRangeOrDirectory(range),
             });
         }
         let catalog_name = strings::without_prefix_if_possible_comptime(spec, b"catalog:")?;
-        Some(Substitution::Catalog {
-            catalog_name: strings::trim(catalog_name, &strings::WHITESPACE_CHARS),
-        })
+        Some(Substitution::Catalog(strings::trim(
+            catalog_name,
+            &strings::WHITESPACE_CHARS,
+        )))
     }
 }
 
@@ -3352,7 +3350,7 @@ fn edit_root_package_json(
 
         // `E::EString::init` keeps a pointer to the bytes, so they go into the pack arena.
         let replacement: &[u8] = match substitution {
-            Substitution::WorkspaceVersion { prefix } => {
+            Substitution::WorkspaceVersion(prefix) => {
                 let Some(version) = manifests().workspace_version(dependency_name) else {
                     fail(
                         "workspace",
@@ -3376,7 +3374,7 @@ fn edit_root_package_json(
                     Err(why) => fail("workspace", format_args!("{why}")),
                 }
             }
-            Substitution::Catalog { catalog_name } => {
+            Substitution::Catalog(catalog_name) => {
                 match manifests().catalog_version(catalog_name, dependency_name) {
                     Some(version) => bump.alloc_slice_copy(version),
                     None => fail("catalog", format_args!("no matching catalog dependency")),

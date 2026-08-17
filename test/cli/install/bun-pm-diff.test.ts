@@ -1017,6 +1017,30 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     }
   });
 
+  test("a package.json name that is not an npm name is never printed or looked up", async () => {
+    // A hostile tarball naming itself with an OSC sequence must not reach the terminal via the header or status.
+    const evil = "\u001b]52;c;aGk=\u0007pkg";
+    const { text, stderr, exitCode } = await pretty({
+      "a/package.json": JSON.stringify({ name: evil, version: "1.0.0" }),
+      "b/package.json": JSON.stringify({ name: evil, version: "1.0.1" }),
+    });
+    expect(text + stderr).not.toContain("\u001b]52");
+    expect(exitCode).toBe(0);
+    // …and it is not accepted as a registry lookup name either.
+    using dir = tempDir("pm-diff-evilname", { "p/package.json": JSON.stringify({ name: evil, version: "1.0.0" }) });
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./p"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, code] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    expect(out + err).not.toContain("\u001b]52");
+    expect(err).toContain('has no package.json "name"');
+    expect(code).toBe(1);
+  });
+
   test("a scope too big for the LCS table takes the windowed path and still folds a consistent rename", async () => {
     // 2100 × 2100 candidate cells > the 4M-cell table cap.
     const n = 2100;

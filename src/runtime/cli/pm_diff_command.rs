@@ -110,6 +110,7 @@ pub(crate) fn exec(
         if name.is_empty() {
             let local = materialize(pm, &left_spec)?;
             *name = package_name_in(&local).unwrap_or_else(|| {
+                Status::clear();
                 Output::err_generic(
                     "{} has no package.json \"name\" to look up in the registry",
                     (BStr::new(&local.label),),
@@ -123,6 +124,7 @@ pub(crate) fn exec(
     if let Spec::Registry { name, .. } = &mut left_spec {
         if name.is_empty() {
             *name = package_name_in(&right).unwrap_or_else(|| {
+                Status::clear();
                 Output::err_generic(
                     "{} has no package.json \"name\" to look up in the registry",
                     (BStr::new(&right.label),),
@@ -154,6 +156,7 @@ pub(crate) fn exec(
                 .retain(|path, _| filters.iter().any(|f| filter_matches(f, path)));
         }
         if left.files.is_empty() && right.files.is_empty() && before_l + before_r > 0 {
+            Status::clear();
             Output::err_generic(
                 "no file in either side matches {}",
                 (BStr::new(&filters.join(&b", "[..])),),
@@ -253,6 +256,7 @@ fn resolve_sides(pm: &mut PackageManager, args: &[Vec<u8>], original_cwd: &[u8])
                 }
                 // `name` / `name@b`: the version this project has installed → b (default: latest).
                 let installed = installed_version(pm, &name).unwrap_or_else(|| {
+                    Status::clear();
                     Output::err_generic("{} is not in this project's lockfile; give two versions to compare, e.g. `bun pm diff {}@1.0.0 {}@2.0.0`", (BStr::new(&name), BStr::new(&name), BStr::new(&name)));
                     Global::exit(1);
                 });
@@ -318,7 +322,33 @@ fn package_name_in(tree: &Tree) -> Option<Vec<u8>> {
     )
     .ok()?;
     let name = json.get_string_cloned(&bump, b"name").ok().flatten()?;
-    (!name.is_empty()).then(|| name.to_vec())
+    is_npm_name(name).then(|| name.to_vec())
+}
+
+/// npm's package-name grammar (lowercase URL-safe, optional `@scope/`), so nothing else from a package.json is
+/// ever printed as a name or sent to a registry.
+fn is_npm_name(name: &[u8]) -> bool {
+    let ok_part = |p: &[u8]| {
+        !p.is_empty()
+            && p.len() <= 214
+            && !p.starts_with(b".")
+            && !p.starts_with(b"_")
+            && p.iter().all(|&b| {
+                b.is_ascii_lowercase()
+                    || b.is_ascii_digit()
+                    || matches!(b, b'-' | b'.' | b'_' | b'~')
+            })
+    };
+    match name.strip_prefix(b"@") {
+        Some(rest) => {
+            let Some(slash) = strings::index_of_char(rest, b'/') else {
+                return false;
+            };
+            let slash = slash as usize;
+            ok_part(&rest[..slash]) && ok_part(&rest[slash + 1..])
+        }
+        None => ok_part(name),
+    }
 }
 
 fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
@@ -334,14 +364,15 @@ fn root_package_name(pm: &PackageManager, original_cwd: &[u8]) -> Vec<u8> {
             &bump,
         ) {
             if let Some(name) = json.get_string_cloned(&bump, b"name").ok().flatten() {
-                if !name.is_empty() {
+                if is_npm_name(name) {
                     return name.to_vec();
                 }
             }
         }
     }
     let name = &pm.root_package_json_name_at_time_of_init;
-    if name.is_empty() {
+    if !is_npm_name(name) {
+        Status::clear();
         Output::err_generic(
             "no package name to compare against: run this inside a package, or pass two specs (e.g. `bun pm diff react@18.0.0 react@19.0.0`)",
             (),
@@ -396,20 +427,31 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
 /// A one-line status on stderr while a side is fetched or read, erased before anything else prints — so a large
 /// package or a slow registry never looks like a hang. Only when stderr is an interactive terminal.
 struct Status;
+static STATUS_SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 impl Status {
     fn show(what: &str, label: &[u8]) -> Option<Status> {
         if !Output::is_stderr_tty() || !Output::enable_ansi_colors_stderr() {
             return None;
         }
-        Output::print_error(format_args!("\x1b[2m{what} {}…\x1b[0m\r", BStr::new(label)));
+        Output::print_error(format_args!(
+            "\x1b[2m{what} {}…\x1b[0m\r",
+            BStr::new(&defang(label))
+        ));
         Output::flush();
+        STATUS_SHOWN.store(true, std::sync::atomic::Ordering::Relaxed);
         Some(Status)
+    }
+    /// Erase the line; also called before a fatal error, since `Global::exit` never runs `Drop`.
+    fn clear() {
+        if STATUS_SHOWN.swap(false, std::sync::atomic::Ordering::Relaxed) {
+            Output::print_error(format_args!("\x1b[2K\r"));
+            Output::flush();
+        }
     }
 }
 impl Drop for Status {
     fn drop(&mut self) {
-        Output::print_error(format_args!("\x1b[2K\r"));
-        Output::flush();
+        Status::clear();
     }
 }
 
@@ -426,6 +468,7 @@ fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Erro
             let bytes = match bun_sys::File::read_from(Fd::cwd(), path) {
                 Ok(b) => b,
                 Err(err) => {
+                    Status::clear();
                     Output::err(err, "failed to read {}", (BStr::new(path),));
                     Global::exit(1);
                 }
@@ -446,6 +489,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
     let mut iter = match ArchiveIterator::init(bytes) {
         ArchiveIterResult::Result(it) => it,
         ArchiveIterResult::Err { message, .. } => {
+            Status::clear();
             Output::err_generic("{}: {}", (BStr::new(&tree.label), BStr::new(message)));
             Global::exit(1);
         }
@@ -455,6 +499,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
             ArchiveIterResult::Result(Some(n)) => n,
             ArchiveIterResult::Result(None) => break,
             ArchiveIterResult::Err { message, .. } => {
+                Status::clear();
                 Output::err_generic("{}: {}", (BStr::new(&tree.label), BStr::new(message)));
                 Global::exit(1);
             }
@@ -482,6 +527,7 @@ fn read_tarball_into(bytes: &[u8], tree: &mut Tree) -> Result<(), crate::Error> 
         let data = match iter.read_entry_data(&next)? {
             ArchiveIterResult::Result(d) => d,
             ArchiveIterResult::Err { message, .. } => {
+                Status::clear();
                 Output::err_generic(
                     "{}: {}: {}",
                     (BStr::new(&tree.label), BStr::new(rel), BStr::new(message)),
@@ -505,12 +551,14 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     let root_fd = match bun_sys::open_dir_at(Fd::cwd(), root) {
         Ok(fd) => fd,
         Err(err) => {
+            Status::clear();
             Output::err(err, "failed to open {}", (BStr::new(root),));
             Global::exit(1);
         }
     };
     // A tree with holes would report those files as deleted, so any read failure is fatal.
     let fail = |err: bun_sys::Error, rel: &[u8]| -> ! {
+        Status::clear();
         Output::err(
             err,
             "failed to read {}/{}",
@@ -675,6 +723,7 @@ fn fetch_registry_tree(
     ) {
         Ok(Some(m)) => m,
         Ok(None) => {
+            Status::clear();
             Output::err_generic(
                 "failed to parse the registry manifest for {}",
                 (BStr::new(name),),
@@ -682,6 +731,7 @@ fn fetch_registry_tree(
             Global::exit(1);
         }
         Err(err) => {
+            Status::clear();
             Output::err(
                 err,
                 "failed to parse the registry manifest for {}",
@@ -706,6 +756,7 @@ fn fetch_registry_tree(
                 break 'found r;
             }
         }
+        Status::clear();
         Output::err_generic(
             "no version of {} matches {}",
             (BStr::new(name), BStr::new(version)),
@@ -840,11 +891,13 @@ fn registry_get(
     let res = match req.send_sync(&mut response_buf) {
         Ok(r) => r,
         Err(err) => {
+            Status::clear();
             Output::err(err, "GET {} failed", (BStr::new(&display_url),));
             Global::exit(1);
         }
     };
     if res.status_code() >= 400 {
+        Status::clear();
         npm::response_error::<false>(&req, &res, for_error, &mut response_buf)?;
     }
     Ok(response_buf)
@@ -1471,14 +1524,14 @@ fn print_header(left: &Tree, right: &Tree, style: Style) {
     match (split_label(&left.label), split_label(&right.label)) {
         (Some((ln, lv)), Some((rn, rv))) if style.pretty && ln == rn => prettyln!(
             "<b>{}<r> <red>{}<r> <d>→<r> <green>{}<r>",
-            BStr::new(ln),
-            BStr::new(lv),
-            BStr::new(rv)
+            BStr::new(&defang(ln)),
+            BStr::new(&defang(lv)),
+            BStr::new(&defang(rv))
         ),
         _ => prettyln!(
             "<b>{}<r> <d>→<r> <b>{}<r>",
-            BStr::new(&left.label),
-            BStr::new(&right.label)
+            BStr::new(&defang(&left.label)),
+            BStr::new(&defang(&right.label))
         ),
     }
 }

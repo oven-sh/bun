@@ -94,11 +94,9 @@ impl<'a> Side<'a> {
         // banner must not mark the statement mapped next to it.
         for (g, line) in super::pm_diff_command::Lines(&norm.text).enumerate() {
             let t = line.trim_ascii_start();
-            // (`* ` continues a block comment; `*name(` is a generator method and stays.)
-            let continues_block = t.starts_with(b"*")
-                && !t.get(1).is_some_and(|b| {
-                    b.is_ascii_alphanumeric() || *b == b'_' || *b == b'$' || *b == b'['
-                });
+            // Only `*`, `* …`, `*/` continue a block comment; `*name(`, `*[Symbol.x](`, `*#p(`, `*"k"(` are generators.
+            let continues_block =
+                t.starts_with(b"*") && matches!(t.get(1), None | Some(b' ' | b'*' | b'/' | b'\t'));
             if t.starts_with(b"/*") || t.starts_with(b"//") || continues_block {
                 if let Some(c) = key_changed.get_mut(g) {
                     *c = false;

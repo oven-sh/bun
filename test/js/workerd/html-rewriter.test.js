@@ -101,6 +101,85 @@ describe("HTMLRewriter", () => {
     await expect(res.text()).rejects.toThrow("test");
   });
 
+  // Inputs that go through the JS stream pump with data already queued are
+  // drained synchronously inside `transform()`, so the handler throws (and the
+  // pipe fails, detaching its input) while `assign_to_stream` is still on the
+  // stack. The pump controller must already be installed as the pipe's input
+  // source at that point: previously the pipe detached an empty placeholder
+  // and the process segfaulted. Detaching the real controller is also what
+  // cancels the input, as it does when the throwing chunk arrives later.
+  // Spawned so a regression shows up as a failed assertion instead of taking
+  // the test runner down.
+  it("error inside element handler rejects the body when the input is drained inside transform()", async () => {
+    const fixture = /* js */ `
+      const html = "<a href=/x>abc</a>";
+      const bytes = () => new TextEncoder().encode(html);
+      let upstreamCancels = 0;
+      const inputs = {
+        "Response(string) whose .body was read": () => {
+          const res = new Response(html);
+          void res.body;
+          return res;
+        },
+        "Response(Blob) whose .body was read": () => {
+          const res = new Response(new Blob([html]));
+          void res.body;
+          return res;
+        },
+        "ReadableStream with a string queued in start()": () =>
+          new Response(new ReadableStream({ start(c) { c.enqueue(html); c.close(); } })),
+        "ReadableStream with bytes queued in start()": () =>
+          new Response(new ReadableStream({ start(c) { c.enqueue(bytes()); c.close(); } })),
+        "bytes ReadableStream with a chunk queued in start()": () =>
+          new Response(new ReadableStream({ type: "bytes", start(c) { c.enqueue(bytes()); c.close(); } })),
+        "direct ReadableStream writing synchronously from pull()": () =>
+          new Response(new ReadableStream({ type: "direct", pull(c) { c.write(html); c.close(); } })),
+        "still-open ReadableStream with a chunk queued in start()": () =>
+          new Response(new ReadableStream({ start(c) { c.enqueue(html); }, cancel() { upstreamCancels++; } })),
+      };
+      for (const [name, input] of Object.entries(inputs)) {
+        const out = new HTMLRewriter()
+          .on("a", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(input());
+        const outcome = await out.text().then(
+          text => "resolved with " + JSON.stringify(text),
+          err => "rejected with " + err.message,
+        );
+        // Sweep the pump controller too: it must have been detached from the
+        // failed pipe rather than left pointing at it.
+        Bun.gc(true);
+        console.log(name + ": " + outcome);
+      }
+      console.log("still-open input cancelled " + upstreamCancels + " time(s)");
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        "Response(string) whose .body was read: rejected with handler threw",
+        "Response(Blob) whose .body was read: rejected with handler threw",
+        "ReadableStream with a string queued in start(): rejected with handler threw",
+        "ReadableStream with bytes queued in start(): rejected with handler threw",
+        "bytes ReadableStream with a chunk queued in start(): rejected with handler threw",
+        "direct ReadableStream writing synchronously from pull(): rejected with handler threw",
+        "still-open ReadableStream with a chunk queued in start(): rejected with handler threw",
+        "still-open input cancelled 1 time(s)",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("HTMLRewriter: async replacement", async () => {
     await gcTick();
     const res = new HTMLRewriter()

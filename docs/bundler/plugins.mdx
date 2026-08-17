@@ -306,7 +306,10 @@ plugin({
 
 </Accordion>
 
-<Warning>You can call the `.defer()` function only once per `onLoad` callback.</Warning>
+<Warning>
+  You can call the `.defer()` function only once per `onLoad` callback, and only while Bun is still loading that module.
+  A `defer` you kept around and call after the callback has settled throws an `ERR_INVALID_STATE` error.
+</Warning>
 
 ### onEnd
 

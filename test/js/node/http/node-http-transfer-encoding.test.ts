@@ -763,7 +763,12 @@ describe("giving up on a response before its headers are sent", () => {
     listener: (req: IncomingMessage, res: ServerResponse) => void;
     https?: boolean;
   }) {
-    await using server = https ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    let requestDispatched = false;
+    const dispatch = (req: IncomingMessage, res: ServerResponse) => {
+      requestDispatched = true;
+      listener(req, res);
+    };
+    await using server = https ? createHttpsServer(tlsCert, dispatch) : createServer(dispatch);
     await once(server.listen(0, "127.0.0.1"), "listening");
     const { port } = server.address() as AddressInfo;
     const rawRequest = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
@@ -773,10 +778,14 @@ describe("giving up on a response before its headers are sent", () => {
     const closed = Promise.withResolvers<void>();
     let received = "";
     socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
-    // Only the bytes matter; the teardown may also surface as ECONNRESET.
+    // The server-side teardown may surface here as an error (ECONNRESET, or a
+    // TLS session ending without close_notify); which one is platform-specific
+    // and not what is under test. An empty `received` is only meaningful if the
+    // request actually reached the listener, so that is checked instead.
     socket.on("error", () => {});
     socket.on("close", () => closed.resolve());
     await closed.promise;
+    expect(requestDispatched).toBe(true);
     return received;
   }
 

@@ -89,7 +89,6 @@ namespace Zig {
 
 // GlobalObject member function for creating CallSite objects
 void createCallSitesFromFrames(
-    Zig::GlobalObject* globalObject,
     JSC::JSGlobalObject* lexicalGlobalObject,
     Zig::JSCStackTrace& stackTrace,
     JSC::MarkedArgumentBuffer& callSites);

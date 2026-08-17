@@ -29,7 +29,6 @@ pub const LIBUS_SOCKET_ALLOW_HALF_OPEN: core::ffi::c_int = 2;
 pub const LIBUS_LISTEN_REUSE_PORT: core::ffi::c_int = 4;
 pub const LIBUS_SOCKET_IPV6_ONLY: core::ffi::c_int = 8;
 pub const LIBUS_LISTEN_REUSE_ADDR: core::ffi::c_int = 16;
-pub const LIBUS_LISTEN_DISALLOW_REUSE_PORT_FAILURE: core::ffi::c_int = 32;
 
 /// BoringSSL `SSL_CTX` (alias so callers don't need a direct boringssl dep).
 pub type SslCtx = bun_boringssl_sys::SSL_CTX;
@@ -462,7 +461,6 @@ pub mod fault_inject {
 
     unsafe extern "C" {
         pub fn us_fault_set(syscall: c_int, rule: *const UsFaultRule);
-        pub safe fn us_fault_clear(syscall: c_int);
         pub safe fn us_fault_clear_all();
         pub fn us_fault_hit(syscall: c_int, fd: c_int, out: *mut isize, clamp: *mut c_int)
         -> c_int;

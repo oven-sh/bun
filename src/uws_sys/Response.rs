@@ -302,18 +302,6 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn override_write_offset<T>(&mut self, offset: T)
-    where
-        u64: TryFrom<T>,
-        <u64 as TryFrom<T>>::Error: core::fmt::Debug,
-    {
-        c::uws_res_override_write_offset(
-            Self::ssl_flag(),
-            self.as_raw(),
-            u64::try_from(offset).expect("int cast"),
-        )
-    }
-
     pub(crate) fn has_responded(&mut self) -> bool {
         c::uws_res_has_responded(Self::ssl_flag(), self.as_raw())
     }
@@ -1176,7 +1164,6 @@ pub mod c {
             data: *const u8,
             length: usize,
         );
-        pub(crate) safe fn uws_res_override_write_offset(ssl: i32, res: &mut uws_res, offset: u64);
         pub(crate) safe fn uws_res_has_responded(ssl: i32, res: &mut uws_res) -> bool;
         // safe: `&mut uws_res` is ABI-identical to a non-null `*mut uws_res`;
         // `handler`/`user_data` are stored opaquely (never dereferenced by the

@@ -50,10 +50,8 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
-bool uws_h3_constructor_failed(uws_h3_app_t* app) { return !app || ((H3App*)app)->constructorFailed(); }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }
-void* uws_h3_get_native_handle(uws_h3_app_t* app) { return ((H3App*)app)->getNativeHandle(); }
 
 bool uws_h3_app_add_server_name(uws_h3_app_t* app, const char* hostname,
     struct us_bun_socket_context_options_t options)
@@ -177,8 +175,6 @@ bool uws_h3_res_write(uws_h3_res_t* res, const char* data, size_t* length)
     return ok;
 }
 
-uint64_t uws_h3_res_get_write_offset(uws_h3_res_t* res) { return ((Http3Response*)res)->getWriteOffset(); }
-void uws_h3_res_override_write_offset(uws_h3_res_t* res, uint64_t off) { ((Http3Response*)res)->overrideWriteOffset(off); }
 bool uws_h3_res_has_responded(uws_h3_res_t* res) { return ((Http3Response*)res)->hasResponded(); }
 size_t uws_h3_res_get_buffered_amount(uws_h3_res_t* res) { return ((Http3Response*)res)->getBufferedAmount(); }
 
@@ -189,10 +185,6 @@ void uws_h3_res_end_sendfile(uws_h3_res_t* res, uint64_t, bool close)
     /* sendfile path falls back to plain end-of-stream over QUIC. */
     ((Http3Response*)res)->sendTerminatingChunk(close);
 }
-void uws_h3_res_prepare_for_sendfile(uws_h3_res_t*) {}
-bool uws_h3_res_is_connect_request(uws_h3_res_t*) { return false; }
-void* uws_h3_res_get_native_handle(uws_h3_res_t* res) { return res; }
-void* uws_h3_res_get_socket_data(uws_h3_res_t* res) { return ((Http3Response*)res)->getSocketData(); }
 
 void uws_h3_res_on_writable(uws_h3_res_t* res, bool (*h)(uws_h3_res_t*, uint64_t, void*), void* opt)
 {
@@ -222,8 +214,6 @@ void uws_h3_res_cork(uws_h3_res_t* res, void* ctx, void (*corker)(void*))
 {
     ((Http3Response*)res)->cork([ctx, corker]() { corker(ctx); });
 }
-void uws_h3_res_uncork(uws_h3_res_t*) {}
-bool uws_h3_res_is_corked(uws_h3_res_t*) { return false; }
 
 uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest, int* port, bool* is_ipv6)
 {
@@ -258,8 +248,6 @@ uint64_t uws_h3_res_get_remote_address_info(uws_h3_res_t* res, const char** dest
 
 /* ───── request ───── */
 
-bool uws_h3_req_is_ancient(uws_h3_req_t*) { return false; }
-bool uws_h3_req_get_yield(uws_h3_req_t* req) { return ((Http3Request*)req)->getYield(); }
 void uws_h3_req_set_yield(uws_h3_req_t* req, bool y) { ((Http3Request*)req)->setYield(y); }
 
 /* The FFI contract requires a non-null pointer; a default-
@@ -283,23 +271,6 @@ size_t uws_h3_req_get_method(uws_h3_req_t* req, const char** dest)
 size_t uws_h3_req_get_header(uws_h3_req_t* req, const char* lower, size_t lower_len, const char** dest)
 {
     return ffi_sv(((Http3Request*)req)->getHeader(sv(lower, lower_len)), dest);
-}
-
-void uws_h3_req_for_each_header(uws_h3_req_t* req,
-    void (*cb)(const char*, size_t, const char*, size_t, void*),
-    void* user_data)
-{
-    ((Http3Request*)req)->forEachHeader([cb, user_data](std::string_view name, std::string_view value) {
-        cb(name.empty() ? "" : name.data(), name.length(),
-            value.empty() ? "" : value.data(), value.length(), user_data);
-    });
-}
-
-size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, const char** dest)
-{
-    return ffi_sv(key ? ((Http3Request*)req)->getQuery(sv(key, key_len))
-                      : ((Http3Request*)req)->getQuery(),
-        dest);
 }
 
 #pragma clang attribute pop

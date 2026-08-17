@@ -31,6 +31,9 @@ pub use bun_core::{ExternalShared, ExternalSharedDescriptor, ExternalSharedOptio
 // `cast_fn_ptr` and `RawSlice` likewise moved to `bun_core`; re-export.
 pub use bun_core::{RawSlice, cast_fn_ptr};
 
+#[cfg(test)]
+mod native_test_shims;
+
 pub mod raw_ref_count;
 pub mod weak_ptr;
 

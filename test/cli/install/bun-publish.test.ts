@@ -1352,6 +1352,45 @@ test("dist.tarball in the published manifest does not include userinfo from the 
   expect(exitCode).toBe(0);
 });
 
+test("user:pass@ in a registry url taken from an env var is sent as Basic auth", async () => {
+  const requests: { method: string; pathname: string; authorization: string | null }[] = [];
+  using mock = Bun.serve({
+    port: 0,
+    fetch(req) {
+      requests.push({
+        method: req.method,
+        pathname: new URL(req.url).pathname,
+        authorization: req.headers.get("authorization"),
+      });
+      return new Response("OK", { status: 200 });
+    },
+  });
+
+  using packageDir = tempDir("publish-env-registry-userinfo", {
+    "package.json": JSON.stringify({ name: "env-userinfo-pkg", version: "1.0.0" }),
+    "bunfig.toml": `[install]\nregistry = "$PUBLISH_REGISTRY"\n`,
+  });
+
+  const { out, err, exitCode } = await publish(
+    { ...env, PUBLISH_REGISTRY: `http://pubuser:hunter2@localhost:${mock.port}/` },
+    String(packageDir),
+  );
+  expect({ requests, err }).toEqual({
+    requests: [
+      {
+        method: "PUT",
+        pathname: "/env-userinfo-pkg",
+        authorization: `Basic ${Buffer.from("pubuser:hunter2").toString("base64")}`,
+      },
+    ],
+    err: expect.not.stringContaining("error:"),
+  });
+  expect(out).toContain(`Registry: http://localhost:${mock.port}/\n`);
+  expect(out).toContain(" + env-userinfo-pkg@1.0.0");
+  expect(out).not.toContain("hunter2");
+  expect(exitCode).toBe(0);
+});
+
 describe("--tolerate-republish", async () => {
   test("republishing normally fails", async () => {
     const { packageDir, packageJson } = await registry.createTestDir();

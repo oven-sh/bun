@@ -421,11 +421,11 @@ impl<'a> Installer<'a> {
                 );
             }
             TaskError::DependencyBinaries(dep_errs) => {
-                for dep_err in dep_errs.iter() {
-                    let dep_node_id = entry_node_ids[dep_err.dep_entry_id.get() as usize];
+                for &(dep_entry_id, dep_err) in dep_errs.iter() {
+                    let dep_node_id = entry_node_ids[dep_entry_id.get() as usize];
                     let dep_pkg_id = node_pkg_ids[dep_node_id.get() as usize];
                     Output::err(
-                        dep_err.err,
+                        dep_err,
                         "failed to link binaries of dependency {}@{} for package: {}@{}",
                         (
                             bstr::BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
@@ -751,21 +751,15 @@ pub struct DownloadError {
     pub(crate) url: Box<[u8]>,
 }
 
-#[derive(Clone, Copy)]
-pub struct DependencyBinariesError {
-    pub(crate) dep_entry_id: StoreEntryId,
-    pub(crate) err: crate::Error,
-}
-
 pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
-    /// `<global link dir>/<link: target>` of this `link:` dependency does not
-    /// fit in a path buffer. See `Installer::append_dependency_path`.
+    /// See `Installer::append_dependency_path`.
     LinkPathTooLong(PackageID),
     RunScripts(crate::Error),
     Binaries(crate::Error),
-    DependencyBinaries(Box<[DependencyBinariesError]>),
+    /// (dependency entry, error)
+    DependencyBinaries(Box<[(StoreEntryId, crate::Error)]>),
     Patching(Log),
     Download(DownloadError),
 }
@@ -1211,8 +1205,7 @@ impl Task {
                                     patch_info.contents_hash(),
                                 ),
                                 ResolutionTag::LocalTarball => {
-                                    // Recorded by the lockfile or by
-                                    // `on_package_extracted` before this task started.
+                                    // recorded by the lockfile or `on_package_extracted`
                                     debug_assert!(
                                         pkg_metas[pkg_id as usize].integrity.tag.is_supported()
                                     );
@@ -2550,7 +2543,7 @@ impl<'a> Installer<'a> {
         let mut link_rel_buf = paths::path_buffer_pool::get();
 
         let mut seen: StringHashMap<()> = StringHashMap::default();
-        let mut failed: Vec<DependencyBinariesError> = Vec::new();
+        let mut failed = Vec::new();
 
         let mut node_modules_path = DefaultAbsPath::init_top_level_dir();
         self.append_real_store_node_modules_path(
@@ -2649,10 +2642,7 @@ impl<'a> Installer<'a> {
             }
 
             if let Some(err) = bin_linker.err {
-                failed.push(DependencyBinariesError {
-                    dep_entry_id: dep.entry_id,
-                    err,
-                });
+                failed.push((dep.entry_id, err));
             }
         }
 

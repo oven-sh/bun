@@ -11,7 +11,7 @@ use crate::p::{LowerUsingDeclarationsContext, P};
 use crate::parser::{
     ExprIn, FnOnlyDataVisit, FnOrArrowDataVisit, ImportItemForNamespaceMap, PrependTempRefsOpts,
     Ref, RelocateVarsMode, ScopeOrder, StmtsKind, StrictModeFeature, StringVoidMap, VisitArgsOpts,
-    is_eval_or_arguments,
+    VisitDeclOpts, is_eval_or_arguments,
 };
 use bun_alloc::{ArenaVec as BumpVec, ArenaVecExt as _};
 use bun_ast as js_ast;
@@ -358,11 +358,10 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             let ref_ = id.r#ref;
                             if let Some(value) = decl.value {
                                 if let ExprData::ERequireString(req) = value.data {
-                                    if req.unwrapped_id != u32::MAX {
-                                        self.imports_to_convert_from_require
-                                            [req.unwrapped_id as usize]
-                                            .namespace
-                                            .ref_ = ref_;
+                                    if let Some(unwrapped_id) = req.unwrapped_id.get() {
+                                        let deferred = &mut self.imports_to_convert_from_require
+                                            [unwrapped_id.get_usize()];
+                                        deferred.namespace.ref_ = ref_;
                                         self.import_items_for_namespace
                                             .insert(ref_, ImportItemForNamespaceMap::default());
                                         continue 'outer;
@@ -390,12 +389,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 let is_after = self.vis_scope().is_after_const_local_prefix;
                 self.visit_decl(
                     decl,
-                    was_anonymous_named_expr,
-                    was_const && !is_after,
-                    if Self::ALLOW_MACROS {
-                        prev_macro_call_count != self.macro_call_count
-                    } else {
-                        false
+                    VisitDeclOpts {
+                        was_anonymous_named_expr,
+                        could_be_const_value: was_const && !is_after,
+                        could_be_macro: if Self::ALLOW_MACROS {
+                            prev_macro_call_count != self.macro_call_count
+                        } else {
+                            false
+                        },
                     },
                 );
             } else if IS_POSSIBLY_DECL_TO_REMOVE {
@@ -414,7 +415,14 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         let replacer = _ptr.get();
                         if !self.replace_decl_and_possibly_remove(decl, replacer) {
                             let is_after = self.vis_scope().is_after_const_local_prefix;
-                            self.visit_decl(decl, false, was_const && !is_after, false);
+                            self.visit_decl(
+                                decl,
+                                VisitDeclOpts {
+                                    was_anonymous_named_expr: false,
+                                    could_be_const_value: was_const && !is_after,
+                                    could_be_macro: false,
+                                },
+                            );
                         } else {
                             continue 'outer;
                         }
@@ -514,13 +522,12 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         }
     }
 
-    pub(crate) fn visit_decl(
-        &mut self,
-        decl: &mut G::Decl,
-        was_anonymous_named_expr: bool,
-        could_be_const_value: bool,
-        could_be_macro: bool,
-    ) {
+    pub(crate) fn visit_decl(&mut self, decl: &mut G::Decl, opts: VisitDeclOpts) {
+        let VisitDeclOpts {
+            was_anonymous_named_expr,
+            could_be_const_value,
+            could_be_macro,
+        } = opts;
         // Optionally preserve the name
         match decl.binding.data {
             BData::BIdentifier(id) => {

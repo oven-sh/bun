@@ -30,6 +30,7 @@
 
 #include "config.h"
 #include "PerformanceTiming.h"
+#include <wtf/TZoneMallocInlines.h>
 
 // #include "Document.h"
 // #include "DocumentEventTiming.h"
@@ -42,6 +43,8 @@
 // #include "ResourceResponse.h"
 
 namespace WebCore {
+
+WTF_MAKE_TZONE_ALLOCATED_IMPL(PerformanceTiming);
 
 PerformanceTiming::PerformanceTiming() {}
 

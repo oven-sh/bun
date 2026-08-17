@@ -231,18 +231,25 @@ public:
         } else {
             /* Write content-length on first call */
             if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_END_CALLED))) {
-                /* Write mark, this propagates to WebSockets too */
-                writeMark();
+                /* Once write() has sent raw body bytes (close-delimited or
+                 * HTTP/1.0 streaming), the header section is already
+                 * terminated: writing a Content-Length here would inject
+                 * header bytes into the body. The connection close delimits
+                 * the message instead. */
+                if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
+                    /* Write mark, this propagates to WebSockets too */
+                    writeMark();
 
-                /* WebSocket upgrades does not allow content-length */
-                if (allowContentLength) {
-                    /* Even zero is a valid content-length */
-                    Super::write("Content-Length: ", 16);
-                    writeUnsigned64(totalSize);
-                    Super::write("\r\n\r\n", 4);
-                    httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
-                } else if (!(httpResponseData->state & (HttpResponseData<SSL>::HTTP_WRITE_CALLED))) {
-                    Super::write("\r\n", 2);
+                    /* WebSocket upgrades does not allow content-length */
+                    if (allowContentLength) {
+                        /* Even zero is a valid content-length */
+                        Super::write("Content-Length: ", 16);
+                        writeUnsigned64(totalSize);
+                        Super::write("\r\n\r\n", 4);
+                        httpResponseData->state |= HttpResponseData<SSL>::HTTP_WROTE_CONTENT_LENGTH_HEADER;
+                    } else {
+                        Super::write("\r\n", 2);
+                    }
                 }
 
                 /* Mark end called */

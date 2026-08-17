@@ -1351,14 +1351,14 @@ Bun converts MySQL types to JavaScript types:
 | FLOAT, DOUBLE                           | number                   |                                                                                                  |
 | DATE                                    | Date                     | JavaScript Date object                                                                           |
 | DATETIME, TIMESTAMP                     | Date                     | Decoded as UTC (see note below); `0000-00-00` becomes an Invalid Date                            |
-| TIME                                    | number                   | Total of microseconds                                                                            |
+| TIME                                    | string                   | Formatted as `HH:MM:SS` (`HHH:MM:SS` above 99 hours); prepared queries drop fractional seconds   |
 | YEAR                                    | number                   |                                                                                                  |
 | CHAR, VARCHAR, VARSTRING, STRING        | string                   |                                                                                                  |
 | TINY TEXT, MEDIUM TEXT, TEXT, LONG TEXT | string                   |                                                                                                  |
 | TINY BLOB, MEDIUM BLOB, BLOB, LONG BLOB | Buffer                   | Same wire types as TEXT; Bun returns a Buffer when the column uses the binary character set      |
 | JSON                                    | object/array             | Automatically parsed                                                                             |
 | BIT(1)                                  | boolean                  | BIT(1) in MySQL                                                                                  |
-| GEOMETRY                                | string                   | Geometry data                                                                                    |
+| GEOMETRY                                | Buffer                   | Binary character set; the bytes are a 4-byte SRID followed by WKB                                |
 
 `DATETIME` and `TIMESTAMP` values have no timezone on the wire, so Bun reads them back as **UTC**. The `Date` you get has the same UTC wall-clock that was stored, regardless of the machine's timezone. Reading as UTC matches how Bun writes values (a bound `Date` stores its UTC components). The same applies to PostgreSQL's `timestamp` (without time zone); `timestamptz` carries an explicit offset and is unaffected.
 

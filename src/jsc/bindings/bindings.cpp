@@ -4190,6 +4190,14 @@ bool JSC__JSValue__isException(JSC::EncodedJSValue JSValue0, JSC::VM* arg1)
     return JSC::JSValue::decode(JSValue0).isBigInt32();
 }
 
+[[ZIG_EXPORT(nothrow)]] bool JSC__JSValue__isLiveCell(JSC::EncodedJSValue JSValue0)
+{
+    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    if (!value.isCell())
+        return false;
+    return !value.asCell()->isPendingDestruction();
+}
+
 void JSC__JSValue__put(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* arg1, const ZigString* arg2, JSC::EncodedJSValue JSValue3)
 {
     JSC::JSObject* object = JSC::JSValue::decode(JSValue0).asCell()->getObject();
@@ -7266,4 +7274,5 @@ extern "C" void JSC__ArrayBuffer__asBunArrayBuffer(JSC::ArrayBuffer* self, Bun__
     out->cell_type = JSC::JSType::ArrayBufferType;
     out->shared = self->isShared();
     out->resizable = self->isResizableOrGrowableShared();
+    out->pinned = false;
 }

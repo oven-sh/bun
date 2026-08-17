@@ -13,7 +13,10 @@ on:
     branches: [main]
     paths:
       - "src/**/*.rs"
+      - "src/**/*.classes.ts"
+      - "src/codegen/class-definitions.ts"
       - "src/jsc/bindings/**"
+      - "packages/bun-types/redis.d.ts"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "scripts/utils.mjs"
@@ -28,7 +31,10 @@ on:
   pull_request:
     paths:
       - "src/**/*.rs"
+      - "src/**/*.classes.ts"
+      - "src/codegen/class-definitions.ts"
       - "src/jsc/bindings/**"
+      - "packages/bun-types/redis.d.ts"
       - "scripts/build/**"
       - "scripts/glob-sources.ts"
       - "scripts/utils.mjs"

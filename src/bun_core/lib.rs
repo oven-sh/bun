@@ -992,18 +992,6 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
     &mut dest[..off]
 }
 
-/// Allocate a fresh `Box<[T]>` holding all `parts` joined. No zero-init: `extend_from_slice`
-/// is `memcpy`-specialized for `T: Copy`, so no `Default` bound is required.
-#[inline]
-pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
-    let len: usize = parts.iter().map(|p| p.len()).sum();
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    for p in parts {
-        v.extend_from_slice(p);
-    }
-    v.into_boxed_slice()
-}
-
 /// Back-compat alias for the original `u8`-only buffer-concat. New code should
 /// call [`concat_into`] directly.
 #[inline]
@@ -1210,8 +1198,8 @@ pub use crate::string::immutable::{
     decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
     ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
-    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
+    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
     is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,

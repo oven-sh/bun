@@ -5361,6 +5361,7 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
+        use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
@@ -5406,12 +5407,12 @@ impl VirtualMachine {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     frame.name_formatter(allow_ansi_colors),
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if !frame.position.is_invalid() {
                 pretty_write!(
                     "<r>      <d>at <r>{}\n",
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if has_name {
                 pretty_write!(
@@ -5421,7 +5422,7 @@ impl VirtualMachine {
             } else {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             }
         }
@@ -6588,6 +6589,7 @@ impl VirtualMachine {
     #[cold]
     #[inline(never)]
     pub(crate) fn print_github_annotation(exception: &ZigException) {
+        use crate::zig_stack_frame::LineColumn;
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
@@ -6677,7 +6679,7 @@ impl VirtualMachine {
                     let _ = write!(
                         loc_str,
                         "{}",
-                        frame.source_url_formatter(file, origin, false, false)
+                        frame.source_url_formatter(file, origin, LineColumn::Include, false)
                     );
                     (name_str, loc_str)
                 };

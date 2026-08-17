@@ -281,11 +281,7 @@ fn rewrite_value(arena: &bun_alloc::Arena, value: &mut Option<Expr>, edit: &Pack
 }
 
 pub(super) fn root_package_json(manager: &mut PackageManager) -> Expr {
-    let target = WorkspaceTarget {
-        name: Box::default(),
-        name_hash: None,
-        package_json_path: root_package_json_path(),
-    };
+    let target = target_for(manager, 0).expect("root target");
     fetch_entry_root(manager, &target)
 }
 

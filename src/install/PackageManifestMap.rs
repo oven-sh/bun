@@ -74,18 +74,8 @@ impl PackageManifestMap {
         )
     }
 
-    /// Stores a manifest that was just fetched. When the same package was
-    /// requested both abbreviated and extended during this install (it is a
-    /// regular dependency of one package and an optional dependency of
-    /// another), the extended response must win regardless of which one
-    /// arrives last, otherwise the dependencies waiting for the extended one
-    /// would never resolve.
-    ///
-    /// This only decides what this install resolves from. A fetched document
-    /// is written to the disk cache by the task that parsed it, before it gets
-    /// here, so when both were fetched the disk ends up with whichever save
-    /// finished last; if that was the abbreviated one, the next resolve that
-    /// needs the extended document fetches it again, nothing else depends on it.
+    /// When a package was requested both abbreviated and extended in one install, the extended
+    /// response wins whichever arrives last, or dependencies waiting on it would never resolve.
     pub(crate) fn insert(
         &mut self,
         name_hash: PackageNameHash,
@@ -166,10 +156,7 @@ impl PackageManifestMap {
     /// [`DiskCacheCtx`] so callers never hold `&mut pm.manifests` and a
     /// `PackageManager` borrow simultaneously.
     ///
-    /// With `needs_extended_manifest`, an abbreviated manifest is reported as
-    /// missing so the caller fetches the extended one. The entry itself is left
-    /// untouched: it is still valid for the callers that don't need the
-    /// extended fields, and `insert` replaces it once the extended one arrives.
+    /// With `needs_extended_manifest`, an abbreviated entry reads as missing but stays for other callers.
     pub(crate) fn by_name_hash_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,

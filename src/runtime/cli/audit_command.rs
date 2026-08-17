@@ -1104,11 +1104,8 @@ fn print_severity(severity: &[u8]) {
 fn print_package_heading(name: &[u8], installed: &[Box<[u8]>]) {
     pretty!("<red>{}<r>", escape_control_chars(name));
     for (i, version) in installed.iter().enumerate() {
-        pretty!(
-            "{}{}",
-            if i == 0 { "@" } else { ", " },
-            escape_control_chars(version)
-        );
+        let separator = if i == 0 { "@" } else { ", " };
+        pretty!("{}{}", separator, escape_control_chars(version));
     }
     prettyln!("");
 }
@@ -1205,10 +1202,8 @@ fn print_enhanced_audit_report(
             print_severity(&vuln.severity);
             pretty!(" {}", escape_control_chars(&vuln.title));
             if !vuln.vulnerable_versions.is_empty() {
-                pretty!(
-                    " <d>({})<r>",
-                    escape_control_chars(&vuln.vulnerable_versions)
-                );
+                let versions = escape_control_chars(&vuln.vulnerable_versions);
+                pretty!(" <d>({})<r>", versions);
             }
             prettyln!(" - <d>{}<r>", escape_control_chars(&vuln.url));
         }

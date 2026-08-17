@@ -1184,24 +1184,20 @@ mod draft {
             }
         }
 
-        /// Record this line under its `//host/path/` prefix so the package
-        /// manager can also resolve it by request URL (see `NpmUrlAuth`).
+        /// Also record the line by `//host/path/` so it can be resolved by request URL (`NpmUrlAuth`).
         fn apply_to_url_auth(&self, url_auth: &mut Vec<NpmUrlAuth>) {
-            let entry = match url_auth
-                .iter_mut()
-                .find(|entry| entry.host == self.host && entry.pathname == self.pathname)
-            {
-                Some(entry) => entry,
-                None => {
-                    url_auth.push(NpmUrlAuth {
-                        host: self.host.clone(),
-                        pathname: self.pathname.clone(),
-                        credentials: NpmRegistry::default(),
-                    });
-                    url_auth.last_mut().expect("just pushed")
-                }
-            };
-            self.apply_to(&mut entry.credentials);
+            let existing = url_auth
+                .iter()
+                .position(|entry| entry.host == self.host && entry.pathname == self.pathname);
+            let index = existing.unwrap_or_else(|| {
+                url_auth.push(NpmUrlAuth {
+                    host: self.host.clone(),
+                    pathname: self.pathname.clone(),
+                    credentials: NpmRegistry::default(),
+                });
+                url_auth.len() - 1
+            });
+            self.apply_to(&mut url_auth[index].credentials);
         }
     }
 

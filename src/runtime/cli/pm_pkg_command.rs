@@ -52,30 +52,21 @@ struct PackageJson {
 /// One step of a key path such as `contributors[0].name` or `keywords[]`.
 #[derive(Clone, Copy)]
 struct Segment<'a> {
-    kind: SegmentKind<'a>,
+    /// An index when applied to an array, else a property name. Empty only for `[]` (append).
+    name: &'a [u8],
+    /// `a[b]` rather than `a.b`: `files[0]=x` and `files[]=x` create an array, `config.0=x` an object.
+    bracketed: bool,
     /// Offset just past this segment in the key; errors name a value by `&key[..end]`.
     end: usize,
 }
 
-#[derive(Clone, Copy)]
-enum SegmentKind<'a> {
-    /// `b` in `a.b` or `a[b]`: an index when applied to an array, otherwise a property name.
-    Key { name: &'a [u8], bracketed: bool },
-    /// `[]`: the slot after the last element of an array.
-    Append,
-}
-
 impl Segment<'_> {
-    /// `files[0]=x` and `files[]=x` create an array; `config.0=x` creates an object keyed `"0"`.
+    fn is_append(self) -> bool {
+        self.name.is_empty()
+    }
+
     fn creates_array(self) -> bool {
-        match self.kind {
-            SegmentKind::Key {
-                name,
-                bracketed: true,
-            } => array_index(name).is_some(),
-            SegmentKind::Key { .. } => false,
-            SegmentKind::Append => true,
-        }
+        self.bracketed && (self.is_append() || array_index(self.name).is_some())
     }
 }
 
@@ -528,10 +519,10 @@ impl PmPkgCommand {
 
     fn resolve_path(root: Expr, key: &[u8]) -> Result<Expr, Error> {
         let mut current = root;
-        for segment in Self::parse_key_path(key)? {
-            let SegmentKind::Key { name, .. } = segment.kind else {
+        for Segment { name, .. } in Self::parse_key_path(key)? {
+            if name.is_empty() {
                 return Err(crate::Error::InvalidPath);
-            };
+            }
             current = match &current.data {
                 ExprData::EArray(array) => array_index(name)
                     .and_then(|index| array.items.slice().get(index).copied())
@@ -555,10 +546,8 @@ impl PmPkgCommand {
             let name_len = strings::index_of(part, b"[").unwrap_or(part.len());
             if name_len > 0 {
                 segments.push(Segment {
-                    kind: SegmentKind::Key {
-                        name: &part[..name_len],
-                        bracketed: false,
-                    },
+                    name: &part[..name_len],
+                    bracketed: false,
                     end: start + name_len,
                 });
             }
@@ -570,16 +559,9 @@ impl PmPkgCommand {
                     return Err(crate::Error::InvalidPath);
                 };
                 let close = open + close;
-                let name = &part[open + 1..close];
                 segments.push(Segment {
-                    kind: if name.is_empty() {
-                        SegmentKind::Append
-                    } else {
-                        SegmentKind::Key {
-                            name,
-                            bracketed: true,
-                        }
-                    },
+                    name: &part[open + 1..close],
+                    bracketed: true,
                     end: start + close + 1,
                 });
                 cursor = close + 1;
@@ -618,29 +600,27 @@ impl PmPkgCommand {
 
         if let Some(array) = container.data.e_array_mut() {
             let len = array.items.len();
-            let index = match segment.kind {
-                SegmentKind::Append => len,
-                SegmentKind::Key { name, .. } => match array_index(name) {
-                    Some(index) if index <= len => index,
-                    Some(index) => {
-                        Output::err_generic(
-                            "{s}: index {s} is out of range for {s} (length {s})",
-                            (quote(key), index, quote(container_name), len),
-                        );
-                        bun_core::note!(
-                            "{}[] appends to the end of the array",
-                            bstr::BStr::new(container_name)
-                        );
-                        Global::exit(1);
-                    }
-                    None => {
-                        Output::err_generic(
-                            "{s}: {s} is an array, so {s} must be an index or []",
-                            (quote(key), quote(container_name), quote(name)),
-                        );
-                        Global::exit(1);
-                    }
-                },
+            let index = match array_index(segment.name) {
+                _ if segment.is_append() => len,
+                Some(index) if index <= len => index,
+                Some(index) => {
+                    Output::err_generic(
+                        "{s}: index {s} is out of range for {s} (length {s})",
+                        (quote(key), index, quote(container_name), len),
+                    );
+                    bun_core::note!(
+                        "{}[] appends to the end of the array",
+                        bstr::BStr::new(container_name)
+                    );
+                    Global::exit(1);
+                }
+                None => {
+                    Output::err_generic(
+                        "{s}: {s} is an array, so {s} must be an index or []",
+                        (quote(key), quote(container_name), quote(segment.name)),
+                    );
+                    Global::exit(1);
+                }
             };
             if index == len {
                 array.push(dummy_bump(), Expr::init(E::Null {}, Loc::EMPTY))?;
@@ -654,13 +634,14 @@ impl PmPkgCommand {
             return Self::set_in_container(&mut child, slot_name, key, rest, value);
         }
 
-        let SegmentKind::Key { name, .. } = segment.kind else {
+        if segment.is_append() {
             Output::err_generic(
                 "{s}: cannot append to {s} because it is not an array",
                 (quote(key), quote(container_name)),
             );
             Global::exit(1);
-        };
+        }
+        let name = segment.name;
         let object = container
             .data
             .e_object_mut()
@@ -742,13 +723,14 @@ impl PmPkgCommand {
         let [segment, rest @ ..] = path else {
             return Ok(false);
         };
-        let SegmentKind::Key { name, .. } = segment.kind else {
+        let name = segment.name;
+        if segment.is_append() {
             Output::err_generic(
                 "Empty brackets are not valid syntax for deleting values.",
                 (),
             );
             Global::exit(1);
-        };
+        }
 
         let mut child = if let Some(array) = container.data.e_array_mut() {
             let Some(index) = array_index(name).filter(|&index| index < array.items.len()) else {

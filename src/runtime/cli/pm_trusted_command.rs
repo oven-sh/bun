@@ -440,8 +440,7 @@ impl TrustCommand {
             Global::crash();
         }
 
-        // Opened before any script runs: package.json is rewritten at the end, and a script
-        // whose trust cannot be recorded must not run.
+        // Opened before any script runs: a script whose trust cannot be recorded must not run.
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
         let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
@@ -559,10 +558,8 @@ impl TrustCommand {
             }
         }
 
-        // The `trustedDependencies` edit below re-reads package.json from disk, so the edits a pnpm
-        // migration made to it have to be written first (the migrated lockfile is saved below).
-        // SAFETY: `pm_raw` singleton; `load_lockfile` only borrows the boxed lockfile, which this
-        // does not touch.
+        // A pnpm migration's package.json edits must hit disk before the re-read below.
+        // SAFETY: `pm_raw` singleton; `load_lockfile` only borrows the boxed lockfile.
         unsafe { package_json_write_back::write_migrated_root(&mut *pm_raw) };
 
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;

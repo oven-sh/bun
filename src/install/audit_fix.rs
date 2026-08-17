@@ -5,6 +5,7 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_ast::Expr;
 use bun_collections::{DynamicBitSet, HashMap, index_sort};
+use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, UnwrapOrOom as _, pretty, prettyln, strings};
 use bun_semver::query::Group;
 use bun_semver::{self as Semver, SlicedString};
@@ -223,11 +224,6 @@ struct Candidate {
     downgrade: bool,
 }
 
-/// Downgrades stay in the installed major (minor below 1.0.0): an older line is a different API, and the bulk response only carries advisories matching the installed versions, so its releases merely look safe (#39309).
-fn same_release_line(a: Semver::Version, b: Semver::Version) -> bool {
-    a.major == b.major && (a.major != 0 || a.minor == b.minor)
-}
-
 fn fmt_version(version: Semver::Version, buf: &[u8]) -> Box<[u8]> {
     let mut out: Vec<u8> = Vec::new();
     let _ = write!(out, "{}", version.fmt(buf));
@@ -258,11 +254,8 @@ fn print_elapsed_line() {
 
 fn print_tokens(tokens: &[Box<[u8]>]) {
     for (i, token) in tokens.iter().enumerate() {
-        pretty!(
-            "{}{}",
-            if i > 0 { ", " } else { "" },
-            bun_core::fmt::escape_control_chars(token)
-        );
+        let token = escape_control_chars(token);
+        pretty!("{}{}", if i > 0 { ", " } else { "" }, token);
     }
 }
 
@@ -317,14 +310,14 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
             bun_core::warn!(
                 "{} did not answer the audit request; skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
-                bun_core::fmt::escape_control_chars(&packages)
+                escape_control_chars(&packages)
             );
         } else {
             bun_core::warn!(
                 "{} did not answer the audit request ({}); skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
                 BStr::new(&group.reason),
-                bun_core::fmt::escape_control_chars(&packages)
+                escape_control_chars(&packages)
             );
         }
     }
@@ -740,7 +733,10 @@ pub fn plan_fixes(manager: &mut PackageManager, advisories: &[Advisory]) -> crat
             if v.order(inst.current, manifest_buf, buf) != Ordering::Less {
                 continue;
             }
-            if !same_release_line(v, inst.current) {
+            // Downgrades stay in the installed major (minor below 1.0.0): an older line is a different API,
+            // and the bulk response only has advisories for the installed versions' lines (#39309).
+            let cur = inst.current;
+            if v.major != cur.major || (v.major == 0 && v.minor != cur.minor) {
                 break;
             }
             if is_safe(v) {
@@ -1084,7 +1080,7 @@ impl FixPlan {
             }
             pretty!("    <cyan>bun audit fix");
             for token in &all_tokens {
-                pretty!(" --ignore {}", bun_core::fmt::escape_control_chars(token));
+                pretty!(" --ignore {}", escape_control_chars(token));
             }
             prettyln!("<r>");
             prettyln!("");
@@ -1092,11 +1088,8 @@ impl FixPlan {
         if !self.unmatched.is_empty() {
             prettyln!("not matched to an installed version:");
             for item in &self.unmatched {
-                prettyln!(
-                    "  {}@{}",
-                    bun_core::fmt::escape_control_chars(&item.name),
-                    bun_core::fmt::escape_control_chars(&item.range)
-                );
+                let name = escape_control_chars(&item.name);
+                prettyln!("  {}@{}", name, escape_control_chars(&item.range));
             }
             prettyln!("");
         }

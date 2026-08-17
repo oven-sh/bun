@@ -3,6 +3,7 @@ use bun_alloc::Arena as Bump;
 use bun_collections::VecExt;
 use bun_core::MutableString;
 use bun_core::fmt as bun_fmt;
+use bun_core::fmt::escape_control_chars;
 use bun_core::strings;
 use bun_core::{Global, Output, prettyln};
 use bun_http as http;
@@ -417,23 +418,22 @@ pub(crate) fn view(
             .len_u32() as usize;
     }
 
-    // Every string printed below is registry-controlled: always go through
-    // `escape_control_chars`.
+    // Every string printed below is registry-controlled: always `escape_control_chars` it.
     prettyln!(
         "<b><blue><u>{}<r><d>@<r><blue><b><u>{}<r> <d>|<r> <cyan>{}<r> <d>|<r> deps<d>:<r> {} <d>|<r> versions<d>:<r> {}",
-        bun_fmt::escape_control_chars(pkg_name),
-        bun_fmt::escape_control_chars(pkg_version),
-        bun_fmt::escape_control_chars(license),
+        escape_control_chars(pkg_name),
+        escape_control_chars(pkg_version),
+        escape_control_chars(license),
         dep_count,
         versions_len,
     );
 
     // Get description and homepage from the top-level package manifest, not the version-specific one
     if let Some(desc) = json.get_string_cloned(&bump, b"description").ok().flatten() {
-        prettyln!("{}", bun_fmt::escape_control_chars(desc));
+        prettyln!("{}", escape_control_chars(desc));
     }
     if let Some(hp) = json.get_string_cloned(&bump, b"homepage").ok().flatten() {
-        prettyln!("<blue>{}<r>", bun_fmt::escape_control_chars(hp));
+        prettyln!("<blue>{}<r>", escape_control_chars(hp));
     }
 
     if let Some(mut iter) = json.get_array(b"keywords") {
@@ -450,10 +450,8 @@ pub(crate) fn view(
             }
         }
         if !keywords.list.is_empty() {
-            prettyln!(
-                "<d>keywords:<r> {}",
-                bun_fmt::escape_control_chars(keywords.list.as_slice())
-            );
+            let keywords = escape_control_chars(keywords.list.as_slice());
+            prettyln!("<d>keywords:<r> {}", keywords);
         }
     }
 
@@ -487,8 +485,8 @@ pub(crate) fn view(
             };
             prettyln!(
                 "- <cyan>{}<r><d>:<r> {}",
-                bun_fmt::escape_control_chars(dep_name),
-                bun_fmt::escape_control_chars(dep_version),
+                escape_control_chars(dep_name),
+                escape_control_chars(dep_version),
             );
         }
     }
@@ -496,22 +494,15 @@ pub(crate) fn view(
     if let Some(dist) = manifest.get_object(b"dist") {
         prettyln!("\n<d><r><b>dist<r>");
         if let Some(t) = dist.get_string_cloned(&bump, b"tarball").ok().flatten() {
-            prettyln!(
-                " <d>.<r>tarball<d>:<r> {}",
-                bun_fmt::escape_control_chars(t)
-            );
+            prettyln!(" <d>.<r>tarball<d>:<r> {}", escape_control_chars(t));
         }
         if let Some(s) = dist.get_string_cloned(&bump, b"shasum").ok().flatten() {
-            prettyln!(
-                " <d>.<r>shasum<r><d>:<r> <green>{}<r>",
-                bun_fmt::escape_control_chars(s)
-            );
+            let s = escape_control_chars(s);
+            prettyln!(" <d>.<r>shasum<r><d>:<r> <green>{}<r>", s);
         }
         if let Some(i) = dist.get_string_cloned(&bump, b"integrity").ok().flatten() {
-            prettyln!(
-                " <d>.<r>integrity<r><d>:<r> <green>{}<r>",
-                bun_fmt::escape_control_chars(i)
-            );
+            let i = escape_control_chars(i);
+            prettyln!(" <d>.<r>integrity<r><d>:<r> <green>{}<r>", i);
         }
         if let Some(u) = dist.get_number(b"unpackedSize") {
             prettyln!(
@@ -537,8 +528,8 @@ pub(crate) fn view(
             let val_expr = prop.value.as_ref().expect("infallible: prop has value");
             if let Some(tag) = tagname_expr.as_string(&bump) {
                 if let Some(val) = val_expr.as_string(&bump) {
-                    let tag_fmt = bun_fmt::escape_control_chars(tag);
-                    let val_fmt = bun_fmt::escape_control_chars(val);
+                    let tag_fmt = escape_control_chars(tag);
+                    let val_fmt = escape_control_chars(val);
                     if tag == b"latest" {
                         prettyln!("<cyan>{}<r><d>:<r> {}", tag_fmt, val_fmt);
                     } else if tag == b"beta" {
@@ -564,39 +555,22 @@ pub(crate) fn view(
                 .ok()
                 .flatten()
                 .unwrap_or(b"");
-            if !em.is_empty() {
-                prettyln!(
-                    "<d>-<r> {} <d>\\<{}\\><r>",
-                    bun_fmt::escape_control_chars(nm),
-                    bun_fmt::escape_control_chars(em)
-                );
-            } else if !nm.is_empty() {
-                prettyln!("<d>-<r> {}", bun_fmt::escape_control_chars(nm));
+            let (nm, em) = (escape_control_chars(nm), escape_control_chars(em));
+            if !em.0.is_empty() {
+                prettyln!("<d>-<r> {} <d>\\<{}\\><r>", nm, em);
+            } else if !nm.0.is_empty() {
+                prettyln!("<d>-<r> {}", nm);
             }
         }
     }
 
     // Add published date information
     if let Some(time_obj) = json.get_object(b"time") {
+        let time = |key: &[u8]| time_obj.get_string_cloned(&bump, key).ok().flatten();
         // TODO: use a relative time formatter
-        if let Some(published_time) = time_obj
-            .get_string_cloned(&bump, pkg_version)
-            .ok()
-            .flatten()
-        {
-            prettyln!(
-                "\n<b>Published<r><d>:<r> {}",
-                bun_fmt::escape_control_chars(published_time)
-            );
-        } else if let Some(modified_time) = time_obj
-            .get_string_cloned(&bump, b"modified")
-            .ok()
-            .flatten()
-        {
-            prettyln!(
-                "\n<b>Published<r><d>:<r> {}",
-                bun_fmt::escape_control_chars(modified_time)
-            );
+        if let Some(published_time) = time(pkg_version).or_else(|| time(b"modified")) {
+            let published_time = escape_control_chars(published_time);
+            prettyln!("\n<b>Published<r><d>:<r> {}", published_time);
         }
     }
 

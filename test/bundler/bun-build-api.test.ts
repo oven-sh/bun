@@ -92,19 +92,20 @@ describe("Bun.build", () => {
     const pristine = readFileSync(jsc);
     expect(pristine.length).toBeGreaterThan(256);
 
-    const run = () => {
-      const { stdout, stderr, exitCode } = Bun.spawnSync({
+    const run = async () => {
+      await using proc = Bun.spawn({
         cmd: [bunExe(), js],
         env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
         stdout: "pipe",
         stderr: "pipe",
       });
-      return { stdout: stdout.toString(), stderr: stderr.toString(), exitCode };
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
     };
     const expected = "PROG 83 62 249-72 84,85,86\n";
 
     // sanity: the untouched sidecar is actually used
-    let result = run();
+    let result = await run();
     expect(result.stdout).toBe(expected);
     expect(result.stderr).toContain("[Disk Cache] Cache hit");
     expect(result.exitCode).toBe(0);
@@ -132,7 +133,7 @@ describe("Bun.build", () => {
     ];
     for (const [name, bytes] of variants) {
       writeFileSync(jsc, bytes);
-      result = run();
+      result = await run();
       expect({ name, stdout: result.stdout }).toEqual({ name, stdout: expected });
       expect(result.stderr).not.toContain("[Disk Cache] Cache hit");
       expect(result.exitCode).toBe(0);

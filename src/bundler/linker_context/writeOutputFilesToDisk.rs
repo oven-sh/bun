@@ -25,8 +25,7 @@ use bun_sys::{
     write_file_with_path_buffer,
 };
 
-/// Bytecode output file extension (also defined in `generateChunksInParallel.rs`).
-const BYTECODE_EXTENSION: &str = ".jsc";
+use crate::bytecode_sidecar::EXTENSION as BYTECODE_EXTENSION;
 
 pub(crate) fn write_output_files_to_disk(
     c: &mut LinkerContext,

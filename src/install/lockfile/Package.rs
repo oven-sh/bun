@@ -12,12 +12,10 @@ use bun_semver::{self as semver, ExternalString, String, Version as SemverVersio
 
 use crate::bun_json::{E, Expr, ExprData};
 use crate::dependency::{Behavior, DependencyExt as _, TagExt as _};
-use crate::repository::RepositoryExt as _;
 use crate::{
     self as install, Aligner, Bin, Dependency, ExternalStringList, ExternalStringMap, Features,
-    Npm, PackageID, PackageManager, PackageNameHash, Repository, TruncatedPackageNameHash,
-    UpdateRequest, bin, default_trusted_dependencies, dependency, initialize_store,
-    invalid_package_id,
+    Npm, PackageID, PackageManager, PackageNameHash, TruncatedPackageNameHash, UpdateRequest, bin,
+    default_trusted_dependencies, dependency, initialize_store, invalid_package_id,
 };
 // `Package.rs` is mounted as `crate::lockfile_real::package`; the parent module
 // (`super`) is the real `lockfile.rs`, distinct from the `crate::lockfile`
@@ -237,7 +235,6 @@ pub(crate) type Resolution<SemverIntType> = ResolutionType<SemverIntType>;
 // override what they need. The `()` impl is the no-op resolver.
 pub trait ResolverContext {
     const IS_VOID: bool = false;
-    const IS_GIT_RESOLVER: bool = false;
 
     fn check_bundled_dependencies() -> bool {
         false
@@ -261,34 +258,12 @@ pub trait ResolverContext {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    // ── GitResolver-only surface ────────────────────────────────────────────
-    // Trait methods so non-git
-    // resolvers don't need the fields; default impls are dead code (gated on
-    // `IS_GIT_RESOLVER`). The bodies here are never executed — calls are
-    // statically guarded by `if R::IS_GIT_RESOLVER` — so a debug assertion
-    // documents the invariant without panicking in release.
-    fn resolution(&self) -> &ResolutionType<u64> {
-        debug_assert!(
-            false,
-            "ResolverContext::resolution called on non-git resolver"
-        );
-        // SAFETY: unreachable in practice; never dereferenced when the
-        // `IS_GIT_RESOLVER` gate is false. `ZEROED` is an associated const on a
-        // trait-bounded generic impl, which Rust refuses to evaluate in `const`
-        // position; a `static` (with `Sync` POD payload) sidesteps that.
-        static EMPTY: ResolutionType<u64> = ResolutionType::<u64>::ZEROED;
-        &EMPTY
-    }
-    fn dep_id(&self) -> install::DependencyID {
-        debug_assert!(false, "ResolverContext::dep_id called on non-git resolver");
-        0
-    }
-    fn new_name(&self) -> &[u8] {
-        b""
-    }
-    fn set_new_name(&mut self, _name: Vec<u8>) {}
-    fn take_new_name(&mut self) -> Vec<u8> {
-        Vec::new()
+    /// Name to store when the package.json has no `name`. Resolvers for
+    /// packages fetched from somewhere (git, tarballs, folders) derive one from
+    /// the source; `None` (the root, workspace members, the npm cache) leaves
+    /// the package unnamed.
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        None
     }
 }
 
@@ -320,7 +295,6 @@ impl ResolverContext for () {
 // permitted on object-safe trait methods, only type generics are not.
 trait ResolverContextDyn {
     fn is_void(&self) -> bool;
-    fn is_git(&self) -> bool;
     fn check_bundled_dependencies(&self) -> bool;
 
     fn count(&mut self, builder: &mut StringBuilder<'_>, json: &Expr);
@@ -330,21 +304,13 @@ trait ResolverContextDyn {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    fn resolution(&self) -> &ResolutionType<u64>;
-    fn dep_id(&self) -> install::DependencyID;
-    fn new_name(&self) -> &[u8];
-    fn set_new_name(&mut self, name: Vec<u8>);
-    fn take_new_name(&mut self) -> Vec<u8>;
+    fn fallback_name(&self) -> Option<Vec<u8>>;
 }
 
 impl<R: ResolverContext> ResolverContextDyn for R {
     #[inline]
     fn is_void(&self) -> bool {
         R::IS_VOID
-    }
-    #[inline]
-    fn is_git(&self) -> bool {
-        R::IS_GIT_RESOLVER
     }
     #[inline]
     fn check_bundled_dependencies(&self) -> bool {
@@ -365,24 +331,8 @@ impl<R: ResolverContext> ResolverContextDyn for R {
     }
 
     #[inline]
-    fn resolution(&self) -> &ResolutionType<u64> {
-        ResolverContext::resolution(self)
-    }
-    #[inline]
-    fn dep_id(&self) -> install::DependencyID {
-        ResolverContext::dep_id(self)
-    }
-    #[inline]
-    fn new_name(&self) -> &[u8] {
-        ResolverContext::new_name(self)
-    }
-    #[inline]
-    fn set_new_name(&mut self, name: Vec<u8>) {
-        ResolverContext::set_new_name(self, name)
-    }
-    #[inline]
-    fn take_new_name(&mut self) -> Vec<u8> {
-        ResolverContext::take_new_name(self)
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        ResolverContext::fallback_name(self)
     }
 }
 
@@ -2239,7 +2189,7 @@ impl Package<u64> {
         self.name_hash = 0;
 
         // -- Count the sizes
-        'name: {
+        let name: &[u8] = 'name: {
             if let Some(name_q) = json.as_property(b"name") {
                 if let Some(name) = name_q.expr.as_utf8(&bump) {
                     if !name.is_empty() {
@@ -2253,29 +2203,28 @@ impl Package<u64> {
                             );
                             return Err(crate::Error::InvalidPackageJSON);
                         }
-                        string_builder.count(name);
-                        break 'name;
+                        // Non-root names become bun.lock `packages` entries, which can
+                        // only be read back if `is_safe_lockfile_package_name` holds.
+                        if !FEATURES.is_main && !dependency::is_safe_lockfile_package_name(name) {
+                            log.add_error_fmt(
+                                source,
+                                value_loc_of(source, name_q.loc),
+                                format_args!("Invalid package name {}", bun_core::fmt::quote(name)),
+                            );
+                            return Err(crate::Error::InvalidPackageJSON);
+                        }
+                        break 'name name;
                     }
                 }
             }
 
-            // name is not validated by npm, so fallback to creating a new from the version literal
-            if resolver.is_git() {
-                let resolution: &Resolution<u64> = resolver.resolution();
-                let repo = match resolution.tag {
-                    ResolutionTag::Git => *resolution.git(),
-                    ResolutionTag::Github => *resolution.github(),
-                    _ => break 'name,
-                };
-
-                resolver.set_new_name(Repository::create_dependency_name_from_version_literal(
-                    &repo,
-                    string_builder.string_bytes.as_slice(),
-                    &lockfile.buffers.dependencies[resolver.dep_id() as usize],
-                ));
-
-                string_builder.count(resolver.new_name());
+            match resolver.fallback_name() {
+                Some(fallback_name) => bump.alloc_slice_copy(&fallback_name),
+                None => b"",
             }
+        };
+        if !name.is_empty() {
+            string_builder.count(name);
         }
 
         if let Some(patched_deps) = json.as_property(b"patchedDependencies") {
@@ -2593,28 +2542,10 @@ impl Package<u64> {
         // was reserved above so it does not realloc.
         let mut package_dependencies: Vec<Dependency> = Vec::with_capacity(total_len - off);
 
-        'name: {
-            if resolver.is_git() {
-                if !resolver.new_name().is_empty() {
-                    let new_name = resolver.take_new_name();
-                    let external_string = string_builder.append::<ExternalString>(&new_name);
-                    self.name = external_string.value;
-                    self.name_hash = external_string.hash;
-                    break 'name;
-                }
-            }
-
-            if let Some(name_q) = json.as_property(b"name") {
-                if let Some(name) = name_q.expr.as_utf8(&bump) {
-                    if !name.is_empty() {
-                        let external_string = string_builder.append::<ExternalString>(name);
-
-                        self.name = external_string.value;
-                        self.name_hash = external_string.hash;
-                        break 'name;
-                    }
-                }
-            }
+        if !name.is_empty() {
+            let external_string = string_builder.append::<ExternalString>(name);
+            self.name = external_string.value;
+            self.name_hash = external_string.hash;
         }
 
         if !FEATURES.is_main {

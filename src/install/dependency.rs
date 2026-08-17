@@ -587,6 +587,36 @@ pub(crate) fn contains_control_character(name: &[u8]) -> bool {
     })
 }
 
+/// bun.lock stores a package as `"<name>@<resolution>"` and takes it apart again with
+/// `split_name_and_version`, then rejects names that fail `is_safe_install_folder_name`.
+/// A name containing any `@` other than a scope marker (`a@b`, `@s/a@b`) or failing that
+/// check would therefore be written out but could never be loaded back.
+pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
+    is_safe_install_folder_name(name) && !strings::contains_char(&name[1..], b'@')
+}
+
+const FALLBACK_PACKAGE_NAME: &[u8] = b"unnamed-package";
+
+/// Name for a package whose own package.json has no `name`: the last component of where it
+/// came from, so `../pkgs/foo`, `https://host/foo.tgz?token=x` and `https://host/user/foo`
+/// all become `foo`. Always `is_safe_lockfile_package_name`, since it ends up in bun.lock.
+pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
+    let without_query = match strings::index_of_char(location, b'?') {
+        Some(query_start) => &location[..query_start as usize],
+        None => location,
+    };
+    let basename = bun_paths::basename(without_query);
+    let name = strings::without_suffix_comptime(
+        strings::without_suffix_comptime(basename, b".tgz"),
+        b".tar.gz",
+    );
+    if is_safe_lockfile_package_name(name) {
+        name
+    } else {
+        FALLBACK_PACKAGE_NAME
+    }
+}
+
 /// assumes version is valid
 pub fn without_build_tag(version: &[u8]) -> &[u8] {
     if let Some(plus) = strings::index_of_char(version, b'+') {

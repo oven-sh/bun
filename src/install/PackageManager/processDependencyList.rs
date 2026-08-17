@@ -15,11 +15,11 @@ use crate::package_manager_real::options::LogLevel;
 use crate::package_manager_real::{
     PackageManager, TaskCallbackList, enqueue, resolution as pm_resolution,
 };
-use crate::repository_real::{Repository, RepositoryExt as _};
+use crate::repository_real::RepositoryExt as _;
 use crate::resolution::{ResolutionType, Tag as ResolutionTag, TaggedValue};
 use crate::{
-    DependencyID, ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution,
-    TaskCallbackContext, initialize_store,
+    ExtractData, Features, INVALID_PACKAGE_ID, PackageID, Resolution, TaskCallbackContext,
+    dependency, initialize_store,
 };
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -29,16 +29,12 @@ use crate::{
 pub struct GitResolver<'a> {
     pub(crate) resolved: &'a [u8],
     pub(crate) resolution: &'a Resolution,
-    pub(crate) dep_id: DependencyID,
-    /// Owned scratch buffer that
-    /// `Package::parse_with_json` may assign when the package.json `name`
-    /// field is missing (see `ResolverContext::set_new_name`).
-    pub(crate) new_name: Vec<u8>,
+    /// `Repository::fallback_package_name`, copied out before parsing starts
+    /// because it is sliced from the lockfile string buffer parsing appends to.
+    pub(crate) fallback_name: &'a [u8],
 }
 
 impl<'a> ResolverContext for GitResolver<'a> {
-    const IS_GIT_RESOLVER: bool = true;
-
     fn check_bundled_dependencies() -> bool {
         true
     }
@@ -67,20 +63,8 @@ impl<'a> ResolverContext for GitResolver<'a> {
         }))
     }
 
-    fn resolution(&self) -> &Resolution {
-        self.resolution
-    }
-    fn dep_id(&self) -> DependencyID {
-        self.dep_id
-    }
-    fn new_name(&self) -> &[u8] {
-        &self.new_name
-    }
-    fn set_new_name(&mut self, name: Vec<u8>) {
-        self.new_name = name;
-    }
-    fn take_new_name(&mut self) -> Vec<u8> {
-        core::mem::take(&mut self.new_name)
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        Some(self.fallback_name.to_vec())
     }
 }
 
@@ -117,6 +101,10 @@ impl<'a> ResolverContext for TarballResolver<'a> {
             _ => unreachable!(),
         }))
     }
+
+    fn fallback_name(&self) -> Option<Vec<u8>> {
+        Some(dependency::fallback_package_name(self.url).to_vec())
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -128,7 +116,6 @@ impl PackageManager {
     pub(crate) fn process_extracted_tarball_package(
         &mut self,
         package_id: &mut PackageID,
-        dep_id: DependencyID,
         resolution: &Resolution,
         data: &ExtractData,
         log_level: LogLevel,
@@ -136,11 +123,14 @@ impl PackageManager {
         match resolution.tag {
             ResolutionTag::Git | ResolutionTag::Github => {
                 let mut package = 'package: {
+                    let fallback_name: Vec<u8> = resolution
+                        .repository()
+                        .fallback_package_name(self.lockfile.buffers.string_bytes.as_slice())
+                        .to_vec();
                     let mut resolver = GitResolver {
                         resolved: &data.resolved,
                         resolution,
-                        dep_id,
-                        new_name: Vec::new(),
+                        fallback_name: &fallback_name,
                     };
 
                     let mut pkg = Package::default();
@@ -184,25 +174,15 @@ impl PackageManager {
                     }
 
                     // package.json doesn't exist, no dependencies to worry about but we need to decide on a name for the dependency
-                    // tag is `.git` or `.github`; both store `Repository`.
-                    let repo = *resolution.repository();
-
-                    let new_name = Repository::create_dependency_name_from_version_literal(
-                        &repo,
-                        self.lockfile.buffers.string_bytes.as_slice(),
-                        &self.lockfile.buffers.dependencies[dep_id as usize],
-                    );
-                    // `defer manager.allocator.free(new_name)` — `new_name: Vec<u8>` drops at scope end.
-
                     {
                         let mut builder = self.lockfile.string_builder();
 
-                        builder.count(&new_name);
+                        builder.count(&fallback_name);
                         resolver.count(&mut builder, &Expr::default());
 
                         bun_core::handle_oom(builder.allocate());
 
-                        let name = builder.append::<ExternalString>(&new_name);
+                        let name = builder.append::<ExternalString>(&fallback_name);
                         pkg.name = name.value;
                         pkg.name_hash = name.hash;
 

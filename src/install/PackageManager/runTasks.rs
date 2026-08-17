@@ -1156,7 +1156,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
-                    dependency_id,
                     resolution,
                     // Tag-checked accessor (debug_asserts Extract|LocalTarball);
                     // shared `&task` here coexists with the field-disjoint
@@ -1489,7 +1488,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     }
                 } else if let Some(pkg) = manager.process_extracted_tarball_package(
                     &mut package_id,
-                    git_checkout.dependency_id,
                     resolution,
                     // Tag-checked accessor (debug_asserts GitCheckout); shared
                     // `&task` here coexists with the field-disjoint

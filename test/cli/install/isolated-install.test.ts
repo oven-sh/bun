@@ -357,6 +357,53 @@ test("can install folder dependencies", async () => {
   ).toBe("module.exports = 'hello from pkg-1';");
 });
 
+test("a folder dependency without a package.json name is stored under its folder name", async () => {
+  const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
+
+  await Promise.all([
+    write(
+      packageJson,
+      JSON.stringify({
+        name: "test-pkg-nameless-folder-dep",
+        dependencies: {
+          "folder-dep": "file:./pkg-1",
+        },
+      }),
+    ),
+    write(join(packageDir, "pkg-1", "package.json"), JSON.stringify({ version: "1.0.0" })),
+    write(join(packageDir, "pkg-1", "index.js"), "module.exports = 'hello from pkg-1';"),
+  ]);
+
+  await runBunInstall(bunEnv, packageDir);
+
+  // Without a name the store entry used to be ".bun/@file+pkg-1/node_modules" with the package's
+  // files spilled directly into that node_modules directory.
+  expect(readlinkSync(join(packageDir, "node_modules", "folder-dep"))).toBe(
+    join(".bun", "pkg-1@file+pkg-1", "node_modules", "pkg-1"),
+  );
+  expect(
+    await file(
+      join(packageDir, "node_modules", ".bun", "pkg-1@file+pkg-1", "node_modules", "pkg-1", "package.json"),
+    ).json(),
+  ).toEqual({ version: "1.0.0" });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "-e", "console.log(require('folder-dep'))"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("hello from pkg-1\n");
+  expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+
+  // The entry bun wrote loads again (runBunInstall fails on "warn: Ignoring lockfile").
+  expect(await file(join(packageDir, "bun.lock")).text()).toContain('"folder-dep": ["pkg-1@file:pkg-1", {}]');
+  await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
+});
+
 test("can install folder dependencies on root package", async () => {
   const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });
 

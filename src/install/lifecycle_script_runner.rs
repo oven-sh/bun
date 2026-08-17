@@ -14,11 +14,11 @@ use bun_io::heap as io_heap;
 use bun_io::{FilePollFlag, PosixFlags};
 
 use bun_core::ZStr;
-use bun_paths::AutoAbsPathChecked;
 #[cfg(unix)]
 use bun_spawn::SpawnResultExt as _;
 use bun_spawn::{Process, ProcessExit, ProcessExitKind, Rusage, SpawnOptions, Status};
-use bun_sys::{Fd, FdExt as _};
+#[cfg(unix)]
+use bun_sys::Fd;
 // `BufferedReaderParent::loop_` is typed `*mut bun_uws::Loop` (the
 // `bun_io::Loop` is the trait's nominal: `us_loop_t` on POSIX, `uv_loop_t`
 // on Windows. `AnyEventLoop::native_loop()` projects through the uws wrapper
@@ -287,20 +287,6 @@ impl<'a> ScriptArgv<'a> {
         })
     }
 
-    /// `bun install --ignore-scripts --no-save`, for a git dependency's `prepare` step.
-    pub fn install_dependencies() -> Result<Self, crate::Error> {
-        let mut argv: [*const c_char; 5] = [core::ptr::null(); 5];
-        argv[0] = bun_core::self_exe_path()?.as_ptr();
-        for (slot, arg) in argv[1..].iter_mut().zip(INSTALL_DEPENDENCIES_ARGS) {
-            *slot = arg.as_ptr();
-        }
-        const _: () = assert!(INSTALL_DEPENDENCIES_ARGS.len() + 2 <= 5);
-        Ok(Self {
-            argv,
-            _borrowed: core::marker::PhantomData,
-        })
-    }
-
     /// The null-terminated array `spawn_process` takes; valid while `self`
     /// (and the strings it borrows) is.
     pub fn as_ptr(&self) -> *const *const c_char {
@@ -331,9 +317,6 @@ pub struct LifecycleScriptSubprocess<'a> {
     /// struct so the `K=V\0` buffers stay alive across every async
     /// `spawn_next_script` for the script chain; freed by `Drop`/`destroy`.
     pub(crate) envp: bun_dotenv::NullDelimitedEnvMap,
-    /// `Some` iff `scripts.install_dependencies_for_prepare`.
-    pub(crate) install_envp: Option<bun_dotenv::NullDelimitedEnvMap>,
-    pub(crate) prepare_dependencies: PrepareDependencies,
     pub(crate) shell_bin: Option<&'a ZStr>,
 
     pub(crate) has_incremented_alive_count: bool,
@@ -368,137 +351,6 @@ impl<'a> InstallCtx<'a> {
     fn installer_mut(&self) -> &mut Installer<'a> {
         // SAFETY: see fn doc.
         unsafe { &mut *self.installer }
-    }
-}
-
-/// See `List::install_dependencies_for_prepare`.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) enum PrepareDependencies {
-    NotNeeded,
-    Pending,
-    /// `bun install` is running; `current_script_index` is the script that follows it.
-    Installing(NestedInstallCleanup),
-    /// Cleaned up once the scripts are done or one of them failed.
-    Installed(NestedInstallCleanup),
-}
-
-/// Holds the package's own `node_modules` (or is empty) while the nested install
-/// and the prepare scripts run. Already existing at the start means an earlier
-/// run was interrupted: it has the original and `node_modules` is that run's leftovers.
-const PREVIOUS_NODE_MODULES_NAME: &[u8] = b".bun-prepare-node_modules";
-
-/// `--ignore-scripts`: this runner is already running the package's scripts.
-/// `--no-save`: leave the package.json and a committed lockfile alone.
-const INSTALL_DEPENDENCIES_ARGS: [&core::ffi::CStr; 3] =
-    [c"install", c"--ignore-scripts", c"--no-save"];
-const INSTALL_DEPENDENCIES_COMMAND_LINE: &[u8] = b"bun install --ignore-scripts --no-save";
-
-/// What to undo in the package directory after the nested install. Its runtime
-/// dependencies are installed outside the package, so everything left inside would
-/// only shadow them.
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub(crate) struct NestedInstallCleanup {
-    /// False when the previous `node_modules` could not be moved out of the way.
-    restore_node_modules: bool,
-    /// `--no-save` still writes `bun.lock` when it migrates a `package-lock.json`
-    /// (`saves_migrated_lockfile`).
-    remove_lockfile: bool,
-}
-
-fn path_in_package(cwd: &[u8], name: &[u8]) -> bun_sys::Result<AutoAbsPathChecked> {
-    let mut path = AutoAbsPathChecked::init();
-    if path.append(cwd).is_err() || path.append(name).is_err() {
-        return Err(
-            bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::rename)
-                .with_path(name),
-        );
-    }
-    Ok(path)
-}
-
-fn set_aside_node_modules(cwd: &[u8]) -> bun_sys::Result<()> {
-    let mut node_modules = path_in_package(cwd, b"node_modules")?;
-    let mut previous = path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME)?;
-    if bun_sys::exists(previous.slice()) {
-        return Fd::cwd().delete_tree(node_modules.slice());
-    }
-    match bun_sys::renameat(
-        Fd::cwd(),
-        node_modules.slice_z(),
-        Fd::cwd(),
-        previous.slice_z(),
-    ) {
-        Err(err) if err.get_errno() == bun_sys::E::ENOENT => {
-            bun_sys::mkdir(previous.slice_z(), 0o755)
-        }
-        result => result,
-    }
-}
-
-impl NestedInstallCleanup {
-    fn begin(cwd: &[u8], package_name: &[u8]) -> Self {
-        let remove_lockfile = path_in_package(cwd, b"bun.lock")
-            .is_ok_and(|lockfile| !bun_sys::exists(lockfile.slice()));
-
-        let restore_node_modules = match set_aside_node_modules(cwd) {
-            Ok(()) => true,
-            Err(err) => {
-                bun_core::warn!(
-                    "failed to set aside the node_modules of \"{}\" ({}); the dependencies installed for its prepare scripts will be left in it",
-                    bstr::BStr::new(package_name),
-                    err,
-                );
-                false
-            }
-        };
-
-        Self {
-            restore_node_modules,
-            remove_lockfile,
-        }
-    }
-
-    fn finish(self, cwd: &[u8], package_name: &[u8]) {
-        if self.remove_lockfile
-            && let Ok(lockfile) = path_in_package(cwd, b"bun.lock")
-        {
-            let _ = Fd::cwd().delete_tree(lockfile.slice());
-        }
-
-        if !self.restore_node_modules {
-            return;
-        }
-        // Both paths were built by `set_aside_node_modules` already.
-        let (Ok(mut node_modules), Ok(mut previous)) = (
-            path_in_package(cwd, b"node_modules"),
-            path_in_package(cwd, PREVIOUS_NODE_MODULES_NAME),
-        ) else {
-            return;
-        };
-
-        if let Err(err) = Fd::cwd().delete_tree(node_modules.slice()) {
-            bun_core::warn!(
-                "failed to remove the dependencies installed for the prepare scripts of \"{}\": {}",
-                bstr::BStr::new(package_name),
-                err,
-            );
-        }
-
-        if let Err(err) = bun_sys::renameat(
-            Fd::cwd(),
-            previous.slice_z(),
-            Fd::cwd(),
-            node_modules.slice_z(),
-        ) {
-            bun_core::warn!(
-                "failed to restore the node_modules of \"{}\" after running its prepare scripts: {}",
-                bstr::BStr::new(package_name),
-                err,
-            );
-            return;
-        }
-        // Removes the empty placeholder from `set_aside_node_modules`; fails on a real one.
-        let _ = bun_sys::rmdir(node_modules.slice_z());
     }
 }
 
@@ -727,33 +579,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*this).current_script_index = next_script_index;
             (*this).has_called_process_exit = false;
 
-            let installing_dependencies = (*this).prepare_dependencies
-                == PrepareDependencies::Pending
-                && next_script_index as usize >= ScriptsList::FIRST_PREPARE_INDEX;
+            let mut copy_script: Vec<u8> = Vec::with_capacity(original_script.len() + 1);
+            replace_package_manager_run(&mut copy_script, original_script)?;
+            copy_script.push(0);
 
-            // Owns the script bytes `argv` points into until the spawn below.
-            let mut copy_script: Vec<u8> = Vec::new();
-            let (argv, command_line): (ScriptArgv, &[u8]) = if installing_dependencies {
-                (*this).prepare_dependencies = PrepareDependencies::Installing(
-                    NestedInstallCleanup::begin(cwd, &(*this).package_name),
-                );
-                (
-                    ScriptArgv::install_dependencies()?,
-                    INSTALL_DEPENDENCIES_COMMAND_LINE,
-                )
-            } else {
-                copy_script.reserve_exact(original_script.len() + 1);
-                replace_package_manager_run(&mut copy_script, original_script)?;
-                copy_script.push(0);
-                let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
-                (
-                    ScriptArgv::new((*this).shell_bin, combined_script)?,
-                    combined_script.as_bytes(),
-                )
-            };
+            let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
+            let argv = ScriptArgv::new((*this).shell_bin, combined_script)?;
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
-                Output::command(Output::CommandArgv::Single(command_line));
+                Output::command(Output::CommandArgv::Single(combined_script.as_bytes()));
             } else if let Some(scripts_node) = (*manager).scripts_node_mut() {
                 (*manager).set_node_name::<true>(
                     scripts_node,
@@ -773,13 +607,8 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 "{} - {} $ {}",
                 bstr::BStr::new(&(*this).package_name),
                 bstr::BStr::new((*this).script_name()),
-                bstr::BStr::new(command_line)
+                bstr::BStr::new(combined_script.as_bytes())
             );
-
-            let envp: *const *const c_char = match &(*this).install_envp {
-                Some(install_envp) if installing_dependencies => install_envp.as_ptr(),
-                _ => (*this).envp.as_ptr(),
-            };
 
             // OWNERSHIP:
             // `bun_io::Source::Pipe` owns a `Box<uv::Pipe>` AND
@@ -857,7 +686,11 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let spawned = match bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp) {
+            let spawned = match bun_spawn::spawn_process(
+                &spawn_options,
+                argv.as_ptr(),
+                (*this).envp.as_ptr().cast::<*const c_char>(),
+            ) {
                 Ok(Ok(s)) => s,
                 res => {
                     #[cfg(windows)]
@@ -1042,28 +875,16 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                         return;
                     }
                     self.print_output();
-                    self.print_failure_subject();
-                    bun_core::pretty_errorln!(" exited with {}<r>", exit.code);
-                    self.remove_prepare_dependencies();
+                    bun_core::pretty_errorln!(
+                        "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" exited with {}<r>",
+                        bstr::BStr::new(self.script_name()),
+                        bstr::BStr::new(&self.package_name),
+                        exit.code,
+                    );
                     // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                     unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                     Output::flush();
                     Global::exit(exit.code as u32);
-                }
-
-                if let PrepareDependencies::Installing(cleanup) = self.prepare_dependencies {
-                    self.prepare_dependencies = PrepareDependencies::Installed(cleanup);
-                    let script_index = self.current_script_index;
-                    self.reset_polls();
-                    // SAFETY: `self` was created by `Self::new` (heap::alloc) and is
-                    // uniquely owned here; it is not touched again on the success
-                    // path before `return` (same contract as the loop below).
-                    if let Err(err) = unsafe {
-                        Self::spawn_next_script(std::ptr::from_mut::<Self>(self), script_index)
-                    } {
-                        self.exit_after_spawn_failure(script_index, err);
-                    }
-                    return;
                 }
 
                 if !self.foreground
@@ -1116,16 +937,18 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                                 u8::try_from(new_script_index).expect("int cast"),
                             )
                         } {
-                            self.exit_after_spawn_failure(
-                                u8::try_from(new_script_index).expect("int cast"),
-                                err,
+                            Output::err_generic(
+                                "Failed to run script <b>{}<r> due to error <b>{}<r>",
+                                (
+                                    bstr::BStr::new(LockfileScripts::NAMES[new_script_index]),
+                                    err.name(),
+                                ),
                             );
+                            Global::exit(1);
                         }
                         return;
                     }
                 }
-
-                self.remove_prepare_dependencies();
 
                 if PackageManager::verbose_install() {
                     bun_core::pretty_errorln!(
@@ -1158,12 +981,12 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 self.print_output();
                 let signal_code = bun_sys::SignalCode::from(signal);
 
-                self.print_failure_subject();
                 bun_core::pretty_errorln!(
-                    " terminated by {}<r>",
+                    "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\" terminated by {}<r>",
+                    bstr::BStr::new(self.script_name()),
+                    bstr::BStr::new(&self.package_name),
                     signal_code.fmt(Output::enable_ansi_colors_stderr()),
                 );
-                self.remove_prepare_dependencies();
 
                 // `Status::signal_code()` range-checks 1..=31 (`bun_core::SignalCode` is
                 // exhaustive); RT signals (>31) fall back to SIGTERM so the diverging
@@ -1186,7 +1009,6 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                     bstr::BStr::new(&self.package_name),
                     err,
                 );
-                self.remove_prepare_dependencies();
                 // SAFETY: `self` was created by `Self::new` (heap::alloc); uniquely owned here.
                 unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
                 Output::flush();
@@ -1285,22 +1107,10 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         unsafe { Self::destroy(std::ptr::from_mut::<Self>(self)) };
     }
 
-    fn remove_prepare_dependencies(&mut self) {
-        let cleanup = match self.prepare_dependencies {
-            PrepareDependencies::Installing(cleanup) | PrepareDependencies::Installed(cleanup) => {
-                cleanup
-            }
-            PrepareDependencies::NotNeeded | PrepareDependencies::Pending => return,
-        };
-        self.prepare_dependencies = PrepareDependencies::NotNeeded;
-        cleanup.finish(self.scripts.cwd.as_bytes(), &self.package_name);
-    }
-
     pub(crate) fn spawn_package_scripts(
         manager: &mut PackageManager,
         list: ScriptsList,
         envp: bun_dotenv::NullDelimitedEnvMap,
-        install_envp: Option<bun_dotenv::NullDelimitedEnvMap>,
         shell_bin: Option<&'a ZStr>,
         optional: bool,
         log_level: crate::LogLevel,
@@ -1308,16 +1118,9 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         ctx: Option<InstallCtx<'a>>,
     ) -> Result<(), crate::Error> {
         let package_name = list.package_name.clone();
-        let prepare_dependencies = if list.install_dependencies_for_prepare {
-            PrepareDependencies::Pending
-        } else {
-            PrepareDependencies::NotNeeded
-        };
         let lifecycle_subprocess = Self::new(LifecycleScriptSubprocess {
             manager: bun_ptr::BackRef::new_mut(manager),
             envp,
-            install_envp,
-            prepare_dependencies,
             shell_bin,
             package_name,
             scripts: list,
@@ -1359,45 +1162,15 @@ impl<'a> LifecycleScriptSubprocess<'a> {
         // SAFETY: `lifecycle_subprocess` is the allocation-rooted `heap::alloc` pointer
         // from `Self::new`; passing it gives the stored backrefs stable provenance.
         if let Err(err) = unsafe { Self::spawn_next_script(lifecycle_subprocess, first_index) } {
-            // SAFETY: `spawn_next_script` does not free the subprocess when it
-            // fails; `lss` is a non-owning view that is not used again.
-            unsafe { (*lifecycle_subprocess).exit_after_spawn_failure(first_index, err) }
+            bun_core::pretty_errorln!(
+                "<r><red>error<r>: Failed to run script <b>{}<r> due to error <b>{}<r>",
+                bstr::BStr::new(LockfileScripts::NAMES[first_index as usize]),
+                err.name(),
+            );
+            Global::exit(1);
         }
 
         Ok(())
-    }
-
-    /// `error: <what was running>`; the caller appends how it ended.
-    fn print_failure_subject(&self) {
-        if matches!(
-            self.prepare_dependencies,
-            PrepareDependencies::Installing(_)
-        ) {
-            bun_core::pretty_error!(
-                "<r><red>error<r><d>:<r> <b>{}<r> for the <b>{}<r> script of \"<b>{}<r>\"",
-                bstr::BStr::new(INSTALL_DEPENDENCIES_COMMAND_LINE),
-                bstr::BStr::new(self.script_name()),
-                bstr::BStr::new(&self.package_name),
-            );
-        } else {
-            bun_core::pretty_error!(
-                "<r><red>error<r><d>:<r> <b>{}<r> script from \"<b>{}<r>\"",
-                bstr::BStr::new(self.script_name()),
-                bstr::BStr::new(&self.package_name),
-            );
-        }
-    }
-
-    fn exit_after_spawn_failure(&mut self, script_index: u8, err: crate::Error) -> ! {
-        Output::err_generic(
-            "Failed to run script <b>{}<r> due to error <b>{}<r>",
-            (
-                bstr::BStr::new(LockfileScripts::NAMES[script_index as usize]),
-                err.name(),
-            ),
-        );
-        self.remove_prepare_dependencies();
-        Global::exit(1);
     }
 
     fn increment_pending_script_tasks(&self) {

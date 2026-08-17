@@ -37,8 +37,8 @@ use crate::update_request::UpdateRequest;
 use crate::{
     self as Install, DependencyID, ExternalSlice, Features, PackageID, PackageManager,
     PackageNameAndVersionHash, PackageNameHash, TruncatedPackageNameHash, dependency,
-    dependency::Dependency, initialize_store, invalid_dependency_id, invalid_package_id,
-    npm as Npm,
+    dependency::Dependency, dependency::DependencyExt as _, initialize_store,
+    invalid_dependency_id, invalid_package_id, npm as Npm,
 };
 use bun_install_types::NodeLinker::NodeLinker;
 
@@ -780,6 +780,25 @@ impl Lockfile {
     /// TODO make this faster by caching the workspace package ids
     pub(crate) fn is_workspace_dependency(&self, id: DependencyID) -> bool {
         self.get_workspace_pkg_if_workspace_dep(id) != invalid_package_id
+    }
+
+    /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
+    pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
+        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
+            if dependencies.contains(id) {
+                return Some(PackageID::try_from(pkg_id).expect("int cast"));
+            }
+        }
+        None
+    }
+
+    /// Does the root package.json declare the same dependency (name and specifier) itself?
+    pub(crate) fn has_equal_root_dependency(&self, dependency: &Dependency) -> bool {
+        let buf = self.buffers.string_bytes.as_slice();
+        self.packages.items_dependencies()[0]
+            .get(self.buffers.dependencies.as_slice())
+            .iter()
+            .any(|root_dependency| root_dependency.eql(dependency, buf, buf))
     }
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {

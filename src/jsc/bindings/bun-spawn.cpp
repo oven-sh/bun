@@ -230,7 +230,7 @@ extern "C" ssize_t posix_spawn_bun(
     char* const argv[],
     char* const envp[])
 {
-    sigset_t blockall, oldmask;
+    sigset_t blockall, oldmask, childmask;
     int res = 0, cs = 0;
 
 #if OS(DARWIN) || OS(FREEBSD)
@@ -247,6 +247,7 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     sigfillset(&blockall);
+    sigemptyset(&childmask);
     sigprocmask(SIG_SETMASK, &blockall, &oldmask);
 #if !OS(ANDROID)
     pthread_setcancelstate(PTHREAD_CANCEL_DISABLE, &cs);
@@ -290,8 +291,6 @@ extern "C" ssize_t posix_spawn_bun(
 #endif
 
     const auto startChild = [&]() -> ssize_t {
-        sigset_t childmask = oldmask;
-
         // Reset signals
         struct sigaction sa = { 0 };
         sa.sa_handler = SIG_DFL;

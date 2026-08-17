@@ -980,15 +980,14 @@ static struct sigaction previous_actions[NSIG];
 
 static void Bun__forwardSignalFromParentToChildAndRestorePreviousAction(pid_t pid, int sig)
 {
-    sigset_t restore_mask;
+    sigset_t previous_mask;
     sigset_t mask;
     sigemptyset(&mask);
     sigaddset(&mask, sig);
-    sigemptyset(&restore_mask);
-    sigaddset(&restore_mask, sig);
-    pthread_sigmask(SIG_BLOCK, &mask, &restore_mask);
+    pthread_sigmask(SIG_BLOCK, &mask, &previous_mask);
     kill(pid, sig);
-    pthread_sigmask(SIG_UNBLOCK, &restore_mask, nullptr);
+    // Not SIG_UNBLOCK: from Bun__sendPendingSignalIfNecessary, `sig` is not in previous_mask and would stay blocked.
+    pthread_sigmask(SIG_SETMASK, &previous_mask, nullptr);
 }
 
 extern "C" void Bun__sendPendingSignalIfNecessary()

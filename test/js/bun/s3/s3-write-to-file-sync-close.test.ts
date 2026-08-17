@@ -13,7 +13,7 @@ import path from "node:path";
 // Accept either outcome here so a future fix that surfaces the error does not
 // trip this test.
 test("Bun.file().write(S3 file) when the S3 stream closes synchronously", async () => {
-  using dir = tempDir("s3-write-sync-close", {});
+  using dir = tempDir("s3-write-sync-close", { "out.bin": "stale" });
   const dest = path.join(String(dir), "out.bin");
 
   const fixture = `
@@ -53,10 +53,15 @@ test("Bun.file().write(S3 file) when the S3 stream closes synchronously", async 
     stdout: normalizeBunSnapshot(stdout),
     stderr: normalizeBunSnapshot(stderr),
     signalCode: proc.signalCode,
+    // Bun.write replaces the destination: it is opened with truncation before
+    // the source stream is started, so a source that fails up front still
+    // leaves an empty file rather than the previous contents.
+    destination: await Bun.file(dest).text(),
   }).toEqual({
     stdout: expect.stringMatching(/^(resolved|rejected:ERR_S3_MISSING_CREDENTIALS)$/),
     stderr: "",
     signalCode: null,
+    destination: "",
   });
   expect(exitCode).toBe(0);
 });

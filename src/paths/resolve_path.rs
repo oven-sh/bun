@@ -2630,9 +2630,9 @@ mod tests {
             ([b"/work/", &name[..]].concat(), true)
         );
 
-        let abs = [b"/".as_slice(), &vec![b'a'; N * 2]].concat();
+        let abs = [b"/".as_slice(), &[b'a'; N * 2]].concat();
         assert_eq!(join(b"/", &abs).0, abs);
-        let cwd = [b"/".as_slice(), &vec![b'c'; N - 1]].concat();
+        let cwd = [b"/".as_slice(), &[b'c'; N - 1]].concat();
         assert_eq!(join(&cwd, b"./x").0, [&cwd[..], b"/x"].concat());
 
         // `sub/../` repeated past the buffer size resolves back under the cwd.

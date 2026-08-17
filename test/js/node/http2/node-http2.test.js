@@ -4439,6 +4439,49 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+it("http2 allowHTTP1 fallback enforces maxRequestsPerSocket like http.Server", async () => {
+  const served = [];
+  const dropped = [];
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    served.push([req.url, res.maxRequestsOnConnectionReached]);
+    res.end("served");
+  });
+  // Like http.Server (and Node's Http2SecureServer), the limit is a property on the server.
+  server.maxRequestsPerSocket = 1;
+  server.on("dropRequest", (req, socket) => dropped.push([req.url, socket.encrypted === true]));
+  await new Promise(resolve => server.listen(0, resolve));
+  let socket;
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    socket = tls.connect(
+      { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+      () => socket.write("GET /1 HTTP/1.1\r\nHost: localhost\r\n\r\n"),
+    );
+    const chunks = [];
+    let sentSecond = false;
+    socket.on("error", reject);
+    socket.on("data", chunk => {
+      chunks.push(chunk);
+      if (!sentSecond && Buffer.concat(chunks).toString("latin1").endsWith("served")) {
+        // The first response is complete; send the over-limit request. Its Connection: close
+        // makes the server end the connection after answering it, which resolves the promise.
+        sentSecond = true;
+        socket.write("GET /2 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+      }
+    });
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString("latin1")));
+    const raw = await promise;
+    expect([...raw.matchAll(/HTTP\/1\.1 (\d+) /g)].map(match => match[1])).toEqual(["200", "503"]);
+    // The first response is the one that reaches the limit, so it already advertises close.
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4)).toContain("\r\nConnection: close\r\n");
+    expect(served).toEqual([["/1", true]]);
+    expect(dropped).toEqual([["/2", true]]);
+  } finally {
+    socket?.destroy();
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

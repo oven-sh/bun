@@ -4139,3 +4139,175 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+describe("connectionListener maxRequestsPerSocket", () => {
+  // Sockets fed in through server.emit("connection", ...) take the JS fallback parser. This
+  // client sends raw keep-alive requests over such a socket one at a time (never pipelined) and
+  // parses each response as it arrives. The servers below only produce Content-Length framed
+  // bodies and the bodiless chunked 503 (a lone terminating chunk), which is all it understands.
+  function keepAliveClientOverEmittedConnection(server: Server) {
+    const [clientSide, serverSide] = duplexPair();
+    server.emit("connection", serverSide);
+    let received = "";
+    let waiter: PromiseWithResolvers<string> | undefined;
+    function takeResponse() {
+      const headEnd = received.indexOf("\r\n\r\n");
+      if (headEnd === -1) return undefined;
+      const head = received.slice(0, headEnd);
+      let bodyEnd = headEnd + 4;
+      const contentLength = /^Content-Length: (\d+)$/m.exec(head);
+      if (contentLength) {
+        bodyEnd += Number(contentLength[1]);
+      } else if (/^Transfer-Encoding: chunked$/m.test(head)) {
+        bodyEnd += "0\r\n\r\n".length;
+      }
+      if (received.length < bodyEnd) return undefined;
+      const response = received.slice(0, bodyEnd);
+      received = received.slice(bodyEnd);
+      return response;
+    }
+    function deliver() {
+      if (waiter === undefined) return;
+      const response = takeResponse();
+      if (response === undefined) return;
+      const { resolve } = waiter;
+      waiter = undefined;
+      resolve(response);
+    }
+    function fail(reason: string) {
+      waiter?.reject(new Error(`${reason} while waiting for a response; received ${JSON.stringify(received)}`));
+      waiter = undefined;
+    }
+    clientSide.on("data", chunk => {
+      received += chunk.toString("latin1");
+      deliver();
+    });
+    clientSide.on("end", () => fail("the server ended the connection"));
+    clientSide.on("close", () => fail("the connection closed"));
+    return {
+      serverSide,
+      async request(rawRequest: string) {
+        waiter = Promise.withResolvers<string>();
+        const { promise } = waiter;
+        clientSide.write(rawRequest);
+        deliver();
+        const raw = await promise;
+        return {
+          statusCode: Number(raw.slice("HTTP/1.1 ".length, "HTTP/1.1 ".length + 3)),
+          connection: /^Connection: (.*)$/m.exec(raw)?.[1],
+          keepAlive: /^Keep-Alive: (.*)$/m.exec(raw)?.[1],
+          body: raw.slice(raw.indexOf("\r\n\r\n") + 4).replace(/^0\r\n\r\n$/, ""),
+        };
+      },
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    };
+  }
+
+  it("advertises Connection: close at the limit and answers every request past it with 503 and 'dropRequest'", async () => {
+    const served: [string, boolean][] = [];
+    const dropped: [string, boolean][] = [];
+    const server = createServer((req, res) => {
+      // Set before 'request' is emitted, like Node; it is what turns the Connection header into "close".
+      served.push([req.url!, (res as any).maxRequestsOnConnectionReached]);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 2;
+    using client = keepAliveClientOverEmittedConnection(server);
+    server.on("dropRequest", (req, socket) => dropped.push([req.url!, socket === client.serverSide]));
+
+    const responses: Awaited<ReturnType<typeof client.request>>[] = [];
+    for (const path of ["/1", "/2", "/3", "/4"]) {
+      responses.push(await client.request(`GET ${path} HTTP/1.1\r\nHost: example.test\r\n\r\n`));
+    }
+    expect(responses).toEqual([
+      { statusCode: 200, connection: "keep-alive", keepAlive: "timeout=5, max=2", body: "served" },
+      { statusCode: 200, connection: "close", keepAlive: undefined, body: "served" },
+      { statusCode: 503, connection: "close", keepAlive: undefined, body: "" },
+      { statusCode: 503, connection: "close", keepAlive: undefined, body: "" },
+    ]);
+    expect(served).toEqual([
+      ["/1", false],
+      ["/2", true],
+    ]);
+    expect(dropped).toEqual([
+      ["/3", true],
+      ["/4", true],
+    ]);
+  });
+
+  it("counts requests per connection", async () => {
+    const dropped: string[] = [];
+    const server = createServer((req, res) => res.end("served"));
+    server.maxRequestsPerSocket = 1;
+    server.on("dropRequest", req => dropped.push(req.url!));
+    using first = keepAliveClientOverEmittedConnection(server);
+    using second = keepAliveClientOverEmittedConnection(server);
+
+    const statusCodes = [
+      (await first.request("GET /first HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+      (await second.request("GET /second HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+      (await first.request("GET /first-again HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+      (await second.request("GET /second-again HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode,
+    ];
+    expect(statusCodes).toEqual([200, 200, 503, 503]);
+    expect(dropped).toEqual(["/first-again", "/second-again"]);
+  });
+
+  it("drops an over-limit request before looking at its Expect header", async () => {
+    // Node's parserOnIncoming checks the limit before the Expect routing, so the dropped
+    // request gets its 503 straight away: no 100 Continue, no 'checkContinue'.
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 1;
+    server.on("checkContinue", (req, res) => {
+      events.push(`checkContinue ${req.url}`);
+      res.writeContinue();
+      res.end("served");
+    });
+    server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+    using client = keepAliveClientOverEmittedConnection(server);
+
+    expect((await client.request("GET /1 HTTP/1.1\r\nHost: example.test\r\n\r\n")).statusCode).toBe(200);
+    expect(
+      await client.request(
+        "POST /2 HTTP/1.1\r\nHost: example.test\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
+      ),
+    ).toEqual({ statusCode: 503, connection: "close", keepAlive: undefined, body: "" });
+    expect(events).toEqual(["request /1", "dropRequest /2"]);
+  });
+
+  it("still hands off an Upgrade request once the limit is reached", async () => {
+    // Node's parserOnIncoming hands upgrades off before it counts requests, so the limit never
+    // turns an upgrade into a 503.
+    const events: string[] = [];
+    const server = createServer((req, res) => {
+      events.push(`request ${req.url}`);
+      res.end("served");
+    });
+    server.maxRequestsPerSocket = 1;
+    server.on("upgrade", (req, socket) => {
+      events.push(`upgrade ${req.url}`);
+      socket.end("HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: test\r\n\r\n");
+    });
+    server.on("dropRequest", req => events.push(`dropRequest ${req.url}`));
+    using client = keepAliveClientOverEmittedConnection(server);
+
+    expect(await client.request("GET /1 HTTP/1.1\r\nHost: example.test\r\n\r\n")).toEqual({
+      statusCode: 200,
+      connection: "close",
+      keepAlive: undefined,
+      body: "served",
+    });
+    expect(
+      (await client.request("GET /ws HTTP/1.1\r\nHost: example.test\r\nUpgrade: test\r\nConnection: Upgrade\r\n\r\n"))
+        .statusCode,
+    ).toBe(101);
+    expect(events).toEqual(["request /1", "upgrade /ws"]);
+  });
+});

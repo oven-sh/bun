@@ -1,9 +1,10 @@
 // An error thrown by a ReadableStream used as a Response body must never
 // escape as a global unhandledRejection. Bun's default unhandledRejection
 // policy exits the process, so before the fix a single bad request took the
-// entire server down.
+// entire server down. The `nativeBodies` variants pin the same wire and
+// reporting contract for bodies Bun.serve streams without a JS ReadableStream.
 //
-// argv[2]: variant name (see `sources` below)
+// argv[2]: variant name (see `sources` and `nativeBodies` below)
 // argv[3]: "development" to run the server with development: true
 //
 // Prints a single JSON object on stdout and exits 0.
@@ -12,10 +13,19 @@ import net from "node:net";
 const variant = process.argv[2];
 const development = process.argv[3] === "development";
 
-// Set by the mid-stream variant so it only errors once its chunk has provably
-// reached the client socket, i.e. after the 200 response is committed on the
-// wire. Called from the raw request's data handler below.
+// Set by the mid-stream variants so they only error once their chunk has
+// provably reached the client socket, i.e. after the 200 response is committed
+// on the wire. Called from the raw request's data handler below.
 let midStreamResolve: (() => void) | undefined;
+
+// Arms `midStreamResolve` for one request. Every mid-stream variant calls this
+// before it emits "chunk-a", so the resolver is in place by the time the
+// client can see the chunk.
+function chunkReachedClient(): Promise<void> {
+  const { promise, resolve } = Promise.withResolvers<void>();
+  midStreamResolve = resolve;
+  return promise;
+}
 
 // Set by the cancel variants: resolved once the source's cancel() has run, so
 // the test observes any resulting rejection before declaring success.
@@ -66,10 +76,9 @@ const sources: Record<string, () => ReadableStream> = {
   "mid-stream-reject": () =>
     new ReadableStream({
       async pull(c) {
-        const { promise, resolve } = Promise.withResolvers<void>();
-        midStreamResolve = resolve;
+        const reached = chunkReachedClient();
         c.enqueue("chunk-a");
-        await promise;
+        await reached;
         throw new Error("boom");
       },
     }),
@@ -112,8 +121,69 @@ const sources: Record<string, () => ReadableStream> = {
     }),
 };
 
+// HTMLRewriter input that lets the rewritten "<b>chunk-a</b>" reach the client
+// before delivering the element whose handler fails.
+function rewriterInput(): ReadableStream {
+  const reached = chunkReachedClient();
+  let pulls = 0;
+  return new ReadableStream({
+    async pull(c) {
+      if (pulls++ === 0) {
+        c.enqueue("<b>chunk-a</b>");
+        return;
+      }
+      await reached;
+      c.enqueue("<p>x</p>");
+      c.close();
+    },
+  });
+}
+
+function rewriterResponse(element: () => void | Promise<void>): Response {
+  return new HTMLRewriter()
+    .on("p", { element })
+    .transform(new Response(rewriterInput(), { headers: { "content-type": "text/html" } }));
+}
+
+// Upstream for the proxied variant: answers with one chunk, then drops the
+// connection once that chunk has made it through the proxy to the client.
+let upstream: net.Server | undefined;
+async function proxiedResponse(): Promise<Response> {
+  if (!upstream) {
+    upstream = net.createServer(sock => {
+      sock.once("data", () => {
+        const reached = chunkReachedClient();
+        sock.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n7\r\nchunk-a\r\n");
+        reached.then(() => sock.destroy());
+      });
+    });
+    await new Promise<void>(resolve => upstream!.listen(0, "127.0.0.1", resolve));
+  }
+  const { port } = upstream.address() as net.AddressInfo;
+  return fetch(`http://127.0.0.1:${port}/`);
+}
+
+// Bodies Bun.serve streams natively (no JS ReadableStream pump) that fail
+// after their first chunk is already on the wire. The status cannot be taken
+// back, so the contract is the same as for "mid-stream-reject": the connection
+// is closed without the terminating chunk, error() is not invoked, and in
+// development mode the failure is reported on stderr.
+const nativeBodies: Record<string, () => Response | Promise<Response>> = {
+  "rewriter-mid-stream-throw": () =>
+    rewriterResponse(() => {
+      throw new Error("boom");
+    }),
+  "rewriter-mid-stream-reject": () =>
+    rewriterResponse(async () => {
+      await Bun.sleep(0);
+      throw new Error("boom");
+    }),
+  "proxied-fetch-mid-stream": proxiedResponse,
+};
+
 const source = sources[variant];
-if (!source) {
+const nativeBody = nativeBodies[variant];
+if (!source && !nativeBody) {
   console.error(`unknown variant: ${variant}`);
   process.exit(3);
 }
@@ -136,7 +206,7 @@ await using server = Bun.serve({
     return new Response("err-body", { status: 500 });
   },
   fetch() {
-    return new Response(source());
+    return nativeBody ? nativeBody() : new Response(source());
   },
 });
 
@@ -175,6 +245,7 @@ const secondWire = await rawRequest(clientAborts);
 // Cycle the event loop so any stray rejected promise reaches the
 // unhandledRejection reporter before we declare success.
 for (let i = 0; i < 10; i++) await Bun.sleep(0);
+upstream?.close();
 
 console.log(
   JSON.stringify({

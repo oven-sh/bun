@@ -8,6 +8,8 @@
 //   3. A body that errored after chunks were already sent was still terminated
 //      with a clean `0\r\n\r\n`, so the client could not tell the truncated
 //      body apart from a complete one.
+// The natively streamed bodies further down (HTMLRewriter, proxied fetch) pin
+// the same mid-stream contract for the non-ReadableStream path.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN } from "harness";
 import { join } from "node:path";
@@ -116,6 +118,56 @@ test.concurrent("mid-stream error in development mode: reported and not terminat
     exitCode: 0,
   });
   expect(stderr).toContain("boom");
+});
+
+// Bodies that Bun.serve streams natively (an HTMLRewriter transform, a proxied
+// fetch() Response) reach the server through RequestContext::end_chunk rather
+// than handle_reject_stream. Once the status is on the wire, error() cannot
+// answer any more, so the failure has to be reported the way the JS stream
+// above is: force-closed without the terminating chunk and, in development
+// mode, printed. Before the fix end_chunk force-closed and dropped the error,
+// so a handler that threw after the first byte left no trace anywhere.
+const nativeBodies = [
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n", "boom"],
+  ["rewriter-mid-stream-reject", "e\r\n<b>chunk-a</b>\r\n", "boom"],
+  ["proxied-fetch-mid-stream", "7\r\nchunk-a\r\n", "ECONNRESET"],
+] as const;
+
+test.concurrent.each(nativeBodies)(
+  "%s in development mode: reported and not terminated as complete",
+  async (variant, body, reported) => {
+    const { stdout, stderr, exitCode } = await runFixture(variant, "development");
+    expect({ result: JSON.parse(stdout), exitCode }).toEqual({
+      result: {
+        statusLine: "HTTP/1.1 200 OK",
+        cleanChunkedTerminator: false,
+        body,
+        errorCb: 0,
+        unhandled: 0,
+        secondStatusLine: "HTTP/1.1 200 OK",
+      },
+      exitCode: 0,
+    });
+    expect(stderr).toContain(reported);
+  },
+);
+
+// `development: false` stays quiet on this path too, exactly like
+// "mid-stream-reject" above; only the wire contract applies.
+test.concurrent.each(nativeBodies)("%s: the chunked body is not terminated as complete", async (variant, body) => {
+  const { stdout, stderr, exitCode } = await runFixture(variant);
+  expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator: false,
+      body,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // The client aborts the download mid-stream, which makes Bun cancel the body

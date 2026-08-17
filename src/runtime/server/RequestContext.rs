@@ -2879,50 +2879,11 @@ where
             self.render_metadata();
         }
 
-        if DEBUG_MODE {
-            if let Some(server) = self.server.get() {
-                if !err.is_empty_or_undefined_or_null() {
-                    let server = &*server;
-                    let mut exception_list: jsc::ExceptionList = Vec::new();
-                    server
-                        .vm()
-                        .as_mut()
-                        .run_error_handler(err, Some(&mut exception_list));
-
-                    // The fallback page below writes into `resp`, which must
-                    // not be dereferenced once the sink has already ended the
-                    // response (see `end_already_responded_stream`).
-                    if !ended_response && server.dev_server().is_some() {
-                        // Render the error fallback HTML page like renderDefaultError does
-                        if !self.flags.has_written_status() {
-                            self.flags.set_has_written_status(true);
-                            if let Some(resp) = self.resp.get() {
-                                resp.write_status(b"500 Internal Server Error");
-                                resp.write_header(
-                                    b"content-type",
-                                    &bun_http_types::MimeType::HTML.value,
-                                );
-                            }
-                        }
-
-                        let bb = DevErrorPage {
-                            message: b"Stream error during server-side rendering",
-                            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
-                            exceptions: &exception_list,
-                            log: None,
-                        }
-                        .render();
-
-                        if let Some(resp) = self.resp.get() {
-                            // SAFETY: FFI handle
-                            resp.write(&bb);
-                        }
-
-                        self.end_stream(self.should_close_connection());
-                        return;
-                    }
-                }
-            }
+        // The dev error page writes into `resp`, which must not be
+        // dereferenced once the sink has already ended the response (see
+        // `end_already_responded_stream`).
+        if self.report_committed_body_error(err, !ended_response) {
+            return;
         }
         // HTTP/1 only: the sink already fully ended the response, so `resp`
         // can no longer be dereferenced (see `end_already_responded_stream`).
@@ -2932,9 +2893,57 @@ where
             self.end_already_responded_stream();
             return;
         }
-        // Body bytes were already written: close without the terminating chunk
-        // (RFC 9112 section 7) so the client sees an incomplete message, not a
-        // truncated body that looks like a complete, successful response.
+        self.close_failed_body();
+    }
+
+    /// The body failed after the status and headers went out, so the server's
+    /// `error()` hook can no longer answer the request. In development mode,
+    /// print the error like an uncaught exception so it does not vanish;
+    /// under a bake dev server, while `resp` may still be written to, also
+    /// render the error page as the rest of the body and end the response,
+    /// returning `true`. Production mode stays quiet. On `false` the caller
+    /// still owns the response and terminates it ([`Self::close_failed_body`]).
+    ///
+    /// Shared by JS `ReadableStream` bodies (`handle_reject_stream`) and
+    /// native `ByteStream` bodies such as a proxied `fetch()` or an
+    /// `HTMLRewriter` transform (`end_chunk`).
+    fn report_committed_body_error(&self, err: JSValue, resp_writable: bool) -> bool {
+        if !DEBUG_MODE || err.is_empty_or_undefined_or_null() {
+            return false;
+        }
+        let server = self.server();
+        let mut exception_list: jsc::ExceptionList = Vec::new();
+        server
+            .vm()
+            .as_mut()
+            .run_error_handler(err, Some(&mut exception_list));
+
+        if !resp_writable || server.dev_server().is_none() {
+            return false;
+        }
+
+        let bb = DevErrorPage {
+            message: b"Stream error during server-side rendering",
+            cwd: bun_resolver::fs::FileSystem::get().top_level_dir,
+            exceptions: &exception_list,
+            log: None,
+        }
+        .render();
+
+        if let Some(resp) = self.resp.get() {
+            // SAFETY: FFI handle
+            resp.write(&bb);
+        }
+
+        self.end_stream(self.should_close_connection());
+        true
+    }
+
+    /// Terminate a response whose body failed after the status went out. Once
+    /// body bytes were written, close without the terminating chunk (RFC 9112
+    /// section 7) so the client sees an incomplete message rather than a
+    /// truncated body that looks complete; otherwise end it normally.
+    fn close_failed_body(&self) {
         if let Some(resp) = self.resp.get() {
             let state = resp.state();
             if state.is_http_write_called() && state.is_response_pending() {
@@ -3219,13 +3228,13 @@ where
             return;
         }
         if let Some(err) = err {
+            let global_this = this.server().global_this();
             // No status committed yet: the upstream producer (e.g. a
             // suspended `HTMLRewriter` transform whose async handler
             // rejected) failed before any bytes were emitted. Detach the
             // ByteStream state and hand the error to the server's
             // `error()` hook so it can supply the response.
             if !this.flags.has_written_status() {
-                let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
                 this.byte_stream.set(None);
                 this.response_body_readable_stream_ref
@@ -3233,14 +3242,15 @@ where
                 this.run_error_handler(js_err);
                 return;
             }
-            if let Some(resp) = this.resp.get() {
-                let state = resp.state();
-                if state.is_http_write_called() && state.is_response_pending() {
-                    this.force_close();
-                    return;
-                }
+            // The status is already on the wire: report and close the same
+            // way `handle_reject_stream` does for a JS body failing mid-stream.
+            if DEBUG_MODE && this.report_committed_body_error(err.to_js(global_this), true) {
+                return;
             }
-        } else if !this.flags.has_written_status() {
+            this.close_failed_body();
+            return;
+        }
+        if !this.flags.has_written_status() {
             // Upstream ended cleanly before any chunk: flush the deferred
             // status/headers so the client sees them before the terminator.
             if let Some(resp) = this.resp.get() {

@@ -4439,6 +4439,35 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+it("http2 allowHTTP1 fallback ends the connection after answering an HTTP/1.0 keep-alive request with Connection: close", async () => {
+  // HTTP/1.0 responses are always answered with Connection: close (like
+  // node:http's own server); the fallback used to leave the connection open
+  // anyway when the request had asked for keep-alive.
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.end(`served ${req.httpVersion} ${req.url}`);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write("GET /first HTTP/1.0\r\nHost: localhost\r\nConnection: keep-alive\r\n\r\n"),
+  );
+  try {
+    const chunks = [];
+    socket.on("error", reject);
+    socket.on("data", chunk => chunks.push(chunk));
+    // Never arrives while the server keeps the connection open.
+    socket.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    const raw = await promise;
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw.slice(0, raw.indexOf("\r\n\r\n") + 4).toLowerCase()).toContain("\r\nconnection: close\r\n");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("served 1.0 /first");
+  } finally {
+    socket.destroy();
+    server.close();
+  }
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

@@ -528,14 +528,10 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
     /// Binds a peer edge the way loading `bun.lock` does, whatever the resolver, a previous
     /// lockfile or a migration left it bound to, so every tree built from these packages agrees.
     fn bind_peer(&mut self, dep_id: DependencyID) {
-        let dependency: &Dependency = &self.dependencies[dep_id as usize];
-        if !dependency.behavior.is_peer() {
-            return;
-        }
         let lockfile_ref = self.lockfile;
         let lockfile: &Lockfile = lockfile_ref.get();
         if let Some(pkg_id) = bun_lock::resolve_peer_dep_version_based(
-            dependency,
+            &self.dependencies[dep_id as usize],
             &lockfile.catalogs,
             &lockfile.package_index,
             &lockfile.overrides,
@@ -709,10 +705,8 @@ impl Tree {
             return Ok(());
         }
 
-        // Below another copy of itself, a package's dependencies are already placed; laying
-        // them out again only re-nests what the levels in between shadow, which for a cycle
-        // through two versions (a@1 -> b@1 -> a@2 -> b@2 -> a@1 ...) never ends. npm stops
-        // here as well (linking to the copy above); bun.lock.rs skips these copies to match.
+        // Below another copy of itself a package's dependencies are already placed; a cycle through two
+        // versions (a@1 -> b@1 -> a@2 -> b@2 ...) would re-nest forever. bun.lock.rs skips these copies too.
         {
             let trees = builder.list.items_tree();
             let mut ancestor_id = self.id;
@@ -824,8 +818,7 @@ impl Tree {
             // don't treat it as unsafe — match the lockfile parser and isolated
             // installer (`bun.lock.rs`, `isolated_install.rs`) which guard
             // `!name.is_empty()` here rather than failing the whole install.
-            // Neither does an unresolved dependency, and if its name is why it
-            // did not resolve, enqueue already reported it.
+            // An unresolved dependency's name was already reported by enqueue if it is why.
             let dependency_name = dependency
                 .name
                 .slice(lockfile.buffers.string_bytes.as_slice());
@@ -850,10 +843,7 @@ impl Tree {
                 }
 
                 if pkg_id == invalid_package_id {
-                    // An unbound peer (optional, or one a migration had nothing recorded for)
-                    // binds to the copy next to or above its dependent, which is where loading
-                    // the saved bun.lock binds it (`PkgMap::find_resolution`); the isolated
-                    // store keys the dependent by that binding.
+                    // An unbound peer binds to the copy next to or above its dependent, as loading bun.lock does.
                     if dependency.behavior.is_peer() {
                         break 'hoisted Tree::hoist_dependency::<true, METHOD>(
                             next_id,
@@ -1176,9 +1166,8 @@ impl Tree {
             return HoistDependencyResult::DependencyLoop; // 3
         }
 
-        // A bundled root's walk ends below the folder holding the bundling package, which is
-        // resolvable from inside it; a bundled dependency depending back on it would otherwise
-        // copy it into itself, and the copy's bundled dependencies bring it back, forever.
+        // A bundled dependency depending back on the bundling package resolves it from inside; copying it
+        // into itself would recurse forever.
         if (this.dependency_id as usize) < deps.len()
             && builder.resolutions[this.dependency_id as usize] == package_id
             && deps[this.dependency_id as usize].name_hash == target_name_hash

@@ -284,20 +284,9 @@ function getPackedSettings(settings?: any): Buffer {
   return buf;
 }
 
-function getUnpackedSettings(buf?: any, options?: any): any {
-  if (buf === undefined) {
-    return { ...kDefaultSettings };
-  }
-
-  if (!Buffer.isBuffer(buf) && !isTypedArray(buf)) {
-    {
-      // node renders this as instance-of (class names), not of-type.
-      const err = new TypeError(
-        `The "buf" argument must be an instance of Buffer or TypedArray. Received ` + receivedValueLabel(buf),
-      );
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
-    }
+function getUnpackedSettings(buf: any, options?: any): any {
+  if (!isTypedArray(buf)) {
+    throw $ERR_INVALID_ARG_TYPE("buf", ["Buffer", "TypedArray"], buf);
   }
 
   if (buf.length % 6 !== 0) {
@@ -3564,18 +3553,10 @@ class ServerHttp2Stream extends Http2Stream {
     fs.open(path, "r", afterOpen.bind(this, options || {}, headers));
   }
   respondWithFD(fd, headers, options) {
-    if (typeof fd !== "number") {
-      // node accepts a FileHandle too; unwrap its descriptor.
-      if (fd !== null && typeof fd === "object" && typeof fd.fd === "number") {
-        fd = fd.fd;
-      } else {
-        const err = new TypeError(
-          `The "fd" argument must be of type number or an instance of FileHandle.` +
-            ` Received ${receivedValueLabel(fd)}`,
-        );
-        err.code = "ERR_INVALID_ARG_TYPE";
-        throw err;
-      }
+    if (fd instanceof FileHandle) {
+      fd = fd.fd;
+    } else if (typeof fd !== "number") {
+      throw $ERR_INVALID_ARG_TYPE("fd", ["number", "FileHandle"], fd);
     }
     if (this.destroyed) {
       throw $ERR_HTTP2_INVALID_STREAM();
@@ -3628,11 +3609,7 @@ class ServerHttp2Stream extends Http2Stream {
       // stream.end() right after it is a no-op instead of ending the stream before the file.
       closeWritableForFileResponse(this);
     }
-    if (fd instanceof FileHandle) {
-      fs.fstat(fd.fd, doSendFileFD.bind(this, options, fd, headers));
-    } else {
-      fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
-    }
+    fs.fstat(fd, doSendFileFD.bind(this, options, fd, headers));
   }
   additionalHeaders(headers) {
     if (this.destroyed || this.closed || this.session === undefined) {
@@ -4033,17 +4010,6 @@ function assertSingleValueHeaders(headers) {
     if (seen === null) seen = new SafeSet();
     seen.add(lower);
   }
-}
-
-// Renders a received value the way node's determineSpecificType does for error messages.
-function receivedValueLabel(value) {
-  if (value === null) return "null";
-  if (typeof value === "object") return "an instance of " + (value.constructor?.name || "Object");
-  if (typeof value === "function") return `function ${value.name}`;
-  if (typeof value === "string") return `type string ('${value}')`;
-  if (typeof value === "symbol") return `type symbol (${String(value)})`;
-  if (typeof value === "number") return `type number (${String(value)})`;
-  return `type ${typeof value} (${JSON.stringify(value)})`;
 }
 
 function buildSensitiveNames(headers, sensitives) {
@@ -6860,9 +6826,8 @@ function performServerHandshake(socket, options = {}) {
   options = initializeOptions(options);
   return new ServerHttp2Session(socket, options, undefined);
 }
-function getDefaultSettings() {
-  // return default settings
-  return getUnpackedSettings();
+function getDefaultSettings(): any {
+  return { ...kDefaultSettings };
 }
 
 Object.defineProperty(connect, promisify.custom, {

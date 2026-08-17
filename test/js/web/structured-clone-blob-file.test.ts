@@ -582,7 +582,7 @@ describe("structuredClone with Blob and File", () => {
       expect(good.readUInt32LE(at - 4)).toBe(probe.length);
 
       // Longer than MAX_PATH_BYTES on every platform (Windows is ~96 KiB).
-      const long = Buffer.from("/" + "a".repeat(100_000));
+      const long = Buffer.concat([Buffer.from("/"), Buffer.alloc(100_000, "a")]);
       const len = Buffer.alloc(4);
       len.writeUInt32LE(long.length);
       const bad = Buffer.concat([good.subarray(0, at - 4), len, long, good.subarray(at + probe.length)]);

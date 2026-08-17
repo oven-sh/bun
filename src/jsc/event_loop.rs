@@ -688,7 +688,9 @@ impl EventLoop {
                 }
                 refills += 1;
                 self.tick_concurrent();
-                self.global_ref().handle_rejected_promises().map_err(|_| Stopped)?;
+                self.global_ref()
+                    .handle_rejected_promises()
+                    .map_err(|_| Stopped)?;
             }
             self.drain_microtasks_with_global(global, global_vm)?;
             if scope.has_exception() {
@@ -716,7 +718,9 @@ impl EventLoop {
             self.tick_concurrent();
         }
 
-        self.global_ref().handle_rejected_promises().map_err(|_| Stopped)
+        self.global_ref()
+            .handle_rejected_promises()
+            .map_err(|_| Stopped)
     }
 
     /// Tick the task queue without draining microtasks afterward.

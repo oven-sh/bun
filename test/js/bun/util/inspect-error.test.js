@@ -1,4 +1,5 @@
 import { describe, expect, jest, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 test("error.cause", () => {
   const err = new Error("error 1");
@@ -9,21 +10,23 @@ test("error.cause", () => {
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
 "1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
-5 |   const err2 = new Error("error 2", { cause: err });
+2 | import { bunEnv, bunExe } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
+6 |   const err2 = new Error("error 2", { cause: err });
                        ^
 error: error 2
-      at <anonymous> ([dir]/inspect-error.test.js:5:20)
+      at <anonymous> ([dir]/inspect-error.test.js:6:20)
 
 1 | import { describe, expect, jest, test } from "bun:test";
-2 | 
-3 | test("error.cause", () => {
-4 |   const err = new Error("error 1");
+2 | import { bunEnv, bunExe } from "harness";
+3 | 
+4 | test("error.cause", () => {
+5 |   const err = new Error("error 1");
                       ^
 error: error 1
-      at <anonymous> ([dir]/inspect-error.test.js:4:19)
+      at <anonymous> ([dir]/inspect-error.test.js:5:19)
 "
 `);
 });
@@ -35,15 +38,15 @@ test("Error", () => {
       .replaceAll("\\", "/")
       .replaceAll(import.meta.dir.replaceAll("\\", "/"), "[dir]"),
   ).toMatchInlineSnapshot(`
-"27 | "
-28 | \`);
-29 | });
-30 | 
-31 | test("Error", () => {
-32 |   const err = new Error("my message");
+"30 | "
+31 | \`);
+32 | });
+33 | 
+34 | test("Error", () => {
+35 |   const err = new Error("my message");
                        ^
 error: my message
-      at <anonymous> ([dir]/inspect-error.test.js:32:19)
+      at <anonymous> ([dir]/inspect-error.test.js:35:19)
 "
 `);
 });
@@ -72,20 +75,13 @@ note: "duplicateConstDecl" was originally declared here
 });
 
 const normalizeError = str => {
-  // remove debug-only stack trace frames
-  // like "at require (:1:21)"
-  if (str.includes(" (:")) {
-    const splits = str.split("\n");
-    for (let i = 0; i < splits.length; i++) {
-      if (splits[i].includes(" (:")) {
-        splits.splice(i, 1);
-        i--;
-      }
-    }
-    return splits.join("\n");
-  }
-
-  return str;
+  // remove debug-only stack trace frames (bun's own builtins, which have
+  // a position but no file) like "at require (51:24)" or "at require (:1:21)"
+  const debugOnlyFrame = /^\s*at .*\((?:native)?:?\d+:\d+\)$/;
+  return str
+    .split("\n")
+    .filter(line => !debugOnlyFrame.test(line))
+    .join("\n");
 };
 
 test("Error inside minified file (no color) ", () => {
@@ -111,7 +107,7 @@ test("Error inside minified file (no color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:92:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:88:7)"
     `);
   }
 });
@@ -140,7 +136,7 @@ test("Error inside minified file (color) ", () => {
       error: error inside long minified file!
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2850)
             at <anonymous> ([dir]/inspect-error-fixture.min.js:26:2890)
-            at <anonymous> ([dir]/inspect-error.test.js:120:7)"
+            at <anonymous> ([dir]/inspect-error.test.js:116:7)"
     `);
   }
 });
@@ -154,7 +150,7 @@ test("Inserted originalLine and originalColumn do not appear in node:util.inspec
       .replaceAll(import.meta.path.replaceAll("\\", "/"), "[file]"),
   ).toMatchInlineSnapshot(`
 "Error: my message
-    at <anonymous> ([file]:149:19)"
+    at <anonymous> ([file]:145:19)"
 `);
 });
 
@@ -187,4 +183,69 @@ test("error.stack throwing an error doesn't lead to a crash", () => {
   expect(() => {
     throw err;
   }).toThrow();
+});
+
+// The error printer reads `message` with getters enabled and then stringifies
+// whatever it got. Only a string message skips the second conversion step, so
+// every other shape of `message` (and an error with no `message` at all) used
+// to reach that step with the read still unchecked, which
+// BUN_JSC_validateExceptionChecks=1 reports as an abort in debug builds.
+describe("error.message that is not a plain string", () => {
+  async function run(source) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", source],
+      env: { ...bunEnv, BUN_JSC_validateExceptionChecks: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Prints just the "name: message" header line of Bun.inspect(e); the code
+  // frame above it and the stack frames below it are not what is under test.
+  function inspectHeader(makeError) {
+    return run(`
+      ${makeError}
+      console.log(Bun.inspect(e).split("\\n").find(line => /^(error|Error)\\b/.test(line)));
+    `);
+  }
+
+  const cases = [
+    ["a Symbol", `const e = new Error("boom"); e.message = Symbol("m");`, "Error: \n"],
+    ["undefined", `const e = new Error("boom"); e.message = undefined;`, "error: undefined\n"],
+    ["a number", `const e = new Error("boom"); e.message = 42;`, "error: 42\n"],
+    [
+      "an object with a toString",
+      `const e = new Error("boom"); e.message = { toString() { return "from toString"; } };`,
+      "error: from toString\n",
+    ],
+    [
+      "an object whose toString throws",
+      `const e = new Error("boom"); e.message = { toString() { throw new Error("from toString"); } };`,
+      "Error: \n",
+    ],
+    ["missing from the whole prototype chain", `const e = new Error(); Object.setPrototypeOf(e, null);`, "Error: \n"],
+    [
+      "a getter that throws",
+      `const e = new Error("boom"); Object.defineProperty(e, "message", { get() { throw new Error("from getter"); } });`,
+      "Error: \n",
+    ],
+    [
+      "looked up through a Proxy whose has trap throws",
+      `const e = new Error(); Object.setPrototypeOf(e, new Proxy({}, { has() { throw new Error("from trap"); } }));`,
+      "Error: \n",
+    ],
+  ];
+
+  test.concurrent.each(cases)("Bun.inspect prints an error whose message is %s", async (_name, makeError, header) => {
+    expect(await inspectHeader(makeError)).toEqual({ stdout: header, stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("the uncaught exception handler prints it too", async () => {
+    const { stdout, stderr, exitCode } = await run(`const e = new Error("boom"); e.message = 42; throw e;`);
+    expect(stdout).toBe("");
+    expect(stderr).toContain("error: 42\n");
+    expect(exitCode).toBe(1);
+  });
 });

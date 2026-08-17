@@ -498,14 +498,21 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
     }
     if (except.type == SYNTAX_ERROR_CODE) {
         except.message = Bun::toStringRef(err->sanitizedMessageString(global));
-
-    } else if (JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message)) {
-        except.message = Bun::toStringRef(global, message);
-        if (!scope.clearExceptionExceptTermination()) [[unlikely]]
-            return;
     } else {
+        // This one intentionally calls getters, so it has to be checked before
+        // toWTFString / sanitizedMessageString open a scope of their own.
+        JSC::JSValue message = obj->getIfPropertyExists(global, vm.propertyNames->message);
+        if (scope.exception()) [[unlikely]] {
+            if (!scope.clearExceptionExceptTermination())
+                return;
+            message = {};
+        }
 
-        except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        if (message) {
+            except.message = Bun::toStringRef(global, message);
+        } else {
+            except.message = Bun::toStringRef(err->sanitizedMessageString(global));
+        }
     }
 
     if (!scope.clearExceptionExceptTermination()) [[unlikely]] {

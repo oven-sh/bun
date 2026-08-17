@@ -534,6 +534,14 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
+    extern "C" fn on_h3_connection_filter(
+        _quic_socket: *mut c_void,
+        opened: i32,
+        user_data: *mut c_void,
+    ) {
+        Self::on_connection_filter(core::ptr::null_mut(), opened, user_data)
+    }
+
     /// Build the server's base URL string (`http(s)://host:port/`, or a
     /// `unix://`/abstract-socket URL) from the configured listen address.
     /// Errors only on allocation failure.
@@ -2831,6 +2839,11 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Lazily materialize the ~816 KB H3 request pool now that
                     // we know an H3 listener will actually exist.
                     (*this).h3_request_pool = <Self as ServerPools<SSL, DEBUG>>::h3_request_pool();
+                }
+                if let Some(h3a) = h3 {
+                    // QUIC connections count as connections too (`is_drained` / the wrapper's root).
+                    bun_opaque::opaque_deref_mut(h3a)
+                        .filter(Self::on_h3_connection_filter, this.cast::<c_void>());
                 }
             }
 

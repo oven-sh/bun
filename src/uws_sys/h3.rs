@@ -403,6 +403,15 @@ impl App {
     pub fn close(&mut self) {
         c::uws_h3_app_close(self)
     }
+    /// Connection hooks, as `App::filter` on the HTTP/1 app: `+2` when a QUIC connection is accepted,
+    /// `-2` when it closes.
+    pub fn filter(
+        &mut self,
+        handler: extern "C" fn(*mut core::ffi::c_void, i32, *mut core::ffi::c_void),
+        user_data: *mut core::ffi::c_void,
+    ) {
+        c::uws_h3_app_filter(self, handler, user_data)
+    }
     pub fn clear_routes(&mut self) {
         c::uws_h3_app_clear_routes(self)
     }
@@ -556,6 +565,11 @@ mod c {
         ) -> *mut App;
         pub(super) fn uws_h3_app_destroy(app: *mut App);
         pub(super) safe fn uws_h3_app_close(app: &mut App);
+        pub(super) safe fn uws_h3_app_filter(
+            app: &mut App,
+            handler: extern "C" fn(*mut core::ffi::c_void, i32, *mut core::ffi::c_void),
+            user_data: *mut core::ffi::c_void,
+        );
         pub(super) safe fn uws_h3_app_clear_routes(app: &mut App);
         pub(super) fn uws_h3_app_add_server_name(
             app: *mut App,

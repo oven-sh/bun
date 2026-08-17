@@ -50,6 +50,10 @@ uws_h3_app_t* uws_h3_create_app(struct us_bun_socket_context_options_t options, 
 }
 
 void uws_h3_app_destroy(uws_h3_app_t* app) { delete (H3App*)app; }
+void uws_h3_app_filter(uws_h3_app_t* app, void (*handler)(us_quic_socket_t*, int, void*), void* user_data)
+{
+    ((H3App*)app)->filter([handler, user_data](us_quic_socket_t* qs, int delta) { handler(qs, delta, user_data); });
+}
 bool uws_h3_constructor_failed(uws_h3_app_t* app) { return !app || ((H3App*)app)->constructorFailed(); }
 void uws_h3_app_close(uws_h3_app_t* app) { ((H3App*)app)->close(); }
 void uws_h3_app_clear_routes(uws_h3_app_t* app) { ((H3App*)app)->clearRoutes(); }

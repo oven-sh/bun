@@ -18,6 +18,15 @@ struct Http3Context {
         if (!ctx) return nullptr;
         new (us_quic_socket_context_ext(ctx)) Http3ContextData();
 
+        us_quic_socket_context_on_open(ctx, [](us_quic_socket_t *qs) {
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_socket_context(qs));
+            for (auto &f : cd->filterHandlers) f(qs, 2);
+        });
+        us_quic_socket_context_on_close(ctx, [](us_quic_socket_t *qs) {
+            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_socket_context(qs));
+            for (auto &f : cd->filterHandlers) f(qs, -2);
+        });
+
         us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
             new (us_quic_stream_ext(s)) Http3ResponseData();
         });
@@ -98,6 +107,10 @@ struct Http3Context {
     }
 
     void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }
+
+    void filter(MoveOnlyFunction<void(us_quic_socket_t *, int)> &&filterHandler) {
+        ((Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this))->filterHandlers.emplace_back(std::move(filterHandler));
+    }
 
     bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
         return us_quic_socket_context_add_server_name((us_quic_socket_context_t *) this, hostname, options) == 0;

@@ -494,6 +494,38 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
+it("a custom inspect function throws when node:util cannot be loaded, and works once it can", async () => {
+  // The native formatter loads util.inspect (and, with colors, its stylize helper) the first
+  // time a custom inspect function runs. A load failure used to abort the process; it has to
+  // throw instead, and a later call has to retry the load. Run in a child because the
+  // unfixed binary aborts.
+  const code = `
+    const obj = { [Bun.inspect.custom]() { return "custom"; } };
+    const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
+    const RealSymbol = Symbol;
+    globalThis.Symbol = 0;
+    try {
+      console.log(Bun.inspect(styled, { colors: true }));
+    } catch {
+      console.log("threw");
+    }
+    globalThis.Symbol = RealSymbol;
+    console.log(Bun.inspect(obj));
+    console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+    // Both functions are cached on the global object now; they have to survive a full GC.
+    Bun.gc(true);
+    console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
+});
+
 describe("Functions with names", () => {
   const closures = [
     () => function f() {},

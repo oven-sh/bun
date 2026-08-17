@@ -161,22 +161,34 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
-        // Search for the beginning of the line
-        unsigned int lineStart = location.byte_position;
-        while (lineStart > 0 && sourceString[lineStart] != '\n') {
-            lineStart--;
-        }
+        const std::span<const Latin1Character> bytes = sourceString.span8();
+        const unsigned length = sourceString.length();
 
-        // Search for the end of the line
-        unsigned int lineEnd = location.byte_position;
-        unsigned int maxSearch = sourceString.length();
-        while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
+        // JSC may position an expression one past its end: on the '\n' ending its line, or at `length`.
+        const unsigned divot = std::min(static_cast<unsigned>(std::max(location.byte_position, 0)), length);
+
+        // `end` is the offset of a line's terminating '\n', or `length` for the last line.
+        auto startOfLineEndingAt = [&](unsigned end) -> unsigned {
+            unsigned start = end;
+            while (start > 0 && bytes[start - 1] != '\n') {
+                start--;
+            }
+            return start;
+        };
+
+        // The line's text without its terminator ("\r\n" included).
+        auto lineText = [&](unsigned start, unsigned end) -> BunString {
+            if (end > start && bytes[end - 1] == '\r') {
+                end--;
+            }
+            return Bun::toStringView(StringView_slice(sourceString, start, end));
+        };
+
+        unsigned lineEnd = divot;
+        while (lineEnd < length && bytes[lineEnd] != '\n') {
             lineEnd++;
         }
-
-        const unsigned char* bytes = sourceString.span8().data();
-
-        // Most of the time, when you look at a stack trace, you want a couple lines above.
+        unsigned lineStart = startOfLineEndingAt(lineEnd);
 
         // It is key to not clone this data because source code strings are large.
         // Usage of toStringView (non-owning) is safe as we ref the provider.
@@ -185,41 +197,16 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             (*referenced_source_provider)->deref();
         }
         *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        source_lines[0] = lineText(lineStart, lineEnd);
         source_line_numbers[0] = location.line();
 
-        if (lineStart > 0) {
-            auto byte_offset_in_source_string = lineStart - 1;
-            uint8_t source_line_i = 1;
-            auto remaining_lines_to_grab = source_lines_count - 1;
-
-            {
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
-
-            while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
-                unsigned int end_of_line_offset = byte_offset_in_source_string;
-
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
-
-                // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
-
-                source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
-                source_line_i++;
-
-                remaining_lines_to_grab--;
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
+        // Lines above: `bytes[lineStart - 1]` is the '\n' ending the line above the one just collected.
+        for (uint8_t i = 1; i < source_lines_count && lineStart > 0; i++) {
+            const unsigned aboveEnd = lineStart - 1;
+            const unsigned aboveStart = startOfLineEndingAt(aboveEnd);
+            source_lines[i] = lineText(aboveStart, aboveEnd);
+            source_line_numbers[i] = OrdinalNumber::fromZeroBasedInt(location.line_zero_based - i);
+            lineStart = aboveStart;
         }
     }
 }

@@ -18,9 +18,9 @@ use bun_core::ZigStringSlice;
 use bun_core::strings;
 use bun_jsc::zig_string::ZigString;
 use bun_options_types::code_coverage_options::CodeCoverageOptions;
+use bun_paths as bun_path;
 use bun_paths::resolve_path;
 use bun_paths::string_paths::without_leading_path_separator;
-use bun_paths::{self as bun_path, PathBuffer};
 use bun_ptr::Interned;
 use bun_resolver::fs::FileSystem;
 use bun_sys::{self, Fd, File};
@@ -878,16 +878,9 @@ impl JunitReporter {
             self.contents.extend_from_slice(b"</testsuites>\n");
         }
 
-        let mut junit_path_buf = PathBuffer::uninit();
-
-        junit_path_buf[..path.len()].copy_from_slice(path);
-        junit_path_buf[path.len()] = 0;
-
-        // SAFETY: junit_path_buf[path.len()] == 0 written above
-        let zpath = bun_core::ZStr::from_buf(&junit_path_buf[..], path.len());
         match File::openat(
             Fd::cwd(),
-            zpath,
+            path,
             bun_sys::O::WRONLY | bun_sys::O::CREAT | bun_sys::O::TRUNC,
             0o664,
         ) {
@@ -1807,84 +1800,100 @@ impl CommandLineReporter {
         // --- Text ---
 
         // --- LCOV ---
-        let mut lcov_name_buf = PathBuffer::uninit();
-        let mut lcov_state: Option<(File, &bun_core::ZStr, /*buffered*/ Vec<u8>)> =
-            if REPORTERS_LCOV {
-                'brk: {
-                    // Ensure the directory exists
-                    let mut fs = crate::node::fs::NodeFS::default();
-                    let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
-                        path: crate::node::PathLike::EncodedSlice(
-                            ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
-                        ),
-                        always_return_none: true,
-                        recursive: true,
-                        ..Default::default()
-                    });
+        /// `contents` is written to `tmp_path`, which is then renamed onto `path`.
+        struct LcovOutput {
+            file: File,
+            tmp_path: bun_path::AutoAbsPathChecked,
+            path: bun_path::AutoAbsPathChecked,
+            contents: Vec<u8>,
+        }
+        let mut lcov_state: Option<LcovOutput> = if REPORTERS_LCOV {
+            'brk: {
+                // Ensure the directory exists
+                let mut fs = crate::node::fs::NodeFS::default();
+                let _ = fs.mkdir_recursive(&crate::node::fs::args::Mkdir {
+                    path: crate::node::PathLike::EncodedSlice(
+                        ZigStringSlice::from_utf8_never_free(&opts.reports_directory),
+                    ),
+                    always_return_none: true,
+                    recursive: true,
+                    ..Default::default()
+                });
 
-                    // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
-                    let mut base64_bytes = [0u8; 8];
-                    let mut shortname_buf = [0u8; 512];
-                    bun_boringssl_sys::rand_bytes(&mut base64_bytes);
-                    // Temp name: `.lcov.info.<lowercase hex of 8 random bytes>.tmp`.
-                    let tmpname = {
-                        use std::io::Write as _;
-                        let mut cursor = &mut shortname_buf[..];
-                        let _ = cursor.write_all(b".lcov.info.");
-                        let _ = write!(cursor, "{}", bun_core::fmt::hex_lower(&base64_bytes));
-                        let _ = cursor.write_all(b".tmp\0");
-                        let s = bun_core::slice_to_nul(&shortname_buf);
-                        // NUL written above; `slice_to_nul` returns the prefix before it.
-                        bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
-                    };
-                    let path = resolve_path::join_abs_string_buf_z::<bun_path::platform::Auto>(
-                        relative_dir,
-                        &mut lcov_name_buf,
-                        &[&opts.reports_directory, tmpname.as_bytes()],
-                    );
-                    let file = File::openat(
+                // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
+                let mut base64_bytes = [0u8; 8];
+                let mut shortname_buf = [0u8; 512];
+                bun_boringssl_sys::rand_bytes(&mut base64_bytes);
+                // Temp name: `.lcov.info.<lowercase hex of 8 random bytes>.tmp`.
+                let tmpname = {
+                    use std::io::Write as _;
+                    let mut cursor = &mut shortname_buf[..];
+                    let _ = cursor.write_all(b".lcov.info.");
+                    let _ = write!(cursor, "{}", bun_core::fmt::hex_lower(&base64_bytes));
+                    let _ = cursor.write_all(b".tmp\0");
+                    let s = bun_core::slice_to_nul(&shortname_buf);
+                    // NUL written above; `slice_to_nul` returns the prefix before it.
+                    bun_core::ZStr::from_buf(&shortname_buf[..], s.len())
+                };
+                // `reports_directory` is unbounded CLI/bunfig input, so use the
+                // length-checked joins.
+                let mut tmp_path = bun_path::AutoAbsPathChecked::init_top_level_dir();
+                let mut path = bun_path::AutoAbsPathChecked::init_top_level_dir();
+                let file = if tmp_path
+                    .join(&[&opts.reports_directory, tmpname.as_bytes()])
+                    .is_err()
+                    || path.join(&[&opts.reports_directory, b"lcov.info"]).is_err()
+                {
+                    bun_sys::Result::Err(
+                        bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open)
+                            .with_path(&opts.reports_directory),
+                    )
+                } else {
+                    File::openat(
                         Fd::cwd(),
-                        path,
+                        tmp_path.slice(),
                         bun_sys::O::CREAT
                             | bun_sys::O::WRONLY
                             | bun_sys::O::TRUNC
                             | bun_sys::O::CLOEXEC,
                         0o644,
-                    );
+                    )
+                };
 
-                    match file {
-                        bun_sys::Result::Err(err) => {
-                            Output::err(
-                                crate::Error::lcovCoverageError,
-                                "Failed to create lcov file",
-                                (),
-                            );
-                            Output::print_error(format_args!("\n{}", err));
-                            Global::exit(1);
-                        }
-                        bun_sys::Result::Ok(f) => {
-                            // Accumulate in a `Vec<u8>` (impl `bun_io::Write`)
-                            // and flush to the fd via `write_all` on success
-                            // below.
-                            let buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
-                            break 'brk Some((f, path, buffered));
-                        }
+                match file {
+                    bun_sys::Result::Err(err) => {
+                        Output::err(
+                            crate::Error::lcovCoverageError,
+                            "Failed to create lcov file",
+                            (),
+                        );
+                        Output::print_error(format_args!("\n{}", err));
+                        Global::exit(1);
+                    }
+                    bun_sys::Result::Ok(file) => {
+                        break 'brk Some(LcovOutput {
+                            file,
+                            tmp_path,
+                            path,
+                            contents: Vec::with_capacity(64 * 1024),
+                        });
                     }
                 }
-            } else {
-                None
-            };
-        let mut lcov_guard = scopeguard::guard(
-            &mut lcov_state,
-            |s: &mut Option<(File, &bun_core::ZStr, Vec<u8>)>| {
-                if REPORTERS_LCOV {
-                    if let Some((file, name, _)) = s.take() {
-                        let _ = file.close(); // close error is non-actionable
-                        let _ = bun_sys::unlink(name);
-                    }
+            }
+        } else {
+            None
+        };
+        let mut lcov_guard = scopeguard::guard(&mut lcov_state, |s: &mut Option<LcovOutput>| {
+            if REPORTERS_LCOV {
+                if let Some(LcovOutput {
+                    file, mut tmp_path, ..
+                }) = s.take()
+                {
+                    let _ = file.close(); // close error is non-actionable
+                    let _ = bun_sys::unlink(tmp_path.slice_z());
                 }
-            },
-        );
+            }
+        });
         // --- LCOV ---
 
         for entry in byte_ranges.iter_mut() {
@@ -1938,8 +1947,10 @@ impl CommandLineReporter {
             }
 
             if REPORTERS_LCOV {
-                if let Some((_, _, buffered)) = lcov_guard.as_mut() {
-                    if coverage::Lcov::write_format(&report, relative_dir, buffered).is_err() {
+                if let Some(lcov) = lcov_guard.as_mut() {
+                    if coverage::Lcov::write_format(&report, relative_dir, &mut lcov.contents)
+                        .is_err()
+                    {
                         continue;
                     }
                 }
@@ -2013,26 +2024,25 @@ impl CommandLineReporter {
         if REPORTERS_LCOV {
             // `try lcov_writer.flush()` — keep the errdefer guard armed across the
             // write so an error here still closes + unlinks the temp file.
-            if let Some((lcov_file, _, buffered)) = &mut **lcov_guard {
-                if let bun_sys::Result::Err(e) = lcov_file.write_all(buffered) {
+            if let Some(lcov) = &**lcov_guard {
+                if let bun_sys::Result::Err(e) = lcov.file.write_all(&lcov.contents) {
                     // `lcov_guard` drops on this early return → close + unlink.
                     return Err(crate::Error::from(e));
                 }
             }
             // Flush succeeded — disarm the errdefer cleanup.
             let state = scopeguard::ScopeGuard::into_inner(lcov_guard);
-            if let Some((lcov_file, lcov_name, _)) = state.take() {
-                let _ = lcov_file.close();
+            if let Some(LcovOutput {
+                file,
+                mut tmp_path,
+                mut path,
+                ..
+            }) = state.take()
+            {
+                let _ = file.close();
                 let cwd = Fd::cwd();
-                if let Err(err) = bun_sys::move_file_z(
-                    cwd,
-                    lcov_name,
-                    cwd,
-                    resolve_path::join_abs_string_z::<bun_path::platform::Auto>(
-                        relative_dir,
-                        &[&opts.reports_directory, b"lcov.info"],
-                    ),
-                ) {
+                if let Err(err) = bun_sys::move_file_z(cwd, tmp_path.slice_z(), cwd, path.slice_z())
+                {
                     Output::err(err, "Failed to save lcov.info file", ());
                     Global::exit(1);
                 }
@@ -2466,20 +2476,33 @@ impl TestCommand {
 
             // Own the joined path in a hoisted buffer and borrow from it.
             let dir_to_scan_owned: Vec<u8>;
-            let dir_to_scan: &[u8] = 'brk: {
-                if !ctx.debug.test_directory.is_empty() {
-                    dir_to_scan_owned = resolve_path::join_abs::<bun_path::platform::Auto>(
+            let (dir_to_scan, scanned): (&[u8], Result<(), scanner::ScanError>) =
+                if ctx.debug.test_directory.is_empty() {
+                    let dir = scanner.fs().top_level_dir;
+                    (dir, scanner.scan(dir))
+                } else {
+                    // The bunfig `root` is unbounded. A root that does not fit a
+                    // path buffer together with its NUL cannot be opened either,
+                    // so it is reported like a root that does not exist.
+                    let mut buf = bun_path::path_buffer_pool::get();
+                    let buf_len = buf.len();
+                    match resolve_path::join_abs_string_buf_checked::<bun_path::platform::Auto>(
                         scanner.fs().top_level_dir,
-                        &ctx.debug.test_directory,
-                    )
-                    .into();
-                    break 'brk &dir_to_scan_owned;
-                }
+                        &mut buf[..buf_len - 1],
+                        &[&ctx.debug.test_directory],
+                    ) {
+                        Some(joined) => {
+                            dir_to_scan_owned = joined.into();
+                            (&dir_to_scan_owned[..], scanner.scan(&dir_to_scan_owned))
+                        }
+                        None => (
+                            &ctx.debug.test_directory[..],
+                            Err(scanner::ScanError::DoesNotExist),
+                        ),
+                    }
+                };
 
-                break 'brk scanner.fs().top_level_dir;
-            };
-
-            match scanner.scan(dir_to_scan) {
+            match scanned {
                 Ok(()) => {}
                 Err(scanner::ScanError::OutOfMemory) => bun::out_of_memory(),
                 Err(scanner::ScanError::DoesNotExist) => {

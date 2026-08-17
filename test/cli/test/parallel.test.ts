@@ -594,6 +594,37 @@ test("--parallel --coverage merges LCOV across workers", async () => {
   expect(exitCode).toBe(0);
 });
 
+test("--parallel --coverage reports a coverage directory longer than the path buffer instead of crashing", async () => {
+  // The merged lcov.info path is built in a buffer of MAX_PATH_BYTES (98302 on
+  // Windows, less elsewhere); a bunfig value can be longer than that on every
+  // platform, where a command-line argument cannot.
+  const coverageDir = Buffer.alloc(100_000, "c").toString();
+  using dir = tempDir("parallel-coverage-dir-too-long", {
+    "bunfig.toml": `[test]\ncoverageDir = "${coverageDir}"\n`,
+    "shared.js": `export function hit() { return 1; }\n`,
+    "a.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; test("a",()=>expect(hit()).toBe(1));`,
+    "b.test.js": `import {test,expect} from "bun:test"; import {hit} from "./shared.js"; test("b",()=>expect(hit()).toBe(1));`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "--parallel=2", "--coverage", "--coverage-reporter=lcov"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout).toContain("PARALLEL");
+  expect(stderr).toContain("Failed to write merged lcov.info");
+  expect(stderr).toContain("ENAMETOOLONG");
+  expect(stderr).toContain("2 pass");
+  expect(proc.signalCode).toBeNull();
+  // Like any other failure to open the merged report, this is reported
+  // without failing the run.
+  expect(exitCode).toBe(0);
+});
+
 test("--parallel --coverage prints merged text table", async () => {
   using dir = tempDir("parallel-coverage-text", {
     "lib-a.js": `export function used() { return 1; }\nexport function unused() { return 2; }\n`,

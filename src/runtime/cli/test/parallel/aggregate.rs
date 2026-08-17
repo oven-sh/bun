@@ -9,9 +9,9 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::strings;
 use bun_core::{self, Output, ZBox};
 use bun_options_types::code_coverage_options::{CodeCoverageOptions, Fraction as CoverageFraction};
-use bun_paths::{self, PathBuffer};
+use bun_paths::AutoAbsPathChecked;
 use bun_sourcemap_jsc::code_coverage::text as CoverageReportText;
-use bun_sys::{self, Fd, File, O};
+use bun_sys::{self, E, Fd, File, O, Tag};
 
 use crate::cli::test::parallel::coordinator::Coordinator;
 use crate::node::PathLike;
@@ -216,18 +216,26 @@ pub(crate) fn merge_coverage_fragments<const ENABLE_COLORS: bool>(
             always_return_none: true,
             ..Default::default()
         });
-        let mut path_buf = PathBuffer::uninit();
-        let out_path = bun_paths::resolve_path::join_abs_string_buf_z::<bun_paths::platform::Auto>(
-            bun_paths::fs::FileSystem::instance().top_level_dir(),
-            &mut path_buf.0,
-            &[&opts.reports_directory, b"lcov.info"],
-        );
-        match File::openat(
-            Fd::cwd(),
-            out_path,
-            O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC,
-            0o644,
-        ) {
+        // `reports_directory` is unbounded CLI/bunfig input, so use the
+        // length-checked join.
+        let mut out_path = AutoAbsPathChecked::init_top_level_dir();
+        let file = if out_path
+            .join(&[&opts.reports_directory, b"lcov.info"])
+            .is_err()
+        {
+            bun_sys::Result::Err(
+                bun_sys::Error::from_code(E::ENAMETOOLONG, Tag::open)
+                    .with_path(&opts.reports_directory),
+            )
+        } else {
+            File::openat(
+                Fd::cwd(),
+                out_path.slice(),
+                O::CREAT | O::WRONLY | O::TRUNC | O::CLOEXEC,
+                0o644,
+            )
+        };
+        match file {
             bun_sys::Result::Err(e) => Output::err(
                 crate::Error::lcovCoverageError,
                 "Failed to write merged lcov.info\n{}",

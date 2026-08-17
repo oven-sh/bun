@@ -303,51 +303,52 @@ pub(super) fn override_literal(
 
 /// Visits, in file order, the value of every entry declaring `selector` for `name`, whichever of the accepted key spellings (`a>b`, `a/b`, `**/b`, `{"a": {"b": ..}}`, `{"b": {".": ..}}`) each uses.
 ///
-/// Reads `overrides`, else `resolutions`, like `OverrideMap::parse_append`; npm's `"parent": { "child": .. }` form only counts in `overrides`, where the parser accepts it.
+/// Walks both `overrides` and `resolutions`, like `OverrideMap::parse_append`; npm's `"parent": { "child": .. }` form only counts in `overrides`, where the parser accepts it.
 fn for_each_override_value(
     root: &Expr,
     name: &[u8],
     selector: &OverrideSelector,
     mut f: impl FnMut(&mut Option<Expr>),
 ) {
-    let overrides = root.get(b"overrides");
-    let nested = overrides.is_some();
-    let Some(mut rules) = overrides.or_else(|| root.get(b"resolutions")) else {
-        return;
-    };
-    let Some(object) = rules.data.e_object_mut() else {
-        return;
-    };
-    for prop in object.properties.slice_mut() {
-        let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
+    for (field, nested) in [(b"overrides".as_slice(), true), (b"resolutions", false)] {
+        let Some(mut rules) = root.get(field) else {
             continue;
         };
-        if !(nested && prop.value.as_ref().is_some_and(|value| value.is_object())) {
-            if parse_selector(key).is_ok_and(|r| selector.matches(name, r.parent, r.target)) {
-                f(&mut prop.value);
-            }
-            continue;
-        }
-        let Ok(parent) = parse_package_segment(key) else {
+        let Some(object) = rules.data.e_object_mut() else {
             continue;
         };
-        let Some(group) = prop.value.as_mut().and_then(|v| v.data.e_object_mut()) else {
-            continue;
-        };
-        for child in group.properties.slice_mut() {
-            let Some(child_key) = child.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
+        for prop in object.properties.slice_mut() {
+            let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
                 continue;
             };
-            let (rule_parent, target) = match parse_selector(child_key) {
-                _ if child_key == b"." => (None, parent),
-                Ok(Selector {
-                    parent: None,
-                    target,
-                }) => (Some(parent), target),
-                _ => continue,
+            if !(nested && prop.value.as_ref().is_some_and(|value| value.is_object())) {
+                if parse_selector(key).is_ok_and(|r| selector.matches(name, r.parent, r.target)) {
+                    f(&mut prop.value);
+                }
+                continue;
+            }
+            let Ok(parent) = parse_package_segment(key) else {
+                continue;
             };
-            if selector.matches(name, rule_parent, target) {
-                f(&mut child.value);
+            let Some(group) = prop.value.as_mut().and_then(|v| v.data.e_object_mut()) else {
+                continue;
+            };
+            for child in group.properties.slice_mut() {
+                let Some(child_key) = child.key.as_ref().and_then(Expr::as_utf8_string_literal)
+                else {
+                    continue;
+                };
+                let (rule_parent, target) = match parse_selector(child_key) {
+                    _ if child_key == b"." => (None, parent),
+                    Ok(Selector {
+                        parent: None,
+                        target,
+                    }) => (Some(parent), target),
+                    _ => continue,
+                };
+                if selector.matches(name, rule_parent, target) {
+                    f(&mut child.value);
+                }
             }
         }
     }

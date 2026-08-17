@@ -297,8 +297,6 @@ pub struct Formatter<'a> {
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
     stack_check: StackCheck,
-    /// Snapshot serialization sets this so a too-deep value fails the test
-    /// rather than storing a truncated snapshot; diff output leaves it off.
     can_throw_stack_overflow: bool,
 }
 

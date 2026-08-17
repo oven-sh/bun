@@ -254,7 +254,7 @@ fn report_index_error(
     crate::Error::SyntaxError
 }
 
-fn guess_indentation(s: &[u8]) -> Indentation {
+pub fn guess_indentation(s: &[u8]) -> Indentation {
     let mut i = 0;
     while i < s.len() {
         if s[i] == b'"' || s[i] == b'\'' {

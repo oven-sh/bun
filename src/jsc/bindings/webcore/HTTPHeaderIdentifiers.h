@@ -116,7 +116,6 @@ public:
 
     HTTPHeaderIdentifiers();
 
-    JSC::Identifier& identifierFor(JSC::VM&, HTTPHeaderName);
     JSC::JSString* stringFor(JSC::JSGlobalObject*, HTTPHeaderName);
 
     template<typename Visitor>

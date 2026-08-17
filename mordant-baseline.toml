@@ -1,66 +1,49 @@
+[bun_ast]
+
 [bun_bundler]
-"pub_invariant_fields:src/bundler/options.rs" = 3
+"defaulted_failure:src/bundler/bundle_v2.rs" = 2
+"narrowed_two_ways:src/bundler/bundle_v2.rs" = 1
 
 [bun_core]
-"pub_invariant_fields:src/bun_core/string/mod.rs" = 1
+"defaulted_failure:src/bun_core/string/immutable.rs" = 1
 
 [bun_css]
-"pub_invariant_fields:src/css/properties/css_modules.rs" = 1
-"pub_invariant_fields:src/css/properties/display.rs" = 1
-"pub_invariant_fields:src/css/rules/container.rs" = 1
-"pub_invariant_fields:src/css/rules/font_face.rs" = 2
-"pub_invariant_fields:src/css/rules/page.rs" = 2
-"pub_invariant_fields:src/css/rules/property.rs" = 1
 
 [bun_install]
-"unread_none:src/install/PackageInstall.rs" = 1
+"defaulted_failure:src/install/npm.rs" = 1
+"interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 
-[bun_js_parser]
-"pub_invariant_fields:src/js_parser/parser.rs" = 1
-"pub_invariant_fields:src/js_parser/scan/scan_imports.rs" = 1
+[bun_js_printer]
+"parallel_vecs:src/js_printer/lib.rs" = 1
 
-[bun_options_types]
-"pub_invariant_fields:src/options_types/compile_target.rs" = 3
+[bun_jsc]
+"defaulted_failure:src/jsc/ConsoleObject.rs" = 4
+"same_match_twice:src/jsc/VirtualMachine.rs" = 1
 
-[bun_picohttp]
-"pub_invariant_fields:src/picohttp/lib.rs" = 1
+[bun_parsers]
+"parallel_vecs:src/parsers/xml.rs" = 1
 
-[bun_resolver]
-"pub_invariant_fields:src/resolver/fs.rs" = 1
-"pub_invariant_fields:src/resolver/package_json.rs" = 1
-
-[bun_router]
-"pub_invariant_fields:src/router/lib.rs" = 1
+[bun_react_compiler]
+"reimplemented_helper:src/react_compiler/reactive_scopes/propagate_early_returns.rs" = 1
 
 [bun_runtime]
-"asymmetric_guard:src/runtime/api/bun/h2_frame_parser.rs" = 1
-"bypassed_validator:src/runtime/cli/pack_command.rs" = 2
-"pub_invariant_fields:src/runtime/api/JSBundler.rs" = 7
-"pub_invariant_fields:src/runtime/api/bun/Terminal.rs" = 1
-"pub_invariant_fields:src/runtime/bake/bake_body.rs" = 1
-"pub_invariant_fields:src/runtime/bake/production.rs" = 2
-"pub_invariant_fields:src/runtime/cli/publish_command.rs" = 3
-"pub_invariant_fields:src/runtime/crypto/EVP.rs" = 1
-"pub_invariant_fields:src/runtime/crypto/PBKDF2.rs" = 1
-"pub_invariant_fields:src/runtime/node/node_fs.rs" = 6
-"pub_invariant_fields:src/runtime/node/node_fs_stat_watcher.rs" = 1
-"pub_invariant_fields:src/runtime/node/node_fs_watcher.rs" = 2
-"pub_invariant_fields:src/runtime/node/types.rs" = 1
-"pub_invariant_fields:src/runtime/server/ServerConfig.rs" = 13
-"pub_invariant_fields:src/runtime/socket/Handlers.rs" = 2
-"pub_invariant_fields:src/runtime/socket/udp_socket.rs" = 1
-"pub_invariant_fields:src/runtime/webcore/Request.rs" = 4
-"stored_projection:src/runtime/test_runner/bun_test.rs" = 1
+"defaulted_failure:src/runtime/server/RequestContext.rs" = 1
+"defaulted_failure:src/runtime/test_runner/pretty_format.rs" = 4
+"error_collapsed_to_bool:src/runtime/api/bun/Terminal.rs" = 1
+"error_collapsed_to_bool:src/runtime/api/bun/h2_frame_parser.rs" = 32
+"error_collapsed_to_bool:src/runtime/ffi/ffi_body.rs" = 1
+"field_valid_only_when:src/runtime/shell/builtin/rm.rs" = 1
+"reimplemented_helper:src/runtime/api/bun/Terminal.rs" = 1
+"reimplemented_helper:src/runtime/hw_exports.rs" = 1
+"same_match_twice:src/runtime/cli/pack_command.rs" = 1
+"same_match_twice:src/runtime/cli/update_interactive_command.rs" = 2
+"same_match_twice:src/runtime/webcore/Blob.rs" = 2
+"unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
+"unchecked_construction:src/runtime/cli/pack_command.rs" = 2
+"unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
+"unchecked_construction:src/runtime/server/server_body.rs" = 5
 
 [bun_sql_jsc]
-"pub_invariant_fields:src/sql_jsc/mysql/MySQLValue.rs" = 2
-"pub_invariant_fields:src/sql_jsc/shared/QueryCtorArgs.rs" = 4
 
-[bun_standalone_graph]
-"pub_invariant_fields:src/standalone_graph/StandaloneModuleGraph.rs" = 1
-
-[bun_uws_sys]
-"pub_invariant_fields:src/uws_sys/socket.rs" = 1
-
-[bun_watcher]
-"pub_invariant_fields:src/watcher/KEventWatcher.rs" = 1
+[bun_sys]
+"error_collapsed_to_bool:src/sys/lib.rs" = 4

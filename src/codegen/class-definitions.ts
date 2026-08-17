@@ -40,11 +40,6 @@ export type Field =
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
-      accessor: { getter: string; setter: string };
-      cache?: true | string;
-      this?: boolean;
-    } & PropertyAttribute)
-  | ({
       fn: string;
 
       /**
@@ -201,10 +196,6 @@ export class ClassDefinition {
    * properties and methods on the prototype.
    */
   proto: Record<string, Field>;
-  /**
-   * Properties and methods attached to the instance itself.
-   */
-  own: Record<string, string>;
   values?: string[];
   /**
    * When true, the class will accept a MarkedArgumentBuffer* to create a
@@ -243,40 +234,19 @@ export class ClassDefinition {
   memoryCost?: boolean;
   hasPendingActivity?: boolean;
   isEventEmitter?: boolean;
-  supportsObjectCreate?: boolean;
-
-  custom?: Record<string, CustomField>;
 
   configurable?: boolean;
   enumerable?: boolean;
   structuredClone?: { transferable: boolean; tag: number; storable: boolean };
   inspectCustom?: boolean;
 
-  callbacks?: Record<string, string>;
-
   constructor(options: Partial<ClassDefinition>) {
     this.name = options.name ?? "";
     this.klass = options.klass ?? {};
     this.proto = options.proto ?? {};
-    this.own = options.own ?? {};
 
     Object.assign(this, options);
   }
-
-  hasOwnProperties() {
-    for (const key in this.own) {
-      return true;
-    }
-
-    return false;
-  }
-}
-
-export interface CustomField {
-  header?: string;
-  extraHeaderIncludes?: string[];
-  impl?: string;
-  type?: string;
 }
 
 /**
@@ -287,7 +257,6 @@ export function define(
   {
     klass = {},
     proto = {},
-    own = {},
     values = [],
     overridesToJS = false,
     estimatedSize = false,
@@ -314,7 +283,6 @@ export function define(
     estimatedSize,
     structuredClone,
     values,
-    own: own || {},
     klass: Object.fromEntries(
       Object.entries(klass)
         .sort(([a], [b]) => a.localeCompare(b))

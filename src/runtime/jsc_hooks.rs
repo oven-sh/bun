@@ -474,7 +474,8 @@ unsafe fn init_runtime_state(
                         .wake_ctx
                         .insert(Box::new(bun_jsc::async_module::WakeContext {
                             queue: &raw mut (*vm).modules,
-                            loop_handle: (*vm).loop_handle(),
+                            handle: (*vm).handle(),
+                            kind: (*vm).current_loop_kind(),
                         }));
                     t.resolver.on_wake_package_manager = bun_resolver::install_types::WakeHandler {
                         context: core::ptr::NonNull::new(wake_ctx.cast()),
@@ -1023,7 +1024,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        unsafe { (*(*vm).global).handle_rejected_promises() };
+        let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
     }
 
@@ -1111,7 +1112,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    unsafe { (*(*vm).global).handle_rejected_promises() };
+    let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as
@@ -2778,7 +2779,6 @@ fn transpile_source_code_inner(
                             is_node_override,
                             path,
                             hash,
-                            loader,
                             package_json,
                         );
                     }
@@ -2830,7 +2830,6 @@ fn transpile_source_code_inner(
                         is_node_override,
                         path,
                         hash,
-                        loader,
                         package_json,
                     );
                 }
@@ -2926,9 +2925,6 @@ fn transpile_source_code_inner(
                             Err(e) => {
                                 return Err(match e {
                                     bun_ast::ToJSError::JSError => bun_jsc::JsError::Thrown,
-                                    bun_ast::ToJSError::JSTerminated => {
-                                        bun_jsc::JsError::Terminated
-                                    }
                                     bun_ast::ToJSError::OutOfMemory => global.throw_out_of_memory(),
                                     e => global.throw_error(
                                         bun_jsc::CrateError::from(e),
@@ -3504,13 +3500,8 @@ fn transpile_source_code_inner(
         // .sqlite / .sqlite_embedded
         // ────────────────────────────────────────────────────────────────────
         L::Sqlite | L::SqliteEmbedded => {
-            // The low-tier
-            // `VirtualMachine.hot_reload` slot is a raw `u8`; compare against
-            // the real `HotReload` enum discriminant (`!= 0` would also match
-            // `.watch`, which is wrong).
             // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
-            let hot =
-                unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot as u8;
+            let hot = unsafe { &*jsc_vm }.hot_reload == bun_options_types::context::HotReload::Hot;
             let sqlite_module_source_code_string: &'static [u8] = if hot {
                 SQLITE_MODULE_SOURCE_HOT
             } else {
@@ -3606,17 +3597,9 @@ fn transpile_source_code_inner(
                 // type.
                 let watcher =
                     unsafe { &mut *(*jsc_vm).bun_watcher.cast::<bun_jsc::ImportWatcher>() };
-                if !matches!(
-                    watcher.add_file::<true>(
-                        input_fd,
-                        path.text,
-                        hash,
-                        loader,
-                        bun_sys::Fd::INVALID,
-                        None,
-                    ),
-                    Ok(bun_watcher::FdOwnership::Watcher)
-                ) {
+                let added =
+                    watcher.add_file::<true>(input_fd, path.text, hash, bun_sys::Fd::INVALID, None);
+                if !matches!(added, Ok(bun_watcher::FdOwnership::Watcher)) {
                     // Not adopted (already watched, or add failed); close the
                     // fd this arm opened.
                     if input_fd.is_valid() {
@@ -3701,7 +3684,6 @@ fn maybe_watch_file(
     is_node_override: bool,
     path: &Fs::Path,
     hash: u32,
-    loader: Loader,
     package_json: Option<&'static bun_watcher::PackageJSON>,
 ) {
     // SAFETY: per fn contract — `jsc_vm` is the live per-thread VM.
@@ -3725,7 +3707,6 @@ fn maybe_watch_file(
             input_file_fd,
             path.text,
             hash,
-            loader,
             bun_sys::Fd::INVALID,
             package_json,
         ),

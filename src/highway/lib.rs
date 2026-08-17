@@ -662,8 +662,9 @@ pub fn decode_hex(src: &[u8], dst: &mut [u8]) -> usize {
     written
 }
 
-/// UTF-16 variant of [`decode_hex`]. Code units above 0xFF are treated as
-/// invalid characters (they stop decoding), never truncated to a byte.
+/// UTF-16 variant of [`decode_hex`]. Each code unit is decoded by its low
+/// byte, as Node's `Buffer` hex decoder does: U+FF41 decodes as `'A'`, and a
+/// unit whose low byte is not a hex digit stops decoding.
 #[inline(always)]
 pub fn decode_hex_u16(src: &[u16], dst: &mut [u8]) -> usize {
     let pairs = (src.len() / 2).min(dst.len());

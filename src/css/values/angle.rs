@@ -178,10 +178,6 @@ impl Angle {
         Some(Angle::Deg(self.to_degrees() + rhs.to_degrees()))
     }
 
-    pub(crate) fn eql(self, rhs: Angle) -> bool {
-        self.to_degrees() == rhs.to_degrees()
-    }
-
     pub(crate) fn mul_f32(self, other: f32) -> Angle {
         // return Angle.op(&this, &other, Angle.mulF32);
         match self {

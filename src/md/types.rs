@@ -157,7 +157,6 @@ pub enum LineType {
     Hr,
     Atxheader,
     Setextunderline,
-    Setextheader,
     Indentedcode,
     Fencedcode,
     Html,

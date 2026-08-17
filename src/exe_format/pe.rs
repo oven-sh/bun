@@ -29,16 +29,12 @@ pub enum Error {
     TooManySections,
     #[error("SectionExists")]
     SectionExists,
-    #[error("InputIsSigned")]
-    InputIsSigned,
     #[error("InvalidSecurityDirectory")]
     InvalidSecurityDirectory,
     #[error("SecurityDirInsideImage")]
     SecurityDirInsideImage,
     #[error("UnexpectedOverlayPresent")]
     UnexpectedOverlayPresent,
-    #[error("InsufficientSpace")]
-    InsufficientSpace,
     #[error("InvalidSectionData")]
     InvalidSectionData,
     #[error("SizeOfImageMismatch")]

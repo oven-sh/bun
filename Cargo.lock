@@ -168,7 +168,6 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_options_types",
- "bun_url",
 ]
 
 [[package]]

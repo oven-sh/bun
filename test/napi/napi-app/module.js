@@ -1482,16 +1482,37 @@ nativeTests.test_ungated_calls_worker_terminate = async () => {
   }
 };
 
-// See ungated_calls_through_timeout in standalone_tests.cpp: 200ms of ungated
-// calls under a 20ms timeout.
+// See ungated_calls_through_timeout in standalone_tests.cpp: 600ms of ungated
+// calls under a 150ms timeout. The timeout is wall-clock from the start of the
+// run, so it must comfortably cover reaching the addon on the slowest lane.
 nativeTests.test_ungated_calls_through_vm_timeout = () => {
   const vm = require("node:vm");
   try {
-    vm.runInNewContext("f(200)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 20 });
+    vm.runInNewContext("f(600)", { f: nativeTests.ungated_calls_through_timeout }, { timeout: 150 });
     console.log("returned");
   } catch (e) {
     console.log(e.code);
   }
+};
+
+nativeTests.test_threadsafe_function_call_js_throws = async () => {
+  // main.js exits on the first uncaught exception; this test wants all three.
+  process.removeAllListeners("uncaughtException");
+  let seen = 0;
+  const { promise, resolve } = Promise.withResolvers();
+  process.on("uncaughtException", function handler(err) {
+    seen++;
+    console.log("uncaughtException", seen, err.message);
+    Promise.resolve().then(() => console.log("microtask", seen));
+    if (seen === 3) {
+      process.removeListener("uncaughtException", handler);
+      resolve();
+    }
+  });
+  nativeTests.test_napi_threadsafe_function_call_js_throws();
+  await promise;
+  await new Promise(r => setImmediate(r));
+  console.log("done", seen);
 };
 
 module.exports = nativeTests;

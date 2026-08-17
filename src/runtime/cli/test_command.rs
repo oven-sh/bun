@@ -122,6 +122,7 @@ use coverage::{ByteRangeMapping, CodeCoverageReport, Fraction};
 // 2k-line body rewrite.
 use crate::test_runner::jest::{self, FileColumns as _, Summary, TestRunner};
 use crate::test_runner::snapshot::Snapshots;
+use bun_collections::index_sort;
 
 #[allow(non_snake_case)]
 mod bun_test {
@@ -920,6 +921,11 @@ fn should_drain_event_loop() -> bool {
     env_var::BUN_TEST_DRAIN_EVENT_LOOP.get().unwrap_or(false)
 }
 
+/// jest and vitest never run a test file's `process.on('exit')` listeners; node's test harness asserts from them.
+pub(crate) fn skip_exit_listeners(reporter: &CommandLineReporter) -> bool {
+    !(reporter.jest.node_test_used || should_drain_event_loop())
+}
+
 pub struct CommandLineReporter {
     // `TestRunner<'a>` borrows `TestOptions`/regex from the CLI ctx; the
     // reporter is held in a `Box` local to `TestCommand::exec` which never
@@ -1602,7 +1608,7 @@ impl CommandLineReporter {
             return Ok(());
         }
 
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         self.print_code_coverage::<REPORTERS_TEXT, REPORTERS_LCOV, ENABLE_ANSI_COLORS>(
             vm,
@@ -1628,7 +1634,7 @@ impl CommandLineReporter {
         if byte_ranges.is_empty() {
             return None;
         }
-        byte_ranges.sort_by(coverage::is_less_than_cmp);
+        index_sort::sort_slice_by(&mut byte_ranges, coverage::is_less_than_cmp);
 
         let relative_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
         let mut buffered: Vec<u8> = Vec::with_capacity(64 * 1024);
@@ -2217,6 +2223,7 @@ impl TestCommand {
                 test_options: unsafe { bun_ptr::detach_lifetime_ref(&ctx.test_options) },
                 unhandled_errors_between_tests: 0,
                 summary: Summary::default(),
+                node_test_used: false,
             },
             repeat_count: 1,
             last_printed_dot: core::cell::Cell::new(false),
@@ -2577,7 +2584,9 @@ impl TestCommand {
                 if let Some(timings) = reporter.timings.as_ref().filter(|t| !t.is_empty()) {
                     write = timings.select_shard(test_files, *shard);
                 } else {
-                    test_files.sort_by(|a, b| strings::order(a.as_bytes(), b.as_bytes()));
+                    index_sort::sort_slice_by(test_files, |a, b| {
+                        strings::order(a.as_bytes(), b.as_bytes())
+                    });
                     let total = test_files.len();
                     for i in 0..total {
                         if i % (shard.count as usize) == (shard.index as usize) - 1 {
@@ -2615,7 +2624,7 @@ impl TestCommand {
         if !test_files.is_empty()
             || (ctx.test_options.changed.is_some() && all_test_files_count != 0)
         {
-            vm.hot_reload = ctx.debug.hot_reload as u8;
+            vm.hot_reload = ctx.debug.hot_reload;
 
             // Install the --changed trigger collector BEFORE the watcher
             // thread starts so a file edit during runAllTests is still
@@ -2623,13 +2632,13 @@ impl TestCommand {
             // runAllTests (separate concern; see O_EVTONLY comment
             // below).
             if ctx.test_options.changed.is_some()
-                && vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH
+                && vm.hot_reload == jsc::virtual_machine::HotReload::Watch
             {
                 ChangedFilesFilter::init_watch_trigger();
             }
 
             match vm.hot_reload {
-                jsc::virtual_machine::HOT_RELOAD_HOT => {
+                jsc::virtual_machine::HotReload::Hot => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2639,7 +2648,7 @@ impl TestCommand {
                         );
                     }
                 }
-                jsc::virtual_machine::HOT_RELOAD_WATCH => {
+                jsc::virtual_machine::HotReload::Watch => {
                     // SAFETY: `vm` is the process-lifetime main-thread VM; it
                     // outlives the leaked reloader.
                     unsafe {
@@ -2708,8 +2717,7 @@ impl TestCommand {
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
-                let loader = vm.transpiler.options.loader(bun_path::extension(path));
-                let _ = watcher.add_file_by_path_slow(path, loader);
+                let _ = watcher.add_file_by_path_slow(path);
             }
         }
 
@@ -3009,7 +3017,7 @@ impl TestCommand {
             reporter.write_timings_if_needed();
         }
 
-        if vm.hot_reload == jsc::virtual_machine::HOT_RELOAD_WATCH {
+        if vm.hot_reload == jsc::virtual_machine::HotReload::Watch {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
             // `run_with_api_lock` takes `&self` only, so the closure holds the
@@ -3030,10 +3038,8 @@ impl TestCommand {
         {
             vm.exit_handler.exit_code = 1;
         }
-        // Run `process.on('exit')` handlers like `bun run` does. Node's test
-        // harness verifies mustCall() counts from one, so skipping them made
-        // those assertions silently pass. Must precede the GC-root release
-        // below: handlers are user JS and may touch still-live state.
+        vm.exit_handler.skip_exit_listeners = skip_exit_listeners(&reporter);
+        // Must precede the GC-root release below: exit listeners are user JS and may touch still-live state.
         {
             let vm_ptr: *mut VirtualMachine = vm;
             // SAFETY: `vm_ptr` reborrows the live `&mut VirtualMachine`;
@@ -3359,7 +3365,7 @@ impl TestCommand {
                     vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
-                        vm.global().handle_rejected_promises();
+                        let _ = vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
@@ -3378,7 +3384,7 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
-            vm.global().handle_rejected_promises();
+            let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");

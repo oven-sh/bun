@@ -199,15 +199,6 @@ export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindin
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
 
-// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
-export type Dependency = any;
-export const npa: (name: string) => Dependency = $newRustFunction("dependency.rs", "fromJS", 1);
-
-export const npmTag: (
-  name: string,
-) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
-  $newRustFunction("dependency.rs", "Version.Tag.inferFromJS", 1);
-
 export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
 export const isArchitectureMatch: (architecture: string[]) => boolean = $newRustFunction(
@@ -556,14 +547,6 @@ export function getWebStreamState(stream: ReadableStream | WritableStream): {
   }
 }
 
-export const fs = require("node:fs/promises").$data;
-
-export const fsStreamInternals = {
-  writeStreamFastPath(str) {
-    return str[require("internal/fs/streams").kWriteStreamFastPath];
-  },
-};
-
 export const arrayBufferViewHasBuffer = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_arrayBufferViewHasBuffer",
@@ -579,7 +562,6 @@ export const timerInternals = {
 export const dgramInternals = {
   newRawSocketFd: $newRustFunction("udp_socket.rs", "jsDgramNewSocketFd", 2),
   closeRawFd: $newRustFunction("udp_socket.rs", "jsDgramCloseFd", 1),
-  isFdAdopted: $newRustFunction("udp_socket.rs", "jsDgramIsFdAdopted", 1),
 };
 
 export const decodeURIComponentSIMD = $newCppFunction(
@@ -677,8 +659,6 @@ export const structuredCloneAdvanced: (
   forStorage: boolean,
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
-
-export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 

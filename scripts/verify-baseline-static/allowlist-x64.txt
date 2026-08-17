@@ -1024,6 +1024,55 @@ _ZN9bun_image9N_AVX3_DLL9HorizPassEPKhmmPhmPKNS_4SpanEPKsm  [AVX, AVX2, AVX512DQ
 
 
 # ----------------------------------------------------------------------------
+# libwebp lossless DSP AVX2 kernels (vendor/libwebp/src/dsp/lossless_avx2.c,
+# lossless_enc_avx2.c). Gate: VP8LDspInit / VP8LEncDspInit (dsp/lossless.c,
+# lossless_enc.c) only call VP8LDspInitAVX2 / VP8LEncDspInitAVX2, which install
+# these into the function-pointer tables, after VP8GetCPUInfo(kAVX2)
+# (dsp/cpu.c: CPUID AVX + OSXSAVE, XGETBV, CPUID.7 AVX2). The dispatchers only
+# compile that call because scripts/build/deps/libwebp.ts defines
+# WEBP_HAVE_AVX2; the Init functions themselves are plain pointer stores and
+# are not flagged. Same set as the libwebp block in allowlist-x64-windows.txt.
+# (36 symbols)
+# ----------------------------------------------------------------------------
+AddGreenToBlueAndRed_AVX2  [AVX, AVX2]
+AddVectorEq_AVX2  [AVX, AVX2]
+AddVector_AVX2  [AVX, AVX2]
+BundleColorMap_AVX2  [AVX, AVX2]
+CollectColorBlueTransforms_AVX2  [AVX, AVX2]
+CollectColorRedTransforms_AVX2  [AVX, AVX2]
+CombinedShannonEntropy_AVX2  [AVX, AVX2]
+ConvertBGRAToRGBA_AVX2  [AVX, AVX2]
+SubtractGreenFromBlueAndRed_AVX2  [AVX, AVX2]
+TransformColorInverse_AVX2  [AVX, AVX2]
+TransformColor_AVX2  [AVX, AVX2]
+VectorMismatch_AVX2  [AVX, AVX2]
+PredictorAdd0_AVX2   [AVX, AVX2]
+PredictorAdd1_AVX2   [AVX, AVX2]
+PredictorAdd2_AVX2   [AVX, AVX2]
+PredictorAdd3_AVX2   [AVX, AVX2]
+PredictorAdd4_AVX2   [AVX, AVX2]
+PredictorAdd8_AVX2   [AVX, AVX2]
+PredictorAdd9_AVX2   [AVX, AVX2]
+PredictorAdd10_AVX2  [AVX, AVX2]
+PredictorAdd11_AVX2  [AVX, AVX2]
+PredictorAdd12_AVX2  [AVX, AVX2]
+PredictorSub0_AVX2   [AVX, AVX2]
+PredictorSub1_AVX2   [AVX, AVX2]
+PredictorSub2_AVX2   [AVX, AVX2]
+PredictorSub3_AVX2   [AVX, AVX2]
+PredictorSub4_AVX2   [AVX, AVX2]
+PredictorSub5_AVX2   [AVX, AVX2]
+PredictorSub6_AVX2   [AVX, AVX2]
+PredictorSub7_AVX2   [AVX, AVX2]
+PredictorSub8_AVX2   [AVX, AVX2]
+PredictorSub9_AVX2   [AVX, AVX2]
+PredictorSub10_AVX2  [AVX, AVX2]
+PredictorSub11_AVX2  [AVX, AVX2]
+PredictorSub12_AVX2  [AVX, AVX2]
+PredictorSub13_AVX2  [AVX, AVX2]
+
+
+# ----------------------------------------------------------------------------
 # JSC LLInt. Data-in-.text false positive, NOT a gate.
 #
 # ENABLE(LLINT_EMBEDDED_OPCODE_ID) is on for x86_64 (WTF/wtf/PlatformEnable.h),

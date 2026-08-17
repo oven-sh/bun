@@ -9,18 +9,23 @@
  * carry-through for #30197), but the full mux/demux is linked since the
  * TUs are tiny and the EXIF/XMP chunks will need the same plumbing later.
  *
- * DirectBuild: no config.h, no codegen. Every dsp/*_{sse2,sse41,neon,msa,
- * mips}*.c file self-guards on WEBP_USE_<ISA> (derived from compiler arch
+ * DirectBuild: no config.h, no codegen. Every dsp/*_{sse2,sse41,avx2,neon,
+ * msa,mips}*.c file self-guards on WEBP_USE_<ISA> (derived from compiler arch
  * macros in src/dsp/cpu.h), so the off-target ones compile to empty TUs —
  * same pattern as libdeflate's arm/x86 cpu_features split. We list them all
- * and let the preprocessor prune.
+ * and let the preprocessor prune. The x86 levels above the baseline need the
+ * two-part wiring described at X86_ISAS below.
  *
- * Threading: WEBP_USE_THREAD is left OFF. The decoder/encoder are invoked
- * from Bun's worker pool already; libwebp's internal pthread pool would just
- * oversubscribe.
+ * Threading: WEBP_USE_THREAD is left OFF. Bun only uses the one-shot API
+ * (WebPDecodeRGBA, WebPEncodeRGBA, WebPEncodeLosslessRGBA), which never
+ * starts libwebp's worker threads either way; all the flag would add is a
+ * mutex around each dsp init body, and only on non-Windows targets (cpu.h
+ * drops it under _WIN32). The two init bodies that are not safe to run
+ * concurrently are instead latched once from src/runtime/image/codec_webp.rs,
+ * which covers every target.
  */
 
-import type { Dependency } from "../source.ts";
+import type { Dependency, DirectSource } from "../source.ts";
 
 const LIBWEBP_COMMIT = "b7e29b9d75bd31422b00c2a446d49d7af06c328d"; // v1.6.0
 
@@ -89,26 +94,45 @@ const SHARPYUV = [
   "sharpyuv_gamma", "sharpyuv_neon", "sharpyuv_sse2",
 ];
 
-// dsp/*_{sse2,sse41,avx2}.c each compile a single ISA variant. libwebp's
-// cpu.h gates them on `__SSE2__`/`__SSE4_1__`/`__AVX2__` *or* `_MSC_VER &&
-// _M_X64` — real MSVC accepts AVX2 intrinsics without /arch, but clang-cl
-// defines _MSC_VER and still requires `-mavx2`, so the file builds on Linux
-// baseline (gate stays off) and explodes on Windows baseline (gate forced on,
-// no ISA). Match upstream cmake/cpu.cmake: pass the ISA flag per-file on x64
-// (on arm64 these compile to the stub body and the x86 -m flags are invalid).
-// Runtime CPU dispatch in dsp/cpu.c picks the best available, so a baseline
-// binary still runs on pre-AVX2 hardware.
-function simd(path: string, x64: boolean) {
-  if (x64) {
-    for (const [suf, flag] of [
-      ["_avx2.c", "-mavx2"],
-      ["_sse41.c", "-msse4.1"],
-      ["_sse2.c", "-msse2"],
-    ] as const) {
-      if (path.endsWith(suf)) return { path, cflags: [flag] };
-    }
-  }
-  return path;
+/**
+ * x86 ISA levels libwebp ships kernels for. Each level is wired up in two
+ * halves, the same split upstream's cmake/cpu.cmake and configure.ac make:
+ *
+ *   - The kernel TUs (dsp/*<suffix>) are compiled with `flag`. cpu.h turns
+ *     the compiler's `__AVX2__` etc. into WEBP_USE_<ISA>, which the kernel
+ *     file guards its body on; without it the file is just a stub Init.
+ *     clang-cl needs the flag too: it defines _MSC_VER, which cpu.h reads as
+ *     "MSVC, intrinsics work without /arch", so the kernel body is forced on.
+ *   - Every TU gets `define` (WEBP_HAVE_<ISA>), which is what the dispatchers
+ *     (dsp/lossless.c, lossless_enc.c, dec.c, ...) compile their
+ *     `if (VP8GetCPUInfo(kAVX2)) VP8LDspInitAVX2();` under. Upstream sets
+ *     these in config.h; without one, cpu.h derives WEBP_HAVE_<ISA> from each
+ *     TU's own target, and the dispatchers are built at -march=nehalem. SSE2
+ *     and SSE4.1 fell out of that, AVX2 did not, so on linux/darwin the AVX2
+ *     kernels were linked in but never called. (clang-cl's _MSC_VER path
+ *     implies all three, so on Windows these defines are a no-op; cpu.h only
+ *     defines the ones that aren't already defined.)
+ *
+ * The define only says the kernels are linked in; the Init call stays behind
+ * dsp/cpu.c's cpuid + xgetbv check, so the baseline binary still runs on
+ * pre-AVX2 hardware. Neither half applies on arm64: the x86 kernel files
+ * compile to stubs, the -m flags are invalid, and the dispatch blocks sit
+ * under an SSE2 gate that is compiled out.
+ */
+const X86_ISAS = [
+  { define: "WEBP_HAVE_AVX2", suffix: "_avx2.c", flag: "-mavx2" },
+  { define: "WEBP_HAVE_SSE41", suffix: "_sse41.c", flag: "-msse4.1" },
+  { define: "WEBP_HAVE_SSE2", suffix: "_sse2.c", flag: "-msse2" },
+];
+
+function simd(path: string, x64: boolean): string | DirectSource {
+  if (!x64) return path;
+  const isa = X86_ISAS.find(isa => path.endsWith(isa.suffix));
+  return isa === undefined ? path : { path, cflags: [isa.flag] };
+}
+
+function x86Defines(x64: boolean): Record<string, true> {
+  return x64 ? Object.fromEntries(X86_ISAS.map(isa => [isa.define, true])) : {};
 }
 
 export const libwebp: Dependency = {
@@ -131,6 +155,7 @@ export const libwebp: Dependency = {
       ...MUX.map(f => `src/mux/${f}.c`),
       ...SHARPYUV.map(f => simd(`sharpyuv/${f}.c`, cfg.x64)),
     ],
+    defines: x86Defines(cfg.x64),
     // src/webp/*.h is the public API; internal headers use "src/..."
     // includes from the repo root, sharpyuv uses "sharpyuv/...".
     includes: [".", "src"],

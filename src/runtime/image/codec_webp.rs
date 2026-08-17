@@ -26,6 +26,16 @@ unsafe extern "C" {
         out: *mut *mut u8,
     ) -> usize;
     pub(crate) fn WebPFree(ptr: *mut c_void);
+    fn VP8LEncDspInit();
+}
+
+/// libwebp's lazy dsp init is unlocked in our build and the VP8L init bodies are not idempotent.
+fn init_dsp() {
+    static INIT: std::sync::Once = std::sync::Once::new();
+    INIT.call_once(|| {
+        // SAFETY: no preconditions; only writes libwebp's own static tables, serialised by `Once`.
+        unsafe { VP8LEncDspInit() }
+    });
 }
 
 // ─── libwebpmux / libwebpdemux ──────────────────────────────────────────────
@@ -134,6 +144,7 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     let w: u32 = u32::try_from(cw).expect("int cast");
     let h: u32 = u32::try_from(ch).expect("int cast");
     codecs::guard(w, h, max_pixels)?;
+    init_dsp();
     // SAFETY: bytes.ptr/len describe a valid readable slice; cw/ch are valid out-params.
     let ptr = unsafe { WebPDecodeRGBA(bytes.as_ptr(), bytes.len(), &raw mut cw, &raw mut ch) };
     if ptr.is_null() {
@@ -231,6 +242,7 @@ pub(crate) fn encode(
     lossless: bool,
     icc_profile: Option<&[u8]>,
 ) -> Result<codecs::Encoded, codecs::Error> {
+    init_dsp();
     let mut out: *mut u8 = core::ptr::null_mut();
     let stride: c_int = c_int::try_from(w * 4).expect("int cast");
     let len = if lossless {

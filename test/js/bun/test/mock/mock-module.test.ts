@@ -582,10 +582,12 @@ test("jest.mock auto-mocks a plugin-provided module", () => {
   expect(mocked.greet()).toBeUndefined();
 });
 
-test.concurrent("auto-mock of the fs builtin: import and requireMock see the mock, require sees the real module", async () => {
-  // Fresh process so mocking a builtin can't leak into other test files.
-  using dir = tempDir("automock-builtin", {
-    "fixture.test.ts": `
+test.concurrent(
+  "auto-mock of the fs builtin: import and requireMock see the mock, require sees the real module",
+  async () => {
+    // Fresh process so mocking a builtin can't leak into other test files.
+    using dir = tempDir("automock-builtin", {
+      "fixture.test.ts": `
       import { test, expect, jest } from "bun:test";
 
       test("jest.mock('fs') consumers", async () => {
@@ -610,22 +612,23 @@ test.concurrent("auto-mock of the fs builtin: import and requireMock see the moc
         expect(typeof real.readFileSync).toBe("function");
       });
     `,
-  });
+    });
 
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "test", "fixture.test.ts"],
-    env: bunEnv,
-    cwd: String(dir),
-    stderr: "pipe",
-    stdout: "pipe",
-  });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "fixture.test.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
 
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
-  expect(stderr).toContain("1 pass");
-  expect(stderr).not.toContain("0 pass");
-  expect(exitCode).toBe(0);
-});
+    expect(stderr).toContain("1 pass");
+    expect(stderr).not.toContain("0 pass");
+    expect(exitCode).toBe(0);
+  },
+);
 
 test("auto-mock restores the prior factory mock when the require() throws", () => {
   // Install a factory mock for a virtual specifier that has no real module

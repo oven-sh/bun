@@ -186,17 +186,15 @@ impl Walker {
                 self.expr(&x.value);
             }
             E::EBinary(x) => {
-                // Left-associative chains are a deep left spine in minified code: iterate it.
-                let mut cur = x;
-                loop {
-                    self.note(&cur.left, b'l', &[cur.op as u8], 0);
-                    self.note(&cur.right, b'r', &[cur.op as u8], 0);
-                    self.expr(&cur.right);
-                    match &cur.left.data {
-                        E::EBinary(inner) => cur = inner,
-                        _ => {
-                            self.expr(&cur.left);
-                            break;
+                // Binary chains are deep spines in minified code: walk both sides with a work-list.
+                let mut work: Vec<&bun_ast::E::Binary> = vec![x];
+                while let Some(b) = work.pop() {
+                    self.note(&b.left, b'l', &[b.op as u8], 0);
+                    self.note(&b.right, b'r', &[b.op as u8], 0);
+                    for side in [&b.left, &b.right] {
+                        match &side.data {
+                            E::EBinary(inner) => work.push(inner),
+                            _ => self.expr(side),
                         }
                     }
                 }

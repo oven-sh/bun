@@ -1180,6 +1180,17 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
       "b/cli.js": "#!/usr/bin/env node\n",
       "b/vendor/huge.bin": Buffer.alloc(64, 2),
     });
+    // A malformed `files` (pack would refuse it) just means the folder is read whole.
+    const odd = await pretty({
+      "a/package.json": JSON.stringify({ name: "p", version: "1.0.0", files: "lib" }),
+      "a/lib/index.js": "1\n",
+      "a/other.txt": "x\n",
+      "b/package.json": JSON.stringify({ name: "p", version: "1.0.1", files: "lib" }),
+      "b/lib/index.js": "1\n",
+      "b/other.txt": "y\n",
+    });
+    expect(odd.text).toContain("other.txt");
+    expect(odd.exitCode).toBe(0);
     // Only what would ship: package.json, lib/index.js (and the bin, which appears in b).
     const headers = text
       .split("\n")

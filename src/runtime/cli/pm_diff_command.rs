@@ -568,39 +568,54 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
     };
     // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
     // bins — not the whole checkout with its vendor/ and build/.
-    if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
-        let bump = Bump::new();
-        let src: &[u8] = bump.alloc_slice_copy(&pkg);
-        if let Ok(json) = bun_parsers::json::parse_utf8(
-            &bun_ast::Source::init_path_string(b"package.json", src),
-            &mut bun_ast::Log::init(),
-            &bump,
-        ) {
-            let dir = bun_sys::Dir::from_fd(root_fd);
-            let (queue, _bins) = crate::cli::pack_command::published_files(
-                &dir,
-                &json,
+    'package: {
+        if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+            let bump = Bump::new();
+            let src: &[u8] = bump.alloc_slice_copy(&pkg);
+            if let Ok(json) = bun_parsers::json::parse_utf8(
+                &bun_ast::Source::init_path_string(b"package.json", src),
+                &mut bun_ast::Log::init(),
                 &bump,
-                bun_install::package_manager::LogLevel::Silent,
-            )?;
-            let _ = dir.into_raw();
-            for (path, optional) in queue.into_paths() {
-                let rel = path.as_bytes();
-                match bun_sys::File::read_from(root_fd, rel) {
-                    Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
-                    Ok(bytes) => {
-                        #[cfg(not(windows))]
-                        if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
-                            tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
+            ) {
+                // pack crashes on a malformed `files`; here that just means "not a package we understand": full walk.
+                let files_ok = json.get(b"files").is_none_or(|f| {
+                    f.as_array().is_some_and(|mut a| {
+                        let mut ok = true;
+                        while let Some(e) = a.next() {
+                            ok &= e.as_string(&bump).is_some();
                         }
-                        tree.files.insert(rel.to_vec(), bytes);
-                    }
-                    Err(err) => fail(err, rel),
+                        ok
+                    })
+                });
+                if !files_ok {
+                    break 'package;
                 }
+                let dir = bun_sys::Dir::from_fd(root_fd);
+                let (queue, _bins) = crate::cli::pack_command::published_files(
+                    &dir,
+                    &json,
+                    &bump,
+                    bun_install::package_manager::LogLevel::Silent,
+                )?;
+                let _ = dir.into_raw();
+                for (path, optional) in queue.into_paths() {
+                    let rel = path.as_bytes();
+                    match bun_sys::File::read_from(root_fd, rel) {
+                        Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
+                        Ok(bytes) => {
+                            #[cfg(not(windows))]
+                            if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
+                                tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
+                            }
+                            tree.files.insert(rel.to_vec(), bytes);
+                        }
+                        Err(err) => fail(err, rel),
+                    }
+                }
+                tree.files.insert(b"package.json".to_vec(), pkg);
+                root_fd.close();
+                return Ok(tree);
             }
-            tree.files.insert(b"package.json".to_vec(), pkg);
-            root_fd.close();
-            return Ok(tree);
         }
     }
     let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];

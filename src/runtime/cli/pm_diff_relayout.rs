@@ -258,16 +258,17 @@ fn expr(arena: C, e: &mut Expr) {
         }
         E::EUnary(x) => expr(arena, &mut x.value),
         E::EBinary(x) => {
-            // Left-associative chains (`a+b+c+…`, `a,b,c,…`) are a deep left spine in minified code: iterate it.
-            let mut rights = vec![x.right];
-            let mut left = x.left;
-            while let E::EBinary(inner) = &left.data {
-                rights.push(inner.right);
-                left = inner.left;
-            }
-            expr(arena, &mut left);
-            for mut r in rights {
-                expr(arena, &mut r);
+            // Binary chains (`a+b+c`, `a,b,c`, `a=b=c`) are deep spines in minified code: walk both sides with a
+            // work-list, only leaving it for non-binary operands.
+            let mut work = vec![x.left, x.right];
+            while let Some(mut e) = work.pop() {
+                match &e.data {
+                    E::EBinary(inner) => {
+                        work.push(inner.left);
+                        work.push(inner.right);
+                    }
+                    _ => expr(arena, &mut e),
+                }
             }
         }
         E::EClass(c) => class(arena, c),

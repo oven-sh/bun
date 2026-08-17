@@ -3,10 +3,10 @@
  * out at the commit the pinned prebuilt WebKit was built from. When the pin is
  * an oven-sh/WebKit release name, that commit is the one in the name: the tag
  * object behind the release was, until oven-sh/WebKit#461, created at whatever
- * main's HEAD was when the release job ran (see pinnedCommit). Every repo below
- * therefore has its tag pointing at the wrong commit, the way the real ones do;
- * resolving through the tag lands there, resolving the name lands on the commit
- * that was built.
+ * main's HEAD was when the release job ran (see pinnedCommit). The release-name
+ * repos below therefore have their tag pointing at the wrong commit, the way the
+ * real ones do; resolving through the tag lands there, resolving the name lands
+ * on the commit that was built.
  */
 import { $, spawnSync } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -70,6 +70,23 @@ function originAndClone(dir: string): { origin: string; clone: string; base: str
   return { origin, clone, base };
 }
 
+/**
+ * Pushes to PR 7 on origin, oldest first: commits on top of `base` that only refs/pull/7/head
+ * reaches, which is all that is left of them once the PR's branch is gone.
+ */
+function pushesToPullRequest(origin: string, base: string, names: string[]): string[] {
+  git(origin, "checkout", "-q", "--detach", base);
+  const pushes = names.map(name => commit(origin, name));
+  git(origin, "update-ref", "refs/pull/7/head", pushes[pushes.length - 1]);
+  git(origin, "checkout", "-q", "--detach", base);
+  return pushes;
+}
+
+/** The release name build-preview.yml gives the build of `push` to PR 7. */
+function previewTag(push: string): string {
+  return `autobuild-preview-pr-7-${push.slice(0, 8)}`;
+}
+
 describe.concurrent("sync-webkit-source", () => {
   test("pinnedCommit takes the commit from the release name", () => {
     const sha = "781d6abb94b9eaee825e95ef700a83d8cf576f55";
@@ -84,9 +101,9 @@ describe.concurrent("sync-webkit-source", () => {
       previewWith9Hex: pinnedCommit("autobuild-preview-pr-459-9203122d6"),
       unknown: pinnedCommit("autobuild-nightly"),
     }).toEqual({
-      sha: { rev: sha, fetch: [] },
-      main: { rev: sha, fetch: [] },
-      preview: { rev: "9203122d", fetch: ["refs/pull/459/head"] },
+      sha: { sha },
+      main: { sha },
+      preview: { shaPrefix: "9203122d", pullRef: "refs/pull/459/head" },
       abbreviatedSha: undefined,
       previewWithoutSha: undefined,
       previewWith7Hex: undefined,
@@ -114,13 +131,8 @@ describe.concurrent("sync-webkit-source", () => {
   test("a preview tag checks out the PR head it is named after, fetched from the PR ref", async () => {
     using dir = tempDir("sync-webkit-source-preview", {});
     const { origin, clone, base } = originAndClone(String(dir));
-    // Leave the PR head reachable from origin's refs/pull/7/head only, as it is once the PR branch is gone.
-    git(origin, "checkout", "-q", "-b", "pr");
-    const prHead = commit(origin, "pr-head");
-    git(origin, "update-ref", "refs/pull/7/head", prHead);
-    git(origin, "checkout", "-q", "--detach", base);
-    git(origin, "branch", "-q", "-D", "pr");
-    const tag = `autobuild-preview-pr-7-${prHead.slice(0, 8)}`;
+    const [prHead] = pushesToPullRequest(origin, base, ["pr-head"]);
+    const tag = previewTag(prHead);
     git(clone, "tag", tag, base);
     expect({ tag: tagTarget(clone, tag), head: head(clone) }).toEqual({ tag: base, head: base });
 
@@ -128,7 +140,34 @@ describe.concurrent("sync-webkit-source", () => {
     expect(head(clone)).toBe(prHead);
   });
 
-  test("a preview whose commit is not at the PR ref either fails rather than checking out the tag", async () => {
+  test("a preview built from an earlier push of the PR checks out that push, not the PR's current head", async () => {
+    using dir = tempDir("sync-webkit-source-preview-earlier-push", {});
+    const { origin, clone, base } = originAndClone(String(dir));
+    const [firstPush] = pushesToPullRequest(origin, base, ["first-push", "second-push"]);
+    const tag = previewTag(firstPush);
+    git(clone, "tag", tag, base);
+
+    expect(await syncWebKitSource(clone, tag)).toBe(firstPush);
+    expect(head(clone)).toBe(firstPush);
+  });
+
+  test("a preview's 8 hex are matched against commit ids, not resolved as a name", async () => {
+    using dir = tempDir("sync-webkit-source-preview-shadowed", {});
+    const { origin, clone, base } = originAndClone(String(dir));
+    const [prHead] = pushesToPullRequest(origin, base, ["pr-head"]);
+    const tag = previewTag(prHead);
+    git(clone, "tag", tag, base);
+    // `git rev-parse <8 hex>` prefers a ref of that name, and a clone that does not have the PR head
+    // yet would resolve it without ever fetching. Same shape as an unrelated local commit sharing
+    // the 8 hex, which a test cannot arrange on purpose.
+    git(clone, "branch", prHead.slice(0, 8), base);
+    expect(git(clone, "rev-parse", "--verify", `${prHead.slice(0, 8)}^{commit}`)).toBe(base);
+
+    expect(await syncWebKitSource(clone, tag)).toBe(prHead);
+    expect(head(clone)).toBe(prHead);
+  });
+
+  test("a preview whose commit the PR no longer has fails rather than checking out the tag", async () => {
     using dir = tempDir("sync-webkit-source-preview-gone", {});
     const { origin, clone, base } = originAndClone(String(dir));
     git(origin, "update-ref", "refs/pull/7/head", base);
@@ -136,7 +175,7 @@ describe.concurrent("sync-webkit-source", () => {
     git(clone, "tag", tag, base);
 
     await expect(syncWebKitSource(clone, tag)).rejects.toThrow(
-      `could not find commit 0badc0de (${tag}) in ${clone} even after fetching refs/pull/7/head`,
+      `no commit starting with 0badc0de (${tag}) in ${clone} even after fetching refs/pull/7/head, whose head is ${base}`,
     );
     expect(head(clone)).toBe(base);
   });

@@ -1,12 +1,11 @@
 import { existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 
-export interface PinnedCommit {
-  /** The commit the prebuilt was built from: a full sha, or the 8-hex prefix a preview tag carries. */
-  rev: string;
-  /** Refspecs to fetch from origin when the clone does not have `rev`; empty means origin's configured branches. */
-  fetch: string[];
-}
+export type PinnedCommit =
+  /** A 40-hex sha, with or without the `autobuild-` prefix of the release built from it. */
+  | { sha: string }
+  /** `autobuild-preview-pr-<n>-<sha8>`: the first 8 hex of the PR head the preview was built from. */
+  | { shaPrefix: string; pullRef: string };
 
 /**
  * WEBKIT_VERSION is a 40-hex sha or the name of an oven-sh/WebKit release.
@@ -23,16 +22,58 @@ export function pinnedCommit(version: string): PinnedCommit | undefined {
   const preview = /^autobuild-preview-pr-(\d+)-([0-9a-f]{8})$/.exec(version);
   if (preview) {
     // refs/pull/<n>/head still serves the commit once the PR's branch has been merged or deleted.
-    return { rev: preview[2], fetch: [`refs/pull/${preview[1]}/head`] };
+    return { shaPrefix: preview[2], pullRef: `refs/pull/${preview[1]}/head` };
   }
   const sha = /^(?:autobuild-)?([0-9a-f]{40})$/.exec(version);
-  if (sha) return { rev: sha[1], fetch: [] };
+  if (sha) return { sha: sha[1] };
   return undefined;
 }
 
 async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
   const out = await Bun.$`git rev-parse --verify ${rev}^{commit}`.cwd(webkitRepo).quiet().nothrow();
   return out.exitCode === 0 ? out.text().trim() : "";
+}
+
+/** The commit objects in the repo whose sha starts with `prefix`. */
+async function commitsWithPrefix(webkitRepo: string, prefix: string): Promise<string[]> {
+  const ids = (await Bun.$`git rev-parse --disambiguate=${prefix}`.cwd(webkitRepo).quiet().text()).split("\n");
+  const commits: string[] = [];
+  for (const id of ids.filter(Boolean)) {
+    const type = (await Bun.$`git cat-file -t ${id}`.cwd(webkitRepo).quiet().text()).trim();
+    if (type === "commit") commits.push(id);
+  }
+  return commits;
+}
+
+async function commitBuiltFrom(webkitRepo: string, version: string, pin: PinnedCommit): Promise<string> {
+  if ("sha" in pin) {
+    let sha = await resolveCommit(webkitRepo, pin.sha);
+    if (!sha) {
+      await Bun.$`git fetch origin`.cwd(webkitRepo);
+      sha = await resolveCommit(webkitRepo, pin.sha);
+    }
+    if (sha) return sha;
+    throw new Error(
+      `could not find commit ${pin.sha} (${version}) in ${webkitRepo} even after fetching origin\n` +
+        "check that the commit exists on https://github.com/oven-sh/WebKit",
+    );
+  }
+
+  // The prefix is only ever compared against whole object ids, never resolved as a name:
+  // `git rev-parse <prefix>` would accept a ref called that, or an unrelated commit sharing the
+  // prefix, while the PR head itself has not been fetched yet. Fetching first puts the built
+  // commit among the candidates whenever the PR still has it.
+  await Bun.$`git fetch origin ${pin.pullRef}`.cwd(webkitRepo);
+  const commits = await commitsWithPrefix(webkitRepo, pin.shaPrefix);
+  if (commits.length === 1) return commits[0];
+  if (commits.length === 0) {
+    const head = await resolveCommit(webkitRepo, "FETCH_HEAD");
+    throw new Error(
+      `no commit starting with ${pin.shaPrefix} (${version}) in ${webkitRepo} even after fetching ${pin.pullRef}, ` +
+        `whose head is ${head}\nthe preview was built from a push the PR no longer has`,
+    );
+  }
+  throw new Error(`${pin.shaPrefix} (${version}) matches more than one commit in ${webkitRepo}: ${commits.join(", ")}`);
 }
 
 /** Checks `webkitRepo` out at the commit `version` was built from, fetching it first if needed. */
@@ -44,19 +85,7 @@ export async function syncWebKitSource(webkitRepo: string, version: string): Pro
         "autobuild-<sha>, or autobuild-preview-pr-<n>-<first 8 hex of the sha>",
     );
   }
-
-  let expectedSha = await resolveCommit(webkitRepo, pin.rev);
-  if (!expectedSha) {
-    await Bun.$`git fetch origin ${pin.fetch}`.cwd(webkitRepo);
-    expectedSha = await resolveCommit(webkitRepo, pin.rev);
-  }
-  if (!expectedSha) {
-    const from = pin.fetch.length > 0 ? pin.fetch.join(", ") : "origin";
-    throw new Error(
-      `could not find commit ${pin.rev} (${version}) in ${webkitRepo} even after fetching ${from}\n` +
-        "check that the commit exists on https://github.com/oven-sh/WebKit",
-    );
-  }
+  const expectedSha = await commitBuiltFrom(webkitRepo, version, pin);
 
   const checkedOutCommit = (await Bun.$`git rev-parse HEAD`.cwd(webkitRepo).quiet().text()).trim();
   if (checkedOutCommit === expectedSha) {

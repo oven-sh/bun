@@ -1323,8 +1323,10 @@ impl<'a> Cloner<'a> {
 
 impl Lockfile {
     /// Re-hoists while a pass bound a peer late; a reload has that binding up front.
+    /// Ranged peers bound to a package the tree left out are rebound the way a reload binds them.
     pub(crate) fn resolve(&mut self, log: &mut bun_ast::Log) -> Result<(), tree::SubtreeError> {
         while self.hoist::<{ tree::BuilderMethod::Resolvable }>(log, None, true, &[], None)? {}
+        TextLockfile::rebind_peers_to_printed_packages(self)?;
         Ok(())
     }
 

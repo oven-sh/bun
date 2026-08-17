@@ -2577,10 +2577,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Substitution::Failure(expr)
     }
 
-    /// Substitutes into the child expression held in `slot`. `Continue` leaves
-    /// the child alone and returns `None` so the caller moves on to the next
-    /// child; `Success` and `Failure` store the rewritten child back into `slot`
-    /// and become the same outcome for `parent`, which the caller returns.
+    /// `None` is `Continue`; otherwise `slot` was rewritten and this is `parent`'s outcome.
     fn substitute_single_use_symbol_in_child(
         &mut self,
         slot: &mut Expr,

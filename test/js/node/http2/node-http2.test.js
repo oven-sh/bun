@@ -2859,6 +2859,75 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(exitCode).toBe(0);
 });
 
+it("http2 session.origin() with several origins rejects one longer than 65535 bytes with a catchable error", async () => {
+  // Each entry of a multi-origin ORIGIN frame carries a 16-bit length prefix.
+  // An entry that does not fit in it must surface as ERR_HTTP2_ORIGIN_LENGTH
+  // like any other oversized origin, not terminate the process. Run in a
+  // subprocess so a crash shows up as a failed assertion instead of taking down
+  // the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("session", session => {
+        const huge = "https://" + Buffer.alloc(70000, "a").toString();
+        for (const origins of [
+          [huge, "https://b.example"],
+          ["https://b.example", huge],
+          [{ origin: huge }, "https://b.example"],
+        ]) {
+          try {
+            session.origin(...origins);
+            console.log("NO_ERROR");
+          } catch (err) {
+            console.log("CODE:" + err.code + " NAME:" + err.name);
+          }
+        }
+        // The session is still usable afterwards.
+        session.origin("https://c.example", "https://d.example");
+        console.log("ORIGIN_SENT");
+      });
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/" });
+        req.on("response", headers => {
+          console.log("STATUS:" + headers[":status"]);
+        });
+        req.resume();
+        req.on("close", () => {
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.split("\n").filter(Boolean)).toEqual([
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "ORIGIN_SENT",
+    "STATUS:200",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.

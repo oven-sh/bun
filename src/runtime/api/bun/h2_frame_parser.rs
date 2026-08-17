@@ -7032,18 +7032,10 @@ impl H2FrameParser {
                 }
                 let origin_string = item.to_slice(global_object)?;
                 let slice = origin_string.slice();
-                if stream
-                    .write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes())
-                    .is_err()
-                {
-                    let exception = global_object.to_type_error(
-                        bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
-                        format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
-                    );
-                    return Err(global_object.throw_value(exception));
-                }
-
-                if stream.write_all(slice).is_err() {
+                let fits = u16::try_from(slice.len()).is_ok_and(|len| {
+                    stream.write_all(&len.to_be_bytes()).is_ok() && stream.write_all(slice).is_ok()
+                });
+                if !fits {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
                         format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),

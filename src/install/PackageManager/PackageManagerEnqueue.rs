@@ -1471,10 +1471,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             if dependency_tag == dependency::version::Tag::Symlink
                 && !version_was_replaced
                 && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(version.symlink()))
-                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
-                && !this.lockfile.packages.items_resolution()[declarer as usize]
-                    .tag
-                    .is_local_package()
+                && let Some((declarer, false)) = this.lockfile.declarer_of(id)
             {
                 if dependency.behavior.is_required() {
                     reject_escaping_link_of_remote_package(this, declarer, dependency);
@@ -1593,10 +1590,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
             let tarball = version.tarball();
             if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
                 && !version_was_replaced
-                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
-                && !this.lockfile.packages.items_resolution()[declarer as usize]
-                    .tag
-                    .is_local_package()
+                && let Some((declarer, false)) = this.lockfile.declarer_of(id)
                 && !this.lockfile.has_equal_root_dependency(dependency)
             {
                 if dependency.behavior.is_required() {
@@ -2770,7 +2764,7 @@ fn get_or_put_resolved_package(
                     }
                 }
 
-                if this.lockfile.is_dependency_of_local_package(dependency_id) {
+                if matches!(this.lockfile.declarer_of(dependency_id), Some((_, true))) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
                     // `string_bytes`; detach the slice lifetime so the

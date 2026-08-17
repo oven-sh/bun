@@ -965,14 +965,12 @@ impl Lockfile {
         invalid_package_id
     }
 
-    /// A folder package a registry package declares gets no dependency list, so a local declarer was reached through local packages only.
-    pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
-        self.get_parent_pkg_of_dependency(id)
-            .is_some_and(|parent_id| {
-                self.packages.items_resolution()[parent_id as usize]
-                    .tag
-                    .is_local_package()
-            })
+    /// The declaring package and whether it is local (`Tag::is_local_package`); a folder package a
+    /// registry package declares gets no dependency list, so a local declarer was reached through local ones only.
+    pub(crate) fn declarer_of(&self, id: DependencyID) -> Option<(PackageID, bool)> {
+        let declarer = self.get_parent_pkg_of_dependency(id)?;
+        let tag = self.packages.items_resolution()[declarer as usize].tag;
+        Some((declarer, tag.is_local_package()))
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?

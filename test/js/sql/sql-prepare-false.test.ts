@@ -110,6 +110,28 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
     expect(rows[1].val).toBe("world");
   });
 
+  // https://github.com/oven-sh/bun/issues/39450
+  test("Date and object parameters are encoded the same as with prepare: true", async () => {
+    await container.ready;
+    await using db = new SQL(options());
+
+    const date = new Date("2026-08-17T13:06:14.904Z");
+    const [{ ts }] = await db`SELECT ${date}::timestamptz AS ts`;
+    expect(ts).toEqual(date);
+
+    const [{ j }] = await db`SELECT ${{ a: 1 }}::jsonb AS j`;
+    expect(j).toEqual({ a: 1 });
+
+    const [{ arr }] = await db`SELECT ${[1, 2, 3]}::jsonb AS arr`;
+    expect(arr).toEqual([1, 2, 3]);
+
+    // Same shape as the issue's repro: insert into typed columns via unsafe.
+    await db.unsafe(`CREATE TEMP TABLE prepare_false_encoding (ts timestamptz, j jsonb)`);
+    await db.unsafe(`INSERT INTO prepare_false_encoding (ts, j) VALUES ($1, $2)`, [date, { a: 1 }]);
+    const rows = await db.unsafe(`SELECT ts, j FROM prepare_false_encoding`);
+    expect(rows).toEqual([{ ts: date, j: { a: 1 } }]);
+  });
+
   test("concurrent parameterized queries with high concurrency", async () => {
     await container.ready;
     await using db = new SQL({ ...options(), max: 8 });

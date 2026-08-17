@@ -5176,7 +5176,9 @@ impl DevServer {
             // This is the dev server's entry from Bun.serve's static-route
             // trampoline (`StaticRouteLike`, which otherwise never enters
             // JS): what bundling left pending is folded at this boundary.
-            Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => crate::dispatch::fold(Err(err)),
+            Err(err @ (jsc::JsError::Thrown | jsc::JsError::Terminated)) => {
+                crate::dispatch::fold(Err(err))
+            }
             Err(jsc::JsError::OutOfMemory) => return Err(AllocError),
         }
         Ok(())

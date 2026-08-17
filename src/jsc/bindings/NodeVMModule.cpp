@@ -107,6 +107,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
                 return {};
             }
             if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+                // See checkForTermination in NodeVMScript.cpp: a `--watch`
+                // process.exit() termination propagates instead.
+                if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
+                    scope.throwException(globalObject, vm.terminationException());
+                    return {};
+                }
                 vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
                 DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
                 vm.clearHasTerminationRequest();
@@ -253,6 +259,12 @@ JSValue NodeVMModule::evaluate(JSGlobalObject* globalObject, uint32_t timeout, b
         return {};
     }
     if (vm.hasTerminationRequest() || vm.hasPendingTerminationException()) {
+        // See checkForTermination in NodeVMScript.cpp: a `--watch`
+        // process.exit() termination propagates instead.
+        if (Bun__VM__isWatchExitRequested(Bun::vm(vm))) {
+            scope.throwException(globalObject, vm.terminationException());
+            return {};
+        }
         vm.drainMicrotasksForGlobalObject(nodeVmGlobalObject);
         DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
         vm.clearHasTerminationRequest();

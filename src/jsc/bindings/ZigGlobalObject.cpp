@@ -3277,6 +3277,13 @@ extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGloba
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
+
+    // A `--watch` process.exit() ended this run: callbacks queued before it
+    // (process.nextTick in particular has no other gate) must not resume
+    // while the watcher waits for the next change.
+    if (Bun__VM__isWatchExitRequested(bunVM())) [[unlikely]]
+        return 1;
+
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     if (auto* exception = scope.exception()) [[unlikely]] {

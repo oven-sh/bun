@@ -101,6 +101,8 @@ pub struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Seats `Formatter::can_throw_stack_overflow`.
+    pub(crate) can_throw_stack_overflow: bool,
 }
 
 impl JestPrettyFormat {
@@ -146,6 +148,7 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
+            fmt.can_throw_stack_overflow = options.can_throw_stack_overflow;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -192,6 +195,7 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
+        fmt.can_throw_stack_overflow = options.can_throw_stack_overflow;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -318,7 +322,12 @@ pub struct Formatter<'a> {
     pub(crate) failed: bool,
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
-    pub(crate) stack_check: StackCheck,
+    stack_check: StackCheck,
+    /// On an exhausted stack, throw a `RangeError` instead of silently
+    /// truncating the output. Set for snapshot serialization, where a
+    /// truncated result would be stored as if it were complete; left off for
+    /// diff output, which is only diagnostic.
+    can_throw_stack_overflow: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -334,6 +343,7 @@ impl<'a> Formatter<'a> {
             estimated_line_length: 0,
             always_newline_scope: false,
             stack_check: StackCheck::init(),
+            can_throw_stack_overflow: false,
         }
     }
 
@@ -1043,8 +1053,13 @@ impl<'a> Formatter<'a> {
         if self.failed {
             return Ok(());
         }
+        // Ahead of the circular-reference bookkeeping below, which only some
+        // of the tags that recurse into child values take part in.
         if !self.stack_check.is_safe_to_recurse() {
             self.failed = true;
+            if self.can_throw_stack_overflow {
+                return Err(self.global_this.throw_stack_overflow());
+            }
             return Ok(());
         }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_

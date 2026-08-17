@@ -314,11 +314,13 @@ for (;;) {
 }))js"_s;
 
 // --- Transport singleton ---------------------------------------------------
-// Mirror of HostClient but NUL-framed JSON instead of binary. POSIX: one
-// socketpair (usockets' bsd_recv needs a real socket), the child's end dup'd
-// to fd 3 and fd 4, ours adopted into usockets. Windows: two pipes driven by
-// libuv in ChromeProcess.rs, reaching us through Bun__Chrome__onPipeData /
-// Bun__Chrome__writePipe. Everything from onData on is shared.
+// Mirror of HostClient but NUL-framed JSON instead of binary. One socketpair
+// — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome reads fd 3,
+// writes fd 4; both hit our socket). Adopted into usockets for onData;
+// writes go through the same fd via us_socket_write. Socketpair not two
+// pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on a
+// pipe — the error was misread as EOF and onClose fired before any data.
+// Windows has no inheritable sockets: ChromeProcess.rs drives two libuv pipes instead and everything from onData on is shared.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);

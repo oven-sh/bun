@@ -79,10 +79,9 @@ namespace CDP {
 
 using namespace JSC;
 
-// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd on POSIX,
-// 0 on Windows (the pipes stay on the Rust side), -1 on failure. path overrides
-// auto-detection; extraArgv (count entries, each NUL-terminated) appends after
-// core flags. All pointers nullable.
+// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
+// path overrides auto-detection; extraArgv (count entries, each NUL-
+// terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
@@ -1294,10 +1293,7 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Every slot of every live view, not just those with a reply outstanding:
-    // a navigate waiting on Page.loadEventFired has no m_pending entry, and
-    // the attach/click chains send between entries (a failed write on Windows
-    // lands here from inside such a send). settle() no-ops on empty slots.
+    // Every slot of every live view, not just m_pending's: a navigate waiting for Page.loadEventFired has no pending id.
     for (auto& [viewId, weak] : m_views) {
         JSWebView* v = weak.get();
         if (!v) continue;

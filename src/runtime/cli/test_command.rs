@@ -2438,7 +2438,10 @@ impl TestCommand {
                 let mut normalized = Vec::with_capacity(filter_names.len());
                 for in_ in filter_names {
                     let mut to_normalize = in_.to_vec();
-                    bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
+                    // Glob patterns stay posix-form; `\` is a glob escape, not a separator.
+                    if !scanner::is_glob_filter(in_) {
+                        bun_path::resolve_path::posix_to_platform_in_place::<u8>(&mut to_normalize);
+                    }
                     normalized.push(to_normalize.into_boxed_slice());
                 }
                 normalized
@@ -2810,6 +2813,7 @@ impl TestCommand {
                     pretty_error!(" {}", bstr::BStr::new(filter));
 
                     if has_file_like.is_none()
+                        && !scanner::is_glob_filter(filter)
                         && (strings::ends_with(filter, b".ts")
                             || strings::ends_with(filter, b".tsx")
                             || strings::ends_with(filter, b".js")

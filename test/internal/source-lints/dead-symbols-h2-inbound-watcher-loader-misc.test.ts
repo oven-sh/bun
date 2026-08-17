@@ -80,8 +80,14 @@ test("the legacy h2 inbound path does not reappear", () => {
     // The byte reader and frame dispatcher that fed the handlers.
     [h2, /\bfn (read_bytes|dispatch_frame|lookup_inbound_stream)\b/],
     // The per-frame handlers and their payload helper.
-    [h2, /\bfn handle_(incomming_payload|window_update_frame|unknown_frame|push_promise_frame|data_frame|go_away_frame|origin_frame|altsvc_frame|rst_stream_frame|ping_frame|priority_frame|continuation_frame|headers_frame|settings_frame)\b/],
-    [h2, /\bfn (decode_header_block|finish_headers_end_stream|adjust_window_size|increment_window_size_if_needed|send_settings_ack|dispatch_with_3_extra)\b/],
+    [
+      h2,
+      /\bfn handle_(incomming_payload|window_update_frame|unknown_frame|push_promise_frame|data_frame|go_away_frame|origin_frame|altsvc_frame|rst_stream_frame|ping_frame|priority_frame|continuation_frame|headers_frame|settings_frame)\b/,
+    ],
+    [
+      h2,
+      /\bfn (decode_header_block|finish_headers_end_stream|adjust_window_size|increment_window_size_if_needed|send_settings_ack|dispatch_with_3_extra)\b/,
+    ],
     [h2, /\bstruct Payload\b/],
     // Decode-direction wire helpers only those handlers used.
     [h2, /\bfn (u32_from_bytes|from_bytes|update_with)\b|\benum SettingsFlags\b|\btype HeaderValue\b/],
@@ -90,7 +96,10 @@ test("the legacy h2 inbound path does not reappear", () => {
     [h2, /\bstruct (SettingsPayloadUnit|SettingsType)\b|_header_table_size_type|bytemuck::Pod for FullSettingsPayload/],
     // Parser / stream state only the inbound path maintained.
     [h2, /\b(current_frame|remaining_length|expecting_continuation|preface_received_len|read_buffer)\b/],
-    [h2, /\b(is_waiting_more_headers|header_block_size|header_block_count|pending_header_block|pending_header_flags)\b/],
+    [
+      h2,
+      /\b(is_waiting_more_headers|header_block_size|header_block_count|pending_header_block|pending_header_flags)\b/,
+    ],
     // The HPACK static-table JSString cache the decoder read through.
     [h2, /getHTTP2CommonString|get_http2_common_string/],
     ["src/jsc/bindings/ZigGlobalObject.h", /Http2CommonStrings/],

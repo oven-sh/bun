@@ -69,11 +69,24 @@ const PRODUCTION_PARAMS: &[ParamType] = &[
     clap::param!("-P, --prod"),
 ];
 
-const SHARED_TAIL_PARAMS: &[ParamType] = &[
+const SAVE_PARAMS: &[ParamType] = &[
     clap::param!(
         "--no-save                             Don't update package.json or save a lockfile"
     ),
     clap::param!("--save                                Save to package.json (true by default)"),
+];
+
+// `parse` gives link and unlink the opposite default: they only save when --save is passed.
+const LINK_SAVE_PARAMS: &[ParamType] = &[
+    clap::param!(
+        "--no-save                             Don't update package.json or save a lockfile (the default)"
+    ),
+    clap::param!(
+        "--save                                Update package.json and save a lockfile (false by default)"
+    ),
+];
+
+const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--ca <STR>...                         Provide a Certificate Authority signing certificate"
     ),
@@ -135,8 +148,19 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
-const SHARED_PARAMS: &[ParamType] =
-    concat_params![SHARED_HEAD_PARAMS, PRODUCTION_PARAMS, SHARED_TAIL_PARAMS];
+const SHARED_PARAMS: &[ParamType] = concat_params![
+    SHARED_HEAD_PARAMS,
+    PRODUCTION_PARAMS,
+    SAVE_PARAMS,
+    SHARED_TAIL_PARAMS
+];
+
+const LINK_SHARED_PARAMS: &[ParamType] = concat_params![
+    SHARED_HEAD_PARAMS,
+    PRODUCTION_PARAMS,
+    LINK_SAVE_PARAMS,
+    SHARED_TAIL_PARAMS
+];
 
 pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
     SHARED_PARAMS,
@@ -172,6 +196,7 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
         ),
         clap::param!("-P, --prod"),
     ],
+    SAVE_PARAMS,
     SHARED_TAIL_PARAMS,
     &[
         clap::param!(
@@ -276,14 +301,14 @@ pub(crate) static REMOVE_PARAMS: &[ParamType] = concat_params![
 ];
 
 pub(crate) static LINK_PARAMS: &[ParamType] = concat_params![
-    SHARED_PARAMS,
+    LINK_SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" install package as a link"
     ),]
 ];
 
 pub(crate) static UNLINK_PARAMS: &[ParamType] = concat_params![
-    SHARED_PARAMS,
+    LINK_SHARED_PARAMS,
     &[clap::param!(
         "<POS> ...                         \"name\" uninstall package as a link"
     ),]
@@ -943,8 +968,11 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/remove<r>.
   <d>Directory should contain a package.json.<r>
   <b><green>bun link<r>
 
-  <d>Add a previously-registered linkable package as a dependency of the current project.<r>
+  <d>Link a previously-registered linkable package into the current project's node_modules.<r>
   <b><green>bun link<r> <blue>\<package\><r>
+
+  <d>Also add it to the current project's package.json as a link: dependency.<r>
+  <b><green>bun link<r> <cyan>--save<r> <blue>\<package\><r>
 
 Full documentation is available at <magenta>https://bun.com/docs/cli/link<r>.
 ";
@@ -1458,8 +1486,7 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
         }
 
-        // link and unlink default to not saving, all others default to
-        // saving.
+        // link and unlink default to not saving (see `LINK_SAVE_PARAMS`), all others to saving.
         if matches!(subcommand, Subcommand::Link | Subcommand::Unlink) {
             cli.no_save = !args.flag(b"--save");
         } else {

@@ -2308,14 +2308,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false
@@ -2531,7 +2531,7 @@
           "completionType": "package"
         }
       ],
-      "examples": ["bun link", "bun link <package>"],
+      "examples": ["bun link", "bun link <package>", "bun link --save <package>"],
       "usage": "Usage: bun link [flags] [<packages>]",
       "documentationUrl": "https://bun.com/docs/cli/link.",
       "dynamicCompletions": {}
@@ -2567,14 +2567,14 @@
         },
         {
           "name": "no-save",
-          "description": "Don't update package.json or save a lockfile",
+          "description": "Don't update package.json or save a lockfile (the default)",
           "hasValue": false,
           "required": false,
           "multiple": false
         },
         {
           "name": "save",
-          "description": "Save to package.json (true by default)",
+          "description": "Update package.json and save a lockfile (false by default)",
           "hasValue": false,
           "required": false,
           "multiple": false

@@ -2487,6 +2487,7 @@ pub(crate) mod __gated_printer {
                 //
                 if record.tag == ImportRecordTag::Bun {
                     if record.kind == ImportKind::Dynamic {
+                        self.print_space_before_identifier();
                         self.print(b"Promise.resolve(globalThis.Bun)");
                         if wrap {
                             self.print(b")");
@@ -2494,6 +2495,7 @@ pub(crate) mod __gated_printer {
                         return;
                     } else if record.kind == ImportKind::Require || record.kind == ImportKind::Stmt
                     {
+                        self.print_space_before_identifier();
                         self.print(b"globalThis.Bun");
                         if wrap {
                             self.print(b")");
@@ -2583,6 +2585,11 @@ pub(crate) mod __gated_printer {
 
                     // Return the namespace object if this is an ESM file
                     if meta.exports_ref.is_valid() {
+                        // When wrapper_ref was invalid the block above emitted
+                        // nothing, so the next token (`__toCommonJS` or the
+                        // exports symbol) can fuse with a preceding identifier
+                        // (e.g. `return`) under minify-whitespace.
+                        self.print_space_before_identifier();
                         // Wrap this with a call to "__toCommonJS()" if this is an ESM file
                         let wrap_with_to_cjs = record
                             .flags

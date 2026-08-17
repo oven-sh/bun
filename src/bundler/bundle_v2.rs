@@ -3878,6 +3878,7 @@ pub mod bv2_impl {
             minify_duration: &mut u64,
             source_code_size: &mut u64,
             fetcher: Option<&DependenciesScanner>,
+            plugins: Option<NonNull<crate::bundle_v2::JSBundlerPlugin>>,
         ) -> Result<BuildResult, Error> {
             let mut this = BundleV2::init(
                 transpiler,
@@ -3888,6 +3889,7 @@ pub mod bv2_impl {
                 None,
                 alloc,
             )?;
+            this.plugins = plugins;
             this.unique_key = generate_unique_key();
 
             // Wrap so every exit path (incl. `?`) hits the cleanup below.

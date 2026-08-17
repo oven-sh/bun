@@ -47,19 +47,20 @@ interface PluginBuilderExt extends PluginBuilder {
 }
 
 /**
- * Used by Bun.serve() to resolve and load plugins.
+ * Used by Bun.serve() and the `bun build` CLI to resolve and load plugins.
  */
 export function loadAndResolvePluginsForServe(
   this: BundlerPlugin,
   plugins: string[],
   bunfig_folder: string,
   runSetupFn: typeof runSetupFunction,
+  target: BuildConfig["target"],
 ) {
   // Same config as created in HTMLBundle.init
   let config: BuildConfigExt = {
     experimentalCss: true,
     experimentalHtml: true,
-    target: "browser",
+    target: target || "browser",
     root: bunfig_folder,
   };
 

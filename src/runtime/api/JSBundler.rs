@@ -1668,6 +1668,7 @@ pub mod js_bundler {
             plugin: &Plugin,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            target: JSValue,
         ) -> JSValue;
     }
 
@@ -1706,6 +1707,7 @@ pub mod js_bundler {
             &self,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            target: JSValue,
         ) -> JSValue;
     }
 
@@ -1804,9 +1806,10 @@ pub mod js_bundler {
             &self,
             plugins: JSValue,
             bunfig_folder: JSValue,
+            target: JSValue,
         ) -> JSValue {
             jsc::mark_binding();
-            JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder)
+            JSBundlerPlugin__loadAndResolvePluginsForServe(self, plugins, bunfig_folder, target)
         }
     }
 

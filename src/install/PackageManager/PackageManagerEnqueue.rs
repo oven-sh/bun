@@ -3065,10 +3065,10 @@ fn bind_existing_peer(
                 existing_package
                     .name
                     .fmt(this.lockfile.buffers.string_bytes.as_slice()),
-                bun_fmt::EscapeControlChars(bun_fmt::redacted(existing_package.resolution.fmt(
+                bun_core::fmt::for_terminal(existing_package.resolution.fmt(
                     this.lockfile.buffers.string_bytes.as_slice(),
                     bun_fmt::PathSep::Auto
-                ))),
+                )),
             ),
         );
     }

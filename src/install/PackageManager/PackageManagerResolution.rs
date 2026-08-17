@@ -2,7 +2,6 @@ use crate::lockfile::package::PackageColumns as _;
 use core::mem::ManuallyDrop;
 
 use bun_core::Output;
-use bun_core::fmt::redacted;
 use bun_core::strings;
 use bun_paths::PathBuffer;
 use bun_semver as semver;
@@ -373,9 +372,9 @@ impl PackageManager {
                     {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            (bun_core::fmt::EscapeControlChars(redacted(
+                            (bun_core::fmt::for_terminal(
                                 failed_dep.version.literal.fmt(string_buf),
-                            )),),
+                            ),),
                         );
                     } else {
                         Output::err_generic(
@@ -384,9 +383,9 @@ impl PackageManager {
                                 bun_core::fmt::escape_control_chars(
                                     failed_dep.name.slice(string_buf),
                                 ),
-                                bun_core::fmt::EscapeControlChars(redacted(
+                                bun_core::fmt::for_terminal(
                                     failed_dep.version.literal.fmt(string_buf),
-                                )),
+                                ),
                             ),
                         );
                     }

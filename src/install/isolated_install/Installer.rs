@@ -3,7 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
-use bun_core::fmt::{EscapeControlChars, redacted};
+use bun_core::fmt::EscapeControlChars;
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
@@ -313,9 +313,9 @@ impl<'a> Installer<'a> {
                 "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                 (
                     bun_core::fmt::escape_control_chars(name),
-                    bun_core::fmt::EscapeControlChars(redacted(
+                    bun_core::fmt::for_terminal(
                         resolution.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                    )),
+                    ),
                     bstr::BStr::new(download_error_reason(err)),
                     EscapeControlChars(bun_core::fmt::redacted_npm_url(url)),
                 ),
@@ -380,9 +380,8 @@ impl<'a> Installer<'a> {
         let pkg_res = pkg_resolutions[pkg_id as usize];
         let pkg_name =
             bun_core::fmt::escape_control_chars(pkg_names[pkg_id as usize].slice(string_buf));
-        let pkg_res_fmt = EscapeControlChars(redacted(
-            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-        ));
+        let pkg_res_fmt =
+            bun_core::fmt::for_terminal(pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto));
 
         match err {
             TaskError::LinkPackage(link_err) => {

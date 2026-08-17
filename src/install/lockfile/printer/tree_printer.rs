@@ -4,7 +4,7 @@ use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars, redacted};
+use bun_core::fmt::{PathSep, escape_control_chars};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
@@ -520,7 +520,7 @@ where
     let packages_slice = this.lockfile.packages.slice();
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
-    let version = EscapeControlChars(redacted(resolution.fmt(string_buf, PathSep::Posix)));
+    let version = bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix));
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
@@ -599,7 +599,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<d>@{f}<r>",
-        bun_core::fmt::EscapeControlChars(redacted(resolution.fmt(string_buf, PathSep::Posix))),
+        bun_core::fmt::for_terminal(resolution.fmt(string_buf, PathSep::Posix)),
     )?;
     writer.write_str(if has_binaries {
         " with binaries:\n"
@@ -789,9 +789,9 @@ where
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
                 bun_core::fmt::escape_control_chars(package_name),
-                bun_core::fmt::EscapeControlChars(redacted(
+                bun_core::fmt::for_terminal(
                     resolved[package_id as usize].fmt(string_buf, PathSep::Auto)
-                )),
+                ),
             )?;
         }
     }

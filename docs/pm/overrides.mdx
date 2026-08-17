@@ -60,37 +60,9 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specif
 
 Bun only reads overrides from the root `package.json`, not from workspace packages. Overrides apply to `peerDependencies` as well.
 
-## Nested overrides
-
-A bare key applies its rule to every occurrence of the package in the tree. To limit a rule to one parent package, or to specific versions of the target, scope the key. Bun accepts the forms used by npm, Yarn, and pnpm:
-
-```json package.json icon="file-json"
-{
-  "overrides": {
-    "bar@<4.4.0": "~4.4.0",
-    "foo": { "bar": "~4.4.0" },
-    "foo/bar": "~4.4.0",
-    "foo>bar": "~4.4.0",
-    "foo@^2.0.0": { "bar": "~4.4.0" }
-  }
-}
-```
-
-- `"bar@<4.4.0"` applies only to versions of `bar` that match the range.
-- npm's object form, Yarn's `/` path form, and pnpm's `>` form are equivalent: the rule applies to `bar` only where it is a dependency of `foo`. The parent can carry its own version range, and Yarn's `**/` wildcard segments are accepted.
-
-Scoping is one level deep: a key like `"a>b>c"` logs a warning and is ignored.
-
-<Note>
-  Scoped rules are recorded in the lockfile as `"lockfileVersion": 3`, which Bun 1.3 and earlier cannot read. See
-  [Upgrading to Bun 1.4](/upgrade-to-1.4) before adding them to a project that older Bun versions still install.
-</Note>
-
 ## `"resolutions"`
 
 `"resolutions"` is Yarn's alternative to `"overrides"`, with similar syntax. Bun supports it to help projects migrate from Yarn.
-
-Scoped keys work here too (see [Nested overrides](#nested-overrides)), except npm's object form, which is only valid in `"overrides"`.
 
 {/* prettier-ignore */}
 ```json package.json icon="file-json"

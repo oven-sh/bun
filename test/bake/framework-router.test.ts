@@ -541,3 +541,100 @@ describe("url matching", () => {
     expect(r.match("/blog//")).toBe(null);
   });
 });
+
+describe("dynamic route precedence", () => {
+  /** Scans a router made of `files` and returns, for each url, the page file (relative to the root) that serves it. */
+  function servedBy(files: string[], urls: string[]): Record<string, string | null> {
+    using dir = tempDir("fsr-precedence", Object.fromEntries(files.map(file => [file, "1"])));
+    const router = new FrameworkRouter({ root: String(dir), style: "nextjs-pages" });
+    return Object.fromEntries(
+      urls.map(url => {
+        const match = router.match(url);
+        return [url, match === null ? null : path.relative(String(dir), match.route.page).replaceAll("\\", "/")];
+      }),
+    );
+  }
+
+  // The file names in each case are chosen so that the directory scan visits the losing route first.
+  test.each([
+    [
+      "a static segment beats a param",
+      ["blog/[slug].tsx", "[section]/[slug].tsx"],
+      { "/blog/hello": "blog/[slug].tsx", "/news/hello": "[section]/[slug].tsx" },
+    ],
+    [
+      "a static segment beats a param after a shared param",
+      ["[user]/posts/[id].tsx", "[user]/[section]/[id].tsx"],
+      { "/joe/posts/1": "[user]/posts/[id].tsx", "/joe/likes/1": "[user]/[section]/[id].tsx" },
+    ],
+    [
+      "a static segment beats a catch-all after a shared param",
+      ["[team]/docs/[[...path]].tsx", "[team]/[...path].tsx"],
+      {
+        "/acme/docs": "[team]/docs/[[...path]].tsx",
+        "/acme/docs/a/b": "[team]/docs/[[...path]].tsx",
+        "/acme/billing": "[team]/[...path].tsx",
+      },
+    ],
+    [
+      "a static segment followed by an optional catch-all beats a param",
+      ["[id].tsx", "opt/[[...rest]].tsx"],
+      { "/opt": "opt/[[...rest]].tsx", "/opt/a": "opt/[[...rest]].tsx", "/other": "[id].tsx" },
+    ],
+    ["a param beats a catch-all", ["[slug].tsx", "[...rest].tsx"], { "/a": "[slug].tsx", "/a/b": "[...rest].tsx" }],
+    [
+      "a param beats an optional catch-all",
+      ["[slug].tsx", "[[...rest]].tsx"],
+      { "/": "[[...rest]].tsx", "/a": "[slug].tsx", "/a/b": "[[...rest]].tsx" },
+    ],
+    [
+      "a catch-all beats an optional catch-all",
+      ["[...slug].tsx", "[[...slug]].tsx"],
+      { "/": "[[...slug]].tsx", "/a": "[...slug].tsx", "/a/b": "[...slug].tsx" },
+    ],
+    [
+      "a catch-all beats an optional catch-all after a shared static segment",
+      ["docs/[...rest].tsx", "docs/[[...opt]].tsx"],
+      { "/docs": "docs/[[...opt]].tsx", "/docs/a": "docs/[...rest].tsx" },
+    ],
+    [
+      "two params beat a catch-all",
+      ["[slug]/[id].tsx", "[...rest].tsx"],
+      { "/a/b": "[slug]/[id].tsx", "/a/b/c": "[...rest].tsx" },
+    ],
+    [
+      "the route that ends first beats one that continues with an optional catch-all",
+      ["[slug].tsx", "[slug]/[[...rest]].tsx"],
+      { "/a": "[slug].tsx", "/a/b": "[slug]/[[...rest]].tsx" },
+    ],
+  ])("%s", (_, files, expected) => {
+    expect(servedBy(files, Object.keys(expected))).toStrictEqual(expected);
+  });
+
+  test("precedence is decided at the first segment that differs", () => {
+    const files = [
+      "[...all].tsx",
+      "[[...opt]].tsx",
+      "[slug].tsx",
+      "[slug]/[id].tsx",
+      "[slug]/[...rest].tsx",
+      "[team]/docs/[[...path]].tsx",
+      "docs/[page]/[[...rest]].tsx",
+      "docs/[...rest].tsx",
+      "opt/[[...rest]].tsx",
+    ];
+    const expected = {
+      "/": "[[...opt]].tsx",
+      "/a": "[slug].tsx",
+      "/a/b": "[slug]/[id].tsx",
+      "/a/b/c": "[slug]/[...rest].tsx",
+      "/acme/docs": "[team]/docs/[[...path]].tsx",
+      "/acme/docs/intro": "[team]/docs/[[...path]].tsx",
+      "/docs/intro": "docs/[page]/[[...rest]].tsx",
+      "/docs/intro/b": "docs/[page]/[[...rest]].tsx",
+      "/opt": "opt/[[...rest]].tsx",
+      "/opt/a": "opt/[[...rest]].tsx",
+    };
+    expect(servedBy(files, Object.keys(expected))).toStrictEqual(expected);
+  });
+});

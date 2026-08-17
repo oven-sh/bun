@@ -47,7 +47,7 @@ pub struct FrameworkRouter {
     ///
     /// Root files are not caught using this technique, since every route tree has a
     /// root. This check is special cased.
-    // TODO: no code to sort this data structure
+    /// Sorted by `EncodedPattern::precedence_key` at the end of `scan`; `match_slow` returns the first match.
     pub(crate) dynamic_routes: DynamicRouteMap,
 
     /// Arena allocator for pattern strings.
@@ -309,6 +309,17 @@ impl EncodedPattern {
             }
         }
         bun_wyhash::hash(&stack_space[..pos]) as usize
+    }
+
+    /// Next.js `getSortedRoutes` order: per part text < param < catch-all < optional catch-all, shorter first, groups ignored.
+    fn precedence_key(&self) -> impl Iterator<Item = (u8, &[u8])> {
+        self.iterate().filter_map(|part| match part {
+            Part::Text(text) => Some((0, text)),
+            Part::Param(_) => Some((1, b"".as_slice())),
+            Part::CatchAll(_) => Some((2, b"".as_slice())),
+            Part::CatchAllOptional(_) => Some((3, b"".as_slice())),
+            Part::Group(_) => None,
+        })
     }
 
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
@@ -1481,7 +1492,14 @@ impl FrameworkRouter {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)?;
+        self.dynamic_routes.sort(|patterns, _, a, b| {
+            patterns[a]
+                .precedence_key()
+                .cmp(patterns[b].precedence_key())
+                .is_lt()
+        });
+        Ok(())
     }
 
     fn scan_inner(

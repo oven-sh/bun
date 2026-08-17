@@ -38,9 +38,7 @@ static bool hasAcceptableHost(const WTF::URL& url)
     return Bun::hasValidPunycodeHost(url.host()) || !url.hasSpecialScheme();
 }
 
-// The basic URL parser removes these before any state runs. The host, hostname
-// and pathname setters look at the value (empty check, port digits, leading "/")
-// before WTF::URL reparses it, so they have to remove them up front too.
+// The basic URL parser removes these first; the setters below inspect the value before WTF::URL reparses it.
 static String removeTabAndNewline(const String& value)
 {
     return value.removeCharacters([](char16_t c) { return c == '\t' || c == '\n' || c == '\r'; });

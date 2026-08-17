@@ -1,4 +1,5 @@
 #include "EventEmitter.h"
+#include "BunClientData.h"
 
 #include "Event.h"
 
@@ -246,6 +247,8 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (!jsFunction) [[unlikely]]
             continue;
+        if (WebCore::clientData(vm)->isJSExecutionForbidden(vm)) [[unlikely]]
+            break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();
         auto callData = JSC::getCallData(jsFunction);

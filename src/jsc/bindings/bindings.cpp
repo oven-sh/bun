@@ -3133,7 +3133,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
     // teardown has forbidden script, a callback from any event source is a silent no-op rather
     // than each source checking.
-    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+    if (WebCore::clientData(vm)->isJSExecutionForbidden(vm)) [[unlikely]] {
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
@@ -5202,9 +5202,18 @@ bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* gl
     return JSC::getVM(globalObject).hasPendingTerminationException();
 }
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
+void JSC__VM__setExecutionForbidden(JSC::VM* arg0)
 {
     (*arg0).setExecutionForbidden();
+}
+
+// The stop of a VM (worker terminate() / process.exit()), armed by the requesting thread right before it fires the
+// termination trap: JSC then forbids execution in the same step that throws the TerminationException, as it does for
+// WebCore's worker VMs (which arm this at creation — Bun cannot, node:vm's timeouts terminate the same VM and must
+// not forbid). Ordered before the trap by VMTraps' signalling lock.
+extern "C" void JSC__VM__forbidExecutionOnTermination(JSC::VM* vm)
+{
+    vm->forbidExecutionOnTermination();
 }
 
 // These may be called concurrently from another thread — or from the VM's own thread inside a host call,
@@ -6799,6 +6808,7 @@ extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globa
     if (!exception || !vm.isTerminationException(exception))
         return false;
     ASSERT(!WebCore::clientData(vm)->scriptAllowed());
+    ASSERT(vm.executionForbidden()); // the stop armed forbidExecutionOnTermination before firing the trap
     DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
     // Thrown by a trap check out here, no VM entry exit will reset this for JSC (VM::executeEntryScopeServicesOnExit).
     if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))

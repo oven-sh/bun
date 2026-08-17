@@ -1,5 +1,6 @@
 #include "BunProcess.h"
 #include "headers.h"
+#include "BunClientData.h"
 #include "node_api.h"
 #include "root.h"
 #include "JavaScriptCore/ConstructData.h"
@@ -97,7 +98,11 @@ using namespace Zig;
     /* PREAMBLE then sees as an unchecked exception. If you need to throw */    \
     /* or clear exceptions, make your own scope. */                             \
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
-    NAPI_RETURN_IF_EXCEPTION(_env)
+    NAPI_RETURN_IF_EXCEPTION(_env);                                             \
+    /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
+    if (WebCore::clientData(_env->vm())->isJSExecutionForbidden(_env->vm()))    \
+        [[unlikely]]                                                            \
+        return napi_set_last_error(_env, napi_pending_exception);
 
 // Only use this for functions that need their own throw or catch scope. Functions that call into
 // JS code that might throw should use NAPI_RETURN_IF_EXCEPTION.

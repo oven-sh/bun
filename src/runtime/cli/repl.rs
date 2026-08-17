@@ -1022,6 +1022,24 @@ impl<'a> Repl<'a> {
     }
 
     /// Restore raw terminal mode after promise wait
+    /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
+    fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
+        use core::sync::atomic::Ordering;
+        SIGINT_DURING_WAIT.store(false, Ordering::Release);
+        while jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending {
+            if SIGINT_DURING_WAIT.swap(false, Ordering::AcqRel) {
+                return true;
+            }
+            vm.as_mut().event_loop_mut().tick();
+            if jsc::JSPromise::opaque_mut(promise).status() == PromiseStatus::Pending
+                && !SIGINT_DURING_WAIT.load(Ordering::Acquire)
+            {
+                vm.as_mut().event_loop_mut().auto_tick();
+            }
+        }
+        false
+    }
+
     fn disable_signals_during_wait(&mut self) {
         SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
 
@@ -1523,16 +1541,8 @@ impl<'a> Repl<'a> {
             self.enable_signals_during_wait();
             // Note: reshaped for borrowck — call disable_signals_during_wait() explicitly on each return path below
 
-            // Wait for the promise to settle
-            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-
-            // If execution was forbidden by SIGINT, clear it and report
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
+            // Wait for the promise to settle, or for a SIGINT.
+            if Self::wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -1828,14 +1838,8 @@ impl<'a> Repl<'a> {
             // owning JSC VM handle for this thread.
             jsc::JSPromise::opaque_mut(promise).set_handled();
             self.enable_signals_during_wait();
-            // Note: reshaped for borrowck — disable_signals_during_wait called on each path
-            // Interrupted (SIGINT forbids execution) ⇒ handled just below.
-            let _ = vm
-                .as_mut()
-                .wait_for_promise(jsc::AnyPromise::Normal(promise));
-            if vm.jsc_vm().execution_forbidden() {
-                vm.jsc_vm().set_execution_forbidden(false);
-                global.clear_termination_exception();
+            // Wait for the promise to settle, or for a SIGINT.
+            if Self::wait_for_promise_or_sigint(vm, promise) {
                 self.print(format_args!("\n"));
                 self.disable_signals_during_wait();
                 return;
@@ -2726,14 +2730,14 @@ impl<'a> Drop for Repl<'a> {
 // not. `null` encodes `None`.
 static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+/// A SIGINT arrived while the REPL was waiting on a promise: stop waiting (the signal itself interrupts the
+/// loop's poll). Not a VM stop — the VM stays usable.
+static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    let vm = SIGINT_VM.load(core::sync::atomic::Ordering::Acquire);
-    if !vm.is_null() {
-        // `vm` was a valid `*mut jsc::VM` when stored (JS thread is
-        // blocked in wait while the handler runs, so it stays valid).
-        jsc::VM::opaque_ref(vm).set_execution_forbidden(true);
+    if !SIGINT_VM.load(core::sync::atomic::Ordering::Acquire).is_null() {
+        SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
     }
 }
 

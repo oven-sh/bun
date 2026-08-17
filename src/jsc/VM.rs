@@ -29,7 +29,8 @@ unsafe extern "C" {
     safe fn JSC__VM__runGC(vm: &VM, sync: bool) -> usize;
     safe fn JSC__VM__heapSize(vm: &VM) -> usize;
     safe fn JSC__VM__collectAsync(vm: &VM);
-    safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
+    safe fn JSC__VM__setExecutionForbidden(vm: &VM);
+    safe fn JSC__VM__forbidExecutionOnTermination(vm: &VM);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
     safe fn JSC__VM__isEntered(vm: &VM) -> bool;
@@ -99,8 +100,16 @@ impl VM {
         JSC__VM__collectAsync(self)
     }
 
-    pub fn set_execution_forbidden(&self, forbidden: bool) {
-        JSC__VM__setExecutionForbidden(self, forbidden)
+    /// Script on this VM is over for good (JSC::VM::setExecutionForbidden; there is no way back).
+    pub fn set_execution_forbidden(&self) {
+        JSC__VM__setExecutionForbidden(self)
+    }
+
+    /// Have JSC forbid execution in the same step that throws this VM's next TerminationException
+    /// (JSC::VM::forbidExecutionOnTermination). Armed by the thread requesting the VM's stop, before it fires
+    /// the trap; node:vm's own terminations never arm it.
+    pub fn forbid_execution_on_termination(&self) {
+        JSC__VM__forbidExecutionOnTermination(self)
     }
 
     pub fn execution_forbidden(&self) -> bool {

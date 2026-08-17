@@ -3279,7 +3279,7 @@ uint8_t GlobalObject::drainMicrotasks()
 
     // A stopped VM has no checkpoint to run: whether or not its termination is still pending here (the
     // landing frame may already have taken it), nothing queued may execute any more.
-    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+    if (WebCore::clientData(vm)->isJSExecutionForbidden(vm)) [[unlikely]] {
         Bun__VM__takeTerminationOutsideScript(this);
         return 1;
     }

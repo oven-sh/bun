@@ -390,7 +390,14 @@ impl VmHandle {
             // SAFETY: inside the gate before `Closed` ⇒ the VM is alive;
             // `notify_need_termination` is thread-safe (VMTraps). Raw field
             // read, no `&VirtualMachine` formed off-thread.
-            unsafe { (*(*self.0.hot.vm).jsc_vm.cast_const()).notify_need_termination() };
+            unsafe {
+                let jsc_vm = &*(*self.0.hot.vm).jsc_vm.cast_const();
+                // This termination is the VM's stop: JSC forbids execution as it throws it (WebCore's
+                // forbidExecutionOnTermination, armed per stop rather than per VM because node:vm's
+                // timeouts terminate the same VM). Ordered before the trap by VMTraps' signalling lock.
+                jsc_vm.forbid_execution_on_termination();
+                jsc_vm.notify_need_termination();
+            }
             self.0.loop_of(LoopKind::Regular).wakeup();
         }
     }

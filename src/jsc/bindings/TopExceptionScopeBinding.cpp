@@ -69,6 +69,7 @@ extern "C" bool TopExceptionScope__takeTerminationOutsideScript(void* ptr)
     if (!exception || !vm.isTerminationException(exception))
         return false;
     ASSERT(!WebCore::clientData(vm)->scriptAllowed());
+    ASSERT(vm.executionForbidden()); // the stop armed forbidExecutionOnTermination before firing the trap
     scope->clearException();
     if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.clearHasTerminationRequest();

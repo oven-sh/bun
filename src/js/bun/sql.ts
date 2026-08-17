@@ -11,6 +11,7 @@ const { SQLHelper, parseOptions } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
 const { validateAbortSignal } = require("internal/validators");
+const { resistStopPropagation } = require("internal/shared");
 
 const defineProperties = Object.defineProperties;
 
@@ -914,7 +915,9 @@ const SQL: typeof Bun.SQL = function SQL(
     const state: ReserveAbortState = { signal, promiseWithResolvers, onConnected: null, onAbort: null };
     state.onConnected = onReserveConnectedWithSignal.bind(state);
     state.onAbort = onReserveAbort.bind(state);
-    signal.addEventListener("abort", state.onAbort, { once: true });
+    // resistStopPropagation: a user listener on the same signal calling
+    // stopImmediatePropagation() must not starve the cancellation.
+    signal.addEventListener("abort", state.onAbort, resistStopPropagation({ __proto__: null, once: true }));
     pool.connect(state.onConnected, true);
     return promiseWithResolvers.promise;
   };

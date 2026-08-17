@@ -332,11 +332,7 @@ impl<R: ResolverContext> ResolverContextDyn for R {
     }
 }
 
-/// Comparator for the post-build dependency sort. Hoisted out of
-/// `parse_with_json_impl` so `<[Dependency]>::sort_by` is instantiated once
-/// (the closure it wraps is zero-capture modulo `buf`, and the impl fn is
-/// itself non-generic, so the 6.5kB pdqsort + 2.2kB drift is emitted exactly
-/// once instead of per-`R`).
+/// Comparator for the post-build dependency sort in `parse_with_json_impl`.
 #[inline]
 fn dep_sort_cmp(buf: &[u8], a: &Dependency, b: &Dependency) -> core::cmp::Ordering {
     // `slice::sort_by` requires

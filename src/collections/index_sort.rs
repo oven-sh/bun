@@ -58,12 +58,13 @@ pub fn sort_vec_unstable_by<T>(items: &mut Vec<T>, mut cmp: impl FnMut(&T, &T) -
 }
 
 /// Reorders `items` in place so that `items[i]` becomes the element that was at `order[i]`,
-/// without a scratch `Vec`; `order` must be a permutation of `0..items.len()` and is consumed.
+/// without a scratch `Vec`; `order` must be a permutation of `0..items.len()` and is left as
+/// the identity permutation.
 pub fn apply_permutation_in_place<T>(items: &mut [T], order: &mut [u32]) {
     debug_assert_eq!(items.len(), order.len());
-    const DONE: u32 = u32::MAX;
     for start in 0..items.len() {
-        if order[start] == DONE {
+        // Already in place: either a fixed point or part of a cycle applied from an earlier `start`.
+        if order[start] as usize == start {
             continue;
         }
         // Walk the cycle starting at `start`; each swap puts the right element into `cur`
@@ -71,10 +72,11 @@ pub fn apply_permutation_in_place<T>(items: &mut [T], order: &mut [u32]) {
         let mut cur = start;
         loop {
             let next = order[cur] as usize;
-            order[cur] = DONE;
+            order[cur] = cur as u32;
             if next == start {
                 break;
             }
+            debug_assert_ne!(next, cur, "order is not a permutation");
             items.swap(cur, next);
             cur = next;
         }
@@ -131,6 +133,34 @@ mod tests {
         sort_slice_unstable_by(&mut a, |x, y| y.cmp(x));
         b.sort_by(|x, y| y.cmp(x));
         assert_eq!(a, b);
+    }
+
+    /// Every permutation of up to 5 elements, checked against the gather-based `apply_permutation`.
+    #[test]
+    fn in_place_permutation_matches_gather() {
+        for len in 0..=5usize {
+            // Enumerate all `len`-digit base-`len` numbers and keep the ones that are permutations.
+            for encoded in 0..len.pow(len as u32) {
+                let mut order: Vec<u32> = (0..len as u32)
+                    .map(|digit| (encoded / len.pow(digit) % len) as u32)
+                    .collect();
+                let mut seen = vec![false; len];
+                let is_permutation = order
+                    .iter()
+                    .all(|&i| !core::mem::replace(&mut seen[i as usize], true));
+                if !is_permutation {
+                    continue;
+                }
+
+                let mut expected: Vec<usize> = (0..len).map(|i| i * 10).collect();
+                apply_permutation(&mut expected, &order);
+
+                let mut items: Vec<usize> = (0..len).map(|i| i * 10).collect();
+                apply_permutation_in_place(&mut items, &mut order);
+                assert_eq!(items, expected);
+                assert_eq!(order, identity(len));
+            }
+        }
     }
 
     #[test]

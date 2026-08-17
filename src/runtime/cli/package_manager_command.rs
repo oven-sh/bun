@@ -631,8 +631,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     dependencies,
                     buf: string_bytes,
                 };
-                // `sort_unstable_by` is pdqsort; names are
-                // unique so stability is irrelevant.
+                // Names are unique, so stability is irrelevant.
                 index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| {
                     by_name.cmp(a, b)
                 });
@@ -854,8 +853,7 @@ fn print_node_modules_folder_structure(
         dependencies,
         buf: string_bytes,
     };
-    // `sort_unstable_by` is pdqsort; names are unique so
-    // stability is irrelevant.
+    // Names are unique, so stability is irrelevant.
     index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
 
     let sorted_len = sorted_dependencies.len();

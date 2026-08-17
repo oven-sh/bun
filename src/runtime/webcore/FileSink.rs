@@ -317,14 +317,14 @@ impl FileSink {
                 .replace(readable_stream::Strong::default());
             if readable_stream.has() {
                 if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = readable_stream.get(global).as_mut() {
+                    if let Some(stream) = readable_stream.get().as_mut() {
                         if !status.is_ok() {
                             // SAFETY: `bun_vm()` is non-null when `global_object()` was;
                             // `event_loop()` returns the live VM-owned `*mut EventLoop`.
                             let _entered = bun_jsc::event_loop::EventLoop::enter_scope(
                                 global.bun_vm().as_mut().event_loop(),
                             );
-                            stream.cancel(global);
+                            crate::dispatch::fold(stream.cancel(global));
                         } else {
                             stream.done(global);
                         }
@@ -514,7 +514,7 @@ impl FileSink {
             // SAFETY(JsCell): `Strong::has`/`get` are read-only on the GC root.
             if (*this).readable_stream.get_mut().has() {
                 if let Some(global) = (*this).js_global() {
-                    if let Some(stream) = (*this).readable_stream.get().get(global) {
+                    if let Some(stream) = (*this).readable_stream.get().get() {
                         stream.done(global);
                     }
                 }
@@ -1483,7 +1483,7 @@ impl FlushPendingTask {
 impl FileSink {
     /// Does not ref or unref.
     fn handle_resolve_stream(&self, global_this: &JSGlobalObject) {
-        if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
+        if let Some(stream) = self.readable_stream.get().get().as_mut() {
             stream.done(global_this);
         }
 
@@ -1493,15 +1493,17 @@ impl FileSink {
     }
 
     /// Does not ref or unref.
-    fn handle_reject_stream(&self, global_this: &JSGlobalObject, _err: JSValue) {
-        if let Some(stream) = self.readable_stream.get().get(global_this).as_mut() {
-            stream.abort(global_this);
+    fn handle_reject_stream(&self, global_this: &JSGlobalObject, _err: JSValue) -> JsResult<()> {
+        if let Some(stream) = self.readable_stream.get().get().as_mut() {
+            let aborted = stream.abort(global_this);
             self.readable_stream.set(readable_stream::Strong::default());
+            aborted?;
         }
 
         if !self.done.get() {
             self.writer.with_mut(|w| w.close());
         }
+        Ok(())
     }
 }
 
@@ -1524,7 +1526,7 @@ fn on_reject_stream(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsRe
     // SAFETY: `this` is kept alive by the ref taken in `assign_to_stream`; this guard balances it.
     let _guard = unsafe { FileSinkRef::adopt(this) };
     // SAFETY: `as_promise_ptr` recovers the `*mut FileSink` stashed by `assign_to_stream`.
-    unsafe { (*this).handle_reject_stream(global_this, err) };
+    unsafe { (*this).handle_reject_stream(global_this, err)? };
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1624,7 +1626,7 @@ impl FileSink {
                         // These don't ref().
                         // SAFETY: `js_promise` is non-null (`as_any_promise`).
                         let result = unsafe { (*js_promise).result(global_this.vm()) };
-                        self.handle_reject_stream(global_this, result);
+                        crate::dispatch::fold(self.handle_reject_stream(global_this, result));
                     }
                 }
             }

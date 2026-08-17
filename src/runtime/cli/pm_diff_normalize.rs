@@ -54,7 +54,7 @@ pub(crate) fn kind_for(path: &[u8]) -> Option<Kind> {
     KINDS.get(ext).copied()
 }
 
-pub(crate) const MAX_BYTES: usize = 32 * 1024 * 1024;
+pub(crate) const MAX_BYTES: usize = 64 * 1024 * 1024;
 
 /// How hard to normalise before comparing.
 #[derive(Clone, Copy, Default)]

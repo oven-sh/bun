@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isDebug, normalizeBunSnapshot, tempDir } from "harness";
 import { chmodSync, readdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 
@@ -1053,9 +1053,10 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
-  test("a file over the normalization size limit is diffed as text and says so", async () => {
+  // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
+  test.skipIf(isDebug)("a file over the normalization size limit is diffed as text and says so", async () => {
     // One long line, so the text diff over it is cheap and only the size check is exercised.
-    const big = "export const v = 1; /*" + Buffer.alloc(32 * 1024 * 1024, "x").toString() + "*/\n";
+    const big = "export const v = 1; /*" + Buffer.alloc(64 * 1024 * 1024, "x").toString() + "*/\n";
     const { text, exitCode } = await pretty({ "a/big.js": big, "b/big.js": big.replace("v = 1", "v = 2") });
     expect(text).toMatch(/\nbig\.js ─+ too large to normalize \+1 -1\n/);
     expect(text).toContain("│- export const v = 1;");

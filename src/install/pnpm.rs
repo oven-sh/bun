@@ -794,8 +794,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
             let path_str = sbuf!(lockfile).append(importer_path)?;
             lockfile.workspace_paths.put(name_hash, path_str)?;
 
-            // Same rule as the `workspaces` array parser: a version that does not parse, or has a
-            // wildcard, leaves the member unversioned.
+            // As in the `workspaces` array parser, an unparsable or wildcard version leaves the member unversioned.
             if let Some((version_raw, _)) = get_string(workspace_root, b"version") {
                 let version_str = sbuf!(lockfile).append(version_raw)?;
                 let parsed = semver::Version::parse(version_str.sliced(string_bytes!(lockfile)));

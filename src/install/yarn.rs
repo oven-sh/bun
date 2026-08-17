@@ -605,11 +605,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         yarn_entry_to_package_id.push(package_id);
     }
 
-    // The ids handed out above count every distinct name@version, but an entry
-    // whose resolution cannot be built is not appended below, and a package's id
-    // has to be its index in `this.packages`. Maps the ids above to the appended
-    // ones; a skipped entry stays `INVALID_PACKAGE_ID`, which gives its dependents
-    // the same unresolved edge as a spec with no yarn.lock entry at all.
+    // A package's id is its index in `this.packages`, and an entry whose resolution cannot be built is
+    // not appended; it stays `INVALID_PACKAGE_ID` here, an unresolved edge like a spec missing from yarn.lock.
     let mut appended_package_ids: Vec<PackageID> =
         vec![install::INVALID_PACKAGE_ID; next_package_id as usize];
     let mut seen_package_ids = vec![false; next_package_id as usize];

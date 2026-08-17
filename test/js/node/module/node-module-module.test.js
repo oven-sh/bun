@@ -254,17 +254,17 @@ console.log("survived", require("./late.js"));`,
     // Misses populate the cache and leave nothing mapped.
     expect(await run(cacheDir)).toEqual({ length: sourceSize, mapped: [] });
 
-    // big.js has the large entry. Its layout (NodeCompileCache.rs) is a 108-byte
-    // header whose second u32 is the stored source's size, the stored source,
-    // then the bytecode at the next multiple of 128.
+    // big.js has the large entry. An entry (NodeCompileCache.rs) starts with
+    // `magic u32 | stored source size u32 | bytecode size u32`, holds the stored
+    // source after the header, and ends with the bytecode.
     const entries = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })]
       .map(f => path.join(cacheDir, f))
       .sort((a, b) => fs.statSync(b).size - fs.statSync(a).size);
     expect(entries).toHaveLength(2);
     const entry = fs.readFileSync(entries[0]);
-    const codeSize = entry.readUInt32LE(4);
-    expect(codeSize).toBeGreaterThanOrEqual(sourceSize);
-    const bytecodeOffset = Math.ceil((108 + codeSize) / 128) * 128;
+    const bytecodeOffset = entry.length - entry.readUInt32LE(8);
+    expect(entry.readUInt32LE(4)).toBeGreaterThanOrEqual(sourceSize);
+    expect(bytecodeOffset).toBeGreaterThan(sourceSize);
 
     // /proc/self/auxv is a list of (type, value) u64 pairs; AT_PAGESZ is type 6.
     const auxv = fs.readFileSync("/proc/self/auxv");

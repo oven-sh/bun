@@ -194,7 +194,9 @@ pub(crate) fn write_bind<Context: WriterContext>(
         }
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                let mut str = BunString::empty();
+                // `json_stringify_fast` stores a +1 WTFStringImpl ref;
+                // `OwnedString` releases it on scope exit.
+                let mut str = bun_core::OwnedString::default();
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 value
                     .json_stringify_fast(global, &mut str)
@@ -203,7 +205,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
-                // `str.deref()` and `slice.deinit()` handled by Drop
+                // `slice.deinit()` handled by Drop
             }
             types::Tag::bool => {
                 let l = writer.length()?;

@@ -31,7 +31,7 @@ impl AWSClient {
             .copied()
             .unwrap_or(JSValue::UNDEFINED);
         Ok(Box::new(AWSClient {
-            options: Arc::new(AwsSignOptions::ambient().with_overrides(global, arg)?),
+            options: Arc::new(AwsSignOptions::ambient().with_overrides(global, &[arg])?),
         }))
     }
 
@@ -65,7 +65,7 @@ impl AWSClient {
             .first()
             .copied()
             .unwrap_or(JSValue::UNDEFINED);
-        let options = this.options.with_overrides(global, arg)?;
+        let options = this.options.with_overrides(global, &[arg])?;
         let refresh =
             arg.is_object() && arg.get_boolean_strict(global, "refresh")?.unwrap_or(false);
         if refresh && let Credentials::Provider(p) = &options.credentials {
@@ -88,7 +88,7 @@ impl AWSClient {
             return Err(global.throw_invalid_arguments(format_args!("presign() expects a URL")));
         };
         let options_value = args.get(1).copied().unwrap_or(JSValue::UNDEFINED);
-        let opts = this.options.with_overrides(global, options_value)?;
+        let opts = this.options.with_overrides(global, &[options_value])?;
 
         let href = if url_value.is_string() {
             BunString::from_js(url_value, global)?

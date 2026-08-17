@@ -159,7 +159,15 @@ pub fn parse_iso8601(s: &[u8]) -> Option<u64> {
     } else {
         return None;
     }
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || se > 60 {
+    let leap = y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+    let days_in_month = match mo {
+        1 | 3 | 5 | 7 | 8 | 10 | 12 => 31,
+        4 | 6 | 9 | 11 => 30,
+        2 if leap => 29,
+        2 => 28,
+        _ => return None,
+    };
+    if !(1..=days_in_month).contains(&d) || h > 23 || mi > 59 || se > 60 {
         return None;
     }
     let utc = days_from_civil(y, mo, d)? * 86_400 + h * 3600 + mi * 60 + se;
@@ -933,6 +941,9 @@ mod tests {
         assert_eq!(parse_iso8601(b"2015-08-30T14:36:00+9999"), None);
         assert_eq!(amz_datetime(1_440_938_160), *b"20150830T123600Z");
         assert_eq!(parse_iso8601(b"garbage"), None);
+        assert_eq!(parse_iso8601(b"20250230T000000Z"), None);
+        assert_eq!(parse_iso8601(b"2024-02-29T00:00:00Z"), Some(1_709_164_800));
+        assert_eq!(parse_iso8601(b"2023-02-29T00:00:00Z"), None);
     }
 
     #[test]

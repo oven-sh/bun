@@ -367,6 +367,9 @@ describe.concurrent("Bun.gcp", () => {
         const b = await (await Bun.gcp.fetch(echo, { scopes: ["bigquery"], headers: { "x-goog-user-project": "mine" } })).json();
         process.env.GOOGLE_APPLICATION_CREDENTIALS = ${JSON.stringify(join(sa, "sa.json"))};
         const c = await (await Bun.gcp.fetch(echo, { audience: "https://run.app/x" })).json();
+        // { url, ...init } shape, with a second init that does not name a token kind
+        const c2 = await (await Bun.gcp.fetch({ url: echo, audience: "https://run.app/x" }, { headers: { "x-extra": "1" } })).json();
+        if (c2.authorization !== c.authorization || c2["x-extra"] !== "1") throw new Error("init-dict overlay: " + JSON.stringify(c2));
         const errors = [];
         for (const init of [{ audience: "a", scopes: "b" }, { headers: { Authorization: "x" } }]) {
           try { await Bun.gcp.fetch(echo, init); errors.push("no error"); } catch (e) { errors.push(e.message); }

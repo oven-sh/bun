@@ -310,6 +310,38 @@ describe.concurrent("Bun.aws.credentials", () => {
     const missing = await creds({ HOME: dir, USERPROFILE: dir }, `{ profile: "nope" }`);
     expect(missing.error.code).toBe("ERR_AWS_CREDENTIALS");
     expect(missing.error.message).toContain('profile "nope" was not found');
+    expect(missing.error.message).not.toContain("could not read");
+    // a config file that exists but cannot be read is called out (here: a directory)
+    using unreadable = tempDir("aws-unreadable", { config: { "not-a-file": "" } });
+    const blocked = await creds(
+      { HOME: dir, USERPROFILE: dir, AWS_CONFIG_FILE: join(unreadable, "config") },
+      `{ profile: "nope" }`,
+    );
+    expect(blocked.error.message).toContain('profile "nope" was not found');
+    expect(blocked.error.message).toMatch(/could not read .*config \(E[A-Z]+\)/);
+    const ambient = await creds({
+      HOME: dir,
+      USERPROFILE: dir,
+      AWS_CONFIG_FILE: join(unreadable, "config"),
+      AWS_PROFILE: "nope",
+    });
+    expect(ambient.error.code).toBe("ERR_AWS_MISSING_CREDENTIALS");
+    expect(ambient.error.message).toMatch(/config \(could not be read: E[A-Z]+\); profile "nope" \(not found in/);
+    // …and when the profile *is* found (in the readable file) but has nothing usable
+    using half = tempDir("aws-half", { ".aws": { credentials: `[lonely]\nregion = us-east-1\n` } });
+    const lonely = await creds(
+      { HOME: half, USERPROFILE: half, AWS_CONFIG_FILE: join(unreadable, "config") },
+      `{ profile: "lonely" }`,
+    );
+    expect(lonely.error.message).toMatch(/does not contain credentials.*; could not read .*config \(E[A-Z]+\)/);
+    using ssoish = tempDir("aws-ssoish", {
+      ".aws": { credentials: `[dev]\nsso_session = corp\nsso_account_id = 1\nsso_role_name = r\n` },
+    });
+    const dev = await creds(
+      { HOME: ssoish, USERPROFILE: ssoish, AWS_CONFIG_FILE: join(unreadable, "config") },
+      `{ profile: "dev" }`,
+    );
+    expect(dev.error.message).toMatch(/sso-session corp.*; could not read .*config \(E[A-Z]+\)/);
   });
 
   test("AWS_SHARED_CREDENTIALS_FILE / AWS_CONFIG_FILE override the default paths", async () => {

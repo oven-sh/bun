@@ -602,28 +602,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         };
     }
 
-    // `Bun.aws.fetch` / `Bun.gcp.fetch`: signing / token options live at
-    // the top level of `init` alongside the usual RequestInit fields.
-    // (Parsed before anything below takes a +1 on a JS string.)
-    let auth_options = options_object.unwrap_or(JSValue::UNDEFINED);
-    let aws_sign: Option<crate::webcore::aws::AwsSignOptions> = match &auth {
-        FetchAuth::Aws(base) => Some(base.with_overrides(global_this, auth_options)?),
-        _ => None,
-    };
-    let gcp_auth: Option<crate::webcore::cloud::gcp::GcpFetchOptions> = match &auth {
-        FetchAuth::Gcp(base) => Some(
-            crate::webcore::cloud::gcp::GcpFetchOptions::from_js_with_base(
-                global_this,
-                auth_options,
-                base,
-            )?,
-        ),
-        _ => None,
-    };
-
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
-        StringOrURL::from_js(first_arg, global_this)?
+        StringOrURL::from_js(first_arg, global_this)?.map(bun_core::OwnedString::new)
     } else {
         None
     };
@@ -639,6 +620,25 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             break 'brk Some(first_arg);
         }
         break 'brk None;
+    };
+
+    // `Bun.aws.fetch` / `Bun.gcp.fetch`: signing / token options sit at the
+    // top level of the init dict(s), later ones winning like every other
+    // field (a credentials pair/triple counts as one field).
+    let inits = [request_init_object, options_object].map(|v| v.unwrap_or(JSValue::UNDEFINED));
+    let aws_sign: Option<crate::webcore::aws::AwsSignOptions> = match &auth {
+        FetchAuth::Aws(base) => Some(base.with_overrides(global_this, &inits)?),
+        _ => None,
+    };
+    let gcp_auth: Option<crate::webcore::cloud::gcp::GcpFetchOptions> = match &auth {
+        FetchAuth::Gcp(base) => Some(
+            crate::webcore::cloud::gcp::GcpFetchOptions::from_js_with_base(
+                global_this,
+                &inits,
+                base,
+            )?,
+        ),
+        _ => None,
     };
 
     // What the caller's `signal` already says, without taking a ref: used to
@@ -691,26 +691,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // is a substring sharing an `ExternalStringImpl` (e.g. a slice of a
     // `TextDecoder.decode()` result), that leaked +1 transitively pins the
     // external buffer past `~VM`.
-    let url_str: bun_core::OwnedString = bun_core::OwnedString::new('extract_url: {
+    let url_str: bun_core::OwnedString = 'extract_url: {
         if let Some(str) = url_str_optional {
             break 'extract_url str;
         }
 
         if let Some(req) = request_mut!() {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
-            break 'extract_url req.url.get().dupe_ref();
+            break 'extract_url bun_core::OwnedString::new(req.url.get().dupe_ref());
         }
 
         if let Some(request_init) = request_init_object {
             if let Some(url_) = request_init.fast_get(global_this, jsc::BuiltinName::Url)? {
                 if !url_.is_undefined() {
-                    break 'extract_url BunString::from_js(url_, global_this)?;
+                    break 'extract_url bun_core::OwnedString::new(BunString::from_js(
+                        url_,
+                        global_this,
+                    )?);
                 }
             }
         }
 
-        break 'extract_url BunString::empty();
-    });
+        break 'extract_url bun_core::OwnedString::new(BunString::empty());
+    };
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);

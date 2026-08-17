@@ -80,8 +80,8 @@ impl ClientOptions {
         if let Some(a) = audience_from_js(global, value)? {
             out.audience = Some(a);
         }
-        if value.get_truthy(global, "scopes")?.is_some() {
-            out.scopes = scopes_from_js(global, Some(value))?;
+        if let Some(scopes) = value.get_truthy(global, "scopes")? {
+            out.scopes = scopes_from_js(global, scopes)?;
         }
         Ok(out.finish())
     }
@@ -142,10 +142,11 @@ impl GCPClient {
             }
         }
         let scopes = match opts.filter(|o| o.is_object()) {
-            Some(o) if o.get_truthy(global, "scopes")?.is_some() => {
-                scopes_from_js(global, Some(o))?
-            }
-            _ => this.options.scopes.clone(),
+            Some(o) => match o.get_truthy(global, "scopes")? {
+                Some(scopes) => scopes_from_js(global, scopes)?,
+                None => this.options.scopes.clone(),
+            },
+            None => this.options.scopes.clone(),
         };
         let refresh = refresh_from(global, opts)?;
         this.start(global, TokenRequest::Access { scopes }, refresh)
@@ -256,14 +257,8 @@ fn checked_audience(global: &JSGlobalObject, audience: &[u8]) -> JsResult<Box<[u
     Ok(Box::from(audience))
 }
 
-/// `scopes: string | string[]` → space-joined; default cloud-platform.
-pub fn scopes_from_js(global: &JSGlobalObject, options: Option<JSValue>) -> JsResult<Box<[u8]>> {
-    let Some(opts) = options.filter(|o| o.is_object()) else {
-        return Ok(Box::from(DEFAULT_SCOPE));
-    };
-    let Some(v) = opts.get_truthy(global, "scopes")? else {
-        return Ok(Box::from(DEFAULT_SCOPE));
-    };
+/// A `scopes: string | string[]` value → space-joined scope URLs.
+pub fn scopes_from_js(global: &JSGlobalObject, v: JSValue) -> JsResult<Box<[u8]>> {
     let bad = || {
         global.throw_invalid_arguments(format_args!(
             "scopes must be a scope URL string or an array of them"
@@ -324,35 +319,34 @@ pub struct GcpFetchOptions {
 }
 
 impl GcpFetchOptions {
-    /// `init` may override `scopes` / `audience`; otherwise the client's default.
+    /// `inits`: the call's init dicts; the last one naming an `audience` or
+    /// `scopes` decides the token, otherwise the client's default.
     pub fn from_js_with_base(
         global: &JSGlobalObject,
-        value: JSValue,
+        inits: &[JSValue],
         base: &ClientOptions,
     ) -> JsResult<Self> {
-        if !value.is_object() {
-            return Ok(Self {
-                provider: Arc::clone(&base.default_provider),
-            });
+        let mut request = None;
+        for value in inits.iter().copied().filter(|v| v.is_object()) {
+            let scopes = value.get_truthy(global, "scopes")?;
+            if let Some(audience) = audience_from_js(global, value)? {
+                if scopes.is_some() {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "audience (an ID token) and scopes (an access token) are mutually exclusive"
+                    )));
+                }
+                request = Some(TokenRequest::Identity { audience });
+            } else if let Some(scopes) = scopes {
+                request = Some(TokenRequest::Access {
+                    scopes: scopes_from_js(global, scopes)?,
+                });
+            }
         }
-        let request = if let Some(audience) = audience_from_js(global, value)? {
-            if value.get_truthy(global, "scopes")?.is_some() {
-                return Err(global.throw_invalid_arguments(format_args!(
-                    "audience (an ID token) and scopes (an access token) are mutually exclusive"
-                )));
-            }
-            TokenRequest::Identity { audience }
-        } else if value.get_truthy(global, "scopes")?.is_some() {
-            TokenRequest::Access {
-                scopes: scopes_from_js(global, Some(value))?,
-            }
-        } else {
-            return Ok(Self {
-                provider: Arc::clone(&base.default_provider),
-            });
-        };
         Ok(Self {
-            provider: provider_for(request, &base.source),
+            provider: match request {
+                Some(request) => provider_for(request, &base.source),
+                None => Arc::clone(&base.default_provider),
+            },
         })
     }
 

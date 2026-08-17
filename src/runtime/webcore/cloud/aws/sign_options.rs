@@ -65,19 +65,21 @@ impl AwsSignOptions {
         }
     }
 
-    /// These options with the fields of `value` (an options object, or
-    /// `undefined`/`null` for none) laid over them.
-    pub fn with_overrides(&self, global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+    /// These options with the fields of each of `values` (options objects,
+    /// or `undefined`/`null` for none) laid over them in turn.
+    pub fn with_overrides(&self, global: &JSGlobalObject, values: &[JSValue]) -> JsResult<Self> {
         let mut out = self.clone();
-        if value.is_undefined_or_null() {
-            return Ok(out);
+        for value in values {
+            if value.is_undefined_or_null() {
+                continue;
+            }
+            if !value.is_object() {
+                return Err(global.throw_invalid_arguments(format_args!(
+                    "expected an options object like {{ region, profile, service, accessKeyId, secretAccessKey }}"
+                )));
+            }
+            out.apply(global, *value)?;
         }
-        if !value.is_object() {
-            return Err(global.throw_invalid_arguments(format_args!(
-                "expected an options object like {{ region, profile, service, accessKeyId, secretAccessKey }}"
-            )));
-        }
-        out.apply(global, value)?;
         Ok(out)
     }
 

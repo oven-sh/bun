@@ -174,17 +174,27 @@ describe("Bun.aws.fetch", () => {
     const s3 = { ...base, service: "s3", region: "us-east-1" };
     for (const signingDate of [
       {},
+      true,
       -1,
       1e21,
+      NaN,
+      Infinity,
+      -Infinity,
       new Date(NaN),
       new Date("+010000-01-01T00:00:00Z"),
       "20250101T000000\n",
+      "20250230T000000Z",
+      "20250101T000000z",
       "nope",
     ]) {
       expect(() => Bun.aws.presign(echo.url, { ...s3, signingDate: signingDate as any })).toThrow(/signingDate/);
     }
     expect(await Bun.aws.presign(echo.url, { ...s3, signingDate: Date.UTC(2031, 0, 2, 3, 4, 5) })).toContain(
       "X-Amz-Date=20310102T030405Z",
+    );
+    expect(await Bun.aws.presign(echo.url, { ...s3, signingDate: 0 })).toContain("X-Amz-Date=19700101T000000Z");
+    expect(await Bun.aws.presign(echo.url, { ...s3, signingDate: new Date(0) })).toContain(
+      "X-Amz-Date=19700101T000000Z",
     );
   });
 
@@ -340,6 +350,27 @@ describe("Bun.aws.fetch", () => {
     await expect(Bun.aws.fetch("/x", { service: "dynamodb", signal: ac.signal })).rejects.toThrow(/aborted/i);
     await expect(Bun.aws.fetch("/x", { service: "dynamodb", signal: 42 as any })).rejects.toThrow(/AbortSignal/);
     await expect(Bun.aws.fetch(echo.url, { signal: 42 as any })).rejects.toThrow(/AbortSignal/);
+    // init.signal is validated even when the Request already carries an aborted one
+    await expect(Bun.aws.fetch(new Request(echo.url, { signal: ac.signal }), { signal: 42 as any })).rejects.toThrow(
+      /AbortSignal/,
+    );
+    // the lone-init-dict call shape carries auth options too, and a 2nd init overlays it per field
+    const viaInit = await Bun.aws.fetch({
+      url: echo.url.href,
+      accessKeyId,
+      secretAccessKey,
+      service: "s3",
+      region: "us-east-1",
+    } as any);
+    expect((await viaInit.json()).headers.authorization).toStartWith(`AWS4-HMAC-SHA256 Credential=${accessKeyId}/`);
+    const overlaid = await Bun.aws.fetch(
+      { url: echo.url.href, accessKeyId, secretAccessKey, service: "s3", region: "us-east-1" } as any,
+      { region: "eu-west-1", headers: { "x-extra": "1" } } as any,
+    );
+    const seen = (await overlaid.json()).headers;
+    expect(seen.authorization).toContain(`Credential=${accessKeyId}/`);
+    expect(seen.authorization).toContain("/eu-west-1/s3/aws4_request");
+    expect(seen["x-extra"]).toBe("1");
     // init.signal: null detaches the Request's signal (as in plain fetch)
     const res = await Bun.aws.fetch(new Request(echo.url, { signal: ac.signal }), {
       accessKeyId,

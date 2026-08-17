@@ -50,6 +50,7 @@ pub fn resolve(cfg: ChainConfig, io: Io) -> ChainFuture<ChainResult> {
             config: None,
             credentials: None,
             notes: Vec::new(),
+            unreadable_files: Vec::new(),
         };
         let c = r.run().await?;
         if let Some(exp) = c.expiration
@@ -76,6 +77,8 @@ struct Resolver {
     credentials: Option<IniFile>,
     /// Why each skipped source was skipped, for the final "nothing found" error.
     notes: Vec<u8>,
+    /// Shared config files that exist but could not be read (`path (errno)`).
+    unreadable_files: Vec<u8>,
 }
 
 fn now_secs() -> u64 {
@@ -166,7 +169,19 @@ impl Resolver {
         }
         let profile = self.cfg.effective_profile().to_vec();
         let mut visited: Vec<Box<[u8]>> = Vec::new();
-        if let Some(mut c) = self.from_profile(&profile, &mut visited, 0).await? {
+        let from_profile = self.from_profile(&profile, &mut visited, 0).await;
+        // A profile that comes up short while a config file could not be read:
+        // say so, whatever the specific complaint was.
+        let from_profile = from_profile.map_err(|mut e| {
+            if !self.unreadable_files.is_empty() {
+                let mut m = e.message.into_vec();
+                m.extend_from_slice(b"; could not read ");
+                m.extend_from_slice(&self.unreadable_files);
+                e.message = m.into_boxed_slice();
+            }
+            e
+        });
+        if let Some(mut c) = from_profile? {
             if c.region.is_none() {
                 c.region = self
                     .profile_region(&profile)
@@ -266,9 +281,17 @@ impl Resolver {
             Ok(bytes) => IniFile::parse(&bytes, is_config),
             Err(e) => {
                 if !matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) {
-                    let kind = if is_config { "config" } else { "credentials" };
+                    if !self.unreadable_files.is_empty() {
+                        self.unreadable_files.extend_from_slice(b", ");
+                    }
+                    let _ = write!(
+                        &mut self.unreadable_files,
+                        "{} ({})",
+                        BStr::new(&path),
+                        BStr::new(e.name())
+                    );
                     self.note(format_args!(
-                        "{} ({kind} file: {})",
+                        "{} (could not be read: {})",
                         BStr::new(&path),
                         BStr::new(e.name())
                     ));

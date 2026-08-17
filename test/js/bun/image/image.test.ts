@@ -236,12 +236,13 @@ describe("Bun.Image", () => {
 
   test("metadata() reads PNG dimensions", async () => {
     const img = new Bun.Image(cornersPng);
+    // `.width`/`.height` are -1 until the first awaited terminal fills them in.
+    expect([img.width, img.height]).toEqual([-1, -1]);
     const meta = await img.metadata();
     expect(meta.width).toBe(4);
     expect(meta.height).toBe(3);
     expect(meta.format).toBe("png");
-    expect(img.width).toBe(4);
-    expect(img.height).toBe(3);
+    expect([img.width, img.height]).toEqual([4, 3]);
   });
 
   test("PNG → PNG round-trip preserves every pixel", async () => {

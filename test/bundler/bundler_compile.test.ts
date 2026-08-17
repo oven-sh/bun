@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, hostLooksNix, isWindows, readElfInterp, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1317,6 +1317,223 @@ test("compile --compile-executable-path rejects a Mach-O template whose __BUN se
     expect(exitCode).toBe(0);
   }
 }, 60_000);
+
+// `bun build --compile --target=bun-linux-*` appends the application bundle to the base
+// executable named by --compile-executable-path. To do that it walks the template's program
+// header table, section header table and .shstrtab, patches the .bun section and rewrites a
+// Nix store PT_INTERP. The templates below are the smallest ELF64 files with that shape:
+//
+//   [ehdr][phdrs][.shstrtab][.interp?][.bun (8 bytes)]   the writable PT_LOAD's file image
+//   [pad][section headers: null, .shstrtab, .bun, .interp?]
+//
+// Every field a `corruption` overrides is one the writer reads from the (arbitrary) template.
+const ELF = {
+  EHDR: 64,
+  PHDR: 56,
+  SHDR: 64,
+  PT_LOAD: 1,
+  PT_INTERP: 3,
+  SHT_PROGBITS: 1,
+  SHT_STRTAB: 3,
+  VADDR: 0x400000n,
+  U64_MAX: (1n << 64n) - 1n,
+};
+
+interface ElfTemplateOptions {
+  interp?: string; // adds a PT_INTERP holding this path and a matching .interp section
+  interpOffset?: bigint; // corrupts that PT_INTERP's p_offset
+  bunOffset?: bigint; // corrupts .bun's sh_offset
+  phoff?: bigint; // e_phoff
+  shoff?: bigint; // e_shoff
+  shstrndx?: number; // e_shstrndx
+  shstrtabOffset?: bigint; // .shstrtab's sh_offset
+  loadFilesz?: bigint; // p_filesz of the writable PT_LOAD
+  loadMemsz?: bigint; // p_memsz of the writable PT_LOAD
+  pad?: number; // zero bytes between the PT_LOAD's file image and the section header table
+}
+
+function elfTemplate(o: ElfTemplateOptions = {}): Buffer {
+  const { EHDR, PHDR, SHDR, VADDR } = ELF;
+  const interp = o.interp === undefined ? null : Buffer.from(o.interp + "\0", "latin1");
+  const phnum = interp ? 2 : 1;
+  const shnum = interp ? 4 : 3;
+  const shstrtab = Buffer.from("\0.shstrtab\0.bun\0.interp\0", "latin1");
+  const shstrtabOff = EHDR + PHDR * phnum;
+  const interpOff = shstrtabOff + shstrtab.length;
+  const bunOff = (interpOff + (interp?.length ?? 0) + 7) & ~7;
+  const loadEnd = bunOff + 8;
+  const shoff = (loadEnd + (o.pad ?? 0) + 7) & ~7;
+  const buf = Buffer.alloc(shoff + SHDR * shnum);
+
+  buf.write("\x7fELF", 0, "latin1");
+  buf[4] = 2; // ELFCLASS64
+  buf[5] = 1; // ELFDATA2LSB
+  buf[6] = 1; // EV_CURRENT
+  buf.writeUInt16LE(2, 16); // e_type = ET_EXEC
+  buf.writeUInt16LE(62, 18); // e_machine = EM_X86_64
+  buf.writeUInt32LE(1, 20); // e_version
+  buf.writeBigUInt64LE(VADDR, 24); // e_entry
+  buf.writeBigUInt64LE(o.phoff ?? BigInt(EHDR), 32); // e_phoff
+  buf.writeBigUInt64LE(o.shoff ?? BigInt(shoff), 40); // e_shoff
+  buf.writeUInt16LE(EHDR, 52); // e_ehsize
+  buf.writeUInt16LE(PHDR, 54); // e_phentsize
+  buf.writeUInt16LE(phnum, 56); // e_phnum
+  buf.writeUInt16LE(SHDR, 58); // e_shentsize
+  buf.writeUInt16LE(shnum, 60); // e_shnum
+  buf.writeUInt16LE(o.shstrndx ?? 1, 62); // e_shstrndx
+
+  const phdr = (i: number, type: number, flags: number, offset: bigint, filesz: bigint, memsz: bigint) => {
+    const p = EHDR + i * PHDR;
+    buf.writeUInt32LE(type, p);
+    buf.writeUInt32LE(flags, p + 4);
+    buf.writeBigUInt64LE(offset, p + 8);
+    buf.writeBigUInt64LE(BigInt.asUintN(64, VADDR + offset), p + 16); // p_vaddr
+    buf.writeBigUInt64LE(BigInt.asUintN(64, VADDR + offset), p + 24); // p_paddr
+    buf.writeBigUInt64LE(filesz, p + 32);
+    buf.writeBigUInt64LE(memsz, p + 40);
+    buf.writeBigUInt64LE(0x1000n, p + 48); // p_align
+  };
+  const PF_R = 4;
+  const PF_W = 2;
+  phdr(0, ELF.PT_LOAD, PF_R | PF_W, 0n, o.loadFilesz ?? BigInt(loadEnd), o.loadMemsz ?? BigInt(loadEnd));
+  if (interp) {
+    const size = BigInt(interp.length);
+    phdr(1, ELF.PT_INTERP, PF_R, o.interpOffset ?? BigInt(interpOff), size, size);
+    interp.copy(buf, interpOff);
+  }
+
+  shstrtab.copy(buf, shstrtabOff);
+
+  const shdr = (i: number, name: number, type: number, alloc: boolean, offset: bigint, size: bigint) => {
+    const s = shoff + i * SHDR;
+    buf.writeUInt32LE(name, s);
+    buf.writeUInt32LE(type, s + 4);
+    buf.writeBigUInt64LE(alloc ? 2n : 0n, s + 8); // sh_flags = SHF_ALLOC
+    buf.writeBigUInt64LE(alloc ? VADDR + offset : 0n, s + 16); // sh_addr
+    buf.writeBigUInt64LE(offset, s + 24);
+    buf.writeBigUInt64LE(size, s + 32);
+    buf.writeBigUInt64LE(1n, s + 48); // sh_addralign
+  };
+  shdr(1, 1, ELF.SHT_STRTAB, false, o.shstrtabOffset ?? BigInt(shstrtabOff), BigInt(shstrtab.length));
+  shdr(2, 11, ELF.SHT_PROGBITS, true, BigInt(bunOff), 8n);
+  // Corrupt only sh_offset: sh_addr still has to fall inside the writable PT_LOAD for the
+  // writer to get as far as using the offset.
+  if (o.bunOffset !== undefined) buf.writeBigUInt64LE(o.bunOffset, shoff + 2 * SHDR + 24);
+  if (interp) shdr(3, 16, ELF.SHT_PROGBITS, true, BigInt(interpOff), BigInt(interp.length));
+  return buf;
+}
+
+/** `sh_size` of the `.interp` section of a compiled output, through its relocated section header table. */
+function readInterpSectionSize(image: Buffer): number | null {
+  const shoff = Number(image.readBigUInt64LE(40));
+  const shstrtab = shoff + image.readUInt16LE(62) * ELF.SHDR;
+  const names = image.subarray(
+    Number(image.readBigUInt64LE(shstrtab + 24)),
+    Number(image.readBigUInt64LE(shstrtab + 24)) + Number(image.readBigUInt64LE(shstrtab + 32)),
+  );
+  for (let i = 0; i < image.readUInt16LE(60); i++) {
+    const shdr = shoff + i * ELF.SHDR;
+    const name = names.subarray(image.readUInt32LE(shdr));
+    if (name.subarray(0, name.indexOf(0)).toString("latin1") === ".interp") {
+      return Number(image.readBigUInt64LE(shdr + 32));
+    }
+  }
+  return null;
+}
+
+async function compileWithElfTemplate(cwd: string, name: string, template: Buffer) {
+  const templatePath = join(cwd, `template-${name}`);
+  await Bun.write(templatePath, template);
+  const outfile = join(cwd, `out-${name}`);
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "build",
+      "--compile",
+      "--target=bun-linux-x64",
+      "--compile-executable-path",
+      templatePath,
+      join(cwd, "entry.js"),
+      "--outfile",
+      outfile,
+    ],
+    env: bunEnv,
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  const output = (await Bun.file(outfile).exists()) ? Buffer.from(await Bun.file(outfile).arrayBuffer()) : null;
+  return { name, stderr, exitCode, outfile, output };
+}
+
+const NIX_INTERP = "/nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-glibc-2.40-1/lib/ld-linux-x86-64.so.2";
+
+test("compile --compile-executable-path rejects an ELF template whose headers point outside the file", async () => {
+  using dir = tempDir("compile-elf-template-bounds", {
+    "entry.js": `console.log("compiled-from-template");`,
+  });
+  const cwd = String(dir);
+  const { U64_MAX } = ELF;
+
+  const corrupt: [name: string, template: Buffer][] = [
+    ["bun-section-past-eof", elfTemplate({ bunOffset: 1n << 40n })],
+    ["phdr-table-past-eof", elfTemplate({ phoff: 1n << 40n })],
+    ["phdr-table-wraps", elfTemplate({ phoff: U64_MAX - 7n })],
+    ["shdr-table-wraps", elfTemplate({ shoff: U64_MAX - 7n })],
+    ["shstrndx-past-shnum", elfTemplate({ shstrndx: 3 })],
+    ["shstrtab-wraps", elfTemplate({ shstrtabOffset: U64_MAX - 3n })],
+    ["load-memsz-wraps", elfTemplate({ loadMemsz: U64_MAX })],
+    // p_filesz > p_memsz: the appended data would land inside the segment's existing bytes.
+    ["load-filesz-over-memsz", elfTemplate({ pad: 0x2000, loadFilesz: 0x1800n })],
+  ];
+  // The templates are a few hundred bytes, so unlike compiles against a real bun binary
+  // these are cheap enough to run at once.
+  const results = await Promise.all(corrupt.map(([name, template]) => compileWithElfTemplate(cwd, name, template)));
+  for (const { name, stderr, exitCode, output } of results) {
+    // Every corrupt template is reported as a clean error...
+    expect({ name, stderr }).toEqual({ name, stderr: expect.stringContaining("InvalidElfFile") });
+    // ...produces no executable...
+    expect({ name, output }).toEqual({ name, output: null });
+    // ...and exits with a normal failure code instead of crashing.
+    expect({ name, exitCode }).toEqual({ name, exitCode: 1 });
+  }
+
+  // The same template with consistent headers is accepted, and so is one whose PT_INTERP
+  // points outside the file: the interpreter rewrite is best-effort and leaves it alone.
+  for (const [name, template] of [
+    ["good", elfTemplate()],
+    ["interp-wraps", elfTemplate({ interp: NIX_INTERP, interpOffset: U64_MAX - 3n })],
+  ] as const) {
+    const { stderr, exitCode, output } = await compileWithElfTemplate(cwd, name, template);
+    expect({ name, stderr }).toEqual({ name, stderr: expect.not.stringContaining("error:") });
+    expect({ name, embedded: output?.includes("compiled-from-template") }).toEqual({ name, embedded: true });
+    expect({ name, exitCode }).toEqual({ name, exitCode: 0 });
+  }
+});
+
+test.skipIf(hostLooksNix())(
+  "compile --compile-executable-path rewrites a Nix store PT_INTERP and the .interp section header",
+  async () => {
+    using dir = tempDir("compile-elf-template-interp", {
+      "entry.js": `console.log("compiled-from-template");`,
+    });
+    const { stderr, exitCode, outfile, output } = await compileWithElfTemplate(
+      String(dir),
+      "nix-interp",
+      elfTemplate({ interp: NIX_INTERP }),
+    );
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    const ldso = "/lib64/ld-linux-x86-64.so.2";
+    expect({ ...readElfInterp(outfile), sh_size: readInterpSectionSize(output!) }).toEqual({
+      interp: ldso,
+      p_filesz: ldso.length + 1,
+      sh_size: ldso.length + 1,
+    });
+    expect(output!.includes("compiled-from-template")).toBe(true);
+  },
+);
 
 test("compile --compile-executable-path rejects a template shorter than the executable-format header", async () => {
   // `--compile-executable-path` accepts an arbitrary file. A file shorter than the target

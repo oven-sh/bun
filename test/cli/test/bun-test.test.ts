@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -223,6 +223,105 @@ describe("bun test", () => {
         `,
       });
       expect(stderr).toContain("should run");
+    });
+
+    async function runTodo(fixture: string, env: Record<string, string> = {}) {
+      using dir = tempDir("bun-test-todo", { "todo.test.ts": fixture });
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", "--todo", "todo.test.ts"],
+        cwd: String(dir),
+        env: { ...bunEnv, ...env },
+        stdout: "ignore",
+        stderr: "pipe",
+      });
+      const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+      return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+    }
+
+    test.concurrent("a todo whose body times out is still a todo", async () => {
+      const { stderr, exitCode } = await runTodo(`
+        import { describe, test } from "bun:test";
+        const late = Promise.withResolvers<void>();
+        test.todo("never settles", () => new Promise(() => {}), 1);
+        test.todo("never calls done", done => {}, 1);
+        describe.todo("describe.todo", () => {
+          test("never settles", () => new Promise(() => {}), 1);
+        });
+        test.todo("fails after it timed out", async () => {
+          await late.promise;
+          throw new Error("still a todo");
+        }, 1);
+        test("the next test is not blamed for the late failure", async () => {
+          late.resolve();
+          await Bun.sleep(0);
+        });
+      `);
+      expect(stderr).toMatchInlineSnapshot(`
+        "todo.test.ts:
+        (todo) never settles
+        (todo) never calls done
+        (todo) describe.todo > never settles
+        (todo) fails after it timed out
+        (pass) the next test is not blamed for the late failure
+
+         1 pass
+         4 todo
+         0 fail
+        Ran 5 tests across 1 file."
+      `);
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("timeouts outside a todo body still fail under --todo", async () => {
+      const { stderr, exitCode } = await runTodo(`
+        import { beforeEach, describe, test } from "bun:test";
+        const late = Promise.withResolvers<void>();
+        test("fails after it timed out", async () => {
+          await late.promise;
+          throw new Error("late failure");
+        }, 1);
+        describe("hanging beforeEach", () => {
+          beforeEach(() => new Promise(() => {}), 1);
+          test.todo("todo", () => {});
+        });
+        test("releases the late failure", async () => {
+          late.resolve();
+          await Bun.sleep(0);
+        });
+      `);
+      expect(stderr).toContain("(fail) fails after it timed out\n  ^ this test timed out after 1ms.");
+      expect(stderr).toContain(
+        "(fail) hanging beforeEach > todo\n  ^ a beforeEach/afterEach hook timed out for this test.",
+      );
+      expect(stderr).toContain("# Unhandled error between tests");
+      expect(stderr).toContain("error: late failure");
+      expect(stderr).toContain(" 2 fail\n 1 error\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a timed out todo that fails after the file finished is not an unhandled error", async () => {
+      // BUN_TEST_DRAIN_EVENT_LOOP keeps the file alive after its last test, so
+      // the body settles once the runner is already done with the file.
+      const { stderr, exitCode } = await runTodo(
+        `
+          import { test } from "bun:test";
+          test.todo("fails after the file is done", async () => {
+            await Bun.sleep(50);
+            throw new Error("still a todo");
+          }, 1);
+        `,
+        { BUN_TEST_DRAIN_EVENT_LOOP: "1" },
+      );
+      expect(stderr).toMatchInlineSnapshot(`
+        "todo.test.ts:
+        (todo) fails after the file is done
+
+         0 pass
+         1 todo
+         0 fail
+        Ran 1 test across 1 file."
+      `);
+      expect(exitCode).toBe(0);
     });
   });
   describe("only", () => {

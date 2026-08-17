@@ -775,7 +775,14 @@ impl Execution {
         let Some((sequence_ptr, _group_ptr)) =
             self.get_current_and_valid_execution_sequence(user_data)
         else {
-            return HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests;
+            // The entry this error belongs to already finished, typically a test body settling
+            // after it timed out. The result is final either way; for a todo body (--todo) the
+            // late failure is the failure the todo mark already accounts for.
+            return if self.is_todo_test_body(user_data) {
+                HandleUncaughtExceptionResult::HideError
+            } else {
+                HandleUncaughtExceptionResult::ShowUnhandledErrorBetweenTests
+            };
         };
         // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
         // remainder of this function, so this is the unique live `&mut` to that element.
@@ -810,6 +817,29 @@ impl Execution {
                 HandleUncaughtExceptionResult::ShowHandledError
             }
         }
+    }
+
+    /// Whether `data` was issued for the test callback (not a hook) of a `test.todo`, regardless
+    /// of whether that sequence is still running it. Unlike
+    /// [`Self::get_current_and_valid_execution_sequence`] this also answers for entries that
+    /// already completed; the group/sequence tables never shrink, so the indices stay valid.
+    fn is_todo_test_body(&self, data: &RefDataValue) -> bool {
+        let RefDataValue::Execution { group_index, entry_data: Some(entry_data) } = data else {
+            return false;
+        };
+        let Some(group) = self.groups.get(*group_index) else {
+            return false;
+        };
+        let seq_abs = group.sequence_start + entry_data.sequence_index;
+        if seq_abs >= group.sequence_end {
+            return false;
+        }
+        let sequence = &self.sequences[seq_abs];
+        let Some(test_entry) = sequence.test_entry else {
+            return false;
+        };
+        core::ptr::eq(test_entry.as_ptr().cast_const().cast::<()>(), entry_data.entry)
+            && sequence.entry_mode() == ScopeMode::Todo
     }
 }
 

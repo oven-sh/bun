@@ -1021,7 +1021,6 @@ impl<'a> Repl<'a> {
         // On Windows, ENABLE_PROCESSED_INPUT is already set so Ctrl+C works
     }
 
-    /// Restore raw terminal mode after promise wait
     /// Drive the loop until `promise` settles; `true` if a SIGINT (see `sigint_handler`) cut the wait short.
     fn wait_for_promise_or_sigint(vm: &VirtualMachine, promise: *mut jsc::JSPromise) -> bool {
         use core::sync::atomic::Ordering;
@@ -1040,6 +1039,7 @@ impl<'a> Repl<'a> {
         false
     }
 
+    /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
         SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
 

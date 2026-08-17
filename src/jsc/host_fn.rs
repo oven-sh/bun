@@ -154,12 +154,18 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
     }
 }
 
-/// A host function is beneath script, where a termination stays pending (`Thrown`); `Terminated` only
-/// reaches one through code shared with loop-level callers. JSC still needs an exception to unwind the
-/// script above: rethrow the VM's.
+/// `Terminated` reached a host-function trampoline (code shared with loop-level callers took the VM's
+/// termination beneath us). Beneath script JSC still needs an exception to unwind what is above:
+/// rethrow the VM's and return empty. With no script above (a trampoline C++ drives from the loop —
+/// `AnyPromise::wrap` from a work-pool completion) there is nothing to unwind and nothing may be pending:
+/// hand back `undefined`; whoever called stands down on the stopped VM.
 #[cold]
 fn terminated_beneath_script(global_this: &JSGlobalObject) -> JSValue {
-    let _ = crate::cpp::JSC__JSGlobalObject__throwTerminationException(global_this);
+    if !global_this.vm().is_entered() {
+        return JSValue::UNDEFINED;
+    }
+    // Raw FFI: the generated `check_slow` wrapper would read the exception straight back off the scope.
+    crate::cpp::raw_throw_termination_exception(global_this);
     JSValue::ZERO
 }
 
@@ -194,10 +200,7 @@ pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsRes
             let _ = global_this.throw_out_of_memory_value();
             false
         }
-        Err(JsError::Terminated) => {
-            let _ = terminated_beneath_script(global_this);
-            false
-        }
+        Err(JsError::Terminated) => !terminated_beneath_script(global_this).is_empty(),
         Ok(()) => true,
     }
 }

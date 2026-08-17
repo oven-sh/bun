@@ -579,6 +579,84 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// When a lazily initialized property throws while being looked up, the property walk used to
+// leave that exception pending. The next lazy property was then initialized with an exception
+// already set (an assertion in debug builds), and in release builds every property after the
+// failing one was dropped from the output until an already-initialized property was reached.
+describe("Bun.inspect and lazy properties whose initializer throws", () => {
+  it.concurrent("only the property that failed is left out", async () => {
+    // An unparseable REDIS_URL makes the Bun.redis initializer throw. The properties declared
+    // after it (secrets, write, zstd*) must still be printed.
+    const code = `
+      try {
+        Bun.redis;
+      } catch (e) {
+        console.log("Bun.redis threw:", e.message);
+      }
+      const out = Bun.inspect(Bun, { depth: 0 });
+      for (const name of ["redis", "secrets", "write", "zstdDecompress"]) {
+        console.log(name + ":", out.includes("\\n  " + name + ": "));
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: { ...bunEnv, REDIS_URL: "not a url" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        "Bun.redis threw: Invalid URL format",
+        "redis: false",
+        "secrets: true",
+        "write: true",
+        "zstdDecompress: true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("initializers that run out of stack", async () => {
+    // Bun.$, Bun.sql and friends run JS to build their value, so with (almost) no JS stack left
+    // they throw and are left out. Unwind a stack overflow one frame at a time and check the
+    // first Bun.inspect(Bun) call that completes: Archive (declared right after $) and version
+    // have initializers that cannot fail, so they must be in the output.
+    const code = `
+      let result;
+      function recurse() {
+        try {
+          recurse();
+        } catch {}
+        if (result !== undefined) return;
+        let out;
+        try {
+          out = Bun.inspect(Bun, { depth: 0 });
+        } catch {
+          return;
+        }
+        result = out.includes("\\n  Archive: ") && out.includes("\\n  version: ") ? "ok" : out;
+      }
+      recurse();
+      console.log(result);
+      const out = Bun.inspect(Bun, { depth: 0 });
+      console.log(out.includes("\\n  $: ") && out.includes("\\n  Archive: ") && out.includes("\\n  version: ") ? "ok" : out);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("ok\nok\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

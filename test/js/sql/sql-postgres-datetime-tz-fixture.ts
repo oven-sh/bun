@@ -33,6 +33,13 @@ const rowsIn = [
   { id: 0, ts: "2024-06-15 12:00:00", tstz: "2024-06-15 12:00:00+00", d: "2024-06-15" },
   { id: 1, ts: "2024-01-15 00:30:00", tstz: "2024-01-15 00:30:00+00", d: "2024-01-15" },
   { id: 2, ts: "2024-12-31 23:45:00", tstz: "2024-12-31 23:45:00+00", d: "2024-12-31" },
+  // Sub-millisecond instants. Both protocols must drop the extra digits; the
+  // binary decoder used to round the pre-1970 ones 1 ms later instead (id 3
+  // came back as 1970-01-01T00:00:00.000Z). id 5 is before the Postgres
+  // epoch (2000) but after 1970, which was already correct and must stay so.
+  { id: 3, ts: "1969-12-31 23:59:59.9996", tstz: "1969-12-31 23:59:59.9996+00", d: "1969-12-31" },
+  { id: 4, ts: "1883-11-18 12:00:00.123456", tstz: "1883-11-18 12:00:00.123456+00", d: "1883-11-18" },
+  { id: 5, ts: "1999-12-31 23:59:59.9996", tstz: "1999-12-31 23:59:59.9996+00", d: "1999-12-31" },
 ];
 for (const r of rowsIn) {
   await sql.unsafe(`INSERT INTO ${t} (id, ts, tstz, d) VALUES (${r.id}, '${r.ts}', '${r.tstz}', '${r.d}')`);
@@ -43,6 +50,9 @@ const expected = [
   { ts: "2024-06-15T12:00:00.000Z", tstz: "2024-06-15T12:00:00.000Z", d: "2024-06-15T00:00:00.000Z" },
   { ts: "2024-01-15T00:30:00.000Z", tstz: "2024-01-15T00:30:00.000Z", d: "2024-01-15T00:00:00.000Z" },
   { ts: "2024-12-31T23:45:00.000Z", tstz: "2024-12-31T23:45:00.000Z", d: "2024-12-31T00:00:00.000Z" },
+  { ts: "1969-12-31T23:59:59.999Z", tstz: "1969-12-31T23:59:59.999Z", d: "1969-12-31T00:00:00.000Z" },
+  { ts: "1883-11-18T12:00:00.123Z", tstz: "1883-11-18T12:00:00.123Z", d: "1883-11-18T00:00:00.000Z" },
+  { ts: "1999-12-31T23:59:59.999Z", tstz: "1999-12-31T23:59:59.999Z", d: "1999-12-31T00:00:00.000Z" },
 ];
 
 const failures: string[] = [];
@@ -62,7 +72,11 @@ function checkRows(protocol: string, rows: Array<{ ts: Date; tstz: Date; d: Date
   }
 }
 
-checkRows("binary", await sql`SELECT ts, tstz, d FROM ${sql(t)} ORDER BY id`);
+// The bound parameter matters: a statement without parameters is prepared and
+// executed in one round trip, before the result types are known, so its Bind
+// asks for text results. With a parameter, Bind is sent after Describe and
+// requests binary for timestamp/timestamptz.
+checkRows("binary", await sql`SELECT ts, tstz, d FROM ${sql(t)} WHERE id >= ${0} ORDER BY id`);
 checkRows("text", await sql`SELECT ts, tstz, d FROM ${sql(t)} ORDER BY id`.simple());
 
 if (failures.length) {

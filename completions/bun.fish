@@ -167,6 +167,9 @@ complete -c bun \
 	-n "__fish_seen_subcommand_from dedupe" -l 'check' -d 'Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything'
 
 complete -c bun \
+	-n "__fish_seen_subcommand_from dedupe" -l 'why' -d "Also list each version's dependents and the ranges they asked for"
+
+complete -c bun \
 	-n "__fish_seen_subcommand_from add" -d 'Popular' -a '(__fish__get_bun_packages)'
 
 complete -c bun \

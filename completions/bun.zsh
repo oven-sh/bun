@@ -693,6 +693,7 @@ _bun_dedupe_completion() {
     _arguments -s -C \
         '1: :->cmd1' \
         '--check[Exit with code 1 if the lockfile has duplicate versions that can be removed, without changing anything]' \
+        '--why[Also list each version'"'"'s dependents and the ranges they asked for]' \
         '-c[Load config(bunfig.toml)]: :->config' \
         '--config[Load config(bunfig.toml)]: :->config' \
         '-y[Write a yarn.lock file (yarn v1)]' \

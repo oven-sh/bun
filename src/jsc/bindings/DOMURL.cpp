@@ -115,7 +115,7 @@ static URL parseBase(const String& base, DOMURL::BaseURLCache* cache)
         return cache->url;
     URL baseURL { base };
     if (!baseURL.isValid() || !hasValidParsedHost(baseURL, base))
-        return { };
+        return {};
     if (cache) {
         cache->input = base;
         cache->url = baseURL;
@@ -125,7 +125,7 @@ static URL parseBase(const String& base, DOMURL::BaseURLCache* cache)
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base, BaseURLCache* cache)
 {
-    URL baseURL = base.isNull() ? URL { } : parseBase(base, cache);
+    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache);
     if (!base.isNull() && !baseURL.isValid())
         return Exception { InvalidURLError, url, base };
     return create(url, baseURL, base);
@@ -135,7 +135,7 @@ DOMURL::~DOMURL() = default;
 
 static URL parseInternal(const String& url, const String& base, DOMURL::BaseURLCache* cache)
 {
-    URL baseURL = base.isNull() ? URL { } : parseBase(base, cache);
+    URL baseURL = base.isNull() ? URL {} : parseBase(base, cache);
     if (!base.isNull() && !baseURL.isValid())
         return {};
     URL result { baseURL, url };

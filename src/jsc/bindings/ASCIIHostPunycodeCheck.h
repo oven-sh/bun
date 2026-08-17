@@ -14,7 +14,9 @@
 
 namespace Bun {
 
-enum class ASCIIHostPunycodeVerdict : uint8_t { Valid, Invalid, NeedsFullCheck };
+enum class ASCIIHostPunycodeVerdict : uint8_t { Valid,
+    Invalid,
+    NeedsFullCheck };
 
 namespace PunycodeDetail {
 

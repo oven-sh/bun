@@ -8,11 +8,8 @@
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
 //
-// The backend side is typed against the JSC protocol snapshot, which is
-// generated from the WebKit Bun links against (bun-inspector-protocol/scripts/
-// generate-protocol.ts), so a field WebKit renames or drops fails to typecheck
-// here instead of turning into `undefined` in a DevTools event. The import is
-// type-only, so the builtin bundler erases it.
+// The backend side is typed against the protocol snapshot generated from the
+// WebKit Bun links against; the type-only import is erased by the builtin bundler.
 import type { JSC } from "../../../../packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts";
 
 const { pathToFileURL, fileURLToPath } = require("node:url");
@@ -20,17 +17,15 @@ const { isAbsolute } = require("node:path");
 
 const EXECUTION_CONTEXT_ID = 1;
 
-// CDP (client-facing) shapes are built ad hoc and stay untyped.
+// CDP (client-facing) shapes stay untyped.
 type AnyObject = Record<string, any>;
 
 type BackendResult = JSC.ResponseMap[keyof JSC.ResponseMap];
 
-// The `error` member of a failed response (InspectorBackendDispatcher.cpp,
-// BackendDispatcher::sendPendingErrors); `code` is already a JSON-RPC number.
+// BackendDispatcher::sendPendingErrors in InspectorBackendDispatcher.cpp.
 type BackendError = { code: number; message: string };
 
-// One JSON message from the backend: a response to a command this adapter sent
-// (`id`, then either `result` or `error`) or a domain event (`method`).
+// A response to one of this adapter's commands, or an event.
 type BackendMessage = {
   id?: number | null;
   result?: BackendResult;
@@ -39,16 +34,10 @@ type BackendMessage = {
   params?: unknown;
 };
 
-// Keyed on `method` so that switching over it narrows `params` to that event's
-// shape (unlike JSC.Event, whose default instantiation is a single object type
-// with every event's params unioned together).
+// Discriminated on `method`, which JSC.Event's default instantiation is not.
 type BackendEvent = { [M in keyof JSC.EventMap]: { method: M; params: JSC.EventMap[M] } }[keyof JSC.EventMap];
 
-// The JSC response behind each CDP command whose result #translateResult
-// reshapes, keyed by the CDP method because that is what #pending records. The
-// JSC command that produced the response is not always the namesake:
-// Debugger.getPossibleBreakpoints is served by Debugger.getBreakpointLocations
-// and a Runtime.evaluate with awaitPromise by Runtime.awaitPromise.
+// The JSC response answering each CDP command that #translateResult reshapes.
 type TranslatedResponses = {
   "Runtime.evaluate": JSC.Runtime.EvaluateResponse | JSC.Runtime.AwaitPromiseResponse;
   "Runtime.callFunctionOn": JSC.Runtime.CallFunctionOnResponse;
@@ -144,8 +133,7 @@ class InspectorCDPAdapter {
     {
       clientId: number | string | null;
       method: string;
-      // Typed per command by #sendToBackend; erased here because one map holds
-      // the callbacks of every in-flight command.
+      // Typed per command at #sendToBackend.
       onResult?: (result: any, error?: BackendError) => void;
     }
   >();
@@ -199,8 +187,6 @@ class InspectorCDPAdapter {
       return;
     }
     if (typeof method === "string") {
-      // Events without params (Debugger.resumed) arrive without a `params`
-      // key at all; anything the switch does not recognise hits its default.
       this.#translateBackendEvent({ method, params: parsed.params || {} } as BackendEvent);
     }
   }
@@ -219,8 +205,8 @@ class InspectorCDPAdapter {
 
   // `clientId` undefined/null marks an adapter-internal command whose response
   // is dropped instead of being forwarded to the client. `onResult` intercepts
-  // the response for adapter-side chaining (e.g. Runtime.evaluate awaitPromise);
-  // when `error` is set it receives `{}` as the result, so check `error` first.
+  // the response for adapter-side chaining (e.g. Runtime.evaluate awaitPromise)
+  // and gets `{}` as the result when `error` is set.
   #sendToBackend<M extends keyof JSC.RequestMap>(
     method: M,
     params?: JSC.RequestMap[M],
@@ -389,8 +375,6 @@ class InspectorCDPAdapter {
         return;
       }
 
-      // CDP and JSC agree on these commands' parameters, so the client's are
-      // forwarded as they are.
       case "Runtime.releaseObject":
       case "Runtime.releaseObjectGroup":
         this.#sendToBackend(method, params as JSC.RequestMap[typeof method], id, method);
@@ -426,7 +410,6 @@ class InspectorCDPAdapter {
         this.#sendToBackend("Debugger.setPauseOnDebuggerStatements", { enabled: true }, id, method);
         return;
 
-      // Forwarded as they are, like Runtime.releaseObject above.
       case "Debugger.disable":
       case "Debugger.pause":
       case "Debugger.resume":

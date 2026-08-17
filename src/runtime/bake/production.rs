@@ -2,7 +2,6 @@
 
 use bun_paths::strings;
 use core::cell::UnsafeCell;
-use core::mem::MaybeUninit;
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::OnceLock;
@@ -428,66 +427,63 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     loader.map.put(b"NODE_ENV", b"production")?;
     dotenv::set_instance(std::ptr::from_mut::<dotenv::Loader>(loader));
 
-    // In-place init via `MaybeUninit` (`init_transpiler_with_options`
-    // keeps the out-param shape shared with the dev-server path).
-    let mut client_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut server_transpiler = MaybeUninit::<Transpiler>::uninit();
-    let mut ssr_transpiler = MaybeUninit::<Transpiler>::uninit();
+    // Borrowed by the transpilers until their slots drop, so it is declared first.
+    let framework_view = framework.as_bundler_view();
+    let mut server_slot = bake::TranspilerSlot::uninit();
+    let mut client_slot = bake::TranspilerSlot::uninit();
+    let mut ssr_slot = bake::TranspilerSlot::uninit();
     // `vm.log` is set from `ctx.log` (non-null, process-lifetime);
     // `log_mut()` is the safe accessor encapsulating the NonNull deref.
     let vm_log = vm.log_mut().unwrap();
-    framework.init_transpiler_with_options(
+    let server_transpiler = framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Server,
-        &mut server_transpiler,
+        &mut server_slot,
+        &framework_view,
         &options.bundler_options.server,
         SourceMapOption::from_api(Some(options.bundler_options.server.source_map)),
         options.bundler_options.server.minify_whitespace,
         options.bundler_options.server.minify_syntax,
         options.bundler_options.server.minify_identifiers,
     )?;
-    framework.init_transpiler_with_options(
+    let client_transpiler = framework.init_transpiler_with_options(
         &options.arena,
         vm_log,
         bake_body::Mode::ProductionStatic,
         bake_body::Graph::Client,
-        &mut client_transpiler,
+        &mut client_slot,
+        &framework_view,
         &options.bundler_options.client,
         SourceMapOption::from_api(Some(options.bundler_options.client.source_map)),
         options.bundler_options.client.minify_whitespace,
         options.bundler_options.client.minify_syntax,
         options.bundler_options.client.minify_identifiers,
     )?;
-    if separate_ssr_graph {
-        framework.init_transpiler_with_options(
+    let mut ssr_transpiler = if separate_ssr_graph {
+        Some(framework.init_transpiler_with_options(
             &options.arena,
             vm_log,
             bake_body::Mode::ProductionStatic,
             bake_body::Graph::Ssr,
-            &mut ssr_transpiler,
+            &mut ssr_slot,
+            &framework_view,
             &options.bundler_options.ssr,
             SourceMapOption::from_api(Some(options.bundler_options.ssr.source_map)),
             options.bundler_options.ssr.minify_whitespace,
             options.bundler_options.ssr.minify_syntax,
             options.bundler_options.ssr.minify_identifiers,
-        )?;
-    }
-    // SAFETY: written above by init_transpiler_with_options.
-    let server_transpiler = unsafe { server_transpiler.assume_init_mut() };
-    // SAFETY: written above by init_transpiler_with_options.
-    let client_transpiler = unsafe { client_transpiler.assume_init_mut() };
-    // `ssr_transpiler` stays `MaybeUninit` and is only `assume_init_mut()`'d
-    // inside `if separate_ssr_graph` blocks below — Rust forbids forming
-    // `&mut T` to uninitialized memory regardless of later use.
+        )?)
+    } else {
+        None
+    };
 
     if ctx.bundler_options.bake_debug_disable_minify {
         let mut targets: Vec<&mut Transpiler> =
             vec![&mut *client_transpiler, &mut *server_transpiler];
-        if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            targets.push(unsafe { ssr_transpiler.assume_init_mut() });
+        if let Some(ssr_transpiler) = ssr_transpiler.as_deref_mut() {
+            targets.push(ssr_transpiler);
         }
         for transpiler in targets {
             transpiler.options.minify_syntax = false;
@@ -597,27 +593,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         framework_router::InsertionContext::wrap(&mut entry_points),
     )?;
 
-    // `bake_body::Framework` is the runtime-side superset; the bundler reads only
-    // `built_in_modules` / `server_components` / `react_fast_refresh` /
-    // `is_built_in_react` via its lower-tier `bake_types::Framework` view.
-    // Project once here via the shared helper so the field-shape (e.g.
-    // `BuiltInModule` `&'static [u8]` → `Box<[u8]>`) stays in one place.
-    // (The two Framework types could only merge if `FileSystemRouterType` /
-    // `framework_router::Style` moved down to bun_bundler.)
+    // Projected again so the bundle sees the paths `resolve()` filled in.
     let bundler_framework = framework.as_bundler_view();
 
     let bundled_outputs_list: Vec<OutputFile> = {
         // Transpiler pointers — reborrow via raw to sidestep the
         // `&'a mut Transpiler<'a>` invariant lifetime on the bundler API.
-        // SAFETY: the three transpilers live in this stack frame and outlive
+        // SAFETY: the transpilers live in this frame's slots, which outlive
         // the bundle call; `BundleV2` does not retain them past return.
         let server_ptr: *mut Transpiler = &raw mut *server_transpiler;
         let client_ptr: *mut Transpiler = &raw mut *client_transpiler;
-        let ssr_ptr: *mut Transpiler = if separate_ssr_graph {
-            // SAFETY: written above by init_transpiler_with_options when separate_ssr_graph.
-            core::ptr::from_mut(unsafe { ssr_transpiler.assume_init_mut() })
-        } else {
-            server_ptr
+        let ssr_ptr: *mut Transpiler = match ssr_transpiler {
+            Some(ssr_transpiler) => &raw mut *ssr_transpiler,
+            None => server_ptr,
         };
 
         // Construct the `AnyEventLoop` enum

@@ -463,6 +463,68 @@ impl Framework {
     }
 }
 
+/// In-place home of a `Transpiler` (configured, it points into its own fields); drops it if filled.
+pub(crate) struct TranspilerSlot<'a> {
+    transpiler: core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+    initialized: bool,
+}
+
+#[allow(dead_code)]
+impl<'a> TranspilerSlot<'a> {
+    pub(crate) const fn uninit() -> Self {
+        Self {
+            transpiler: core::mem::MaybeUninit::uninit(),
+            initialized: false,
+        }
+    }
+
+    pub(crate) fn is_initialized(&self) -> bool {
+        self.initialized
+    }
+
+    fn write(
+        &mut self,
+        transpiler: bun_bundler::Transpiler<'a>,
+    ) -> &mut bun_bundler::Transpiler<'a> {
+        debug_assert!(!self.initialized);
+        let transpiler = self.transpiler.write(transpiler);
+        self.initialized = true;
+        transpiler
+    }
+
+    /// Panics if the slot is empty.
+    pub(crate) fn get(&self) -> &bun_bundler::Transpiler<'a> {
+        assert!(self.initialized, "transpiler slot is empty");
+        // SAFETY: `initialized` is set by `write` after it stores the transpiler and cleared by `clear` as it drops it.
+        unsafe { self.transpiler.assume_init_ref() }
+    }
+
+    /// Panics if the slot is empty.
+    pub(crate) fn get_mut(&mut self) -> &mut bun_bundler::Transpiler<'a> {
+        assert!(self.initialized, "transpiler slot is empty");
+        // SAFETY: see `get`.
+        unsafe { self.transpiler.assume_init_mut() }
+    }
+
+    /// Only valid to dereference while the slot is filled.
+    pub(crate) fn as_mut_ptr(&mut self) -> *mut bun_bundler::Transpiler<'a> {
+        self.transpiler.as_mut_ptr()
+    }
+
+    pub(crate) fn clear(&mut self) {
+        if core::mem::take(&mut self.initialized) {
+            // SAFETY: the flag was set, so a transpiler is stored; it is already cleared, so nothing drops it again.
+            unsafe { self.transpiler.assume_init_drop() };
+        }
+    }
+}
+
+impl Drop for TranspilerSlot<'_> {
+    fn drop(&mut self) {
+        self.clear();
+    }
+}
+
 /// `bake.SplitBundlerOptions` — per-graph bundler config + shared plugin.
 #[derive(Default)]
 pub struct SplitBundlerOptions {

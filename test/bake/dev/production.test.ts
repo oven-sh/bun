@@ -899,7 +899,7 @@ export default function IndexPage() {
         const leaked = ["TextDecoder", "Blob", "ImmediateObject", "CryptoHasher"].filter(type =>
           stderr.toString().includes(type),
         );
-        expect(leaked).toEqual([]);
+        expect(leaked).toStrictEqual([]);
       },
       timeout,
     );
@@ -1013,6 +1013,97 @@ export default function Client() {
         });
 
         expect(await build(dir, "--debug-dump-server-files")).toMatchObject({ ...failed, failedWrites: [serverPage] });
+      },
+      timeout,
+    );
+  });
+
+  // The build's per-graph transpilers must be freed; these builds stop right after bundling, where a leak report would exit non-zero.
+  describe.concurrent.skipIf(!isASAN)("frees its transpilers before exiting", () => {
+    async function buildApp(cwd: string) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "build", "--app", "./app.ts"],
+        cwd,
+        env: {
+          ...bunEnv,
+          // Silences the "Bun Bake is highly experimental" banner.
+          BUN_DEV_SERVER_TEST_RUNNER: "1",
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../leaksan.supp")}`,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout, stderr, exitCode };
+    }
+
+    const cleanBuild = {
+      stdout: "done\n",
+      stderr: "Loading configuration\nBundling routes\n",
+      exitCode: 0,
+    };
+
+    const timeout = 30_000;
+
+    test(
+      "react framework: server, client and ssr graphs",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-transpiler-leak-react", {
+          "app.ts": `export default { app: { framework: "react" } };`,
+        });
+
+        expect(await buildApp(dir)).toStrictEqual(cleanBuild);
+      },
+      timeout,
+    );
+
+    test(
+      "framework without server components: server and client graphs only",
+      async () => {
+        using dir = tempDir("bake-production-transpiler-leak-two-graphs", {
+          "app.ts": `export default {
+            app: {
+              framework: {
+                fileSystemRouterTypes: [{ root: "pages", serverEntryPoint: "./server.ts", style: "nextjs-pages" }],
+              },
+            },
+          };`,
+          "server.ts": `export function prerender() {}`,
+        });
+
+        expect(await buildApp(String(dir))).toStrictEqual(cleanBuild);
+      },
+      timeout,
+    );
+
+    test(
+      "build that fails while bundling",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-transpiler-leak-bundle-error", {
+          "app.ts": `export default { app: { framework: "react" } };`,
+          "pages/index.tsx": `import { useState } from "react";
+export default function IndexPage() {
+  useState(0);
+}
+`,
+        });
+
+        const { stdout, stderr, exitCode } = await buildApp(dir);
+        expect({ stdout, stderr: normalizeBunSnapshot(stderr, dir), exitCode }).toMatchInlineSnapshot(`
+          {
+            "exitCode": 1,
+            "stderr": 
+          "Loading configuration
+          Bundling routes
+          3 |   useState(0);
+                ^
+          error: "useState" is not available in a server component. If you need interactivity, consider converting part of this to a Client Component (by adding \`"use client";\` to the top of the file).
+              at <dir>/pages/index.tsx:3:3"
+          ,
+            "stdout": "",
+          }
+        `);
       },
       timeout,
     );

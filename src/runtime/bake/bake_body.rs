@@ -1139,27 +1139,25 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler_with_options<'a>(
-        &mut self,
+    pub(crate) fn init_transpiler_with_options<'a, 'slot>(
+        &self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        out: &'slot mut super::TranspilerSlot<'a>,
+        framework_view: &'a bun_bundler::bake_types::Framework,
         bundler_options: &BuildConfigSubset,
         source_map: bun_bundler::options::SourceMapOption,
         minify_whitespace: Option<bool>,
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<&'slot mut bun_bundler::Transpiler<'a>> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // The caller (`DevServer::init`) hands us an uninitialized slot, so
-        // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
-        // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
@@ -1221,13 +1219,7 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY projection
-        // (`bake_types::Framework`); construct it here and give it arena
-        // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // NOTE: interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        out.options.framework = Some(framework_view);
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -1294,7 +1286,7 @@ impl Framework {
         // Re-sync after define/naming mutations so the resolver sees the
         // final option set.
         out.sync_resolver_opts();
-        Ok(())
+        Ok(out)
     }
 }
 

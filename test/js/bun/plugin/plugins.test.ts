@@ -836,7 +836,7 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
       const m = await import("myns:hello");
       console.log("result=" + m.default);
     `);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=1", stderr, exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=1", stderr: "", exitCode: 0 });
   });
 
   it("re-registering a namespaced onResolve plugin after clearAll() drops the old callback", async () => {
@@ -860,7 +860,7 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
       const m = await import("myns:hello");
       console.log("result=" + m.default);
     `);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=2", stderr, exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "result=2", stderr: "", exitCode: 0 });
   });
 
   // A namespace registered after clearAll() takes the index of a namespace that
@@ -901,7 +901,7 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
     `);
     expect({ stdout, stderr, exitCode }).toEqual({
       stdout: JSON.stringify({ calls: { oldResolve: 0, newResolve: 1, newLoad: 1 }, loaded: "new" }),
-      stderr,
+      stderr: "",
       exitCode: 0,
     });
   });
@@ -931,7 +931,7 @@ describe.concurrent("Bun.plugin.clearAll()", () => {
 
     expect({ stdout: stdout.trim(), stderr: stderr.trim(), exitCode }).toEqual({
       stdout: "ok",
-      stderr: stderr.trim(),
+      stderr: "",
       exitCode: 0,
     });
   });

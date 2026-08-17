@@ -144,10 +144,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             &mut abs_buf,
             &[tarball_path],
         )
-        .ok_or(bun_sys::Error::from_code(
-            bun_sys::E::ENAMETOOLONG,
-            bun_sys::Tag::open,
-        ));
+        .ok_or_else(|| bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open));
 
         let tarball_bytes = match abs_tarball_path.and_then(|p| File::read_from(Fd::cwd(), p)) {
             Ok(b) => b,

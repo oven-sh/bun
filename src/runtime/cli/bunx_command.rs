@@ -48,7 +48,7 @@ impl InstallLock {
         nonblocking: bool,
     ) -> Option<Self> {
         let sep = bun_paths::SEP_STR.as_bytes();
-        let path = bun_core::ZBox::from_bytes(&[bunx_cache_dir, sep, b".bunx-lock"].concat());
+        let path = bun_core::ZBox::from_bytes([bunx_cache_dir, sep, b".bunx-lock"].concat());
         for _ in 0..5 {
             let fd = bun_sys::openat(Fd::cwd(), &path, O::CREAT | O::RDWR | O::CLOEXEC, 0o600);
             let file = bun_sys::File::from_fd(fd.ok()?);

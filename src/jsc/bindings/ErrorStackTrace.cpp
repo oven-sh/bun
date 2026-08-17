@@ -455,6 +455,16 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
     return Zig::sourceURL(function->jsExecutable()->source());
 }
 
+String functionNameForDisplay(JSC::VM& vm, String name)
+{
+    // Identity, not equality: a function that is actually named "starDefault" keeps its name.
+    if (name.impl() == vm.propertyNames->starDefaultPrivateName.impl()) {
+        return vm.propertyNames->defaultKeyword.string();
+    }
+
+    return name;
+}
+
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
     auto codeType = codeBlock->codeType();
@@ -465,7 +475,7 @@ String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
     }
 
     if (codeType == JSC::FunctionCode) {
-        return uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string();
+        return functionNameForDisplay(vm, uncheckedDowncast<JSC::FunctionExecutable>(executable)->ecmaName().string());
     }
 
     return String();
@@ -521,7 +531,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::
         }
     }
 
-    return functionName;
+    return functionNameForDisplay(vm, WTF::move(functionName));
 }
 
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety finalizerSafety, unsigned int* flags)
@@ -580,7 +590,7 @@ String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const
                     auto str = function->nameWithoutGC(vm);
                     if (str.isEmpty() && !function->isHostFunction()) {
                         setTypeFlagsIfNecessary();
-                        return function->jsExecutable()->ecmaName().string();
+                        return functionNameForDisplay(vm, function->jsExecutable()->ecmaName().string());
                     }
                     setTypeFlagsIfNecessary();
                     return str;

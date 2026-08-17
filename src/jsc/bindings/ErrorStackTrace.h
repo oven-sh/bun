@@ -215,6 +215,9 @@ public:
     static constexpr unsigned AddNewKeyword = 1 << 4;
 };
 
+// Renders an anonymous `export default`'s internal `*default*` binding as "default", like JSFunction::reifyName does for `.name`.
+String functionNameForDisplay(JSC::VM& vm, String name);
+
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSObject* callee);
 String functionName(JSC::VM& vm, JSC::JSGlobalObject* lexicalGlobalObject, const JSC::StackFrame& frame, FinalizerSafety, unsigned int* flags);

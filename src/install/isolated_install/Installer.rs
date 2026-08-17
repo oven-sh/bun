@@ -2249,8 +2249,7 @@ impl<'a> Installer<'a> {
         Ok(PatchInfo::None)
     }
 
-    /// `node_modules/.bun/node_modules/<package name>`
-    fn hidden_node_modules_link_path(&self, entry_id: StoreEntryId) -> AutoPath {
+    pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
@@ -2272,18 +2271,6 @@ impl<'a> Installer<'a> {
             .as_bytes(),
         );
         let _ = hidden_hoisted_node_modules.append(pkg_name.slice(string_buf)); // OOM/capacity: fire-and-forget
-
-        hidden_hoisted_node_modules
-    }
-
-    pub(crate) fn link_to_hidden_node_modules(&self, entry_id: StoreEntryId) {
-        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-
-        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
-        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize];
-
-        let hidden_hoisted_node_modules = self.hidden_node_modules_link_path(entry_id);
 
         let mut target = AutoRelPath::init();
 
@@ -2507,7 +2494,12 @@ impl<'a> Installer<'a> {
 
         for &entry_id in &self.failed_optional_entries {
             if self.store.entries.items_hoisted()[entry_id.get() as usize] {
-                let _ = remove_link(self.hidden_node_modules_link_path(entry_id).slice_z());
+                let node_id = entry_node_ids[entry_id.get() as usize].get() as usize;
+                let pkg_name = pkg_names[nodes.items_pkg_id()[node_id] as usize].slice(string_buf);
+                let mut hidden = AutoPath::init();
+                let _ = hidden.append_fmt(format_args!("{NODE_MODULES_BUN}/node_modules"));
+                let _ = hidden.append(pkg_name);
+                let _ = remove_link(hidden.slice_z());
             }
         }
     }

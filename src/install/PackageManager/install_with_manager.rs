@@ -595,7 +595,7 @@ pub fn install_with_manager(
     if manager.pending_task_count() > 0
         || manager.peer_dependencies.readable_length() > 0
         || !named.latest_rows.is_empty()
-        || transitive.has_deferred()
+        || !transitive.deferred.is_empty()
     {
         resolve_pending_tasks(
             manager,

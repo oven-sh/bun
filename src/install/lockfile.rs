@@ -1933,11 +1933,8 @@ impl Lockfile {
             );
             // The hoister binds peers by scanning `package_index` under the package name.
             debug_assert!(
-                match self.package_index.get(&package.name_hash) {
-                    Some(PackageIndexEntry::Id(id)) => *id as usize == i,
-                    Some(PackageIndexEntry::Ids(ids)) => ids.iter().any(|&id| id as usize == i),
-                    None => false,
-                },
+                self.packages_named(package.name_hash)
+                    .contains(&(i as PackageID)),
                 "package {} is not in package_index under its own name",
                 i
             );

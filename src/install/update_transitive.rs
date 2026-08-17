@@ -282,7 +282,7 @@ pub struct TransitiveUpdate {
     /// For `print_plan`, when no install summary will print the rows (`--dry-run`, `--lockfile-only`).
     report: Report,
     /// Range rows left to follow the direct entry whose package they share; see `plan_unanchored`.
-    deferred: Vec<DependencyID>,
+    pub(crate) deferred: Vec<DependencyID>,
 }
 
 impl TransitiveUpdate {
@@ -305,10 +305,6 @@ impl TransitiveUpdate {
             edges
         };
         plan_edges(manager, &edges, direct)
-    }
-
-    pub fn has_deferred(&self) -> bool {
-        !self.deferred.is_empty()
     }
 
     /// Once the direct entries have resolved: a deferred row whose entry moved to a version the row's range accepts has followed it; one whose package no direct entry resolves to any more (the entry moved where the range does not reach, or was removed from package.json in the meantime) is planned on its own range here. Returns whether anything was enqueued, in which case the caller resolves again.

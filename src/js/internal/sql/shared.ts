@@ -383,6 +383,23 @@ function pushBindParam(
   return adapter.placeholder(index) + " ";
 }
 
+// Every path except the tagged template (helpers, sql.unsafe, sql.file) hands values to
+// native raw, and native JSON-stringifies objects. Copies lazily: `values` may be the caller's.
+function unwrapArrayParams(values: unknown[]): unknown[] {
+  let out: unknown[] | undefined;
+  for (let i = 0; i < values.length; i++) {
+    const v = values[i];
+    if (v instanceof SQLArrayParameter) {
+      if (out === undefined) {
+        out = new Array(values.length);
+        for (let j = 0; j < values.length; j++) out[j] = values[j];
+      }
+      out[i] = v.serializedValues;
+    }
+  }
+  return out ?? values;
+}
+
 // This function handles array values in single fields:
 // - JSON/JSONB are the only field types that can be arrays themselves, so we serialize them
 // - SQL array field types (e.g., INTEGER[], TEXT[]) require the sql.array() helper
@@ -395,7 +412,7 @@ function normalizeQuery(
 ): [string, unknown[]] {
   if (typeof strings === "string") {
     // identifier or unsafe query
-    return [strings, values || []];
+    return [strings, unwrapArrayParams(values || [])];
   }
 
   if (!$isArray(strings)) {
@@ -575,13 +592,7 @@ function normalizeQuery(
     }
   }
 
-  // The INSERT / UPDATE / IN helpers above push values raw, bypassing adapter.bindParam.
-  for (let i = 0; i < binding_values.length; i++) {
-    const v = binding_values[i];
-    if (v instanceof SQLArrayParameter) binding_values[i] = v.serializedValues;
-  }
-
-  return [query, binding_values];
+  return [query, unwrapArrayParams(binding_values)];
 }
 
 const enum PooledConnectionState {

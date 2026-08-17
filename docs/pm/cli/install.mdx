@@ -535,6 +535,7 @@ The migration process handles:
 - Preserves resolved versions and integrity hashes
 - Preserves peer dependency ranges and `peerDependenciesMeta`, so the next `bun install` leaves the migrated lockfile unchanged
 - Writes every catalog entry declared in `pnpm-workspace.yaml` to `bun.lock`, including entries no workspace uses yet (`pnpm-lock.yaml` lists only the entries in use), so the next `bun install` leaves the catalog unchanged
+- Keeps `catalog:` and `workspace:` specifiers as written and records each workspace package's version, so `bun install --frozen-lockfile` accepts the migrated lockfile and the versions pnpm locked for each workspace are the ones installed
 - Migrates git, GitHub, tarball URL, `file:`, and `npm:` alias dependencies, including transitive ones
 - Resolves pnpm named registries (`name@registry:version`) via `namedRegistries` in `pnpm-workspace.yaml`
 - Converts injected workspace packages (`dependenciesMeta.*.injected`) to ordinary workspace dependencies

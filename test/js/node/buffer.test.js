@@ -4561,6 +4561,106 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
   });
 });
 
+// Node reads a detached view's length (0) like any other buffer's: it sorts before any
+// non-empty buffer, equals any other empty one, swapNN() has nothing to swap, and as a fill
+// value it is rejected the way an empty one is. The expected values below are Node v26's.
+describe("detached buffers in compare, equals, swapNN and as a fill value", () => {
+  const detached = (size = 16) => {
+    const buf = Buffer.alloc(size);
+    buf.buffer.transfer();
+    return buf;
+  };
+  // A length-tracking view on a resizable ArrayBuffer computes its byteLength through a
+  // different path in JSC than a fixed-length one; both must read as 0 once detached.
+  const detachedLengthTracking = () => {
+    const rab = new ArrayBuffer(16, { maxByteLength: 32 });
+    const view = new Uint8Array(rab);
+    rab.transfer();
+    return view;
+  };
+  const abc = () => Buffer.from("abc");
+  const empty = () => Buffer.alloc(0);
+  const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+
+  it("Buffer.compare() treats a detached argument in either position as empty", () => {
+    const same = detached();
+    expect([
+      Buffer.compare(detached(), detached()),
+      Buffer.compare(same, same),
+      Buffer.compare(detached(), abc()),
+      Buffer.compare(abc(), detached()),
+      Buffer.compare(detached(), empty()),
+      Buffer.compare(empty(), detached()),
+      Buffer.compare(detachedLengthTracking(), abc()),
+      Buffer.compare(abc(), detachedLengthTracking()),
+      Buffer.compare(detachedLengthTracking(), detachedLengthTracking()),
+    ]).toEqual([0, 0, -1, 1, 0, 0, -1, 1, 0]);
+  });
+
+  it("buf.compare() treats a detached target or source as empty", () => {
+    const same = detached();
+    expect([
+      abc().compare(detached()),
+      empty().compare(detached()),
+      detached().compare(detached()),
+      same.compare(same),
+      detached().compare(abc()),
+      abc().compare(detachedLengthTracking()),
+      // With explicit offsets the detached side is an empty range whatever its start is.
+      abc().compare(detached(), 0),
+      abc().compare(detached(), 5),
+      detached().compare(detached(), 5),
+      empty().compare(detached(), 0, 0, 0, 0),
+    ]).toEqual([1, 0, 0, 0, -1, 1, 1, 1, 0, 0]);
+  });
+
+  it("buf.compare() range-checks an explicit end against the detached side's length of 0", () => {
+    expect(() => abc().compare(detached(), 0, 1)).toThrow(OUT_OF_RANGE);
+    expect(() => detached().compare(abc(), 0, 3, 0, 1)).toThrow(OUT_OF_RANGE);
+  });
+
+  it("buf.equals() treats a detached buffer on either side as empty", () => {
+    const same = detached();
+    expect([
+      abc().equals(detached()),
+      empty().equals(detached()),
+      detached().equals(detached()),
+      same.equals(same),
+      detached().equals(abc()),
+      detached().equals(empty()),
+      abc().equals(detachedLengthTracking()),
+      empty().equals(detachedLengthTracking()),
+    ]).toEqual([false, true, true, true, false, true, false, true]);
+  });
+
+  it.each(["swap16", "swap32", "swap64"])("%s() returns a detached buffer unchanged", method => {
+    const buf = detached();
+    expect(buf[method]()).toBe(buf);
+    expect(buf.length).toBe(0);
+
+    // The size check sees the detached length of 0, not the 3 bytes it was created with.
+    const odd = detached(3);
+    expect(odd[method]()).toBe(odd);
+
+    const view = detachedLengthTracking();
+    expect(Buffer.prototype[method].call(view)).toBe(view);
+  });
+
+  it("Buffer.alloc() and buf.fill() reject a detached fill value like an empty one", () => {
+    const INVALID_ARG_VALUE = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+    expect(() => Buffer.alloc(4, detached())).toThrow(INVALID_ARG_VALUE);
+    expect(() => Buffer.alloc(4, detachedLengthTracking())).toThrow(INVALID_ARG_VALUE);
+    expect(() => abc().fill(detached())).toThrow(INVALID_ARG_VALUE);
+    expect(() => abc().fill(detachedLengthTracking())).toThrow(INVALID_ARG_VALUE);
+
+    // Nothing to fill, so the value is never looked at (in Node either).
+    expect(Buffer.alloc(0, detached()).length).toBe(0);
+    const buf = abc();
+    expect(buf.fill(detached(), 1, 1)).toBe(buf);
+    expect(buf.toString()).toBe("abc");
+  });
+});
+
 describe("Buffer.copyBytesFrom", () => {
   it("copies the correct bytes from a Uint8Array view with a non-zero byteOffset", () => {
     const ab = new ArrayBuffer(10);

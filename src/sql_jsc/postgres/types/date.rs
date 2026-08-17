@@ -20,12 +20,8 @@ pub(crate) fn from_binary(bytes: &[u8]) -> f64 {
     if microseconds == i64::MIN {
         return f64::NEG_INFINITY;
     }
-    // Floor to whole ms before converting: the text decoders drop the sub-ms
-    // digits, and a fractional f64 would instead be truncated toward zero by
-    // timeClip in DateInstance::create, landing pre-1970 instants 1 ms late
-    // (1969-12-31 23:59:59.9996 came back as 1970-01-01T00:00:00.000Z).
-    // |µs / 1000| <= ~9.2e15, so the epoch shift cannot overflow, and every
-    // result JS Date accepts (±8.64e15) is below 2^53, so the cast is exact.
+    // Floor in integers: a fractional f64 would be truncated toward zero by
+    // timeClip, landing pre-1970 instants 1 ms late. Text decoding floors.
     (microseconds.div_euclid(US_PER_MS) + POSTGRES_EPOCH_DATE) as f64
 }
 
@@ -63,8 +59,6 @@ pub(crate) fn timestamp_text_to_ms_utc(
             i32::from(parsed.hour),
             i32::from(parsed.minute),
             i32::from(parsed.second),
-            // Fractional seconds → milliseconds; drops the sub-ms digits, as
-            // `from_binary` does.
             (parsed.microsecond / 1000) as i32,
         )
         .ok()

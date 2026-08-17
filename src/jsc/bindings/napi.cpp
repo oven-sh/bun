@@ -100,7 +100,7 @@ using namespace Zig;
     auto napi_preamble_throw_scope__ = DECLARE_TOP_EXCEPTION_SCOPE(_env->vm()); \
     NAPI_RETURN_IF_EXCEPTION(_env);                                             \
     /* Node: RETURN_STATUS_IF_FALSE(env, env->can_call_into_js(), ...) */       \
-    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))    \
+    if (WebCore::clientData(_env->vm())->isStoppingOrStopped(_env->vm()))       \
         [[unlikely]]                                                            \
         return napi_set_last_error(_env, _env->napiModule().nm_version >= 10 ? napi_cannot_run_js : napi_pending_exception);
 

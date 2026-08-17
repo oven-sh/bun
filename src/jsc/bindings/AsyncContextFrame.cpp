@@ -101,7 +101,7 @@ extern "C" JSC::EncodedJSValue AsyncContextFrame__withAsyncContextIfNeeded(JSGlo
     if (!functionObject.isCell())                                                   \
         return jsUndefined();                                                       \
     auto& vm = global->vm();                                                        \
-    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]           \
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]              \
         return jsUndefined();                                                       \
     JSValue restoreAsyncContext;                                                    \
     InternalFieldTuple* asyncContextData = nullptr;                                 \

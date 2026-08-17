@@ -62,7 +62,7 @@ struct Entry {
 /// 128-byte-aligned blob. JSC's bytecode decoder reads the blob in place and
 /// requires the same alignment the standalone graph provides (see
 /// StandaloneModuleGraph.rs "Bytecode alignment" note). Either a heap buffer
-/// or a span inside a whole-file mapping.
+/// or a span inside a mapping of the cache file.
 struct AlignedBlob {
     ptr: core::ptr::NonNull<u8>,
     len: usize,
@@ -71,11 +71,13 @@ struct AlignedBlob {
 
 enum Backing {
     Heap,
-    /// `PROT_READ`/`MAP_PRIVATE` mapping of the whole cache file; `ptr` points
-    /// at [`blob_file_offset`] inside it, 128-aligned because the mapping base
-    /// is page-aligned. Safe against entry rewrites: writers go through
-    /// tmpfile + rename, so a replaced file's old inode stays live under the
-    /// mapping.
+    /// `PROT_READ`/`MAP_PRIVATE` mapping of the cache file's tail: the file is
+    /// mapped whole to validate it, then the pages in front of the one holding
+    /// [`blob_file_offset`] (header + stored code, never read again once
+    /// compared) are unmapped, so `base` is the last page boundary at or before
+    /// the blob. `ptr` stays 128-aligned because page boundaries are. Safe
+    /// against entry rewrites: writers go through tmpfile + rename, so a
+    /// replaced file's old inode stays live under the mapping.
     Map {
         base: core::ptr::NonNull<u8>,
         map_len: usize,
@@ -109,6 +111,39 @@ impl AlignedBlob {
     fn as_mut_slice(&mut self) -> &mut [u8] {
         // SAFETY: `ptr` is valid for `len` bytes for the lifetime of `self`.
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
+    }
+
+    /// Takes ownership of a validated whole-file mapping, keeping only the
+    /// pages from the blob onwards mapped (see [`Backing::Map`]). The stored
+    /// code in the unmapped prefix was paged in by the byte compare and would
+    /// otherwise stay resident next to the live source string for the rest of
+    /// the process.
+    ///
+    /// # Safety
+    /// `(base, map_len)` must be a live mapping nothing else reads any more,
+    /// with `blob_off + blob_len <= map_len` and `base + blob_off` 128-aligned.
+    unsafe fn from_mapping(
+        base: core::ptr::NonNull<u8>,
+        map_len: usize,
+        blob_off: usize,
+        blob_len: usize,
+    ) -> Self {
+        let prefix_len = blob_off - blob_off % bun_alloc::page_size();
+        // SAFETY: `prefix_len <= blob_off <= map_len` per the contract.
+        let (ptr, tail) = unsafe { (base.add(blob_off), base.add(prefix_len)) };
+        let (base, map_len) = if prefix_len != 0 && sys::munmap(base.as_ptr(), prefix_len).is_ok() {
+            (tail, map_len - prefix_len)
+        } else {
+            // The blob starts in the first page, or the kernel refused the
+            // partial unmap: keep owning the whole mapping and release it at
+            // once on drop.
+            (base, map_len)
+        };
+        Self {
+            ptr,
+            len: blob_len,
+            backing: Backing::Map { base, map_len },
+        }
     }
 }
 
@@ -831,14 +866,11 @@ fn read_cache_file(state: &CacheState, key: u64, entry: &mut Entry, code: Option
     });
     let blob = if map_is_aligned {
         let (base, map_len) = map_guard.take().expect("checked above");
-        // SAFETY: `blob_off + cache_size == map_len` was just validated.
-        let ptr =
-            unsafe { core::ptr::NonNull::new_unchecked(base.as_ptr().add(blob_off as usize)) };
-        AlignedBlob {
-            ptr,
-            len: cache_size as usize,
-            backing: Backing::Map { base, map_len },
-        }
+        // SAFETY: `blob_off + cache_size == map_len` and the blob's alignment
+        // were just validated, and `bytes`/`blob_bytes` (views of the whole
+        // mapping, part of which is unmapped here) are not used past this
+        // point.
+        unsafe { AlignedBlob::from_mapping(base, map_len, blob_off as usize, cache_size as usize) }
     } else {
         // No mapping, or the blob would be misaligned in it: copy to an
         // aligned heap buffer instead (map_guard unmaps on return).

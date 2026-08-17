@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import fs from "fs";
-import { bunEnv, bunExe, isWindows, ospath, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, ospath, tempDir } from "harness";
 import Module, { _nodeModulePaths, builtinModules, createRequire, isBuiltin, wrap } from "module";
 import path from "path";
 
@@ -214,6 +214,63 @@ console.log("survived", require("./late.js"));`,
     const modes = files.map(f => (fs.statSync(path.join(cacheDir, f)).mode & 0o777).toString(8));
     expect(modes).toEqual(["600", "600"]);
     expect(exitCode).toBe(0);
+  });
+
+  test.skipIf(!isLinux)("compile cache keeps only the bytecode pages of an accepted entry mapped", async () => {
+    // An accepted entry file is mmapped so JSC reads the bytecode in place. The
+    // stored source in front of the bytecode is only read by the byte compare
+    // (the module's live source holds the same text), so its pages are unmapped
+    // afterwards instead of staying resident for the rest of the process.
+    const sourceSize = 256 * 1024;
+    using dir = tempDir("compile-cache-unmap", {
+      // Spans several pages even with 64 KiB pages.
+      "big.js": `module.exports = "${Buffer.alloc(sourceSize, "x").toString()}";`,
+      // Prints the mappings (file offset + mapped length) of every file whose
+      // path contains argv[2].
+      "main.js": `
+        const length = require("./big.js").length;
+        const mapped = require("fs")
+          .readFileSync("/proc/self/maps", "utf8")
+          .split("\\n")
+          .filter(line => line.includes(process.argv[2]))
+          .map(line => {
+            const [range, , offset] = line.split(/\\s+/);
+            const [start, end] = range.split("-");
+            return { offset: parseInt(offset, 16), length: parseInt(end, 16) - parseInt(start, 16) };
+          });
+        console.log(JSON.stringify({ length, mapped }));
+      `,
+    });
+    const cacheDir = path.join(String(dir), "cc");
+    const env = { ...bunEnv, NODE_COMPILE_CACHE: cacheDir };
+    async function run(filter) {
+      await using proc = Bun.spawn({ cmd: [bunExe(), "main.js", filter], env, cwd: String(dir), stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    // Misses populate the cache and leave nothing mapped.
+    expect(await run(cacheDir)).toEqual({ length: sourceSize, mapped: [] });
+
+    // big.js has the large entry: header, stored source, then the bytecode.
+    const entries = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })]
+      .map(f => ({ basename: path.basename(f), size: fs.statSync(path.join(cacheDir, f)).size }))
+      .sort((a, b) => b.size - a.size);
+    expect(entries).toHaveLength(2);
+    const { basename, size } = entries[0];
+    expect(size).toBeGreaterThan(sourceSize);
+
+    const { length, mapped } = await run(basename);
+    expect(length).toBe(sourceSize);
+    expect(mapped).toHaveLength(1);
+    const [{ offset, length: mappedLength }] = mapped;
+    // The mapping starts at the page the bytecode begins on, not at the start of the file...
+    expect(offset).toBeGreaterThan(0);
+    expect(mappedLength).toBeLessThan(size);
+    // ...and still covers the bytecode through the end of the file.
+    expect(offset + mappedLength).toBeGreaterThanOrEqual(size);
   });
 
   const compileCacheEnv = { ...bunEnv };

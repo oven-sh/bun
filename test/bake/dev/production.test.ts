@@ -353,6 +353,27 @@ export default function Docs() {
     expect(exitCode).toBe(1);
   });
 
+  test("rejects a non-array plugins option", async () => {
+    using dir = tempDir("bake-production-plugins-not-array", {
+      "server.ts": `export function render() { return new Response("unused"); }`,
+      "bun.app.ts": `
+        export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+            },
+            plugins: 123,
+          },
+        };
+      `,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app`.cwd(String(dir)).env(bunEnv).throws(false);
+
+    expect(stderr.toString()).toContain("TypeError: plugins must be an array");
+    expect(exitCode).toBe(1);
+  });
+
   test("two pages resolving to the same route are reported", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

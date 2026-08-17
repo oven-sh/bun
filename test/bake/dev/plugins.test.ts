@@ -1,4 +1,6 @@
 // Plugin tests concern plugins in development mode.
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { devTest, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
@@ -110,6 +112,84 @@ devTest("onResolve + onLoad virtual file", {
     ]);
   },
 });
+
+// `app.plugins` and `framework.plugins` share one parser; a non-array used to be iterated or silently ignored.
+test.concurrent("app.plugins and framework.plugins must be arrays", async () => {
+  using dir = tempDir("bake-plugins-not-array", {
+    "server.ts": `export function render() { return new Response("unused"); }`,
+    "check.ts": `
+      const framework = {
+        fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+      };
+      let setupCalls = 0;
+      const plugin = { name: "counted", setup() { setupCalls++; } };
+      const values = {
+        "string": "abc",
+        "single plugin object": plugin,
+        "number": 123,
+        "array-like": { length: 0 },
+        "array": [plugin],
+        "empty array": [],
+        "null": null,
+      };
+      const sites = {
+        "app.plugins": plugins => ({ framework, plugins }),
+        "framework.plugins": plugins => ({ framework: { ...framework, plugins } }),
+      };
+
+      const results = {};
+      for (const [site, app] of Object.entries(sites)) {
+        for (const [name, plugins] of Object.entries(values)) {
+          try {
+            const server = Bun.serve({
+              port: 0,
+              development: true,
+              app: app(plugins),
+              fetch: () => new Response(""),
+            });
+            server.stop(true);
+            results[site + " = " + name] = "accepted";
+          } catch (e) {
+            results[site + " = " + name] = e.message;
+          }
+        }
+      }
+      results.setupCalls = setupCalls;
+      console.log(JSON.stringify(results));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "check.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toStrictEqual({
+    "app.plugins = string": "plugins must be an array",
+    "app.plugins = single plugin object": "plugins must be an array",
+    "app.plugins = number": "plugins must be an array",
+    "app.plugins = array-like": "plugins must be an array",
+    "app.plugins = array": "accepted",
+    "app.plugins = empty array": "accepted",
+    "app.plugins = null": "accepted",
+    "framework.plugins = string": "plugins must be an array",
+    "framework.plugins = single plugin object": "plugins must be an array",
+    "framework.plugins = number": "plugins must be an array",
+    "framework.plugins = array-like": "plugins must be an array",
+    "framework.plugins = array": "accepted",
+    "framework.plugins = empty array": "accepted",
+    "framework.plugins = null": "accepted",
+    // once per site, from the two "array" cases
+    setupCalls: 2,
+  });
+  expect(exitCode).toBe(0);
+});
+
 // devTest("onLoad with watchFile", {
 //   framework: minimalFramework,
 //   pluginFile: `

@@ -814,8 +814,7 @@ impl StreamResult {
 
 /// Generic controller externs (defined in the generated `JSSink.cpp`). Every
 /// `JSReadable*SinkController` shares the `JSReadableSinkControllerBase`
-/// layout, so one symbol per operation suffices for all sink kinds; only
-/// creating a controller (`${abi}__createController`) is per sink.
+/// layout, so one symbol per operation suffices for all sink kinds.
 pub(crate) mod controller_abi {
     unsafe extern "C" {
         #[link_name = "JSSinkController__onReady"]
@@ -828,9 +827,7 @@ pub(crate) mod controller_abi {
         pub(crate) safe fn on_close(c: ::bun_jsc::JSValue, reason: ::bun_jsc::JSValue);
         #[link_name = "JSSinkController__detachPtr"]
         pub(crate) safe fn detach_ptr(c: ::bun_jsc::JSValue);
-        /// Start pumping `stream` into the controller's sink. Returns
-        /// undefined (drained inline), the pump promise, or the Exception
-        /// cell if setup threw.
+        /// Returns undefined (drained inline), the pump promise, or the thrown Exception cell.
         #[link_name = "JSSinkController__assignToStream"]
         pub(crate) safe fn assign_to_stream(
             g: &::bun_jsc::JSGlobalObject,
@@ -911,8 +908,7 @@ pub enum SourceHandle {
     /// No source attached.
     #[default]
     None,
-    /// Encoded `JSValue` of the C++ controller cell pumping a JS
-    /// `ReadableStream` into the sink (`JSSink::assign_to_stream`).
+    /// The C++ controller cell of a JS-stream pump (`JSSink::assign_to_stream`).
     JSController(JSValue),
     ByteStream(BackRef<crate::webcore::ByteStream>),
     FileReader(BackRef<crate::webcore::FileReader>),

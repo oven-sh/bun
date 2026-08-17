@@ -31,39 +31,11 @@ pub struct Entry {
     pub(crate) name_loc: bun_ast::Loc,
 }
 
-enum Scanned {
-    Workspace(Entry),
-    /// No usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
-    Nameless {
-        declares_dependencies: bool,
-    },
-}
-
 impl WorkspaceMap {
     pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
             skipped_with_dependencies: Vec::new(),
-        }
-    }
-
-    fn workspace_entry(&mut self, scanned: Scanned, relative_dir: &[u8]) -> Option<Entry> {
-        match scanned {
-            Scanned::Workspace(entry) => Some(entry),
-            Scanned::Nameless {
-                declares_dependencies,
-            } => {
-                // Overlapping patterns match the same directory more than once.
-                if declares_dependencies
-                    && !self
-                        .skipped_with_dependencies
-                        .iter()
-                        .any(|dir| **dir == *relative_dir)
-                {
-                    self.skipped_with_dependencies.push(relative_dir.into());
-                }
-                None
-            }
         }
     }
 
@@ -168,11 +140,14 @@ pub(crate) enum MissingWorkspace<'a> {
     SkipIfInLockfile(&'a Lockfile),
 }
 
+/// `None`: no usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
 fn process_workspace_name(
+    workspace_names: &mut WorkspaceMap,
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &[u8],
+    root_dir: &[u8],
     log: &mut bun_ast::Log,
-) -> crate::Result<Scanned> {
+) -> crate::Result<Option<Entry>> {
     let workspace_json = json_cache
         .get_with_path(
             log,
@@ -202,14 +177,23 @@ fn process_workspace_name(
             "processWorkspaceName({}) has no name, skipping",
             BStr::new(abs_package_json_path)
         );
-        return Ok(Scanned::Nameless {
-            declares_dependencies: DependencyGroup::FOUR.iter().any(|group| {
-                workspace_json
-                    .root
-                    .get(group.prop)
-                    .is_some_and(|deps| deps.property_count() > 0)
-            }),
+        let json = &workspace_json.root;
+        let declares_dependencies = DependencyGroup::FOUR.iter().any(|group| {
+            json.get(group.prop)
+                .is_some_and(|deps| deps.property_count() > 0)
         });
+        let mut buf = path::path_buffer_pool::get();
+        let dir = relative_workspace_path(
+            &mut buf.0,
+            root_dir,
+            workspace_dir_of(abs_package_json_path),
+        );
+        // Overlapping patterns match the same directory more than once.
+        let skipped = &mut workspace_names.skipped_with_dependencies;
+        if declares_dependencies && !skipped.iter().any(|skipped| **skipped == *dir) {
+            skipped.push(dir.into());
+        }
+        return Ok(None);
     };
 
     let entry = Entry {
@@ -231,7 +215,7 @@ fn process_workspace_name(
         BStr::new(&entry.name)
     );
 
-    Ok(Scanned::Workspace(entry))
+    Ok(Some(entry))
 }
 
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
@@ -324,13 +308,19 @@ impl WorkspaceMap {
                         continue;
                     }
 
-                    process_workspace_name(json_cache, abs_package_json_path, log)
-                        .map(|scanned| (abs_package_json_path, scanned))
+                    process_workspace_name(
+                        workspace_names,
+                        json_cache,
+                        abs_package_json_path,
+                        root_dir,
+                        log,
+                    )
+                    .map(|entry| (abs_package_json_path, entry))
                 }
                 None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
             };
 
-            let (abs_package_json_path, scanned) = match processed {
+            let (abs_package_json_path, workspace_entry) = match processed {
                 Ok(processed) => processed,
                 Err(err) => {
                     if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -380,16 +370,14 @@ impl WorkspaceMap {
                 }
             };
 
+            let Some(workspace_entry) = workspace_entry else {
+                continue;
+            };
             let rel_input_path = relative_workspace_path(
                 &mut rel_path_buf.0,
                 root_dir,
                 workspace_dir_of(abs_package_json_path),
             );
-
-            let Some(workspace_entry) = workspace_names.workspace_entry(scanned, rel_input_path)
-            else {
-                continue;
-            };
 
             if let Some(builder) = string_builder.as_deref_mut() {
                 builder.count(&workspace_entry.name);
@@ -534,14 +522,18 @@ impl WorkspaceMap {
                     >(
                         cwd, filepath_buf, &[entry_dir, b"package.json"]
                     ) {
-                        Some(abs_package_json_path) => {
-                            process_workspace_name(json_cache, abs_package_json_path, log)
-                                .map(|scanned| (abs_package_json_path, scanned))
-                        }
+                        Some(abs_package_json_path) => process_workspace_name(
+                            workspace_names,
+                            json_cache,
+                            abs_package_json_path,
+                            root_dir,
+                            log,
+                        )
+                        .map(|entry| (abs_package_json_path, entry)),
                         None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
                     };
 
-                    let (abs_package_json_path, scanned) = match processed {
+                    let (abs_package_json_path, workspace_entry) = match processed {
                         Ok(processed) => processed,
                         Err(err) => {
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -562,17 +554,14 @@ impl WorkspaceMap {
                         }
                     };
 
+                    let Some(workspace_entry) = workspace_entry else {
+                        continue;
+                    };
                     let workspace_path: &[u8] = relative_workspace_path(
                         &mut rel_path_buf.0,
                         root_dir,
                         workspace_dir_of(abs_package_json_path),
                     );
-
-                    let Some(workspace_entry) =
-                        workspace_names.workspace_entry(scanned, workspace_path)
-                    else {
-                        continue;
-                    };
 
                     if let Some(builder) = string_builder.as_deref_mut() {
                         builder.count(&workspace_entry.name);

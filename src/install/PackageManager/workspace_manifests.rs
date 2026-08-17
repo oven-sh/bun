@@ -3,10 +3,9 @@ use core::fmt;
 use bstr::BStr;
 use bun_collections::HashMap;
 use bun_core::{Global, Output};
-use bun_paths::{platform, resolve_path};
-use bun_resolver::fs::FileSystem;
 
 use crate::dependency::{Behavior, Tag as DependencyTag};
+use crate::lockfile::package::folder_relative_to_top_level_dir;
 use crate::lockfile::{DependencySlice, Lockfile, Package};
 use crate::{Features, PackageNameHash};
 
@@ -94,9 +93,8 @@ impl ScratchManifests {
     }
 }
 
-/// The workspace versions and catalogs `bun pm pack` / `bun publish` substitute, read from the
-/// package.json files as they are now. Not from bun.lock: it has the versions of the last install,
-/// and releases bump versions between that install and the publish.
+/// The workspace versions and catalogs `bun pm pack` / `bun publish` substitute, read from the package.json
+/// files as they are now (bun.lock has the versions of the last install; releases bump them after it).
 pub struct WorkspaceManifests {
     lockfile: Lockfile,
     /// Has a `Behavior::WORKSPACE` entry per workspace: its name and root-relative directory.
@@ -107,9 +105,7 @@ pub struct WorkspaceManifests {
 impl WorkspaceManifests {
     /// Exits with `bun install`'s errors when the root package.json or a workspace does not parse.
     pub fn load(manager: &mut PackageManager) -> WorkspaceManifests {
-        // Only the two things pack reads: the `workspaces` walk and the catalogs. The root's own
-        // dependency sections are not parsed, so `bun install`'s checks on them (a `workspace:1.2.3`
-        // range no workspace satisfies, say) do not decide whether a package packs.
+        // Only what pack reads, so `bun install`'s checks on the root's own dependency lists do not fail a pack.
         let features = Features {
             is_main: true,
             workspaces: true,
@@ -144,25 +140,8 @@ impl WorkspaceManifests {
         if path.is_empty() {
             return None;
         }
-        let top_level_dir = FileSystem::get().top_level_dir();
-        let mut directory_buf = bun_paths::path_buffer_pool::get();
-        let directory = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-            top_level_dir,
-            &mut directory_buf[..],
-            &[package_dir, path],
-        )?;
-        let relative_directory: &[u8] = resolve_path::relative(top_level_dir, directory);
-        // The workspaces' directories are stored with `/` separators on every platform.
-        #[cfg(windows)]
-        let mut posix_buf = bun_paths::path_buffer_pool::get();
-        #[cfg(windows)]
-        let relative_directory: &[u8] = {
-            let len = relative_directory.len();
-            posix_buf[..len].copy_from_slice(relative_directory);
-            bun_paths::dangerously_convert_path_to_posix_in_place::<u8>(&mut posix_buf[..len]);
-            &posix_buf[..len]
-        };
-
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let relative_directory = folder_relative_to_top_level_dir(package_dir, path, &mut buf[..])?;
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
         self.root_dependencies
             .get(self.lockfile.buffers.dependencies.as_slice())
@@ -174,22 +153,19 @@ impl WorkspaceManifests {
             .map(|dependency| dependency.name.slice(string_buf))
     }
 
-    /// The package.json whose `workspaces` and catalogs these are: the workspace root's when the
-    /// package being packed is one of its workspaces, otherwise the package's own.
+    /// The package.json whose `workspaces` and catalogs these are (the packed package's own when it is no workspace).
     pub fn root_package_json_path(&self) -> &[u8] {
         &self.root_package_json_path
     }
 
-    /// The `version` in the package.json of the workspace named `name`. `None` when no workspace
-    /// has that name or its package.json has no (semver) version.
+    /// The (semver) `version` in the package.json of the workspace named `name`, if any.
     pub fn workspace_version(&self, name: &[u8]) -> Option<impl fmt::Display + '_> {
         let name_hash: PackageNameHash = bun_semver::string::Builder::string_hash(name);
         let version = self.lockfile.workspace_versions.get(&name_hash)?;
         Some(version.fmt(self.lockfile.buffers.string_bytes.as_slice()))
     }
 
-    /// The range catalog `catalog_name` (`""` and `"default"` both name the default catalog)
-    /// declares for `dependency_name`, as written in the root package.json.
+    /// The range catalog `catalog_name` (`""` or `"default"` for the default one) declares for `dependency_name`, as written.
     pub fn catalog_version(&self, catalog_name: &[u8], dependency_name: &[u8]) -> Option<&[u8]> {
         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
         let dependency = self

@@ -779,6 +779,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Global::exit(1);
             }
             Self::handle_load_lockfile_errors(&load_lockfile, log_level);
+            package_json_write_back::write_migrated_root(pm);
             // Reshaped for borrowck — `save_to_disk` needs
             // `&mut Lockfile` (self) and `&LoadResult` simultaneously, but
             // `LoadResultOk.lockfile` already holds the only `&mut` into the
@@ -794,7 +795,6 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             unsafe {
                 (*lf).save_to_disk(&load_lockfile, &(*pm_raw).options);
             }
-            package_json_write_back::write_migrated_root(pm);
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"version") {
             let positionals: &[&[u8]] = pm.options.positionals;

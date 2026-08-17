@@ -730,7 +730,7 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
             bun_core::pretty!(
                 "<d>{}<r> {}<d>@{}<r>",
                 if last { "└──" } else { "├──" },
-                BStr::new(&entry.name),
+                bun_core::fmt::escape_control_chars(&entry.name),
                 bun_core::fmt::for_terminal(BStr::new(&entry.version))
             );
             if entry.dev_only {

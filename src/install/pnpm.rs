@@ -2430,7 +2430,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
 }
 
 /// Copies the settings pnpm keeps in `pnpm-workspace.yaml` and the `pnpm` key into the fields bun reads, in the
-/// cached root package.json; `package_json_write_back::record_migrated_root` writes it if the lockfile is saved.
+/// cached root package.json; `package_json_write_back::write_migrated_root` writes it if the lockfile is saved.
 fn update_package_json_after_migration(
     lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,

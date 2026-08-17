@@ -58,34 +58,22 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// The root package.json a pnpm migration edited in memory, announced once; `None` when the load did not touch it.
-/// Only the places that save the migrated lockfile ask, so a load that is never saved leaves the file alone.
-fn take_migrated_root(manager: &mut PackageManager) -> Option<WorkspaceTarget> {
+/// Writes the root package.json a pnpm migration edited in memory, just before the migrated lockfile is saved:
+/// a package.json that cannot take the moved fields fails the command before a lockfile that depends on them exists.
+/// Only the places that save the lockfile call this, so a load that is never saved leaves the file alone.
+pub fn write_migrated_root(manager: &mut PackageManager) {
     if manager.migrated_package_json_moves.is_empty() {
-        return None;
+        return;
     }
     let moved = core::mem::take(&mut manager.migrated_package_json_moves);
+    if !write_target(manager, &root_target()) {
+        Global::exit(1);
+    }
     if !manager.options.log_level.is_silent() {
         bun_core::pretty_errorln!(
             "<d>copied {} in <r><green>package.json<r>",
             moved.join(", ")
         );
-    }
-    Some(root_target())
-}
-
-/// `install_with_manager`: written by `flush` along with the command's other package.json edits.
-pub(crate) fn record_migrated_root(manager: &mut PackageManager) {
-    if let Some(root) = take_migrated_root(manager) {
-        record(manager, root, false);
-    }
-}
-
-/// `bun pm migrate` / `bun pm trust`: they save the lockfile regardless of `--dry-run` / `--no-save` (which disable
-/// `flush`), so its package.json is written directly; a write failure is reported, not fatal (the lockfile is saved).
-pub fn write_migrated_root(manager: &mut PackageManager) {
-    if let Some(root) = take_migrated_root(manager) {
-        let _ = write_target(manager, &root);
     }
 }
 

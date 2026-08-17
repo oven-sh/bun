@@ -476,7 +476,7 @@ impl WhyCommand {
             let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
             bun_core::prettyln!(
                 "<b>{}@{}<r>",
-                BStr::new(target_name),
+                escape_control_chars(target_name),
                 for_terminal(BStr::new(&target_version.version))
             );
 

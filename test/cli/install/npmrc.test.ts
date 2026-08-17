@@ -263,6 +263,29 @@ registry = http://localhost:${registry.port}/
       expect(result).toEqual(usesRegistry(1));
     });
 
+    // npm has no user config at all when `userconfig` names a missing file; it does not go back to ~/.npmrc.
+    it.concurrent("does not fall back to $HOME/.npmrc when $NPM_CONFIG_USERCONFIG does not exist", async () => {
+      using dir = tempDir("npmrc-userconfig-missing", { ...pkg, "home/.npmrc": npmrc(1) });
+      const result = await publishDryRun(String(dir), {
+        NPM_CONFIG_USERCONFIG: join(String(dir), "elsewhere", "missing.npmrc"),
+      });
+      expect(result.stderr).toContain("missing authentication");
+      expect(result.exitCode).toBe(1);
+    });
+
+    it.concurrent("resolves a relative $NPM_CONFIG_USERCONFIG against the directory bun was started in", async () => {
+      using dir = tempDir("npmrc-userconfig-relative", {
+        "package.json": JSON.stringify({ name: "root", private: true, workspaces: ["pkg"] }),
+        ...pkg,
+        "ci.npmrc": npmrc(1),
+        "pkg/ci.npmrc": npmrc(2),
+        "home/.npmrc": npmrc(3),
+      });
+      // `publish` runs from the workspace member `pkg/`.
+      const result = await publishDryRun(String(dir), { NPM_CONFIG_USERCONFIG: "ci.npmrc" });
+      expect(result).toEqual(usesRegistry(2));
+    });
+
     it.concurrent("the project .npmrc still overrides $NPM_CONFIG_USERCONFIG", async () => {
       using dir = tempDir("npmrc-userconfig-project", {
         ...pkg,

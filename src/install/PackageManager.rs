@@ -452,7 +452,7 @@ pub struct PackageManager {
     pub(crate) wrote_package_json: bool,
 
     // pnpm migration: what it moved into the cached root package.json. The file is only written along with the
-    // migrated lockfile (package_json_write_back::record_migrated_root); loads that are never saved leave it alone.
+    // migrated lockfile (package_json_write_back::write_migrated_root); loads that are never saved leave it alone.
     pub(crate) migrated_package_json_moves: Vec<&'static str>,
 
     // bun add: catalog references decided per target and the root entries they need; see add_catalog.rs

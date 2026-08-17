@@ -595,7 +595,7 @@ pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
 /// Name for a package whose package.json has none: the last component of where it came from
 /// (`../pkgs/foo`, `https://host/foo.tgz?token=x`, `https://host/user/foo` all become `foo`).
 pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
-    let without_query = location.split(|&b| b == b'?').next().unwrap_or(location);
+    let without_query = strings::split(location, b"?").next().unwrap_or(location);
     let basename = bun_paths::basename(without_query);
     let name = strings::without_suffix_comptime(
         strings::without_suffix_comptime(basename, b".tgz"),

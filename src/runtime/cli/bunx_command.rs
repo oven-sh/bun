@@ -33,42 +33,35 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
-/// `flock` on `<bunx cache dir>/.bunx-lock`: exclusive while installing into the shared directory,
-/// probed shared before running out of it. CLOEXEC, so exec'ing the target releases it too.
+/// `flock` on `<bunx cache dir>.lock`, next to (not inside) the shared directory so the stale-tree cleanup
+/// never unlinks it: exclusive while installing, probed shared before running out of it. CLOEXEC, so exec'ing
+/// the target releases it too.
 struct InstallLock(bun_sys::File);
 
 impl InstallLock {
     /// Zero-padded seconds, fixed width so a rewrite never has to truncate.
     const STAMP_LEN: usize = 20;
 
-    /// `None` when the lock cannot be taken, or is held elsewhere and `nonblocking`.
+    /// `None` when the lock cannot be taken (including a lock path that is a symlink or, on POSIX, not ours),
+    /// or is held elsewhere and `nonblocking`.
     fn acquire(
         bunx_cache_dir: &[u8],
         mode: bun_sys::FileLockMode,
         nonblocking: bool,
     ) -> Option<Self> {
-        let sep = bun_paths::SEP_STR.as_bytes();
-        let path = bun_core::ZBox::from_bytes([bunx_cache_dir, sep, b".bunx-lock"].concat());
-        for _ in 0..5 {
-            let fd = bun_sys::openat(Fd::cwd(), &path, O::CREAT | O::RDWR | O::CLOEXEC, 0o600);
-            let file = bun_sys::File::from_fd(fd.ok()?);
-            if !bun_sys::flock(file.fd(), mode, nonblocking).ok()? {
+        let path = bun_core::ZBox::from_bytes([bunx_cache_dir, b".lock"].concat());
+        let flags = O::CREAT | O::RDWR | O::CLOEXEC | O::NOFOLLOW;
+        let file = bun_sys::File::from_fd(bun_sys::openat(Fd::cwd(), &path, flags, 0o600).ok()?);
+        #[cfg(unix)]
+        {
+            let st = bun_sys::fstat(file.fd()).ok()?;
+            if (st.st_mode & libc::S_IFMT) != libc::S_IFREG || st.st_uid != bun_sys::c::getuid() {
                 return None;
             }
-            // The stale-tree cleanup deletes the lock file with the directory, and a lock on an
-            // unlinked file guards nothing: keep it only if the path still names the file locked.
-            let Ok(probe) = bun_sys::openat(Fd::cwd(), &path, O::RDONLY | O::CLOEXEC, 0) else {
-                continue;
-            };
-            let probe = bun_sys::File::from_fd(probe);
-            if let (Ok(held), Ok(at_path)) = (bun_sys::fstat(file.fd()), bun_sys::fstat(probe.fd()))
-            {
-                if held.st_ino == at_path.st_ino && held.st_dev == at_path.st_dev {
-                    return Some(Self(file));
-                }
-            }
         }
-        None
+        bun_sys::flock(file.fd(), mode, nonblocking)
+            .ok()?
+            .then_some(Self(file))
     }
 
     /// Whether another `bun x` is installing into `bunx_cache_dir` right now (its tree is partial).

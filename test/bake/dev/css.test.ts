@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import assert from "node:assert";
 import type { Dev } from "../bake-harness";
-import { devTest, emptyHtmlFile, imageFixtures } from "../bake-harness";
+import { devTest, emptyHtmlFile, imageFixtures, minimalFramework } from "../bake-harness";
 
 /** The stylesheet URLs the dev server injected into an HTML route (source `<link>` tags are ignored). */
 async function stylesheetUrls(dev: Dev, route: string): Promise<string[]> {
@@ -17,6 +17,33 @@ async function fetchCss(dev: Dev, url: string): Promise<string> {
   expect(res.status).toBe(200);
   expect(res.headers.get("Content-Type")).toBe("text/css;charset=utf-8");
   return res.text();
+}
+
+/** Resolves served CSS chunk URLs to the file name in the comment each chunk starts with. */
+function stylesheetFileNames(dev: Dev, hrefs: string[]): Promise<string[]> {
+  return Promise.all(
+    hrefs.map(async href => {
+      const css = await fetchCss(dev, href);
+      const header = css.match(/^\/\* (.*) \*\/\n/);
+      if (!header) throw new Error(`${href} does not start with a file name comment:\n${css}`);
+      return header[1];
+    }),
+  );
+}
+
+/** The `color` each stylesheet linked from `route` (one chunk per CSS root) declares for `selector`. */
+async function linkedStylesheetColors(dev: Dev, route: string, selector: string): Promise<string[]> {
+  const hrefs = await stylesheetUrls(dev, route);
+  return Promise.all(
+    hrefs.map(async href => {
+      const css = await fetchCss(dev, href);
+      const rule = css.match(new RegExp(`^${selector.replaceAll(".", "\\.")}\\s*\\{\\s*color:\\s*([^;]+);`, "m"));
+      if (!rule) {
+        throw new Error(`No ${selector} rule in ${href}:\n${css}`);
+      }
+      return rule[1];
+    }),
+  );
 }
 
 /** The exact stylesheet served for a route that links exactly one stylesheet. */
@@ -345,6 +372,11 @@ devTest("hot updates through shared imports, assets and script imports", {
         }
         "
       `);
+
+      // The rebuild above bundled both stylesheets together; each must keep its edge to `shared.css`.
+      await dev.write("shared.css", `.shared { color: red; }`, { errors: null });
+      await c1.style(".shared").color.expect.toBe("red");
+      await c2.style(".shared").color.expect.toBe("red");
     }
 
     // asset referenced in css
@@ -934,6 +966,120 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       }
       "
     `);
+  },
+});
+
+// None of these `@import` anything, so the comment each served chunk starts with names the referenced file.
+const orderedCssFiles = {
+  "one.css": `.one { color: red; }`,
+  "two.css": `.two { color: red; }`,
+  "three.css": `.three { color: red; }`,
+  "four.css": `.four { color: red; }`,
+  "five.css": `.five { color: red; }`,
+};
+devTest("css roots keep their edges and are linked in source order", {
+  files: {
+    // html route links stylesheets in source order (#30488, #28117)
+    "order.html": emptyHtmlFile({
+      styles: ["one.css", "two.css", "three.css"],
+      scripts: ["order.ts"],
+    }),
+    "order.ts": `
+      import "./four.css";
+      import "./five.css";
+    `,
+    ...orderedCssFiles,
+    // stylesheets bundled together both update when a shared import changes
+    "together.html": emptyHtmlFile({
+      styles: ["together-a.css", "together-b.css"],
+    }),
+    "together-a.css": `
+      @import "./together-shared.css";
+      .a { color: red; }
+    `,
+    "together-b.css": `
+      @import "./together-shared.css";
+      .b { color: blue; }
+    `,
+    "together-shared.css": `
+      .shared { color: green; }
+    `,
+    // stylesheet importing another linked stylesheet updates when it changes; base.css is linked first
+    "linked.html": emptyHtmlFile({
+      styles: ["base.css", "theme.css"],
+    }),
+    "base.css": `
+      .base { color: green; }
+    `,
+    "theme.css": `
+      @import "./base.css";
+      .theme { color: blue; }
+    `,
+  },
+  async test(dev) {
+    // html route links stylesheets in source order
+    {
+      const linked = async () => stylesheetFileNames(dev, await stylesheetUrls(dev, "/order"));
+      expect(await linked()).toEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
+
+      // Rebuilding a file re-links the edges it already had in the same order.
+      await dev.writeNoChanges("order.html");
+      await dev.writeNoChanges("order.ts");
+      expect(await linked()).toEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
+
+      await dev.write(
+        "order.html",
+        emptyHtmlFile({
+          styles: ["three.css", "one.css", "two.css"],
+          scripts: ["order.ts"],
+        }),
+      );
+      expect(await linked()).toEqual(["three.css", "one.css", "two.css", "four.css", "five.css"]);
+
+      await dev.write(
+        "order.ts",
+        `
+          import "./five.css";
+          import "./four.css";
+        `,
+      );
+      expect(await linked()).toEqual(["three.css", "one.css", "two.css", "five.css", "four.css"]);
+    }
+
+    // stylesheets bundled together both update when a shared import changes
+    {
+      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toEqual(["green", "green"]);
+      await dev.write("together-shared.css", `.shared { color: yellow; }`);
+      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toEqual(["#ff0", "#ff0"]);
+      // The re-bundle above processed both roots together again; the edges must survive it.
+      await dev.write("together-shared.css", `.shared { color: red; }`);
+      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toEqual(["red", "red"]);
+    }
+
+    // stylesheet importing another linked stylesheet updates when it changes
+    {
+      expect(await linkedStylesheetColors(dev, "/linked", ".base")).toEqual(["green", "green"]);
+      await dev.write("base.css", `.base { color: yellow; }`);
+      expect(await linkedStylesheetColors(dev, "/linked", ".base")).toEqual(["#ff0", "#ff0"]);
+    }
+  },
+});
+devTest("framework route lists styles in source order", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": `
+      import "../one.css";
+      import "../two.css";
+      import "../three.css";
+      export default function (req, meta) {
+        return Response.json(meta.styles);
+      }
+    `,
+    ...orderedCssFiles,
+  },
+  async test(dev) {
+    const styles: string[] = await dev.fetch("/").json();
+    expect(await stylesheetFileNames(dev, styles)).toEqual(["one.css", "two.css", "three.css"]);
   },
 });
 

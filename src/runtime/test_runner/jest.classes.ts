@@ -803,6 +803,18 @@ export default [
     klass: {},
     proto: {},
   }),
+  // Internal to the runner (AsyncContextRef.rs).
+  define({
+    name: "AsyncContextRef",
+    construct: false,
+    noConstructor: true,
+    finalize: true,
+    JSType: "0b11101110",
+    values: [],
+    configurable: false,
+    klass: {},
+    proto: {},
+  }),
   define({
     name: "ScopeFunctions",
     construct: false,

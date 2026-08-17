@@ -33,6 +33,7 @@ pub mod Classes {
     pub use crate::crypto::CryptoHasher;
     pub use crate::image as Image;
     pub use crate::shell::Interpreter as ShellInterpreter;
+    pub use crate::test_runner::async_context_ref::AsyncContextRef;
     pub use crate::test_runner::done_callback::DoneCallback;
     pub use crate::test_runner::expect::Expect;
     pub use crate::test_runner::expect::ExpectAny;

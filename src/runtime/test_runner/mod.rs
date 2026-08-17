@@ -134,6 +134,7 @@ macro_rules! throw_pretty_static {
 }
 
 cfg_jsc! {
+    #[path = "AsyncContextRef.rs"] pub mod async_context_ref;
     #[path = "bun_test.rs"]       pub mod bun_test;
     #[path = "Collection.rs"]     pub mod collection;
     #[path = "debug.rs"]          pub mod debug;
@@ -493,6 +494,7 @@ pub mod expect {
 
 // public surface for `crate::test_runner::*` consumers
 cfg_jsc! {
+    pub use async_context_ref::AsyncContextRef;
     pub use done_callback::DoneCallback;
     pub use expect::{
         Expect, ExpectAny, ExpectAnything, ExpectArrayContaining, ExpectCloseTo,

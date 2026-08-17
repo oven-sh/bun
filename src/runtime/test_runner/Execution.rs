@@ -46,7 +46,7 @@ use bun_core::scoped_log;
 use super::debug::group as group_log; // bun_test.debug.group
 use super::bun_test::{
     group_begin, AddedInPhase, BunTest, BunTestPtr, EntryData, ExecutionEntry,
-    HandleUncaughtExceptionResult, Order, RefDataValue, ScopeMode, StepResult,
+    HandleUncaughtExceptionResult, Order, RefDataPtr, RefDataValue, ScopeMode, StepResult,
 };
 use crate::cli::test_command;
 
@@ -167,6 +167,9 @@ pub struct ExecutionSequence {
     /// Expectation set by expect.hasAssertions() or expect.assertions(n).
     pub(crate) expect_assertions: ExpectAssertions,
     pub(crate) maybe_skip: bool,
+    /// The `RefData` the callback being executed runs under (AsyncContextRef.rs).
+    /// Owned `+1`, released by `advance_sequence` or `Drop`.
+    pub(crate) executing_ref: Option<RefDataPtr>,
 }
 
 impl ExecutionSequence {
@@ -189,6 +192,20 @@ impl ExecutionSequence {
             expect_call_count: 0,
             expect_assertions: ExpectAssertions::NotSet,
             maybe_skip: false,
+            executing_ref: None,
+        }
+    }
+
+    /// Called when the runner moves on before the executing callback completed.
+    pub(crate) fn abandon_executing_callback(&self) {
+        if let Some(executing_ref) = &self.executing_ref {
+            executing_ref.abandoned.set(true);
+        }
+    }
+
+    fn release_executing_ref(&mut self) {
+        if let Some(executing_ref) = self.executing_ref.take() {
+            executing_ref.deref();
         }
     }
 
@@ -198,6 +215,12 @@ impl ExecutionSequence {
             return unsafe { entry.as_ref() }.base.mode;
         }
         ScopeMode::Normal
+    }
+}
+
+impl Drop for ExecutionSequence {
+    fn drop(&mut self) {
+        self.release_executing_ref();
     }
 }
 
@@ -512,6 +535,7 @@ impl Execution {
         let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
 
         debug_assert!(sequence.executing);
+        sequence.release_executing_ref();
         if let Some(entry_ptr) = sequence.active_entry {
             // SAFETY: arena-owned entry, alive for lifetime of BunTest
             let entry = unsafe { entry_ptr.as_ref() };
@@ -981,6 +1005,7 @@ fn step_sequence_one(
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
         if active_entry.evaluate_timeout(sequence, now) {
+            sequence.abandon_executing_callback();
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -1019,6 +1044,11 @@ fn step_sequence_one(
         };
         group_log::log(format_args!("runSequence queued callback: {}", callback_data));
 
+        // Shared by the sequence (to mark it abandoned) and the callback's async context.
+        let invocation_ref: RefDataPtr = BunTest::ref_(buntest_strong, callback_data.clone());
+        debug_assert!(sequence.executing_ref.is_none());
+        sequence.executing_ref = Some(invocation_ref.dupe_ref());
+
         let prev_on_stack = this.on_stack_entry.replace(Some(next_item_ptr));
         let prev_on_stack_data = this.on_stack_entry_data.replace(Some(entry_data));
         let on_stack_cell = &raw const this.on_stack_entry;
@@ -1034,6 +1064,7 @@ fn step_sequence_one(
             buntest_strong,
             global_this,
             cb.get(),
+            Some(invocation_ref),
             next_item.has_done_parameter,
             callback_data,
             &next_item.timespec,

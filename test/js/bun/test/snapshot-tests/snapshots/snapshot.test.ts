@@ -1,7 +1,8 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { join } from "path";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -957,4 +958,244 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+});
+
+// When the runner gives up on a test or hook that is still running (it timed out, or an unhandled
+// error failed it while it was still waiting), its body keeps running while the next test executes.
+// The snapshot matchers it calls from then on must be rejected, not written under the next test's name.
+describe("snapshot matchers called after the runner gave up on the test", () => {
+  const rejected = "Snapshot matchers are not supported after the test has finished executing";
+  const header = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+
+  // `report` logs whether each late matcher threw, and what, so stdout tells the outcomes apart.
+  const prelude = /* ts */ `
+    import { beforeAll, beforeEach, describe, expect, test } from "bun:test";
+    function report(label: string, matcher: () => void) {
+      try {
+        matcher();
+        console.log(label + ": did not throw");
+      } catch (error) {
+        console.log(label + ": " + (error as Error).message);
+      }
+    }
+  `;
+
+  async function runTestFile(source: string) {
+    const testFile = prelude + source;
+    using dir = tempDir("snapshot-after-runner-moved-on", { "late.test.ts": testFile });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "late.test.ts"],
+      cwd: String(dir),
+      env: { ...bunEnv, CI: "false" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    const snapPath = join(String(dir), "__snapshots__", "late.test.ts.snap");
+    const snap = existsSync(snapPath) ? readFileSync(snapPath, "utf8") : null;
+    // Inline snapshots are written into the test file itself once the run is over.
+    const testFileAfterwards = readFileSync(join(String(dir), "late.test.ts"), "utf8");
+    // stdout starts with the "bun test vX.Y.Z (sha)" banner; the rest is what the test file logged.
+    return { stdout: stdout.replace(/^bun test v.*\n/, ""), stderr, exitCode, snap, testFile, testFileAfterwards };
+  }
+
+  test.concurrent("a test that timed out", async () => {
+    // Same body for both cases, as with test.each. The first case only continues once the second
+    // one has started, so it has always timed out by then; the second case then waits for the
+    // first one's late matchers before taking its own snapshots.
+    const { stdout, stderr, snap, testFile, testFileAfterwards } = await runTestFile(/* ts */ `
+      const secondStarted = Promise.withResolvers<void>();
+      const firstDone = Promise.withResolvers<void>();
+      async function migrate(name: string) {
+        if (name === "first") {
+          await secondStarted.promise;
+          report("late with hint", () => expect("lockfile of " + name).toMatchSnapshot(name));
+          report("late without hint", () => expect("lockfile of " + name).toMatchSnapshot());
+          report("late toThrowErrorMatchingSnapshot", () =>
+            expect(() => {
+              throw new Error(name);
+            }).toThrowErrorMatchingSnapshot(),
+          );
+          // Block bodies: a matcher called in tail position gets located at report()'s own call to it.
+          report("late toMatchInlineSnapshot", () => {
+            expect("lockfile of " + name).toMatchInlineSnapshot();
+          });
+          report("late toThrowErrorMatchingInlineSnapshot", () => {
+            expect(() => {
+              throw new Error(name);
+            }).toThrowErrorMatchingInlineSnapshot();
+          });
+          firstDone.resolve();
+          return;
+        }
+        secondStarted.resolve();
+        await firstDone.promise;
+        expect("lockfile of " + name).toMatchSnapshot(name);
+        expect("lockfile of " + name).toMatchSnapshot();
+      }
+      describe("migrate", () => {
+        test("first", () => migrate("first"), 1);
+        test("second", () => migrate("second"));
+      });
+    `);
+
+    expect(stdout).toBe(
+      [
+        `late with hint: ${rejected}`,
+        `late without hint: ${rejected}`,
+        `late toThrowErrorMatchingSnapshot: ${rejected}`,
+        `late toMatchInlineSnapshot: ${rejected}`,
+        `late toThrowErrorMatchingInlineSnapshot: ${rejected}`,
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toContain("this test timed out after 1ms");
+    expect(stderr).toContain("(pass) migrate > second");
+    // Nothing of the first case's under the second case's name, and the second case's own
+    // unhinted snapshot is still number 1 (on the previous behaviour the late calls pushed it to
+    // number 2).
+    expect(snap).toBe(
+      header +
+        '\nexports[`migrate second: second 1`] = `"lockfile of second"`;\n' +
+        '\nexports[`migrate second 1`] = `"lockfile of second"`;\n',
+    );
+    // The late inline matchers did not get their snapshots written into the test file either.
+    expect(testFileAfterwards).toBe(testFile);
+  });
+
+  test.concurrent("a hook that timed out", async () => {
+    // The hook only applies to "first": a 1ms timeout also fails a hook that returns right away
+    // whenever invoking it took longer than that, which happens on a loaded machine.
+    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+      const secondStarted = Promise.withResolvers<void>();
+      const hookDone = Promise.withResolvers<void>();
+      describe("with the hook", () => {
+        beforeEach(async () => {
+          await secondStarted.promise;
+          report("late from the hook", () => expect("from the hook").toMatchSnapshot("hook"));
+          hookDone.resolve();
+        }, 1);
+        test("first", () => {});
+      });
+      test("second", async () => {
+        secondStarted.resolve();
+        await hookDone.promise;
+        expect("from second").toMatchSnapshot();
+      });
+    `);
+
+    expect(stdout).toBe(`late from the hook: ${rejected}\n`);
+    expect(stderr).toContain("(fail) with the hook > first");
+    expect(stderr).toContain("(pass) second");
+    expect(snap).toBe(header + '\nexports[`second 1`] = `"from second"`;\n');
+  });
+
+  // The two cases below fail the running test with an unhandled error. They wait through a done
+  // callback rather than a returned promise: the runner gives up on a test that is only waiting for
+  // done() as soon as the error is reported (an awaited body is going to be waited for instead,
+  // see #36719), and that is the situation these cases are about.
+  test.concurrent("a test failed by an unhandled error while it was waiting for done()", async () => {
+    // The only snapshot matcher in the file is the late one, so nothing at all should be written:
+    // not even an empty snapshot file.
+    const { stdout, stderr, snap } = await runTestFile(/* ts */ `
+      const secondStarted = Promise.withResolvers<void>();
+      const firstDone = Promise.withResolvers<void>();
+      test("first", done => {
+        Promise.reject(new Error("failure in the background"));
+        secondStarted.promise.then(() => {
+          report("late after the rejection", () => expect("from first").toMatchSnapshot());
+          firstDone.resolve();
+          done();
+        });
+      });
+      test("second", async () => {
+        secondStarted.resolve();
+        await firstDone.promise;
+      });
+    `);
+
+    expect(stdout).toBe(`late after the rejection: ${rejected}\n`);
+    expect(stderr).toContain("failure in the background");
+    expect(stderr).toContain("(pass) second");
+    expect(snap).toBeNull();
+  });
+
+  test.concurrent("an attempt that the runner gave up on, while its retry runs", async () => {
+    // Both attempts run the same inline matcher. On the previous behaviour the first attempt's late
+    // call and the retry's call asked for different values on the same line, which fails the
+    // writing of the file's inline snapshots as a whole ("Multiple inline snapshots on the same
+    // line must all have the same value"). The first attempt never calls done(): the runner has
+    // given up on it, and only the retry's done() is meant to end the test.
+    const { stdout, stderr, snap, testFile, testFileAfterwards } = await runTestFile(/* ts */ `
+      const retryStarted = Promise.withResolvers<void>();
+      const firstAttemptDone = Promise.withResolvers<void>();
+      let attempts = 0;
+      test(
+        "retried",
+        done => {
+          const attempt = ++attempts;
+          // Block body: a matcher called in tail position gets located at the call to inline() instead.
+          const inline = () => {
+            expect("from attempt " + attempt).toMatchInlineSnapshot();
+          };
+          if (attempt === 1) {
+            Promise.reject(new Error("first attempt fails in the background"));
+            retryStarted.promise.then(() => {
+              report("late from the first attempt", () => expect("from attempt " + attempt).toMatchSnapshot());
+              report("late inline from the first attempt", inline);
+              firstAttemptDone.resolve();
+            });
+            return;
+          }
+          retryStarted.resolve();
+          firstAttemptDone.promise.then(() => {
+            expect("from attempt " + attempt).toMatchSnapshot();
+            inline();
+            done();
+          });
+        },
+        { retry: 1 },
+      );
+    `);
+
+    expect(stdout).toBe(`late from the first attempt: ${rejected}\nlate inline from the first attempt: ${rejected}\n`);
+    expect(stderr).toContain("(pass) retried");
+    expect(stderr).not.toContain("Failed to update inline snapshot");
+    // The passing attempt owns "retried 1" and the inline snapshot; a later run must compare
+    // against its values.
+    expect(snap).toBe(header + '\nexports[`retried 1`] = `"from attempt 2"`;\n');
+    expect(testFileAfterwards).toBe(
+      testFile.replace("toMatchInlineSnapshot()", 'toMatchInlineSnapshot(`"from attempt 2"`)'),
+    );
+  });
+
+  test.concurrent("callbacks registered by a finished hook still snapshot under the running test", async () => {
+    // The server's fetch handler was registered by beforeAll, which finished normally, so its
+    // snapshots belong to whichever test is making the request, as before.
+    const { stderr, snap, exitCode } = await runTestFile(/* ts */ `
+      let server: ReturnType<typeof Bun.serve>;
+      beforeAll(() => {
+        server = Bun.serve({
+          port: 0,
+          fetch(request) {
+            expect(new URL(request.url).pathname).toMatchSnapshot("requested path");
+            return new Response("ok");
+          },
+        });
+      });
+      test("one", async () => {
+        expect(await (await fetch(server.url + "one")).text()).toBe("ok");
+      });
+      test("two", async () => {
+        expect(await (await fetch(server.url + "two")).text()).toBe("ok");
+        server.stop(true);
+      });
+    `);
+
+    expect(stderr).toContain(" 2 pass\n");
+    expect(snap).toBe(
+      header + '\nexports[`one: requested path 1`] = `"/one"`;\n' + '\nexports[`two: requested path 1`] = `"/two"`;\n',
+    );
+    expect(exitCode).toBe(0);
+  });
 });

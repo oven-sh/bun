@@ -603,7 +603,9 @@ pub(crate) mod on_unhandled_rejection {
             // re-borrows. Const→mut projection is centralized in `buntest_as_mut`
             // pending the BunTestPtr interior-mut reshape (see bun_test.rs).
             let buntest = unsafe { bun_test::buntest_as_mut(&buntest_strong) };
-            // mark unhandled errors as belonging to the currently active test. note that this can be misleading.
+            // mark unhandled errors as belonging to the currently active test. note that this can be misleading:
+            // it includes errors thrown late by an abandoned invocation (AsyncContextRef.rs), whose context is
+            // no longer installed when the error gets here.
             let mut current_state_data = buntest.get_current_state_data();
             // split entry()/sequence() borrows via raw-ptr capture (per-use reborrow).
             let entry_ptr: Option<*mut bun_test::ExecutionEntry> = current_state_data
@@ -614,6 +616,9 @@ pub(crate) mod on_unhandled_rejection {
                     if sequence.test_entry.map(|p| p.as_ptr()) != Some(entry) {
                         // mark errors in hooks as 'unhandled error between tests'
                         current_state_data = RefDataValue::Start;
+                    } else {
+                        // `add_result` below moves past this test while its callback may still be awaiting.
+                        sequence.abandon_executing_callback();
                     }
                 }
             }

@@ -52,11 +52,31 @@ fn strong_create(value: JSValue) -> Strong {
     Strong::create(value, global)
 }
 
+/// `JSValue::with_async_context_if_needed` minus the registering test's own ref (AsyncContextRef.rs).
+/// Applied where the callback is stored: registration reads `.length` of and `.bind()`s the
+/// function itself, and the wrapper is not a function.
+pub(crate) fn keep_registration_async_context(callback: JSValue) -> JSValue {
+    bun_jsc::cpp::Bun__AsyncContextRef__withAsyncContextIfNeeded(VirtualMachine::get().global(), callback)
+}
+
 pub(crate) fn clone_active_strong() -> Option<BunTestPtr> {
     let runner = Jest::runner()?;
     runner.bun_test_root.clone_active_file()
 }
 
+/// What an `expect()`-family call made right now belongs to: the entry being
+/// executed, or the abandoned invocation the caller descends from (AsyncContextRef.rs).
+/// `None` outside `bun test`. Returns an owned `+1`.
+pub(crate) fn caller_ref(global: &JSGlobalObject) -> Option<RefDataPtr> {
+    if let Some(abandoned) = AsyncContextRef::abandoned_caller(global) {
+        return Some(abandoned);
+    }
+    let buntest_strong = clone_active_strong()?;
+    let state = buntest_strong.get().get_current_state_data();
+    Some(BunTest::ref_(&buntest_strong, state))
+}
+
+pub use super::async_context_ref::AsyncContextRef;
 pub use super::done_callback::DoneCallback;
 
 pub mod js_fns {
@@ -167,6 +187,14 @@ pub mod js_fns {
 
             let tag_name: &'static str = tag.into();
             let sig_bytes: &'static [u8] = tag.sig();
+
+            // Otherwise the hook would be added to whatever happens to be running now.
+            if AsyncContextRef::caller_is_abandoned(global_this) {
+                return Err(global_this.throw(format_args!(
+                    "Cannot call {}() here. The test or hook it was called from has already finished executing (it timed out, or failed while it was still running).",
+                    tag_name
+                )));
+            }
 
             let args = ScopeFunctions::parse_arguments(
                 global_this,
@@ -728,6 +756,7 @@ impl BunTest {
         bun_ptr::IntrusiveRc::new(RefData {
             buntest_weak: Rc::downgrade(this_strong),
             phase,
+            abandoned: core::cell::Cell::new(false),
             ref_count: bun_ptr::RefCount::init(),
         })
     }
@@ -1110,10 +1139,14 @@ impl BunTest {
     }
 
     /// if sync, the result is returned. if async, None is returned.
+    ///
+    /// `invocation_ref` (a `+1`, consumed) is what the callback runs under
+    /// (AsyncContextRef.rs); describe callbacks pass `None`.
     pub(crate) fn run_test_callback(
         this_strong: &BunTestPtr,
         global_this: &JSGlobalObject,
         cfg_callback: JSValue,
+        invocation_ref: Option<RefDataPtr>,
         cfg_done_parameter: bool,
         cfg_data: RefDataValue,
         timeout: &Timespec,
@@ -1144,24 +1177,61 @@ impl BunTest {
             };
         }
 
+        let mut callable: JSValue = cfg_callback;
+        let mut entered = false;
+        if let Some(invocation_ref) = invocation_ref {
+            match AsyncContextRef::enter(global_this, cfg_callback, invocation_ref) {
+                Ok(v) => {
+                    callable = v;
+                    entered = true;
+                }
+                Err(e) => {
+                    // OOM: charge it to this entry and still run the callback, as for `done` above.
+                    // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point.
+                    unsafe { (*this).on_uncaught_exception(global_this, Some(global_this.take_exception(e)), false, &cfg_data) };
+                }
+            }
+        }
+
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
-            cfg_callback,
-            global_this,
-            JSValue::UNDEFINED,
-            args_slice,
-        ) {
-            Ok(v) => v,
-            Err(_) => {
-                global_this.clear_termination_exception();
-                // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
-                unsafe { (*this).on_uncaught_exception(global_this, global_this.try_take_exception(), false, &cfg_data) };
-                bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
-                JSValue::ZERO
+
+        // Call, leave, then drain microtasks. The callback's exception is taken
+        // before `leave` runs. `Some(None)` is a termination (nothing to print).
+        let mut failure: Option<Option<JSValue>> = None;
+        let mut result: JSValue = JSValue::UNDEFINED;
+        if !global_this.has_exception() {
+            match callable.call(global_this, JSValue::UNDEFINED, args_slice) {
+                Ok(v) => result = v,
+                Err(_) => {
+                    global_this.clear_termination_exception();
+                    failure = Some(global_this.try_take_exception());
+                }
             }
-        };
+        }
+        if entered {
+            if let Err(e) = AsyncContextRef::leave(global_this) {
+                let exception = global_this.take_exception(e);
+                if failure.is_none() {
+                    failure = Some(Some(exception));
+                }
+            }
+        }
+        if failure.is_none() {
+            if let Err(stopped) = vm.event_loop_mut().drain_microtasks_with_global(global_this, vm.jsc_vm()) {
+                let _ = stopped.throw(global_this);
+                global_this.clear_termination_exception();
+                failure = Some(global_this.try_take_exception());
+            }
+        }
+        result.ensure_still_alive();
+        if let Some(exception) = failure {
+            // SAFETY: re-derive after JS callback returned; no outer `&mut` was held across it.
+            unsafe { (*this).on_uncaught_exception(global_this, exception, false, &cfg_data) };
+            bun_core::scoped_log!(bun_test_group, "callTestCallback -> error");
+            result = JSValue::ZERO;
+        }
 
         done_callback.ensure_still_alive();
 
@@ -1503,6 +1573,9 @@ impl fmt::Display for RefDataValue {
 pub struct RefData {
     pub(crate) buntest_weak: BunTestPtrWeak,
     pub(crate) phase: RefDataValue,
+    /// The runner moved on while this invocation's callback was still running
+    /// (set through `ExecutionSequence::executing_ref`, read by [`caller_ref`]).
+    pub(crate) abandoned: core::cell::Cell<bool>,
     pub(crate) ref_count: bun_ptr::RefCount<RefData>,
 }
 // `*RefData` crosses FFI (`as_promise_ptr`), so this MUST be `bun_ptr::IntrusiveRc` (= `RefPtr`), never `Rc`.
@@ -1935,9 +2008,9 @@ impl ExecutionEntry {
                 ScopeMode::Skip => None,
                 ScopeMode::Todo => {
                     let run_todo = Jest::runner().is_some_and(|runner| runner.run_todo);
-                    if run_todo { Some(strong_create(c)) } else { None }
+                    if run_todo { Some(strong_create(keep_registration_async_context(c))) } else { None }
                 }
-                _ => Some(strong_create(c)),
+                _ => Some(strong_create(keep_registration_async_context(c))),
             };
         }
         entry

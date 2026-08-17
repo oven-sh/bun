@@ -3279,6 +3279,8 @@ impl TestCommand {
             }
             // need to wake up so autoTick() doesn't wait for 16-100ms after loading the entrypoint
             vm.wakeup();
+            // Before the file loads: node:vm contexts copy this flag when they are created.
+            jsc::cpp::Bun__AsyncContextRef__enableTracking(vm.global());
             let promise = vm.load_entry_point_for_test_runner(file_path)?;
             // Only count the file once, not once per repeat
             if repeat_index == 0 {

@@ -902,38 +902,46 @@ describe("bun pm licenses", () => {
     });
   });
 
-  // U+009B is the one-character form of ESC [ and, unlike the ASCII controls above, is accepted in a file name, so a
-  // tarball specifier carries it into the version column. A backslash and U+00A9 (encoded with the same lead byte as
-  // U+009B) must come through unchanged.
-  test.concurrent("C1 controls and DEL are escaped in the license, the version column and --long fields", async () => {
-    const C1 = "\u009b";
-    const tarball = `path-parse-${C1}.tgz`;
-    const { packageDir: dir } = await registry.createTestDir({
-      bunfigOpts: { linker: "hoisted" },
-      files: { "package.json": pkg({ dependencies: { pp: `file:./${tarball}` } }) },
-    });
-    copyFileSync(join(registry.packagesPath, "path-parse", "path-parse-1.0.6.tgz"), join(dir, tarball));
-    await install(dir, "hoisted");
-    const license = `MIT${C1}31m`;
-    const author = `Eve${C1}2J \\ \u007f \u00a9`;
-    const description = `one${C1}two`;
-    const homepage = `https://example.com/${C1}x`;
-    patchInstalledManifest(dir, "pp", { license, author, description, homepage });
+  // U+009B is the one-character form of ESC [ and, unlike the ASCII controls above, is accepted in a file name and a
+  // package name, so a tarball carries it into both halves of the name@version column. A backslash and U+00A9 (encoded
+  // with the same lead byte as U+009B) must come through unchanged.
+  test.concurrent(
+    "C1 controls and DEL are escaped in the license, the name@version column and --long fields",
+    async () => {
+      const C1 = "\u009b";
+      const manifest = {
+        name: `dep-${C1}`,
+        version: "1.0.0",
+        license: `MIT${C1}31m`,
+        author: `Eve${C1}2J \\ \u007f \u00a9`,
+        description: `one${C1}two`,
+        homepage: `https://example.com/${C1}x`,
+      };
+      const tarball = `dep-${C1}.tgz`;
+      const { packageDir: dir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": pkg({ dependencies: { dep: `file:./${tarball}` } }) },
+      });
+      const archive = new Bun.Archive({ "package/package.json": JSON.stringify(manifest) }, { compress: "gzip" });
+      writeFileSync(join(dir, tarball), await archive.bytes());
+      await install(dir, "hoisted");
 
-    const stdout = await licensesText(dir, "--long");
-    expect(stdout).not.toMatch(RAW_CONTROL);
-    expect(stdout).toContain(
-      "MIT\\u009b31m (1)\n" +
-        "└── path-parse@./path-parse-\\u009b.tgz\n" +
-        "    Eve\\u009b2J \\ \\x7f \u00a9\n" +
-        "    one\\u009btwo\n" +
-        "    https://example.com/\\u009bx\n",
-    );
+      const stdout = await licensesText(dir, "--long");
+      expect(stdout).not.toMatch(RAW_CONTROL);
+      expect(stdout).toContain(
+        "MIT\\u009b31m (1)\n" +
+          "└── dep-\\u009b@./dep-\\u009b.tgz\n" +
+          "    Eve\\u009b2J \\ \\x7f \u00a9\n" +
+          "    one\\u009btwo\n" +
+          "    https://example.com/\\u009bx\n",
+      );
 
-    expect(await licensesJson(dir)).toStrictEqual({
-      [license]: [{ name: "path-parse", versions: [`./${tarball}`], license, author, description, homepage }],
-    });
-  });
+      const { name, license, author, description, homepage } = manifest;
+      expect(await licensesJson(dir)).toStrictEqual({
+        [license]: [{ name, versions: [`./${tarball}`], license, author, description, homepage }],
+      });
+    },
+  );
 
   test.concurrent("isolated linker matches hoisted: marker, --dev and --long", async () => {
     const dir = await setup("isolated");

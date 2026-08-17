@@ -560,12 +560,17 @@ long us_ssl_ctx_live_count(void);
 int us_ssl_ctx_add_ca_cert(struct ssl_ctx_st *ctx, const char *content);
 /* TLS-over-duplex / named-pipe SSL owners (no us_socket_t): opt an SSL into
  * the parked new-session/keylog queues, then drain them with the pop calls
- * after each SSL_read/SSL_do_handshake stack unwinds. Pop returns the entry
- * length (0 = queue empty); entries are capped at 64 KB (sessions) and
- * 4 KB+1 (keylog lines). */
+ * after each SSL_read/SSL_do_handshake stack unwinds. A pop detaches the
+ * oldest entry (NULL = queue empty) and exposes its payload; the entry stays
+ * valid across whatever the caller dispatches it to, even an SSL_free, until
+ * us_ssl_free_pending(). */
+struct us_ssl_pending_session_t;
 void us_ssl_enable_pending_events(struct ssl_st *ssl);
-int us_ssl_pop_pending_session(struct ssl_st *ssl, unsigned char *out, int out_cap);
-int us_ssl_pop_pending_keylog(struct ssl_st *ssl, unsigned char *out, int out_cap);
+struct us_ssl_pending_session_t *us_ssl_pop_pending_session(
+    struct ssl_st *ssl, const unsigned char **out_data, size_t *out_len);
+struct us_ssl_pending_session_t *us_ssl_pop_pending_keylog(
+    struct ssl_st *ssl, const unsigned char **out_data, size_t *out_len);
+void us_ssl_free_pending(struct us_ssl_pending_session_t *entry);
 /* The resumable session most recently delivered via the new-session callback,
  * or NULL if none. Borrowed; valid until the next NewSessionTicket or SSL_free. */
 struct ssl_session_st *us_ssl_get_new_session(struct ssl_st *ssl);

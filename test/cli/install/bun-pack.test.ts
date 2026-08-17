@@ -1422,6 +1422,34 @@ describe("files", () => {
       { "pathname": "package/src/index.ts" },
     ]);
   });
+
+  test("an entry longer than the path buffer is still matched", async () => {
+    // A brace group of 1000 names that do not exist, then "dist". ~100KB, longer
+    // than the path buffer on every platform (98302 bytes on Windows).
+    const unused = Buffer.alloc(100, "x").toString();
+    const pattern = `{${Array.from({ length: 1000 }, (_, i) => `${unused}${i}`).join(",")},dist}`;
+    expect(pattern.length).toBeGreaterThan(100_000);
+
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-files-long-entry",
+          version: "1.0.0",
+          files: [pattern],
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "console.log('hello ./dist/index.js')"),
+      write(join(packageDir, "src", "index.js"), "console.log('hello ./src/index.js')"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+    const tarball = readTarball(join(packageDir, "pack-files-long-entry-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { "pathname": "package/package.json" },
+      { "pathname": "package/dist/index.js" },
+    ]);
+  });
 });
 
 describe(".gitignore/.npmignore", () => {
@@ -1677,6 +1705,61 @@ describe("bins", () => {
         pathname: "package/dist/hi.js",
       },
     ]);
+  });
+
+  describe("longer than the path buffer", () => {
+    // Longer than the path buffer on every platform (98302 bytes on Windows), so
+    // nothing on disk can have this name.
+    const long = Buffer.alloc(100_000, "b").toString();
+
+    test.each([
+      ["bin", { bin: long }],
+      ["bin object value", { bin: { cli: long } }],
+      ["directories.bin", { directories: { bin: long } }],
+    ])("%s is skipped like any other bin that does not exist", async (_, fields) => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-long-bin",
+            version: "1.0.0",
+            ...fields,
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+      ]);
+
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pack-long-bin-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }, { pathname: "package/index.js" }]);
+    });
+
+    test("the other bins are still packed", async () => {
+      await Promise.all([
+        write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "pack-long-bin",
+            version: "1.0.0",
+            files: ["index.js"],
+            bin: { long, cli: "cli.js" },
+          }),
+        ),
+        write(join(packageDir, "index.js"), "console.log('hello ./index.js')"),
+        write(join(packageDir, "cli.js"), `#!/usr/bin/env bun\n`),
+      ]);
+
+      await pack(packageDir, bunEnv);
+
+      const tarball = readTarball(join(packageDir, "pack-long-bin-1.0.0.tgz"));
+      expect(tarball.entries).toMatchObject([
+        { pathname: "package/package.json" },
+        { pathname: "package/cli.js" },
+        { pathname: "package/index.js" },
+      ]);
+      expect(tarball.entries[1].perm & 0o111).toBe(0o111);
+    });
   });
 });
 

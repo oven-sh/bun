@@ -654,6 +654,53 @@ for (const info of [
   });
 }
 
+describe("bin longer than the path buffer", () => {
+  // Longer than the path buffer on every platform (98302 bytes on Windows), so
+  // nothing on disk can have this name.
+  const long = Buffer.alloc(100_000, "b").toString();
+  // The registry is never contacted with --dry-run; the userinfo only satisfies the auth check.
+  const dryRunEnv = { ...env, npm_config_registry: "http://user:pass@127.0.0.1:1/" };
+
+  test.each([
+    ["bin", { bin: long }, "warn: bin '<long>' does not exist"],
+    ["bin object value", { bin: { cli: long } }, "warn: bin '<long>' does not exist"],
+    ["bin object key", { bin: { [long]: "cli.js" } }, null],
+    ["directories.bin", { directories: { bin: long } }, "warn: bin directory '<long>' does not exist"],
+  ])("tarball with a long %s", async (_, fields, warning) => {
+    const packageDir = tmpdirSync();
+    const packageJson = JSON.stringify({ name: "publish-long-bin", version: "1.0.0", ...fields });
+    await Promise.all([
+      write(join(packageDir, "package.json"), packageJson),
+      write(join(packageDir, "cli.js"), ""),
+      Bun.Archive.write(
+        join(packageDir, "publish-long-bin-1.0.0.tgz"),
+        { "package/package.json": packageJson },
+        { compress: "gzip" },
+      ),
+    ]);
+
+    const { out, err, exitCode } = await publish(dryRunEnv, packageDir, "./publish-long-bin-1.0.0.tgz", "--dry-run");
+    const stderr = err.replaceAll(long, "<long>");
+    expect(stderr.split("\n").filter(line => line.startsWith("warn:"))).toEqual(warning === null ? [] : [warning]);
+    expect(stderr).not.toContain("error:");
+    expect(out).toContain("+ publish-long-bin@1.0.0 (dry-run)");
+    expect(exitCode).toBe(0);
+  });
+
+  test("directory with a long bin", async () => {
+    const packageDir = tmpdirSync();
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name: "publish-long-bin", version: "1.0.0", bin: long }),
+    );
+
+    const { out, err, exitCode } = await publish(dryRunEnv, packageDir, "--dry-run");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("+ publish-long-bin@1.0.0 (dry-run)");
+    expect(exitCode).toBe(0);
+  });
+});
+
 test("dependencies are installed", async () => {
   const { packageDir, packageJson } = await registry.createTestDir();
   const publishDir = tmpdirSync();

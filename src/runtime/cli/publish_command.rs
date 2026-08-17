@@ -15,7 +15,7 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
-use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf, normalize_buf_z};
+use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf_spill, normalize_buf_z_spill};
 use bun_paths::{self as path, PathBuffer};
 use bun_resolver::fs::FileSystem;
 use bun_sha_hmac as sha;
@@ -1608,14 +1608,16 @@ impl PublishCommand {
             };
         }
         let mut path_buf = PathBuffer::uninit();
+        let mut path_spill: Vec<u8> = Vec::new();
         if let Some(bin_query) = json.as_property(b"bin") {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
                     let normalized = strings::without_prefix_comptime_z(
-                        normalize_buf_z::<path::platform::Posix>(
-                            bin_str.string(bump)?,
+                        normalize_buf_z_spill::<path::platform::Posix>(
                             &mut *path_buf,
+                            &mut path_spill,
+                            bin_str.string(bump)?,
                         ),
                         b"./",
                     );
@@ -1660,9 +1662,10 @@ impl PublishCommand {
                                     if ks.len() != 0 {
                                         break 'key Some(Box::<[u8]>::from(
                                             strings::without_prefix(
-                                                normalize_buf::<path::platform::Posix>(
-                                                    ks.string(bump)?,
+                                                normalize_buf_spill::<path::platform::Posix>(
                                                     &mut *path_buf,
+                                                    &mut path_spill,
+                                                    ks.string(bump)?,
                                                 ),
                                                 b"./",
                                             ),
@@ -1685,9 +1688,10 @@ impl PublishCommand {
                                         break 'value Some(bun_core::ZBox::from_bytes(
                                             strings::without_prefix_comptime_z(
                                                 // replace separators
-                                                normalize_buf_z::<path::platform::Posix>(
-                                                    vs.string(bump)?,
+                                                normalize_buf_z_spill::<path::platform::Posix>(
                                                     &mut *path_buf,
+                                                    &mut path_spill,
+                                                    vs.string(bump)?,
                                                 ),
                                                 b"./",
                                             )
@@ -1746,7 +1750,11 @@ impl PublishCommand {
                 let mut bin_props: Vec<G::Property> = Vec::new();
                 let normalized_bin_dir = bun_core::ZBox::from_bytes(
                     strings::without_trailing_slash(strings::without_prefix(
-                        normalize_buf::<path::platform::Posix>(bin_dir_str, &mut *path_buf),
+                        normalize_buf_spill::<path::platform::Posix>(
+                            &mut *path_buf,
+                            &mut path_spill,
+                            bin_dir_str,
+                        ),
                         b"./",
                     )),
                 );
@@ -1763,7 +1771,7 @@ impl PublishCommand {
                 ) {
                     Ok(fd) => fd,
                     Err(e) => {
-                        if e.get_errno() == bun_sys::E::ENOENT {
+                        if matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENAMETOOLONG) {
                             bun_core::warn!(
                                 "bin directory '{}' does not exist",
                                 bstr::BStr::new(normalized_bin_dir.as_bytes()),

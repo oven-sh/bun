@@ -192,8 +192,8 @@ describe("bundler", () => {
       },
     ],
   });
+  // https://github.com/oven-sh/bun/issues/5030
   itBundled("naming/AssetNoOverwrite", {
-    todo: true,
     files: {
       "/src/entry.js": /* js */ `
         import asset1 from "./asset1.file";
@@ -214,8 +214,50 @@ describe("bundler", () => {
       ".file": "file",
     },
     bundleErrors: {
-      "<bun>": ['Multiple files share the same output path: "same-filename.txt"'],
+      "<bun>": [`Multiple files share the same output path`],
     },
+  });
+  itBundled("naming/AssetNoOverwriteNameExt", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import a from "./a/logo.file";
+        import b from "./b/logo.file";
+        console.log(a, b);
+      `,
+      "/src/a/logo.file": `content-A`,
+      "/src/b/logo.file": `content-B`,
+    },
+    root: "/src",
+    assetNaming: "[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    loader: {
+      ".file": "file",
+    },
+    bundleErrors: {
+      "<bun>": [`Multiple files share the same output path`],
+    },
+  });
+  itBundled("naming/AssetSameContentSamePath", {
+    files: {
+      "/src/entry.js": /* js */ `
+        import a from "./a/logo.file";
+        import b from "./b/logo.file";
+        console.log(a, b);
+      `,
+      "/src/a/logo.file": `same-content`,
+      "/src/b/logo.file": `same-content`,
+    },
+    root: "/src",
+    assetNaming: "[name].[ext]",
+    entryPointsRaw: ["./src/entry.js"],
+    loader: {
+      ".file": "file",
+    },
+    run: {
+      file: "/out/entry.js",
+      stdout: "./logo.file ./logo.file",
+    },
+    outputPaths: ["/out/entry.js", "/out/logo.file"],
   });
   itBundled("naming/AssetFileLoaderPath1", {
     files: {

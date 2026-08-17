@@ -479,11 +479,16 @@ describe("Valkey: Recovering After fail()", () => {
       get connections() {
         return sockets.length;
       },
-      listen: () =>
-        new Promise<number>(resolve =>
-          server.listen(0, "127.0.0.1", () => resolve((server.address() as net.AddressInfo).port)),
-        ),
-      listenUnix: (socketPath: string) => new Promise<void>(resolve => server.listen(socketPath, resolve)),
+      // events.once() rejects if the listen fails instead of leaving the test to time out.
+      listen: async () => {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        return (server.address() as net.AddressInfo).port;
+      },
+      listenUnix: async (socketPath: string) => {
+        server.listen(socketPath);
+        await once(server, "listening");
+      },
       close: () => new Promise(resolve => server.close(resolve)),
     };
   }

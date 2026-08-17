@@ -29,7 +29,11 @@ if($env:VSINSTALLDIR -eq $null) {
     )
     foreach ($searchPath in $searchPaths) {
       if (Test-Path $searchPath) {
-        $vsDir = (Get-ChildItem -Path $searchPath -Directory | Select-Object -First 1).FullName
+        # Only accept an install that actually ships the C++ toolset (vswhere
+        # isn't usable here, so check for the toolset directory instead).
+        $vsDir = (Get-ChildItem -Path $searchPath -Directory |
+          Where-Object { Test-Path (Join-Path $_.FullName "VC\Tools\MSVC") } |
+          Select-Object -First 1).FullName
         if ($vsDir -ne $null) { break }
       }
     }

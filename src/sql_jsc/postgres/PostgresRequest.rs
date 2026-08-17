@@ -202,6 +202,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 let l = writer.length()?;
                 writer.write(slice.slice())?;
                 l.write_excluding_self()?;
+
             }
             types::Tag::bool => {
                 let l = writer.length()?;

@@ -227,6 +227,19 @@ impl<T: JsSinkAbi> JSSink<T> {
         }
     }
 
+    /// Pump `stream` into the sink through a `JSReadable*SinkController`
+    /// (`${abi}__assignToStream`), leaving that controller in the sink's
+    /// `source()` so the sink can `ready()`/`close()`/[`detach`](Self::detach)
+    /// it.
+    ///
+    /// The extern stores the controller through its out-pointer before it
+    /// starts the pump, and the pump may drain the whole stream, user code
+    /// included, before returning. A sink that fails during that drain
+    /// detaches whatever its `source()` holds at the time, so the out-pointer
+    /// is aimed straight at the `JSController` payload instead of at a local
+    /// that would only be copied into the slot afterwards. Until the store
+    /// lands the payload is `JSValue::ZERO`, which `SourceHandle::close`/
+    /// `ready` and [`Self::detach`] treat as "no controller yet".
     pub fn assign_to_stream(
         global: &crate::webcore::jsc::JSGlobalObject,
         stream: crate::webcore::jsc::JSValue,
@@ -237,45 +250,35 @@ impl<T: JsSinkAbi> JSSink<T> {
     {
         use crate::webcore::jsc::JSValue;
         // SAFETY: `ptr` is a live sink owned by the caller for this synchronous
-        // call; the pointer is only stashed in C++ `m_sinkPtr` and `source()` is
-        // read here synchronously.
+        // call; the pointer is only stashed in C++ `m_sinkPtr`, and the slot
+        // handed to the extern below lives inside it (or in this frame).
         let ptr = unsafe { ptr.as_mut() };
-        // Pre-seed JSController(ZERO) so a sync drain's __controllerDetached can match-and-clear;
-        // only install the real controller value if the placeholder survived.
-        if let Some(src) = ptr.source() {
+        let mut unsourced = streams::SourceHandle::None;
+        // `JSValue` is `repr(transparent)` over the encoded bits the extern
+        // stores.
+        let controller_slot: *mut JSValue = {
+            let src = ptr.source().unwrap_or(&mut unsourced);
             *src = streams::SourceHandle::JSController(JSValue::ZERO);
-        }
-        let mut bits: usize = 0;
+            match src {
+                streams::SourceHandle::JSController(slot) => slot,
+                _ => unreachable!(),
+            }
+        };
         let result = T::assign_to_stream_extern(
             global,
             stream,
             std::ptr::from_mut::<T>(ptr).cast::<c_void>(),
-            (&raw mut bits).cast::<*mut c_void>(),
+            controller_slot.cast::<*mut c_void>(),
         );
-        // `${name}__assignToStream` creates the JSReadable*SinkController with
-        // m_sinkPtr=ptr before calling into the stream pump. If the pump setup
-        // throws (e.g. a direct stream's `pull` getter), nothing ever calls
-        // end()/close() on the controller, so its destructor would run
-        // `${name}__finalize(m_sinkPtr)` after the caller has freed the sink.
-        // Detach it now while `ptr` is still live; the controller's later GC
-        // then sees m_sinkPtr==null and skips the native finalize.
-        if bits != 0 && result.to_error().is_some() {
-            if let Some(src) = ptr.source() {
-                *src = streams::SourceHandle::None;
-            }
-            let _ = ::bun_jsc::call_check_slow(global, || {
-                streams::controller_abi::detach_ptr(JSValue::from_encoded(bits))
-            });
-            return result;
-        }
-        if let Some(src) = ptr.source() {
-            if matches!(*src, streams::SourceHandle::JSController(_)) {
-                *src = if bits != 0 {
-                    streams::SourceHandle::JSController(JSValue::from_encoded(bits))
-                } else {
-                    streams::SourceHandle::None
-                };
-            }
+        // The controller was created with m_sinkPtr=ptr before the pump
+        // started. If the pump setup throws (e.g. a direct stream's `pull`
+        // getter), nothing ever calls end()/close() on it, so its destructor
+        // would run `${name}__finalize(m_sinkPtr)` after the caller has freed
+        // the sink. Detach it now while `ptr` is still live; a controller that
+        // detached inside the call already cleared the slot
+        // (`js_controller_detached`), and this is then a no-op.
+        if result.to_error().is_some() {
+            Self::detach(ptr.source().unwrap_or(&mut unsourced), global);
         }
         result
     }
@@ -285,6 +288,10 @@ impl<T: JsSinkAbi> JSSink<T> {
         match *source {
             SourceHandle::JSController(value) => {
                 source.clear();
+                // `assign_to_stream` has not received the controller yet.
+                if value == JSValue::ZERO {
+                    return;
+                }
                 value.unprotect();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
                 let _ = ::bun_jsc::call_check_slow(_global, || {
@@ -641,13 +648,9 @@ impl<T: JsSinkType> JSSink<T> {
     /// but only when it still holds this controller's bits — a sink
     /// re-assigned to a new stream holds the newer controller's bits.
     pub(crate) fn js_controller_detached(this: &mut T, controller: crate::webcore::jsc::JSValue) {
-        use crate::webcore::jsc::JSValue;
         if let Some(src) = this.source() {
-            if let SourceHandle::JSController(held) = *src {
-                // ZERO = assign_to_stream placeholder; clear it too.
-                if held == controller || held == JSValue::ZERO {
-                    src.clear();
-                }
+            if matches!(*src, SourceHandle::JSController(held) if held == controller) {
+                src.clear();
             }
         }
         this.controller_detached();

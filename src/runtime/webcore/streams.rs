@@ -901,8 +901,9 @@ pub enum SourceHandle {
     /// No source attached.
     #[default]
     None,
-    /// Encoded `JSValue` of the C++ controller cell written by
-    /// `${abi}__assignToStream`. `JSValue::ZERO` is the pre-seed sentinel.
+    /// Encoded `JSValue` of the C++ controller cell, stored straight into this
+    /// payload by `${abi}__assignToStream` (see `JSSink::assign_to_stream`).
+    /// `JSValue::ZERO` only while that store is still pending.
     JSController(JSValue),
     ByteStream(BackRef<crate::webcore::ByteStream>),
     FileReader(BackRef<crate::webcore::FileReader>),
@@ -934,9 +935,8 @@ impl SourceHandle {
     pub fn close(&mut self, err: Option<SysError>) {
         match *self {
             SourceHandle::None => {}
-            // `JSController(ZERO)` is the `assign_to_stream` pre-seed
-            // placeholder; the real controller value hasn't been installed yet,
-            // so there is no cell to notify.
+            // `JSController(ZERO)`: `assign_to_stream` has not received the
+            // controller yet, so there is no cell to notify.
             SourceHandle::JSController(cpp) => {
                 if cpp == JSValue::ZERO {
                     return;

@@ -1197,17 +1197,26 @@ nativeTests.test_napi_instanceof = () => {
   dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
-// Each line reports what napi_get_prototype did with an argument whose
-// [[GetPrototypeOf]] throws. result= is "untouched" when *result was left
-// alone and "null handle" when a NULL napi_value was written (see
-// perform_get_prototype in js_test_helpers.cpp).
-nativeTests.test_napi_get_prototype_exceptions = () => {
+// V8's Object::GetPrototype (what napi_get_prototype wraps in Node) returns null
+// for a Proxy without running its getPrototypeOf trap, so the proxy lines below
+// all read "result=null" with nothing pending, whatever the trap would do.
+// result= is "untouched" if *result was not written and "null handle" if a NULL
+// napi_value was written (see perform_get_prototype in js_test_helpers.cpp).
+nativeTests.test_napi_get_prototype_proxy = () => {
   const trapError = new RangeError("from getPrototypeOf trap");
+  let trapCalls = 0;
+  const chainProxy = new Proxy({}, {});
+  const names = [
+    [Object.prototype, "Object.prototype"],
+    [Array.prototype, "Array.prototype"],
+    [Function.prototype, "Function.prototype"],
+    [chainProxy, "the proxy"],
+  ];
 
   function dump(label, object) {
     const r = nativeTests.perform_get_prototype(object);
-    const result =
-      typeof r.result === "string" ? r.result : r.result === Object.prototype ? "Object.prototype" : String(r.result);
+    const named = names.find(([value]) => value === r.result);
+    const result = typeof r.result === "string" ? r.result : named ? named[1] : String(r.result);
     const exception =
       r.exception === undefined
         ? "none"
@@ -1222,6 +1231,21 @@ nativeTests.test_napi_get_prototype_exceptions = () => {
   dump("plain object", {});
   dump("null prototype", Object.create(null));
 
+  dump("proxy without traps", new Proxy([], {}));
+  dump("callable proxy", new Proxy(function () {}, {}));
+  dump(
+    "trap returns Array.prototype",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          trapCalls++;
+          return Array.prototype;
+        },
+      },
+    ),
+  );
+  console.log(`getPrototypeOf trap calls: ${trapCalls}`);
   dump(
     "trap throws",
     new Proxy(
@@ -1233,9 +1257,6 @@ nativeTests.test_napi_get_prototype_exceptions = () => {
       },
     ),
   );
-
-  // The engine throws a TypeError for these two: a trap result that is neither
-  // an object nor null, and a revoked proxy.
   dump(
     "trap returns a number",
     new Proxy(
@@ -1251,8 +1272,10 @@ nativeTests.test_napi_get_prototype_exceptions = () => {
   revocable.revoke();
   dump("revoked proxy", revocable.proxy);
 
-  // Each exception above was reported to and cleared by the addon, so nothing
-  // is left pending.
+  // Only the object itself is special-cased; a proxy further up the chain is
+  // returned like any other prototype.
+  dump("object whose prototype is a proxy", Object.create(chainProxy));
+
   dump("plain object again", {});
 };
 

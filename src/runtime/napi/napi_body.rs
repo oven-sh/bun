@@ -976,8 +976,13 @@ extern "C" fn napi_get_prototype(
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
-    // A Proxy's getPrototypeOf trap runs here. If it throws, the exception stays
-    // pending for the addon and *result must be left untouched.
+    // Node's v8::Object::GetPrototype cannot run JS: for a Proxy it returns null
+    // without consulting the getPrototypeOf trap. No other object type runs JS
+    // for [[GetPrototypeOf]], so this function never does either.
+    if object.js_type() == jsc::JSType::ProxyObject {
+        result.set(env, JSValue::NULL);
+        return env.ok();
+    }
     let prototype = match object.get_prototype(env.to_js()) {
         Ok(prototype) => prototype,
         Err(_) => return env.pending_exception(),

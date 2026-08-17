@@ -1780,26 +1780,24 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
   });
 
   describe("napi_get_prototype", () => {
-    it("returns napi_pending_exception and leaves *result untouched when [[GetPrototypeOf]] throws", async () => {
-      // Bun runs the Proxy's getPrototypeOf trap (Object.getPrototypeOf
-      // semantics), so a throwing trap has to be reported the way every other
-      // Node-API call reports JS that threw: napi_pending_exception (10), the
-      // exception left for napi_get_and_clear_last_exception, *result not
-      // written. This is not a checkSameOutput test because V8's
-      // Object::GetPrototype never runs proxy traps: Node prints
-      // "status=0 ... result=null exception=none" for all three proxies.
-      const output = await runOn(bunExe(), "test_napi_get_prototype_exceptions", []);
-      const lines = output
-        .trim()
-        .split(/\r?\n/)
-        // remove all debug logs
-        .filter(line => !/^\[\w+\]/.test(line));
-      expect(lines).toEqual([
+    it("returns null for a Proxy without running its getPrototypeOf trap, like Node", async () => {
+      // Before this was special-cased, Bun ran the trap: a proxy without traps
+      // reported its target's prototype, and a throwing trap reported napi_ok
+      // with a NULL handle written to *result and the exception left pending.
+      const output = await checkSameOutput("test_napi_get_prototype_proxy", []);
+      // checkSameOutput already asserted parity with Node; pin the values so a
+      // shared failure cannot pass.
+      expect(output.split(/\r?\n/)).toEqual([
         "plain object: status=0 pending=false result=Object.prototype exception=none",
         "null prototype: status=0 pending=false result=null exception=none",
-        "trap throws: status=10 pending=true result=untouched exception=the trap's error",
-        "trap returns a number: status=10 pending=true result=untouched exception=TypeError",
-        "revoked proxy: status=10 pending=true result=untouched exception=TypeError",
+        "proxy without traps: status=0 pending=false result=null exception=none",
+        "callable proxy: status=0 pending=false result=null exception=none",
+        "trap returns Array.prototype: status=0 pending=false result=null exception=none",
+        "getPrototypeOf trap calls: 0",
+        "trap throws: status=0 pending=false result=null exception=none",
+        "trap returns a number: status=0 pending=false result=null exception=none",
+        "revoked proxy: status=0 pending=false result=null exception=none",
+        "object whose prototype is a proxy: status=0 pending=false result=the proxy exception=none",
         "plain object again: status=0 pending=false result=Object.prototype exception=none",
       ]);
     });

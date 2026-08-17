@@ -1185,11 +1185,8 @@ impl<'a> Linker<'a> {
             abs_target.as_bytes(),
         );
 
-        // The shim resolves `bin_path` against the parent of its own directory,
-        // so the leading `..\` is implied. `relative` yields no `..\` when the
-        // target is on another drive (it returns the absolute path) or when the
-        // target is inside the bin directory itself, both of which happen with
-        // global installs; those shims store the absolute target.
+        // The shim resolves `bin_path` against its directory's parent, hence no `..\`. Global
+        // installs can target another drive or the bin directory itself: store those absolute.
         let (bin_path, is_absolute_target): (&[u8], bool) =
             match strings::without_prefix_if_possible_comptime(rel_target.as_bytes(), b"..\\") {
                 Some(rel_to_parent) => (rel_to_parent, false),
@@ -1276,17 +1273,11 @@ impl<'a> Linker<'a> {
         // so each return path calls `Self::chmod_on_ok` explicitly instead.
 
         let abs_dest_dir = resolve_path::dirname::<PlatformAuto>(abs_dest.as_bytes());
-        // Usually starts with `..`, but a global install may nest the package
-        // directory inside the bin directory; any relative path works here.
-        // One `..` per component of `abs_dest_dir` can make this longer than `abs_target`.
+        // Need not start with `..` (a global install may nest the package inside the bin
+        // directory), and one `..` per component of `abs_dest_dir` can outgrow `abs_target`.
         let rel_bound = abs_target.len() + 3 * (strings::count_char(abs_dest_dir, SEP) + 1) + 2;
-        let mut rel_spill: Vec<u8>;
-        let rel_buf: &mut [u8] = if rel_bound <= self.rel_buf.len() {
-            self.rel_buf
-        } else {
-            rel_spill = vec![0; rel_bound];
-            &mut rel_spill
-        };
+        let mut rel_spill = Vec::new();
+        let rel_buf = resolve_path::buf_or_spill(self.rel_buf, &mut rel_spill, rel_bound);
         let rel_target = resolve_path::relative_buf_z(rel_buf, abs_dest_dir, abs_target.as_bytes());
 
         match sys::symlink_running_executable(rel_target, abs_dest) {
@@ -1501,38 +1492,21 @@ impl<'a> Linker<'a> {
         }
 
         let target_basename = path::basename(target);
+        let in_subdir = target_basename.len() != target.len();
         let exe_name: Vec<u8> =
             if !bin_name.is_empty() && !strings::has_suffix_comptime(bin_name, b".exe") {
                 [bin_name, b".exe"].concat()
             } else {
                 Vec::new()
             };
-        let candidates: [&[u8]; 4] = [
-            // (1)
-            target,
-            // (2)
-            bin_name,
-            // (3), only when `target` has a directory component
-            if target_basename.len() != target.len() {
-                target_basename
-            } else {
-                b""
-            },
-            // (4)
-            &exe_name,
-        ];
-
-        for candidate in candidates {
+        let at_root = if in_subdir { target_basename } else { b"" };
+        for candidate in [target, bin_name, at_root, &exe_name] {
             if candidate.is_empty() {
                 continue;
             }
-            let Some(abs_candidate) =
-                join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
-            else {
-                continue;
-            };
-            if sys::exists_z(abs_candidate) {
-                let len = abs_candidate.len();
+            let found = join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
+                .filter(|abs| sys::exists_z(abs));
+            if let Some(len) = found.map(ZStr::len) {
                 return Some(ZStr::from_buf(buf, len));
             }
         }

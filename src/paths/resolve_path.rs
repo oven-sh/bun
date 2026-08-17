@@ -1314,7 +1314,7 @@ pub fn normalize_buf_z_spill<'a, P: PlatformT>(
 }
 
 /// `buf` when it holds `needed` bytes, otherwise `spill` grown to `needed`.
-fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
+pub fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
     if needed <= buf.len() {
         buf
     } else {

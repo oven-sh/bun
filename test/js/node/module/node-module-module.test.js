@@ -254,23 +254,39 @@ console.log("survived", require("./late.js"));`,
     // Misses populate the cache and leave nothing mapped.
     expect(await run(cacheDir)).toEqual({ length: sourceSize, mapped: [] });
 
-    // big.js has the large entry: header, stored source, then the bytecode.
+    // big.js has the large entry. Its layout (NodeCompileCache.rs) is a 108-byte
+    // header whose second u32 is the stored source's size, the stored source,
+    // then the bytecode at the next multiple of 128.
     const entries = [...new Bun.Glob("**/*").scanSync({ cwd: cacheDir, onlyFiles: true })]
-      .map(f => ({ basename: path.basename(f), size: fs.statSync(path.join(cacheDir, f)).size }))
-      .sort((a, b) => b.size - a.size);
+      .map(f => path.join(cacheDir, f))
+      .sort((a, b) => fs.statSync(b).size - fs.statSync(a).size);
     expect(entries).toHaveLength(2);
-    const { basename, size } = entries[0];
-    expect(size).toBeGreaterThan(sourceSize);
+    const entry = fs.readFileSync(entries[0]);
+    const codeSize = entry.readUInt32LE(4);
+    expect(codeSize).toBeGreaterThanOrEqual(sourceSize);
+    const bytecodeOffset = Math.ceil((108 + codeSize) / 128) * 128;
 
-    const { length, mapped } = await run(basename);
-    expect(length).toBe(sourceSize);
-    expect(mapped).toHaveLength(1);
-    const [{ offset, length: mappedLength }] = mapped;
-    // The mapping starts at the page the bytecode begins on, not at the start of the file...
-    expect(offset).toBeGreaterThan(0);
-    expect(mappedLength).toBeLessThan(size);
-    // ...and still covers the bytecode through the end of the file.
-    expect(offset + mappedLength).toBeGreaterThanOrEqual(size);
+    // /proc/self/auxv is a list of (type, value) u64 pairs; AT_PAGESZ is type 6.
+    const auxv = fs.readFileSync("/proc/self/auxv");
+    let pageSize = 0;
+    for (let i = 0; i + 16 <= auxv.length; i += 16) {
+      if (auxv.readBigUInt64LE(i) === 6n) pageSize = Number(auxv.readBigUInt64LE(i + 8));
+    }
+    expect(pageSize).toBeGreaterThan(0);
+    const roundDown = n => n - (n % pageSize);
+    const roundUp = n => roundDown(n + pageSize - 1);
+
+    // Only the pages from the one the bytecode starts on through the end of
+    // the file stay mapped.
+    expect(await run(path.basename(entries[0]))).toEqual({
+      length: sourceSize,
+      mapped: [
+        {
+          offset: roundDown(bytecodeOffset),
+          length: roundUp(entry.length) - roundDown(bytecodeOffset),
+        },
+      ],
+    });
   });
 
   const compileCacheEnv = { ...bunEnv };

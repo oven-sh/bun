@@ -71,13 +71,15 @@ struct AlignedBlob {
 
 enum Backing {
     Heap,
-    /// `PROT_READ`/`MAP_PRIVATE` mapping of the cache file's tail: the file is
-    /// mapped whole to validate it, then the pages in front of the one holding
-    /// [`blob_file_offset`] (header + stored code, never read again once
-    /// compared) are unmapped, so `base` is the last page boundary at or before
-    /// the blob. `ptr` stays 128-aligned because page boundaries are. Safe
-    /// against entry rewrites: writers go through tmpfile + rename, so a
-    /// replaced file's old inode stays live under the mapping.
+    /// What is still mapped (`PROT_READ`/`MAP_PRIVATE`) of the cache file. The
+    /// file is mapped whole to validate it, then the pages in front of the one
+    /// holding [`blob_file_offset`] (header + stored code, never read again
+    /// once compared) are unmapped, leaving the tail from the last page
+    /// boundary at or before the blob; when the blob begins in the first page
+    /// or that partial unmap fails, this is still the whole file. `ptr` stays
+    /// 128-aligned because page boundaries are. Safe against entry rewrites:
+    /// writers go through tmpfile + rename, so a replaced file's old inode
+    /// stays live under the mapping.
     Map {
         base: core::ptr::NonNull<u8>,
         map_len: usize,

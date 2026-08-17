@@ -511,6 +511,45 @@ it.concurrent("should handle postinstall scripts correctly with symlinked bunx",
   expect(exited).toBe(0);
 });
 
+// Regression test for #39377: BUN_OPTIONS tokens spliced after argv[0] used to
+// defeat the BUN_INTERNAL_BUNX_INSTALL escape hatch's positional check, so the
+// install child re-entered bunx mode and re-spawned itself forever. Before the
+// fix this test hangs instead of completing.
+it.concurrent(
+  "bunx does not fork-bomb when BUN_OPTIONS is set",
+  async () => {
+    const { x_dir, env } = setup();
+    // The bug only triggers when argv[0] is "bunx": the `bun x` spelling
+    // dispatches through the generic flag-skipping path and is immune.
+    copyFileSync(bunExe(), join(x_dir, isWindows ? "bun.exe" : "bun"));
+    copyFileSync(bunExe(), join(x_dir, isWindows ? "bunx.exe" : "bunx"));
+
+    const subprocess = spawn({
+      cmd: ["bunx", "esbuild@latest", "--version"],
+      cwd: x_dir,
+      stdout: "pipe",
+      stdin: "inherit",
+      stderr: "pipe",
+      env: {
+        ...env,
+        BUN_OPTIONS: "--smol",
+        PATH: `${x_dir}${isWindows ? ";" : ":"}${env.PATH || ""}`,
+      },
+    });
+
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(err).not.toContain("error:");
+    expect(out.trim()).not.toContain(Bun.version);
+    expect(exited).toBe(0);
+  },
+  1000 * 60 * 2,
+);
+
 // Pinned to 20: its engines are "^20.19.0 || ^22.12.0 || >=24.0.0", so the node-24
 // requirement this test exercises holds no matter what Node.js version Bun reports.
 // @latest tracks Angular's engines upward and breaks whenever they outrun us.

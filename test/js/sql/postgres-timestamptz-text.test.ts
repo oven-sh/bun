@@ -1,24 +1,12 @@
-// Postgres emits `timestamptz` text as `YYYY-MM-DD HH:MM:SS[.ffffff]±HH[:MM[:SS]]`
-// (DateStyle=ISO, pinned in the startup packet). Routing that through JS
-// `Date.parse` was wrong in two ways:
-//   - the `±HH:MM:SS` offset width, which Postgres prints for instants governed
-//     by local mean time (most zones before ~1880-1920; America/New_York in 1883
-//     is `-04:56:02`), is not a JS date format at all, so every such value came
-//     back as `Invalid Date` with no error;
-//   - the space separator makes JSC take its non-ISO heuristic parser, which
-//     windows years 0001..0099 into 1900..2099 (and misreads 0001 entirely).
-// The binary path decodes µs since 2000-01-01 and was unaffected, so the two
-// protocols silently disagreed on the same value. The text decoder must parse
-// the ISO components and the explicit offset directly, like the naive
-// `timestamp` decoder already does. `timestamptz[]` / `timestamp[]` are always
-// sent as text (even on the extended protocol) and now share that decoder, so
-// array elements are covered too, including `timestamp[]` being read as UTC
-// rather than host-local time.
+// Text-path decoding of `timestamptz` (`YYYY-MM-DD HH:MM:SS[.ffffff]±HH[:MM[:SS]]`)
+// must yield the same instant as the binary path for every offset width
+// Postgres emits, including the `±HH:MM:SS` form it prints for local-mean-time
+// instants, and for years 0001..0099. JS `Date.parse` gets both wrong.
 //
-// Driven by a scripted v3 backend so the exact wire text each path sees is
-// pinned and no Postgres server is required. The `±HH:MM:SS` vectors are what
-// PostgreSQL 17 prints for `'1883-11-18 12:00:00+00'::timestamptz` under the
-// session time zones named next to them.
+// Driven by a scripted v3 backend so the exact wire text is pinned and no
+// Postgres server is needed. The `±HH:MM:SS` vectors are what PostgreSQL 17
+// prints for `'1883-11-18 12:00:00+00'::timestamptz` under the zones named
+// next to them.
 
 import { SQL } from "bun";
 import { afterAll, beforeAll, expect, test } from "bun:test";
@@ -89,7 +77,7 @@ async function decode(typeOid: number, texts: string[]): Promise<unknown[]> {
     const [row]: any = await sql`select 1`.simple();
     return texts.map((_, i) => row[`c${i}`]);
   } finally {
-    await sql.close({ timeout: 0 }).catch(() => {});
+    await sql.close({ timeout: 0 });
   }
 }
 
@@ -153,9 +141,14 @@ test("timestamptz text: years 0001..0099 decode literally (text path == binary p
 });
 
 test("timestamptz text outside the fixed-width shape still falls back to Date.parse", async () => {
-  // Five-digit years are the one such shape Date.parse handles; it must keep doing so.
-  const cells = await decode(OID.timestamptz, ["10000-01-01 00:00:00+00"]);
-  expect(cells.map(iso)).toEqual(["+010000-01-01T00:00:00.000Z"]);
+  const cells = await decode(OID.timestamptz, [
+    // Five-digit years are the one such shape Date.parse handles; it must keep doing so.
+    "10000-01-01 00:00:00+00",
+    // Out-of-range offset fields are not treated as 99 minutes / 99 seconds.
+    "2024-06-01 12:00:00+01:99",
+    "2024-06-01 12:00:00+00:00:99",
+  ]);
+  expect(cells.map(iso)).toEqual(["+010000-01-01T00:00:00.000Z", "Invalid Date", "Invalid Date"]);
 });
 
 // --- array text path (arrays are text even on the extended protocol) --------

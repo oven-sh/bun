@@ -549,7 +549,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
         if (specifier.startsWith("file:"_s)) {
             URL fileURL = URL(url, specifier);
             if (fileURL.isValid()) {
-                specifier = fileURL.fileSystemPath();
+                specifier = Bun::fileSystemPathWithQuery(fileURL);
                 specifierString = jsString(vm, specifier);
                 globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
                 return;
@@ -582,7 +582,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject *
                     globalObject->onLoadPlugins.mustDoExpensiveRelativeLookup = true;
 
                     if (relativeURL.protocolIsFile())
-                        specifier = relativeURL.fileSystemPath();
+                        specifier = Bun::fileSystemPathWithQuery(relativeURL);
                     else
                         specifier = relativeURL.string();
 
@@ -789,7 +789,7 @@ std::optional<String> BunPlugin::OnLoad::resolveVirtualModule(const String& path
         if (path.startsWith("./"_s) || path.startsWith(".."_s)) {
             auto url = WTF::URL::fileURLWithFileSystemPath(from);
             ASSERT(url.isValid());
-            joinedPath = URL(url, path).fileSystemPath();
+            joinedPath = Bun::fileSystemPathWithQuery(URL(url, path));
         }
 
         return virtualModules->contains(joinedPath) ? std::optional<String> { joinedPath } : std::nullopt;

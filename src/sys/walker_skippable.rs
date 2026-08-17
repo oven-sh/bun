@@ -26,7 +26,6 @@ pub struct Walker {
     skip_dirnames: Range<usize>,
     skip_all: Box<[u64]>,
     seed: u64,
-    pub resolve_unknown_entry_types: bool,
 }
 
 /// The directory a walk starts from. The walker never closes a borrowed
@@ -53,12 +52,20 @@ pub struct WalkerEntry<'a> {
     pub dir: Fd,
     pub basename: &'a OSPathSliceZ,
     pub path: &'a OSPathSliceZ,
+    /// Resolved with `lstat` when readdir did not report it; `Unknown` only if that failed too.
     pub kind: sys::EntryKind,
 }
 
 struct StackItem {
     iter: WrappedIterator,
     dirname_len: usize,
+}
+
+/// Every consumer branches on the kind, and the walk itself descends by it.
+fn iterate(dir: Fd) -> WrappedIterator {
+    let mut iter = dir_iterator::iterate(dir);
+    iter.resolve_unknown_entry_types = true;
+    iter
 }
 
 impl Walker {
@@ -76,127 +83,96 @@ impl Walker {
             // be invalidated by appending to `self.stack` below.
             let top_idx = self.stack.len() - 1;
             let mut dirname_len = self.stack[top_idx].dirname_len;
-            match self.stack[top_idx].iter.next() {
-                Err(err) => return Err(err),
-                Ok(res) => {
-                    if let Some(base) = res {
-                        // Some filesystems (NFS, FUSE, bind mounts) don't provide
-                        // d_type and return DT_UNKNOWN. Optionally resolve via
-                        // fstatat so callers get accurate types for recursion.
-                        // This only affects POSIX; Windows always provides types.
-                        #[cfg(not(windows))]
-                        let kind: sys::EntryKind = if base.kind == sys::EntryKind::Unknown
-                            && self.resolve_unknown_entry_types
-                        {
-                            let dir_fd = self.stack[top_idx].iter.dir();
-                            match sys::lstatat(dir_fd, base.name.as_zstr()) {
-                                Ok(stat_buf) => sys::kind_from_mode(stat_buf.st_mode as sys::Mode),
-                                Err(_) => continue, // skip entries we can't stat
-                            }
+            let Some(base) = self.stack[top_idx].iter.next()? else {
+                let item = self.stack.pop().unwrap();
+                if !self.stack.is_empty() {
+                    item.iter.dir().close();
+                }
+                continue;
+            };
+            let kind = base.kind;
+
+            match kind {
+                sys::EntryKind::Directory => {
+                    let skip = &self.skip_all[self.skip_dirnames.clone()];
+                    if skip.contains(
+                        // avoid hashing if there will be 0 results
+                        &(if !skip.is_empty() {
+                            hash_with_seed(self.seed, slice_as_bytes(base.name.as_slice()))
                         } else {
-                            base.kind
-                        };
-                        #[cfg(windows)]
-                        let kind: sys::EntryKind = base.kind;
-
-                        match kind {
-                            sys::EntryKind::Directory => {
-                                let skip = &self.skip_all[self.skip_dirnames.clone()];
-                                if skip.contains(
-                                    // avoid hashing if there will be 0 results
-                                    &(if !skip.is_empty() {
-                                        hash_with_seed(
-                                            self.seed,
-                                            slice_as_bytes(base.name.as_slice()),
-                                        )
-                                    } else {
-                                        0
-                                    }),
-                                ) {
-                                    continue;
-                                }
-                            }
-                            sys::EntryKind::File => {
-                                let skip = &self.skip_all[self.skip_filenames.clone()];
-                                if skip.contains(
-                                    // avoid hashing if there will be 0 results
-                                    &(if !skip.is_empty() {
-                                        hash_with_seed(
-                                            self.seed,
-                                            slice_as_bytes(base.name.as_slice()),
-                                        )
-                                    } else {
-                                        0
-                                    }),
-                                ) {
-                                    continue;
-                                }
-                            }
-
-                            // we don't know what it is for a symlink
-                            sys::EntryKind::SymLink => {
-                                let skip = &self.skip_all[..];
-                                if skip.contains(
-                                    // avoid hashing if there will be 0 results
-                                    &(if !skip.is_empty() {
-                                        hash_with_seed(
-                                            self.seed,
-                                            slice_as_bytes(base.name.as_slice()),
-                                        )
-                                    } else {
-                                        0
-                                    }),
-                                ) {
-                                    continue;
-                                }
-                            }
-
-                            _ => {}
-                        }
-
-                        self.name_buffer.truncate(dirname_len);
-                        if !self.name_buffer.is_empty() {
-                            self.name_buffer.push(SEP as OSPathChar);
-                            dirname_len += 1;
-                        }
-                        self.name_buffer.extend_from_slice(base.name.as_slice());
-                        let cur_len = self.name_buffer.len();
-                        self.name_buffer.push(0);
-
-                        let mut top_idx = top_idx;
-                        if kind == sys::EntryKind::Directory {
-                            let new_dir = sys::open_dir_for_iteration_os_path(
-                                self.stack[top_idx].iter.dir(),
-                                base.name.as_slice(),
-                            )?;
-                            {
-                                self.stack.push(StackItem {
-                                    iter: dir_iterator::iterate(new_dir),
-                                    dirname_len: cur_len,
-                                });
-                                top_idx = self.stack.len() - 1;
-                            }
-                        }
-                        // `name_buffer[cur_len] == 0` was written above; both views end at
-                        // `cur_len` and are NUL-terminated by that sentinel char. `from_buf`
-                        // ties the borrow to `&self.name_buffer` (no raw-pointer reslice).
-                        return Ok(Some(WalkerEntry {
-                            dir: self.stack[top_idx].iter.dir(),
-                            basename: OSPathSliceZ::from_buf(
-                                &self.name_buffer[dirname_len..],
-                                cur_len - dirname_len,
-                            ),
-                            path: OSPathSliceZ::from_buf(&self.name_buffer, cur_len),
-                            kind,
-                        }));
-                    } else {
-                        let item = self.stack.pop().unwrap();
-                        if !self.stack.is_empty() {
-                            item.iter.dir().close();
-                        }
+                            0
+                        }),
+                    ) {
+                        continue;
                     }
                 }
+                sys::EntryKind::File => {
+                    let skip = &self.skip_all[self.skip_filenames.clone()];
+                    if skip.contains(
+                        // avoid hashing if there will be 0 results
+                        &(if !skip.is_empty() {
+                            hash_with_seed(self.seed, slice_as_bytes(base.name.as_slice()))
+                        } else {
+                            0
+                        }),
+                    ) {
+                        continue;
+                    }
+                }
+
+                // we don't know what it is for a symlink
+                sys::EntryKind::SymLink => {
+                    let skip = &self.skip_all[..];
+                    if skip.contains(
+                        // avoid hashing if there will be 0 results
+                        &(if !skip.is_empty() {
+                            hash_with_seed(self.seed, slice_as_bytes(base.name.as_slice()))
+                        } else {
+                            0
+                        }),
+                    ) {
+                        continue;
+                    }
+                }
+
+                _ => {}
             }
+
+            self.name_buffer.truncate(dirname_len);
+            if !self.name_buffer.is_empty() {
+                self.name_buffer.push(SEP as OSPathChar);
+                dirname_len += 1;
+            }
+            self.name_buffer.extend_from_slice(base.name.as_slice());
+            let cur_len = self.name_buffer.len();
+            self.name_buffer.push(0);
+
+            let mut top_idx = top_idx;
+            if kind == sys::EntryKind::Directory {
+                let new_dir = sys::open_dir_for_iteration_os_path(
+                    self.stack[top_idx].iter.dir(),
+                    base.name.as_slice(),
+                )?;
+                {
+                    self.stack.push(StackItem {
+                        iter: iterate(new_dir),
+                        dirname_len: cur_len,
+                    });
+                    top_idx = self.stack.len() - 1;
+                }
+            }
+            // `name_buffer[cur_len] == 0` was written above; both views end at
+            // `cur_len` and are NUL-terminated by that sentinel char. `from_buf`
+            // ties the borrow to `&self.name_buffer` (no raw-pointer reslice).
+            return Ok(Some(WalkerEntry {
+                dir: self.stack[top_idx].iter.dir(),
+                basename: OSPathSliceZ::from_buf(
+                    &self.name_buffer[dirname_len..],
+                    cur_len - dirname_len,
+                ),
+                path: OSPathSliceZ::from_buf(&self.name_buffer, cur_len),
+                kind,
+            }));
         }
         Ok(None)
     }
@@ -263,7 +239,7 @@ fn walk_root(
     }
 
     stack.push(StackItem {
-        iter: dir_iterator::iterate(root.fd()),
+        iter: iterate(root.fd()),
         dirname_len: 0,
     });
 
@@ -275,6 +251,5 @@ fn walk_root(
         seed,
         skip_filenames: skip_filenames_,
         skip_dirnames: skip_dirnames_,
-        resolve_unknown_entry_types: false,
     })
 }

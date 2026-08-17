@@ -2017,6 +2017,7 @@ mod _async_tasks {
             let mut iterator = DirIterator::iterate::<true>(fd);
             #[cfg(not(windows))]
             let mut iterator = DirIterator::iterate::<false>(fd);
+            iterator.resolve_unknown_entry_types = true;
             let mut entry = iterator.next();
             loop {
                 let current = match entry {
@@ -6338,6 +6339,8 @@ impl NodeFS {
         // so it is called inline on every exit path below instead.
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
+        // Only Dirent results expose the kind.
+        iterator.resolve_unknown_entry_types = T::IS_DIRENT;
         loop {
             let current = match iterator.next() {
                 Err(err) => {
@@ -6361,18 +6364,13 @@ impl NodeFS {
                 );
             }
 
-            let utf8_name = current.name.slice();
-            // On filesystems that return DT_UNKNOWN (e.g. FUSE, bind mounts),
-            // fall back to lstat to determine the real file kind.
-            let kind = if T::IS_DIRENT && current.kind == sys::FileKind::Unknown {
-                match sys::lstatat(fd, current.name_assume_z()) {
-                    Ok(st) => sys::kind_from_mode(st.st_mode as Mode),
-                    Err(_) => current.kind,
-                }
-            } else {
-                current.kind
-            };
-            T::append_entry(entries, utf8_name, &dirent_path, kind, args.encoding);
+            T::append_entry(
+                entries,
+                current.name.slice(),
+                &dirent_path,
+                current.kind,
+                args.encoding,
+            );
         }
 
         dirent_path.deref();
@@ -6513,6 +6511,7 @@ impl NodeFS {
         });
 
         let mut iterator = DirIterator::WrappedIterator::init(fd);
+        iterator.resolve_unknown_entry_types = true;
         let mut dirent_path_prev = BunString::EMPTY;
         let mut spill: Vec<u8> = Vec::new();
         let mut dirent_spill: Vec<u8> = Vec::new();
@@ -6556,9 +6555,6 @@ impl NodeFS {
             let name_to_copy_z =
                 unsafe { ZStr::from_raw(name_to_copy.as_ptr(), name_to_copy.len()) };
 
-            // Track effective kind - may be resolved from .unknown via stat
-            let mut effective_kind = current.kind;
-
             'enqueue: {
                 match current.kind {
                     // a symlink might be a directory or might not be
@@ -6574,22 +6570,6 @@ impl NodeFS {
                         // file descriptors open.
                         if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
                         async_task.enqueue(name_to_copy_z);
-                    }
-                    // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
-                    // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
-                    sys::FileKind::Unknown => {
-                        if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                        // Lazy stat to determine the actual kind (lstatat to not follow symlinks)
-                        match sys::lstatat(fd, current.name_assume_z()) {
-                            Ok(st) => {
-                                let real_kind = sys::kind_from_mode(st.st_mode as Mode);
-                                effective_kind = real_kind;
-                                if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
-                                    async_task.enqueue(name_to_copy_z);
-                                }
-                            }
-                            Err(_) => {} // Skip entries we can't stat
-                        }
                     }
                     _ => {}
                 }
@@ -6612,7 +6592,7 @@ impl NodeFS {
                 utf8_name,
                 name_to_copy,
                 &dirent_path_prev,
-                effective_kind,
+                current.kind,
                 async_task.encoding,
                 false,
             );
@@ -6710,6 +6690,7 @@ impl NodeFS {
             });
 
             let mut iterator = DirIterator::WrappedIterator::init(fd);
+            iterator.resolve_unknown_entry_types = true;
             let mut dirent_path_prev = BunString::DEAD;
 
             loop {
@@ -6734,9 +6715,6 @@ impl NodeFS {
                     .as_bytes()
                 };
 
-                // Track effective kind - may be resolved from .unknown via stat
-                let mut effective_kind = current.kind;
-
                 'enqueue: {
                     match current.kind {
                         // a symlink might be a directory or might not be
@@ -6751,24 +6729,6 @@ impl NodeFS {
                             owned.extend_from_slice(name_to_copy);
                             owned.push(0);
                             stack.push_back(owned);
-                        }
-                        // Some filesystems (e.g., Docker bind mounts, FUSE, NFS) return
-                        // DT_UNKNOWN for d_type. Use lstatat to determine the actual type.
-                        sys::FileKind::Unknown => {
-                            if utf8_name.len() + 1 + name_to_copy.len() > paths::MAX_PATH_BYTES { break 'enqueue; }
-                            match sys::lstatat(fd, current.name_assume_z()) {
-                                Ok(st) => {
-                                    let real_kind = sys::kind_from_mode(st.st_mode as Mode);
-                                    effective_kind = real_kind;
-                                    if matches!(real_kind, sys::FileKind::Directory | sys::FileKind::SymLink) {
-                                        let mut owned = Vec::with_capacity(name_to_copy.len() + 1);
-                                        owned.extend_from_slice(name_to_copy);
-                                        owned.push(0);
-                                        stack.push_back(owned);
-                                    }
-                                }
-                                Err(_) => {} // Skip entries we can't stat
-                            }
                         }
                         _ => {}
                     }
@@ -6794,7 +6754,7 @@ impl NodeFS {
                     utf8_name,
                     name_to_copy,
                     &dirent_path_prev,
-                    effective_kind,
+                    current.kind,
                     args.encoding,
                     true,
                 );
@@ -8376,6 +8336,7 @@ impl NodeFS {
         let mut iterator = DirIterator::WrappedIteratorW::init(fd);
         #[cfg(not(windows))]
         let mut iterator = DirIterator::WrappedIterator::init(fd);
+        iterator.resolve_unknown_entry_types = true;
 
         loop {
             let current = match iterator.next() {

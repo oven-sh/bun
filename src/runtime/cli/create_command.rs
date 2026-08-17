@@ -1820,6 +1820,7 @@ impl Example {
             for folder in &folders {
                 if folder.fd() != bun_sys::Fd::invalid() {
                     let mut iter = bun_sys::dir_iterator::iterate(folder.fd());
+                    iter.resolve_unknown_entry_types = true;
 
                     'loop_: while let Some(entry) = iter.next().ok().flatten() {
                         let entry_name = entry.name.slice_u8();

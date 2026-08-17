@@ -492,6 +492,8 @@ impl ShellLsTask {
             }
 
             let mut iterator = dir_iterator::iterate(fd);
+            // The kind is only looked at to decide what to recurse into.
+            iterator.resolve_unknown_entry_types = this.opts.recursive;
 
             // If `-a` is used, "." and ".." should show up as results. However,
             // our `DirIterator` abstraction skips them, so add them now.

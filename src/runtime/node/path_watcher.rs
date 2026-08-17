@@ -605,6 +605,7 @@ fn walk_subtree<const DIRS_ONLY: bool>(
     };
     let _close = sys::CloseOnDrop::new(dfd);
     let mut it = sys::dir_iterator::iterate(dfd);
+    it.resolve_unknown_entry_types = true;
     let mut abs_buf = path::path_buffer_pool::get();
     let mut rel_buf = path::path_buffer_pool::get();
     loop {

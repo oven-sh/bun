@@ -20,20 +20,18 @@ import path from "node:path";
 const lockfiles = ["bun.lock", "test/bun.lock"];
 
 // Each lockfile entry starts with "name@resolution"; a scoped name contains a
-// "/" but only the leading "@". Registry packages resolve to a bare version and
-// the local kinds to root:, workspace:, file: or link:. Everything bun fetches
-// from somewhere else is github:, git+<url> or a tarball URL.
-function isOffRegistry(nameAtResolution: string): boolean {
-  const resolution = /^@?[^@]+@(.*)$/s.exec(nameAtResolution)?.[1];
-  // An entry this cannot split is a format change; flag it rather than skip it.
-  return resolution === undefined || /^(github:|git\+|https?:\/\/)/.test(resolution);
-}
+// "/" but only the leading "@". The registry resolves to a bare version, and
+// root:, workspace:, file: and link: never leave the checkout. Everything else
+// fails: github:, git+<url> and tarball URLs are fetched from another host, and
+// a shape this does not know needs someone to decide which of the two it is.
+const registryOrCheckout = /^@?[^@]+@(\d+\.\d+\.\d+|root:|workspace:|file:|link:)/;
 
-test("isOffRegistry tells registry and local resolutions from fetched ones", () => {
+test("registryOrCheckout accepts registry versions and checkout-local resolutions only", () => {
   const classified = Object.fromEntries(
     [
       "esbuild@0.21.5",
       "@types/node@25.0.0",
+      "@wolfy1339/lru-cache@11.0.2-patch.1",
       "bun@root:",
       "bun-types@workspace:packages/bun-types",
       "bun-plugin-svelte@file:../packages/bun-plugin-svelte",
@@ -42,21 +40,24 @@ test("isOffRegistry tells registry and local resolutions from fetched ones", () 
       "foo@git+ssh://git@github.com/oven-sh/foo.git#0123abc",
       "foo@git+https://github.com/oven-sh/foo.git#0123abc",
       "foo@https://example.com/foo-1.0.0.tgz",
+      "foo@",
       "no-resolution",
-    ].map(entry => [entry, isOffRegistry(entry)]),
+    ].map(entry => [entry, registryOrCheckout.test(entry)]),
   );
   expect(classified).toEqual({
-    "esbuild@0.21.5": false,
-    "@types/node@25.0.0": false,
-    "bun@root:": false,
-    "bun-types@workspace:packages/bun-types": false,
-    "bun-plugin-svelte@file:../packages/bun-plugin-svelte": false,
-    "react@link:../node_modules/react": false,
-    "bun-tracestrings@github:oven-sh/bun.report#912ca63": true,
-    "foo@git+ssh://git@github.com/oven-sh/foo.git#0123abc": true,
-    "foo@git+https://github.com/oven-sh/foo.git#0123abc": true,
-    "foo@https://example.com/foo-1.0.0.tgz": true,
-    "no-resolution": true,
+    "esbuild@0.21.5": true,
+    "@types/node@25.0.0": true,
+    "@wolfy1339/lru-cache@11.0.2-patch.1": true,
+    "bun@root:": true,
+    "bun-types@workspace:packages/bun-types": true,
+    "bun-plugin-svelte@file:../packages/bun-plugin-svelte": true,
+    "react@link:../node_modules/react": true,
+    "bun-tracestrings@github:oven-sh/bun.report#912ca63": false,
+    "foo@git+ssh://git@github.com/oven-sh/foo.git#0123abc": false,
+    "foo@git+https://github.com/oven-sh/foo.git#0123abc": false,
+    "foo@https://example.com/foo-1.0.0.tgz": false,
+    "foo@": false,
+    "no-resolution": false,
   });
 });
 
@@ -71,7 +72,7 @@ test.each(lockfiles)("%s resolves every package from the npm registry", lockfile
   expect(entries.length).toBeGreaterThan(0);
 
   const violations = entries
-    .filter(([, [nameAtResolution]]) => isOffRegistry(nameAtResolution))
+    .filter(([, [nameAtResolution]]) => !registryOrCheckout.test(nameAtResolution))
     .map(([key, [nameAtResolution]]) => `${key} -> ${nameAtResolution}`);
   expect(violations).toEqual([]);
 });

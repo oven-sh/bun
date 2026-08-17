@@ -154,7 +154,7 @@ describe("util", () => {
     });
 
     // These inputs used to segfault the process, so they run in a child.
-    it("handles revoked proxies and getPrototypeOf traps", async () => {
+    it.concurrent("handles revoked proxies and getPrototypeOf traps", async () => {
       const fixture = /* js */ `
         const { isError } = require("node:util");
         const attempt = fn => {
@@ -168,6 +168,14 @@ describe("util", () => {
         revoke();
         console.log("revoked:", attempt(() => isError(revoked)));
         console.log("throwing trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf() { throw new Error("from trap"); } }))));
+        const thrown = { from: "trap" };
+        let caught;
+        try {
+          isError(new Proxy({}, { getPrototypeOf() { throw thrown; } }));
+        } catch (e) {
+          caught = e;
+        }
+        console.log("throwing trap rethrows the same value:", caught === thrown);
         console.log("null trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf: () => null }))));
         console.log("Error.prototype trap:", attempt(() => isError(new Proxy({}, { getPrototypeOf: () => Error.prototype }))));
         console.log("proxy of an Error:", attempt(() => isError(new Proxy(new Error("x"), {}))));
@@ -184,6 +192,7 @@ describe("util", () => {
         [
           "revoked: threw TypeError: Proxy has already been revoked. No more operations are allowed to be performed on it",
           "throwing trap: threw Error: from trap",
+          "throwing trap rethrows the same value: true",
           "null trap: false",
           "Error.prototype trap: true",
           "proxy of an Error: true",

@@ -2,10 +2,9 @@
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
 const { STATUS_CODES } = require("internal/http");
-const { SafeSet } = require("internal/primordials");
 
+// Node's server[kConnections]: a ConnectionsList holding every fallback connection's parser.
 const kHttp1Connections = Symbol("http1Connections");
-const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -236,7 +235,7 @@ function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
-  const { allMethods } = process.binding("http_parser");
+  const { allMethods, ConnectionsList } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
   const IncomingMessageClass = http1Options.IncomingMessage || http.IncomingMessage;
@@ -247,10 +246,6 @@ function connectionListenerHTTP1(server, socket, options) {
   // through req.socket.server (nodejs/node#13435).
   socket.server = server;
 
-  const connections = (server[kHttp1Connections] ??= new SafeSet());
-  connections.add(socket);
-  socket[kHttp1ActiveRequests] = 0;
-
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
@@ -258,8 +253,9 @@ function connectionListenerHTTP1(server, socket, options) {
   // Mirror Node's connectionListenerInternal: carry maxHeaderSize / leniency / maxHeadersCount
   // into the parser. https://github.com/nodejs/node/blob/main/lib/_http_server.js
   const lenientFlags = calculateLenientFlags(server.httpValidation, server.insecureHTTPParser);
+  const connections = (server[kHttp1Connections] ??= new ConnectionsList());
   const parser = new HTTPParser();
-  parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
+  parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags, connections);
   parser.socket = socket;
   socket.parser = parser;
   const { maxHeadersCount } = server;
@@ -281,8 +277,6 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
-    socket[kHttp1ActiveRequests]++;
-
     req = new IncomingMessageClass(socket);
     req.socket = socket;
     req.httpVersionMajor = versionMajor;
@@ -320,7 +314,6 @@ function connectionListenerHTTP1(server, socket, options) {
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
-      socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
       if (!shouldKeepAlive && !socket.destroyed) {
         socket.end();
       }
@@ -401,11 +394,8 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
-      connections.delete(socket);
-      try {
-        parser.close();
-      } catch {}
-      socket.parser = null;
+      socket.removeListener("close", freeHttp1Parser);
+      freeHttp1Parser();
       const eventName = upgradeReq.method === "CONNECT" ? "connect" : "upgrade";
       const bodyHead = typeof ret === "number" ? data.slice(ret) : Buffer.alloc(0);
       if (server.listenerCount(eventName) > 0) {
@@ -439,31 +429,38 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
+  // Node's freeParser; a closed parser can no longer remove() itself from the list.
+  function freeHttp1Parser() {
+    parser.remove();
+    parser.close();
+    socket.parser = null;
+  }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
-  socket.once("close", () => {
-    connections.delete(socket);
-    try {
-      parser.close();
-    } catch {}
-  });
+  socket.once("close", freeHttp1Parser);
 }
 
+// Node's Server#closeIdleConnections; a parser is busy from initialize() and from each message's
+// first byte until kOnMessageComplete, so idle() is the connections sitting between requests.
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
-  for (const socket of connections) {
-    if (!socket[kHttp1ActiveRequests] && !socket.destroyed) {
-      socket.destroy();
-    }
+  const idle = connections.idle();
+  for (let i = 0, length = idle.length; i < length; i++) {
+    const socket = idle[i].socket;
+    const httpMessage = socket._httpMessage;
+    if (httpMessage && !httpMessage.finished) continue;
+    if (!socket.destroyed) socket.destroy();
   }
 }
 
 function closeAllHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
-  for (const socket of connections) {
+  const all = connections.all();
+  for (let i = 0, length = all.length; i < length; i++) {
+    const socket = all[i].socket;
     if (!socket.destroyed) socket.destroy();
   }
 }
@@ -472,5 +469,4 @@ export default {
   connectionListenerHTTP1,
   closeIdleHttp1Connections,
   closeAllHttp1Connections,
-  kHttp1Connections,
 };

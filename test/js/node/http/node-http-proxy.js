@@ -32,12 +32,14 @@ export async function run() {
     req.pipe(proxyRequest); // Use pipe instead of manual data handling
   });
 
-  proxyServer.listen(0, "localhost", async () => {
+  // Bind and connect to one explicit address: on a host whose "localhost" resolves to both ::1 and
+  // 127.0.0.1, the server may bind one family while the client tries the other (ECONNREFUSED).
+  proxyServer.listen(0, "127.0.0.1", async () => {
     const address = proxyServer.address();
 
     const options = {
       protocol: "http:",
-      hostname: "localhost",
+      hostname: "127.0.0.1",
       port: address.port,
       path: "/", // Change path to /
       headers: {

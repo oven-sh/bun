@@ -4139,3 +4139,238 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+// Reads one Content-Length framed response off the client half of a duplexPair; rejects if the
+// response is framed any other way or the connection goes away first.
+function readResponseBody(clientSide: ReturnType<typeof duplexPair>[0]): Promise<string> {
+  const { promise, resolve, reject } = Promise.withResolvers<string>();
+  let raw = "";
+  function settle(body?: string, error?: Error) {
+    clientSide.off("data", onData);
+    clientSide.off("close", onClose);
+    clientSide.off("error", onError);
+    if (error) reject(error);
+    else resolve(body!);
+  }
+  function onData(chunk: Buffer) {
+    raw += chunk.toString("latin1");
+    const headersEnd = raw.indexOf("\r\n\r\n");
+    if (headersEnd === -1) return;
+    const contentLength = /\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd));
+    if (!contentLength) {
+      settle(undefined, new Error(`expected a Content-Length framed response, got: ${JSON.stringify(raw)}`));
+      return;
+    }
+    const body = raw.slice(headersEnd + 4);
+    if (body.length < Number(contentLength[1])) return;
+    settle(body);
+  }
+  function onClose() {
+    settle(undefined, new Error(`connection closed before the response completed, got: ${JSON.stringify(raw)}`));
+  }
+  function onError(error: Error) {
+    settle(undefined, error);
+  }
+  clientSide.on("data", onData);
+  clientSide.on("close", onClose);
+  clientSide.on("error", onError);
+  return promise;
+}
+
+// Node only considers a connection idle between requests: from the moment it is accepted until
+// its first request has been fully received, and again from the first byte of every later
+// request, it is busy (and left to headersTimeout/requestTimeout instead). A received request
+// whose response has not finished keeps the connection busy too. Sockets handed in through
+// server.emit("connection", ...) are tracked like accepted ones, so closeIdleConnections() and
+// close() must apply the same rules to them.
+it("closeIdleConnections() only destroys emitted connections that are between requests", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const server = createServer((req, res) => {
+    switch (req.url) {
+      case "/hold":
+        heldResponse.resolve(res);
+        break;
+      case "/body":
+        // Respond before the request body has arrived; the request is still being received.
+        res.end("early");
+        break;
+      default:
+        res.end(`served ${req.url}`);
+    }
+  });
+  // Node tracks connections (including emitted ones) only once the server is listening.
+  await listen(server);
+  const names = ["fresh", "partial", "body", "hold", "reused", "idle"] as const;
+  const pairs = Object.fromEntries(names.map(name => [name, duplexPair()])) as Record<
+    (typeof names)[number],
+    ReturnType<typeof duplexPair>
+  >;
+  const client = (name: (typeof names)[number]) => pairs[name][0];
+  const destroyedFlags = () => Object.fromEntries(names.map(name => [name, pairs[name][1].destroyed]));
+  try {
+    for (const name of names) server.emit("connection", pairs[name][1]);
+
+    const partialHeadArrived = once(pairs.partial[1], "data");
+    client("partial").write("GET /partial HTTP/1.1\r\nHost: x\r\n");
+    await partialHeadArrived;
+    const earlyBody = readResponseBody(client("body"));
+    client("body").write("POST /body HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    expect(await earlyBody).toBe("early");
+    client("hold").write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    const held = await heldResponse.promise;
+    const reusedFirstBody = readResponseBody(client("reused"));
+    client("reused").write("GET /reused-1 HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await reusedFirstBody).toBe("served /reused-1");
+    const reusedSecondHeadArrived = once(pairs.reused[1], "data");
+    client("reused").write("GET /reused-2 HTTP/1.1\r\n");
+    await reusedSecondHeadArrived;
+    const idleBody = readResponseBody(client("idle"));
+    client("idle").write("GET /idle HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await idleBody).toBe("served /idle");
+
+    server.closeIdleConnections();
+    expect(destroyedFlags()).toEqual({
+      fresh: false,
+      partial: false,
+      body: false,
+      hold: false,
+      reused: false,
+      idle: true,
+    });
+
+    // Every connection that was kept is still fully functional.
+    const freshBody = readResponseBody(client("fresh"));
+    client("fresh").write("GET /fresh HTTP/1.1\r\nHost: x\r\n\r\n");
+    const partialBody = readResponseBody(client("partial"));
+    client("partial").write("\r\n");
+    const bodyNextBody = readResponseBody(client("body"));
+    client("body").write("defghijGET /body-next HTTP/1.1\r\nHost: x\r\n\r\n");
+    const holdBody = readResponseBody(client("hold"));
+    held.end("held");
+    const reusedSecondBody = readResponseBody(client("reused"));
+    client("reused").write("Host: x\r\n\r\n");
+    expect(await Promise.all([freshBody, partialBody, bodyNextBody, holdBody, reusedSecondBody])).toEqual([
+      "served /fresh",
+      "served /partial",
+      "served /body-next",
+      "held",
+      "served /reused-2",
+    ]);
+
+    // Now they are all between requests; close() sweeps idle connections the same way.
+    server.close();
+    expect(destroyedFlags()).toEqual({
+      fresh: true,
+      partial: true,
+      body: true,
+      hold: true,
+      reused: true,
+      idle: true,
+    });
+  } finally {
+    for (const name of names) {
+      pairs[name][0].destroy();
+      pairs[name][1].destroy();
+    }
+    if (server.listening) server.close();
+  }
+});
+
+// res.end() marks the response finished synchronously while it stays assigned to the socket until
+// 'finish' is emitted; like Node, a connection in that window is already idle.
+it("closeIdleConnections() destroys an emitted connection as soon as its response has ended", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const server = createServer((req, res) => heldResponse.resolve(res));
+  await listen(server);
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    clientSide.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    const res = await heldResponse.promise;
+
+    server.closeIdleConnections();
+    const keptWhileResponsePending = !serverSide.destroyed;
+    res.end("done");
+    server.closeIdleConnections();
+    expect({
+      keptWhileResponsePending,
+      responseStillAssigned: (serverSide as any)._httpMessage === res,
+      destroyedOnceEnded: serverSide.destroyed,
+    }).toEqual({ keptWhileResponsePending: true, responseStillAssigned: true, destroyedOnceEnded: true });
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    if (server.listening) server.close();
+  }
+});
+
+// The request handler runs from the parser's headers-complete callback, i.e. while the request is
+// still being received, so a handler that responds and then sweeps idle connections (the usual
+// "shut down from a request" pattern) does not destroy its own connection; Node leaves it to the
+// keep-alive timeout. Once the request has been fully received the next sweep takes it.
+it("closeIdleConnections() run from inside the request handler keeps the handler's own connection", async () => {
+  const handled = Promise.withResolvers<boolean>();
+  const server = createServer((req, res) => {
+    res.end("body");
+    server.closeIdleConnections();
+    handled.resolve(req.socket.destroyed);
+  });
+  await listen(server);
+  const [clientSide, serverSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    const body = readResponseBody(clientSide);
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+    const destroyedInsideHandler = await handled.promise;
+    expect({ destroyedInsideHandler, destroyedAfterHandler: serverSide.destroyed }).toEqual({
+      destroyedInsideHandler: false,
+      destroyedAfterHandler: false,
+    });
+    expect(await body).toBe("body");
+    server.closeIdleConnections();
+    expect(serverSide.destroyed).toBe(true);
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    if (server.listening) server.close();
+  }
+});
+
+it("closeAllConnections() destroys an emitted connection that closeIdleConnections() keeps, but not one handed to 'upgrade'", async () => {
+  const upgraded = Promise.withResolvers<void>();
+  const server = createServer(() => {});
+  server.on("upgrade", (req, socket) => {
+    socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\n");
+    upgraded.resolve();
+  });
+  await listen(server);
+  const [clientSide, serverSide] = duplexPair();
+  const [upgradeClientSide, upgradeServerSide] = duplexPair();
+  try {
+    server.emit("connection", serverSide);
+    server.emit("connection", upgradeServerSide);
+    const headArrived = once(serverSide, "data");
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n");
+    await headArrived;
+    upgradeClientSide.write("GET / HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: tcp\r\n\r\n");
+    await upgraded.promise;
+
+    server.closeIdleConnections();
+    expect({ partial: serverSide.destroyed, upgraded: upgradeServerSide.destroyed }).toEqual({
+      partial: false,
+      upgraded: false,
+    });
+    // Like Node, a connection that left HTTP via 'upgrade' is no longer the server's to close.
+    server.closeAllConnections();
+    expect({ partial: serverSide.destroyed, upgraded: upgradeServerSide.destroyed }).toEqual({
+      partial: true,
+      upgraded: false,
+    });
+  } finally {
+    clientSide.destroy();
+    serverSide.destroy();
+    upgradeClientSide.destroy();
+    upgradeServerSide.destroy();
+    if (server.listening) server.close();
+  }
+});

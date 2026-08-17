@@ -1446,9 +1446,7 @@ impl FFI {
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
             return Ok(val);

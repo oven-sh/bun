@@ -913,6 +913,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit, (JSC::JSGlobalObject * globalObje
     RETURN_IF_EXCEPTION(throwScope, {});
 
     Process__dispatchOnExit(zigGlobal, Bun__getExitCode(bunVM(zigGlobal)));
+    RETURN_IF_EXCEPTION(throwScope, {});
 
     // process.reallyExit(process.exitCode) — re-read: an 'exit' listener may have set it.
     auto reallyExitVal = process->get(globalObject, Identifier::fromString(vm, "reallyExit"_s));

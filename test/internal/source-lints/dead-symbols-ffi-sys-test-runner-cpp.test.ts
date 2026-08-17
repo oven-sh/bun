@@ -189,7 +189,6 @@ test("dead C++ bindings do not reappear", () => {
       ],
       ["src/jsc/bindings/webcore/streams/StreamQueue.h", /\bsetTotalSize\b/],
       ["src/jsc/bindings/webcore/WorkerMessagingProxy.h", /\baskedToTerminate\(\)|\bloaderContextIdentifier\(\)/],
-      ["src/jsc/bindings/BunHttp2CommonStrings.h", /\bcommonStringInitializer\b/],
       ["src/jsc/modules/NativeModuleList.h", /\bBUN_FOREACH_CJS_NATIVE_MODULE\b/],
       // Iso-subspace slots no class ever allocated from.
       [

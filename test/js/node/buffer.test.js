@@ -1050,6 +1050,48 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf).toEqual(Buffer.from([0xab, 0, 0, 0]));
       });
 
+      // Like Node.js, two-byte (UTF-16) strings are decoded from the low byte
+      // of each code unit: U+FF41 and U+0141 both act like 'A', while a unit
+      // whose low byte is not a hex digit stops decoding like any other
+      // invalid character.
+      it("hex decoding of two-byte strings uses the low byte of each code unit", () => {
+        expect(Buffer.from("f\uff41", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        expect(Buffer.from("\uff46\uff41", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        expect(Buffer.from("fa\uff41\uff41", "hex")).toStrictEqual(Buffer.from([0xfa, 0xaa]));
+        expect(Buffer.from("f\u0141", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        // U+0130 -> '0', U+3061 -> 'a', U+0131..U+0134 -> '1'..'4'
+        expect(Buffer.from("\u0130\u0130\u3061\u3061", "hex")).toStrictEqual(Buffer.from([0x00, 0xaa]));
+        expect(Buffer.from("\u0131\u0132\u0133\u0134", "hex")).toStrictEqual(Buffer.from([0x12, 0x34]));
+
+        // low byte is not a hex digit: U+0100 -> 0x00, U+0147 -> 'G', U+01FF -> 0xff,
+        // U+D83D (first unit of an emoji) -> '='
+        expect(Buffer.from("\u0100\u0100", "hex").length).toBe(0);
+        expect(Buffer.from("ab\u0147\u0147cd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("ab\u01ff\u01ffcd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("ab\u{1F600}cd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("\u6d4b\u8bd5ab", "hex").length).toBe(0);
+
+        // write(), hexWrite(), fill() and indexOf() narrow the same way
+        {
+          const b = Buffer.alloc(4, 0xcc);
+          expect(b.write("fa\uff41\uff41\u0147\u0147cd", "hex")).toBe(2);
+          expect(b).toStrictEqual(Buffer.from([0xfa, 0xaa, 0xcc, 0xcc]));
+        }
+        {
+          const b = Buffer.alloc(4, 0xcc);
+          expect(b.hexWrite("\uff46\uff41", 1)).toBe(1);
+          expect(b).toStrictEqual(Buffer.from([0xcc, 0xfa, 0xcc, 0xcc]));
+        }
+        expect(Buffer.alloc(5).fill("fa\uff41\uff41", "hex")).toStrictEqual(
+          Buffer.from([0xfa, 0xaa, 0xfa, 0xaa, 0xfa]),
+        );
+        expect(Buffer.alloc(3, "f\uff41", "hex")).toStrictEqual(Buffer.from([0xfa, 0xfa, 0xfa]));
+        expect(() => Buffer.alloc(2).fill("\u0147\u0147", "hex")).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+        );
+        expect(Buffer.from([0x01, 0xfa, 0xaa]).indexOf("f\uff41\uff41\uff41", 0, "hex")).toBe(1);
+      });
+
       // The hex decoder takes a SIMD path once the input has at least 16 byte
       // pairs and falls back to scalar code for short inputs, vector tails and
       // the block containing the first invalid character. These tests sweep the
@@ -1061,11 +1103,12 @@ for (let withOverridenBufferWrite of [false, true]) {
           if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10;
           return -1;
         };
+        // Like Node's decoder, each code unit is narrowed to its low byte first.
         const referenceHexDecode = (str, maxBytes = Infinity) => {
           const out = [];
           for (let i = 0; i + 1 < str.length && out.length < maxBytes; i += 2) {
-            const hi = hexDigitValue(str.charCodeAt(i));
-            const lo = hexDigitValue(str.charCodeAt(i + 1));
+            const hi = hexDigitValue(str.charCodeAt(i) & 0xff);
+            const lo = hexDigitValue(str.charCodeAt(i + 1) & 0xff);
             if (hi < 0 || lo < 0) break;
             out.push((hi << 4) | lo);
           }
@@ -1116,18 +1159,53 @@ for (let withOverridenBufferWrite of [false, true]) {
           }
         });
 
-        it("treats UTF-16 code units above 0xFF as invalid even when their low byte is a hex digit", () => {
-          // U+0130, U+0141, U+3061, U+FF41 truncate to '0', 'A', 'a', 'A' — the
-          // decoder must reject them rather than decode the truncated byte.
-          const pairs = 64;
-          for (const bad of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
-            for (const pos of [0, 1, 31, 32, 63, 64, 97, 126, 127]) {
+        // 75 pairs: on every target the input spans whole vector blocks (pairs
+        // 0-63), the 128-bit mop-up blocks of wide targets (64-71) and the
+        // scalar tail (72-74). The positions below put the two-byte unit in
+        // each of those regions and on the block boundaries between them.
+        const wideUnitPairs = 75;
+        const wideUnitPositions = [0, 1, 31, 32, 63, 64, 127, 128, 143, 144, 149];
+
+        it("decodes UTF-16 code units above 0xFF from their low byte, like Node", () => {
+          // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
+          const pairs = wideUnitPairs;
+          for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+            const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
+            for (const pos of wideUnitPositions) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = wide;
+              const hex = chars.join("");
+              chars[pos] = narrow;
+              const expected = Buffer.from(chars.join(""), "hex");
+              expect(expected.length).toBe(pairs);
+              expect(expected).toEqual(referenceHexDecode(hex));
+
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+              const target = Buffer.alloc(pairs);
+              expect(target.write(hex, "hex")).toBe(pairs);
+              expect(target).toEqual(expected);
+            }
+          }
+        });
+
+        it("stops at a UTF-16 code unit above 0xFF whose low byte is not a hex digit", () => {
+          // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
+          const pairs = wideUnitPairs;
+          for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
+            for (const pos of wideUnitPositions) {
               const chars = patternHex(pairs).split("");
               chars[pos] = bad;
               const hex = chars.join("");
               const expected = referenceHexDecode(hex);
               expect(expected.length).toBe(Math.floor(pos / 2));
+
               expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+              const target = Buffer.alloc(pairs, 0xaa);
+              expect(target.write(hex, "hex")).toBe(expected.length);
+              expect(target.subarray(0, expected.length)).toEqual(expected);
+              expect(target.subarray(expected.length)).toEqual(Buffer.alloc(pairs - expected.length, 0xaa));
             }
           }
         });
@@ -4558,6 +4636,106 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
         });
       });
     });
+  });
+});
+
+// Node reads a detached view's length (0) like any other buffer's: it sorts before any
+// non-empty buffer, equals any other empty one, swapNN() has nothing to swap, and as a fill
+// value it is rejected the way an empty one is. The expected values below are Node v26's.
+describe("detached buffers in compare, equals, swapNN and as a fill value", () => {
+  const detached = (size = 16) => {
+    const buf = Buffer.alloc(size);
+    buf.buffer.transfer();
+    return buf;
+  };
+  // A length-tracking view on a resizable ArrayBuffer computes its byteLength through a
+  // different path in JSC than a fixed-length one; both must read as 0 once detached.
+  const detachedLengthTracking = () => {
+    const rab = new ArrayBuffer(16, { maxByteLength: 32 });
+    const view = new Uint8Array(rab);
+    rab.transfer();
+    return view;
+  };
+  const abc = () => Buffer.from("abc");
+  const empty = () => Buffer.alloc(0);
+  const OUT_OF_RANGE = expect.objectContaining({ code: "ERR_OUT_OF_RANGE" });
+
+  it("Buffer.compare() treats a detached argument in either position as empty", () => {
+    const same = detached();
+    expect([
+      Buffer.compare(detached(), detached()),
+      Buffer.compare(same, same),
+      Buffer.compare(detached(), abc()),
+      Buffer.compare(abc(), detached()),
+      Buffer.compare(detached(), empty()),
+      Buffer.compare(empty(), detached()),
+      Buffer.compare(detachedLengthTracking(), abc()),
+      Buffer.compare(abc(), detachedLengthTracking()),
+      Buffer.compare(detachedLengthTracking(), detachedLengthTracking()),
+    ]).toEqual([0, 0, -1, 1, 0, 0, -1, 1, 0]);
+  });
+
+  it("buf.compare() treats a detached target or source as empty", () => {
+    const same = detached();
+    expect([
+      abc().compare(detached()),
+      empty().compare(detached()),
+      detached().compare(detached()),
+      same.compare(same),
+      detached().compare(abc()),
+      abc().compare(detachedLengthTracking()),
+      // With explicit offsets the detached side is an empty range whatever its start is.
+      abc().compare(detached(), 0),
+      abc().compare(detached(), 5),
+      detached().compare(detached(), 5),
+      empty().compare(detached(), 0, 0, 0, 0),
+    ]).toEqual([1, 0, 0, 0, -1, 1, 1, 1, 0, 0]);
+  });
+
+  it("buf.compare() range-checks an explicit end against the detached side's length of 0", () => {
+    expect(() => abc().compare(detached(), 0, 1)).toThrow(OUT_OF_RANGE);
+    expect(() => detached().compare(abc(), 0, 3, 0, 1)).toThrow(OUT_OF_RANGE);
+  });
+
+  it("buf.equals() treats a detached buffer on either side as empty", () => {
+    const same = detached();
+    expect([
+      abc().equals(detached()),
+      empty().equals(detached()),
+      detached().equals(detached()),
+      same.equals(same),
+      detached().equals(abc()),
+      detached().equals(empty()),
+      abc().equals(detachedLengthTracking()),
+      empty().equals(detachedLengthTracking()),
+    ]).toEqual([false, true, true, true, false, true, false, true]);
+  });
+
+  it.each(["swap16", "swap32", "swap64"])("%s() returns a detached buffer unchanged", method => {
+    const buf = detached();
+    expect(buf[method]()).toBe(buf);
+    expect(buf.length).toBe(0);
+
+    // The size check sees the detached length of 0, not the 3 bytes it was created with.
+    const odd = detached(3);
+    expect(odd[method]()).toBe(odd);
+
+    const view = detachedLengthTracking();
+    expect(Buffer.prototype[method].call(view)).toBe(view);
+  });
+
+  it("Buffer.alloc() and buf.fill() reject a detached fill value like an empty one", () => {
+    const INVALID_ARG_VALUE = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
+    expect(() => Buffer.alloc(4, detached())).toThrow(INVALID_ARG_VALUE);
+    expect(() => Buffer.alloc(4, detachedLengthTracking())).toThrow(INVALID_ARG_VALUE);
+    expect(() => abc().fill(detached())).toThrow(INVALID_ARG_VALUE);
+    expect(() => abc().fill(detachedLengthTracking())).toThrow(INVALID_ARG_VALUE);
+
+    // Nothing to fill, so the value is never looked at (in Node either).
+    expect(Buffer.alloc(0, detached()).length).toBe(0);
+    const buf = abc();
+    expect(buf.fill(detached(), 1, 1)).toBe(buf);
+    expect(buf.toString()).toBe("abc");
   });
 });
 

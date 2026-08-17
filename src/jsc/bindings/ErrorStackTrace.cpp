@@ -182,27 +182,6 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
         stackTrace.shrink(stackTraceLimit);
 }
 
-JSCStackTrace JSCStackTrace::getStackTraceForThrownValue(JSC::VM& vm, JSC::JSValue thrownValue)
-{
-    const WTF::Vector<JSC::StackFrame>* jscStackTrace = nullptr;
-
-    JSC::Exception* currentException = DECLARE_TOP_EXCEPTION_SCOPE(vm).exception();
-    if (currentException && currentException->value() == thrownValue) {
-        jscStackTrace = &currentException->stack();
-    } else {
-        JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(thrownValue);
-        if (error) {
-            jscStackTrace = error->stackTrace();
-        }
-    }
-
-    if (!jscStackTrace) {
-        return JSCStackTrace();
-    }
-
-    return fromExisting(vm, *jscStackTrace);
-}
-
 static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
 {
     if (!codeBlock->ownerExecutable()) {
@@ -213,57 +192,9 @@ static bool isVisibleBuiltinFunction(JSC::CodeBlock* codeBlock)
     return !Zig::sourceURL(source).isEmpty();
 }
 
-JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
-    : m_vm(vm)
-    , m_codeBlock(nullptr)
-    , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL()
-    , m_functionName()
-    , m_isWasmFrame(false)
-    , m_isAsync(false)
-    , m_sourcePositionsState(SourcePositionsState::NotCalculated)
-{
-    m_callee = visitor->callee().asCell();
-    m_callFrame = visitor->callFrame();
-
-    if (auto* codeBlock = visitor->codeBlock()) {
-        auto codeType = codeBlock->codeType();
-        if (codeType == JSC::FunctionCode || codeType == JSC::EvalCode) {
-            m_isFunctionOrEval = true;
-        }
-    }
-
-    // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
-    if (visitor->isNativeCalleeFrame()) {
-        auto* nativeCallee = visitor->callee().asNativeCallee();
-        switch (nativeCallee->category()) {
-        case NativeCallee::Category::Wasm: {
-            m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
-            m_isWasmFrame = true;
-            break;
-        }
-        case NativeCallee::Category::InlineCache: {
-            break;
-        }
-        }
-    } else if (auto* codeBlock = visitor->codeBlock()) {
-        auto* unlinkedCodeBlock = codeBlock->unlinkedCodeBlock();
-        if (!unlinkedCodeBlock->isBuiltinFunction() || isVisibleBuiltinFunction(codeBlock)) {
-            m_codeBlock = codeBlock;
-            m_bytecodeIndex = visitor->bytecodeIndex();
-        }
-    }
-
-    if (!m_bytecodeIndex && visitor->hasLineAndColumnInfo()) {
-        auto lineColumn = visitor->computeLineAndColumn();
-        m_sourcePositions = { OrdinalNumber::fromOneBasedInt(lineColumn.line), OrdinalNumber::fromOneBasedInt(lineColumn.column) };
-        m_sourcePositionsState = SourcePositionsState::Calculated;
-    }
-}
-
 JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     : m_vm(vm)
-    , m_callFrame(nullptr)
+    , m_stackFrame(&frame)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
     , m_sourceURL()

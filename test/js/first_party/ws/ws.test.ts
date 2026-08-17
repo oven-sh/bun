@@ -354,6 +354,64 @@ it("isBinary", async () => {
   await promise;
 });
 
+// send(data, { binary }) overrides the frame type that would otherwise be picked from the type of data.
+describe("send() with { binary }", () => {
+  const sends = [
+    { data: Buffer.from("sent as text"), opts: { binary: false } },
+    { data: "sent as binary", opts: { binary: true } },
+  ] as const;
+  const expected = [
+    { data: Buffer.from("sent as text"), isBinary: false },
+    { data: Buffer.from("sent as binary"), isBinary: true },
+  ];
+
+  function receiveAll(ws: WebSocket) {
+    const { promise, resolve, reject } = Promise.withResolvers<{ data: unknown; isBinary: boolean }[]>();
+    const received: { data: unknown; isBinary: boolean }[] = [];
+    ws.on("message", (data, isBinary) => {
+      received.push({ data, isBinary });
+      if (received.length === sends.length) resolve(received);
+    });
+    ws.on("error", reject);
+    return promise;
+  }
+
+  async function connectPair() {
+    const wss = new WebSocketServer({ port: 0 });
+    const connection = once(wss, "connection");
+    const client = new WebSocket("ws://localhost:" + wss.address().port);
+    clients.push(client);
+    const opened = once(client, "open");
+    const [serverSide] = (await connection) as [WebSocket];
+    await opened;
+    return { wss, client, serverSide };
+  }
+
+  it("from the client", async () => {
+    const { wss, client, serverSide } = await connectPair();
+    try {
+      const received = receiveAll(serverSide);
+      for (const { data, opts } of sends) client.send(data, opts);
+      expect(await received).toEqual(expected);
+    } finally {
+      serverSide.terminate();
+      wss.close();
+    }
+  });
+
+  it("from the server", async () => {
+    const { wss, client, serverSide } = await connectPair();
+    try {
+      const received = receiveAll(client);
+      for (const { data, opts } of sends) serverSide.send(data, opts);
+      expect(await received).toEqual(expected);
+    } finally {
+      serverSide.terminate();
+      wss.close();
+    }
+  });
+});
+
 it("onmessage", done => {
   const wss = new WebSocketServer({ port: 0 });
   wss.on("connection", ws => {

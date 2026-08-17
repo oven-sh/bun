@@ -1,7 +1,7 @@
 use bstr::BStr;
 
 use bun_core::ZBox;
-use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars};
+use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars, redacted};
 use bun_core::strings;
 use bun_install::lockfile::Lockfile;
 use bun_install::lockfile::Scripts as LockfileScripts;
@@ -444,7 +444,8 @@ impl List {
         resolution_buf: &[u8],
         format_type: PrintFormat,
     ) {
-        let resolution = EscapeControlChars(resolution.fmt(resolution_buf, PathSep::Posix));
+        let resolution =
+            EscapeControlChars(redacted(resolution.fmt(resolution_buf, PathSep::Posix)));
         let needle = bun_paths::NODE_MODULES_NEEDLE;
         if let Some(i) = strings::index_of(self.cwd.as_bytes(), needle) {
             bun_core::pretty!(

@@ -4,7 +4,7 @@ use bun_semver as semver;
 
 use crate::lockfile_real::package::PackageColumns as _;
 use crate::package_manager_real::TrackInstalledBin;
-use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars};
+use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars, redacted};
 use bun_install::lockfile::{Printer, package::Meta as PackageMeta};
 use bun_install::{
     self as install, Bin, Dependency, DependencyID, DependencyVersionTag, INVALID_PACKAGE_ID,
@@ -529,6 +529,7 @@ where
     let packages_slice = this.lockfile.packages.slice();
     let resolution: Resolution = packages_slice.items_resolution()[package_id as usize];
     let name = dependency.name.slice(string_buf);
+    let version = EscapeControlChars(redacted(resolution.fmt(string_buf, PathSep::Posix)));
 
     let package_name = packages_slice.items_name()[package_id as usize].slice(string_buf);
     if let Some(later_version_fmt) =
@@ -542,7 +543,7 @@ where
                     true
                 ),
                 escape_control_chars(name),
-                EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
+                version,
                 later_version_fmt,
             )?;
         } else {
@@ -550,7 +551,7 @@ where
                 writer,
                 bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r> <d>(v{f} available)<r>\n", false),
                 escape_control_chars(name),
-                EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
+                version,
                 later_version_fmt,
             )?;
         }
@@ -563,14 +564,14 @@ where
             writer,
             bun_core::pretty_fmt!("<r><green>+<r> <b>{s}<r><d>@{f}<r>\n", true),
             escape_control_chars(name),
-            EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
+            version,
         )?;
     } else {
         write!(
             writer,
             bun_core::pretty_fmt!("<r>+ {s}<r><d>@{f}<r>\n", false),
             escape_control_chars(name),
-            EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
+            version,
         )?;
     }
 
@@ -607,7 +608,7 @@ where
         writer,
         ENABLE_ANSI_COLORS,
         "<d>@{f}<r>",
-        EscapeControlChars(resolution.fmt(string_buf, PathSep::Posix)),
+        bun_core::fmt::EscapeControlChars(redacted(resolution.fmt(string_buf, PathSep::Posix))),
     )?;
     writer.write_str(if has_binaries {
         " with binaries:\n"
@@ -796,8 +797,8 @@ where
                 writer,
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
-                escape_control_chars(package_name),
-                EscapeControlChars(resolved[package_id as usize].fmt(string_buf, PathSep::Auto)),
+                bun_core::fmt::escape_control_chars(package_name),
+                bun_core::fmt::EscapeControlChars(redacted(resolved[package_id as usize].fmt(string_buf, PathSep::Auto))),
             )?;
         }
     }

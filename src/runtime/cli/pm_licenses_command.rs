@@ -4,7 +4,7 @@ use std::io::Write as _;
 use bstr::BStr;
 use bun_ast::{Expr, Log, Source};
 use bun_collections::{DynamicBitSet, StringHashMap, index_sort};
-use bun_core::fmt::{PathSep, escape_control_chars};
+use bun_core::fmt::{PathSep, escape_control_chars, redacted};
 use bun_core::{FileKind, Global, Output, strings};
 use bun_install::isolated_install::store::entry::fmt_store_key;
 use bun_install::lockfile::{Lockfile, package::PackageColumns as _, reachable, tree};
@@ -730,8 +730,8 @@ fn print_text(entries: &[Entry], long: bool, checked: usize, summary: bool) {
             bun_core::pretty!(
                 "<d>{}<r> {}<d>@{}<r>",
                 if last { "└──" } else { "├──" },
-                escape_control_chars(&entry.name),
-                escape_control_chars(&entry.version)
+                BStr::new(&entry.name),
+                bun_core::fmt::EscapeControlChars(redacted(BStr::new(&entry.version)))
             );
             if entry.dev_only {
                 bun_core::pretty!(" <d>(dev)<r>");
@@ -831,7 +831,8 @@ fn print_json(entries: &[Entry]) {
                 if i > 0 {
                     out.extend_from_slice(b", ");
                 }
-                json_string(&mut out, &entry.version);
+                let version = redacted(BStr::new(&entry.version)).to_string();
+                json_string(&mut out, version.as_bytes());
             }
             out.extend_from_slice(b"],\n      \"paths\": [");
             for (i, entry) in kept.iter().enumerate() {

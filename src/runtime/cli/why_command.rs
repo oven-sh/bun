@@ -5,7 +5,7 @@ use std::io::Write as _;
 use bstr::BStr;
 
 use bun_collections::HashMap;
-use bun_core::fmt::{PathSep, escape_control_chars};
+use bun_core::fmt::{PathSep, escape_control_chars, redacted};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_install::dependency::Behavior;
@@ -476,8 +476,8 @@ impl WhyCommand {
             let target_name = pkg_names[target_version.pkg_id as usize].slice(string_bytes);
             bun_core::prettyln!(
                 "<b>{}@{}<r>",
-                escape_control_chars(target_name),
-                escape_control_chars(&target_version.version)
+                BStr::new(target_name),
+                bun_core::fmt::EscapeControlChars(redacted(BStr::new(&target_version.version)))
             );
 
             if let Some(dependents) = all_dependents.get(&target_version.pkg_id) {
@@ -549,12 +549,12 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     } else {
         bun_core::pretty!("{}", escape_control_chars(&package.name));
         if !package.version.is_empty() {
-            bun_core::pretty!("<d>@{}<r>", escape_control_chars(&package.version));
+            bun_core::pretty!("<d>@{}<r>", bun_core::fmt::EscapeControlChars(redacted(BStr::new(&package.version))));
         }
     }
 
     if !package.spec.is_empty() {
-        bun_core::prettyln!(" <d>(requires {})<r>", escape_control_chars(&package.spec));
+        bun_core::prettyln!(" <d>(requires {})<r>", bun_core::fmt::EscapeControlChars(redacted(BStr::new(&package.spec))));
     } else {
         bun_core::prettyln!("");
     }

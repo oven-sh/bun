@@ -756,10 +756,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     let name = dependencies[dependency_id as usize]
                         .name
                         .slice(string_bytes);
-                    let name = bun_fmt::escape_control_chars(name);
-                    let resolution = bun_fmt::EscapeControlChars(
+                    let resolution = bun_core::fmt::EscapeControlChars(bun_fmt::redacted(
                         resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
-                    );
+                    ));
 
                     if index < sorted_dependencies.len() - 1 {
                         bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
@@ -901,7 +900,8 @@ fn print_node_modules_folder_structure(
                     }
                 }
             }
-            let directory_version = resolutions[id as usize].fmt(string_bytes, PathSep::Auto);
+            let directory_version =
+                bun_fmt::redacted(resolutions[id as usize].fmt(string_bytes, PathSep::Auto));
             if let Some(j) = strings::index_of(path, b"node_modules") {
                 bun_core::prettyln!(
                     "{}<d>@{}<r>",
@@ -1023,7 +1023,9 @@ fn print_node_modules_folder_structure(
         bun_core::prettyln!(
             "{}<d>@{}<r>",
             bun_fmt::escape_control_chars(package_name),
-            bun_fmt::EscapeControlChars(resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)),
+            bun_fmt::EscapeControlChars(bun_fmt::redacted(
+                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
+            )),
         );
     }
 
@@ -1089,10 +1091,8 @@ fn print_trusted_dependencies_flat(
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];
         let name = dependencies[dep_id as usize].name.slice(string_bytes);
-        let name = bun_fmt::escape_control_chars(name);
-        let resolution = bun_fmt::EscapeControlChars(
-            resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
-        );
+        let resolution =
+            bun_core::fmt::EscapeControlChars(bun_fmt::redacted(resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)));
         if index + 1 < trusted.len() {
             bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
         } else {

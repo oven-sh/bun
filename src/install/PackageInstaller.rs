@@ -1,7 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
-use bun_core::fmt::PathSep;
+use bun_core::fmt::{PathSep, redacted};
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{dirname, join_abs_string_z, join_z_buf};
@@ -2120,9 +2120,7 @@ impl<'a> PackageInstaller<'a> {
                                             "Blocked {} scripts for: {}@{}\n",
                                             count,
                                             bstr::BStr::new(alias.slice(string_buf!())),
-                                            bun_core::fmt::EscapeControlChars(
-                                                resolution.fmt(string_buf!(), PathSep::Posix)
-                                            ),
+                                            bun_core::fmt::EscapeControlChars(redacted(resolution.fmt(string_buf!(), PathSep::Posix))),
                                         );
                                     }
                                     let entry = self

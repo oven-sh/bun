@@ -1,5 +1,6 @@
 use core::cell::Cell;
 
+use bun_core::fmt::redacted;
 use bun_core::{Global, Output};
 use bun_paths::dirname;
 use bun_paths::platform;
@@ -154,12 +155,7 @@ impl PackageManager {
                                 Output::err(
                                     err,
                                     "failed to parse package.json for <b>{}<r>",
-                                    format_args!(
-                                        "{}",
-                                        bun_core::fmt::EscapeControlChars(
-                                            resolution.fmt_url(string_buf)
-                                        )
-                                    ),
+                                    format_args!("{}", bun_core::fmt::EscapeControlChars(redacted(resolution.fmt_url(string_buf)))),
                                 );
                             }
                             self.crash();
@@ -245,7 +241,7 @@ impl PackageManager {
                         let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                         bun_core::pretty_errorln!(
                             "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
-                            bun_core::fmt::EscapeControlChars(resolution.fmt_url(string_buf)),
+                            bun_core::fmt::EscapeControlChars(redacted(resolution.fmt_url(string_buf))),
                             err.name(),
                         );
                     }
@@ -297,9 +293,7 @@ impl PackageManager {
                                 let string_buf = self.lockfile.buffers.string_bytes.as_slice();
                                 bun_core::pretty_errorln!(
                                     "<r><red>error:<r> expected package.json in <b>{}<r> to be a JSON file: {}\n",
-                                    bun_core::fmt::EscapeControlChars(
-                                        resolution.fmt_url(string_buf)
-                                    ),
+                                    bun_core::fmt::EscapeControlChars(redacted(resolution.fmt_url(string_buf))),
                                     err.name(),
                                 );
                             }

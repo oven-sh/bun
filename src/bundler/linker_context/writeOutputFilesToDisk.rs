@@ -377,11 +377,7 @@ pub(crate) fn write_output_files_to_disk(
 
                 buf.extend_from_slice(&code_result.buffer);
                 buf.extend_from_slice(source_map_start);
-
-                let old_len = buf.len();
-                buf.resize(old_len + encode_len, 0);
-                let _ = bun_base64::encode(&mut buf[old_len..], &output_source_map);
-
+                bun_base64::encode_append(&mut buf, &output_source_map);
                 buf.push(b'\n');
                 code_result.buffer = buf.into_boxed_slice();
             }

@@ -2302,7 +2302,6 @@ private:
             return m_jsString;
         }
         const String& string() { return m_string; }
-        String takeString() { return WTF::move(m_string); }
 
     private:
         String m_string;

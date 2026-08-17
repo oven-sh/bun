@@ -123,13 +123,13 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     if unsafe { spng_decoded_image_size(ctx, SPNG_FMT_RGBA8, &raw mut size) } != 0 {
         return Err(codecs::Error::DecodeFailed);
     }
-    let mut out = vec![0u8; size];
-    // SAFETY: ctx is valid; out is a valid mutable buffer of `size` bytes.
+    let mut out: Vec<u8> = Vec::with_capacity(size);
+    // SAFETY: ctx is valid; out has `size` bytes of capacity, which libspng only writes.
     if unsafe {
         spng_decode_image(
             ctx,
             out.as_mut_ptr(),
-            out.len(),
+            size,
             SPNG_FMT_RGBA8,
             SPNG_DECODE_TRNS,
         )
@@ -137,6 +137,8 @@ pub(crate) fn decode(bytes: &[u8], max_pixels: u64) -> Result<codecs::Decoded, c
     {
         return Err(codecs::Error::DecodeFailed);
     }
+    // SAFETY: libspng returns 0 only once it reached end-of-image, i.e. wrote all `size` bytes.
+    unsafe { bun_core::vec::commit_spare(&mut out, size) };
 
     // iCCP after decode so the chunk has definitely been parsed. A non-zero
     // return here means "no iCCP" or "iCCP was malformed" — treat both as

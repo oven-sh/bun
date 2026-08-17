@@ -1,6 +1,6 @@
+use crate::JSType;
 use crate::custom_getter_setter::CustomGetterSetter;
 use crate::getter_setter::GetterSetter;
-use crate::{JSType, JSValue};
 
 bun_opaque::opaque_ffi! {
     /// Opaque FFI handle for `JSC::JSCell`.
@@ -14,10 +14,6 @@ impl JSCell {
         // `JSType` is a `#[repr(transparent)]` newtype over `u8`, so any byte
         // returned by the extern is a valid value (see the extern's NOTE).
         JSType(JSC__JSCell__getType(self))
-    }
-
-    pub fn to_js(&self) -> JSValue {
-        JSValue::from_cell(std::ptr::from_ref::<JSCell>(self))
     }
 
     pub(crate) fn get_getter_setter(&self) -> &GetterSetter {

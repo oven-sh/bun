@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 use bun_alloc::AllocError;
 use bun_bundler::Transpiler;
 use bun_bundler::options::BundleOptions;
+use bun_collections::index_sort;
 #[cfg(not(windows))]
 use bun_core::ZStr;
 use bun_core::{StringOrTinyString, strings};
@@ -176,7 +177,7 @@ impl<'a> Scanner<'a> {
                 // regression/issue/26851 relies on `a_*.test` running before
                 // `b_*.test` under `--bail`.
                 let mut entry_ptrs: Vec<*mut fs::Entry> = entries.data.values().copied().collect();
-                entry_ptrs.sort_by(|a, b| {
+                index_sort::sort_slice_by(&mut entry_ptrs, |a, b| {
                     // SAFETY: `EntryMap` stores `*mut Entry` into the
                     // process-static `EntryStore`; valid for `'static`.
                     let (an, bn) = unsafe { ((**a).base_lowercase(), (**b).base_lowercase()) };

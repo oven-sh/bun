@@ -39,7 +39,14 @@ export const boringssl: Dependency = {
   // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
   // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
   // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
+  //
+  // A few allocations deliberately bypass OPENSSL_malloc upstream (the TLS
+  // record buffers in ssl_buffer.cc, the error queue in err.cc, the
+  // thread-local tables) and call libc malloc directly. Only Linux has the
+  // global malloc override (see mimalloc.ts), so on Windows/macOS those would
+  // stay on the CRT heap; the second patch routes them through
+  // OPENSSL_system_{malloc,realloc,free}, also defined in src/boringssl/lib.rs.
+  patches: ["patches/boringssl/require-memory-hooks.patch", "patches/boringssl/system-malloc-hooks.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)

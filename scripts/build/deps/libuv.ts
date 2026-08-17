@@ -53,7 +53,19 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
+  //
+  // win-fs-event-split-path-uv-malloc: bun installs mimalloc via
+  // uv_replace_allocator() (src/bun_bin/lib.rs), so everything libuv frees
+  // with uv__free() must come from uv__malloc(). uv__split_path() was the one
+  // place still allocating from the CRT (_wcsdup for a path without a
+  // separator, e.g. the relative target of a watched symlink); closing such a
+  // watcher then fed a CRT pointer to mi_free and crashed. Upstream has the
+  // same bug with wcsdup; to upstream as-is.
+  patches: [
+    "patches/libuv/win-poll-rearm-before-callback.patch",
+    "patches/libuv/win-poll-abort-with-disconnect.patch",
+    "patches/libuv/win-fs-event-split-path-uv-malloc.patch",
+  ],
 
   build: () => ({
     kind: "direct",

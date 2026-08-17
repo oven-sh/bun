@@ -1,0 +1,290 @@
+--- a/crypto/err/err.cc
++++ b/crypto/err/err.cc
+@@ -75,11 +75,11 @@
+ 
+ BSSL_NAMESPACE_END
+ 
+-static char *strdup_libc_malloc(const char *str) {
++static char *strdup_system_malloc(const char *str) {
+   // `strdup` is not in C until C23, so MSVC triggers deprecation warnings, and
+   // glibc and musl gate it on a feature macro. Reimplementing it is easier.
+   size_t len = strlen(str);
+-  char *ret = reinterpret_cast<char *>(malloc(len + 1));
++  char *ret = reinterpret_cast<char *>(OPENSSL_system_malloc(len + 1));
+   if (ret != nullptr) {
+     memcpy(ret, str, len + 1);
+   }
+@@ -88,7 +88,7 @@
+ 
+ // err_clear clears the given queued error.
+ static void err_clear(struct err_error_st *error) {
+-  free(error->data);
++  OPENSSL_system_free(error->data);
+   OPENSSL_memset(error, 0, sizeof(struct err_error_st));
+ }
+ 
+@@ -98,7 +98,7 @@
+   if (src->data != nullptr) {
+     // We can't use OPENSSL_strdup because we don't want to call OPENSSL_malloc,
+     // which can affect the error stack.
+-    dst->data = strdup_libc_malloc(src->data);
++    dst->data = strdup_system_malloc(src->data);
+   }
+   dst->packed = src->packed;
+   dst->line = src->line;
+@@ -122,8 +122,8 @@
+   for (unsigned i = 0; i < ERR_NUM_ERRORS; i++) {
+     err_clear(&state->errors[i]);
+   }
+-  free(state->to_free);
+-  free(state);
++  OPENSSL_system_free(state->to_free);
++  OPENSSL_system_free(state);
+ }
+ 
+ // err_get_state gets the ERR_STATE object for the current thread.
+@@ -131,7 +131,8 @@
+   ERR_STATE *state = reinterpret_cast<ERR_STATE *>(
+       CRYPTO_get_thread_local(OPENSSL_THREAD_LOCAL_ERR));
+   if (state == nullptr) {
+-    state = reinterpret_cast<ERR_STATE *>(malloc(sizeof(ERR_STATE)));
++    state = reinterpret_cast<ERR_STATE *>(
++        OPENSSL_system_malloc(sizeof(ERR_STATE)));
+     if (state == nullptr) {
+       return nullptr;
+     }
+@@ -199,7 +200,7 @@
+       // error queue.
+       if (inc) {
+         if (error->data != nullptr) {
+-          free(state->to_free);
++          OPENSSL_system_free(state->to_free);
+           state->to_free = error->data;
+         }
+         error->data = nullptr;
+@@ -273,7 +274,7 @@
+   for (i = 0; i < ERR_NUM_ERRORS; i++) {
+     err_clear(&state->errors[i]);
+   }
+-  free(state->to_free);
++  OPENSSL_system_free(state->to_free);
+   state->to_free = nullptr;
+ 
+   state->top = state->bottom = 0;
+@@ -577,13 +578,13 @@
+   struct err_error_st *error;
+ 
+   if (state == nullptr || state->top == state->bottom) {
+-    free(data);
++    OPENSSL_system_free(data);
+     return;
+   }
+ 
+   error = &state->errors[state->top];
+ 
+-  free(error->data);
++  OPENSSL_system_free(error->data);
+   error->data = data;
+ }
+ 
+@@ -642,7 +643,8 @@
+     return;  // Would overflow.
+   }
+   total_size += 1;  // NUL terminator.
+-  if ((buf = reinterpret_cast<char *>(malloc(total_size))) == nullptr) {
++  buf = reinterpret_cast<char *>(OPENSSL_system_malloc(total_size));
++  if (buf == nullptr) {
+     return;
+   }
+   buf[0] = '\0';
+@@ -686,7 +688,7 @@
+   }
+   // We can not use OPENSSL_strdup because we don't want to call OPENSSL_malloc,
+   // which can affect the error stack.
+-  char *copy = strdup_libc_malloc(data);
++  char *copy = strdup_system_malloc(data);
+   if (copy != nullptr) {
+     err_set_error_data(copy);
+   }
+@@ -759,8 +761,8 @@
+   for (size_t i = 0; i < state->num_errors; i++) {
+     err_clear(&state->errors[i]);
+   }
+-  free(state->errors);
+-  free(state);
++  OPENSSL_system_free(state->errors);
++  OPENSSL_system_free(state);
+ }
+ 
+ ERR_SAVE_STATE *bssl::ERR_save_state() {
+@@ -769,8 +771,8 @@
+     return nullptr;
+   }
+ 
+-  ERR_SAVE_STATE *ret =
+-      reinterpret_cast<ERR_SAVE_STATE *>(malloc(sizeof(ERR_SAVE_STATE)));
++  ERR_SAVE_STATE *ret = reinterpret_cast<ERR_SAVE_STATE *>(
++      OPENSSL_system_malloc(sizeof(ERR_SAVE_STATE)));
+   if (ret == nullptr) {
+     return nullptr;
+   }
+@@ -781,9 +783,9 @@
+                           : ERR_NUM_ERRORS + state->top - state->bottom;
+   assert(num_errors < ERR_NUM_ERRORS);
+   ret->errors = reinterpret_cast<err_error_st *>(
+-      malloc(num_errors * sizeof(struct err_error_st)));
++      OPENSSL_system_malloc(num_errors * sizeof(struct err_error_st)));
+   if (ret->errors == nullptr) {
+-    free(ret);
++    OPENSSL_system_free(ret);
+     return nullptr;
+   }
+   OPENSSL_memset(ret->errors, 0, num_errors * sizeof(struct err_error_st));
+--- a/crypto/internal.h
++++ b/crypto/internal.h
+@@ -165,6 +165,26 @@
+ inline void OPENSSL_enable_malloc_failures_for_testing() {}
+ #endif
+ 
++// OPENSSL_system_malloc, OPENSSL_system_realloc and OPENSSL_system_free back
++// the few allocations that deliberately bypass |OPENSSL_malloc|: the TLS record
++// buffers (not worth zeroing on free), the error queue (|OPENSSL_malloc|
++// reports its failures into it) and the per-thread tables behind
++// |CRYPTO_set_thread_local|. Unlike |OPENSSL_free|, freeing does not zero.
++#if defined(BORINGSSL_REQUIRE_MEMORY_HOOKS)
++// Bun: supplied by the embedder alongside |OPENSSL_memory_alloc| (see mem.cc),
++// so that this memory also lands on the embedder's allocator on platforms where
++// the C runtime's malloc is not overridden globally (Windows, macOS).
++extern "C" void *OPENSSL_system_malloc(size_t size);
++extern "C" void *OPENSSL_system_realloc(void *ptr, size_t size);
++extern "C" void OPENSSL_system_free(void *ptr);
++#else
++inline void *OPENSSL_system_malloc(size_t size) { return malloc(size); }
++inline void *OPENSSL_system_realloc(void *ptr, size_t size) {
++  return realloc(ptr, size);
++}
++inline void OPENSSL_system_free(void *ptr) { free(ptr); }
++#endif
++
+ #if defined(__has_builtin)
+ #define OPENSSL_HAS_BUILTIN(x) __has_builtin(x)
+ #else
+@@ -1450,8 +1470,8 @@
+ 
+ // OPENSSL_vasprintf_internal is just like `vasprintf(3)`. If `system_malloc` is
+ // 0, memory will be allocated with `OPENSSL_malloc` and must be freed with
+-// `OPENSSL_free`. Otherwise the system `malloc` function is used and the memory
+-// must be freed with the system `free` function.
++// `OPENSSL_free`. Otherwise `OPENSSL_system_malloc` is used and the memory must
++// be freed with `OPENSSL_system_free`.
+ OPENSSL_EXPORT int OPENSSL_vasprintf_internal(char **str, const char *format,
+                                               va_list args, int system_malloc)
+     OPENSSL_PRINTF_FORMAT_FUNC(2, 0);
+--- a/crypto/mem.cc
++++ b/crypto/mem.cc
+@@ -483,10 +483,12 @@
+ 
+ int bssl::OPENSSL_vasprintf_internal(char **str, const char *format,
+                                      va_list args, int system_malloc) {
+-  void *(*allocate)(size_t) = system_malloc ? malloc : OPENSSL_malloc;
+-  void (*deallocate)(void *) = system_malloc ? free : OPENSSL_free;
++  void *(*allocate)(size_t) =
++      system_malloc ? OPENSSL_system_malloc : OPENSSL_malloc;
++  void (*deallocate)(void *) =
++      system_malloc ? OPENSSL_system_free : OPENSSL_free;
+   void *(*reallocate)(void *, size_t) =
+-      system_malloc ? realloc : OPENSSL_realloc;
++      system_malloc ? OPENSSL_system_realloc : OPENSSL_realloc;
+   char *candidate = nullptr;
+   size_t candidate_len = 64;  // TODO(bbe) what's the best initial size?
+   int ret;
+--- a/crypto/thread_pthread.cc
++++ b/crypto/thread_pthread.cc
+@@ -71,7 +71,7 @@
+     }
+   }
+ 
+-  free(pointers);
++  OPENSSL_system_free(pointers);
+ }
+ 
+ static pthread_once_t g_thread_local_init_once = PTHREAD_ONCE_INIT;
+@@ -109,14 +109,14 @@
+       reinterpret_cast<void **>(pthread_getspecific(g_thread_local_key));
+   if (pointers == nullptr) {
+     pointers = reinterpret_cast<void **>(
+-        malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS));
++        OPENSSL_system_malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS));
+     if (pointers == nullptr) {
+       destructor(value);
+       return 0;
+     }
+     OPENSSL_memset(pointers, 0, sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS);
+     if (pthread_setspecific(g_thread_local_key, pointers) != 0) {
+-      free(pointers);
++      OPENSSL_system_free(pointers);
+       destructor(value);
+       return 0;
+     }
+--- a/crypto/thread_win.cc
++++ b/crypto/thread_win.cc
+@@ -88,7 +88,7 @@
+     }
+   }
+ 
+-  free(pointers);
++  OPENSSL_system_free(pointers);
+ }
+ 
+ // Thread Termination Callbacks.
+@@ -201,14 +201,14 @@
+   void **pointers = get_thread_locals();
+   if (pointers == nullptr) {
+     pointers = reinterpret_cast<void **>(
+-        malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS));
++        OPENSSL_system_malloc(sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS));
+     if (pointers == nullptr) {
+       destructor(value);
+       return 0;
+     }
+     OPENSSL_memset(pointers, 0, sizeof(void *) * NUM_OPENSSL_THREAD_LOCALS);
+     if (TlsSetValue(g_thread_local_key, pointers) == 0) {
+-      free(pointers);
++      OPENSSL_system_free(pointers);
+       destructor(value);
+       return 0;
+     }
+--- a/ssl/ssl_buffer.cc
++++ b/ssl/ssl_buffer.cc
+@@ -38,7 +38,7 @@
+ 
+ void SSLBuffer::Clear() {
+   if (buf_ != inline_buf_) {
+-    free(buf_);  // Allocated with malloc().
++    OPENSSL_system_free(buf_);  // Allocated with OPENSSL_system_malloc().
+   }
+   buf_ = nullptr;
+   offset_ = 0;
+@@ -67,9 +67,10 @@
+     // Add up to `SSL3_ALIGN_PAYLOAD` - 1 bytes of slack for alignment.
+     //
+     // Since this buffer gets allocated quite frequently and doesn't contain any
+-    // sensitive data, we allocate with malloc rather than `OPENSSL_malloc` and
+-    // avoid zeroing on free.
+-    new_buf = (uint8_t *)malloc(new_cap + SSL3_ALIGN_PAYLOAD - 1);
++    // sensitive data, we allocate with `OPENSSL_system_malloc` rather than
++    // `OPENSSL_malloc` and avoid zeroing on free.
++    new_buf = reinterpret_cast<uint8_t *>(
++        OPENSSL_system_malloc(new_cap + SSL3_ALIGN_PAYLOAD - 1));
+     if (new_buf == nullptr) {
+       OPENSSL_PUT_ERROR(SSL, ERR_R_MALLOC_FAILURE);
+       return false;
+@@ -85,7 +86,7 @@
+   OPENSSL_memmove(new_buf + new_offset, buf_ + offset_, size_);
+ 
+   if (buf_ != inline_buf_) {
+-    free(buf_);  // Allocated with malloc().
++    OPENSSL_system_free(buf_);  // Allocated with OPENSSL_system_malloc().
+   }
+ 
+   buf_ = new_buf;

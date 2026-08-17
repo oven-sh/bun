@@ -647,6 +647,16 @@ export const structuredCloneAdvanced: (
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 
+/**
+ * Allocates through each C library's own allocator and reports whether the
+ * block landed in mimalloc. `libuv` is `null` where libuv is not linked.
+ */
+export const thirdPartyAllocationsUseMimalloc: () => {
+  boringssl: boolean;
+  boringsslErrorQueue: boolean;
+  libuv: boolean | null;
+} = $newCppFunction("InternalForTesting.cpp", "jsFunction_thirdPartyAllocationsUseMimalloc", 0);
+
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",
   "jsFunction_BunString_toThreadSafeRefCountDelta",

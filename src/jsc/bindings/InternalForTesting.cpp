@@ -8,6 +8,13 @@
 #include "webcore/HTTPHeaderMap.h"
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <mimalloc.h>
+#include <openssl/err.h>
+#include <openssl/mem.h>
+#if OS(WINDOWS)
+#include <uv.h>
+#endif
 
 extern "C" void BunString__toThreadSafe(BunString* str);
 
@@ -57,6 +64,51 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * global
 #else
     return JSValue::encode(jsBoolean(false));
 #endif
+}
+
+// bun has no global malloc override on Windows or macOS, so the C libraries it
+// links are pointed at mimalloc one by one. Allocates through each library's
+// own allocator and reports whether mimalloc owns the block; `null` marks a
+// library that is not linked on this platform.
+JSC_DEFINE_HOST_FUNCTION(jsFunction_thirdPartyAllocationsUseMimalloc, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    auto& vm = globalObject->vm();
+
+    // OPENSSL_malloc -> OPENSSL_memory_alloc (src/boringssl/lib.rs).
+    void* opensslBlock = OPENSSL_malloc(64);
+    bool boringssl = opensslBlock && mi_is_in_heap_region(opensslBlock);
+    OPENSSL_free(opensslBlock);
+
+    // The error queue keeps its strings off OPENSSL_malloc; with
+    // patches/boringssl/system-malloc-hooks.patch they come from
+    // OPENSSL_system_malloc instead of the CRT.
+    ERR_clear_error();
+    ERR_put_error(ERR_LIB_USER, 0, ERR_R_INTERNAL_ERROR, __FILE__, __LINE__);
+    ERR_add_error_data(1, "bun:internal-for-testing");
+    const char* errorData = nullptr;
+    int errorFlags = 0;
+    ERR_peek_last_error_line_data(nullptr, nullptr, &errorData, &errorFlags);
+    bool boringsslErrorQueue = errorData && (errorFlags & ERR_FLAG_STRING) && mi_is_in_heap_region(errorData);
+    ERR_clear_error();
+
+    auto* result = JSC::constructEmptyObject(globalObject);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "boringssl"_s), JSC::jsBoolean(boringssl));
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "boringsslErrorQueue"_s), JSC::jsBoolean(boringsslErrorQueue));
+
+#if OS(WINDOWS)
+    // uv_os_environ allocates the array with uv__calloc, i.e. whatever
+    // uv_replace_allocator installed (src/bun_bin/lib.rs).
+    uv_env_item_t* envItems = nullptr;
+    int envCount = 0;
+    bool libuv = uv_os_environ(&envItems, &envCount) == 0 && envItems && mi_is_in_heap_region(envItems);
+    if (envItems)
+        uv_os_free_environ(envItems, envCount);
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "libuv"_s), JSC::jsBoolean(libuv));
+#else
+    result->putDirect(vm, JSC::Identifier::fromString(vm, "libuv"_s), JSC::jsNull());
+#endif
+
+    return JSC::JSValue::encode(result);
 }
 
 // Returns the net refcount change on the *original* StringImpl after a

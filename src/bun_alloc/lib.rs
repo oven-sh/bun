@@ -254,6 +254,20 @@ pub mod default_alloc {
     /// # Safety
     /// `ptr` must be null or a live allocation from the default allocator.
     #[inline]
+    pub unsafe fn realloc(ptr: *mut c_void, new_size: usize) -> *mut c_void {
+        if cfg!(bun_asan) {
+            // SAFETY: caller guarantees `ptr` is null or a live libc allocation
+            // (the default allocator under ASAN).
+            unsafe { libc::realloc(ptr, new_size) }
+        } else {
+            // SAFETY: caller guarantees `ptr` is null or a live mimalloc allocation.
+            unsafe { crate::mimalloc::mi_realloc(ptr, new_size) }
+        }
+    }
+
+    /// # Safety
+    /// `ptr` must be null or a live allocation from the default allocator.
+    #[inline]
     pub unsafe fn free(ptr: *mut c_void) {
         if cfg!(bun_asan) {
             // SAFETY: caller guarantees `ptr` is null or a live libc allocation

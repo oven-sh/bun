@@ -5031,7 +5031,7 @@ describe.concurrent("`bun audit` against a registry with a self-signed certifica
     const { stdout, stderr, exitCode, requests } = await audit({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" });
 
     expect(stderr).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
-    expect(stdout).toBe("No vulnerabilities found\n");
+    expect(stdout).toContain("No vulnerabilities found");
     expect(requests).toEqual(["POST /-/npm/v1/security/advisories/bulk"]);
     expect(exitCode).toBe(0);
   });

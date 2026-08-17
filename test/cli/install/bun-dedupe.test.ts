@@ -382,9 +382,9 @@ test.concurrent("--why explains a dropped version through its removed dependent"
   const check = await dedupe(packageDir, "--check", "--why");
   expect(lines(check.stdout)).toStrictEqual([
     HEADER,
-    "~ no-deps 2.0.0",
+    "~ no-deps 2.0.0 -> (removed)",
     wanted("2.0.0", "one-fixed-dep@2.0.0"),
-    "~ one-fixed-dep 2.0.0 -> 1.0.0",
+    "~ one-fixed-dep 2.0.0 -> 1.0.0 (downgrade)",
     wanted(">=1.0.0", "foo", "npm:one-fixed-dep@1.0.0".length),
     wanted("npm:one-fixed-dep@1.0.0", "foo"),
     "",

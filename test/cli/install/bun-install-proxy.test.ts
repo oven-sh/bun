@@ -265,8 +265,8 @@ describe("registry commands honor http_proxy", () => {
     });
     expect({ requests: setup.requests, stdout, stderr, exitCode }).toEqual({
       requests: [{ via: "proxy", method: "POST", url: `${setup.registryUrl}-/npm/v1/security/advisories/bulk` }],
-      stdout: "No vulnerabilities found\n",
-      stderr: expect.stringMatching(/^bun audit v.*\n$/),
+      stdout: expect.stringContaining("No vulnerabilities found"),
+      stderr: "",
       exitCode: 0,
     });
   });

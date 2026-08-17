@@ -32,12 +32,13 @@ export async function run() {
     req.pipe(proxyRequest); // Use pipe instead of manual data handling
   });
 
-  proxyServer.listen(0, "localhost", async () => {
+  // Bound and dialed by literal address: "localhost" can bind ::1 while the client dials 127.0.0.1.
+  proxyServer.listen(0, "127.0.0.1", async () => {
     const address = proxyServer.address();
 
     const options = {
       protocol: "http:",
-      hostname: "localhost",
+      hostname: address.address,
       port: address.port,
       path: "/", // Change path to /
       headers: {

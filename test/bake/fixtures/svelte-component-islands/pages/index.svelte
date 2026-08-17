@@ -3,7 +3,7 @@
 </script>
 <main>
     <h1>hello</h1>
-    <p>This is my svelte server component (non-interactive)</p>
+    <p id="server_text">This is my svelte server component (non-interactive)</p>
     <p>Bun v{Bun.version}</p>
     <Counter initial={5} />
 </main>

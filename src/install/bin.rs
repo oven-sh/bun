@@ -12,7 +12,7 @@ use bun_paths::MAX_PATH_BYTES;
 #[cfg(windows)]
 use bun_paths::WPathBuffer;
 use bun_paths::platform::Auto as PlatformAuto;
-use bun_paths::resolve_path;
+use bun_paths::resolve_path::{self, join_abs_string_buf_z_checked as join_z_checked};
 use bun_paths::strings;
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{ExternalString, String};
@@ -1047,7 +1047,8 @@ impl<'a> Linker<'a> {
 
         // Create temporary file path
         let mut tmppath_buf = [0u8; MAX_PATH_BYTES];
-        let Some(tmppath) = Self::join_z_checked(dir_path, tmpname.as_bytes(), &mut tmppath_buf)
+        let Some(tmppath) =
+            join_z_checked::<PlatformAuto>(dir_path, &mut tmppath_buf, &[tmpname.as_bytes()])
         else {
             return;
         };
@@ -1496,7 +1497,7 @@ impl<'a> Linker<'a> {
         let target = strings::without_trailing_slash(target);
 
         if !is_native_binlink_redirect {
-            return Self::join_z_checked(package_dir, target, buf);
+            return join_z_checked::<PlatformAuto>(package_dir, buf, &[target]);
         }
 
         let target_basename = path::basename(target);
@@ -1525,7 +1526,9 @@ impl<'a> Linker<'a> {
             if candidate.is_empty() {
                 continue;
             }
-            let Some(abs_candidate) = Self::join_z_checked(package_dir, candidate, buf) else {
+            let Some(abs_candidate) =
+                join_z_checked::<PlatformAuto>(package_dir, buf, &[candidate])
+            else {
                 continue;
             };
             if sys::exists_z(abs_candidate) {
@@ -1537,20 +1540,7 @@ impl<'a> Linker<'a> {
         // Nothing found; return the primary so `link_bin_or_create_shim` sets
         // `skipped_due_to_missing_bin` and the caller retries without the
         // redirect.
-        Self::join_z_checked(package_dir, target, buf)
-    }
-
-    /// `<dir>/<relative>` with a NUL in `buf`, or `None` if it does not fit (`sys` rejects it too).
-    fn join_z_checked<'b>(dir: &[u8], relative: &[u8], buf: &'b mut [u8]) -> Option<&'b ZStr> {
-        let without_nul = buf.len() - 1;
-        let len = resolve_path::join_abs_string_buf_checked::<PlatformAuto>(
-            dir,
-            &mut buf[..without_nul],
-            &[relative],
-        )?
-        .len();
-        buf[len] = 0;
-        Some(ZStr::from_buf(buf, len))
+        join_z_checked::<PlatformAuto>(package_dir, buf, &[target])
     }
 
     /// uses `self.abs_target_buf`
@@ -1790,10 +1780,10 @@ impl<'a> Linker<'a> {
                         return;
                     }
                     // for normalizing `target`
-                    let Some(abs_target_dir) = Self::join_z_checked(
+                    let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
                         &self.abs_target_buf[0..package_dir_len],
-                        target,
                         resolved_target_buf,
+                        &[target],
                     ) else {
                         self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;
@@ -1824,10 +1814,10 @@ impl<'a> Linker<'a> {
                                 let entry_name = entry.name.slice_u8();
                                 // `package_dir` is no longer needed, so `abs_target_buf` is free.
                                 let abs_target: &ZStr = {
-                                    let Some(r) = Self::join_z_checked(
+                                    let Some(r) = join_z_checked::<PlatformAuto>(
                                         abs_target_dir.as_bytes(),
-                                        entry_name,
                                         self.abs_target_buf,
+                                        &[entry_name],
                                     ) else {
                                         self.skipped_due_to_missing_bin = true;
                                         continue;
@@ -1957,10 +1947,10 @@ impl<'a> Linker<'a> {
                     }
 
                     let mut abs_target_dir_buf = path::path_buffer_pool::get();
-                    let Some(abs_target_dir) = Self::join_z_checked(
+                    let Some(abs_target_dir) = join_z_checked::<PlatformAuto>(
                         &self.abs_target_buf[0..package_dir_len],
-                        target,
                         abs_target_dir_buf.as_mut_slice(),
+                        &[target],
                     ) else {
                         self.err = Some(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
                         return;

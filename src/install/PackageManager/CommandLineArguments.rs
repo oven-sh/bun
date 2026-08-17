@@ -1810,43 +1810,31 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 fn change_directory(arg: &[u8]) -> Result<(), crate::Error> {
     let mut buf = PathBuffer::uninit();
     let mut buf2 = PathBuffer::uninit();
-    let too_long = || bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
-
-    // Either buffer keeps its last byte for the NUL terminator `chdir` needs.
-    let resolved: Result<&bun_core::ZStr, bun_sys::Error> = if arg.first() == Some(&b'.') {
+    let path = if arg.first() == Some(&b'.') {
         let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-        let out_len = buf2.len() - 1;
-        match Path::resolve_path::join_abs_string_buf_checked::<Path::platform::Auto>(
+        Path::resolve_path::join_abs_string_buf_z_checked::<Path::platform::Auto>(
             &buf[..cwd_len],
-            &mut buf2[..out_len],
+            &mut buf2[..],
             &[arg],
         )
-        .map(|joined| joined.len())
-        {
-            Some(len) => {
-                buf2[len] = 0;
-                Ok(bun_core::ZStr::from_buf(&buf2[..], len))
-            }
-            None => Err(too_long()),
-        }
     } else if arg.len() < buf.len() {
         buf[..arg.len()].copy_from_slice(arg);
         buf[arg.len()] = 0;
-        Ok(bun_core::ZStr::from_buf(&buf[..], arg.len()))
+        Some(bun_core::ZStr::from_buf(&buf[..], arg.len()))
     } else {
-        Err(too_long())
+        None
     };
-
-    let (path, err) = match resolved {
-        Ok(path) => match bun_sys::chdir(path) {
-            Ok(()) => return Ok(()),
-            Err(err) => (path.as_bytes(), err),
-        },
-        Err(err) => (arg, err),
+    let err = match path.map(bun_sys::chdir) {
+        Some(Ok(())) => return Ok(()),
+        Some(Err(err)) => err,
+        None => bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir),
     };
     Output::err_generic(
         "failed to change directory to \"{}\": {}\n",
-        (bstr::BStr::new(path), bstr::BStr::new(err.name())),
+        (
+            bstr::BStr::new(path.map_or(arg, |p| p.as_bytes())),
+            bstr::BStr::new(err.name()),
+        ),
     );
     Global::crash();
 }

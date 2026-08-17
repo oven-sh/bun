@@ -14,9 +14,7 @@ use bun_http as http;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
-use bun_paths::resolve_path::{
-    join_abs_string_buf_checked, normalize_buf_spill, normalize_buf_z_spill,
-};
+use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_z_spill};
 use bun_paths::{self as path, PathBuffer};
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -1612,11 +1610,12 @@ impl PublishCommand {
                                     if ks.len() != 0 {
                                         break 'key Some(Box::<[u8]>::from(
                                             strings::without_prefix(
-                                                normalize_buf_spill::<path::platform::Posix>(
+                                                normalize_buf_z_spill::<path::platform::Posix>(
                                                     &mut *path_buf,
                                                     &mut path_spill,
                                                     ks.string(bump)?,
-                                                ),
+                                                )
+                                                .as_bytes(),
                                                 b"./",
                                             ),
                                         ));

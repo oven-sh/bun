@@ -1306,31 +1306,18 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
 }
 
-/// [`normalize_buf`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
-pub fn normalize_buf_spill<'a, P: PlatformT>(
-    buf: &'a mut [u8],
-    spill: &'a mut Vec<u8>,
-    str: &[u8],
-) -> &'a [u8] {
-    normalize_buf::<P>(str, normalize_buf_or_spill(buf, spill, str))
-}
-
 /// [`normalize_buf_z`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
 pub fn normalize_buf_z_spill<'a, P: PlatformT>(
     buf: &'a mut [u8],
     spill: &'a mut Vec<u8>,
     str: &[u8],
 ) -> &'a ZStr {
-    normalize_buf_z::<P>(str, normalize_buf_or_spill(buf, spill, str))
+    // Normalizing grows a path by at most one byte (`""` -> `.`, `C:` -> `C:.`), plus the NUL.
+    normalize_buf_z::<P>(str, buf_or_spill(buf, spill, str.len() + 2))
 }
 
-fn normalize_buf_or_spill<'a>(
-    buf: &'a mut [u8],
-    spill: &'a mut Vec<u8>,
-    str: &[u8],
-) -> &'a mut [u8] {
-    // Normalizing grows a path by at most one byte (`""` -> `.`, `C:` -> `C:.`), plus the NUL.
-    let needed = str.len() + 2;
+/// `buf` when it holds `needed` bytes, otherwise `spill` grown to `needed`.
+fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
     if needed <= buf.len() {
         return buf;
     }
@@ -1471,16 +1458,7 @@ pub fn join_z_buf_spill<'a, P: PlatformT>(
     spill: &'a mut Vec<u8>,
     parts: &[&[u8]],
 ) -> &'a ZStr {
-    let needed = join_needed(parts);
-    let out: &mut [u8] = if needed <= buf.len() {
-        buf
-    } else {
-        if spill.len() < needed {
-            spill.resize(needed, 0);
-        }
-        &mut spill[..]
-    };
-    join_z_buf::<P>(out, parts)
+    join_z_buf::<P>(buf_or_spill(buf, spill, join_needed(parts)), parts)
 }
 
 /// [`join`] (thread-local buffer) when the result fits, otherwise into
@@ -1722,6 +1700,19 @@ pub fn join_abs_string_buf_checked<'a, P: PlatformT>(
     let len = joined.len();
     buf[..len].copy_from_slice(joined);
     Some(&buf[..len])
+}
+
+/// [`join_abs_string_buf_checked`], NUL-terminated; the last byte of `buf` is reserved for the NUL.
+pub fn join_abs_string_buf_z_checked<'a, P: PlatformT>(
+    cwd: &[u8],
+    buf: &'a mut [u8],
+    parts: &[&[u8]],
+) -> Option<&'a ZStr> {
+    debug_assert!(!parts.is_empty());
+    let cap = buf.len() - 1;
+    let len = join_abs_string_buf_checked::<P>(cwd, &mut buf[..cap], parts)?.len();
+    buf[len] = 0;
+    Some(ZStr::from_buf(buf, len))
 }
 
 pub fn join_abs_string_buf_z<'a, P: PlatformT>(
@@ -2640,58 +2631,32 @@ mod tests {
     }
 
     #[test]
-    fn join_abs_string_spill_leaves_spill_untouched_when_the_result_fits() {
-        let mut spill = Vec::new();
-        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[b"a/../b.json"]);
-        assert_eq!(out, b"/work/b.json");
-        assert!(spill.is_empty());
-    }
-
-    #[test]
-    fn join_abs_string_spill_spills_a_part_longer_than_the_thread_local_buffer() {
-        let name = vec![b'a'; PARSER_JOIN_INPUT_BUFFER_LEN + 1];
-        let mut expected = b"/work/".to_vec();
-        expected.extend_from_slice(&name);
-
-        let mut spill = Vec::new();
-        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&name]);
-        assert_eq!(out, &expected[..]);
-        assert!(!spill.is_empty());
-    }
-
-    #[test]
-    fn join_abs_string_spill_spills_an_absolute_part_and_a_long_cwd_alike() {
-        let mut abs = b"/".to_vec();
-        abs.resize(PARSER_JOIN_INPUT_BUFFER_LEN * 2, b'a');
-        let mut spill = Vec::new();
+    fn join_abs_string_spill_spills_only_results_longer_than_the_thread_local_buffer() {
+        const N: usize = PARSER_JOIN_INPUT_BUFFER_LEN;
+        let join = |cwd: &[u8], part: &[u8]| {
+            let mut spill = Vec::new();
+            let out = join_abs_string_spill::<platform::Posix>(cwd, &mut spill, &[part]).to_vec();
+            (out, !spill.is_empty())
+        };
         assert_eq!(
-            join_abs_string_spill::<platform::Posix>(b"/", &mut spill, &[&abs]),
-            &abs[..]
+            join(b"/work", b"a/../b.json"),
+            (b"/work/b.json".to_vec(), false)
         );
 
-        let mut cwd = b"/".to_vec();
-        cwd.resize(PARSER_JOIN_INPUT_BUFFER_LEN, b'c');
-        let mut expected = cwd.clone();
-        expected.extend_from_slice(b"/x");
-        let mut spill = Vec::new();
+        let name = vec![b'a'; N + 1];
         assert_eq!(
-            join_abs_string_spill::<platform::Posix>(&cwd, &mut spill, &[b"./x"]),
-            &expected[..]
+            join(b"/work", &name),
+            ([b"/work/", &name[..]].concat(), true)
         );
-    }
 
-    #[test]
-    fn join_abs_string_spill_normalizes_a_long_part_that_collapses() {
-        // `sub/../` repeated past the buffer size resolves back to the cwd.
-        let mut part = Vec::new();
-        while part.len() <= PARSER_JOIN_INPUT_BUFFER_LEN {
-            part.extend_from_slice(b"sub/../");
-        }
-        part.extend_from_slice(b"sub");
+        let abs = [b"/".as_slice(), &vec![b'a'; N * 2]].concat();
+        assert_eq!(join(b"/", &abs).0, abs);
+        let cwd = [b"/".as_slice(), &vec![b'c'; N - 1]].concat();
+        assert_eq!(join(&cwd, b"./x").0, [&cwd[..], b"/x"].concat());
 
-        let mut spill = Vec::new();
-        let out = join_abs_string_spill::<platform::Posix>(b"/work", &mut spill, &[&part]);
-        assert_eq!(out, b"/work/sub");
+        // `sub/../` repeated past the buffer size resolves back under the cwd.
+        let part = [b"sub/../".repeat(N / 7 + 1), b"sub".to_vec()].concat();
+        assert_eq!(join(b"/work", &part).0, b"/work/sub");
     }
 
     #[test]
@@ -2715,77 +2680,38 @@ mod tests {
     }
 
     #[test]
-    fn normalize_buf_spill_leaves_spill_untouched_when_the_input_fits() {
+    fn normalize_buf_z_spill_spills_only_what_does_not_fit_with_its_nul() {
         let mut buf = [0u8; 32];
         let mut spill = Vec::new();
+        let norm = |buf: &mut [u8], spill: &mut Vec<u8>, s: &[u8]| {
+            normalize_buf_z_spill::<platform::Posix>(buf, spill, s)
+                .as_bytes_with_nul()
+                .to_vec()
+        };
         assert_eq!(
-            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, b"./bins/../cli/./x.js"),
-            b"cli/x.js"
+            norm(&mut buf, &mut spill, b"./bins/../cli/./x.js"),
+            b"cli/x.js\0"
         );
-        assert_eq!(
-            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, b"./bins/").as_bytes(),
-            b"bins/"
-        );
+        assert_eq!(norm(&mut buf, &mut spill, b"./bins/"), b"bins/\0");
         assert!(spill.is_empty());
-    }
 
-    #[test]
-    fn normalize_buf_spill_spills_input_longer_than_buf() {
-        let mut buf = [0u8; 32];
-        let name = vec![b'b'; buf.len() * 3];
         let mut input = b"./".to_vec();
-        input.extend_from_slice(&name);
+        input.resize(2 + buf.len() * 3, b'b');
         input.extend_from_slice(b"/./x.js");
-        let mut expected = name;
-        expected.extend_from_slice(b"/x.js");
-
-        let mut spill = Vec::new();
-        assert_eq!(
-            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, &input),
-            &expected[..]
-        );
-        expected.push(0);
-        assert_eq!(
-            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, &input)
-                .as_bytes_with_nul(),
-            &expected[..]
-        );
+        let mut expected = vec![b'b'; buf.len() * 3];
+        expected.extend_from_slice(b"/x.js\0");
+        assert_eq!(norm(&mut buf, &mut spill, &input), expected);
         assert!(!spill.is_empty());
-    }
 
-    #[test]
-    fn normalize_buf_z_spill_spills_input_exactly_as_long_as_buf() {
-        // The input normalizes to `buf.len()` bytes, leaving no room for the NUL.
-        let mut buf = [0u8; 32];
+        // Normalizes to exactly `buf.len()` bytes, leaving no room for the NUL.
+        let mut spill = Vec::new();
         let input = vec![b'a'; buf.len()];
-        let mut expected = input.clone();
-        expected.push(0);
-
-        let mut spill = Vec::new();
-        assert_eq!(
-            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, &input)
-                .as_bytes_with_nul(),
-            &expected[..]
-        );
+        assert_eq!(norm(&mut buf, &mut spill, &input)[..buf.len()], input[..]);
         assert!(!spill.is_empty());
-    }
 
-    #[test]
-    fn normalize_buf_spill_sizes_the_spill_for_the_empty_input_becoming_a_dot() {
-        let mut buf = [0u8; 1];
-
+        // `""` grows to `.`.
         let mut spill = Vec::new();
-        assert_eq!(
-            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, b""),
-            b"."
-        );
-        assert_eq!(spill.len(), 2);
-
-        let mut spill = Vec::new();
-        assert_eq!(
-            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, b"").as_bytes_with_nul(),
-            b".\0"
-        );
+        assert_eq!(norm(&mut buf[..1], &mut spill, b""), b".\0");
         assert_eq!(spill.len(), 2);
     }
 }

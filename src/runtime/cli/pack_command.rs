@@ -32,7 +32,7 @@ type CowString = CowSlice<u8>;
 use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
-use bun_paths::resolve_path::{self, normalize_buf_spill};
+use bun_paths::resolve_path::{self, normalize_buf_z_spill};
 use bun_sha_hmac::sha;
 use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,
@@ -1486,7 +1486,7 @@ pub(crate) fn bin_subpath<'a>(
     buf: &'a mut [u8],
     spill: &'a mut Vec<u8>,
 ) -> Option<&'a [u8]> {
-    let normalized: &'a [u8] = normalize_buf_spill::<path::platform::Posix>(buf, spill, value);
+    let normalized = normalize_buf_z_spill::<path::platform::Posix>(buf, spill, value).as_bytes();
     let subpath = match ty {
         BinType::Dir => strings::without_trailing_slash(normalized),
         BinType::File if normalized.ends_with(b"/") || normalized == b"package.json" => {
@@ -2243,11 +2243,12 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     let mut path_spill: Vec<u8> = Vec::new();
                     while let Some(files_entry) = files_array.next() {
                         if let Some(file_entry_str) = files_entry.as_string(bump) {
-                            let normalized = normalize_buf_spill::<path::platform::Posix>(
+                            let normalized = normalize_buf_z_spill::<path::platform::Posix>(
                                 &mut path_buf,
                                 &mut path_spill,
                                 file_entry_str,
-                            );
+                            )
+                            .as_bytes();
                             let Some(parsed) = Pattern::from_utf8(normalized)? else {
                                 continue;
                             };
@@ -2851,26 +2852,16 @@ fn tarball_destination<'a>(
         Global::crash();
     }
     if !pack_filename.is_empty() {
-        // Leave room for the NUL terminator written after the join.
-        let join_buf_len = dest_buf.len() - 1;
-        let Some(tarball_name_len) =
-            resolve_path::join_abs_string_buf_checked::<resolve_path::platform::Auto>(
-                original_cwd,
-                &mut dest_buf[..join_buf_len],
-                &[pack_filename],
-            )
-            .map(<[u8]>::len)
-        else {
+        let Some(tarball_name) = resolve_path::join_abs_string_buf_z_checked::<
+            resolve_path::platform::Auto,
+        >(original_cwd, dest_buf, &[pack_filename]) else {
             Output::err_generic(
                 "archive filename too long: \"{}\"",
                 format_args!("{}", bstr::BStr::new(pack_filename)),
             );
             Global::crash();
         };
-        dest_buf[tarball_name_len] = 0;
-
-        // SAFETY: NUL written at tarball_name_len
-        return (ZStr::from_buf(&dest_buf[..], tarball_name_len), 0);
+        return (tarball_name, 0);
     } else {
         let destination_base = if pack_destination.is_empty() {
             abs_workspace_path

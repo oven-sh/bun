@@ -20,7 +20,7 @@ use bun_event_loop::{self, AnyEventLoop, EventLoopHandle};
 use bun_http as http;
 use bun_ini as ini;
 use bun_paths::resolve_path::{self, PosixToWinNormalizer, platform};
-use bun_paths::{DELIMITER, MAX_PATH_BYTES, PathBuffer, SEP, SEP_STR};
+use bun_paths::{DELIMITER, PathBuffer, SEP, SEP_STR};
 use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
@@ -1480,27 +1480,6 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     );
 }
 
-/// `<dir>/.npmrc` for the user-level `.npmrc` candidates in [`init`]. `dir` is
-/// `$XDG_CONFIG_HOME` or `$HOME`, so it can be longer than `buf`; a path that
-/// does not fit could not be opened either, and `None` makes the caller treat
-/// it like a missing file.
-fn user_npmrc_path<'a>(dir: &[u8], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
-    join_path_z(dir, &[b".npmrc"], buf)
-}
-
-/// `None` when the joined path does not fit the buffer.
-fn join_path_z<'a>(base: &[u8], parts: &[&[u8]], buf: &'a mut PathBuffer) -> Option<&'a ZStr> {
-    // The last byte is reserved for the NUL terminator.
-    let len = resolve_path::join_abs_string_buf_checked::<platform::Auto>(
-        base,
-        &mut buf[..MAX_PATH_BYTES - 1],
-        parts,
-    )?
-    .len();
-    buf[len] = 0;
-    Some(ZStr::from_buf(&buf[..], len))
-}
-
 /// Returns `&'static mut PackageManager` — the process-singleton (held in
 /// `holder::RAW_PTR`) is leaked for the process lifetime and `init()` is called
 /// exactly once on the single CLI dispatch thread. Every
@@ -1952,27 +1931,26 @@ pub fn init(
 
         let mut buf = PathBuffer::uninit();
 
-        let mut global_len: usize = 0;
-        // npm's `userconfig`: when set, this file is the per-user .npmrc and
-        // neither $XDG_CONFIG_HOME/.npmrc nor ~/.npmrc is looked at.
-        // actions/setup-node writes one to $RUNNER_TEMP and exports
-        // NPM_CONFIG_USERCONFIG pointing at it.
+        let parts = [b"./.npmrc" as &[u8]];
+        // `None` (too long for `buf`) could not be opened either, so it counts as a missing file.
+        let join = resolve_path::join_abs_string_buf_z_checked::<platform::Auto>;
+        // npm's `userconfig` replaces both candidates below (actions/setup-node exports it).
         let userconfig = [b"NPM_CONFIG_USERCONFIG" as &[u8], b"npm_config_userconfig"]
             .into_iter()
             .find_map(|key| env.get(key).filter(|path| !path.is_empty()));
+
+        // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
+        // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
+        let mut global_len: usize = 0;
         if let Some(userconfig) = userconfig {
-            global_len =
-                join_path_z(&original_cwd_clone, &[userconfig], &mut buf).map_or(0, ZStr::len);
+            global_len = join(&original_cwd_clone, &mut buf, &[userconfig]).map_or(0, ZStr::len);
         } else if let Some(xdg_dir) = bun_core::env_var::XDG_CONFIG_HOME.get_not_empty() {
-            // npm reads `$HOME/.npmrc` and ignores XDG_CONFIG_HOME; keep
-            // `$XDG_CONFIG_HOME/.npmrc` only when that file actually exists.
-            global_len = user_npmrc_path(xdg_dir, &mut buf)
-                .filter(|p| bun_sys::exists_z(p))
+            global_len = (join(xdg_dir, &mut buf, &parts).filter(|p| bun_sys::exists_z(p)))
                 .map_or(0, ZStr::len);
         }
         if global_len == 0 && userconfig.is_none() {
             if let Some(home_dir) = bun_core::env_var::HOME.get_not_empty() {
-                global_len = user_npmrc_path(home_dir, &mut buf).map_or(0, ZStr::len);
+                global_len = join(home_dir, &mut buf, &parts).map_or(0, ZStr::len);
             }
         }
 

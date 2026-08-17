@@ -36,11 +36,12 @@ fn pretty_help(text: &str) {
 /// (`Negatable::apply` skips names this build does not know), an unknown name is a typo and fatal.
 fn parse_platform_flag<T: Npm::NegatableEnum>(
     values: &[&[u8]],
+    unset: T,
     what: &str,
     valid_names: &str,
-) -> Option<T> {
+) -> T {
     if values.is_empty() {
-        return None;
+        return unset;
     }
     let mut negatable = Npm::Negatable::<T>::default();
     for &value in values {
@@ -60,7 +61,7 @@ fn parse_platform_flag<T: Npm::NegatableEnum>(
             }
         }
     }
-    Some(negatable.combine())
+    negatable.combine()
 }
 
 type ParamType = clap::Param<clap::Help>;
@@ -1581,23 +1582,19 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.config = Some(opt);
         }
 
-        if let Some(cpu) = parse_platform_flag(
+        cli.cpu = parse_platform_flag(
             args.options(b"--cpu"),
+            cli.cpu,
             "CPU architecture",
             "arm, arm64, ia32, mips, mipsel, ppc, ppc64, s390, s390x, x32, x64",
-        ) {
-            cli.cpu = cpu;
-        }
-        if let Some(os) = parse_platform_flag(
+        );
+        cli.os = parse_platform_flag(
             args.options(b"--os"),
+            cli.os,
             "operating system",
             "aix, darwin, freebsd, linux, openbsd, sunos, win32, android",
-        ) {
-            cli.os = os;
-        }
-        if let Some(libc) = parse_platform_flag(args.options(b"--libc"), "libc", "glibc, musl") {
-            cli.libc = libc;
-        }
+        );
+        cli.libc = parse_platform_flag(args.options(b"--libc"), cli.libc, "libc", "glibc, musl");
 
         if matches!(subcommand, Subcommand::Add | Subcommand::Install) {
             cli.dependency_group = if args.flag(b"--development") || args.flag(b"--dev") {

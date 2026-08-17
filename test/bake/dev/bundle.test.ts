@@ -1001,3 +1001,197 @@ devTest("barrel optimization", {
     }
   },
 });
+
+// A separate-SSR-graph "use client" file's errors are owned by the client graph; the route importing it must still see them.
+for (const mode of ["0", "1"]) {
+  devTest(`route importing a failing "use client" file (BUN_ASSUME_PERFECT_INCREMENTAL=${mode})`, {
+    framework: separateSSRGraphFramework,
+    env: { BUN_ASSUME_PERFECT_INCREMENTAL: mode },
+    files: {
+      "routes/index.ts": `
+        import { good } from '../good';
+        import '../components/Sibling';
+        export default function (req, meta) {
+          return new Response('page: ' + good);
+        }
+      `,
+      "good.ts": `export const good = "v1";`,
+      "components/Sibling.ts": `
+        "use client";
+        import './sibling-missing';
+        export const sibling = 1;
+      `,
+    },
+    async test(dev) {
+      const error = `Could not resolve: "./sibling-missing"`;
+      await expectBuildFailedPage(dev, "/", error);
+      await expectBuildFailedPage(dev, "/", error);
+
+      await dev.write("good.ts", `export const good = "v2";`, { errors: null });
+      await expectBuildFailedPage(dev, "/", error);
+
+      // Creating the missing file re-bundles Sibling.ts through the directory watcher, now as a working component.
+      await dev.write("components/sibling-missing.ts", `export {};`, { errors: null });
+      await dev.fetch("/").equals("page: v2");
+
+      // The same thing for a component that has already been bundled once.
+      const otherError = `Could not resolve: "./other-missing"`;
+      await dev.write(
+        "components/Sibling.ts",
+        `
+          "use client";
+          import './other-missing';
+          export const sibling = 2;
+        `,
+        { errors: null },
+      );
+      await expectBuildFailedPage(dev, "/", otherError);
+      await dev.write("good.ts", `export const good = "v3";`, { errors: null });
+      await expectBuildFailedPage(dev, "/", otherError);
+      await dev.write("components/other-missing.ts", `export {};`, { errors: null });
+      await dev.fetch("/").equals("page: v3");
+    },
+  });
+}
+// Both boundaries end up in `client_components_affected`, which `finalize_bundle` appends to while walking it (ASAN).
+devTest('"use client" file that fails to bundle, imported from another "use client" file', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page');
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import './Sibling';
+      export const comp = 1;
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    const error = `Could not resolve: "./sibling-missing"`;
+    await expectBuildFailedPage(dev, "/", error);
+    await dev.patch("routes/index.ts", { find: "'page'", replace: "'page2'", errors: null });
+    await expectBuildFailedPage(dev, "/", error);
+    await dev.write("components/sibling-missing.ts", `export {};`, { errors: null });
+    await dev.fetch("/").equals("page2");
+  },
+});
+// Dropping the directive while fixing the file deletes the client side of the boundary that never bundled.
+devTest('removing "use client" from a file that never bundled', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import { sibling } from '../components/Sibling';
+      export default function (req, meta) {
+        return new Response('page: ' + sibling);
+      }
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/", `Could not resolve: "./sibling-missing"`);
+    await dev.write("components/Sibling.ts", `export const sibling = "server";`, { errors: null });
+    await dev.fetch("/").equals("page: server");
+  },
+});
+// The route's SSR copy imports the component as a plain SSR module; that must not count as a demotion.
+devTest('deleting and re-creating a "use client" file that never bundled', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import '../components/Sibling';
+      export default function (req, meta) {
+        return new Response('page');
+      }
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      import './sibling-missing';
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/", `Could not resolve: "./sibling-missing"`);
+    await dev.delete("components/Sibling.ts", { errors: null });
+    await expectBuildFailedPage(dev, "/", `Could not resolve: "../components/Sibling"`);
+    await dev.write("components/Sibling.ts", `"use client"; export const sibling = 2;`, { errors: null });
+    await dev.fetch("/").equals("page");
+  },
+});
+// Same rule when everything bundles; whether the inner boundary got deleted depended on parse order.
+devTest('working "use client" file imported from another "use client" file', {
+  framework: separateSSRGraphFramework,
+  files: {
+    "routes/index.ts": `
+      import '../components/Comp';
+      export default function (req, meta) {
+        return new Response('page');
+      }
+    `,
+    "components/Comp.ts": `
+      "use client";
+      import './Sibling';
+      export const comp = 1;
+    `,
+    "components/Sibling.ts": `
+      "use client";
+      export const sibling = 1;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("page");
+    // The inner component is still a boundary, so it is re-bundled as one.
+    await dev.write("components/Sibling.ts", `"use client"; export const sibling = 2;`, { errors: null });
+    await dev.fetch("/").equals("page");
+  },
+});
+// `checkRouteFailures` must start from an empty `failures_added`, not the previous bundle's list.
+devTest("route marked by an earlier failure does not report another route's errors", {
+  framework: minimalFramework,
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  files: {
+    "routes/a.ts": `
+      import { shared } from '../shared';
+      import { a } from '../a';
+      export default function (req, meta) {
+        return new Response('a: ' + shared + a);
+      }
+    `,
+    "routes/b.ts": `
+      import { shared } from '../shared';
+      export default function (req, meta) {
+        return new Response('b: ' + shared);
+      }
+    `,
+    "shared.ts": `export const shared = "s";`,
+    "a.ts": `export const a = "a";`,
+  },
+  async test(dev) {
+    await dev.fetch("/a").equals("a: sa");
+    await dev.fetch("/b").equals("b: s");
+
+    // Both routes import shared.ts, so both get marked as possibly failing.
+    await dev.write("shared.ts", `import './missing'; export const shared = "s";`, { errors: null });
+    await expectBuildFailedPage(dev, "/a", `shared.ts`);
+    await expectBuildFailedPage(dev, "/b", `shared.ts`);
+
+    // Fixing it does not revisit the routes; they stay marked until requested.
+    await dev.write("shared.ts", `export const shared = "s";`, { errors: null });
+    // Only /a imports a.ts.
+    await dev.write("a.ts", `import './missing'; export const a = "a";`, { errors: null });
+
+    await dev.fetch("/b").equals("b: s");
+    await expectBuildFailedPage(dev, "/a", `a.ts`);
+  },
+});

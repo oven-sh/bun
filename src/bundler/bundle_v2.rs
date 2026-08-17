@@ -5814,6 +5814,21 @@ pub mod bv2_impl {
                 bun_core::scoped_log!(Bundle, "failed with error: {}", err.name());
                 resolve_result.resolve_queue.clear();
 
+                // Retargeted to the browser by `ParseTask`: the failure is on the client graph.
+                if let Some(dev) = this.dev_server {
+                    if result.use_directive == crate::UseDirective::Client
+                        && target == Target::Browser
+                        && this
+                            .framework
+                            .as_ref()
+                            .and_then(|framework| framework.server_components.as_ref())
+                            .is_some_and(|sc| sc.separate_ssr_graph)
+                    {
+                        dev.handle_client_component_boundary_failure(result.source.path.text)
+                            .expect("oom");
+                    }
+                }
+
                 // Preserve the parsed import_records on the graph so any plugin
                 // onResolve tasks already dispatched for *other* records in this
                 // same file can still dereference

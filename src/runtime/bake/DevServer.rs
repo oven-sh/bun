@@ -2259,13 +2259,9 @@ fn check_route_failures(
     resp: DevResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
-    // Note: erase to a raw pointer so the deferred cleanup only fires on
-    // scope exit when no other borrow of `dev` is live.
+    // Still holds the last bundle's failures, which this route may not import.
+    dev.incremental_result.failures_added.clear();
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
-    scopeguard::defer! {
-        // SAFETY: see Note above.
-        unsafe { (*dev_ptr).incremental_result.failures_added.clear() }
-    };
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
@@ -4396,13 +4392,17 @@ pub(super) fn finalize_bundle(
         dev.incremental_result.html_routes_soft_affected.clear();
         ctx.gts.clear();
 
-        for index in &dev.incremental_result.client_components_affected {
+        // `trace_dependencies` appends to this list while it is being walked.
+        let mut i = 0;
+        while i < dev.incremental_result.client_components_affected.len() {
+            let index = dev.incremental_result.client_components_affected[i];
             dev.server_graph.trace_dependencies(
-                *index,
+                index,
                 ctx.gts,
                 incremental_graph::TraceDependencyGoal::NoStop,
-                *index,
+                index,
             )?;
+            i += 1;
         }
 
         for request in &dev.incremental_result.framework_routes_affected {
@@ -4989,6 +4989,25 @@ impl DevServer {
                 )?,
             }
         }
+        Ok(())
+    }
+
+    /// Gives a "use client" file that failed to resolve the graph shape of a bundled boundary.
+    pub(crate) fn handle_client_component_boundary_failure(
+        &mut self,
+        abs_path: &[u8],
+    ) -> Result<(), AllocError> {
+        let _g = self.graph_safety_lock.guard();
+        let client_index = self
+            .client_graph
+            .insert_stale(abs_path, bake::Graph::Client)?;
+        self.client_graph.bundled_files.values_mut()[client_index.get() as usize].is_hmr_root =
+            true;
+        let server_index = self
+            .server_graph
+            .insert_stale(abs_path, bake::Graph::Server)?;
+        self.server_graph.bundled_files.values_mut()[server_index.get() as usize]
+            .is_client_component_boundary = true;
         Ok(())
     }
 

@@ -1159,6 +1159,11 @@ bun_bundler::link_impl_DevServerHandle! {
                 .handle_parse_task_failure(&err.into(), graph, abs_path, &*log, &mut *bv2)
                 .map_err(Into::into)
         },
+        handle_client_component_boundary_failure(abs_path) => {
+            (*this)
+                .handle_client_component_boundary_failure(abs_path)
+                .map_err(Into::into)
+        },
         put_or_overwrite_asset(path, contents, content_hash) => {
             // `path` was erased from `&bun_resolver::fs::Path<'_>` at the
             // `DevServerHandle::put_or_overwrite_asset_erased` call site. Re-wrap

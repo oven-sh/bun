@@ -1,5 +1,5 @@
 // Plugin tests concern plugins in development mode.
-import { devTest, minimalFramework } from "../bake-harness";
+import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
 devTest("onResolve", {
@@ -147,3 +147,64 @@ devTest("onResolve + onLoad virtual file", {
 //     await dev.fetch("/").expect('value: 2');
 //   },
 // });
+
+// An onResolve fall-through resolution failure the importer handles itself (require in try/catch) is not an error.
+const onResolveFallThroughPlugin = {
+  "bunfig.toml": `
+    [serve.static]
+    plugins = ["./plugin.ts"]
+  `,
+  "plugin.ts": `
+    export default {
+      name: "fall-through",
+      setup(build) {
+        build.onResolve({ filter: /optional-dep|missing/ }, () => undefined);
+      },
+    };
+  `,
+};
+devTest("onResolve fall-through keeps a module whose missing require is in try/catch", {
+  files: {
+    ...onResolveFallThroughPlugin,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      let value = "fallback";
+      try {
+        value = require("./optional-dep").value;
+      } catch {}
+      console.log("v1 " + value);
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("v1 fallback");
+
+    // The module is in the incremental graph, so editing it is a hot update.
+    await dev.patch("index.ts", { find: "v1", replace: "v2" });
+    await c.expectMessage("v2 fallback");
+
+    // The failed resolution is still tracked: creating the file re-bundles the importer.
+    await dev.write("optional-dep.ts", `export const value = "dep";`);
+    await c.expectMessage("v2 dep");
+  },
+});
+devTest("onResolve fall-through still reports an unresolvable import", {
+  files: {
+    ...onResolveFallThroughPlugin,
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { value } from "./missing";
+      console.log(value);
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/", {
+      errors: [`index.ts:1:23: error: Could not resolve: "./missing"`],
+    });
+    await c.expectReload(async () => {
+      await dev.write("missing.ts", `export const value = "found";`);
+    });
+    await c.expectMessage("found");
+  },
+});

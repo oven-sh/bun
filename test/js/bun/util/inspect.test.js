@@ -953,6 +953,9 @@ describe("property lookup throws while an object is being formatted", () => {
       // Lazily initialized properties of native objects can throw from their
       // initializer too. Bun.$ is built by JS that calls Symbol(), so breaking
       // the global makes it throw; the properties after it must still show up.
+      // On Windows, Bun.env has an inspect.custom hook, and calling one loads
+      // node:util, which needs a working Symbol: load it before breaking the global.
+      Bun.inspect({ [Bun.inspect.custom]() { return 0; } });
       const RealSymbol = Symbol;
       globalThis.Symbol = 1;
       const bun = Bun.inspect(Bun);

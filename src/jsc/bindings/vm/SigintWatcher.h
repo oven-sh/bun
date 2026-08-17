@@ -3,7 +3,7 @@
 #include "root.h"
 
 #include "Semaphore.h"
-#include "SigintReceiver.h"
+#include "NodeVMRunTermination.h"
 
 #include <atomic>
 
@@ -17,8 +17,8 @@ public:
     void signalReceived();
     // While registered, a SIGINT is recorded on the receiver and its VM's termination requested. The signal
     // handler is installed while at least one receiver is registered.
-    void registerReceiver(SigintReceiver*);
-    void unregisterReceiver(SigintReceiver*);
+    void registerReceiver(NodeVMRunTermination*);
+    void unregisterReceiver(NodeVMRunTermination*);
 
     static SigintWatcher& get();
 
@@ -31,7 +31,7 @@ private:
     // takes it too); m_installMutex serialises the install()/uninstall() transitions its emptiness drives.
     WTF::Lock m_receiversMutex;
     WTF::Lock m_installMutex;
-    WTF::Vector<SigintReceiver*, 4> m_receivers;
+    WTF::Vector<NodeVMRunTermination*, 4> m_receivers;
 
     void install();
     void uninstall();

@@ -111,7 +111,7 @@ void SigintWatcher::signalReceived()
     }
 }
 
-void SigintWatcher::registerReceiver(SigintReceiver* receiver)
+void SigintWatcher::registerReceiver(NodeVMRunTermination* receiver)
 {
     WTF::Locker transition(m_installMutex);
     bool wasEmpty;
@@ -124,7 +124,7 @@ void SigintWatcher::registerReceiver(SigintReceiver* receiver)
         install();
 }
 
-void SigintWatcher::unregisterReceiver(SigintReceiver* receiver)
+void SigintWatcher::unregisterReceiver(NodeVMRunTermination* receiver)
 {
     WTF::Locker transition(m_installMutex);
     bool nowEmpty;
@@ -156,7 +156,7 @@ bool SigintWatcher::signalInnermost()
         return false;
     auto* receiver = m_receivers.last();
     receiver->setSigintReceived();
-    receiver->sigintVM().notifyNeedTermination();
+    receiver->vm().notifyNeedTermination();
     return true;
 }
 

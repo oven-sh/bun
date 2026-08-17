@@ -2,10 +2,9 @@
 
 #include "root.h"
 
-#include "SigintReceiver.h"
-
 #include <JavaScriptCore/TerminationDeadline.h>
 #include <JavaScriptCore/ThrowScope.h>
+#include <atomic>
 #include <optional>
 
 namespace Bun {
@@ -18,7 +17,7 @@ namespace Bun {
 // (JSC::VM::cancelTermination) and turned into ERR_SCRIPT_EXECUTION_TIMEOUT / _INTERRUPTED — or
 // someone else's (an enclosing run's, or the VM's own worker terminate() / process.exit()), which is
 // left in place for the caller to propagate. The timeout is wall-clock, as in Node.
-class NodeVMRunTermination final : private SigintReceiver {
+class NodeVMRunTermination final {
     WTF_MAKE_NONCOPYABLE(NodeVMRunTermination);
     WTF_FORBID_HEAP_ALLOCATION;
 
@@ -39,14 +38,20 @@ public:
     // pending; a caller that keeps state past the unwind (a module mid-evaluation) records this error for it.
     JSC::JSObject* errorForEnclosingRunCutShort() const;
 
+    // SigintWatcher's signal thread, under its lock: record the SIGINT, then request m_vm's termination.
+    JSC::VM& vm() const { return m_vm; }
+    void setSigintReceived() { m_sigintReceived = true; }
+
 private:
     void disarm(); // stop listening: nothing of this run's can fire once it returns
     bool timedOut() const { return m_deadline && m_deadline->didFire(); }
     bool wasCutShort() const { return timedOut() || m_sigintReceived; }
     const NodeVMRunTermination* enclosingRunCutShort() const;
 
+    JSC::VM& m_vm;
     JSC::JSGlobalObject* const m_realm;
     const std::optional<Seconds> m_timeout;
+    std::atomic<bool> m_sigintReceived { false }; // read on this thread only once disarm()ed
     RefPtr<JSC::TerminationDeadline> m_deadline;
     bool m_listeningForSigint { false };
     // The run this one is nested in, if any: runs nest on the stack, so the innermost is tracked per thread.

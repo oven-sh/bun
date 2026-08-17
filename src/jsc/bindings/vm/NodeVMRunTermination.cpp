@@ -14,19 +14,19 @@ using namespace JSC;
 static thread_local NodeVMRunTermination* s_innermostRunOnThisThread = nullptr;
 
 NodeVMRunTermination::NodeVMRunTermination(JSGlobalObject* realm, std::optional<Seconds> timeout, bool breakOnSigint)
-    : SigintReceiver(realm->vm())
+    : m_vm(realm->vm())
     , m_realm(realm)
     , m_timeout(timeout)
     , m_enclosing(std::exchange(s_innermostRunOnThisThread, this))
 {
     if (breakOnSigint) {
         // Requested from the signal thread by then: the exception object it needs must exist.
-        m_sigintVM.ensureTerminationException();
+        m_vm.ensureTerminationException();
         SigintWatcher::get().registerReceiver(this);
         m_listeningForSigint = true;
     }
     if (m_timeout)
-        m_deadline = m_sigintVM.addTerminationDeadline(MonotonicTime::now() + *m_timeout);
+        m_deadline = m_vm.addTerminationDeadline(MonotonicTime::now() + *m_timeout);
 }
 
 NodeVMRunTermination::~NodeVMRunTermination()
@@ -41,7 +41,7 @@ void NodeVMRunTermination::disarm()
     if (std::exchange(m_listeningForSigint, false))
         SigintWatcher::get().unregisterReceiver(this);
     if (m_deadline)
-        m_deadline->cancel(m_sigintVM);
+        m_deadline->cancel(m_vm);
     // From here m_sigintReceived and didFire() are final.
 }
 
@@ -54,7 +54,7 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
     disarm();
     if (!wasCutShort())
         return;
-    VM& vm = m_sigintVM;
+    VM& vm = m_vm;
     // The VM has been asked to stop as a whole meanwhile: that request is indistinguishable from ours and wins.
     if (!WebCore::clientData(vm)->scriptAllowed())
         return;
@@ -96,7 +96,7 @@ const NodeVMRunTermination* NodeVMRunTermination::enclosingRunCutShort() const
 JSObject* NodeVMRunTermination::errorForEnclosingRunCutShort() const
 {
     ASSERT(m_finished);
-    if (wasCutShort() || !m_sigintVM.hasPendingTermination())
+    if (wasCutShort() || !m_vm.hasPendingTermination())
         return nullptr;
     const auto* run = enclosingRunCutShort();
     if (!run)

@@ -995,11 +995,7 @@ impl<'a> Repl<'a> {
 
     /// Temporarily enable SIGINT delivery during blocking promise waits
     fn enable_signals_during_wait(&mut self) {
-        if let Some(vm) = self.vm {
-            // Cleared in disable_signals_during_wait; Release pairs with the
-            // Acquire load in `sigint_handler`.
-            SIGINT_VM.store(vm.jsc_vm, core::sync::atomic::Ordering::Release);
-        }
+        SIGINT_ARMED.store(true, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -1041,7 +1037,7 @@ impl<'a> Repl<'a> {
 
     /// Restore raw terminal mode after promise wait
     fn disable_signals_during_wait(&mut self) {
-        SIGINT_VM.store(core::ptr::null_mut(), core::sync::atomic::Ordering::Release);
+        SIGINT_ARMED.store(false, core::sync::atomic::Ordering::Release);
 
         #[cfg(unix)]
         {
@@ -2724,23 +2720,16 @@ impl<'a> Drop for Repl<'a> {
     }
 }
 
-/// Global pointer for signal handler to access the VM.
-// PORTING.md §Global mutable state: read from a signal handler → AtomicPtr.
-// Atomics are async-signal-safe; the previous raw-global `Option<*mut>` was
-// not. `null` encodes `None`.
-static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
-    core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
-/// A SIGINT arrived while the REPL was waiting on a promise: stop waiting (the signal itself interrupts the
-/// loop's poll). Not a VM stop — the VM stays usable.
+/// The REPL is waiting on a promise and wants SIGINT to cut the wait short (async-signal-safe: atomics only).
+static SIGINT_ARMED: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// A SIGINT arrived during such a wait: stop waiting (the signal itself interrupts the loop's poll). Not a
+/// VM stop — the VM stays usable.
 static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    if !SIGINT_VM
-        .load(core::sync::atomic::Ordering::Acquire)
-        .is_null()
-    {
+    if SIGINT_ARMED.load(core::sync::atomic::Ordering::Acquire) {
         SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
     }
 }

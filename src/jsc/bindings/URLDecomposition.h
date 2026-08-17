@@ -60,7 +60,7 @@ public:
     void setPort(StringView);
 
     WEBCORE_EXPORT String pathname() const;
-    void setPathname(StringView);
+    void setPathname(const String&);
 
     WEBCORE_EXPORT String search() const;
     void setSearch(const String&);

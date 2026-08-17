@@ -249,6 +249,42 @@ describe("url", () => {
     // A path whose first segment merely starts with "." gets no guard.
     expect(util.inspect(new URL("foo:/.foo"), { showHidden: true })).toContain("pathname_start: 4,");
   });
+
+  it("pathname setter removes ASCII tab and newline before looking at the leading slash", () => {
+    // https://url.spec.whatwg.org/#concept-basic-url-parser removes tab, LF and CR from the value first, so
+    // "\n/x" is the same assignment as "/x". Expected values are Node's. On a host-less URL the unstripped
+    // value used to reparse as "//evil.com/y", which made evil.com the host.
+    const cases: [href: string, value: string, expected: { href: string; host: string; pathname: string }][] = [
+      ["foo:/a", "\n/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/a", "\t/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/a", "\r/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/a", "\t\n\r/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      // Two leading slashes on a host-less URL get the /. guard instead of becoming an empty host.
+      ["foo:/a", "\n//evil.com/y", { href: "foo:/.//evil.com/y", host: "", pathname: "//evil.com/y" }],
+      ["foo:/a", "\tevil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
+      ["foo:/.//p", "\t/x", { href: "foo:/x", host: "", pathname: "/x" }],
+      ["foo:/.//p", "\t//x", { href: "foo:/.//x", host: "", pathname: "//x" }],
+      ["foo://host/a", "\n/x/y", { href: "foo://host/x/y", host: "host", pathname: "/x/y" }],
+      // A value that strips down to "" empties the path of a non-special URL with a host.
+      ["foo://host/a", "\t", { href: "foo://host", host: "host", pathname: "" }],
+      ["http://h/", "\t/x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\n/x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\r/x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\t//x", { href: "http://h//x", host: "h", pathname: "//x" }],
+      ["http://h/", "\t\\x", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\tx", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["http://h/", "\t/a\tb/\nc", { href: "http://h/ab/c", host: "h", pathname: "/ab/c" }],
+      ["http://h/", "/x\n", { href: "http://h/x", host: "h", pathname: "/x" }],
+      ["file:///a", "\t/x", { href: "file:///x", host: "", pathname: "/x" }],
+    ];
+    const results = cases.map(([href, value]) => {
+      const url = new URL(href);
+      url.pathname = value;
+      return [href, value, { href: url.href, host: url.host, pathname: url.pathname }];
+    });
+    expect(results).toEqual(cases);
+  });
+
   it("works", () => {
     const inputs = [
       [

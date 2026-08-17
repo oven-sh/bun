@@ -218,12 +218,16 @@ String URLDecomposition::pathname() const
     return fullURL().path().toString();
 }
 
-void URLDecomposition::setPathname(StringView value)
+void URLDecomposition::setPathname(const String& value)
 {
     auto fullURL = this->fullURL();
     if (fullURL.hasOpaquePath())
         return;
-    fullURL.setPath(value);
+    // The basic URL parser removes ASCII tab and newline before anything else.
+    // URL::setPath only drops them in its reparse, after choosing the leading "/"
+    // (and the "/." guard) from the raw value, so "\n/a/b" reparsed as "//a/b".
+    String path = value.removeCharacters([](char16_t c) { return c == '\t' || c == '\n' || c == '\r'; });
+    fullURL.setPath(path);
     setFullURL(fullURL);
 }
 

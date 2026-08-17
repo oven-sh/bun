@@ -458,6 +458,7 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
     const zeros = Buffer.alloc(12 * MiB);
     const bodies = {
       gzip: gzipSync(zeros),
+      // Content-Encoding: deflate is the zlib-wrapped stream; Bun.deflateSync would emit raw deflate.
       deflate: zlib.deflateSync(zeros),
       br: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
       zstd: zstdCompressSync(zeros),

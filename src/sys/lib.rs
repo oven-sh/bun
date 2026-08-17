@@ -93,24 +93,6 @@ pub mod copy_file;
 // Directory-entry kind — same set as `bun_core::FileKind`.
 pub use bun_core::FileKind as EntryKind;
 
-/// Uninitialized `[u8; N]` stack scratch for a `read(2)`-like producer: the array form of `bun_core::vec::spare_bytes_mut`.
-pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
-
-impl<const N: usize> UninitBuf<N> {
-    #[inline(always)]
-    pub const fn uninit() -> Self {
-        Self(core::mem::MaybeUninit::uninit())
-    }
-
-    /// # Safety
-    /// The bytes are uninitialized: only a producer may store into the slice, and only the prefix it reports written may be read.
-    #[inline(always)]
-    pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
-        // SAFETY: `MaybeUninit<[u8; N]>` is laid out as `[u8; N]`; the caller upholds the write-only contract.
-        unsafe { core::slice::from_raw_parts_mut(self.0.as_mut_ptr().cast::<u8>(), N) }
-    }
-}
-
 // `bun.DirIterator`.
 //
 // A readdir-style directory iterator. Notable behaviors:

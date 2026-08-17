@@ -11,7 +11,7 @@ use crate::Fd;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use crate::Tag;
 #[cfg(not(windows))]
-use crate::UninitBuf;
+use bun_core::vec::UninitBuf;
 
 // `declare_scope!` uses the ident as both static name AND tag string, but
 // `copy_file` would shadow `pub fn copy_file()` below. Hand-expand with the

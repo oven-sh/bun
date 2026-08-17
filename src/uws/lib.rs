@@ -198,29 +198,8 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
-    /// Uninitialized stack scratch for `SSL_read` / `BIO_read` / the pending-event pops; only the prefix they report is read back.
-    struct IoBuffer(core::mem::MaybeUninit<[u8; BUFFER_SIZE]>);
-
-    impl IoBuffer {
-        #[inline(always)]
-        const fn uninit() -> Self {
-            IoBuffer(core::mem::MaybeUninit::uninit())
-        }
-
-        #[inline(always)]
-        fn as_mut_ptr(&mut self) -> *mut u8 {
-            self.0.as_mut_ptr().cast()
-        }
-
-        /// `[0..len]` as `&[u8]`; unsafe because the caller asserts a producer wrote every one of those bytes.
-        #[inline(always)]
-        unsafe fn filled(&self, len: usize) -> &[u8] {
-            debug_assert!(len <= BUFFER_SIZE);
-            // SAFETY: caller contract — `[0..len]` was written by the producer;
-            // `len <= BUFFER_SIZE` keeps the slice in-bounds.
-            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
-        }
-    }
+    /// Stack scratch shared by `SSL_read` / `BIO_read` / the pending-event pops.
+    type IoBuffer = bun_core::vec::UninitBuf<BUFFER_SIZE>;
 
     /// Cap on peer-initiated TLS renegotiations per
     /// [`MAX_RENEGOTIATION_WINDOW`]. Mirrors the `us_reneg_policy` defaults in

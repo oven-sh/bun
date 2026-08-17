@@ -1021,7 +1021,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
         return;
     };
     if ctx.is_null() {
-        let mut stack_buf = bun_sys::UninitBuf::<4096>::uninit();
+        let mut stack_buf = bun_core::vec::UninitBuf::<4096>::uninit();
         // SAFETY: lsquic only stores into the slice and the drained bytes are never read back.
         let buf = unsafe { stack_buf.as_bytes_mut() };
         while stream.read(buf) > 0 {}
@@ -1076,7 +1076,7 @@ pub(super) unsafe extern "C" fn on_stream_read(ctx: *mut c_void, s: *mut lsquic:
     if stream.received_early_data() {
         qs.with_state(|s| s.received_early_data = 1);
     }
-    let mut stack_buf = bun_sys::UninitBuf::<{ 16 * 1024 }>::uninit();
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 16 * 1024 }>::uninit();
     // SAFETY: lsquic is the only writer of `buf`; each iteration reads back only `buf[..n]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut got_any = false;

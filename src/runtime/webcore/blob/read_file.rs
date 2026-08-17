@@ -814,7 +814,7 @@ impl ReadFile {
             //
             // 64 KB is large, but since this is running in a thread
             // with it's own stack, it should have sufficient space.
-            let mut stack_storage = bun_sys::UninitBuf::<{ 64 * 1024 }>::uninit();
+            let mut stack_storage = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
             // SAFETY: only `do_read` writes into it and only `stack_buffer[..read_amount]` is read back.
             let stack_buffer = unsafe { stack_storage.as_bytes_mut() };
             // `do_read` never touches `self.buffer`; move it out so the read

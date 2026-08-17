@@ -988,7 +988,7 @@ fn read_write_loop_capped(
     cap: SizeType,
     total: &mut u64,
 ) -> bun_sys::Result<()> {
-    let mut stack_buf = bun_sys::UninitBuf::<{ 64 * 1024 }>::uninit();
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
     // SAFETY: `read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
     let buf = unsafe { stack_buf.as_bytes_mut() };
     let mut remaining = cap;

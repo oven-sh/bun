@@ -4715,7 +4715,7 @@ impl NodeFS {
         }
 
         const STACK_BUF_LEN: usize = 64 * 1024;
-        let mut stack_buf = sys::UninitBuf::<STACK_BUF_LEN>::uninit();
+        let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
         // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
         let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };

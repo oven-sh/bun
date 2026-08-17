@@ -1302,6 +1302,40 @@ pub fn normalize_buf_z<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a m
     unsafe { ZStr::from_raw_mut(buf.as_mut_ptr(), len) }
 }
 
+/// [`normalize_buf`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
+pub fn normalize_buf_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a [u8] {
+    normalize_buf::<P>(str, normalize_buf_or_spill(buf, spill, str))
+}
+
+/// [`normalize_buf_z`] into `buf` when the result fits, otherwise into `spill` (grown as needed).
+pub fn normalize_buf_z_spill<'a, P: PlatformT>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a ZStr {
+    normalize_buf_z::<P>(str, normalize_buf_or_spill(buf, spill, str))
+}
+
+fn normalize_buf_or_spill<'a>(
+    buf: &'a mut [u8],
+    spill: &'a mut Vec<u8>,
+    str: &[u8],
+) -> &'a mut [u8] {
+    // Normalizing grows a path by at most one byte (`""` -> `.`, `C:` -> `C:.`), plus the NUL.
+    let needed = str.len() + 2;
+    if needed <= buf.len() {
+        return buf;
+    }
+    if spill.len() < needed {
+        spill.resize(needed, 0);
+    }
+    &mut spill[..]
+}
+
 pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T]) -> &'a mut [T] {
     if str.is_empty() {
         buf[0] = T::from_u8(b'.');
@@ -2455,7 +2489,7 @@ pub use crate::PathChar;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane, `bun run rust:miri -p bun_paths`).
 // Normalizing reaches `bun_core::strings`' byte searches, whose highway kernels
-// are only linked into the full binary, so the two they reference are satisfied
+// are only linked into the full binary, so the ones they reference are satisfied
 // below with scalar stubs (the simdutf counterparts live in string_paths.rs).
 // Under Miri the wrappers take their own scalar path and never call these.
 #[cfg(test)]
@@ -2495,6 +2529,45 @@ mod tests {
         text.iter()
             .position(|b| chars.contains(b))
             .unwrap_or(text_len)
+    }
+
+    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_last_index_of_char(
+        haystack: *const u8,
+        haystack_len: usize,
+        needle: u8,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) pair.
+        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
+        haystack
+            .iter()
+            .rposition(|&b| b == needle)
+            .unwrap_or(haystack_len)
+    }
+
+    /// Returns `usize::MAX` when `needle` does not occur, like the kernel.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn highway_memrmem16(
+        haystack: *const u16,
+        haystack_len: usize,
+        needle: *const u16,
+        needle_len: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass valid (ptr, len) pairs.
+        let (haystack, needle) = unsafe {
+            (
+                core::slice::from_raw_parts(haystack, haystack_len),
+                core::slice::from_raw_parts(needle, needle_len),
+            )
+        };
+        if needle_len > haystack_len {
+            return usize::MAX;
+        }
+        (0..=haystack_len - needle_len)
+            .rev()
+            .find(|&i| haystack[i..i + needle_len] == *needle)
+            .unwrap_or(usize::MAX)
     }
 
     #[test]
@@ -2560,5 +2633,80 @@ mod tests {
             normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
             b"C:."
         );
+    }
+
+    #[test]
+    fn normalize_buf_spill_leaves_spill_untouched_when_the_input_fits() {
+        let mut buf = [0u8; 32];
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, b"./bins/../cli/./x.js"),
+            b"cli/x.js"
+        );
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, b"./bins/").as_bytes(),
+            b"bins/"
+        );
+        assert!(spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_buf_spill_spills_input_longer_than_buf() {
+        let mut buf = [0u8; 32];
+        let name = vec![b'b'; buf.len() * 3];
+        let mut input = b"./".to_vec();
+        input.extend_from_slice(&name);
+        input.extend_from_slice(b"/./x.js");
+        let mut expected = name;
+        expected.extend_from_slice(b"/x.js");
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, &input),
+            &expected[..]
+        );
+        expected.push(0);
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, &input)
+                .as_bytes_with_nul(),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_buf_z_spill_spills_input_exactly_as_long_as_buf() {
+        // The input normalizes to `buf.len()` bytes, leaving no room for the NUL.
+        let mut buf = [0u8; 32];
+        let input = vec![b'a'; buf.len()];
+        let mut expected = input.clone();
+        expected.push(0);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, &input)
+                .as_bytes_with_nul(),
+            &expected[..]
+        );
+        assert!(!spill.is_empty());
+    }
+
+    #[test]
+    fn normalize_buf_spill_sizes_the_spill_for_the_empty_input_becoming_a_dot() {
+        let mut buf = [0u8; 1];
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_spill::<platform::Posix>(&mut buf, &mut spill, b""),
+            b"."
+        );
+        assert_eq!(spill.len(), 2);
+
+        let mut spill = Vec::new();
+        assert_eq!(
+            normalize_buf_z_spill::<platform::Posix>(&mut buf, &mut spill, b"").as_bytes_with_nul(),
+            b".\0"
+        );
+        assert_eq!(spill.len(), 2);
     }
 }

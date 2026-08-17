@@ -587,16 +587,18 @@ it.concurrent("BUN_OPTIONS does not break the internal bunx install escape hatch
 
     {
       await using proc = spawn({ cmd: [bunxPath, "add", "--help"], env: childEnv, stdout: "pipe", stderr: "pipe" });
-      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [out, errOut, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(out).not.toContain("MISDISPATCHED_ADD");
+      expect(errOut).not.toContain("MISDISPATCHED_ADD");
       expect(out).toContain("bun add");
       expect(exitCode).toBe(0);
     }
 
     {
       await using proc = spawn({ cmd: [bunxPath, "exec", "echo hatch-ok"], env: childEnv, stdout: "pipe", stderr: "pipe" });
-      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [out, errOut, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect(out).not.toContain("MISDISPATCHED_EXEC");
+      expect(errOut).not.toContain("MISDISPATCHED_EXEC");
       expect(out.trim()).toBe("hatch-ok");
       expect(exitCode).toBe(0);
     }

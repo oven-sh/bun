@@ -2677,6 +2677,29 @@ declare module "bun" {
     ping(message: RedisClient.KeyLike): Promise<string>;
 
     /**
+     * Switch this connection to another logical database
+     *
+     * A connection starts on the database named by the path of the connection
+     * URL (`redis://localhost:6379/2` selects database 2), or on database 0
+     * when the URL has no path. That URL database is selected again after an
+     * automatic reconnect and is what {@link duplicate `.duplicate()`} starts
+     * on; a database chosen with this method only lasts until the connection
+     * drops. Not available while the client is in subscriber mode.
+     *
+     * @param index The database index. Servers have 16 databases (0 to 15)
+     * unless configured otherwise.
+     * @returns Promise that resolves with "OK", or rejects when the index is
+     * out of range for the server
+     *
+     * @example
+     * ```ts
+     * await redis.select(1);
+     * await redis.set("key", "value"); // written to database 1
+     * ```
+     */
+    select(index: number | string): Promise<"OK">;
+
+    /**
      * Publish a message to a Redis channel.
      *
      * @param channel The channel to publish to.
@@ -2695,8 +2718,9 @@ declare module "bun" {
      *
      * Subscribing moves the channel to a dedicated subscription state which
      * prevents most other commands from being executed until unsubscribed. Only
-     * {@link ping `.ping()`}, {@link subscribe `.subscribe()`}, and
-     * {@link unsubscribe `.unsubscribe()`} can be called while subscribed.
+     * {@link ping `.ping()`}, {@link subscribe `.subscribe()`},
+     * {@link unsubscribe `.unsubscribe()`}, and {@link pubsub `.pubsub()`} can
+     * be called while subscribed.
      *
      * @param channel The channel to subscribe to.
      * @param listener The listener to call when a message is received on the
@@ -2792,6 +2816,114 @@ declare module "bun" {
      * Opens a new connection to the Redis server.
      */
     duplicate(): Promise<RedisClient>;
+
+    /**
+     * List the channels that currently have at least one subscriber
+     *
+     * The result covers every client connected to the server, not only this
+     * one, and only counts subscriptions made with
+     * {@link subscribe `.subscribe()`}: pattern subscriptions are not included.
+     * Unlike most commands, PUBSUB can also be sent while this client is in
+     * subscriber mode.
+     *
+     * @param subcommand "CHANNELS"
+     * @returns Promise that resolves with the channel names
+     *
+     * @example
+     * ```ts
+     * await subscriber.subscribe("news", () => {});
+     * console.log(await redis.pubsub("CHANNELS")); // ["news"]
+     * ```
+     */
+    pubsub(subcommand: "CHANNELS"): Promise<string[]>;
+
+    /**
+     * List the channels that currently have at least one subscriber and whose
+     * name matches a pattern
+     *
+     * See the single-argument overload for what is counted.
+     *
+     * @param subcommand "CHANNELS"
+     * @param pattern Glob-style pattern, as used by `KEYS` (`"news.*"`)
+     * @returns Promise that resolves with the matching channel names
+     */
+    pubsub(subcommand: "CHANNELS", pattern: string): Promise<string[]>;
+
+    /**
+     * Count the subscribers of each given channel
+     *
+     * Counts the subscriptions every client connected to the server made with
+     * {@link subscribe `.subscribe()`}; pattern subscriptions are not included.
+     * A channel nobody is subscribed to is reported with a count of 0.
+     *
+     * @param subcommand "NUMSUB"
+     * @param channels The channels to count subscribers for
+     * @returns Promise that resolves with a flat array alternating channel name
+     * and subscriber count, in the order the channels were given (empty when no
+     * channels were given)
+     *
+     * @example
+     * ```ts
+     * await subscriber.subscribe("news", () => {});
+     * console.log(await redis.pubsub("NUMSUB", "news", "sports")); // ["news", 1, "sports", 0]
+     * ```
+     */
+    pubsub(subcommand: "NUMSUB", ...channels: string[]): Promise<(string | number)[]>;
+
+    /**
+     * Count the patterns clients are subscribed to
+     *
+     * @param subcommand "NUMPAT"
+     * @returns Promise that resolves with the number of distinct patterns any
+     * client connected to the server is subscribed to. Two clients subscribed
+     * to the same pattern count once.
+     */
+    pubsub(subcommand: "NUMPAT"): Promise<number>;
+
+    /**
+     * List the shard channels that currently have at least one subscriber
+     *
+     * Shard channels are the ones used by `SSUBSCRIBE` and
+     * {@link spublish `.spublish()`}; regular channels are not included.
+     *
+     * @param subcommand "SHARDCHANNELS"
+     * @returns Promise that resolves with the shard channel names
+     */
+    pubsub(subcommand: "SHARDCHANNELS"): Promise<string[]>;
+
+    /**
+     * List the shard channels that currently have at least one subscriber and
+     * whose name matches a pattern
+     *
+     * @param subcommand "SHARDCHANNELS"
+     * @param pattern Glob-style pattern, as used by `KEYS`
+     * @returns Promise that resolves with the matching shard channel names
+     */
+    pubsub(subcommand: "SHARDCHANNELS", pattern: string): Promise<string[]>;
+
+    /**
+     * Count the subscribers of each given shard channel
+     *
+     * @param subcommand "SHARDNUMSUB"
+     * @param shardchannels The shard channels to count subscribers for
+     * @returns Promise that resolves with a flat array alternating shard channel
+     * name and subscriber count, in the order the channels were given (empty
+     * when no channels were given)
+     */
+    pubsub(subcommand: "SHARDNUMSUB", ...shardchannels: string[]): Promise<(string | number)[]>;
+
+    /**
+     * Send any other PUBSUB subcommand
+     *
+     * The subcommand and its arguments are sent to the server as given. The
+     * server also accepts lowercase spellings of the subcommands above; they
+     * go through this overload, so their replies are untyped.
+     *
+     * @param subcommand The subcommand, for example `"HELP"`
+     * @param args The subcommand's arguments
+     * @returns Promise that resolves with the server's reply
+     */
+    pubsub(subcommand: string, ...args: string[]): Promise<any>;
 
     /**
      * Copy the value stored at the source key to the destination key

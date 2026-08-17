@@ -1452,6 +1452,42 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   expect(server.subscriberCount("boop")).toBe(0);
 });
 
+it.concurrent("server.upgrade() from the error() handler after fetch() threw completes the handshake", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = Bun.serve({
+         port: 0,
+         development: true,
+         fetch(req) { throw Object.assign(new Error("boom"), { req }); },
+         error(err) {
+           if (err.req && server.upgrade(err.req, { data: { from: "error" } })) return;
+           return new Response("err", { status: 500 });
+         },
+         websocket: {
+           open(ws) { ws.send("opened:" + ws.data.from); },
+           message(ws, m) { ws.send("echo:" + m); },
+         },
+       });
+       const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+       ws.onerror = () => { console.log("ws error"); process.exit(1); };
+       ws.onmessage = e => {
+         console.log(e.data);
+         if (e.data === "echo:hi") ws.close();
+         else ws.send("hi");
+       };
+       ws.onclose = e => { console.log("closed", e.code); server.stop(true); };`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("opened:error\necho:hi\nclosed 1000\n");
+  expect(exitCode).toBe(0);
+});
+
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {
   // req.url and req.headers are lifted lazily from the uws request. upgrade()
   // detaches that context, so fields not touched before the call must be

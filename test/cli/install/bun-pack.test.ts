@@ -1680,6 +1680,185 @@ describe("bins", () => {
   });
 });
 
+describe("entry points", () => {
+  test('"main" and "browser" are included even if not in "files"', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-files",
+          version: "1.0.0",
+          main: "lib/index.js",
+          browser: "lib/browser.js",
+          files: ["dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "bundle.js"), "exports.b=1"),
+      write(join(packageDir, "lib", "index.js"), "module.exports='entry'"),
+      write(join(packageDir, "lib", "browser.js"), "module.exports='browser'"),
+      write(join(packageDir, "lib", "other.js"), "module.exports='other'"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-files-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/bundle.js" },
+      { pathname: "package/lib/browser.js" },
+      { pathname: "package/lib/index.js" },
+    ]);
+  });
+
+  test('"main" cannot be excluded by .npmignore', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-npmignore",
+          version: "1.0.0",
+          main: "index.js",
+          bin: "cli.js",
+        }),
+      ),
+      write(join(packageDir, "index.js"), "module.exports=2"),
+      write(join(packageDir, "cli.js"), "#!/usr/bin/env node\n"),
+      write(join(packageDir, ".npmignore"), "index.js\ncli.js\n"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-npmignore-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/cli.js" },
+      { pathname: "package/index.js" },
+    ]);
+
+    // "main" does not pick up the executable bit that "bin" gets
+    const indexEntry = tarball.entries.find(e => e.pathname === "package/index.js");
+    expect(indexEntry.perm & 0o111).toBe(0);
+  });
+
+  test('"main" inside "files" directory is not duplicated', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-dedupe",
+          version: "1.0.0",
+          main: "dist/index.js",
+          files: ["dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "index.js"), "module.exports=1"),
+      write(join(packageDir, "dist", "other.js"), "module.exports=2"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-dedupe-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/index.js" },
+      { pathname: "package/dist/other.js" },
+    ]);
+  });
+
+  test('"main" that does not exist is not an error', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-missing",
+          version: "1.0.0",
+          main: "lib/index.js",
+          files: ["dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "bundle.js"), "exports.b=1"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-missing-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/bundle.js" },
+    ]);
+  });
+
+  test('"main" or "bin" pointing at package.json does not duplicate it', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-pkgjson",
+          version: "1.0.0",
+          main: "./package.json",
+          bin: "./package.json",
+        }),
+      ),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-pkgjson-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([{ pathname: "package/package.json" }]);
+  });
+
+  test('"main" that names a directory is skipped', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-dir",
+          version: "1.0.0",
+          main: "./lib",
+          files: ["dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "bundle.js"), "exports.b=1"),
+      write(join(packageDir, "lib", "index.js"), "module.exports=1"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-dir-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/bundle.js" },
+    ]);
+  });
+
+  test('"browser" object map is not force-included', async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "pack-entry-browser-map",
+          version: "1.0.0",
+          main: "lib/index.js",
+          browser: { "./lib/index.js": "./lib/browser.js" },
+          files: ["dist"],
+        }),
+      ),
+      write(join(packageDir, "dist", "bundle.js"), "exports.b=1"),
+      write(join(packageDir, "lib", "index.js"), "module.exports='entry'"),
+      write(join(packageDir, "lib", "browser.js"), "module.exports='browser'"),
+    ]);
+
+    await pack(packageDir, bunEnv);
+
+    const tarball = readTarball(join(packageDir, "pack-entry-browser-map-1.0.0.tgz"));
+    expect(tarball.entries).toMatchObject([
+      { pathname: "package/package.json" },
+      { pathname: "package/dist/bundle.js" },
+      { pathname: "package/lib/index.js" },
+    ]);
+  });
+});
+
 test("unicode", async () => {
   await Promise.all([
     write(

@@ -442,6 +442,7 @@ struct DirInfo(Dir, Box<[u8]>, usize);
 fn iterate_included_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    entry_points: &[ZBox],
     includes: &[Pattern],
     excludes: &[Pattern],
     root_dir: &Dir,
@@ -627,6 +628,9 @@ fn iterate_included_project_tree(
                             continue 'next_entry;
                         }
                     }
+                    if is_package_entry_point(entry_points, entry_subpath.as_bytes()) {
+                        continue 'next_entry;
+                    }
 
                     pack_queue.add(PackQueueItem {
                         path: entry_subpath,
@@ -644,6 +648,7 @@ fn iterate_included_project_tree(
     for included_dir_info in included_dirs {
         add_entire_tree(
             bins,
+            entry_points,
             excludes,
             included_dir_info,
             pack_queue,
@@ -658,6 +663,7 @@ fn iterate_included_project_tree(
 /// Adds all files in a directory tree to `pack_list` (default ignores still apply)
 fn add_entire_tree(
     bins: &[BinInfo],
+    entry_points: &[ZBox],
     excludes: &[Pattern],
     root_dir_info: DirInfo,
     pack_queue: &mut PackQueue,
@@ -761,6 +767,9 @@ fn add_entire_tree(
                         {
                             continue 'next_entry;
                         }
+                    }
+                    if is_package_entry_point(entry_points, entry_subpath.as_bytes()) {
+                        continue 'next_entry;
                     }
                     pack_queue.add(PackQueueItem {
                         path: entry_subpath,
@@ -1244,6 +1253,7 @@ fn add_bundled_dep(
 fn iterate_project_tree(
     pack_queue: &mut PackQueue,
     bins: &[BinInfo],
+    entry_points: &[ZBox],
     root_dir: DirInfo,
     log_level: LogLevel,
 ) -> Result<(), AllocError> {
@@ -1336,6 +1346,9 @@ fn iterate_project_tree(
                         {
                             continue 'next_entry;
                         }
+                    }
+                    if is_package_entry_point(entry_points, entry_subpath_.as_bytes()) {
+                        continue 'next_entry;
                     }
                     pack_queue.add(PackQueueItem {
                         path: entry_subpath_,
@@ -1468,7 +1481,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                 bin_str,
                 &mut path_buf,
             );
-            if !bin_path_escapes_root(normalized) {
+            if normalized != b"package.json" && !bin_path_escapes_root(normalized) {
                 bins.push(BinInfo {
                     path: ZBox::from_bytes(normalized),
                     ty: BinType::File,
@@ -1489,7 +1502,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                             bin_str,
                             &mut path_buf,
                         );
-                        if !bin_path_escapes_root(normalized) {
+                        if normalized != b"package.json" && !bin_path_escapes_root(normalized) {
                             bins.push(BinInfo {
                                 path: ZBox::from_bytes(normalized),
                                 ty: BinType::File,
@@ -1527,6 +1540,56 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
 fn bin_path_escapes_root(p: &[u8]) -> bool {
     path::is_absolute_loose(p) || p == b".." || p.starts_with(b"../")
+}
+
+/// npm-packlist force-includes `main` and string-form `browser` alongside `bin`.
+fn get_package_entry_points(json: &Expr, bins: &[BinInfo]) -> Result<Vec<ZBox>, AllocError> {
+    let mut entry_points: Vec<ZBox> = Vec::new();
+    let mut path_buf = PathBuffer::uninit();
+
+    let mut push_field = |field: &'static [u8]| -> Result<(), AllocError> {
+        let Some(prop) = json.as_property(field) else {
+            return Ok(());
+        };
+        // `browser` may be an object map; only the string form is a file path.
+        let Some(value) = prop.expr.as_string(pack_bump()) else {
+            return Ok(());
+        };
+        let normalized =
+            resolve_path::normalize_buf::<resolve_path::platform::Posix>(value, &mut path_buf);
+        if normalized.is_empty()
+            || normalized == b"package.json"
+            || bin_path_escapes_root(normalized)
+        {
+            return Ok(());
+        }
+        for bin in bins {
+            if bin.ty == BinType::File && strings::eql_long(bin.path.as_bytes(), normalized, true) {
+                return Ok(());
+            }
+        }
+        for existing in &entry_points {
+            if strings::eql_long(existing.as_bytes(), normalized, true) {
+                return Ok(());
+            }
+        }
+        entry_points.push(ZBox::from_bytes(normalized));
+        Ok(())
+    };
+
+    push_field(b"main")?;
+    push_field(b"browser")?;
+
+    Ok(entry_points)
+}
+
+fn is_package_entry_point(entry_points: &[ZBox], subpath: &[u8]) -> bool {
+    for entry_point in entry_points {
+        if strings::eql_long(entry_point.as_bytes(), subpath, true) {
+            return true;
+        }
+    }
+    false
 }
 
 fn is_package_bin(bins: &[BinInfo], maybe_bin_path: &[u8]) -> bool {
@@ -2269,6 +2332,14 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut pack_queue: PackQueue = new_pack_queue();
 
     let bins = get_package_bins(&json.root)?;
+    let entry_points = get_package_entry_points(&json.root, &bins)?;
+
+    for entry_point in &entry_points {
+        pack_queue.add(PackQueueItem {
+            path: ZBox::from_bytes(entry_point.as_bytes()),
+            optional: true,
+        })?;
+    }
 
     for bin in &bins {
         match bin.ty {
@@ -2297,6 +2368,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 iterate_project_tree(
                     &mut pack_queue,
                     &[],
+                    &entry_points,
                     DirInfo(bin_dir, bin.path.as_bytes().into(), 2),
                     log_level,
                 )?;
@@ -2342,6 +2414,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     iterate_included_project_tree(
                         &mut pack_queue,
                         &bins,
+                        &entry_points,
                         &includes,
                         &excludes,
                         &root_dir,
@@ -2361,6 +2434,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             iterate_project_tree(
                 &mut pack_queue,
                 &bins,
+                &entry_points,
                 DirInfo(Dir::from_fd(root_dir.fd), Box::from(&b""[..]), 1),
                 log_level,
             )?;
@@ -2661,6 +2735,17 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     Global::crash();
                 }
             };
+
+            // openat(O_RDONLY) succeeds on directories on POSIX
+            if item.optional && !bun_core::S::ISREG(stat.st_mode as bun_sys::Mode) {
+                ctx.stats.total_files -= 1;
+                if log_level.show_progress() {
+                    node.as_mut()
+                        .expect("infallible: progress active")
+                        .complete_one();
+                }
+                continue;
+            }
 
             pack_list.push(PackListEntry {
                 subpath: ZBox::from_bytes(item.path.as_bytes()),
@@ -3828,6 +3913,11 @@ fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
                     Global::crash();
                 }
             };
+
+            if item.optional && !bun_core::S::ISREG(stat.st_mode as bun_sys::Mode) {
+                ctx.stats.total_files -= 1;
+                continue;
+            }
 
             ctx.stats.unpacked_size += usize::try_from(stat.st_size).expect("int cast");
 

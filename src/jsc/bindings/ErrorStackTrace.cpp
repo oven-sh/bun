@@ -524,6 +524,26 @@ String sourceURL(JSC::VM& vm, JSC::JSFunction* function)
     return Zig::sourceURL(function->jsExecutable()->source());
 }
 
+bool isNodeVMSource(JSC::SourceProvider* sourceProvider)
+{
+    if (!sourceProvider) [[unlikely]] {
+        return false;
+    }
+
+    auto* fetcher = sourceProvider->sourceOrigin().fetcher();
+    return fetcher && fetcher->fetcherType() == JSC::ScriptFetcher::Type::NodeVM;
+}
+
+bool isNodeVMSource(const JSC::StackFrame& frame)
+{
+    auto* codeBlock = frame.codeBlock();
+    if (!codeBlock || !codeBlock->ownerExecutable()) {
+        return false;
+    }
+
+    return isNodeVMSource(codeBlock->source().provider());
+}
+
 String functionName(JSC::VM& vm, JSC::CodeBlock* codeBlock)
 {
     auto codeType = codeBlock->codeType();

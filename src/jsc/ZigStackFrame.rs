@@ -23,9 +23,22 @@ pub struct ZigStackFrame {
     /// This informs formatters whether to display as a blob URL or not
     pub remapped: bool,
 
+    /// Set by C++ (`Zig::isNodeVMSource`) for code compiled by `node:vm`. Its
+    /// `source_url` is whatever filename the caller passed, so it must never be
+    /// looked up in the source map table even when it names a file Bun transpiled.
+    pub is_node_vm: bool,
+
     /// -1 means not set.
     pub jsc_stack_frame_index: i32,
 }
+
+// Mirrors `struct ZigStackFrame` in `src/jsc/bindings/headers-handwritten.h`,
+// which C++ populates in place.
+bun_core::assert_ffi_layout!(
+    ZigStackFrame, 72, 8;
+    function_name @ 0, source_url @ 24, position @ 48, code_type @ 60, is_async @ 61,
+    remapped @ 62, is_node_vm @ 63, jsc_stack_frame_index @ 64,
+);
 
 impl ZigStackFrame {
     /// Explicit deref of owned strings.
@@ -72,6 +85,7 @@ impl ZigStackFrame {
         position: ZigStackFramePosition::INVALID,
         is_async: false,
         remapped: false,
+        is_node_vm: false,
         jsc_stack_frame_index: -1,
     };
 

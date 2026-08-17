@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { join } from "path";
+import { pathToFileURL } from "url";
 
 // Every workload below is time-bounded for 100ms. On Windows JSC's
 // SamplingProfiler effectively ticks at the ~15.6ms default timer quantum, and
@@ -443,5 +444,56 @@ describe.concurrent("--cpu-prof", () => {
     // Validate markdown file
     const mdContent = readFileSync(join(String(dir), mdFiles[0]), "utf-8");
     expect(mdContent).toContain("# CPU Profile");
+  });
+
+  test("vm code compiled under the filename of the profiled file keeps its own positions", async () => {
+    // Source maps are keyed by filename. `f` is compiled by node:vm on line 5 of
+    // its source, under the fixture's own filename ("own") or under a name Bun
+    // never loaded ("other"); both must report the same, physical position. The
+    // PADDING-line comment is stripped by the transpiler, so any line the
+    // fixture's source map could produce is > PADDING and never mistaken for 5.
+    const PADDING = 20;
+    const padding = ["/*", ...Array.from({ length: PADDING - 2 }, () => " *"), " */"].join("\n") + "\n";
+    const body = String.raw`
+const vm = require("node:vm");
+const name = process.argv[2] === "own" ? __filename : "not-a-loaded-file.js";
+const source = "\n\n\n\n(function f() { for (const end = performance.now() + 100; performance.now() < end; ) {} })";
+const f = vm.runInThisContext(source, { filename: name });
+f();
+console.log(name);
+`;
+    using dir = tempDir("cpu-prof-vm-filename", { "fixture.js": padding + body });
+
+    const profileFor = async (kind: string) => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "--cpu-prof", `--cpu-prof-name=${kind}.cpuprofile`, "fixture.js", kind],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+      const profile = JSON.parse(readFileSync(join(String(dir), `${kind}.cpuprofile`), "utf8"));
+      const fNodes = profile.nodes.filter((n: any) => n.callFrame.functionName === "f");
+      expect(fNodes.length).toBeGreaterThan(0);
+      return {
+        name: stdout.trim(),
+        callFrames: [
+          ...new Set(
+            fNodes.map((n: any) => JSON.stringify([n.callFrame.url, n.callFrame.lineNumber, n.callFrame.columnNumber])),
+          ),
+        ].map(s => JSON.parse(s as string)),
+        tickLines: new Set(fNodes.flatMap((n: any) => (n.positionTicks ?? []).map((t: any) => t.line))),
+      };
+    };
+    const [own, other] = await Promise.all([profileFor("own"), profileFor("other")]);
+
+    // callFrame.lineNumber is 0-based; positionTicks.line is 1-based.
+    expect(other.callFrames).toEqual([["not-a-loaded-file.js", 4, expect.any(Number)]]);
+    const [[, line, column]] = other.callFrames;
+    expect(own.callFrames).toEqual([[pathToFileURL(own.name).href, line, column]]);
+    expect(other.tickLines).toEqual(new Set([5]));
+    expect(own.tickLines).toEqual(new Set([5]));
   });
 });

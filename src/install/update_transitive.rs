@@ -23,17 +23,11 @@ use crate::{
     PackageManager, PackageNameHash, ResolutionTag, invalid_package_id,
 };
 
-struct DirectRow {
-    name_hash: PackageNameHash,
-    behavior: Behavior,
-    resolved: PackageID,
-}
-
 /// Root/workspace dependency rows as loaded from bun.lock, taken before the differ re-enqueues them.
 #[derive(Default)]
 pub struct DirectDependencies {
     owners: Vec<(PackageID, u32, u32)>,
-    rows: Vec<DirectRow>,
+    rows: Vec<(PackageNameHash, Behavior, PackageID)>,
 }
 
 impl DirectDependencies {
@@ -62,11 +56,7 @@ impl DirectDependencies {
                     .get(deps)
                     .iter()
                     .zip(res_slices[owner].get(resolutions))
-                    .map(|(dep, &resolved)| DirectRow {
-                        name_hash: dep.name_hash,
-                        behavior: dep.behavior,
-                        resolved,
-                    }),
+                    .map(|(dep, &resolved)| (dep.name_hash, dep.behavior, resolved)),
             );
             out.owners.push((
                 owner as PackageID,
@@ -80,9 +70,9 @@ impl DirectDependencies {
     /// One bit per package: the packages the direct rows resolve to.
     fn resolved_packages(&self, packages_len: usize) -> DynamicBitSet {
         let mut set = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
-        for row in &self.rows {
-            if (row.resolved as usize) < packages_len {
-                set.set(row.resolved as usize);
+        for &(_, _, resolved) in &self.rows {
+            if (resolved as usize) < packages_len {
+                set.set(resolved as usize);
             }
         }
         set
@@ -118,8 +108,8 @@ impl DirectDependencies {
                 .iter()
                 .zip(res_slices[owner].get(resolutions));
             for (i, (dep, &new)) in current.enumerate() {
-                let same = |row: &DirectRow| {
-                    row.name_hash == dep.name_hash && row.behavior == dep.behavior
+                let same = |row: &(PackageNameHash, Behavior, PackageID)| {
+                    row.0 == dep.name_hash && row.1 == dep.behavior
                 };
                 let index = if claimed.is_none() && rows.get(i).is_some_and(same) {
                     i
@@ -147,7 +137,7 @@ impl DirectDependencies {
                     taken.set(k);
                     k
                 };
-                let old = rows[index].resolved;
+                let old = rows[index].2;
                 if old == new
                     || (old as usize) >= packages_len
                     || (new as usize) >= packages_len
@@ -284,20 +274,13 @@ struct Pin {
     to: Option<Semver::Version>,
 }
 
-struct Planned {
-    v: Semver::Version,
-    /// `None` re-resolves the edge through its own dist-tag.
-    to: Option<Semver::Version>,
-    later: Box<[u8]>,
-}
-
 /// The transitive half of a bare `bun update`: every edge owned by a non-workspace package the selected workspaces reach (all of them from the root or with -r) moves to the newest release its own range allows, or to wherever its dist-tag points now. A range edge sharing the package a root/workspace entry resolves to follows that entry instead (`deferred`).
 #[derive(Default)]
 pub struct TransitiveUpdate {
     pins: Vec<Pin>,
-    /// Kept for `print_plan` when no install summary will print the rows (`--dry-run`, `--lockfile-only`).
-    report: Option<Report>,
-    /// Range rows left to follow the direct entry whose package they share; `plan_unanchored` plans the ones that entry did not take along.
+    /// For `print_plan`, when no install summary will print the rows (`--dry-run`, `--lockfile-only`).
+    report: Report,
+    /// Range rows left to follow the direct entry whose package they share; see `plan_unanchored`.
     deferred: Vec<DependencyID>,
 }
 
@@ -320,14 +303,7 @@ impl TransitiveUpdate {
             }
             edges
         };
-        let planned = plan_edges(manager, &edges, direct)?;
-        register_moved(manager, &planned.report.moved)?;
-        let printed_here = manager.options.dry_run || manager.options.lockfile_only;
-        Ok(TransitiveUpdate {
-            pins: planned.pins,
-            report: printed_here.then_some(planned.report),
-            deferred: planned.deferred,
-        })
+        plan_edges(manager, &edges, direct)
     }
 
     pub fn has_deferred(&self) -> bool {
@@ -362,19 +338,12 @@ impl TransitiveUpdate {
         if edges.count() == 0 {
             return Ok(false);
         }
-        let planned = plan_edges(manager, &edges, &current)?;
-        register_moved(manager, &planned.report.moved)?;
-        if let Some(report) = &mut self.report {
-            report.rows.extend(planned.report.rows);
-            report.moved.extend(planned.report.moved);
-        }
-        if planned.pins.is_empty() {
+        let mut round = plan_edges(manager, &edges, &current)?;
+        self.report.rows.append(&mut round.report.rows);
+        self.report.moved.append(&mut round.report.moved);
+        if round.pins.is_empty() {
             return Ok(false);
         }
-        let round = TransitiveUpdate {
-            pins: planned.pins,
-            ..Default::default()
-        };
         round.enqueue(manager)?;
         manager.drain_dependency_list();
         self.pins.extend(round.pins);
@@ -434,10 +403,7 @@ impl TransitiveUpdate {
             return;
         }
         let dry_run = options.dry_run;
-        let mut rows = self
-            .report
-            .as_ref()
-            .map_or_else(Vec::new, |report| report.rows.clone());
+        let mut rows = self.report.rows.clone();
         let mut pairs = direct.moved_pairs(&manager.lockfile);
         pairs.extend(named_pairs(&manager.lockfile, named));
         rows.extend(rows_between(manager, pairs));
@@ -505,12 +471,7 @@ pub(crate) fn refresh_children_of(
     };
     // The direct rows are resolved by now, so the rows `plan_edges` defers are sharing a package those rows settled on and simply stay there.
     let direct = DirectDependencies::snapshot(&manager.lockfile);
-    let planned = plan_edges(manager, &edges, &direct)?;
-    register_moved(manager, &planned.report.moved)?;
-    let update = TransitiveUpdate {
-        pins: planned.pins,
-        ..Default::default()
-    };
+    let update = plan_edges(manager, &edges, &direct)?;
     update.enqueue(manager)?;
     Ok(update
         .pins
@@ -1060,9 +1021,9 @@ pub(crate) fn plannable_peer_rows(
     let resolutions = lockfile.buffers.resolutions.as_slice();
 
     let mut providers = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
-    for row in &direct.rows {
-        if !row.behavior.is_peer() && (row.resolved as usize) < packages_len {
-            providers.set(row.resolved as usize);
+    for &(_, behavior, resolved) in &direct.rows {
+        if !behavior.is_peer() && (resolved as usize) < packages_len {
+            providers.set(resolved as usize);
         }
     }
     for owner in 0..packages_len {
@@ -1103,20 +1064,12 @@ pub(crate) fn plannable_peer_rows(
     rows
 }
 
-#[derive(Default)]
-struct Plan {
-    pins: Vec<Pin>,
-    report: Report,
-    /// Range rows sharing a package a row of `direct` resolves to; see `TransitiveUpdate::deferred`.
-    deferred: Vec<DependencyID>,
-}
-
-/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. A range row on a package that a row of `direct` resolves to is deferred instead, since it belongs with that entry; a dist-tag row keeps following its tag.
+/// `edges` selects the rows to plan; each moves to the newest release its (post-override/catalog) range allows, or follows its dist-tag. A range row on a package that a row of `direct` resolves to is deferred instead, since it belongs with that entry; a dist-tag row keeps following its tag. The moved packages are registered for the summary.
 fn plan_edges(
     manager: &mut PackageManager,
     edges: &DynamicBitSet,
     direct: &DirectDependencies,
-) -> crate::Result<Plan> {
+) -> crate::Result<TransitiveUpdate> {
     let mut instances: Vec<Instance> = Vec::new();
     let mut kept: Vec<PackageID> = Vec::new();
     {
@@ -1215,10 +1168,10 @@ fn plan_edges(
     }
     instances.retain(|inst| !inst.wants.is_empty());
     if instances.is_empty() {
-        return Ok(Plan::default());
+        return Ok(TransitiveUpdate::default());
     }
 
-    let mut plan = Plan::default();
+    let mut plan = TransitiveUpdate::default();
     let shared_with_direct = direct.resolved_packages(manager.lockfile.packages.len());
     instances.retain_mut(|inst| {
         if inst.held || !shared_with_direct.is_set(inst.pkg_id as usize) {
@@ -1236,7 +1189,7 @@ fn plan_edges(
     if instances.is_empty() {
         return Ok(plan);
     }
-    let edges_on = edges_on_instances(manager, &instances, direct);
+    let (followers, direct_rows) = edges_on_instances(manager, &instances, direct);
 
     let ids: Vec<PackageID> = instances.iter().map(|inst| inst.pkg_id).collect();
     let msgs_before = manager.log_mut().msgs.len();
@@ -1248,7 +1201,7 @@ fn plan_edges(
     let buf = manager.lockfile.buffers.string_bytes.as_slice();
     let pkg_names = manager.lockfile.packages.items_name();
 
-    let Plan { pins, report, .. } = &mut plan;
+    let TransitiveUpdate { pins, report, .. } = &mut plan;
     let mut unchecked: Vec<(Box<[u8]>, Box<[u8]>)> = Vec::new();
     // Non-inline prerelease strings of planned versions live in the manifest buffer; copied into the lockfile's below.
     let mut pre_strings: Vec<(core::ops::Range<usize>, u64, Box<[u8]>)> = Vec::new();
@@ -1276,7 +1229,8 @@ fn plan_edges(
         let manifest: &PackageManifest = manifest;
         let manifest_buf: &[u8] = &manifest.string_buf;
         let rows_before = report.rows.len();
-        let planned: Vec<Option<Planned>> = inst
+        // Per want: (version, pin target (`None` re-resolves through the dist-tag), `later` hint).
+        let planned: Vec<Option<(Semver::Version, Option<Semver::Version>, Box<[u8]>)>> = inst
             .wants
             .iter()
             .map(|want| {
@@ -1287,11 +1241,7 @@ fn plan_edges(
                         .unwrap()
                         .map(|found| found.version)
                         .filter(|&v| v.order(inst.current, manifest_buf, buf) == Ordering::Greater)
-                        .map(|v| Planned {
-                            v,
-                            to: Some(v),
-                            later: later_than(manifest, v, min_age, excludes),
-                        })
+                        .map(|v| (v, Some(v), later_than(manifest, v, min_age, excludes)))
                 } else {
                     let tag = want.version.dist_tag().tag.slice(buf);
                     manifest
@@ -1299,15 +1249,11 @@ fn plan_edges(
                         .unwrap()
                         .map(|found| found.version)
                         .filter(|&v| v.order(inst.current, manifest_buf, buf) != Ordering::Equal)
-                        .map(|v| Planned {
-                            v,
-                            to: None,
-                            later: Box::default(),
-                        })
+                        .map(|v| (v, None, Box::default()))
                 }
             })
             .collect();
-        let edge_wants: Vec<(DependencyID, Option<usize>)> = edges_on.followers[inst_i]
+        let edge_wants: Vec<(DependencyID, Option<usize>)> = followers[inst_i]
             .iter()
             .map(|&edge| {
                 let owner = inst
@@ -1320,7 +1266,7 @@ fn plan_edges(
         // Rows landing back on `current` are stayers the redirect can still carry; the first moved row's landing is the instance's only direct redirect target (`redirect` is first-wins over `moved_pairs`, both in owner order).
         let mut direct_stayers: Vec<DependencyID> = Vec::new();
         let mut direct_landing: Option<(Semver::Version, bool)> = None;
-        for &(dep_id, latest, keep, res_slot) in &edges_on.direct[inst_i] {
+        for &(dep_id, latest, keep, res_slot) in &direct_rows[inst_i] {
             let Some((landing, in_manifest)) = direct_row_landing(
                 &manager.lockfile,
                 manifest,
@@ -1344,17 +1290,17 @@ fn plan_edges(
         loop {
             let mut changed = false;
             for w in 0..inst.wants.len() {
-                let Some(plan) = &planned[w] else {
+                let Some((v, Some(_), _)) = &planned[w] else {
                     continue;
                 };
-                if held_wants[w] || plan.to.is_none() {
+                if held_wants[w] {
                     continue;
                 }
                 // The redirect carries every remaining edge toward the FIRST pinned want's target (dist-tag pins included).
                 let redirect_v = (0..inst.wants.len())
                     .find(|&i| !held_wants[i] && planned[i].is_some())
-                    .and_then(|i| planned[i].as_ref().map(|plan| plan.v))
-                    .unwrap_or(plan.v);
+                    .and_then(|i| planned[i].as_ref())
+                    .map_or(*v, |plan| plan.0);
                 if forks_surviving_instance(
                     &manager.lockfile,
                     inst,
@@ -1376,13 +1322,13 @@ fn plan_edges(
             }
         }
         for (w, want) in inst.wants.iter().enumerate() {
-            let Some(plan) = &planned[w] else {
+            let Some((v, to, later)) = &planned[w] else {
                 continue;
             };
             if held_wants[w] {
                 continue;
             }
-            let (v, to) = (plan.v, plan.to);
+            let (v, to) = (*v, *to);
             if to.is_some() && !v.tag.pre.value.is_inline() {
                 let end = pins.len() + want.dep_ids.len();
                 pre_strings.push((
@@ -1400,7 +1346,7 @@ fn plan_edges(
                 name: Box::from(name),
                 from: text(inst.current.fmt(buf)),
                 to: text(v.fmt(manifest_buf)),
-                later: plan.later.clone(),
+                later: later.clone(),
             });
         }
         if report.rows.len() != rows_before {
@@ -1424,20 +1370,18 @@ fn plan_edges(
     }
 
     sort_dedup_rows(&mut report.rows);
+    register_moved(manager, &plan.report.moved)?;
     Ok(plan)
 }
 
-/// Live rows per planned instance: `followers` move only via the post-resolve redirect; `direct` rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead model)` per `should_update`.
-struct InstanceEdges {
-    followers: Vec<Vec<DependencyID>>,
-    direct: Vec<Vec<(DependencyID, bool, KeepLocked, u32)>>,
-}
+type DirectRows = Vec<(DependencyID, bool, KeepLocked, u32)>;
 
+/// Live rows per planned instance: followers move only via the post-resolve redirect; direct rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead model, slot it resolves to)` per `should_update`.
 fn edges_on_instances(
     manager: &mut PackageManager,
     instances: &[Instance],
     direct_deps: &DirectDependencies,
-) -> InstanceEdges {
+) -> (Vec<Vec<DependencyID>>, Vec<DirectRows>) {
     struct DirectRow {
         dep_id: DependencyID,
         inst: u32,
@@ -1450,8 +1394,7 @@ fn edges_on_instances(
         npm: bool,
     }
     let mut followers: Vec<Vec<DependencyID>> = vec![Vec::new(); instances.len()];
-    let mut direct: Vec<Vec<(DependencyID, bool, KeepLocked, u32)>> =
-        vec![Vec::new(); instances.len()];
+    let mut direct: Vec<DirectRows> = vec![Vec::new(); instances.len()];
     let mut direct_rows: Vec<DirectRow> = Vec::new();
     {
         let lockfile: &Lockfile = &manager.lockfile;
@@ -1620,7 +1563,7 @@ fn edges_on_instances(
         };
         direct[row.inst as usize].push((row.dep_id, latest, keep, row.res_slot));
     }
-    InstanceEdges { followers, direct }
+    (followers, direct)
 }
 
 #[derive(Clone, Copy)]
@@ -1678,8 +1621,8 @@ fn snapshot_resolution(
         .find(|&&(pkg, _, _)| pkg == owner)?;
     direct_deps.rows[start as usize..(start + len) as usize]
         .iter()
-        .find(|row| row.name_hash == name_hash && row.behavior == behavior)
-        .map(|row| row.resolved)
+        .find(|row| row.0 == name_hash && row.1 == behavior)
+        .map(|row| row.2)
 }
 
 /// Mirrors `should_update`'s named branch: the row names a requested package and sits in the update scope.
@@ -1776,7 +1719,7 @@ fn forks_surviving_instance(
     lockfile: &Lockfile,
     inst: &Instance,
     want_index: usize,
-    planned: &[Option<Planned>],
+    planned: &[Option<(Semver::Version, Option<Semver::Version>, Box<[u8]>)>],
     held_wants: &[bool],
     edge_wants: &[(DependencyID, Option<usize>)],
     direct_stayers: &[DependencyID],

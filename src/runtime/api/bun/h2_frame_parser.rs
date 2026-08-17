@@ -1992,7 +1992,7 @@ impl Stream {
             }
             if lf!().len == 0 {
                 // we have an empty frame with means we can just use this frame with a new buffer
-                lf!().buffer = vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME];
+                lf!().buffer = Vec::with_capacity(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
             }
             let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME as u32;
             let remaining = max_size - lf!().len;
@@ -2000,8 +2000,7 @@ impl Stream {
                 // ok we can cork frames
                 let consumed_len = (remaining as usize).min(bytes.len());
                 let merge = &bytes[0..consumed_len];
-                let len = lf!().len as usize;
-                lf!().buffer[len..len + consumed_len].copy_from_slice(merge);
+                lf!().buffer.extend_from_slice(merge);
                 lf!().len += u32::try_from(consumed_len).expect("int cast");
                 bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
@@ -2044,7 +2043,7 @@ impl Stream {
             end_stream
         );
 
-        let mut frame = PendingFrame {
+        let frame = PendingFrame {
             end_stream,
             len: u32::try_from(bytes.len()).expect("int cast"),
             offset: 0,
@@ -2052,7 +2051,10 @@ impl Stream {
             buffer: if bytes.is_empty() {
                 Vec::new()
             } else {
-                vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME]
+                // Full-frame capacity so later writes cork into this frame without reallocating.
+                let mut buffer = Vec::with_capacity(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                buffer.extend_from_slice(bytes);
+                buffer
             },
             callback: if callback.is_callable() {
                 StrongOptional::create(callback, &global_this)
@@ -2061,7 +2063,6 @@ impl Stream {
             },
         };
         if !bytes.is_empty() {
-            frame.buffer[0..bytes.len()].copy_from_slice(bytes);
             global_this.vm().deprecated_report_extra_memory(bytes.len());
         }
         bun_output::scoped_log!(H2FrameParser, "dataFrame enqueued {}", frame.len);

@@ -991,7 +991,6 @@ pub struct JsonTape {
     prop_value_locs: Vec<crate::Loc, TapeAlloc>,
     item_locs: Vec<crate::Loc, TapeAlloc>,
     str_chunks: Vec<Vec<u8, TapeAlloc>, TapeAlloc>,
-    str_used: usize,
     pub encoding: StrEncoding,
 }
 
@@ -1014,7 +1013,6 @@ impl JsonTape {
             prop_value_locs: Vec::new_in(alloc),
             item_locs: Vec::new_in(alloc),
             str_chunks: Vec::new_in(alloc),
-            str_used: 0,
             encoding: StrEncoding::Utf8,
         }
     }
@@ -1061,7 +1059,7 @@ impl JsonTape {
         (first, rows.len() as u32)
     }
 
-    /// Copy decoded string bytes into the tape; chunks never move once handed out.
+    /// Copy decoded string bytes into the tape; chunks grow only within capacity and so never move.
     pub fn alloc_str(&mut self, bytes: &[u8]) -> Str {
         self.alloc_str_join(bytes, b"")
     }
@@ -1072,26 +1070,21 @@ impl JsonTape {
         let fits = self
             .str_chunks
             .last()
-            .is_some_and(|c| c.len() - self.str_used >= len);
+            .is_some_and(|c| c.capacity() - c.len() >= len);
         if !fits {
             let cap = len.max(Self::STR_CHUNK);
-            let mut chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
-            chunk.resize(cap, 0);
+            let chunk: Vec<u8, TapeAlloc> = Vec::with_capacity_in(cap, self.alloc());
             self.str_chunks.push(chunk);
-            self.str_used = 0;
         }
         let chunk = self.str_chunks.last_mut().expect("chunk pushed above");
-        let out = &mut chunk[self.str_used..self.str_used + len];
+        let start = chunk.len();
         if len <= 32 {
-            for (o, &c) in out.iter_mut().zip(a.iter().chain(b)) {
-                *o = c;
-            }
+            chunk.extend(a.iter().chain(b));
         } else {
-            out[..a.len()].copy_from_slice(a);
-            out[a.len()..].copy_from_slice(b);
+            chunk.extend_from_slice(a);
+            chunk.extend_from_slice(b);
         }
-        self.str_used += len;
-        Str::new(out)
+        Str::new(&chunk[start..])
     }
 
     /// The row buffers, for a reader that resolves spans itself.

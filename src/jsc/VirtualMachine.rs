@@ -4977,10 +4977,8 @@ impl VirtualMachine {
                 return bun_sys::Result::Err(err);
             }
         };
-        // Stored exactly as `getcwd` returned it (no trailing separator), the same
-        // shape `FileSystem::init` stores at startup. `getcwd` returns at most
-        // `MAX_PATH_BYTES - 1` bytes, so the NUL always fits; a separator plus the
-        // NUL would not.
+        // No trailing separator, matching the shape `FileSystem::init` stores at
+        // startup; `getcwd` fills at most `MAX_PATH_BYTES - 1` bytes, so the NUL fits.
         fs.top_level_dir_buf[..into_cwd_len].copy_from_slice(&buf[..into_cwd_len]);
         fs.top_level_dir_buf[into_cwd_len] = 0;
         // SAFETY: `top_level_dir_buf` is a process-lifetime field of the

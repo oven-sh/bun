@@ -1553,11 +1553,15 @@ fn push_store_entry_names(
 ) {
     let pkg_res = lockfile.packages.items_resolution();
     let node_pkg_ids = store.nodes.items_pkg_id();
+    let entry_nested_folder = store.entries.items_nested_folder();
     names.reserve(store.entries.len());
     let mut name: Vec<u8> = Vec::new();
     for (entry_idx, node_id) in store.entries.items_node_id().iter().enumerate() {
         let pkg_id = node_pkg_ids[node_id.get() as usize] as usize;
-        if pkg_res[pkg_id].tag == ResolutionTag::Workspace || !wanted.is_set(pkg_id) {
+        if pkg_res[pkg_id].tag == ResolutionTag::Workspace
+            || entry_nested_folder[entry_idx]
+            || !wanted.is_set(pkg_id)
+        {
             continue;
         }
         name.clear();

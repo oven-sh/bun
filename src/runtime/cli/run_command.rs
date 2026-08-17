@@ -1413,6 +1413,10 @@ impl Run<'_> {
             }
         }
 
+        // A host that embeds the runtime (see `crate::embed`) gets its
+        // message surface on the main VM before the entry script runs.
+        crate::embed::install(vm);
+
         match vm.load_entry_point(entry) {
             Ok(promise) => {
                 // SAFETY: `promise` is a live GC cell returned by the module loader.

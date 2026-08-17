@@ -928,3 +928,82 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+// A lookup that threw used to leave its exception pending for the rest of the
+// property walk, and a throwing getPrototypeOf trap was read as an object.
+// Both took the process down, so each case runs in a subprocess.
+describe.concurrent("property lookups that throw while formatting", () => {
+  async function runFixture(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, , exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout), exitCode };
+  }
+
+  it("skips a prototype Proxy property whose get trap throws", async () => {
+    const { stdout, exitCode } = await runFixture(`
+      const proto = new Proxy({}, {
+        ownKeys: () => ["a", "b", "c"],
+        getOwnPropertyDescriptor: () => ({ value: 0, configurable: true, enumerable: true, writable: true }),
+        get(target, key) {
+          if (key === "b") throw new Error("no b");
+          return key === "a" || key === "c" ? key : undefined;
+        },
+      });
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        a: "a",
+        c: "c",
+      }"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  it("stops at a prototype Proxy whose getPrototypeOf trap throws", async () => {
+    const { stdout, exitCode } = await runFixture(`
+      const proto = new Proxy({}, {
+        ownKeys: () => ["a"],
+        getOwnPropertyDescriptor: () => ({ value: 0, configurable: true, enumerable: true, writable: true }),
+        get: (target, key) => (key === "a" ? 1 : undefined),
+        getPrototypeOf() { throw new Error("no prototype"); },
+      });
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        a: 1,
+      }"
+    `);
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps going after a lazy property fails to initialize near the stack limit", async () => {
+    // Bun.$ is the first entry in Bun's property table and runs JS to build
+    // itself, so looking it up right after a stack overflow throws. The
+    // entries after it must still be formatted, and it must still work later.
+    const { stdout, exitCode } = await runFixture(`
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch (e) {
+          if (deep === undefined) deep = Bun.inspect(Bun);
+        }
+      }
+      recurse();
+      console.log(deep.includes("Archive:"), deep.includes("version:"));
+      console.log(typeof Bun.$, Bun.inspect(Bun).includes("$:"));
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "true true
+      function true"
+    `);
+    expect(exitCode).toBe(0);
+  });
+});

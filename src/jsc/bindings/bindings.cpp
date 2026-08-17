@@ -5643,10 +5643,12 @@ restart:
                 }
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
-                if (!object->getPropertySlot(globalObject, property, slot))
-                    continue;
-                // Ignore exceptions from "Get" proxy traps.
+                bool hasProperty = object->getPropertySlot(globalObject, property, slot);
+                // Ignore exceptions from "Get" proxy traps and lazy property initializers;
+                // either one reports the property as missing.
                 CLEAR_IF_EXCEPTION(scope);
+                if (!hasProperty)
+                    continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
                     if (property == propertyNames->underscoreProto
@@ -5718,7 +5720,12 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iterating = iterating->getPrototype(globalObject).getObject();
+            JSValue prototype = iterating->getPrototype(globalObject);
+            // Ignore exceptions from Proxy "getPrototypeOf" traps.
+            CLEAR_IF_EXCEPTION(scope);
+            if (!prototype)
+                break;
+            iterating = prototype.getObject();
         }
     }
 

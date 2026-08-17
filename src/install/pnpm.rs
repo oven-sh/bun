@@ -2433,7 +2433,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
 /// Copies the settings pnpm keeps in `pnpm-workspace.yaml` and the `pnpm` key into the fields bun reads, in the
 /// cached root package.json; `package_json_write_back::record_migrated_root` writes it if the lockfile is saved.
 fn update_package_json_after_migration(
-    mut lockfile: Option<&mut Lockfile>,
+    lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     patches: &StringArrayHashMap<Box<[u8]>>,
@@ -2515,7 +2515,7 @@ fn update_package_json_after_migration(
             catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
             catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
             // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
-            if let Some(lockfile) = lockfile.as_deref_mut() {
+            if let Some(lockfile) = lockfile {
                 let catalogs = &mut lockfile.catalogs;
                 catalogs.put_missing_from_pnpm_workspace(
                     catalog_obj,

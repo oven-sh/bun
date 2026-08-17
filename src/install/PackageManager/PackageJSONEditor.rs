@@ -768,19 +768,13 @@ pub(crate) fn record_catalog_originals(
     let string_buf = lockfile.buffers.string_bytes.as_slice();
     let package_resolutions = lockfile.packages.items_resolution();
 
-    for (dep, &package_id) in lockfile
-        .buffers
-        .dependencies
-        .iter()
-        .zip(lockfile.buffers.resolutions.iter())
-    {
-        if dep.version.tag != dependency::Tag::Catalog
-            || (package_id as usize) >= package_resolutions.len()
-        {
+    let dependencies = lockfile.buffers.dependencies.iter();
+    for (dep, &package_id) in dependencies.zip(lockfile.buffers.resolutions.iter()) {
+        let resolution = package_resolutions.get(package_id as usize);
+        let Some(resolution) = resolution.filter(|r| r.tag == resolution::Tag::Npm) else {
             continue;
-        }
-        let resolution = &package_resolutions[package_id as usize];
-        if resolution.tag != resolution::Tag::Npm {
+        };
+        if dep.version.tag != dependency::Tag::Catalog {
             continue;
         }
         let dep_name = dep.name.slice(string_buf);

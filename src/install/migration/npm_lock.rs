@@ -84,7 +84,13 @@ fn parse_bundle(pkg: &E::ObjectJSON) -> Result<Bundle, Error> {
 
 /// The `os` / `cpu` / `libc` of a package-lock entry: npm copies the field
 /// from package.json as-is, so a single string is accepted like npm does.
-fn parse_platform_list<T: Npm::NegatableEnum>(value: &E::JsonValue) -> Result<T, Error> {
+fn parse_platform_list<T: Npm::NegatableEnum>(
+    value: Option<&E::JsonValue>,
+    absent: T,
+) -> Result<T, Error> {
+    let Some(value) = value else {
+        return Ok(absent);
+    };
     let mut list = T::NONE.negatable();
     if let Some(s) = value.as_str() {
         list.apply(s);
@@ -125,14 +131,6 @@ fn path_inside<'k>(dir: &[u8], path: &'k [u8]) -> Option<&'k [u8]> {
     path.strip_prefix(dir)?
         .strip_prefix(b"/")
         .filter(|rest| !rest.is_empty())
-}
-
-/// Folder inside a cache-installed dependent; the installer reads its row relative to the package.
-#[derive(Clone, Copy)]
-struct FolderInDependent<'k> {
-    path: &'k [u8],
-    /// Fallback name, as in a fresh resolve; npm writes these entries without one.
-    alias: &'k [u8],
 }
 
 struct Migrator<'a> {
@@ -314,7 +312,9 @@ impl<'a> Migrator<'a> {
         j: u32,
         via_link: bool,
         hint: DepTag,
-        folder_in_dependent: Option<FolderInDependent<'_>>,
+        // (path below the dependent, dependency name): a folder inside a cache-installed dependent, whose row the
+        // installer reads relative to that package; npm writes these entries nameless, so the name is the fallback.
+        folder_in_dependent: Option<(&[u8], &[u8])>,
     ) -> Result<PackageID, Error> {
         let entries = self.entries;
         let entry = &entries[j as usize];
@@ -330,8 +330,8 @@ impl<'a> Migrator<'a> {
             &ws.name
         } else if let Some(set_name) = pkg.get(b"name").and_then(|n| n.as_str()) {
             set_name
-        } else if let Some(folder) = folder_in_dependent {
-            folder.alias
+        } else if let Some((_, alias)) = folder_in_dependent {
+            alias
         } else {
             package_name_from_path(key)
         };
@@ -356,20 +356,9 @@ impl<'a> Migrator<'a> {
                 lockfile::Origin::Npm
             },
 
-            arch: match pkg.get(b"cpu") {
-                Some(cpu) => parse_platform_list(cpu)?,
-                None => Npm::Architecture::ALL,
-            },
-
-            os: match pkg.get(b"os") {
-                Some(os) => parse_platform_list(os)?,
-                None => Npm::OperatingSystem::ALL,
-            },
-
-            libc: match pkg.get(b"libc") {
-                Some(libc) => parse_platform_list(libc)?,
-                None => Npm::Libc::NONE,
-            },
+            arch: parse_platform_list(pkg.get(b"cpu"), Npm::Architecture::ALL)?,
+            os: parse_platform_list(pkg.get(b"os"), Npm::OperatingSystem::ALL)?,
+            libc: parse_platform_list(pkg.get(b"libc"), Npm::Libc::NONE)?,
 
             man_dir: SemverString::default(),
 
@@ -405,7 +394,7 @@ impl<'a> Migrator<'a> {
             workspace_entry.is_some(),
             via_link,
             hint,
-            folder_in_dependent.map(|folder| folder.path),
+            folder_in_dependent.map(|(path, _)| path),
         )?;
         debug!(
             "{} -> {}",
@@ -802,13 +791,13 @@ impl<'a> Migrator<'a> {
 
                 let version_tag = version.tag;
                 let mut found = self.find_target(key, name);
-                let mut folder_in_dependent: Option<FolderInDependent<'_>> = None;
+                let mut folder_in_dependent = None;
                 if let Some((t, through_link)) = found
                     && !is_local
                 {
                     if through_link && installed_from_cache {
                         folder_in_dependent = path_inside(key, entries[t as usize].key.slice())
-                            .map(|path| FolderInDependent { path, alias: name });
+                            .map(|path| (path, name));
                     }
                     if folder_in_dependent.is_none() && self.is_external_folder(t, through_link) {
                         self.skip_external(t, name);

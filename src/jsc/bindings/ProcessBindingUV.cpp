@@ -153,20 +153,30 @@ JSC_DEFINE_HOST_FUNCTION(jsErrname, (JSGlobalObject * globalObject, JSC::CallFra
 JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
-    auto map = JSC::JSMap::create(vm, globalObject->mapStructure());
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* map = JSC::JSMap::create(vm, globalObject->mapStructure());
 
-    // Inlining each of these via macros costs like 300 KB.
-    const auto putProperty = [](JSC::VM& vm, JSC::JSMap* map, JSC::JSGlobalObject* globalObject, ASCIILiteral name, int value, ASCIILiteral desc) -> void {
-        auto arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
-        // RETURN_IF_EXCEPTION
-        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(name)));
-        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc)));
-        map->set(globalObject, JSC::jsNumber(value), arr);
+    struct Entry {
+        ASCIILiteral name;
+        int value;
+        ASCIILiteral desc;
+    };
+    static constexpr Entry entries[] = {
+#define ENTRY(name, desc) { #name##_s, UV_##name, desc##_s },
+        BUN_UV_ERRNO_MAP(ENTRY)
+#undef ENTRY
     };
 
-#define PUT_PROPERTY(name, desc) putProperty(vm, map, globalObject, #name##_s, UV_##name, desc##_s);
-    BUN_UV_ERRNO_MAP(PUT_PROPERTY)
-#undef PUT_PROPERTY
+    for (const auto& [name, value, desc] : entries) {
+        auto* arr = JSC::constructEmptyArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), 2);
+        RETURN_IF_EXCEPTION(scope, {});
+        arr->putDirectIndex(globalObject, 0, JSC::jsString(vm, String(name)));
+        RETURN_IF_EXCEPTION(scope, {});
+        arr->putDirectIndex(globalObject, 1, JSC::jsString(vm, String(desc)));
+        RETURN_IF_EXCEPTION(scope, {});
+        map->set(globalObject, JSC::jsNumber(value), arr);
+        RETURN_IF_EXCEPTION(scope, {});
+    }
 
     return JSValue::encode(map);
 }

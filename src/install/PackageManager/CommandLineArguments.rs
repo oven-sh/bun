@@ -32,12 +32,8 @@ fn pretty_help(text: &str) {
     Output::pretty(text);
 }
 
-/// `--cpu` / `--os` / `--libc`: each may be repeated, values combine like the
-/// package.json arrays they filter against (`!name` negates, `*` or `any`
-/// allows everything, `none` is accepted as-is). `None` when the flag was not
-/// passed. `Negatable::apply` tolerates unknown names because a package.json
-/// may name a platform this build does not know; on the command line an
-/// unknown name, negated or not, is a typo and fatal.
+/// `--cpu` / `--os` / `--libc`, combined like the package.json arrays they filter. Unlike there
+/// (`Negatable::apply` skips names this build does not know), an unknown name is a typo and fatal.
 fn parse_platform_flag<T: Npm::NegatableEnum>(
     values: &[&[u8]],
     what: &str,

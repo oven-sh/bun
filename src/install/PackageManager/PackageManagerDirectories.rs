@@ -308,11 +308,7 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     };
 
-    // After any fallback, `tempdir` points at `<cache>/.tmp`, not
-    // `$TMPDIR`. `name` must describe the directory `handle` actually points
-    // at: the node-gyp shim is written through `handle` but advertised on
-    // `PATH` via `name`, and a mismatch makes lifecycle scripts fail to find
-    // `node-gyp` (exit 127).
+    // `name` must be the directory `handle` is: the node-gyp shim is written via `handle`, put on PATH via `name`.
     let name: &'static [u8] = if tried_dot_tmp {
         let joined = path::resolve_path::join::<path::platform::Auto>(&[
             manager.cache_directory_path.as_bytes(),
@@ -395,8 +391,7 @@ pub struct CacheDir {
     pub path: Vec<u8>,
 }
 
-/// Fails with `ENAMETOOLONG` when the configured directory (user-controlled, so
-/// possibly longer than any path the OS accepts) does not fit a `PathBuffer`.
+/// `ENAMETOOLONG` when the configured directory does not fit a `PathBuffer`.
 pub fn fetch_cache_directory_path(
     env: &mut DotEnvLoader,
     options: Option<&Options>,
@@ -742,8 +737,7 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
-/// `@T@<hash of the URL>@@@1`, for URL tarballs. `file:` tarballs use
-/// `cached_local_tarball_folder_name_print`.
+/// `@T@<hash of the URL>@@@1`; `file:` tarballs use [`cached_local_tarball_folder_name_print`].
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
@@ -769,17 +763,9 @@ pub fn cached_tarball_folder_name(
     )
 }
 
-/// `@T@sha512-<first 16 digest bytes as hex>@@@1`.
-///
-/// A `file:` tarball's resolution is the path as written in package.json
-/// (`pkg.tgz`), which names a different tarball in every project sharing the
-/// cache, so unlike a URL tarball it is cached under the integrity bun.lock
-/// pins for it: the entry is only reused for the bytes it was extracted from.
-///
-/// Empty when the integrity is not known yet (lockfile written before tarball
-/// integrity was recorded). Callers treat that like a cache miss: extracting the
-/// tarball computes the integrity, and the install callbacks record it in the
-/// lockfile before installing from the entry named after it.
+/// `@T@sha512-<first 16 digest bytes as hex>@@@1`: a `file:` tarball's path names different bytes
+/// in every project sharing the cache, so it is cached under the integrity bun.lock pins instead.
+/// Empty while that integrity is unknown, which callers treat as a cache miss.
 pub fn cached_local_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     integrity: &Integrity,

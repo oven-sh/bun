@@ -33,6 +33,77 @@ bun_output::declare_scope!(bunx, visible);
 
 pub(crate) struct BunxCommand;
 
+/// `flock` on `<bunx cache dir>/.bunx-lock`: exclusive while installing into the shared directory,
+/// probed shared before running out of it. CLOEXEC, so exec'ing the target releases it too.
+struct InstallLock(bun_sys::File);
+
+impl InstallLock {
+    /// Zero-padded seconds, fixed width so a rewrite never has to truncate.
+    const STAMP_LEN: usize = 20;
+
+    /// `None` when the lock cannot be taken, or is held elsewhere and `nonblocking`.
+    fn acquire(
+        bunx_cache_dir: &[u8],
+        mode: bun_sys::FileLockMode,
+        nonblocking: bool,
+    ) -> Option<Self> {
+        let sep = bun_paths::SEP_STR.as_bytes();
+        let path = bun_core::ZBox::from_bytes(&[bunx_cache_dir, sep, b".bunx-lock"].concat());
+        for _ in 0..5 {
+            let fd = bun_sys::openat(Fd::cwd(), &path, O::CREAT | O::RDWR | O::CLOEXEC, 0o600);
+            let file = bun_sys::File::from_fd(fd.ok()?);
+            if !bun_sys::flock(file.fd(), mode, nonblocking).ok()? {
+                return None;
+            }
+            // The stale-tree cleanup deletes the lock file with the directory, and a lock on an
+            // unlinked file guards nothing: keep it only if the path still names the file locked.
+            let Ok(probe) = bun_sys::openat(Fd::cwd(), &path, O::RDONLY | O::CLOEXEC, 0) else {
+                continue;
+            };
+            let probe = bun_sys::File::from_fd(probe);
+            if let (Ok(held), Ok(at_path)) = (bun_sys::fstat(file.fd()), bun_sys::fstat(probe.fd()))
+            {
+                if held.st_ino == at_path.st_ino && held.st_dev == at_path.st_dev {
+                    return Some(Self(file));
+                }
+            }
+        }
+        None
+    }
+
+    /// Whether another `bun x` is installing into `bunx_cache_dir` right now (its tree is partial).
+    fn install_in_progress(bunx_cache_dir: &[u8]) -> bool {
+        let busy = Self::acquire(bunx_cache_dir, bun_sys::FileLockMode::Shared, true).is_none();
+        if busy {
+            bun_output::scoped_log!(
+                bunx,
+                "install in progress for {}, waiting",
+                BStr::new(bunx_cache_dir)
+            );
+        }
+        busy
+    }
+
+    /// Whether the previous exclusive holder finished installing at or after `since`.
+    fn installed_since(&self, since: i64) -> bool {
+        let mut stamp = [0u8; Self::STAMP_LEN];
+        matches!(
+            bun_sys::pread(self.0.fd(), &mut stamp, 0),
+            Ok(Self::STAMP_LEN)
+        ) && bun_core::fmt::parse_unsigned::<i64>(&stamp, 10).is_ok_and(|done| done >= since)
+    }
+
+    /// Stamps the completion time (the last write before the lock goes) and releases the lock.
+    fn release_after_install(lock: &mut Option<Self>) {
+        let Some(lock) = lock.take() else { return };
+        let stamp = format!("{:01$}", bun_core::time::timestamp(), Self::STAMP_LEN);
+        // Best effort: without a stamp, waiters reinstall.
+        if let Err(err) = bun_sys::pwrite(lock.0.fd(), stamp.as_bytes(), 0) {
+            bun_output::scoped_log!(bunx, "failed to record install completion: {}", err);
+        }
+    }
+}
+
 /// bunx-specific options parsed from argv.
 //
 // Invariant: string fields borrow from `argv`, which is process-lifetime —
@@ -473,16 +544,10 @@ impl BunxCommand {
 
             if is_stale {
                 let _ = target_package_json.close();
-                // Delete only while holding the exclusive lock, so the tree
-                // (lock file included) never vanishes under a process that
-                // is installing into or about to run from it. Contended or
-                // unlockable → skip; the reinstall refreshes the tree. If
-                // delete fails, oh well. Hope installation takes care of it.
-                if let Some(_lock) = Self::lock_cache_dir(
-                    tempdir_name,
-                    bun_sys::FileLockMode::Exclusive,
-                    /* nonblocking */ true,
-                ) {
+                // Not under a process installing into or about to run from it; the reinstall
+                // refreshes it anyway. If delete fails, oh well. Hope installation takes care of it.
+                let mode = bun_sys::FileLockMode::Exclusive;
+                if let Some(_lock) = InstallLock::acquire(tempdir_name, mode, true) {
                     let _ = bun_sys::Dir::cwd().delete_tree(tempdir_name);
                 }
                 return Err(crate::Error::NeedToInstall);
@@ -686,129 +751,6 @@ impl BunxCommand {
     fn exit_with_usage() -> ! {
         crate::cli::command::tag_print_help(Command::Tag::BunxCommand, false);
         Global::exit(1);
-    }
-
-    /// The lock taken on `.bunx-lock` only serializes anything if the path
-    /// still names the file we locked — the stale-tree cleanup deletes the
-    /// whole cache dir, lock file included (Windows included: `bun_sys`
-    /// opens with `FILE_SHARE_DELETE` and deletes with POSIX semantics), so
-    /// a lock on an unlinked file guards nothing. Compare identity via
-    /// `fstat` on the held fd and on a freshly opened probe fd: both map to
-    /// ino/dev on POSIX and NTFS file index/volume serial on Windows.
-    fn lock_file_identity_ok(fd: Fd, path_z: &ZStr) -> bool {
-        let probe = match bun_sys::openat(Fd::cwd(), path_z, O::RDONLY | O::CLOEXEC, 0) {
-            Ok(fd) => fd,
-            Err(_) => return false,
-        };
-        let probe_file = bun_sys::File::from_fd(probe);
-        match (bun_sys::fstat(fd), bun_sys::fstat(probe_file.fd())) {
-            (Ok(held), Ok(on_disk)) => {
-                held.st_ino == on_disk.st_ino && held.st_dev == on_disk.st_dev
-            }
-            _ => false,
-        }
-    }
-
-    /// Width of the zero-padded decimal timestamp stored in the lock file.
-    /// Fixed-width so rewrites never need a truncation.
-    const LOCK_TIMESTAMP_LEN: usize = 20;
-
-    /// After a successful install, the exclusive lock holder records the
-    /// completion time in the lock file so waiters can tell the tree was
-    /// just (re)installed.
-    fn mark_install_completed(lock: &bun_sys::File) {
-        let mut buf = [0u8; Self::LOCK_TIMESTAMP_LEN];
-        let mut cursor: &mut [u8] = &mut buf[..];
-        write!(cursor, "{:020}", bun_core::time::timestamp()).expect("unreachable");
-        // Best-effort: on failure waiters reinstall, so only log it.
-        if let Err(err) = bun_sys::pwrite(lock.fd(), &buf, 0) {
-            bun_output::scoped_log!(bunx, "failed to record install completion: {}", err);
-        }
-    }
-
-    /// Stamp the completion time and release the exclusive lock. The stamp
-    /// must be the last write before release: a waiter that arrived while
-    /// the holder ran its post-install probes compares its own start time
-    /// against it, and an earlier stamp can land in the previous second.
-    fn release_install_lock(install_lock: &mut Option<bun_sys::File>) {
-        if let Some(lock) = install_lock.take() {
-            Self::mark_install_completed(&lock);
-        }
-    }
-
-    /// Whether a concurrent `bun x` finished installing into this directory
-    /// at or after `wait_start`. Rerunning `bun add` then (`--force` for
-    /// dist-tag installs) would mutate the tree out from under the process
-    /// that just started executing it, so the caller skips the install and
-    /// runs the freshly installed tree instead.
-    fn install_completed_while_waiting(lock: &bun_sys::File, wait_start: i64) -> bool {
-        let mut buf = [0u8; Self::LOCK_TIMESTAMP_LEN];
-        match bun_sys::pread(lock.fd(), &mut buf, 0) {
-            Ok(n) if n == buf.len() => {}
-            _ => return false,
-        }
-        let mut ts: i64 = 0;
-        for &b in &buf {
-            if !b.is_ascii_digit() {
-                return false;
-            }
-            ts = match ts
-                .checked_mul(10)
-                .and_then(|v| v.checked_add(i64::from(b - b'0')))
-            {
-                Some(v) => v,
-                None => return false,
-            };
-        }
-        ts >= wait_start
-    }
-
-    /// Opens (creating if needed) `<bunx_cache_dir>/.bunx-lock` and takes an
-    /// advisory lock on it. Returns `None` when the lock can't be acquired
-    /// (including contention in `nonblocking` mode). Dropping the returned
-    /// file releases the lock; the fd is CLOEXEC so exec'ing the target
-    /// binary releases it too.
-    ///
-    /// Concurrent `bun x` processes for the same package share one install
-    /// directory. The exclusive lock serializes installs so they don't
-    /// corrupt each other's node_modules; the shared lock keeps a process
-    /// from executing a tree another process is mutating mid-install.
-    fn lock_cache_dir(
-        bunx_cache_dir: &[u8],
-        mode: bun_sys::FileLockMode,
-        nonblocking: bool,
-    ) -> Option<bun_sys::File> {
-        let mut path = PathBuffer::uninit();
-        let len = {
-            let total = path.len();
-            let mut cursor: &mut [u8] = &mut path[..];
-            write!(
-                cursor,
-                "{dir}{sep}.bunx-lock",
-                dir = BStr::new(bunx_cache_dir),
-                sep = bun_paths::SEP as char,
-            )
-            .ok()?;
-            total - cursor.len()
-        };
-        path[len] = 0;
-        // SAFETY: path[len] == 0 written above
-        let path_z = ZStr::from_buf(&path[..], len);
-
-        for _ in 0..5 {
-            let fd =
-                bun_sys::openat(Fd::cwd(), path_z, O::CREAT | O::RDWR | O::CLOEXEC, 0o600).ok()?;
-            let file = bun_sys::File::from_fd(fd);
-            match bun_sys::flock(fd, mode, nonblocking) {
-                Ok(true) => {}
-                Ok(false) | Err(_) => return None,
-            }
-            if Self::lock_file_identity_ok(fd, path_z) {
-                return Some(file);
-            }
-            // Unlinked while we waited; `file` closes on drop. Reopen.
-        }
-        None
     }
 
     pub(crate) fn exec(ctx: &mut ContextData, argv: &[&'static ZStr]) -> crate::Result<()> {
@@ -1203,7 +1145,6 @@ impl BunxCommand {
                 };
                 if let Some(destination) = dest_or_cache {
                     let out: &[u8] = destination.as_bytes();
-                    let mut cache_read_lock: Option<bun_sys::File> = None;
 
                     // If this directory was installed by bunx, we want to perform cache invalidation on it
                     // this way running `bunx hello` will update hello automatically to the latest version
@@ -1287,26 +1228,9 @@ impl BunxCommand {
                             }
                         }
 
-                        // Another bunx process may be mid-install into this
-                        // shared directory; running now risks a partially
-                        // copied tree. Busy → take the install path, which
-                        // waits for the installer to finish. With
-                        // --no-install the install path is a hard error, so
-                        // keep the old behavior and run what was found.
-                        if !opts.no_install {
-                            cache_read_lock = Self::lock_cache_dir(
-                                bunx_cache_dir,
-                                bun_sys::FileLockMode::Shared,
-                                /* nonblocking */ true,
-                            );
-                            if cache_read_lock.is_none() {
-                                bun_output::scoped_log!(
-                                    bunx,
-                                    "install in progress for {}, waiting",
-                                    BStr::new(bunx_cache_dir)
-                                );
-                                break 'try_run_existing;
-                            }
+                        // The install path waits for it; with --no-install that path is an error.
+                        if !opts.no_install && InstallLock::install_in_progress(bunx_cache_dir) {
+                            break 'try_run_existing;
                         }
                     }
 
@@ -1316,7 +1240,6 @@ impl BunxCommand {
                         BStr::new(destination.as_bytes())
                     );
                     let stored = fs.dirname_store.append_slice(out)?;
-                    drop(cache_read_lock);
                     Run::run_binary(
                         ctx,
                         stored,
@@ -1415,31 +1338,13 @@ impl BunxCommand {
                                         do_cache_bust = true;
                                         break 'try_run_existing;
                                     }
-                                    // Same mid-install guard as the first
-                                    // cache probe.
-                                    let cache_read_lock = if !opts.no_install
+                                    if !opts.no_install
                                         && strings::has_prefix(out, bunx_cache_dir)
+                                        && InstallLock::install_in_progress(bunx_cache_dir)
                                     {
-                                        match Self::lock_cache_dir(
-                                            bunx_cache_dir,
-                                            bun_sys::FileLockMode::Shared,
-                                            /* nonblocking */ true,
-                                        ) {
-                                            Some(lock) => Some(lock),
-                                            None => {
-                                                bun_output::scoped_log!(
-                                                    bunx,
-                                                    "install in progress for {}, waiting",
-                                                    BStr::new(bunx_cache_dir)
-                                                );
-                                                break 'try_run_existing;
-                                            }
-                                        }
-                                    } else {
-                                        None
-                                    };
+                                        break 'try_run_existing;
+                                    }
                                     let stored = fs.dirname_store.append_slice(out)?;
-                                    drop(cache_read_lock);
                                     Run::run_binary(
                                         ctx,
                                         stored,
@@ -1501,20 +1406,11 @@ impl BunxCommand {
             Global::exit(1);
         }
 
-        // Serialize concurrent `bun x` installs into this shared directory.
-        // Without the lock, simultaneous cold-cache spawns of the same
-        // package install into the same node_modules at once and fail with
-        // EEXIST/ENOENT ("failed copying files from cache to destination")
-        // or execute a half-written tree. Held (blocking) through the
-        // install and the post-install bin probes; released right before
-        // exec'ing the target. On failure, fall back to the old unlocked
-        // behavior rather than refusing to run.
+        // Concurrent cold-cache runs of one package share this directory: hold the lock through the
+        // install and the bin probes below, until exec. Unlockable: install without it, as before.
         let install_wait_start = bun_core::time::timestamp();
-        let mut install_lock = Self::lock_cache_dir(
-            bunx_cache_dir,
-            bun_sys::FileLockMode::Exclusive,
-            /* nonblocking */ false,
-        );
+        let mut install_lock =
+            InstallLock::acquire(bunx_cache_dir, bun_sys::FileLockMode::Exclusive, false);
         if install_lock.is_none() {
             bun_output::scoped_log!(
                 bunx,
@@ -1523,11 +1419,9 @@ impl BunxCommand {
             );
         }
 
-        let skip_install = match &install_lock {
-            Some(lock) => Self::install_completed_while_waiting(lock, install_wait_start),
-            None => false,
-        };
-        if skip_install {
+        // The holder we queued behind just installed this tree; `bun add` again (`--force` for a
+        // dist tag) would rewrite it under the process now running out of it.
+        if (install_lock.as_ref()).is_some_and(|lock| lock.installed_since(install_wait_start)) {
             bun_output::scoped_log!(
                 bunx,
                 "concurrent bunx finished installing {}, skipping reinstall",
@@ -1721,7 +1615,7 @@ impl BunxCommand {
             // Bail out to the generic error rather than execute it.
             if Self::is_trusted_cached_binary(destination, uid) {
                 let stored = fs.dirname_store.append_slice(out)?;
-                Self::release_install_lock(&mut install_lock);
+                InstallLock::release_after_install(&mut install_lock);
                 Run::run_binary(
                     ctx,
                     stored,
@@ -1782,7 +1676,7 @@ impl BunxCommand {
                         // Same TOCTOU hardening as the post-install probe above.
                         if Self::is_trusted_cached_binary(destination, uid) {
                             let stored = fs.dirname_store.append_slice(out)?;
-                            Self::release_install_lock(&mut install_lock);
+                            InstallLock::release_after_install(&mut install_lock);
                             Run::run_binary(
                                 ctx,
                                 stored,

@@ -1497,3 +1497,206 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
     });
   },
 });
+
+devTest("modules that failed because of a dependency are evaluated again once the dependency is fixed", {
+  // A failed module rethrows its failure on every later load. Fixing the
+  // dependency only replaces the dependency; the modules that failed with it,
+  // whose bodies never ran, have no import bindings to patch and have to be
+  // evaluated again. One server; each case has its own module graph under a
+  // directory of the same name.
+  framework: minimalFramework,
+  files: {
+    // The route fails together with its rejecting dependency.
+    "rejected/dep.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("dep rejected");
+    `,
+    "routes/rejected.ts": `
+      import { value } from "../rejected/dep";
+      export default function () {
+        return new Response("value: " + value);
+      }
+    `,
+    // `async-mod` fails along with `dep`. require() refuses it (it has
+    // top-level await); import() evaluates it.
+    "async-mod/dep.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("dep rejected");
+    `,
+    "async-mod/async-mod.ts": `
+      import { value } from "./dep";
+      await 1;
+      export const result = "async-mod: " + value;
+    `,
+    "routes/async-mod.ts": `
+      export default async function () {
+        const results = [];
+        try {
+          results.push("require: " + require("../async-mod/async-mod").result);
+        } catch (e) {
+          results.push("require threw: " + e.message);
+        }
+        try {
+          results.push("import: " + (await import("../async-mod/async-mod")).result);
+        } catch (e) {
+          results.push("import threw: " + e.message);
+        }
+        return Response.json(results);
+      }
+    `,
+    // The route throws because of what its dependency exports.
+    "port/config.ts": `
+      export const port = "not a number";
+    `,
+    "routes/port.ts": `
+      import { port } from "../port/config";
+      if (typeof port !== "number") throw new Error("invalid port: " + port);
+      export default function () {
+        return new Response("port: " + port);
+      }
+    `,
+    // `dep` is imported by one route directly and by the other one through
+    // `shared`. Discovering the failed modules must walk all of `dep`'s
+    // importers, including the ones behind a root that does not accept the
+    // update, rather than stopping at the first such root.
+    "shared/dep.ts": `
+      export const value = "broken";
+    `,
+    "shared/shared.ts": `
+      export { value } from "./dep";
+    `,
+    "routes/shared-index.ts": `
+      import { value } from "../shared/dep";
+      if (value === "broken") throw new Error("index: dep is broken");
+      export default function () {
+        return new Response("index: " + value);
+      }
+    `,
+    "routes/shared-other.ts": `
+      import { value } from "../shared/shared";
+      if (value === "broken") throw new Error("other: dep is broken");
+      export default function () {
+        return new Response("other: " + value);
+      }
+    `,
+    // `dep` is already recorded as failed (by /failed-first) when /failed loads
+    // it. Loading a failed module rethrows its failure right away; the route
+    // still has to be recorded as one of its importers, or fixing `dep` cannot find it.
+    "failed/dep.ts": `
+      export const value = "unreachable";
+      throw new Error("dep threw");
+    `,
+    "routes/failed-first.ts": `
+      export default async function () {
+        const { value } = await import("../failed/dep");
+        return new Response("first: " + value);
+      }
+    `,
+    "routes/failed.ts": `
+      const { value } = require("../failed/dep");
+      export default function () {
+        return new Response("failed: " + value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/rejected").expectErrorPage("dep rejected");
+    await dev.fetch("/rejected").expectErrorPage("dep rejected");
+    await dev.write(
+      "rejected/dep.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    await dev.fetch("/rejected").equals("value: fixed");
+
+    const cannotRequire = `require threw: Cannot require "async-mod/async-mod.ts" because "async-mod/async-mod.ts" uses top-level await, but 'require' is a synchronous operation.`;
+    expect(await dev.fetch("/async-mod").json()).toStrictEqual([cannotRequire, "import threw: dep rejected"]);
+    await dev.write(
+      "async-mod/dep.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    // The update evaluated async-mod again (it sits between the fixed
+    // dependency and the route), so it is loaded by the time the route runs.
+    expect(await dev.fetch("/async-mod").json()).toStrictEqual([
+      "require: async-mod: fixed",
+      "import: async-mod: fixed",
+    ]);
+
+    await dev.fetch("/port").expectErrorPage("invalid port: not a number");
+    // Still broken: the route is evaluated against the new dependency and
+    // reports the new failure, not the remembered one.
+    await dev.write("port/config.ts", `export const port = "still not a number";`);
+    await dev.fetch("/port").expectErrorPage("invalid port: still not a number");
+    await dev.write("port/config.ts", `export const port = 3000;`);
+    await dev.fetch("/port").equals("port: 3000");
+    // Once loaded, the route takes further updates as a regular importer.
+    await dev.write("port/config.ts", `export const port = 3001;`);
+    await dev.fetch("/port").equals("port: 3001");
+
+    await dev.fetch("/shared-index").expectErrorPage("index: dep is broken");
+    await dev.fetch("/shared-other").expectErrorPage("other: dep is broken");
+    await dev.write("shared/dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/shared-index").equals("index: fixed");
+    await dev.fetch("/shared-other").equals("other: fixed");
+
+    await dev.fetch("/failed-first").expectErrorPage("dep threw");
+    await dev.fetch("/failed").expectErrorPage("dep threw");
+    await dev.write("failed/dep.ts", `export const value = "fixed";`);
+    await dev.fetch("/failed").equals("failed: fixed");
+    await dev.fetch("/failed-first").equals("first: fixed");
+  },
+});
+
+devTest("a module that failed because its dependency rejected is loaded again once the dependency is fixed (client)", {
+  // Same as the server test above, in the browser runtime. The failure is
+  // reached through import() so that it does not take the page down; the
+  // entry point accepts the update so that it is applied without a reload.
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      globalThis.loadLazy = async () => {
+        try {
+          return (await import("./lazy")).value;
+        } catch (e) {
+          return "failed: " + e.message;
+        }
+      };
+      console.log("ready");
+      import.meta.hot.accept();
+    `,
+    "lazy.ts": `
+      import { value } from "./dep";
+      export { value };
+    `,
+    "dep.ts": `
+      await 1;
+      export const value = "unreachable";
+      throw new Error("dep rejected");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("ready");
+    expect(await c.js`loadLazy()`).toBe("failed: dep rejected");
+    expect(await c.js`loadLazy()`).toBe("failed: dep rejected");
+    await dev.write(
+      "dep.ts",
+      `
+        await 1;
+        export const value = "fixed";
+      `,
+    );
+    // The self-accepting entry point is evaluated again by the update.
+    await c.expectMessage("ready");
+    expect(await c.js`loadLazy()`).toBe("fixed");
+  },
+});

@@ -657,13 +657,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     cb: HotAccept;
     key: Id;
   };
+  /** Every module this update replaces with a new copy: disposed of, then evaluated again. */
   const toReload = new Set<HMRModule>();
   const toAccept: ToAccept[] = [];
   let failures: Set<Id> | null = null;
-  const toDispose: HMRModule[] = [];
 
   // Discover all HMR boundaries
-  outer: for (const key of Object.keys(modules)) {
+  for (const key of Object.keys(modules)) {
     // Unref old source maps, and track new ones
     if (side === "client") {
       DEBUG.ASSERT(sourceMapId);
@@ -679,6 +679,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
+    // An importer accepting `key` is reached again from every module walked past on the way up.
+    const accepted = new Set<HotAccept>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
     while (true) {
@@ -686,38 +688,43 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       if (!mod) break;
 
       // Stop propagation if the module is self-accepting
-      let hadSelfAccept = true;
+      let propagates = true;
       if (mod.selfAccept) {
         toReload.add(mod);
         visited.add(mod);
-        hadSelfAccept = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
-        }
+        propagates = false;
       }
       // Modules that mutate data are implied to handle updates via reusing their `data` property
       else if (Object.keys(mod.data).length > 0) {
         mod.selfAccept ??= implicitAcceptFunction;
         toReload.add(mod);
         visited.add(mod);
-        hadSelfAccept = false;
-        if (mod.onDispose) {
-          toDispose.push(mod);
-        }
+        propagates = false;
       }
 
-      // All importers will be visited
-      if (hadSelfAccept && mod.importers.size === 0) {
-        failures ??= new Set();
-        failures.add(key);
-        continue outer;
+      if (propagates) {
+        // Nothing to patch in a failed module: its next load evaluates it again.
+        if (mod.state === State.Error) {
+          mod.state = State.Stale;
+          mod.failure = null;
+        }
+        if (mod.importers.size === 0) {
+          // The server applies the update anyway, so the other importers of `key` are still walked.
+          failures ??= new Set();
+          failures.add(key);
+        } else {
+          // Its body ran against the previous version of `key`.
+          toReload.add(mod);
+        }
       }
 
       for (const importer of mod.importers) {
         const cb = importer.depAccepts?.[key];
         if (cb) {
+          if (accepted.has(cb)) continue;
+          accepted.add(cb);
           toAccept.push({ cb, key });
-        } else if (hadSelfAccept) {
+        } else if (propagates) {
           if (visited.has(importer)) continue;
           visited.add(importer);
           queue.push(importer);
@@ -735,10 +742,11 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     for (const boundary of failures) {
       const path: Id[] = [];
       let current = registry.get(boundary)!;
-      DEBUG.ASSERT(!boundary.endsWith(".html")); // caller should have already reloaded
       DEBUG.ASSERT(current);
       DEBUG.ASSERT(current.selfAccept === null);
       if (current.importers.size === 0) {
+        // Only a route's own .html file is a root module, and the caller already reloads for those.
+        DEBUG.ASSERT(!boundary.endsWith(".html"));
         message += `Module "${boundary}" is a root module that does not self-accept.\n`;
         continue;
       }
@@ -771,43 +779,43 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         }),
       );
       fullReload();
-    } else {
-      console.warn(message);
+      return;
     }
+    // The server has no page to reload; the update is applied as far as it goes.
+    console.warn(message);
   }
 
-  // Dispose all modules
-  if (toDispose.length > 0) {
-    const disposePromises: Promise<void>[] = [];
-    for (const mod of toDispose) {
-      mod.state = State.Stale;
-      for (const fn of mod.onDispose!) {
-        const p = fn(mod.data);
-        if (p && p instanceof Promise) {
-          disposePromises.push(p);
-        }
-      }
-      mod.onDispose = null;
-    }
-    if (disposePromises.length > 0) {
-      await Promise.all(disposePromises);
-    }
-  }
-
-  // Reload all modules
-  const promises: Promise<HMRModule>[] = [];
+  // Dispose all modules. Marking them stale first lets a load that arrives while a dispose callback is pending evaluate the new version.
+  const disposePromises: Promise<void>[] = [];
   for (const mod of toReload) {
     mod.state = State.Stale;
-    const selfAccept = mod.selfAccept;
+    const { onDispose } = mod;
+    if (!onDispose) continue;
+    for (const fn of onDispose) {
+      const p = fn(mod.data);
+      if (p && p instanceof Promise) {
+        disposePromises.push(p);
+      }
+    }
+    mod.onDispose = null;
+  }
+  if (disposePromises.length > 0) {
+    await Promise.all(disposePromises);
+  }
+
+  // Reload all modules. All are marked stale before any is loaded, so the loader evaluates a stale import first.
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
+  for (const mod of toReload) {
+    mod.state = State.Stale;
+    selfAccepts.set(mod, mod.selfAccept);
     mod.selfAccept = null;
     mod.depAccepts = null;
-
+  }
+  const promises: Promise<HMRModule>[] = [];
+  const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];
+  for (const [mod, selfAccept] of selfAccepts) {
     const modOrPromise = loadModuleAsync(mod.id, false, null);
-    if (modOrPromise === mod) {
-      if (selfAccept) {
-        selfAccept(getEsmExports(mod));
-      }
-    } else {
+    if (modOrPromise !== mod) {
       DEBUG.ASSERT(modOrPromise instanceof Promise);
       promises.push(
         (modOrPromise as Promise<HMRModule>).then(mod => {
@@ -817,10 +825,21 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           return mod;
         }),
       );
+    } else if (selfAccept) {
+      if (mod.state === State.Loaded) {
+        selfAccept(getEsmExports(mod));
+      } else {
+        acceptsAfterLoad.push([mod, selfAccept]);
+      }
     }
   }
   if (promises.length > 0) {
     await Promise.all(promises);
+  }
+  for (const [mod, selfAccept] of acceptsAfterLoad) {
+    if (mod.state === State.Loaded) {
+      selfAccept(getEsmExports(mod));
+    }
   }
   for (const mod of toReload) {
     const { selfAccept } = mod;

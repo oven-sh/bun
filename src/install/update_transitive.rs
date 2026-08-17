@@ -15,7 +15,7 @@ use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::{MinimumReleaseAgeExcludes, PackageManifest};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
-use crate::package_manager_real::enqueue::keep_locked_if_ahead;
+use crate::package_manager_real::enqueue::{is_named_update_row, keep_locked_if_ahead};
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
@@ -1385,6 +1385,9 @@ fn edges_on_instances(
 ) -> (Vec<Vec<DependencyID>>, Vec<DirectRows>) {
     struct DirectRow {
         dep_id: DependencyID,
+        /// The effective version's package name.
+        name: Semver::String,
+        name_hash: PackageNameHash,
         inst: u32,
         /// Slot of the instance the row currently resolves to, `u32::MAX` when unresolved or unplanned.
         res_slot: u32,
@@ -1500,6 +1503,8 @@ fn edges_on_instances(
                     {
                         direct_rows.push(DirectRow {
                             dep_id: row as DependencyID,
+                            name: names,
+                            name_hash: row_hash,
                             inst: i as u32,
                             res_slot,
                             locked,
@@ -1540,7 +1545,8 @@ fn edges_on_instances(
                         .is_root_dependency(unsafe { &mut *this_ptr }, row.dep_id)
                 }
         } else {
-            named_row_in_scope(manager, row.dep_id)
+            let dep = &manager.lockfile.buffers.dependencies[row.dep_id as usize];
+            is_named_update_row(manager, dep, row.dep_id, row.name_hash, row.name)
         };
         if !reresolves {
             // The row keeps its locked resolution, so it sits on exactly that instance; only the redirect can carry it.
@@ -1619,25 +1625,6 @@ fn snapshot_resolution(
         .iter()
         .find(|row| row.0 == name_hash && row.1 == behavior)
         .map(|row| row.2)
-}
-
-/// Mirrors `should_update`'s named branch: the row names a requested package and sits in the update scope.
-fn named_row_in_scope(manager: &PackageManager, dep_id: DependencyID) -> bool {
-    let lockfile: &Lockfile = &manager.lockfile;
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let dep = &lockfile.buffers.dependencies[dep_id as usize];
-    let aliased =
-        dedupe::effective_version(lockfile, dep_id, dep).and_then(|version| match version.tag {
-            DependencyVersionTag::Npm => Some(version.npm().name),
-            DependencyVersionTag::DistTag => Some(version.dist_tag().name),
-            _ => None,
-        });
-    let named = manager.is_update_request(dep.name_hash, dep.name.slice(buf))
-        || aliased.is_some_and(|name| {
-            let hash = Semver::string::Builder::string_hash(name.slice(buf));
-            hash != dep.name_hash && manager.is_update_request(hash, name.slice(buf))
-        });
-    named && UpdateScope::of(manager).contains_dependency(lockfile, dep_id)
 }
 
 /// The release the differ lands this row on (with whether it lives in the manifest buffer): the patched capture, or the lookup (`latest` dist-tag for `--latest` target rows, else the row's own range or tag) through `keep_locked_if_ahead`.

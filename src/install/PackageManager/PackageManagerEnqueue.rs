@@ -2224,13 +2224,7 @@ fn get_or_put_resolved_package_with_find_result(
     // borrows `this.lockfile` and `this` at once. Split via raw root.
     let should_update = this.to_update
         && if !this.update_requests.is_empty() {
-            // bun update <name>: every in-scope <name> row (declared or `npm:<name>@…` aliased, see update_scope); other resolutions stay pinned.
-            let string_buf = this.lockfile.buffers.string_bytes.as_slice();
-            (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
-                || (name_hash != dependency.name_hash
-                    && this.is_update_request(name_hash, name.slice(string_buf))))
-                && crate::update_scope::UpdateScope::of(&*this)
-                    .contains_dependency(&this.lockfile, dependency_id)
+            is_named_update_row(this, dependency, dependency_id, name_hash, name)
         } else if let Some(targets) = this.update_target_workspaces.as_deref() {
             // `bun update -r`/`--filter`: direct deps of the selected workspaces; catalogs are root-scoped.
             dependency.version.tag == dependency::version::Tag::Catalog
@@ -2947,6 +2941,22 @@ fn resolved_folder_package(
         is_first_time,
         task: None,
     }))
+}
+
+/// `bun update <name>`: the row names a requested package (declared or `npm:<name>@…` aliased) and is in the update scope; other resolutions stay pinned.
+pub(crate) fn is_named_update_row(
+    this: &PackageManager,
+    dependency: &Dependency,
+    dependency_id: DependencyID,
+    name_hash: PackageNameHash,
+    name: SemverString,
+) -> bool {
+    let string_buf = this.lockfile.buffers.string_bytes.as_slice();
+    (this.is_update_request(dependency.name_hash, dependency.name.slice(string_buf))
+        || (name_hash != dependency.name_hash
+            && this.is_update_request(name_hash, name.slice(string_buf))))
+        && crate::update_scope::UpdateScope::of(this)
+            .contains_dependency(&this.lockfile, dependency_id)
 }
 
 /// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).

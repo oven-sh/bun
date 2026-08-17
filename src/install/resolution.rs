@@ -50,6 +50,24 @@ impl Resolution {
 
         false
     }
+
+    /// Picks the name a `trustedDependencies` entry has to carry to apply to a
+    /// dependency resolving to this package (or anything keyed by that name,
+    /// such as a `(name, hash)` pair): the package's own name for a registry
+    /// package, because a dependent chooses the aliases of its dependencies and
+    /// `"x": "npm:y"` must not inherit trust given to `x`; the declared alias
+    /// for everything else, which has no registry-backed name.
+    ///
+    /// Every reader and writer of trust entries has to pick the same side, or
+    /// an entry written by one command is ignored by the next.
+    #[inline]
+    pub fn trusted_name<T>(&self, by_alias: T, by_pkg_name: T) -> T {
+        if self.tag == Tag::Npm {
+            by_pkg_name
+        } else {
+            by_alias
+        }
+    }
 }
 
 #[repr(C)]

@@ -392,25 +392,13 @@ impl TrustCommand {
                 };
 
                 if let Some(scripts_list) = maybe_scripts_list {
-                    let skip = 'brk: {
-                        if trust_all {
-                            break 'brk false;
-                        }
+                    let trusted_name = resolution
+                        .trusted_name(alias, packages.items_name()[package_id as usize].slice(buf));
 
-                        for package_name_from_cli in &packages_to_trust {
-                            if strings::eql_long(package_name_from_cli, alias, true)
-                                && !lockfile.has_trusted_dependency(
-                                    alias,
-                                    packages.items_name()[package_id as usize].slice(buf),
-                                    resolution,
-                                )
-                            {
-                                break 'brk false;
-                            }
-                        }
-
-                        true
-                    };
+                    let skip = !trust_all
+                        && !packages_to_trust.iter().any(|package_name_from_cli| {
+                            strings::eql_long(package_name_from_cli, trusted_name, true)
+                        });
 
                     let total = scripts_list.total as usize;
                     // even if it is skipped we still add to scripts_at_depth for logging later
@@ -425,7 +413,7 @@ impl TrustCommand {
                     });
 
                     if !skip {
-                        package_names_to_add.put(alias, ())?;
+                        package_names_to_add.put(trusted_name, ())?;
                         scripts_count += total;
                     }
                 }

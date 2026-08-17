@@ -3207,7 +3207,8 @@ fn add_archive_entry(
 enum Substitution<'a> {
     /// `workspace:^`, `workspace:~`, `workspace:*`: the workspace's current version behind that prefix.
     WorkspaceVersion { prefix: &'static str },
-    /// `workspace:1.x` on a dependency that is a workspace, or a directory, `workspace:../core`.
+    /// Another workspace under this dependency's name, `workspace:@acme/core@*`; a directory,
+    /// `workspace:../core`; or `workspace:1.x` on a dependency that is itself a workspace.
     WorkspaceRangeOrDirectory(&'a [u8]),
     /// `catalog:` / `catalog:<name>`: that catalog's entry for the dependency.
     Catalog { catalog_name: &'a [u8] },
@@ -3215,6 +3216,7 @@ enum Substitution<'a> {
 
 impl<'a> Substitution<'a> {
     fn for_spec(spec: &'a [u8]) -> Option<Substitution<'a>> {
+        let spec = bun_install::dependency::trim_literal(spec);
         if let Some(range) = strings::without_prefix_if_possible_comptime(spec, b"workspace:") {
             return Some(match range {
                 b"^" => Substitution::WorkspaceVersion { prefix: "^" },
@@ -3268,40 +3270,88 @@ fn needs_workspace_manifests(package_json: Expr) -> bool {
     needed
 }
 
-/// Directory first: `"pkg1": "workspace:../pkg1"` reads both ways; only a directory has a version.
+/// Alias first, as the installer reads it; directory before range, since only a directory has a version.
 fn publish_spec_for_workspace_range_or_directory(
     manifests: &WorkspaceManifests,
     package_dir: &[u8],
     dependency_name: &[u8],
     spec: &[u8],
 ) -> Result<Vec<u8>, String> {
-    let Some(workspace_name) = manifests.workspace_name_at_path(package_dir, spec) else {
-        // `workspace:<name>@<range>` installs workspace `<name>` under `dependency_name`.
-        let is_alias = strings::last_index_of_char(spec, b'@')
-            .is_some_and(|at| at > 0 && manifests.has_workspace(&spec[..at]));
-        if manifests.has_workspace(dependency_name) || is_alias {
-            return Ok(spec.to_vec());
-        }
-        return Err(format!(
-            "\"{}\" has no workspace named \"{}\" and no workspace in the directory \"{}\"",
-            bstr::BStr::new(manifests.root_package_json_path()),
-            bstr::BStr::new(dependency_name),
-            bstr::BStr::new(spec),
+    let alias = split_workspace_alias(spec);
+    if let Some((workspace_name, range)) = alias.filter(|(name, _)| manifests.has_workspace(name)) {
+        let range = strings::trim(range, &strings::WHITESPACE_CHARS);
+        // The installer links an empty range like `*`.
+        let prefix = match range {
+            b"" | b"*" => Some(""),
+            b"^" => Some("^"),
+            b"~" => Some("~"),
+            _ => None,
+        };
+        let Some(prefix) = prefix else {
+            return Ok(publish_workspace(
+                dependency_name,
+                workspace_name,
+                bstr::BStr::new(range),
+            ));
+        };
+        let Some(version) = manifests.workspace_version(workspace_name) else {
+            return Err(format!(
+                "the package.json of workspace \"{}\" has no version",
+                bstr::BStr::new(workspace_name),
+            ));
+        };
+        return Ok(publish_workspace(
+            dependency_name,
+            workspace_name,
+            format_args!("{prefix}{version}"),
         ));
+    }
+    if let Some(workspace_name) = manifests.workspace_name_at_path(package_dir, spec) {
+        let Some(version) = manifests.workspace_version(workspace_name) else {
+            return Err(format!(
+                "the package.json of workspace \"{}\" in the directory \"{}\" has no version",
+                bstr::BStr::new(workspace_name),
+                bstr::BStr::new(spec),
+            ));
+        };
+        return Ok(publish_workspace(dependency_name, workspace_name, version));
+    }
+    if alias.is_none() && manifests.has_workspace(dependency_name) {
+        return Ok(spec.to_vec());
+    }
+    Err(format!(
+        "\"{}\" has no workspace named \"{}\" and no workspace in the directory \"{}\"",
+        bstr::BStr::new(manifests.root_package_json_path()),
+        bstr::BStr::new(alias.map_or(dependency_name, |(workspace_name, _)| workspace_name)),
+        bstr::BStr::new(spec),
+    ))
+}
+
+/// `<name>@<range>` of `workspace:<name>@<range>`, which installs workspace `<name>` under the
+/// dependency's name. `<name>` may be scoped, so it ends at the last `@`; what a directory such as
+/// `../@scope/pkg` leaves in front of its last `@` is not a package name, so that is not an alias.
+fn split_workspace_alias(spec: &[u8]) -> Option<(&[u8], &[u8])> {
+    let at = strings::last_index_of_char(spec, b'@').filter(|at| *at > 0)?;
+    let (name, range) = (&spec[..at], &spec[at + 1..]);
+    let is_package_name = match bun_install::dependency::is_scoped_package_name(name) {
+        Ok(true) => true,
+        Ok(false) => !strings::contains_char(name, b'/'),
+        Err(_) => false,
     };
-    let Some(version) = manifests.workspace_version(workspace_name) else {
-        return Err(format!(
-            "the package.json of workspace \"{}\" in the directory \"{}\" has no version",
-            bstr::BStr::new(workspace_name),
-            bstr::BStr::new(spec),
-        ));
-    };
-    Ok(if workspace_name == dependency_name {
-        format!("{version}").into_bytes()
+    is_package_name.then_some((name, range))
+}
+
+/// The version itself under the workspace's own name, otherwise the `npm:` alias pnpm publishes too.
+fn publish_workspace(
+    dependency_name: &[u8],
+    workspace_name: &[u8],
+    version: impl fmt::Display,
+) -> Vec<u8> {
+    if workspace_name == dependency_name {
+        version.to_string().into_bytes()
     } else {
-        // What pnpm publishes too: the alias installs the workspace's package under this name.
         format!("npm:{}@{version}", bstr::BStr::new(workspace_name)).into_bytes()
-    })
+    }
 }
 
 /// Edits `json.root` in place (`bun publish` sends that tree to the registry) and returns it printed.

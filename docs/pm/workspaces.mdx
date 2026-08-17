@@ -99,6 +99,14 @@ You can also reference a workspace package by the path of its directory. The pat
 "b": "workspace:../pkg-b"     -> "b": "npm:pkg-b@1.0.1"
 ```
 
+To install a workspace package under a different name, put the package name in front of the version: `workspace:<name>@<version>`. Bun publishes these as `npm:` aliases too:
+
+```
+"b": "workspace:pkg-b@*"     -> "b": "npm:pkg-b@1.0.1"
+"b": "workspace:pkg-b@^"     -> "b": "npm:pkg-b@^1.0.1"
+"b": "workspace:pkg-b@1.0.1" -> "b": "npm:pkg-b@1.0.1"
+```
+
 Workspaces have a few major benefits.
 
 - **Split code into logical parts.** If one package relies on another, add it as a dependency in `package.json`. If package `b` depends on `a`, `bun install` installs your local `packages/a` directory into `node_modules` instead of downloading it from the npm registry.

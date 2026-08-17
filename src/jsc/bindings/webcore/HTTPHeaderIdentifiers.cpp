@@ -46,16 +46,29 @@ using StringGetter = JSC::JSString* (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObje
     &HTTPHeaderIdentifiers::name##Identifier,
 #define HTTP_HEADERS_STRING_ARRAY_ENTRIES(literal, name) \
     &HTTPHeaderIdentifiers::name##String,
+#define HTTP_HEADERS_ENUM_ENTRIES(literal, name) HTTPHeaderName::name,
 
-// Indexed by HTTPHeaderName; HTTP_HEADERS_EACH_NAME follows HTTPHeaderNames.in's order.
+// The tables below are indexed by HTTPHeaderName.
+static constexpr HTTPHeaderName headerNameOfEntry[] = {
+    HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ENUM_ENTRIES)
+};
+static constexpr bool entriesFollowHTTPHeaderNameOrder()
+{
+    for (size_t i = 0; i < std::size(headerNameOfEntry); i++) {
+        if (static_cast<size_t>(headerNameOfEntry[i]) != i)
+            return false;
+    }
+    return true;
+}
+static_assert(std::size(headerNameOfEntry) == numHTTPHeaderNames, "HTTP_HEADERS_EACH_NAME must list every HTTPHeaderName");
+static_assert(entriesFollowHTTPHeaderNameOrder(), "HTTP_HEADERS_EACH_NAME must follow the HTTPHeaderName enum order");
+
 static const IdentifierGetter headerIdentifierFields[] = {
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES)
 };
 static const StringGetter headerStringFields[] = {
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_STRING_ARRAY_ENTRIES)
 };
-static_assert(std::size(headerIdentifierFields) == numHTTPHeaderNames);
-static_assert(std::size(headerStringFields) == numHTTPHeaderNames);
 
 // Indexed by HTTP2PseudoHeaderName, generated from the same list.
 static const IdentifierGetter pseudoHeaderIdentifierFields[] = {
@@ -67,6 +80,7 @@ static const StringGetter pseudoHeaderStringFields[] = {
 
 #undef HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES
 #undef HTTP_HEADERS_STRING_ARRAY_ENTRIES
+#undef HTTP_HEADERS_ENUM_ENTRIES
 
 JSC::Identifier& HTTPHeaderIdentifiers::identifierFor(JSC::VM& vm, HTTPHeaderName name)
 {

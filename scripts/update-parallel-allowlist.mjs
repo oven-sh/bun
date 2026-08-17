@@ -138,9 +138,6 @@ console.error(`scanning annotations from ${builds.length} builds (#${Math.min(..
 const flakeCounts = await collectFlakes(builds);
 console.error(`${flakeCounts.size} distinct files flaked or failed in that window`);
 
-// prestart-map.mjs is a hint list for the shard-level service prestart, not a
-// registry of every test that talks to a container, so also treat any file that
-// calls describeWithContainer( as a docker-service test.
 // Files that already failed inside the batch and passed alone. History-based
 // promotion cannot see batch sensitivity for files that never ran in a batch, so
 // this list is what the batch itself taught us; it only ever grows by evidence.
@@ -158,6 +155,9 @@ if (opts["denylist-from-annotations"]) {
   writeFileSync(denylistPath, [...header, ...[...denylist].sort()].join("\n") + "\n");
   console.error(`denylist: ${added.length} file(s) added from batch annotations (${denylist.size} total)`);
 }
+// prestart-map.mjs is a hint list for the shard-level service prestart, not a
+// registry of every test that talks to a container, so also treat any file that
+// calls describeWithContainer( as a docker-service test.
 const dockerPrefixes = Object.keys(dockerPrestartMap);
 const usesContainer = file => /describeWithContainer\s*\(/.test(readFileSync(join(testDir, file), "utf8"));
 const files = listBunTestFiles();

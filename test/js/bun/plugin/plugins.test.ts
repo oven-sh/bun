@@ -803,3 +803,81 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
   expect(exitCode).toBe(0);
 });
+
+describe("virtual modules and onResolve plugins for node: names that are not builtins", () => {
+  async function runWithPreload(preload: string, env: Record<string, string> = {}) {
+    using dir = tempDir("plugin-node-prefix", {
+      "preload.ts": preload,
+      "target.ts": `export default "target";`,
+      "entry.ts": `
+        import direct from "node:provided_by_plugin";
+        console.log("entry:", direct);
+        console.log("require():", require("./required.ts").default);
+        console.log("import():", (await import("./imported.ts")).default);
+      `,
+      "required.ts": `
+        import value from "node:provided_by_plugin";
+        export default value;
+      `,
+      "imported.ts": `export { default } from "node:provided_by_plugin";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // The entry point and require()d files are transpiled on the JS thread; with the concurrent
+  // transpiler disabled, so is everything import()ed. Their static imports must reach the plugin
+  // registry exactly like the imports of concurrently transpiled files do.
+  it.concurrent.each([
+    ["concurrent transpiler", {}],
+    ["concurrent transpiler disabled", { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" }],
+  ])("build.module() is seen by static imports in every kind of file (%s)", async (_, env) => {
+    const result = await runWithPreload(
+      `
+        Bun.plugin({
+          name: "node-prefixed virtual module",
+          setup(build) {
+            build.module("node:provided_by_plugin", () => ({ exports: { default: "virtual" }, loader: "object" }));
+          },
+        });
+      `,
+      env,
+    );
+
+    expect(result).toEqual({
+      stdout: "entry: virtual\nrequire(): virtual\nimport(): virtual\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Registering onResolve moves every file onto the JS thread, so one run covers all three shapes.
+  it.concurrent('onResolve({ namespace: "node" }) is consulted for static imports in every kind of file', async () => {
+    const result = await runWithPreload(`
+      import { join } from "node:path";
+
+      Bun.plugin({
+        name: "node-namespace onResolve",
+        setup(build) {
+          build.onResolve({ filter: /^provided_by_plugin$/, namespace: "node" }, () => ({
+            path: join(import.meta.dir, "target.ts"),
+          }));
+        },
+      });
+    `);
+
+    expect(result).toEqual({
+      stdout: "entry: target\nrequire(): target\nimport(): target\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

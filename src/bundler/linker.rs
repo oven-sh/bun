@@ -3,7 +3,7 @@
 use std::io::Write as _;
 
 use bun_ast::Log;
-use bun_ast::{ImportKind, ImportRecord, ImportRecordFlags, ImportRecordTag};
+use bun_ast::{ImportKind, ImportRecordFlags, ImportRecordTag};
 use bun_collections::HashMap;
 use bun_paths::{self, SEP};
 // two `fs` shapes are in play here. `bun_resolver::fs` (`Fs`) holds
@@ -374,7 +374,6 @@ impl Linker {
 
         let source_dir = file_path.source_dir();
         let mut externals: Vec<u32> = Vec::new();
-        let mut had_resolve_errors = false;
 
         let is_deferred = !result.pending_imports.is_empty();
 
@@ -384,10 +383,8 @@ impl Linker {
             | options::Loader::Js
             | options::Loader::Ts
             | options::Loader::Tsx => {
-                // Iterate by index, take field-disjoint
-                // borrows (`&result.source` + `&mut result.ast.*`) where
-                // needed, and hoist `is_pending_import` (which borrows the
-                // whole `result`) before any `ast` mut borrow.
+                // Iterate by index and hoist `is_pending_import` (which
+                // borrows the whole `result`) before the `ast` mut borrow.
                 let len = result.ast.import_records.as_slice().len();
                 for record_i in 0..len {
                     let record_index = u32::try_from(record_i).expect("int cast");
@@ -395,10 +392,7 @@ impl Linker {
                     let skip_deferred =
                         IS_BUN && is_deferred && !result.is_pending_import(record_index);
 
-                    // Field-split borrow: `source` ⟂ `ast`.
-                    let source = &result.source;
-                    let ast = &mut result.ast;
-                    let import_record = &mut ast.import_records.as_mut_slice()[record_i];
+                    let import_record = &mut result.ast.import_records.as_mut_slice()[record_i];
 
                     if import_record.flags.contains(ImportRecordFlags::IS_UNUSED) || skip_deferred {
                         continue;
@@ -444,21 +438,6 @@ impl Linker {
                             import_record
                                 .flags
                                 .insert(ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
-                            continue;
-                        }
-                        if strings::starts_with(import_record.path.text, b"node:") {
-                            // if a module is not found here, it is not found at
-                            // all so we can just disable it
-                            had_resolve_errors = Self::when_module_not_found::<IS_BUN>(
-                                self.log_mut(),
-                                target,
-                                import_record,
-                                source,
-                            )?;
-
-                            if had_resolve_errors {
-                                return Err(crate::Error::ResolveMessage);
-                            }
                             continue;
                         }
 
@@ -519,86 +498,10 @@ impl Linker {
 
             _ => {}
         }
-        if had_resolve_errors {
-            return Err(crate::Error::ResolveMessage);
-        }
         // Vec drop at scope end frees.
         externals.clear();
         let _ = externals;
         Ok(())
-    }
-
-    // Takes the disjoint pieces explicitly rather than `&mut self` plus
-    // overlapping sub-borrows of `result`.
-    fn when_module_not_found<const IS_BUN: bool>(
-        log: &mut Log,
-        target: BundleTarget,
-        import_record: &mut ImportRecord,
-        source: &bun_ast::Source,
-    ) -> crate::Result<bool> {
-        if import_record
-            .flags
-            .contains(ImportRecordFlags::HANDLES_IMPORT_ERRORS)
-        {
-            import_record.path.is_disabled = true;
-            import_record
-                .flags
-                .insert(ImportRecordFlags::WAS_UNRESOLVED);
-            return Ok(false);
-        }
-
-        if IS_BUN {
-            // make these happen at runtime
-            if import_record.kind == ImportKind::Require
-                || import_record.kind == ImportKind::RequireResolve
-                || import_record.kind == ImportKind::Dynamic
-            {
-                return Ok(false);
-            }
-        }
-
-        if !import_record.path.text.is_empty() && resolver::is_package_path(import_record.path.text)
-        {
-            if target == BundleTarget::Browser && options::is_node_builtin(import_record.path.text)
-            {
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Try setting --target=\"node\"",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    import_record.kind,
-                    bun_ast::Error::ModuleNotFound,
-                );
-            } else {
-                log.add_resolve_error(
-                    Some(source),
-                    import_record.range,
-                    format_args!(
-                        "Could not resolve: \"{}\". Maybe you need to \"bun install\"?",
-                        bstr::BStr::new(import_record.path.text)
-                    ),
-                    import_record.path.text,
-                    import_record.kind,
-                    bun_ast::Error::ModuleNotFound,
-                );
-            }
-        } else {
-            log.add_resolve_error(
-                Some(source),
-                import_record.range,
-                format_args!(
-                    "Could not resolve: \"{}\"",
-                    bstr::BStr::new(import_record.path.text)
-                ),
-                import_record.path.text,
-                import_record.kind,
-                bun_ast::Error::ModuleNotFound,
-            );
-        }
-        Ok(true)
     }
 
     pub(crate) fn generate_import_path(

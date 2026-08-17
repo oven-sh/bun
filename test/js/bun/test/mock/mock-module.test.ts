@@ -7,7 +7,8 @@
 // - Write test for export {foo} from "./foo"
 // - Write test for import {foo} from "./foo"; export {foo}
 
-import { expect, mock, spyOn, test } from "bun:test";
+import { describe, expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -165,4 +166,53 @@ test("mocking a builtin", async () => {
 
   const { readFile } = await import("node:fs/promises");
   expect(await readFile("hello.txt", "utf8")).toBe("hello world");
+});
+
+describe("mocking a node: name that is not a builtin", () => {
+  test("is seen by a static import in a require()d file", () => {
+    mock.module("node:mocked_by_mock_module_test", () => ({ default: "mocked" }));
+
+    expect(require("./node-prefix-import-fixture.ts").default).toBe("mocked");
+  });
+
+  // The entry point and require()d files are transpiled on the JS thread; with the concurrent
+  // transpiler disabled, so is everything import()ed. All of them must consult the mock registry
+  // exactly like files transpiled concurrently do.
+  test.concurrent.each([
+    ["concurrent transpiler", {}],
+    ["concurrent transpiler disabled", { BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER: "1" }],
+  ])("is seen by static imports in the entry point, a require()d file and an import()ed file (%s)", async (_, env) => {
+    using dir = tempDir("mock-module-node-prefix", {
+      "preload.ts": `
+        import { mock } from "bun:test";
+        mock.module("node:mocked_in_preload", () => ({ default: "mocked", named: 1 }));
+      `,
+      "entry.ts": `
+        import direct, { named } from "node:mocked_in_preload";
+        console.log("entry:", direct, named);
+        console.log("require():", require("./required.ts").default);
+        console.log("import():", (await import("./imported.ts")).default);
+      `,
+      "required.ts": `
+        import value from "node:mocked_in_preload";
+        export default value;
+      `,
+      "imported.ts": `export { default } from "node:mocked_in_preload";`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "--preload", "./preload.ts", "entry.ts"],
+      env: { ...bunEnv, ...env },
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "entry: mocked 1\nrequire(): mocked\nimport(): mocked\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
 });

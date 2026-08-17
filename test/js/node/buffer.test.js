@@ -1050,6 +1050,48 @@ for (let withOverridenBufferWrite of [false, true]) {
         expect(buf).toEqual(Buffer.from([0xab, 0, 0, 0]));
       });
 
+      // Like Node.js, two-byte (UTF-16) strings are decoded from the low byte
+      // of each code unit: U+FF41 and U+0141 both act like 'A', while a unit
+      // whose low byte is not a hex digit stops decoding like any other
+      // invalid character.
+      it("hex decoding of two-byte strings uses the low byte of each code unit", () => {
+        expect(Buffer.from("f\uff41", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        expect(Buffer.from("\uff46\uff41", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        expect(Buffer.from("fa\uff41\uff41", "hex")).toStrictEqual(Buffer.from([0xfa, 0xaa]));
+        expect(Buffer.from("f\u0141", "hex")).toStrictEqual(Buffer.from([0xfa]));
+        // U+0130 -> '0', U+3061 -> 'a', U+0131..U+0134 -> '1'..'4'
+        expect(Buffer.from("\u0130\u0130\u3061\u3061", "hex")).toStrictEqual(Buffer.from([0x00, 0xaa]));
+        expect(Buffer.from("\u0131\u0132\u0133\u0134", "hex")).toStrictEqual(Buffer.from([0x12, 0x34]));
+
+        // low byte is not a hex digit: U+0100 -> 0x00, U+0147 -> 'G', U+01FF -> 0xff,
+        // U+D83D (first unit of an emoji) -> '='
+        expect(Buffer.from("\u0100\u0100", "hex").length).toBe(0);
+        expect(Buffer.from("ab\u0147\u0147cd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("ab\u01ff\u01ffcd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("ab\u{1F600}cd", "hex")).toStrictEqual(Buffer.from([0xab]));
+        expect(Buffer.from("\u6d4b\u8bd5ab", "hex").length).toBe(0);
+
+        // write(), hexWrite(), fill() and indexOf() narrow the same way
+        {
+          const b = Buffer.alloc(4, 0xcc);
+          expect(b.write("fa\uff41\uff41\u0147\u0147cd", "hex")).toBe(2);
+          expect(b).toStrictEqual(Buffer.from([0xfa, 0xaa, 0xcc, 0xcc]));
+        }
+        {
+          const b = Buffer.alloc(4, 0xcc);
+          expect(b.hexWrite("\uff46\uff41", 1)).toBe(1);
+          expect(b).toStrictEqual(Buffer.from([0xcc, 0xfa, 0xcc, 0xcc]));
+        }
+        expect(Buffer.alloc(5).fill("fa\uff41\uff41", "hex")).toStrictEqual(
+          Buffer.from([0xfa, 0xaa, 0xfa, 0xaa, 0xfa]),
+        );
+        expect(Buffer.alloc(3, "f\uff41", "hex")).toStrictEqual(Buffer.from([0xfa, 0xfa, 0xfa]));
+        expect(() => Buffer.alloc(2).fill("\u0147\u0147", "hex")).toThrow(
+          expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }),
+        );
+        expect(Buffer.from([0x01, 0xfa, 0xaa]).indexOf("f\uff41\uff41\uff41", 0, "hex")).toBe(1);
+      });
+
       // The hex decoder takes a SIMD path once the input has at least 16 byte
       // pairs and falls back to scalar code for short inputs, vector tails and
       // the block containing the first invalid character. These tests sweep the
@@ -1061,11 +1103,12 @@ for (let withOverridenBufferWrite of [false, true]) {
           if (c >= 0x41 && c <= 0x46) return c - 0x41 + 10;
           return -1;
         };
+        // Like Node's decoder, each code unit is narrowed to its low byte first.
         const referenceHexDecode = (str, maxBytes = Infinity) => {
           const out = [];
           for (let i = 0; i + 1 < str.length && out.length < maxBytes; i += 2) {
-            const hi = hexDigitValue(str.charCodeAt(i));
-            const lo = hexDigitValue(str.charCodeAt(i + 1));
+            const hi = hexDigitValue(str.charCodeAt(i) & 0xff);
+            const lo = hexDigitValue(str.charCodeAt(i + 1) & 0xff);
             if (hi < 0 || lo < 0) break;
             out.push((hi << 4) | lo);
           }
@@ -1116,18 +1159,53 @@ for (let withOverridenBufferWrite of [false, true]) {
           }
         });
 
-        it("treats UTF-16 code units above 0xFF as invalid even when their low byte is a hex digit", () => {
-          // U+0130, U+0141, U+3061, U+FF41 truncate to '0', 'A', 'a', 'A' — the
-          // decoder must reject them rather than decode the truncated byte.
-          const pairs = 64;
-          for (const bad of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
-            for (const pos of [0, 1, 31, 32, 63, 64, 97, 126, 127]) {
+        // 75 pairs: on every target the input spans whole vector blocks (pairs
+        // 0-63), the 128-bit mop-up blocks of wide targets (64-71) and the
+        // scalar tail (72-74). The positions below put the two-byte unit in
+        // each of those regions and on the block boundaries between them.
+        const wideUnitPairs = 75;
+        const wideUnitPositions = [0, 1, 31, 32, 63, 64, 127, 128, 143, 144, 149];
+
+        it("decodes UTF-16 code units above 0xFF from their low byte, like Node", () => {
+          // U+0130, U+0141, U+3061, U+FF41 narrow to '0', 'A', 'a', 'A'.
+          const pairs = wideUnitPairs;
+          for (const wide of ["\u0130", "\u0141", "\u3061", "\uff41"]) {
+            const narrow = String.fromCharCode(wide.charCodeAt(0) & 0xff);
+            for (const pos of wideUnitPositions) {
+              const chars = patternHex(pairs).split("");
+              chars[pos] = wide;
+              const hex = chars.join("");
+              chars[pos] = narrow;
+              const expected = Buffer.from(chars.join(""), "hex");
+              expect(expected.length).toBe(pairs);
+              expect(expected).toEqual(referenceHexDecode(hex));
+
+              expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+              const target = Buffer.alloc(pairs);
+              expect(target.write(hex, "hex")).toBe(pairs);
+              expect(target).toEqual(expected);
+            }
+          }
+        });
+
+        it("stops at a UTF-16 code unit above 0xFF whose low byte is not a hex digit", () => {
+          // U+0100, U+0147, U+01FF, U+3000 narrow to 0x00, 'G', 0xFF, 0x00.
+          const pairs = wideUnitPairs;
+          for (const bad of ["\u0100", "\u0147", "\u01ff", "\u3000"]) {
+            for (const pos of wideUnitPositions) {
               const chars = patternHex(pairs).split("");
               chars[pos] = bad;
               const hex = chars.join("");
               const expected = referenceHexDecode(hex);
               expect(expected.length).toBe(Math.floor(pos / 2));
+
               expect(Buffer.from(hex, "hex")).toEqual(expected);
+
+              const target = Buffer.alloc(pairs, 0xaa);
+              expect(target.write(hex, "hex")).toBe(expected.length);
+              expect(target.subarray(0, expected.length)).toEqual(expected);
+              expect(target.subarray(expected.length)).toEqual(Buffer.alloc(pairs - expected.length, 0xaa));
             }
           }
         });

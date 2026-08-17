@@ -584,8 +584,21 @@ pub struct PackageUpdateInfo {
     pub(crate) original_version_literal: Box<[u8]>,
     // set by the post-install write-back; the install summary still needs the entry
     pub(crate) written_back: bool,
+    /// Registered by `package_json_editor::record_catalog_originals`: the name's `catalog:` rows carry the move, so the install summary reports it through them.
+    pub(crate) catalog_entry: bool,
     pub(crate) original_version_string_buf: Box<[u8]>,
     pub(crate) original_version: Option<Semver::Version>,
+}
+
+impl PackageUpdateInfo {
+    /// `version`'s tag strings live in `buf` (a lockfile string buffer that cleaning rebuilds), so the original keeps its own copy of them.
+    pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
+        let mut tag_buf =
+            vec![0u8; version.tag.pre.len() + version.tag.build.len()].into_boxed_slice();
+        let mut cursor: &mut [u8] = &mut tag_buf;
+        self.original_version = Some(version.clone_into(buf, &mut cursor));
+        self.original_version_string_buf = tag_buf;
+    }
 }
 
 pub struct CatalogUpdateInfo {

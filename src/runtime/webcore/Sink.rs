@@ -562,13 +562,8 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = Self::get_this(global, frame)?;
-
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
-
+        // Option getters can run user JS that closes the sink, so read them
+        // before resolving `this`.
         let config = if frame.arguments_count() > 0 {
             match T::START_TAG {
                 Some(tag) => {
@@ -579,6 +574,12 @@ impl<T: JsSinkType> JSSink<T> {
         } else {
             streams::Start::Empty
         };
+
+        let this = Self::get_this(global, frame)?;
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
 
         match this.sink.start(config) {
             sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),

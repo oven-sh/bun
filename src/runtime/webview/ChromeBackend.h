@@ -317,9 +317,10 @@ for (;;) {
 // Mirror of HostClient but NUL-framed JSON instead of binary. POSIX: one
 // socketpair — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome
 // reads fd 3, writes fd 4; both hit our socket). Adopted into usockets for
-// onData; writes go through the same fd via direct write(). Socketpair not
-// two pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on
-// a pipe — the error was misread as EOF and onClose fired before any data.
+// onData; writes go to the same socket via us_socket_write (see writeRaw for
+// why not a direct write()). Socketpair not two pipes because usockets'
+// bsd_recv calls recv() which fails ENOTSOCK on a pipe — the error was
+// misread as EOF and onClose fired before any data.
 // Windows: two pipes driven by libuv in ChromeProcess.rs; bytes arrive via
 // Bun__Chrome__onPipeData → onData and leave via writeRaw →
 // Bun__Chrome__writePipe. Everything from onData on is shared.

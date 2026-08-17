@@ -862,16 +862,22 @@ impl Endpoints {
         let reply = pipes.reply;
         let self_ptr = bun_core::heap::into_raw(Box::new(ChromeProcess { process, pipes }));
 
+        // Watching before the exit handler is installed is gapless here: on
+        // Windows the exit is delivered by this thread's loop, which does not
+        // run until we return.
+        //
         // SAFETY: `reply` is the live handle now owned by `*self_ptr`, and
         // `self_ptr` is the root pointer of that allocation, so stashing it in
         // the handle for the read callbacks is sound until `WindowsPipes::close`
-        // stops reading.
-        let started = unsafe { (*reply).read_start_ctx::<ChromeProcess>(self_ptr) }
-            .to_result(bun_sys::Tag::listen);
-        // `watch()` only refs the already-active uv_process_t on Windows; it
-        // cannot fail, so read_start is the last fallible step.
+        // stops reading. `process` is live and exclusively ours.
+        let started = unsafe {
+            (*reply)
+                .read_start_ctx::<ChromeProcess>(self_ptr)
+                .to_result(bun_sys::Tag::listen)
+                .and_then(|()| (*process.as_ptr()).watch())
+        };
         if let Err(err) = started {
-            scoped_log!(Chrome, "read_start failed: {}", err);
+            scoped_log!(Chrome, "read_start/watch failed: {}", err);
             // SAFETY: `self_ptr` was never published, so it is still
             // exclusively ours; `process` holds the strong ref taken by
             // to_process. `detach` closes the uv_process_t (no exit handler
@@ -893,9 +899,6 @@ impl Endpoints {
         unsafe {
             let p = process.as_ptr();
             (*p).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
-            if let Err(e) = (*p).watch() {
-                scoped_log!(Chrome, "watch failed: {}", e);
-            }
             // Same weak-handle reasoning as HostProcess: parent exit → Chrome's
             // fd 3 EOFs → DevToolsPipeHandler::Shutdown → exit. dispatchOnExit
             // also kills it via Bun__Chrome__kill.

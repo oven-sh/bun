@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
+import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
@@ -8,7 +8,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join } from "node:path";
 
 // shm_unlink for encoding:"shmem" test cleanup. macOS has no /dev/shm
@@ -151,7 +151,16 @@ const chromePath = findChrome();
 // exists but can't run. Gate on CI + macOS < 15 rather than probing — a real
 // probe needs an async navigate, which adds startup cost on every platform.
 const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
-const it = chromePath && !chromeBroken ? test : test.todo;
+// Edge refuses to run under a Windows service account: as LocalSystem every
+// msedge.exe invocation, even --version, exits with code 234 after ~15ms
+// without printing anything, so spawn-mode ends in "Chrome process closed the
+// pipe". The buildkite agent on the Windows CI images runs as LocalSystem,
+// and a machine account's user name is "<host>$". Run as a normal user (or
+// with BUN_CHROME_PATH pointing at a Chromium) to exercise the Windows
+// transport.
+const edgeRefusesServiceAccount =
+  process.platform === "win32" && /msedge\.exe$/i.test(chromePath ?? "") && userInfo().username.endsWith("$");
+const it = chromePath && !chromeBroken && !edgeRefusesServiceAccount ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote
@@ -1031,22 +1040,38 @@ it("chrome: large evaluate result crosses the pipe", async () => {
   expect(result.at(150_000)).toBe("y");
 });
 
-it("BUN_CHROME_PATH selects the executable", async () => {
-  // Subprocess-isolated — the executable is resolved once per process, on
-  // the first spawn. The env var is the second lookup step (after
-  // backend.path), so a process that has it set never consults $PATH or
-  // the install locations.
+// Both BUN_CHROME_PATH tests are subprocess-isolated: the executable is
+// resolved once per process, on the first spawn. The env var is consulted
+// right after backend.path, before $PATH and the install locations.
+const spawnWithEnv = `
+  const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+  await view.navigate("data:text/html,<body>env</body>");
+  console.log(await view.evaluate("document.body.textContent"));
+  view.close();
+`;
+
+it("BUN_CHROME_PATH wins over auto-detection", async () => {
+  // This machine has a browser that auto-detection would find (that's the
+  // `it` gate), so the only way the constructor can fail here is by honoring
+  // the env var.
+  using dir = tempDir("bun-chrome-path", {});
   await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-      const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
-      await view.navigate("data:text/html,<body>env</body>");
-      console.log(await view.evaluate("document.body.textContent"));
-      view.close();
-      `,
-    ],
+    cmd: [bunExe(), "-e", spawnWithEnv],
+    env: { ...bunEnv, BUN_CHROME_PATH: join(String(dir), "not-a-browser") },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("");
+  expect(stderr).toContain("Failed to spawn Chrome");
+  expect(exitCode).toBe(1);
+});
+
+it("BUN_CHROME_PATH is used as the executable", async () => {
+  // The value is handed to the spawner as-is (no $PATH lookup), so this
+  // covers the absolute-path shape from the bug report on every platform,
+  // including paths with spaces and backslashes on Windows.
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", spawnWithEnv],
     env: { ...bunEnv, BUN_CHROME_PATH: chromePath },
     stderr: "pipe",
   });

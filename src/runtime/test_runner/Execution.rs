@@ -371,8 +371,16 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
-                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
+                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive. This
+                // `&mut` is dead before `this` is touched again.
+                let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+                debug_assert!(sequence.active_entry.is_some());
+                if let Some(completed_entry) = sequence.active_entry {
+                    // A callback that blocked past its deadline completes before the timeout timer can
+                    // fire, so check the deadline here like the synchronous-return path in step_sequence_one.
+                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
+                    let _ = unsafe { completed_entry.as_ref() }.evaluate_timeout(sequence, &now, true);
+                }
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
@@ -980,7 +988,7 @@ fn step_sequence_one(
         };
         // SAFETY: arena-owned entry
         let active_entry = unsafe { &mut *active_entry_ptr.as_ptr() };
-        if active_entry.evaluate_timeout(sequence, now) {
+        if active_entry.evaluate_timeout(sequence, now, false) {
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);
             return Ok(None); // run again
         }
@@ -1044,7 +1052,7 @@ fn step_sequence_one(
             // SAFETY: re-deref after run_test_callback; sequence_ptr still valid (sequences is a
             // Box<[ExecutionSequence]>, never reallocated during execution).
             let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-            let _ = next_item.evaluate_timeout(sequence, now);
+            let _ = next_item.evaluate_timeout(sequence, now, true);
 
             // the result is available immediately; advance the sequence and run again.
             Execution::advance_sequence(buntest_ptr, sequence_ptr, group);

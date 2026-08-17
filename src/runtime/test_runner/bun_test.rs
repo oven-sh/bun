@@ -1943,10 +1943,15 @@ impl ExecutionEntry {
         entry
     }
 
+    /// Records a timeout failure on `sequence` if this entry's deadline has passed. `callback_completed`
+    /// is set when the callback has already finished (returned, settled, or called `done`) and merely
+    /// took too long; the "before its done callback was called" hint is only reported while it is still
+    /// running.
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,
         now: &Timespec,
+        callback_completed: bool,
     ) -> bool {
         if !self.timespec.eql(&Timespec::EPOCH) && self.timespec.order(now) == core::cmp::Ordering::Less {
             // timed out
@@ -1954,13 +1959,14 @@ impl ExecutionEntry {
             let is_test_entry = sequence
                 .test_entry
                 .is_some_and(|p| core::ptr::eq(p.as_ptr().cast_const(), self));
+            let waiting_for_done = self.has_done_parameter && !callback_completed;
             sequence.result = if is_test_entry {
-                if self.has_done_parameter {
+                if waiting_for_done {
                     Execution::Result::FailBecauseTimeoutWithDoneCallback
                 } else {
                     Execution::Result::FailBecauseTimeout
                 }
-            } else if self.has_done_parameter {
+            } else if waiting_for_done {
                 Execution::Result::FailBecauseHookTimeoutWithDoneCallback
             } else {
                 Execution::Result::FailBecauseHookTimeout

@@ -29,7 +29,7 @@ exports[`pnpm-lock.yaml v9 v9 git and userinfo-tarball references migrate: bun.l
 
 exports[`pnpm-lock.yaml v9 snapshot alias whose dep-path version is a file: directory or tarball: bun.lock 1`] = `
 "{
-  "lockfileVersion": 2,
+  "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
     "": {

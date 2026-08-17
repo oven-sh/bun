@@ -54,6 +54,10 @@ Bun v1.2 changed the default lockfile format to the text-based `bun.lock`. To mi
 
 For more on the format, see [the blog post](https://bun.com/blog/bun-lock-text-lockfile).
 
+#### `lockfileVersion`
+
+The `lockfileVersion` field at the top of `bun.lock` records its format version. A new `bun.lock` is written as `lockfileVersion` 1, which every Bun release since v1.2 can read, and re-saving a `lockfileVersion` 1 or 2 lockfile keeps its version. The exception is [nested or version-scoped overrides](/pm/overrides#limitations): while a lockfile contains those it is written as `lockfileVersion` 3, which requires Bun v1.4 or later, and it goes back to 1 once they are removed.
+
 #### Automatic lockfile migration
 
 When you run `bun install` in a project without a `bun.lock`, Bun automatically migrates existing lockfiles:

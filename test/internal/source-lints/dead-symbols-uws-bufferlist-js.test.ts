@@ -148,7 +148,8 @@ test("dead built-in JS helpers do not reappear", () => {
       ["src/js/internal/sql/shared.ts", /^\s+SSLMode,$/m],
       ["src/js/internal/fifo.ts", /\bclear\(\)/],
       ["src/js/internal/assert/assertion_error.ts", /\binterface Diff\b|\benum Operation\b/],
-      ["src/js/node/net.ts", /\blisteningId\b/],
+      // The write-only Server property; the cluster code's local `listeningId` is unrelated.
+      ["src/js/node/net.ts", /this\.listeningId\b/],
       ["src/js/node/util.ts", /node-inspect-extracted/],
       // Bun.fs() and its watcher types no longer exist
       [

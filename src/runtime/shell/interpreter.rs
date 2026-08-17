@@ -2241,6 +2241,14 @@ pub(crate) fn shell_statat(dir: Fd, path_: &bun_core::ZStr) -> bun_sys::Result<b
     }
 }
 
+/// Resolved by the shell (cwd join, or the Windows `*at()` emulation), `""` would name the cwd.
+pub(crate) fn reject_empty_path(path: &[u8], syscall: bun_sys::Tag) -> bun_sys::Result<()> {
+    if path.is_empty() {
+        return Err(bun_sys::Error::from_code(bun_sys::E::ENOENT, syscall));
+    }
+    Ok(())
+}
+
 /// POSIX: `bun_sys::openat` with the error tagged `.with_path(path)`.
 /// Windows: for `O_DIRECTORY` opens, rewrite POSIX-absolute paths via
 /// `shell_get_path` and use `openDirAtWindowsA(.iterable=true)` +
@@ -2252,6 +2260,7 @@ pub(crate) fn shell_openat(
     flags: i32,
     perm: bun_sys::Mode,
 ) -> bun_sys::Result<Fd> {
+    reject_empty_path(path.as_bytes(), bun_sys::Tag::open)?;
     #[cfg(windows)]
     {
         use bun_sys::FdExt;

@@ -4,7 +4,7 @@ use crate::shell::ExitCode;
 use crate::shell::builtin::{Builtin, BuiltinState, IoKind, Kind};
 use crate::shell::interpreter::{
     EventLoopHandle, FlagParser, Interpreter, NodeId, OutputSrc, OutputTask, OutputTaskVTable,
-    ParseFlagResult, ShellTask, parse_flags, unsupported_flag,
+    ParseFlagResult, ShellTask, parse_flags, reject_empty_path, unsupported_flag,
 };
 use crate::shell::io_writer::{ChildPtr, WriterTag};
 use crate::shell::yield_::Yield;
@@ -296,6 +296,10 @@ impl ShellMkdirTask {
 
     fn run_from_thread_pool(this: &mut ShellMkdirTask) {
         use bun_paths::{Platform, platform, resolve_path};
+        if let Err(e) = reject_empty_path(&this.filepath, bun_sys::Tag::mkdir) {
+            this.err = Some(e);
+            return;
+        }
         // We have to give an absolute path to our mkdir implementation for it
         // to work with cwd.
         let filepath: &bun_core::ZStr = if Platform::AUTO.is_absolute(&this.filepath) {

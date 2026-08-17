@@ -6,8 +6,8 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
-import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
+import { bunEnv, bunExe, isPosix, tempDir } from "harness";
+import { existsSync, mkdirSync, readdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
 const TestBuilder = createTestBuilder(import.meta.path);
@@ -329,3 +329,59 @@ test.skipIf(process.platform === "win32")(
     expect(exitCode).toBe(0);
   },
 );
+
+// An empty operand used to stand for the cwd twice over: the refuse-to-remove-
+// the-root check joined it onto the cwd (so in a top-level directory `rm ""`
+// refused to remove the cwd), and on Windows the fd-relative unlink/open
+// emulation resolved it to the cwd itself, so `rm -r ""` emptied the cwd.
+describe.concurrent("rm with an empty operand", () => {
+  const files = { f: "F\n", "sub/inner": "I\n" };
+  const ENOENT = "rm: No such file or directory\n";
+
+  test.each([
+    ['rm ""', { stdout: "", stderr: ENOENT, exitCode: 1 }],
+    ['rm -r ""', { stdout: "", stderr: ENOENT, exitCode: 1 }],
+    ['rm -d ""', { stdout: "", stderr: ENOENT, exitCode: 1 }],
+    ['rm -f ""', { stdout: "", stderr: "", exitCode: 0 }],
+    ['rm -rf ""', { stdout: "", stderr: "", exitCode: 0 }],
+  ])("%s removes nothing", async (command, expected) => {
+    using dir = tempDir("rm-empty-operand", files);
+
+    const { stdout, stderr, exitCode } = await $`${{ raw: command }}`.cwd(String(dir)).quiet();
+
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual(expected);
+    expect(readdirSync(String(dir)).sort()).toEqual(["f", "sub"]);
+    expect(existsSync(path.join(String(dir), "sub", "inner"))).toBeTrue();
+  });
+
+  test("the other operands are still removed when one is empty", async () => {
+    using dir = tempDir("rm-empty-operand-multi", files);
+
+    const { stdout, stderr, exitCode } = await $`rm "" f`.cwd(String(dir)).quiet();
+
+    expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+      stdout: "",
+      stderr: ENOENT,
+      exitCode: 1,
+    });
+    expect(readdirSync(String(dir))).toEqual(["sub"]);
+  });
+
+  // /tmp is a top-level directory, which is where the root check used to trip
+  // on "". Nothing can be removed here: "" names nothing and is the only operand.
+  test.if(isPosix)("is not mistaken for the cwd by the root check in a top-level directory", async () => {
+    const forced = await $`rm -f ""`.cwd("/tmp").quiet();
+    expect({ stdout: forced.stdout.toString(), stderr: forced.stderr.toString(), exitCode: forced.exitCode }).toEqual({
+      stdout: "",
+      stderr: "",
+      exitCode: 0,
+    });
+
+    const plain = await $`rm ""`.cwd("/tmp").quiet();
+    expect({ stdout: plain.stdout.toString(), stderr: plain.stderr.toString(), exitCode: plain.exitCode }).toEqual({
+      stdout: "",
+      stderr: ENOENT,
+      exitCode: 1,
+    });
+  });
+});

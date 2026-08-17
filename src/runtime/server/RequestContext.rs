@@ -2140,7 +2140,7 @@ where
             || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len() == 0);
 
         if !stream.is_locked(global_this) && !is_in_progress {
-            if let Some(comparator) = WebCore::ReadableStream::from_held(stream.value) {
+            if let Some(comparator) = WebCore::ReadableStream::from_js_direct(stream.value) {
                 if core::mem::discriminant(&comparator.ptr) == core::mem::discriminant(&stream.ptr)
                 {
                     stream_log!("is not locked");

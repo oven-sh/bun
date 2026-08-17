@@ -771,7 +771,7 @@ impl Value {
                 let blob_size = blob.size.get();
                 let value = ReadableStream::from_blob_copy_ref(global_this, &blob, blob_size)?;
 
-                let stream = ReadableStream::from_held(value).unwrap();
+                let stream = ReadableStream::from_js_direct(value).unwrap();
                 *self = Value::Locked(PendingValue {
                     readable: webcore::readable_stream::Strong::init(stream, global_this),
                     ..PendingValue::new(global_this)
@@ -1640,7 +1640,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         if let Some(js_ref) = self.js_ref() {
             if let Some(stream) = Self::stream_get_cached(js_ref) {
                 // JS is always source of truth for the stream
-                return ReadableStream::from_held(stream);
+                return ReadableStream::from_js_direct(stream);
             }
         }
         if let Value::Locked(locked) = self.get_body_value() {
@@ -1706,7 +1706,7 @@ pub(crate) trait BodyMixin: BodyOwnerJs + Sized {
         let cloned = 'brk: {
             if let Some(js_ref) = self.js_ref() {
                 if let Some(stream) = Self::stream_get_cached(js_ref) {
-                    let mut readable = ReadableStream::from_held(stream);
+                    let mut readable = ReadableStream::from_js_direct(stream);
                     if let Some(r) = readable.as_mut() {
                         break 'brk self
                             .get_body_value()

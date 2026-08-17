@@ -90,7 +90,7 @@ impl Strong {
     /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
     /// [`ReadableStream::from_js`], which converts arbitrary values).
     pub(crate) fn get(&self) -> Option<ReadableStream> {
-        self.value().and_then(ReadableStream::from_held)
+        self.value().and_then(ReadableStream::from_js_direct)
     }
 
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
@@ -179,8 +179,8 @@ impl ReadableStream {
             return Ok(None);
         }
         let (Some(out_stream1), Some(out_stream2)) = (
-            ReadableStream::from_held(out1),
-            ReadableStream::from_held(out2),
+            ReadableStream::from_js_direct(out1),
+            ReadableStream::from_js_direct(out2),
         ) else {
             return Ok(None);
         };
@@ -191,9 +191,9 @@ impl ReadableStream {
         self.value
     }
 
-    /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_held`.
+    /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
     pub fn reload_tag(&mut self) {
-        *self = ReadableStream::from_held(self.value).unwrap_or(ReadableStream {
+        *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {
             ptr: Source::Invalid,
             value: JSValue::ZERO,
         });
@@ -411,9 +411,9 @@ impl ReadableStream {
         ReadableStream__is(value)
     }
 
-    /// Re-tag a value already known to be a `ReadableStream` (one a handle holds). Pure — no script,
-    /// no exception, no trap poll; `None` only if it is not a stream after all.
-    pub fn from_held(value: JSValue) -> Option<ReadableStream> {
+    /// As [`from_js`](Self::from_js), but only matches a value that already is a `ReadableStream`
+    /// (no async-iterable conversion): pure — no script, no exception, no trap poll.
+    pub fn from_js_direct(value: JSValue) -> Option<ReadableStream> {
         let mut ptr: *mut c_void = core::ptr::null_mut();
         let tag = ReadableStreamTag__taggedStream(value, &mut ptr);
         Self::from_tag(tag, value, ptr)

@@ -252,7 +252,7 @@ describe("url", () => {
 
   describe("pathname setter removes ASCII tab and newline before looking at the leading slash", () => {
     // https://url.spec.whatwg.org/#concept-basic-url-parser removes tab, LF and CR from the value first, so
-    // "\n/x" is the same assignment as "/x". Expected values are Node's. On a host-less URL the unstripped
+    // "\n/x" is the same assignment as "/x". Expected values are Node 26's. On a host-less URL the unstripped
     // value used to reparse as "//evil.com/y", which made evil.com the host.
     test.each<[href: string, value: string, expected: { href: string; host: string; pathname: string }]>([
       ["foo:/a", "\n/evil.com/y", { href: "foo:/evil.com/y", host: "", pathname: "/evil.com/y" }],
@@ -284,7 +284,7 @@ describe("url", () => {
   });
 
   describe("host and hostname setters remove ASCII tab and newline before looking at the value", () => {
-    // Same parser rule as the pathname setter above; expected values are Node's. The host setter used to count
+    // Same parser rule as the pathname setter above; expected values are Node 26's. The host setter used to count
     // the port digits in the raw value, so a tab after the colon dropped or truncated the port, and a value
     // that is only whitespace skipped the empty-value no-op and reparsed "http:///p" with "p" as the host.
     test.each<

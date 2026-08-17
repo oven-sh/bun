@@ -579,6 +579,70 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
   });
 });
 
+// Bun.$ is built lazily the first time it is read, and building it reads process.env. When that throws while
+// Bun.inspect walks the object, only that one property should be left out; the exception used to stay pending
+// and make every later lazy property on the object fail too (and trip an assertion in debug builds).
+it("Bun.inspect skips a lazy property whose initializer throws and still prints the rest", async () => {
+  const code = `
+    Object.defineProperty(process, "env", {
+      get() {
+        throw new Error("nope");
+      },
+    });
+    const names = Object.getOwnPropertyNames(Bun);
+    const printed = new Set();
+    for (const line of Bun.inspect(Bun).split("\\n")) {
+      const match = /^  ([^\\s:]+): /.exec(line);
+      if (match) printed.add(match[1]);
+    }
+    console.log(JSON.stringify(names.filter(name => !printed.has(name))));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: '["$"]\n', stderr: "", exitCode: 0 });
+});
+
+// Inherited properties are printed too, so Proxy traps on a prototype run while the object is being walked.
+// A throwing trap used to leave its exception pending, and the walk then dereferenced the empty value it got
+// back for the next prototype.
+it("Bun.inspect survives Proxy traps on the prototype chain that throw", async () => {
+  const code = `
+    const getThrows = new Proxy({ a: 1, b: 2, c: 3 }, {
+      get(target, key, receiver) {
+        if (key === "a") throw new Error("get trap");
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const getPrototypeOfThrows = new Proxy({ b: 2 }, {
+      getPrototypeOf() {
+        throw new Error("getPrototypeOf trap");
+      },
+    });
+    for (const proto of [getThrows, getPrototypeOfThrows]) {
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(JSON.stringify(Bun.inspect(obj)));
+    }
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({
+    stdout: '"{\\n  own: 0,\\n  b: 2,\\n  c: 3,\\n}"\n' + '"{\\n  own: 0,\\n  b: 2,\\n}"\n',
+    stderr: "",
+    exitCode: 0,
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

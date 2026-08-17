@@ -562,10 +562,13 @@ impl CompressionStreamCoder {
                         }
                         brotli::BrotliDecoderResult::needs_more_output => {}
                         brotli::BrotliDecoderResult::err => {
-                            // SAFETY: `p` is a live decoder; the error string is a
-                            // static C string owned by the brotli library.
+                            // SAFETY: `p` is a live decoder.
+                            let ec = brotli::BrotliDecoderGetErrorCode(unsafe { &*p.as_ptr() });
+                            if ec.is_alloc_failure() {
+                                return Err(CodecError::OutOfMemory);
+                            }
+                            // SAFETY: the error string is a static C string owned by the brotli library.
                             let code = unsafe {
-                                let ec = brotli::BrotliDecoderGetErrorCode(&*p.as_ptr());
                                 core::ffi::CStr::from_ptr(brotli::BrotliDecoderErrorString(ec))
                             };
                             return Err(CodecError::Brotli(

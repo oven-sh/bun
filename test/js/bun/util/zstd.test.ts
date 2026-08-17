@@ -326,14 +326,20 @@ describe("decompressing frames whose size is not known up front", () => {
 // the call has to throw or reject, not take the process down. ASAN's allocation cap makes the
 // failure deterministic: native allocations above CAP_MIB fail, while the JS Buffers the
 // script itself creates are backed by JSC's own allocator and are not affected.
-describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", () => {
+describe.skipIf(!isASAN)("a failed allocation is an error, not a crash", () => {
   const MiB = 1024 * 1024;
   const CAP_MIB = 8;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
-  // An empty frame (magic, descriptor, window descriptor, one empty raw last block) without a content
-  // size and with a 16 MiB window: our output buffer stays small, but zstd itself has to allocate a
-  // window-sized buffer before it can decode anything, and that allocation is what fails under the cap.
+
+  // Two streams whose decoders have to allocate a 16 MiB window (larger than the cap) before they can
+  // produce anything, so it is the codec's own allocation that fails, not one of ours:
+  // an empty zstd frame (magic, descriptor, window descriptor, one empty raw last block) without a
+  // content size, and a brotli stream compressed with a 2^24 byte window.
   const emptyFrameWith16MiBWindow = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, 14 << 3, 0x01, 0x00, 0x00]);
+  const brotliWith16MiBWindow = (input: Uint8Array) =>
+    zlib.brotliCompressSync(input, {
+      params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1, [zlib.constants.BROTLI_PARAM_LGWIN]: 24 },
+    });
 
   // Runs `script` in a child whose native allocations above the cap fail. `inputs` arrive in the
   // child as Buffers in a `inputs` object; the script prints a JSON object, which is returned.
@@ -462,7 +468,8 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
 
   it.concurrent("fetch() decompressing a response body", async () => {
     // The first four bodies decompress to 12 MiB: the gzip trailer's size cannot be reserved up front
-    // and every streaming decoder (zlib, brotli, zstd) fails while growing its output.
+    // and every streaming decoder (zlib, brotli, zstd) fails while growing its output. The two
+    // large-window bodies fail inside the codec instead.
     const zeros = Buffer.alloc(12 * MiB);
     const bodies = {
       gzip: gzipSync(zeros),
@@ -470,10 +477,15 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       deflate: zlib.deflateSync(zeros),
       br: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
       zstd: zstdCompressSync(zeros),
+      "br-large-window": brotliWith16MiBWindow(zeros),
       "zstd-large-window": emptyFrameWith16MiBWindow,
       afterwards: gzipSync(Buffer.from("still works")),
     };
-    const encodings: Record<string, string> = { "zstd-large-window": "zstd", afterwards: "gzip" };
+    const encodings: Record<string, string> = {
+      "br-large-window": "br",
+      "zstd-large-window": "zstd",
+      afterwards: "gzip",
+    };
 
     const results = await runCapped(
       bodies,
@@ -499,8 +511,43 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       deflate: fetchOutOfMemory,
       br: fetchOutOfMemory,
       zstd: fetchOutOfMemory,
+      "br-large-window": fetchOutOfMemory,
       "zstd-large-window": fetchOutOfMemory,
       afterwards: "still works",
+    });
+  });
+
+  it.concurrent("DecompressionStream", async () => {
+    // A stream's own output is produced in small chunks, so only the codecs' window allocations can
+    // fail here; the default-window brotli stream decompresses all 12 MiB to prove that.
+    const zeros = Buffer.alloc(12 * MiB);
+    const streams = {
+      brotli: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
+      brotliLargeWindow: brotliWith16MiBWindow(zeros),
+      zstdLargeWindow: emptyFrameWith16MiBWindow,
+    };
+
+    const results = await runCapped(
+      streams,
+      /* js */ `
+        const decompressedLength = async (bytes, format) => {
+          let length = 0;
+          for await (const chunk of new Response(bytes).body.pipeThrough(new DecompressionStream(format))) {
+            length += chunk.length;
+          }
+          return length;
+        };
+        for (const [name, bytes] of Object.entries(inputs)) {
+          results[name] = await decompressedLength(bytes, name.startsWith("brotli") ? "brotli" : "zstd").catch(describeError);
+        }
+        results.afterwards = await decompressedLength(inputs.brotli, "brotli");
+      `,
+    );
+    expect(results).toEqual({
+      brotli: 12 * MiB,
+      brotliLargeWindow: outOfMemory,
+      zstdLargeWindow: outOfMemory,
+      afterwards: 12 * MiB,
     });
   });
 });

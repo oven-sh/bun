@@ -163,17 +163,13 @@ impl StreamingDecoder {
                 }
                 c::BrotliDecoderResult::err => {
                     self.state = ReaderState::Error;
-                    return Err(match c::BrotliDecoderGetErrorCode(self.brotli_mut()) {
-                        c::BrotliDecoderErrorCode2::ERROR_ALLOC_CONTEXT_MODES
-                        | c::BrotliDecoderErrorCode2::ERROR_ALLOC_TREE_GROUPS
-                        | c::BrotliDecoderErrorCode2::ERROR_ALLOC_CONTEXT_MAP
-                        | c::BrotliDecoderErrorCode2::ERROR_ALLOC_RING_BUFFER_1
-                        | c::BrotliDecoderErrorCode2::ERROR_ALLOC_RING_BUFFER_2
-                        | c::BrotliDecoderErrorCode2::ERROR_ALLOC_BLOCK_TYPE_TREES => {
+                    return Err(
+                        if c::BrotliDecoderGetErrorCode(self.brotli_mut()).is_alloc_failure() {
                             crate::Error::OutOfMemory
-                        }
-                        _ => crate::Error::BrotliDecompressionError,
-                    });
+                        } else {
+                            crate::Error::BrotliDecompressionError
+                        },
+                    );
                 }
                 c::BrotliDecoderResult::needs_more_input => {
                     self.state = ReaderState::Inflating;

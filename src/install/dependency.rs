@@ -555,9 +555,9 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
-/// Names come from untrusted `package.json` / manifest keys and end up as
-/// `node_modules/` directories and in progress and error output, so reject path
-/// escapes and terminal control characters. `@scope/name` stays valid.
+/// A dependency name/alias becomes a directory under `node_modules/`. Names
+/// come from untrusted `package.json` / manifest keys, so reject anything that
+/// could resolve outside that directory, and terminal control characters. `@scope/name` stays valid.
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
     if name.is_empty() || contains_control_character(name) {
         return false;

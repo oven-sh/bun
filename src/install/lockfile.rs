@@ -3159,10 +3159,7 @@ impl Lockfile {
         Ok(digest)
     }
 
-    /// `version_buf` is the buffer `version`'s strings (prerelease/build tags)
-    /// were parsed against. The auto-install resolver passes versions parsed
-    /// from a project's package.json here, so it is not always this lockfile's
-    /// string buffer.
+    /// `version_buf` is what `version`'s tag strings were parsed against (auto-install passes a package.json's).
     pub(crate) fn resolve_package_from_name_and_version(
         &self,
         package_name: &[u8],

@@ -595,9 +595,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         manifest.pkg.public_max_age = timestamp_this_tick.unwrap();
 
-                        // Insert by-value and reborrow below; `insert` may keep
-                        // an extended manifest that arrived in the meantime, in
-                        // which case that is the one written back to disk.
+                        // `insert` may keep an extended manifest that arrived meanwhile; that one is written back.
                         let name_hash = manifest.pkg.name.hash;
                         manager.manifests.insert(name_hash, manifest)?;
 

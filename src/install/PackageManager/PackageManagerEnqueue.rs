@@ -640,10 +640,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     resolution: PackageID,
     install_peer: bool,
     success_fn: SuccessFn,
-    // True for runtime auto-install's root enqueues
-    // (`enqueue_dependency_to_root`): their resolution errors go to `this.log`
-    // instead of propagating. An explicit flag, not a `success_fn` address
-    // comparison: the linker may fold the byte-identical fn bodies.
+    // `enqueue_dependency_to_root` (auto-install): resolution errors go to `this.log` instead of propagating.
+    // A flag rather than a `success_fn` address comparison, which linker folding would break.
     is_root: bool,
 ) -> crate::Result<()> {
     if dependency.behavior.is_optional_peer() {
@@ -764,9 +762,7 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         break 'version dependency.version.clone();
     };
 
-    // Refuse an unsafe alias (the future `node_modules/` folder) or registry
-    // name (the request and the package name) here, before either is fetched
-    // or printed. Empty names are tolerated, as in the tree builder.
+    // Refuse an unsafe alias (a future folder) or registry name before either is fetched or printed; empty is tolerated.
     let invalid_name = {
         let alias = this.lockfile.str(&dependency.name);
         let alias_is_safe = if alias == this.lockfile.str(&dependency.version.literal) {
@@ -1100,10 +1096,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         loaded_manifest = Some(manifest.clone());
 
                                         // If it's an exact package version already living in the cache
-                                        // We can skip the network request, even if it's beyond the caching period.
-                                        // Except when minimum-release-age needs publish times and the cached
-                                        // manifest is abbreviated: its timestamps are all 0, so the age check
-                                        // below would pass any version. Fall through and fetch the extended one.
+                                        // We can skip the network request, even if it's beyond the caching period
+                                        // (unless minimum-release-age needs publish times an abbreviated manifest lacks).
                                         if version.tag == dependency::version::Tag::Npm
                                             && version.npm().version.is_exact()
                                             && (!needs_extended_manifest
@@ -2281,13 +2275,9 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // A peer that is still deferred may only reuse an exact match: which
-    // siblings exist at this point depends on response arrival order, so the
-    // range match waits for the `install_peer` pass, when all of them exist.
+    // A deferred peer may only reuse an exact match: which siblings exist yet depends on arrival
+    // order, so its range match waits for the `install_peer` pass; likewise only regular rows' pins count.
     let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
-    // Which peer rows have landed on a version by any given moment depends on
-    // what has arrived (they bind on sight or in the peer pass), so only
-    // regular rows' pins are recorded (`AppendedFor::pinned`).
     let pins = !behavior.is_peer()
         && version.tag == dependency::version::Tag::Npm
         && version.npm().version.is_exact();
@@ -2307,9 +2297,7 @@ fn get_or_put_resolved_package_with_find_result(
         if pins {
             this.lockfile.mark_pinned_by_reuse(id);
         }
-        // The existing entry may have been created from the abbreviated
-        // manifest (a regular dependency elsewhere in the tree, or a lockfile
-        // written before `libc` was recorded); this manifest knows the libc.
+        // The existing entry may come from an abbreviated manifest or a pre-`libc` lockfile.
         if find_result.package.libc != Npm::Libc::NONE {
             let buf = this.lockfile.buffers.string_bytes.as_slice();
             let same_version = this.lockfile.packages.items_resolution()[id as usize].eql(

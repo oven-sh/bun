@@ -380,7 +380,6 @@ struct Wanted {
 
 struct Row {
     name: Box<[u8]>,
-    /// The removed version.
     from: Box<[u8]>,
     /// Surviving version(s); empty when `from` is dropped outright.
     to: Box<[u8]>,
@@ -621,9 +620,6 @@ fn dedupe_lockfile(lockfile: &mut Lockfile, why: bool) -> Report {
                 let Some(rows) = explains.get(original[dep_id] as usize) else {
                     continue;
                 };
-                if rows.is_empty() {
-                    continue;
-                }
                 let dep = &deps[dep_id];
                 let literal = effective_version(lockfile, dep_id as DependencyID, dep)
                     .map(|version| version.literal)

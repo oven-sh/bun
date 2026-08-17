@@ -258,10 +258,7 @@ pub trait ResolverContext {
         json: &Expr,
     ) -> crate::Result<ResolutionType<u64>>;
 
-    /// Name to store when the package.json has no `name`. Resolvers for
-    /// packages fetched from somewhere (git, tarballs, folders) derive one from
-    /// the source; `None` (the root, workspace members, the npm cache) leaves
-    /// the package unnamed.
+    /// Name to store when the package.json has none; git/tarball/folder resolvers derive one from the source.
     fn fallback_name(&self) -> Option<Vec<u8>> {
         None
     }
@@ -613,10 +610,8 @@ impl Package<u64> {
                 resolve_id: new_package.resolutions.off + PackageID::try_from(i).expect("int cast"),
             };
 
-            // A peer slot must not keep a target alive that something else held
-            // when the lockfile was loaded; it is bound in `Cloner::flush` if that
-            // holder survived. A target the loaded lockfile held through optional
-            // peers alone is cloned like a dependency (see `Lockfile::held_at_load`).
+            // Peer slots must not keep their target alive; bound in `Cloner::flush`. A target the
+            // loaded lockfile held through optional peers alone is cloned like a dependency.
             if old_dependencies[i].behavior.is_optional_peer()
                 && old
                     .held_at_load

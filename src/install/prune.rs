@@ -660,9 +660,7 @@ enum Installed {
     Matches,
     Missing,
     Mismatch,
-    /// A version the lockfile installs elsewhere; the filter just favors a
-    /// different copy at this position, so it is kept without warning.
-    /// Only produced when `filtered` is set.
+    /// `filtered` only: a version the lockfile installs elsewhere, kept without warning.
     OtherVersion,
 }
 

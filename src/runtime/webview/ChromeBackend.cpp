@@ -86,8 +86,8 @@ extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataD
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
 #if OS(WINDOWS)
-// Copies and queues one chunk; -1 once Chrome is gone.
-extern "C" int32_t Bun__Chrome__writePipe(const char* data, size_t len);
+// Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
+extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
 #endif
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
@@ -503,10 +503,7 @@ void Transport::writeRaw(const char* data, size_t len)
 {
 #if OS(WINDOWS)
     // libuv queues the chunks in order; m_txQueue/onWritable are unused.
-    if (m_dead) return;
-    if (Bun__Chrome__writePipe(data, len) < 0)
-        rejectAllAndMarkDead("Chrome process closed the pipe"_s);
-    return;
+    if (!m_dead) Bun__Chrome__writePipe(data, len);
 #else
     if (m_dead || !m_readSock) return;
 
@@ -1293,17 +1290,18 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Every slot of every live view, not just m_pending's: a navigate waiting for Page.loadEventFired has no pending id.
-    for (auto& [viewId, weak] : m_views) {
-        JSWebView* v = weak.get();
-        if (!v) continue;
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
-            settle(g, v, s, false, err);
-        v->m_closed = true;
-    }
+    // Taken out first: settling can GC, and ~JSWebView of an unrelated dead view erases from m_views.
+    auto views = std::exchange(m_views, {});
     m_pending.clear();
     m_sessions.clear();
-    m_views.clear();
+    // Every slot of every live view, not just m_pending's: a navigate waiting for Page.loadEventFired has no pending id.
+    for (auto& [viewId, weak] : views) {
+        JSWebView* v = weak.get();
+        if (!v) continue;
+        v->m_closed = true;
+        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
+            settle(g, v, s, false, err);
+    }
     updateKeepAlive();
 }
 

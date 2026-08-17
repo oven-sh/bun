@@ -629,6 +629,7 @@ it("chrome: a navigate still waiting for the load event rejects when Chrome dies
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout).toMatch(/^rejected: Chrome (process closed the pipe|killed by signal \d+|exited)\nclosed: true\n$/);
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

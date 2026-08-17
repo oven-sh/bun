@@ -989,63 +989,74 @@ struct WriteReq {
     req: uv::uv_write_t,
     buf: uv::uv_buf_t,
     _bytes: Box<[u8]>,
+    generation: u32,
 }
 
 #[cfg(windows)]
 impl WriteReq {
+    /// Safety: `pipe` is the live command pipe of the Chrome with `generation`.
+    unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32) -> bool {
+        let bytes: Box<[u8]> = Box::from(chunk);
+        let buf = uv::uv_buf_t::init(&bytes);
+        let req = bun_core::heap::into_raw(Box::new(WriteReq {
+            req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
+            buf,
+            _bytes: bytes,
+            generation,
+        }));
+        // SAFETY: caller contract; `req` stays put until `on_write` reclaims it.
+        let rc = unsafe {
+            (*req)
+                .req
+                .write((*pipe).as_stream(), &(*req).buf, req, WriteReq::on_write)
+        };
+        if let Some(err) = rc.to_error(bun_sys::Tag::write) {
+            scoped_log!(Chrome, "uv_write failed: {}", err);
+            // SAFETY: libuv did not take `req`, so the callback will not run.
+            unsafe { bun_core::heap::destroy(req) };
+            return false;
+        }
+        true
+    }
+
     fn on_write(this: *mut WriteReq, status: uv::ReturnCode) {
+        // SAFETY: the Box leaked by `submit`; libuv hands it back exactly once.
+        let req = unsafe { bun_core::heap::take(this) };
         if let Some(err) = status.to_error(bun_sys::Tag::write) {
             scoped_log!(Chrome, "command pipe write failed: {}", err);
+            // ECANCELED is `WindowsPipes::close` draining the queue; the death is already being reported.
+            if status.int() != uv::UV_ECANCELED {
+                PipeEvent::Closed.post(req.generation);
+            }
         }
-        // SAFETY: the Box leaked by `Bun__Chrome__writePipe`; libuv hands it
-        // back exactly once.
-        unsafe { bun_core::heap::destroy(this) };
     }
 }
 
-/// Transport::writeRaw on Windows: copies and queues one chunk; 0 on success, -1 once Chrome is gone. Safety: `data` points to `len` readable bytes.
+/// Transport::writeRaw on Windows. A write that fails surfaces as a Closed event, like any other loss of the transport. Safety: `data` points to `len` readable bytes.
 #[cfg(windows)]
 #[unsafe(no_mangle)]
-unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) -> i32 {
+unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
     let instance = INSTANCE.load(Ordering::Relaxed);
     if instance.is_null() {
-        return -1;
+        return; // `release` ran; its Exited event is on its way to C++
     }
-    // SAFETY: INSTANCE is live until `release` clears it; a raw field read, so
-    // it doesn't alias the `&mut` the read callbacks form.
-    let pipe = unsafe { (*instance).pipes.cmd };
-    if pipe.is_null() {
-        return -1;
-    }
-    if len == 0 {
-        return 0;
-    }
-    if len > u32::MAX as usize {
-        return -1; // uv_buf_t.len is a ULONG
-    }
+    // SAFETY: INSTANCE is live until `release` clears it; raw field reads, so
+    // nothing aliases the `&mut` the read callbacks form.
+    let (pipe, generation) = unsafe { ((*instance).pipes.cmd, (*instance).generation) };
+    debug_assert!(
+        !pipe.is_null(),
+        "pipes are only closed after INSTANCE is cleared"
+    );
     scoped_log!(Chrome, "write {} bytes", len);
     // SAFETY: caller contract.
-    let bytes: Box<[u8]> = Box::from(unsafe { bun_core::ffi::slice(data, len) });
-    let buf = uv::uv_buf_t::init(&bytes);
-    let req = bun_core::heap::into_raw(Box::new(WriteReq {
-        req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
-        buf,
-        _bytes: bytes,
-    }));
-    // SAFETY: `pipe` is live while INSTANCE is set; `req` stays put until
-    // `on_write` reclaims it.
-    let rc = unsafe {
-        (*req)
-            .req
-            .write((*pipe).as_stream(), &(*req).buf, req, WriteReq::on_write)
-    };
-    if let Some(err) = rc.to_error(bun_sys::Tag::write) {
-        scoped_log!(Chrome, "uv_write failed: {}", err);
-        // SAFETY: libuv did not take `req`, so the callback will not run.
-        unsafe { bun_core::heap::destroy(req) };
-        return -1;
+    let bytes = unsafe { bun_core::ffi::slice(data, len) };
+    for chunk in bytes.chunks(u32::MAX as usize) {
+        // SAFETY: `pipe` belongs to the published instance read above.
+        if !unsafe { WriteReq::submit(pipe, chunk, generation) } {
+            PipeEvent::Closed.post(generation);
+            return;
+        }
     }
-    0
 }
 
 // Implemented in ChromeBackend.cpp.

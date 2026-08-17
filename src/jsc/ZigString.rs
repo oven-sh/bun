@@ -26,19 +26,17 @@ unsafe extern "C" {
     ) -> JSValue;
 }
 
-/// Hand a globally-allocated
-/// UTF-16 buffer to JSC as an external string. Ownership of `ptr[0..len]`
-/// transfers to JSC on success; on the too-long path the buffer is freed
-/// here, a `STRING_TOO_LONG` error is thrown, and `.zero` is returned.
+/// Hand an owned UTF-16 buffer to JSC as an external string; JSC frees it
+/// through `ZigString__freeGlobal` when the string is collected. On the
+/// too-long path the buffer is dropped here, a `STRING_TOO_LONG` error is
+/// thrown, and `.zero` is returned.
 ///
-/// # Safety
-/// `ptr` must have been allocated by the global mimalloc allocator
-/// (via `heap::alloc`/`Vec::into_raw_parts`/`bun.default_allocator`) and
-/// must not be used by the caller after this returns.
-pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObject) -> JSValue {
-    if len > BunString::max_length() {
-        // SAFETY: caller contract — `ptr` came from the default (global) allocator.
-        unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<core::ffi::c_void>()) };
+/// `buf` must be non-empty: for `len == 0` JSC returns the shared empty
+/// string without adopting the buffer, so any capacity it had would leak.
+pub fn to_external_u16(buf: Vec<u16>, global: &JSGlobalObject) -> JSValue {
+    debug_assert!(!buf.is_empty());
+    if buf.len() > BunString::max_length() {
+        drop(buf);
         // Propagation of the throw is intentionally swallowed.
         let _ = global
             .err(
@@ -48,8 +46,10 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
             .throw();
         return JSValue::ZERO;
     }
-    // SAFETY: ptr/len describe a globally-allocated UTF-16 buffer; ownership
-    // transfers to JSC (freed via the external-string finalizer).
+    let len = buf.len();
+    let ptr = buf.leak().as_ptr();
+    // SAFETY: `ptr[..len]` is the leaked buffer of a global-allocator `Vec`;
+    // JSC owns it from here and frees it via `ZigString__freeGlobal`.
     unsafe { ZigString__toExternalU16(ptr, len, global) }
 }
 

@@ -1633,21 +1633,6 @@ impl ZigStringJsc for bun_core::ZigString {
     }
 }
 
-/// Free-function form of `ZigString.toExternalU16` for callers that import
-/// `bun_core::ZigString`. Forwards to the canonical impl in [`zig_string`].
-///
-/// # Safety
-/// See [`zig_string::to_external_u16`].
-#[inline]
-pub unsafe fn zig_string_to_external_u16(
-    ptr: *const u16,
-    len: usize,
-    global: &JSGlobalObject,
-) -> JSValue {
-    // SAFETY: caller upholds `to_external_u16`'s contract.
-    unsafe { crate::zig_string::to_external_u16(ptr, len, global) }
-}
-
 /// Extension trait providing JSC-aware methods on `bun_sys::Error` (`bun.sys.Error`).
 pub trait SysErrorJsc {
     fn to_system_error(&self) -> SystemError;

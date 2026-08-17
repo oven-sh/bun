@@ -29,10 +29,7 @@ pub struct PackageInstall<'a> {
     /// short-lived `Dir` held by the caller — `PackageInstall` never closes it.
     pub(crate) cache_dir: Fd,
     pub(crate) cache_dir_subpath: &'a ZStr,
-    // TODO: `destination_dir_subpath` aliases into `destination_dir_subpath_buf`;
-    // borrowck will reject simultaneous &ZStr + &mut [u8]. Consider storing only the len.
     pub(crate) destination_dir_subpath: &'a ZStr,
-    pub(crate) destination_dir_subpath_buf: &'a mut [u8],
 
     pub(crate) progress: Option<&'a mut Progress>,
 
@@ -498,18 +495,14 @@ impl<TaskType> NewTaskQueue<TaskType> {
     }
 
     /// # Safety
-    /// `task` must be the pointer `bun_core::heap::into_raw` returned for a live
-    /// `TaskType` whose ownership is being handed to the thread pool; the worker
-    /// reclaims it through the pointer scheduled here (`from_task_ptr` + `heap::take`).
+    /// `task` must be the `heap::into_raw` pointer of a live `TaskType` whose
+    /// ownership is being handed to the thread pool; the worker reclaims it.
     pub(crate) unsafe fn push(&self, task: *mut TaskType)
     where
         TaskType: IntrusiveWorkTask,
     {
         self.wait_group.add_one();
-        // SAFETY: caller contract — `task` is a live allocation. The projection goes
-        // through `task` itself (not through a `&mut` to the field) so the pointer the
-        // pool hands back carries the whole allocation's provenance, which the worker's
-        // container-of and `heap::take` need.
+        // SAFETY: caller contract; projecting through `task` keeps the allocation's provenance.
         self.thread_pool
             .schedule(Batch::from(unsafe { TaskType::field_of(task) }));
     }
@@ -610,9 +603,7 @@ impl HardLinkWindowsInstallTask {
     }
 
     fn run_from_thread_pool(task: *mut WorkPoolTask) {
-        // SAFETY: `task` is the pointer `NewTaskQueue::push` projected out of the
-        // `init()` allocation, so it points at our `task` field with provenance for
-        // the whole allocation, which the `heap::take` calls below rely on.
+        // SAFETY: `task` is the `task` field pointer `NewTaskQueue::push` scheduled.
         let self_: *mut Self = unsafe { Self::from_task_ptr(task) };
         // SAFETY: HARDLINK_QUEUE initialized by init_queue() before scheduling.
         let queue = unsafe { (*HARDLINK_QUEUE.get()).assume_init_ref() };
@@ -783,48 +774,6 @@ impl UninstallTask {
     }
 }
 
-/// `<destination_dir_subpath>/<name>`, written in place after the alias in
-/// `destination_dir_subpath_buf`. Dropping it restores the alias's NUL terminator.
-struct DestinationSubpath<'b> {
-    buf: &'b mut [u8],
-    alias_len: usize,
-    len: usize,
-}
-
-impl<'b> DestinationSubpath<'b> {
-    /// `None` when the path and its NUL terminator do not fit `buf`: the alias is
-    /// only required to fit the buffer by itself (`alias_is_safe_install_target`).
-    fn new(buf: &'b mut [u8], alias_len: usize, name: &[u8]) -> Option<Self> {
-        let name_start = alias_len + 1;
-        let len = name_start + name.len();
-        if len >= buf.len() {
-            return None;
-        }
-        buf[alias_len] = SEP;
-        buf[name_start..len].copy_from_slice(name);
-        buf[len] = 0;
-        Some(Self {
-            buf,
-            alias_len,
-            len,
-        })
-    }
-}
-
-impl core::ops::Deref for DestinationSubpath<'_> {
-    type Target = ZStr;
-
-    fn deref(&self) -> &ZStr {
-        ZStr::from_buf(self.buf, self.len)
-    }
-}
-
-impl Drop for DestinationSubpath<'_> {
-    fn drop(&mut self) {
-        self.buf[self.alias_len] = 0;
-    }
-}
-
 // ───────────────────────────── impl PackageInstall ─────────────────────────────
 
 impl<'a> PackageInstall<'a> {
@@ -863,17 +812,15 @@ impl<'a> PackageInstall<'a> {
     // 1. verify that .bun-tag exists (was it installed from bun?)
     // 2. check .bun-tag against the resolved version
     fn verify_git_resolution(&mut self, repo: &Repository, root_node_modules_dir: &Dir) -> bool {
-        let Some(bun_tag_path) = DestinationSubpath::new(
-            self.destination_dir_subpath_buf,
-            self.destination_dir_subpath.len(),
-            b".bun-tag",
-        ) else {
-            return false;
-        };
+        let mut spill = Vec::new();
+        let bun_tag_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[self.destination_dir_subpath.as_bytes(), b".bun-tag"],
+        );
 
         let Ok(bun_tag_file) = self
             .node_modules
-            .read_small_file(root_node_modules_dir, &bun_tag_path)
+            .read_small_file(root_node_modules_dir, bun_tag_path)
         else {
             return false;
         };
@@ -933,15 +880,15 @@ impl<'a> PackageInstall<'a> {
         mutable.reset();
         mutable.expand_to_capacity();
 
-        let package_json_path = DestinationSubpath::new(
-            self.destination_dir_subpath_buf,
-            self.destination_dir_subpath.len(),
-            b"package.json",
-        )?;
+        let mut spill = Vec::new();
+        let package_json_path = path::resolve_path::join_z_spill::<path::platform::Posix>(
+            &mut spill,
+            &[self.destination_dir_subpath.as_bytes(), b"package.json"],
+        );
 
         let package_json_file = self
             .node_modules
-            .open_file(root_node_modules_dir, &package_json_path)
+            .open_file(root_node_modules_dir, package_json_path)
             .ok()?;
         // defer package_json_file.close()
 

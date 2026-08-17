@@ -291,9 +291,7 @@ pub struct TreeContext {
 
     /// Dependencies whose folder in this tree is replaced by this install.
     pub(crate) replaced: Vec<DependencyID>,
-
-    /// This tree is inside one of an ancestor's `replaced` folders, so what is
-    /// on disk here is going away (possibly after a download) and cannot be skipped.
+    /// Inside an ancestor's `replaced` folder: what is on disk here goes away, so never skip.
     pub(crate) inside_replaced_folder: bool,
 }
 
@@ -1060,8 +1058,7 @@ impl<'a> PackageInstaller<'a> {
         true
     }
 
-    /// Call before installing a tree's dependencies; relies on trees being
-    /// visited in id order, so the parent's `replaced` is already complete.
+    /// Trees are visited in id order, so the parent's `replaced` is complete.
     pub(crate) fn set_inside_replaced_folder(&mut self, tree_id: lockfile::tree::Id) {
         let lockfile = self.lockfile();
         let tree = lockfile.buffers.trees.as_slice()[tree_id as usize];
@@ -1081,15 +1078,6 @@ impl<'a> PackageInstaller<'a> {
                 .any(|&dep_id| deps[dep_id as usize].name.slice(string_buf) == folder)
         };
         self.trees[tree_id as usize].inside_replaced_folder = inside;
-    }
-
-    /// `install_from_link` re-points one symlink; `PackageInstall::install` replaces
-    /// the folder, folder dependencies included (a directory of per-file symlinks).
-    fn install_replaces_folder(tag: resolution::Tag) -> bool {
-        !matches!(
-            tag,
-            resolution::Tag::Symlink | resolution::Tag::Workspace | resolution::Tag::Root
-        )
     }
 
     // `pub fn deinit` dropped. All owned fields (`pending_lifecycle_scripts: Vec`,
@@ -1339,22 +1327,11 @@ impl<'a> PackageInstaller<'a> {
             return;
         }
 
-        // `PackageInstall` stores both `destination_dir_subpath: &mut ZStr`
-        // and `destination_dir_subpath_buf: &mut [u8]` aliasing the same bytes.
-        // Derive BOTH from a single `*mut PathBuffer`
-        // so neither `&mut` invalidates the other under stacked-borrows.
-        let subpath_buf_ptr: *mut PathBuffer = &raw mut self.destination_dir_subpath_buf;
-        let destination_dir_subpath: &mut ZStr = {
-            let alias_slice = alias.slice(string_buf!());
-            // SAFETY: `subpath_buf_ptr` is the unique borrow of the field; valid for
-            // the lifetime of this fn body.
-            let buf = unsafe { &mut *subpath_buf_ptr };
-            buf[..alias_slice.len()].copy_from_slice(alias_slice);
-            buf[alias_slice.len()] = 0;
-            // SAFETY: buf[alias_slice.len()] == 0 written above; pointer derives from
-            // `subpath_buf_ptr` so it shares provenance with `destination_dir_subpath_buf`
-            // below.
-            unsafe { ZStr::from_raw_mut((*subpath_buf_ptr).as_mut_ptr(), alias_slice.len()) }
+        let destination_dir_subpath = {
+            let alias = alias.slice(string_buf!());
+            self.destination_dir_subpath_buf[..alias.len()].copy_from_slice(alias);
+            self.destination_dir_subpath_buf[alias.len()] = 0;
+            ZStr::from_buf(&self.destination_dir_subpath_buf, alias.len())
         };
 
         let pkg_name_hash = self.pkg_name_hashes[package_id as usize];
@@ -1446,10 +1423,6 @@ impl<'a> PackageInstaller<'a> {
             },
             cache_dir: Fd::INVALID, // assigned below
             destination_dir_subpath,
-            // SAFETY: `subpath_buf_ptr` = `&raw mut self.destination_dir_subpath_buf`; the
-            // field outlives `installer`. `destination_dir_subpath` above derives from the
-            // same raw pointer, so this `&mut` does not invalidate it under stacked-borrows.
-            destination_dir_subpath_buf: unsafe { (*subpath_buf_ptr).as_mut_slice() },
             package_name: pkg_name,
             patch: patch_patch.map(|_| package_install::Patch {
                 contents_hash: patch_contents_hash.unwrap(),
@@ -1653,11 +1626,15 @@ impl<'a> PackageInstaller<'a> {
             || !installer.verify(resolution, &self.root_node_modules_folder);
         self.summary.skipped += (!needs_install) as u32;
 
-        // Not needed inside a replaced folder: child trees inherit the flag.
+        // `install_from_link` (symlink/workspace) re-points one symlink; everything else
+        // replaces the folder. Child trees of a replaced folder inherit the flag.
         if verifying
             && needs_install
             && !inside_replaced_folder
-            && Self::install_replaces_folder(resolution.tag)
+            && !matches!(
+                resolution.tag,
+                resolution::Tag::Symlink | resolution::Tag::Workspace | resolution::Tag::Root
+            )
         {
             self.trees[self.current_tree_id as usize]
                 .replaced
@@ -1894,12 +1871,10 @@ impl<'a> PackageInstaller<'a> {
                         // This is a transitive folder dependency. It is installed as a directory of symlinks
                         // to the target's files (see `PackageInstall::install`), and is not hoisted.
                         //
-                        // A transitive `Resolution::Folder` is relative to the top-level dir when
-                        // a local `file:` package declared it (`Package::parse` normalized it) or
-                        // when a root `overrides`/`resolutions` rule, scoped or not, supplied the
-                        // path, so install it from `installer.cache_dir` (the cwd, set in the
-                        // switch above). Only the unsafe-path check in that switch is limited to
-                        // plain rules (see `OverrideMap::contains_name`).
+                        // A transitive `Resolution::Folder` declared by a local `file:` package
+                        // is relative to the top-level dir (`Package::parse` normalized it), so
+                        // install it from `installer.cache_dir` (the cwd, set in the switch above).
+                        // The same holds for a path from a root `overrides`/`resolutions` rule.
                         if resolution.tag == resolution::Tag::Folder
                             && (self.lockfile().is_folder_tree_id(self.current_tree_id)
                                 || self.lockfile().is_overridden_dependency(dependency_id))
@@ -1912,9 +1887,9 @@ impl<'a> PackageInstaller<'a> {
                             );
                         }
 
-                        // One declared by a cache package (`from_npm`, `Features::NPM`) is
-                        // relative to that package, which installs at `dirname(node_modules.path)`
-                        // because transitive folders never hoist.
+                        // One declared by an npm manifest (`Package::from_npm`) is verbatim,
+                        // i.e. relative to the declaring package, which installs at
+                        // `dirname(node_modules.path)` because transitive folders never hoist.
                         let dir_name = {
                             let d = dirname::<platform::Auto>(self.node_modules.path.as_slice());
                             if d.is_empty() {
@@ -2306,7 +2281,7 @@ impl<'a> PackageInstaller<'a> {
             };
 
             // `defer { destination_dir.close(); }` + `defer increment_tree_install_count`.
-            // No early returns in this branch, so manual calls at end are equivalent.
+            // No early returns after this point, so manual calls at end are equivalent.
 
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;

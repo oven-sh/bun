@@ -12,7 +12,6 @@ use crate::run_command::RunCommand as Run;
 use bun_alloc::AllocError;
 use bun_ast::ExprData;
 use bun_bundler::Transpiler;
-use bun_collections::BoundedArray;
 use bun_core::{self, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_install::dependency::VersionTag;
@@ -1408,36 +1407,35 @@ impl BunxCommand {
             let _ = package_json.write_all(b"{}\n");
         }
 
-        // TODO(next commit): only the first requested package is installed
-        // here — the fixed-size argv below is generalized to every entry in
-        // `install_params` right after this.
-        let install_args: [&[u8]; 4] = [
-            bun_core::self_exe_path()?.as_bytes(),
-            b"add",
-            install_params[0].as_slice(),
-            b"--no-summary",
-        ];
-        let mut args: BoundedArray<&[u8], 8> =
-            BoundedArray::from_slice(&install_args).expect("unreachable"); // upper bound is known
+        // `install_params` holds 1..=N targets (N > 1 only when multiple
+        // `--package` values were given), so the argv can't be a fixed-size
+        // array the way a single-package install could be.
+        let mut args: Vec<&[u8]> = Vec::with_capacity(install_params.len() + 6);
+        args.push(bun_core::self_exe_path()?.as_bytes());
+        args.push(b"add");
+        for p in &install_params {
+            args.push(p.as_slice());
+        }
+        args.push(b"--no-summary");
 
         if do_cache_bust {
             // disable the manifest cache when a tag is specified
             // so that @latest is fetched from the registry
-            args.append(b"--no-cache").expect("unreachable"); // upper bound is known
+            args.push(b"--no-cache");
 
             // forcefully re-install packages in this mode too
-            args.append(b"--force").expect("unreachable"); // upper bound is known
+            args.push(b"--force");
         }
 
         if opts.verbose_install {
-            args.append(b"--verbose").expect("unreachable"); // upper bound is known
+            args.push(b"--verbose");
         }
 
         if opts.silent_install {
-            args.append(b"--silent").expect("unreachable"); // upper bound is known
+            args.push(b"--silent");
         }
 
-        let argv_to_use = args.slice();
+        let argv_to_use = args.as_slice();
 
         bun_output::scoped_log!(
             bunx,

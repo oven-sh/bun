@@ -43,6 +43,7 @@ bun upgrade
 | `fetch` / `Headers`   | Duplicate response headers are combined with `", "`              | Update code that expected only the last value                           |
 | `Bun.Socket`          | `setKeepAlive()` delay is milliseconds, not seconds              | Pass milliseconds, as in `node:net`                                     |
 | `Bun.SQL` (MySQL)     | `DATETIME` / `TIMESTAMP` columns decode as UTC                   | Remove local-time compensation on values read back                      |
+| `Bun.SQL` (MySQL)     | RSA public key retrieval over plain TCP is refused               | Connect with TLS, or set `allowPublicKeyRetrieval: true`                |
 | `HTMLRewriter`        | `transform()` throws for async handlers on string input          | Wrap the input in a `Response` and read the body asynchronously         |
 | Distribution          | Single x64 build (no separate AVX2 build)                        | None; `-baseline` names still resolve                                   |
 
@@ -129,6 +130,11 @@ When the same install setting (the default registry, a scoped registry, `exact`,
 
 **What to do:** if a setting appears in both files, keep the one you want and delete the other.
 
+Two related changes to where registry settings and credentials are read from:
+
+- `~/.npmrc` is now read when `XDG_CONFIG_HOME` is set but `$XDG_CONFIG_HOME/.npmrc` does not exist. Bun 1.3 only looked in `$XDG_CONFIG_HOME` when the variable was set (GitHub Actions' Ubuntu runners set it), so a `~/.npmrc` that was silently ignored there, for example one written by `npm login`, takes effect after upgrading.
+- Credentials embedded in a registry URL (`https://user:pass@registry.example.com/`) passed as `--registry`, through `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY`, or in the `registry = { url = "..." }` object form in `bunfig.toml` are now sent; Bun 1.3 silently dropped them. They replace an `.npmrc` token for the same registry, and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` now still apply when `--registry` is also passed.
+
 ### `trustedDependencies` matches the resolved package name
 
 For packages installed from a registry, [`trustedDependencies`](/pm/lifecycle) and the built-in default trust list are now compared against the name of the package that was actually **resolved**, not the alias it is installed under. This matters for `npm:` aliases:
@@ -185,7 +191,7 @@ cache = 'C:\Users\me\.bun-cache'    # [!code ++]
 A few value types are also parsed differently:
 
 - `inf` / `-inf` / `nan` are numbers (`Infinity` / `-Infinity` / `NaN`), not the strings `"inf"` / `"-inf"` / `"nan"`.
-- Integers outside `Number.MAX_SAFE_INTEGER` throw instead of silently losing precision.
+- Integers outside `±(2^53 - 1)` throw (`Integer cannot be losslessly represented as a JavaScript number`) instead of silently losing precision. Quote the value to read it as a string.
 - Date and time literals (previously rejected) parse as `Temporal` objects: offset date-times as `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`, local dates as `Temporal.PlainDate`, and local times as `Temporal.PlainTime`. `bun build` emits them as `Temporal.<Type>.from(...)` calls for every target, so a bundle that imports such a file needs a `Temporal` global where it runs. Parsing such a file with `BUN_JSC_useTemporal=0` set throws `Date/time values require Temporal, which is disabled in this process`.
 - `Bun.TOML.parse()` throws a `SyntaxError` instead of a `BuildMessage`.
 
@@ -367,9 +373,20 @@ process.on("warning", w => myLogger.warn(w));
 
 As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on that, switch to `dns.resolve4()` / `dns.resolve()` (which still use c-ares and honor `setServers()`), or call [`Bun.dns.lookup()`](/runtime/networking/dns) with `{ backend: "c-ares" }`. `fetch()` and `Bun.dns.lookup()` defaults are unchanged.
 
+### `module.enableCompileCache()` is implemented
+
+In 1.3, `module.enableCompileCache()` was a no-op that returned `undefined`. In 1.4 it works as in Node: it returns a `{ status, directory }` object and Bun writes a bytecode cache to the directory (by default `node-compile-cache` under the OS temporary directory), and setting `NODE_COMPILE_CACHE=<dir>` in the environment enables the cache for the whole process. Tools that already call `enableCompileCache()` when it exists therefore start creating and filling a cache directory when run under Bun.
+
+This is a performance feature, and the output of your program is unchanged. If you do not want the cache (for example in CI jobs where the directory is discarded afterwards), set `NODE_DISABLE_COMPILE_CACHE=1`; `enableCompileCache()` then reports `status: DISABLED`.
+
 ### Other Node.js compatibility changes
 
 - `new URL("not a url")` throws with the message `Invalid URL` and `code: "ERR_INVALID_URL"` (plus `input` / `base` properties), matching Node. 1.3's message was `"..." cannot be parsed as a URL`. Tests matching the old message need updating.
+- Module-not-found errors carry Node's wording in `error.message` (and `.stack`). In 1.3 both `require()` and `import` produced `Cannot find package 'x' from '/path/to/file.js'`. `require()` and `require.resolve()` now produce `Cannot find module 'x'` followed by a `Require stack:` list (plus a `requireStack` property); `import` and `import()` now produce `Cannot find package 'x' imported from /path/to/file.js` (`Cannot find module './x' imported from ...` for a relative specifier). The `code` values are unchanged (`MODULE_NOT_FOUND` for `require()`, `ERR_MODULE_NOT_FOUND` for `import`), as is the line Bun prints for an unhandled resolution error; tests that match `error.message` need updating.
+- The `AbortError` produced by Node APIs that take a `signal` (`timers/promises`, `fs`, `events.once()`, streams, `child_process`, `net`, and `Bun.spawn`) now has the message `The operation was aborted`, without the trailing period Bun 1.3 added. The `DOMException` thrown by `fetch()` and used as `signal.reason` keeps the period.
+- `crypto.createCipheriv()` / `createDecipheriv()` in GCM mode reject initialization vectors longer than 128 bytes with `ERR_CRYPTO_INVALID_IV`, as Node does; 1.3 accepted any length.
+- `fs.mkdtemp("")` / `fs.mkdtempSync("")` throw `EINVAL` instead of creating a randomly named directory in the current directory.
+- `node:vm` functions reject arrays and functions passed as the `options` argument (`ERR_INVALID_ARG_TYPE`).
 - `assert.deepStrictEqual()` and `util.isDeepStrictEqual()` now compare prototypes and own enumerable properties the way Node does. Comparisons that 1.3 incorrectly passed (an `Array` subclass against a plain array, a `Buffer` against a `Uint8Array`, a `Date` carrying extra own properties) now fail. `Bun.deepEquals()` and `bun:test` matchers are unchanged.
 - An exception thrown inside a `node:fs`, `node:dns`, or `crypto.pbkdf2()` callback is reported as `uncaughtException`, not `unhandledRejection`.
 - `node:http`: after an explicit `res.writeHead()`, `res.end(chunk)` sends the body chunked instead of computing a `Content-Length`, as Node does. `http.Server` now enforces `maxConnections` and emits `"drop"`.
@@ -425,6 +442,12 @@ socket.setKeepAlive(true, 60_000);
 
 `setKeepAlive(true)` with no delay now returns `true` instead of `false`.
 
+### MySQL public key retrieval over plain TCP must be opted into
+
+MySQL 8 accounts use the `caching_sha2_password` plugin by default. The first connection for a given user over an unencrypted connection requires the client to download the server's RSA public key; Bun 1.3 did this automatically. Bun 1.4 refuses by default (the same default as `mysql2` and Connector/J, since a man-in-the-middle could substitute their own key) and the connection fails with `ERR_MYSQL_PUBLIC_KEY_RETRIEVAL_NOT_ALLOWED`. This typically shows up against local or containerized MySQL 8 servers without TLS.
+
+**What to do:** connect with TLS, or pass `allowPublicKeyRetrieval: true` in the `SQL` options for networks you trust (see [MySQL](/runtime/sql#mysql)). Connections that use TLS or `mysql_native_password` accounts, and connections for a user whose credentials the server has already cached, are unaffected.
+
 ### MySQL `DATETIME` / `TIMESTAMP` decode as UTC
 
 The MySQL driver now decodes `DATETIME` and `TIMESTAMP` columns as UTC to match how it encodes them. In Bun 1.3 these were decoded as local time, so values round-tripped through the driver came back shifted by the local UTC offset. Reading existing rows after upgrading returns the value actually stored in the database.
@@ -441,6 +464,8 @@ Against MariaDB 10.5 or newer, `Bun.SQL` now negotiates MariaDB's extended type 
 - An unrecognized value throws `ERR_INVALID_ARG_VALUE`.
 
 To keep the 1.3 behavior for a specific connection, add `?sslmode=disable` (or the mode you want) to its URL.
+
+Relatedly, for both Postgres and MySQL, passing `tls` / `ssl` options now requires an encrypted connection: if the server declines TLS, the connection fails instead of silently continuing in plaintext as it did in 1.3. The `?ssl=` and `?ssl-mode=` URL parameters and string values such as `ssl: "verify-full"` are now honored as well (1.3 only read `?sslmode=`), so a URL carrying `?ssl=true` that used to connect in plaintext to a server without TLS now fails too.
 
 ### `bun:sqlite` `close()` finalizes `query()` statements
 
@@ -471,7 +496,7 @@ No action is needed. CPUs that previously required the `-baseline` build now run
 
 ## Other changes you may notice
 
-These are correctness fixes that tighten validation or align with a specification. They only affect code that was relying on the previous (incorrect) behavior.
+These are mostly correctness fixes that tighten validation or align with a specification, plus a few differences in generated output. They only affect code that was relying on the previous behavior.
 
 **`bun test`**
 
@@ -488,15 +513,18 @@ These are correctness fixes that tighten validation or align with a specificatio
 - The client `WebSocket` fires `close` as a queued task, per the WHATWG spec: immediately after `ws.close()` the `readyState` is `CLOSING` and `onclose` runs on a later turn. In 1.3, `onclose` ran synchronously inside `close()`.
 - Requests with a malformed `Transfer-Encoding` (`gzip, chunked`, `chunked, chunked`, or the header split across fields) are rejected with a 400 instead of being served with an undecoded body.
 - `requestCert` / `rejectUnauthorized` set inside a per-hostname `tls` entry (`serverName`) are now enforced; 1.3 only honored them on the top-level `tls` object.
+- `server.reload({ routes: {} })` on a server whose only handler was its routes now throws instead of leaving a server that answers 404 to everything. `reload({ error })` / `reload({ websocket })` on a `fetch`-only server now work (1.3 threw).
 
 **JavaScript engine**
 
 - `Array.prototype.join()` / `toString()` on an array that contains itself throws `RangeError` (updated JavaScriptCore); 1.3 returned `""` for the cycle.
+- The bundled ICU on Linux and Windows is now version 78 (`process.versions.icu`; 1.3 shipped 75 on Linux and 73 on Windows), which updates the locale data behind `Intl` and `toLocaleString()`. Snapshot tests of locale-formatted output may change. macOS uses the system ICU and is unaffected.
 
 **Bun APIs**
 
 - `Bun.JSONC.parse()` throws `SyntaxError` instead of `BuildMessage`, and `Bun.JSONC.parse("")` throws instead of returning `{}`.
-
+- `CompressionStream` / `DecompressionStream` deliver the output of one input chunk in pieces of at most 64 KiB (a new `highWaterMark` constructor option changes the size; `Infinity` restores one output chunk per input chunk), and a `write()` settles once its output has been consumed. In 1.3 each input chunk produced exactly one output chunk holding its whole expansion, which code doing one `read()` per `write()` may have relied on.
+- `Bun.SQL` with the SQLite adapter: interpolating a plain object, array, or `Date` as a query value now throws `Binding expected string, TypedArray, boolean, number, bigint or null`. In 1.3 an array or indexed object in that position was silently used as the binding set for the whole statement (overriding the other parameters), and any other object was bound as `NULL`. Use `sql([...])` for `IN` lists and `sql(object)` for inserts, and convert other values (`JSON.stringify()`, `date.toISOString()`) yourself.
 - `Bun.spawn`: passing an already-aborted `AbortSignal` throws immediately instead of spawning; `timeout: NaN`, `killSignal: 0`, and NUL bytes in `argv0` / `cwd` are rejected.
 - `bun:ffi`: validation errors from `viewSource()` and `new JSCallback()` are thrown instead of returned.
 - `structuredClone` / `postMessage`: transfer lists are validated before serialization instead of silently dropping invalid entries.
@@ -517,12 +545,18 @@ These are correctness fixes that tighten validation or align with a specificatio
 - `tls.Server` with `requestCert: true` now enforces the default `rejectUnauthorized: true` for client certificates.
 - `process.exit(code)`: if a `process.on("exit")` listener assigns `process.exitCode`, the process (or worker) now exits with that value, as in Node.js; 1.3 exited with `code`.
 
-**Bundler**
+**Bundler and transpiler**
 
+- `splitting: true` (`--splitting`) combined with `format: "cjs"` or `"iife"` is now a build error, `Code splitting is currently only supported when format is set to "esm"`. In 1.3 the option was silently ignored for a single entry point (and crashed when entry points shared code). Build configs that enable `splitting` globally and emit several formats need to restrict it to the ESM build.
 - `bun build --target browser` honors a package's `"browser"` field entries for Node built-ins (`"crypto": false` or a path to a shim); 1.3 always bundled Bun's own polyfill.
+- Generated output differs in a few places, which shows up in snapshot tests of transpiled or bundled code: a TypeScript `enum` declared inside a block or function is lowered to `let` instead of `var` (as `tsc` does, so it no longer leaks out of its block; top-level enums still use `var`), the keys of bundled `import * as ns` namespace objects and CommonJS-format entry point exports are emitted in ascending order (1.3 emitted them in descending order), and `--minify-identifiers` no longer generates a bare `$` name (so other generated names shift).
 
 **CLI and package manager**
 
+- `bun outdated` (and `bun update --interactive`) exit with code 1 when the manifest of a required dependency cannot be fetched, including a package that does not exist on the configured registry; 1.3 printed an empty table and exited 0.
+- `bun dedupe` and `bun up` (an alias of `bun update`) are new built-in commands, so `package.json` scripts with those names now need `bun run dedupe` / `bun run up`. `bun feedback` was removed.
+- A `workspace:` range inside a package downloaded from a registry (a publishing mistake in that package) is now an unresolvable dependency; 1.3 resolved it against your own workspace.
+- With `--linker isolated`, the `node_modules/.bun/` entry names of tarball and git dependencies whose URL carries credentials or a query string (including `git+ssh://git@...` URLs) no longer contain that part of the URL. The next `bun install` links such packages under the new name (`bun prune` removes the old directories); `bun.lock` is unchanged.
 - `bun init` templates declare `"typescript": "^7"` in `peerDependencies` (1.3 declared `^5`; the React templates declared no TypeScript dependency).
 - A non-interactive `bun update` now also updates `catalog:` entries within their ranges; 1.3 only did this in `bun update -i`.
 - `bun add` and `bun remove` accept `--filter` / `-F`, and `bun install <pkg> --filter` honors it. 1.3 ignored the flag on these commands, so `bun add y --filter x` added both `y` and a package named `x` to the current `package.json`; 1.4 edits the matching workspaces instead. For these two commands `--filter '*'` does not include the root package; name it explicitly to include it.

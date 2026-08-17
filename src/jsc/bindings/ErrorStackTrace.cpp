@@ -171,11 +171,8 @@ void JSCStackTrace::getFramesForCaller(JSC::VM& vm, JSC::CallFrame* callFrame, J
     auto* globalObject = callerObject->globalObject();
     WTF::String callerName = Zig::functionName(vm, globalObject, callerObject);
 
-    // Match V8: remove all frames up to and including the caller. We match by
-    // cell identity first, then by name — name matching is needed because a
-    // resumed async function's frame callee is the generator's `next` function
-    // (a different cell) but Zig::functionName still reports the original
-    // async function's name.
+    // Match V8: remove all frames up to and including the caller. Name matching
+    // covers resumed async functions, whose frame callee is the generator's `next`.
     std::optional<size_t> removeCount;
     for (size_t i = 0; i < stackTrace.size(); i++) {
         const auto& frame = stackTrace.at(i);

@@ -314,12 +314,15 @@ for (;;) {
 }))js"_s;
 
 // --- Transport singleton ---------------------------------------------------
-// Mirror of HostClient but NUL-framed JSON instead of binary. One socketpair
-// — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome reads fd 3,
-// writes fd 4; both hit our socket). Adopted into usockets for onData;
-// writes go through the same fd via direct write(). Socketpair not two
-// pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on a
-// pipe — the error was misread as EOF and onClose fired before any data.
+// Mirror of HostClient but NUL-framed JSON instead of binary. POSIX: one
+// socketpair — the child gets the peer end dup'd to fd 3 AND fd 4 (Chrome
+// reads fd 3, writes fd 4; both hit our socket). Adopted into usockets for
+// onData; writes go through the same fd via direct write(). Socketpair not
+// two pipes because usockets' bsd_recv calls recv() which fails ENOTSOCK on
+// a pipe — the error was misread as EOF and onClose fired before any data.
+// Windows: two pipes driven by libuv in ChromeProcess.rs; bytes arrive via
+// Bun__Chrome__onPipeData → onData and leave via writeRaw →
+// Bun__Chrome__writePipe. Everything from onData on is shared.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);
@@ -410,15 +413,18 @@ public:
     // close() can cancel (m_pending.removeIf erases the id, drain skips).
     void send(uint32_t cdpId, Command&& cmd);
 
-    // Called from usockets onData. Parses complete NUL-delimited messages
-    // out of rx, dispatches each to handleMessage.
+    // Called from usockets onData (POSIX) or Bun__Chrome__onPipeData
+    // (Windows). Parses complete NUL-delimited messages out of rx,
+    // dispatches each to handleMessage.
     void onData(const char* data, int length);
     void onWritable();
     void onClose();
 
     Zig::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
-    // Pipe mode: usockets-adopted socketpair fd.
+    // Pipe mode on POSIX: usockets-adopted socketpair fd. Always null on
+    // Windows, where the Rust side owns the pipes; m_dead is the liveness
+    // flag there.
     us_socket_t* m_readSock = nullptr;
     // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
     // the singleton's lifetime. The WebSocket's native callbacks point

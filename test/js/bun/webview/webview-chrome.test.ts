@@ -3,9 +3,9 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast } from "harness";
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
-// ChromeProcess.zig's findChrome() — $PATH names, then hardcoded absolute
+// ChromeProcess.rs's find_chrome() — $PATH names, then hardcoded absolute
 // paths, then Playwright cache — so the test detects Chrome whenever the
-// runtime would.
+// runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
@@ -43,7 +43,18 @@ function findChrome(): string | undefined {
   }
 
   // $PATH — same as `which google-chrome` etc.
-  const names = ["google-chrome-stable", "google-chrome", "chromium-browser", "chromium", "microsoft-edge", "chrome"];
+  const names =
+    process.platform === "win32"
+      ? ["chrome", "chromium", "brave", "msedge"]
+      : [
+          "google-chrome-stable",
+          "google-chrome",
+          "chromium-browser",
+          "chromium",
+          "brave-browser",
+          "microsoft-edge",
+          "chrome",
+        ];
   for (const n of names) {
     const found = Bun.which(n);
     if (found) return found;
@@ -70,16 +81,42 @@ function findChrome(): string | undefined {
       "/usr/bin/chromium-browser",
       "/usr/bin/chromium",
       "/snap/bin/chromium",
+      "/usr/bin/brave-browser",
+      "/snap/bin/brave",
       "/usr/bin/microsoft-edge",
     ];
     for (const c of absolute) if (isExecutable(c)) return c;
-  } // Windows TODO — ChromeProcess.zig doesn't support it yet
+  } else if (process.platform === "win32") {
+    // Installer layout: <root>\<Vendor>\<Channel>\Application\<exe>. Same
+    // candidate order and roots as find_chrome(); Edge lives under
+    // "Program Files (x86)" even on 64-bit Windows.
+    const relative = [
+      "Google\\Chrome\\Application\\chrome.exe",
+      "Google\\Chrome Beta\\Application\\chrome.exe",
+      "Google\\Chrome Dev\\Application\\chrome.exe",
+      "Google\\Chrome SxS\\Application\\chrome.exe",
+      "Chromium\\Application\\chrome.exe",
+      "BraveSoftware\\Brave-Browser\\Application\\brave.exe",
+      "Microsoft\\Edge\\Application\\msedge.exe",
+    ];
+    const roots = [process.env.ProgramFiles, process.env["ProgramFiles(x86)"], process.env.LOCALAPPDATA].filter(
+      (root): root is string => !!root,
+    );
+    for (const rel of relative) {
+      for (const root of roots) {
+        const candidate = join(root, rel);
+        if (isExecutable(candidate)) return candidate;
+      }
+    }
+  }
 
-  // Playwright cache fallback — mirrors findPlaywrightShell().
+  // Playwright cache fallback — mirrors find_playwright_shell().
   const cacheDir =
     process.platform === "darwin"
       ? join(homedir(), "Library/Caches/ms-playwright")
-      : join(homedir(), ".cache/ms-playwright");
+      : process.platform === "win32"
+        ? join(process.env.LOCALAPPDATA ?? "", "ms-playwright")
+        : join(homedir(), ".cache/ms-playwright");
   let bestRev = 0;
   let bestName = "";
   try {
@@ -94,7 +131,10 @@ function findChrome(): string | undefined {
   if (!bestRev) return undefined;
   const arch = process.arch === "arm64" ? "arm64" : "x64";
   const plat = process.platform === "darwin" ? "mac" : "linux";
-  const bin = join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
+  const bin =
+    process.platform === "win32"
+      ? join(cacheDir, bestName, "chrome-headless-shell-win64", "chrome-headless-shell.exe")
+      : join(cacheDir, bestName, `chrome-headless-shell-${plat}-${arch}`, "chrome-headless-shell");
   if (isExecutable(bin)) return bin;
   if (process.platform === "linux" && process.arch === "arm64") {
     const bin2 = join(cacheDir, bestName, "chrome-linux/headless_shell");
@@ -976,4 +1016,40 @@ it("chrome: large evaluate payload crosses the pipe", async () => {
   const big = "x".repeat(100_000);
   const result = await view.evaluate(`${JSON.stringify(big)}.length`);
   expect(result).toBe(100_000);
+});
+
+it("chrome: large evaluate result crosses the pipe", async () => {
+  await using view = new Bun.WebView({ backend: chrome, width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // The reply is larger than any single read the parent does (64KB on the
+  // Windows pipe transport), so the NUL-delimited frame arrives in several
+  // chunks and has to be reassembled before it's parsed.
+  const result: string = await view.evaluate(`"y".repeat(300_000) + "!"`);
+  expect(result.length).toBe(300_001);
+  expect(result.at(-1)).toBe("!");
+  expect(result.at(0)).toBe("y");
+  expect(result.at(150_000)).toBe("y");
+});
+
+it("BUN_CHROME_PATH selects the executable", async () => {
+  // Subprocess-isolated — the executable is resolved once per process, on
+  // the first spawn. The env var is the second lookup step (after
+  // backend.path), so a process that has it set never consults $PATH or
+  // the install locations.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const view = new Bun.WebView({ backend: { type: "chrome", url: false }, width: 200, height: 200 });
+      await view.navigate("data:text/html,<body>env</body>");
+      console.log(await view.evaluate("document.body.textContent"));
+      view.close();
+      `,
+    ],
+    env: { ...bunEnv, BUN_CHROME_PATH: chromePath },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "env", stderr: "", exitCode: 0 });
 });

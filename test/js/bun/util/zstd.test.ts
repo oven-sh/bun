@@ -381,13 +381,13 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
           .join(":"),
       },
       stdout: "pipe",
-      // ASAN logs a warning for every refused allocation; not asserted on.
+      // ASAN logs a warning for every refused allocation; drained, not asserted on.
       stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
     const outOfMemory = { name: "RangeError", message: "Out of memory" };
-    expect(stdout, `the child printed nothing and exited with ${exitCode}`).not.toBe("");
+    expect(stdout, `the child printed nothing and exited with ${exitCode}\nstderr:\n${stderr}`).not.toBe("");
     expect(JSON.parse(stdout)).toEqual({
       compressSync: outOfMemory,
       compress: outOfMemory,

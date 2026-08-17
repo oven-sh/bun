@@ -2740,16 +2740,13 @@ pub mod JSZstd {
             .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
-    /// Why a `Bun.zstd*` call produced no output. Shared by the sync functions
-    /// (thrown) and [`ZstdJob`] (rejected), so both report the same errors.
+    /// Error of a `Bun.zstd*` call: thrown by the sync functions, rejected by [`ZstdJob`].
     pub(crate) enum Failure {
-        /// The output buffer could not be allocated. Its size is derived from
-        /// the input (the compression bound, or whatever the frames claim to
-        /// decompress to), so this is an error for the caller, not a crash.
+        /// The output buffer, whose size the input decides, could not be allocated.
         OutOfMemory,
-        /// Compression was refused or failed; an `ERR_ZSTD` with this message.
+        /// An `ERR_ZSTD` with this message.
         Compression(&'static [u8]),
-        /// Decompression failed; an `ERR_ZSTD` naming the error.
+        /// An `ERR_ZSTD` naming the error.
         Decompression(bun_zstd::ZstdError),
     }
 
@@ -2789,19 +2786,14 @@ pub mod JSZstd {
         }
     }
 
-    /// Compress `input` into a buffer sized to the compression bound, shrunk
-    /// to the compressed size afterwards.
     fn compress_to_vec(input: &[u8], level: i32) -> Result<Vec<u8>, Failure> {
         let max_size = bun_zstd::compress_bound(input.len());
-        // `ZSTD_compressBound` returns an error code instead of a size once the
-        // input exceeds `ZSTD_MAX_INPUT_SIZE`.
+        // `ZSTD_compressBound` returns an error code for inputs over `ZSTD_MAX_INPUT_SIZE`.
         if bun_zstd::is_error(max_size) {
             return Err(Failure::Compression(b"Input is too large to compress"));
         }
 
-        // The bound is only reserved, not zero-filled: zstd initializes exactly
-        // the bytes it reports, and filling the buffer first would be a second
-        // pass over the whole thing.
+        // Reserved, not zero-filled: zstd initializes exactly the bytes it reports.
         let mut output: Vec<u8> = Vec::new();
         output
             .try_reserve_exact(max_size)

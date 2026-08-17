@@ -188,8 +188,7 @@ pub enum Result {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, strum::IntoStaticStr)]
 pub enum ZstdError {
-    /// The output buffer could not be allocated or grown. Its size comes from
-    /// the (untrusted) input, so this is reported instead of aborting.
+    /// The output buffer, whose size the (untrusted) input decides, could not be allocated.
     OutOfMemory,
     InvalidZstdData,
     DecompressionFailed,
@@ -293,11 +292,7 @@ pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
     Result::Success(result)
 }
 
-/// [`decompress`] into `out`'s spare capacity (append mode). The spare
-/// capacity is the output bound handed to zstd, so callers reserve the
-/// decompressed size first; zstd fails with `dstSize_tooSmall` when the
-/// frames do not fit. On success `out.len()` is advanced by the number of
-/// bytes written.
+/// [`decompress`] into `out`'s spare capacity, which is the output bound; commits the bytes written.
 fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> Result {
     let spare = out.spare_capacity_mut();
     // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src
@@ -323,8 +318,7 @@ fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> Result {
 /// Returns owned slice that must be freed by the caller.
 /// Handles both frames with known and unknown content sizes.
 /// For safety, if the reported decompressed size exceeds 16MB, streaming decompression is used instead.
-/// Every output allocation is fallible ([`ZstdError::OutOfMemory`]) because the
-/// input decides how large it is.
+/// Output allocations fail with [`ZstdError::OutOfMemory`] instead of aborting.
 pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> {
     let size = get_decompressed_size(src);
 
@@ -340,13 +334,11 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     // 1. Content size is unknown, OR
     // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
     if size == ZSTD_CONTENTSIZE_UNKNOWN || size > MAX_PREALLOCATE_SIZE {
-        // Doubling up from one step copies about as many bytes as the result
-        // is long, so start from a bounded guess instead: the header size is
-        // untrusted and gets at most what the fast path below would allocate;
-        // without one, a frame's output is rarely smaller than its input.
         let initial_capacity = if size == ZSTD_CONTENTSIZE_UNKNOWN {
+            // A frame's output is rarely smaller than its input.
             src.len().clamp(STREAMING_OUTPUT_STEP, MAX_PREALLOCATE_SIZE)
         } else {
+            // The header size is untrusted: reserve no more than the fast path below would.
             MAX_PREALLOCATE_SIZE
         };
         let mut list: Vec<u8> = Vec::new();
@@ -359,9 +351,7 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
         return Ok(list);
     }
 
-    // Fast path: size is known and within reasonable limits. zstd writes every
-    // byte it reports, so the buffer is handed over uninitialized; zero-filling
-    // it first would cost a second pass over the whole output.
+    // Fast path: size is known and within reasonable limits
     let mut output: Vec<u8> = Vec::new();
     output
         .try_reserve_exact(size)
@@ -381,9 +371,7 @@ pub fn get_decompressed_size(src: &[u8]) -> usize {
 
 pub use bun_core::compress::State;
 
-/// Minimum spare output capacity handed to `ZSTD_decompressStream` per call.
-/// The whole spare capacity is offered, so the `Vec` doubles past this as the
-/// output grows.
+/// Minimum spare output capacity offered to `ZSTD_decompressStream` per call.
 const STREAMING_OUTPUT_STEP: usize = 4096;
 
 struct ZstdReaderArrayList<'a> {
@@ -591,8 +579,8 @@ impl StreamingDecoder {
     }
 
     /// Consume all of `input`, appending decompressed bytes to `out`
-    /// (growing in `STREAMING_OUTPUT_STEP` steps). Returns `ShortRead` when
-    /// more input is required and `is_done` is false.
+    /// (growing in 4096-byte steps). Returns `ShortRead` when more input is
+    /// required and `is_done` is false.
     pub fn decompress(
         &mut self,
         input: &[u8],

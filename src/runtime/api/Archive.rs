@@ -1083,31 +1083,29 @@ impl FilesContext {
 
             // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
-            if size > 0 {
-                let mut total_read: usize = 0;
-                let mut buf = [0u8; 64 * 1024];
-                while total_read < size {
-                    let to_read = (size - total_read).min(buf.len());
-                    let read = archive.read_data(&mut buf[..to_read]);
-                    if read < 0 {
-                        // Read error.
-                        // NOTE: both `data` and `entries` drop automatically here.
-                        // SAFETY: `archive` is the live `read_new()` handle opened above.
-                        return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                            FilesResult::LibarchiveErr(err)
-                        } else {
-                            FilesResult::Err(FilesError::ReadError)
-                        });
-                    }
-                    if read == 0 {
-                        break;
-                    }
-                    let bytes_read = usize::try_from(read).expect("int cast");
-                    data.try_reserve(bytes_read)
-                        .map_err(|_| bun_alloc::AllocError)?;
-                    data.extend_from_slice(&buf[..bytes_read]);
-                    total_read += bytes_read;
+            while data.len() < size {
+                let to_read = (size - data.len()).min(64 * 1024);
+                data.try_reserve(to_read)
+                    .map_err(|_| bun_alloc::AllocError)?;
+                // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    // Read error.
+                    // NOTE: both `data` and `entries` drop automatically here.
+                    // SAFETY: `archive` is the live `read_new()` handle opened above.
+                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                        FilesResult::LibarchiveErr(err)
+                    } else {
+                        FilesResult::Err(FilesError::ReadError)
+                    });
                 }
+                if read == 0 {
+                    break;
+                }
+                let bytes_read = usize::try_from(read).expect("int cast");
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
             }
             // errdefer free(data) — handled by Drop
 
@@ -1338,6 +1336,9 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    let mut stack_buf = bun_sys::UninitBuf::<{ 64 * 1024 }>::uninit();
+    // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
 
     while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
@@ -1427,7 +1428,6 @@ fn extract_to_disk_filtered(
                 if size > 0 {
                     // Read archive data and write to file
                     let mut remaining = size;
-                    let mut buf = [0u8; 64 * 1024];
                     while remaining > 0 {
                         let to_read = remaining.min(buf.len());
                         let read = archive.read_data(&mut buf[..to_read]);

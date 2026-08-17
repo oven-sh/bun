@@ -4714,13 +4714,14 @@ impl NodeFS {
                 unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
         }
 
-        let mut stack_buf = [0u8; 64 * 1024];
-        let stack_buf_len = stack_buf.len();
+        const STACK_BUF_LEN: usize = 64 * 1024;
+        let mut stack_buf = sys::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
-        let mut buf: &mut [u8] = &mut stack_buf;
+        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+        let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
 
         'maybe_allocate_large_temp_buf: {
-            if stat_size > stack_buf_len * 16 {
+            if stat_size > STACK_BUF_LEN * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 // The slab must stay uninitialised: `Vec::resize` here was a

@@ -928,3 +928,42 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("exceptions thrown while walking properties", () => {
+  async function run(fixture) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("a lazy property initializer that throws only hides that property", async () => {
+    // Bun.$ is initialized on first access and reads process.env while doing so.
+    // The exception it throws here used to stay pending while the following
+    // properties were visited, so they were dropped from the output (and debug
+    // builds asserted when the next initializer ran).
+    const { stdout, stderr, exitCode } = await run(`
+      Object.defineProperty(process, "env", { get() { throw new Error("boom"); } });
+      const s = Bun.inspect(Bun);
+      console.log(/^  \\$:/m.test(s), /^  Archive:/m.test(s), /^  version:/m.test(s));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false true true\n", stderr: "", exitCode: 0 });
+  });
+
+  it("a throwing getPrototypeOf trap in the prototype chain stops the walk", async () => {
+    const { stdout, stderr, exitCode } = await run(`
+      const proto = new Proxy({ inherited: 1 }, { getPrototypeOf() { throw new Error("trap"); } });
+      console.log(Bun.inspect(Object.create(proto)));
+      console.log(Object.create(proto));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "{\n  inherited: 1,\n}\n{\n  inherited: 1,\n}\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});

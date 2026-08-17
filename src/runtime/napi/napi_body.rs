@@ -976,9 +976,7 @@ extern "C" fn napi_get_prototype(
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
-    // Node's v8::Object::GetPrototype cannot run JS: for a Proxy it returns null
-    // without consulting the getPrototypeOf trap. No other object type runs JS
-    // for [[GetPrototypeOf]], so this function never does either.
+    // Like V8's Object::GetPrototype: a Proxy yields null and its trap never runs.
     if object.js_type() == jsc::JSType::ProxyObject {
         result.set(env, JSValue::NULL);
         return env.ok();

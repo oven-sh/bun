@@ -1665,7 +1665,7 @@ impl BunxCommand {
         if let (false, Some(binary_name)) = (opts.specified_packages.is_empty(), opts.binary_name) {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
-                (BStr::new(&update_request.name), BStr::new(binary_name)),
+                (BStr::new(&install_param_display), BStr::new(binary_name)),
             );
             bun_core::prettyln!(
                 "  <d>hint: try running without --package to install and run {} directly<r>",

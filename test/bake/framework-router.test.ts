@@ -224,7 +224,6 @@ describe.concurrent("a style that is not a built-in style name", () => {
   });
 });
 
-
 describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path buffer", () => {
   // Longer than MAX_PATH_BYTES on every platform.
   const tooLongRoot = `Buffer.alloc(100_000, "a").toString()`;
@@ -680,7 +679,9 @@ describe("scan errors", () => {
         "blog/[id].tsx": "1",
         "blog/[slug].tsx": "1",
       }),
-    ).toStrictEqual(['Multiple pages matching the same route pattern is ambiguous: "blog/[id].tsx" and "blog/[slug].tsx"']);
+    ).toStrictEqual([
+      'Multiple pages matching the same route pattern is ambiguous: "blog/[id].tsx" and "blog/[slug].tsx"',
+    ]);
   });
 
   // A route group adds no URL segment, so both files land on the same route.

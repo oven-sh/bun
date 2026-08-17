@@ -1085,6 +1085,50 @@ test("onmessageerror alone does not ref the port", () => {
   port1.close();
 });
 
+describe("a message that fails to deserialize emits 'messageerror'", () => {
+  // Serializes fine but fails to deserialize: the DataView's offset is only in bounds
+  // after a getter resized the buffer, and the buffer was serialized before that.
+  const undeserializable = `(() => { const ab = new ArrayBuffer(8, { maxByteLength: 65536 }); return { ab, get grow() { ab.resize(65536); return 1; }, get view() { return new DataView(ab, 4096, 16); } }; })()`;
+
+  async function run(script: string) {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", script], env: bunEnv, stdout: "pipe", stderr: "inherit" });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    return { stdout, exitCode };
+  }
+
+  test("on a MessagePort, and later messages still arrive", async () => {
+    const { stdout, exitCode } = await run(
+      `const { MessageChannel } = require("node:worker_threads");
+       const { port1, port2 } = new MessageChannel();
+       const seen = [];
+       const record = s => { seen.push(s); if (seen.length === 2) { console.log(seen.join(",")); port1.close(); port2.close(); } };
+       port2.on("messageerror", () => record("messageerror"));
+       port2.on("message", m => record("message:" + m));
+       port1.postMessage(${undeserializable});
+       port1.postMessage("after");`,
+    );
+    expect(stdout).toBe("messageerror,message:after\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("on the Worker when parentPort posts it, and later messages still arrive", async () => {
+    const { stdout, exitCode } = await run(
+      `const { Worker } = require("node:worker_threads");
+       const w = new Worker(
+         'const { parentPort } = require("node:worker_threads"); parentPort.postMessage(${undeserializable}); parentPort.postMessage("after"); setInterval(() => {}, 1000);',
+         { eval: true },
+       );
+       const seen = [];
+       const record = s => { seen.push(s); if (seen.length === 2) { console.log(seen.join(",")); w.terminate(); } };
+       w.on("error", e => { console.log("error", e); process.exit(1); });
+       w.on("messageerror", () => record("messageerror"));
+       w.on("message", m => record("message:" + m));`,
+    );
+    expect(stdout).toBe("messageerror,message:after\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Collecting the unreferenced peer must not look like a peer close: node never
 // closes a channel because a port was garbage-collected, so ref() still works.
 test("hasRef() survives collection of the unreferenced peer", () => {

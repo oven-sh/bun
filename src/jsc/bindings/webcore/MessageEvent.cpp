@@ -94,8 +94,17 @@ auto MessageEvent::create(JSC::JSGlobalObject& globalObject, Ref<SerializedScrip
     bool didFail = false;
 
     auto deserialized = data->deserialize(globalObject, &globalObject, ports, SerializationErrorMode::NonThrowing, &didFail);
-    if (topExceptionScope.exception()) [[unlikely]]
+    if (topExceptionScope.exception()) [[unlikely]] {
+        // A termination exception is left pending for the caller; anything else is a
+        // deserialization failure and becomes a `messageerror` event.
+        if (!vm.hasPendingTerminationException()) {
+            topExceptionScope.clearException();
+            didFail = true;
+        }
         deserialized = jsUndefined();
+    }
+    if (didFail)
+        deserialized = jsNull();
 
     JSC::Strong<JSC::Unknown> strongData(vm, deserialized);
 

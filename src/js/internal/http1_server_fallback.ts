@@ -235,13 +235,12 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
   const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
-  const { kHandle: kHttp1ResponseHandle } = require("internal/http");
+  const { kHandle: kHttp1ResponseHandle, kMustCloseConnection } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
   const http1Options = options.http1Options || {};
   const IncomingMessageClass = http1Options.IncomingMessage || http.IncomingMessage;
   const ServerResponseClass = http1Options.ServerResponse || http.ServerResponse;
-  const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
 
   // Node's connectionListenerInternal sets this so handlers can reach the server
   // through req.socket.server (nodejs/node#13435).
@@ -269,6 +268,8 @@ function connectionListenerHTTP1(server, socket, options) {
 
   let req = null;
   let pendingUpgrade = null;
+  // Node's state.keepAliveTimeoutSet.
+  let keepAliveTimeoutSet = false;
 
   parser[kOnHeadersComplete] = function onHttp1HeadersComplete(
     versionMajor,
@@ -281,6 +282,11 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
+    // Node's resetSocketTimeout.
+    if (keepAliveTimeoutSet) {
+      keepAliveTimeoutSet = false;
+      socket.setTimeout(server.timeout || 0);
+    }
     socket[kHttp1ActiveRequests]++;
 
     req = new IncomingMessageClass(socket);
@@ -316,6 +322,7 @@ function connectionListenerHTTP1(server, socket, options) {
     // The native dispatcher seeds these from the server; renderNativeHeaders
     // reads them to decide the Keep-Alive auto-header bits, so the fallback
     // path must carry them too or keep-alive responses lose their timeout line.
+    const keepAliveTimeout = typeof server.keepAliveTimeout === "number" ? server.keepAliveTimeout : 5000;
     res._keepAliveTimeout = keepAliveTimeout;
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
@@ -327,11 +334,14 @@ function connectionListenerHTTP1(server, socket, options) {
     };
     res[kHttp1ResponseHandle] = handle;
     res.assignSocket(socket);
-    // node's resOnFinish: release the socket once the response completes so the next
-    // keep-alive request's response can attach (assignSocket throws
-    // ERR_HTTP_SOCKET_ASSIGNED while a previous response is still assigned).
+    // Node's resOnFinish: detach, then its res._last branch or its keep-alive branch.
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
+      if (this[kMustCloseConnection]) {
+        if (!socket.destroyed) socket.end();
+      } else {
+        armKeepAliveTimeout();
+      }
     });
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
@@ -401,6 +411,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
+      socket.removeListener("timeout", onHttp1SocketTimeout);
       connections.delete(socket);
       try {
         parser.close();
@@ -434,20 +445,49 @@ function connectionListenerHTTP1(server, socket, options) {
     }
     const httpMessage = socket._httpMessage;
     if (httpMessage) {
-      httpMessage._last = true;
+      httpMessage[kMustCloseConnection] = true;
     } else if (socket.writable) {
       socket.end();
     }
   }
+  // Node's socketOnTimeout.
+  function onHttp1SocketTimeout() {
+    const reqTimeout = req && !req.complete && req.emit("timeout", socket);
+    const res = socket._httpMessage;
+    const resTimeout = res && res.emit("timeout", socket);
+    const serverTimeout = server.emit("timeout", socket);
+    if (!reqTimeout && !resTimeout && !serverTimeout) socket.destroy();
+  }
+  // The keep-alive branch of Node's resOnFinish.
+  function armKeepAliveTimeout() {
+    if (
+      socket[kHttp1ActiveRequests] !== 0 ||
+      socket.destroyed ||
+      socket.writableEnded ||
+      typeof socket.setTimeout !== "function"
+    ) {
+      return;
+    }
+    const { keepAliveTimeout, keepAliveTimeoutBuffer } = server;
+    if (!(Number.isFinite(keepAliveTimeout) && keepAliveTimeout > 0)) return;
+    const buffer =
+      Number.isFinite(keepAliveTimeoutBuffer) && keepAliveTimeoutBuffer >= 0 ? keepAliveTimeoutBuffer : 1000;
+    socket.setTimeout(keepAliveTimeout + buffer);
+    keepAliveTimeoutSet = true;
+  }
   socket.on("data", onHttp1SocketData);
   socket.on("error", onHttp1SocketErrorListener);
   socket.once("end", onHttp1SocketEnd);
+  socket.on("timeout", onHttp1SocketTimeout);
   socket.once("close", () => {
     connections.delete(socket);
     try {
       parser.close();
     } catch {}
   });
+  // Node's connectionListenerInternal: server.timeout applies from accept on.
+  const { timeout: serverTimeout } = server;
+  if (serverTimeout && typeof socket.setTimeout === "function") socket.setTimeout(serverTimeout);
 }
 
 function closeIdleHttp1Connections(server) {

@@ -75,6 +75,8 @@ const serverSymbol = Symbol.for("::bunternal::");
 const kPendingCallbacks = Symbol("pendingCallbacks");
 const kRequest = Symbol("request");
 const kCloseCallback = Symbol("closeCallback");
+// Node's res._last: the connection is to be closed once this response has finished.
+const kMustCloseConnection = Symbol("kMustCloseConnection");
 
 export const enum ClientRequestEmitState {
   socket = 1,
@@ -584,6 +586,7 @@ export {
   kMaxHeaderSize,
   kMaxHeadersCount,
   kMethod,
+  kMustCloseConnection,
   kNeedDrain,
   kOptions,
   kOutHeaders,

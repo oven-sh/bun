@@ -4070,7 +4070,11 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     const server = createServer(() =>
       unexpectedRequest.reject(new Error("request handler must not run for a handled upgrade")),
     );
+    let timeoutListenersAtHandoff = -1;
     server.on("upgrade", (req, socket, head) => {
+      // Like Node (test-http-connect asserts the same), the listener gets the socket without
+      // the connection listener's 'timeout' handling, which would otherwise destroy the tunnel.
+      timeoutListenersAtHandoff = socket.listenerCount("timeout");
       socket.write("HTTP/1.1 101 Switching Protocols\r\n\r\nHEAD:" + head.toString());
       socket.on("data", d => socket.write("TUNNEL:" + d));
     });
@@ -4097,6 +4101,7 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(out).toStartWith("HTTP/1.1 101 Switching Protocols");
     expect(out).toContain("HEAD:early");
     expect(out).toContain("TUNNEL:more");
+    expect(timeoutListenersAtHandoff).toBe(0);
     clientSide.destroy();
     serverSide.destroy();
   }
@@ -4138,4 +4143,89 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
   }
+});
+
+it("connectionListener closes a socket fed through emit('connection') once it has been idle for keepAliveTimeout", async () => {
+  const httpServer = createServer({ keepAliveTimeout: 100, keepAliveTimeoutBuffer: 0 }, (req, res) => res.end("ok"));
+  const serverSideClosed = Promise.withResolvers<void>();
+  // A plain net.Server accepts the connection and hands it to http's connection listener, so
+  // the request is served by the JS fallback parser rather than the native server.
+  const netServer = createNetServer(socket => {
+    socket.once("close", () => serverSideClosed.resolve());
+    httpServer.emit("connection", socket);
+  });
+  await once(netServer.listen(0), "listening");
+  try {
+    const client = connect((netServer.address() as AddressInfo).port);
+    client.setEncoding("utf8");
+    let received = "";
+    client.on("data", chunk => (received += chunk));
+    const clientClosed = once(client, "close");
+    await once(client, "connect");
+    client.write("GET / HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    // The client never sends anything else, so only the server can be closing the connection.
+    await serverSideClosed.promise;
+    await clientClosed;
+    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(received.toLowerCase()).toContain("\r\nconnection: keep-alive\r\n");
+    expect(received).toEndWith("\r\n\r\nok");
+  } finally {
+    netServer.close();
+  }
+});
+
+it("connectionListener serves a Duplex that has no setTimeout() even when server.timeout and keepAliveTimeout are set", async () => {
+  // Like Node, the timeouts only apply to sockets that can carry one; a plain stream pair fed
+  // through emit('connection') (test-http-generic-streams style) is served without them.
+  const responseFinished = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    // The connection listener's own 'finish' listener (where keep-alive would be armed) runs
+    // before this one, so reaching it means that path coped with the missing setTimeout too.
+    res.on("finish", () => responseFinished.resolve());
+    res.end("ok");
+  });
+  server.setTimeout(100);
+  const [clientSide, serverSide] = duplexPair();
+  expect(typeof (serverSide as any).setTimeout).toBe("undefined");
+  server.emit("connection", serverSide);
+  const response = await new Promise<string>((resolve, reject) => {
+    let buf = "";
+    clientSide.on("data", d => {
+      buf += d;
+      if (buf.endsWith("\r\n\r\nok")) resolve(buf);
+    });
+    clientSide.on("close", () => reject(new Error("closed before the response arrived: " + buf)));
+    clientSide.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  });
+  await responseFinished.promise;
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(serverSide.destroyed).toBe(false);
+  clientSide.destroy();
+  serverSide.destroy();
+});
+
+it("connectionListener with httpAllowHalfOpen ends the connection once the response to a half-closed client finishes", async () => {
+  // Node's socketOnEnd marks the in-flight response as the connection's last one instead of
+  // ending the connection under the response; resOnFinish then ends it.
+  const writableEndedAfterFinish = Promise.withResolvers<boolean>();
+  const server = createServer((req, res) => {
+    // The request's own Connection header allows keep-alive; only the half-close says otherwise.
+    req.socket.once("end", () => {
+      res.on("finish", () => writableEndedAfterFinish.resolve(req.socket.writableEnded));
+      res.end("ok");
+    });
+  });
+  server.httpAllowHalfOpen = true;
+  const [clientSide, serverSide] = duplexPair();
+  server.emit("connection", serverSide);
+  const clientSawEnd = once(clientSide, "end");
+  let response = "";
+  clientSide.on("data", d => (response += d));
+  clientSide.end("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  expect(await writableEndedAfterFinish.promise).toBe(true);
+  await clientSawEnd;
+  expect(response).toStartWith("HTTP/1.1 200 OK\r\n");
+  expect(response).toEndWith("\r\n\r\nok");
+  clientSide.destroy();
+  serverSide.destroy();
 });

@@ -847,15 +847,14 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
 
     case Method::RuntimeEvaluate: {
         // {"result":{"type":"...","value":...},"exceptionDetails":{...}?}
-        // returnByValue:true + awaitPromise:true → result.value is the
-        // JSON-serialized return. exceptionDetails present → script threw.
+        // exceptionDetails present → script (or its JSON.stringify) threw.
         auto excDetails = jsonField(result, { "exceptionDetails", 16 });
         if (!excDetails.empty()) {
             settle(g, view, entry.slot, false, errorFromExceptionDetails(g, excDetails));
             return;
         }
-        // result.result.value — the inner result object's value field.
-        // type:"undefined" → no value field → resolve undefined.
+        // result.result.value — JSON of the round-tripped value (see
+        // Ops::evaluate). Only type:"undefined" has no value field.
         auto inner = jsonField(result, { "result", 6 });
         auto type = jsonString(jsonField(inner, { "type", 4 }));
         auto valueSlice = jsonField(inner, { "value", 5 });
@@ -863,8 +862,7 @@ void Transport::handleResponse(uint32_t id, std::span<const char> result, std::s
             settle(g, view, entry.slot, true, jsUndefined());
             return;
         }
-        // JSONParse the value slice directly. Same 1-parse as WKWebView's
-        // EvalDone — the slice IS JSON (returnByValue serialized it).
+        // Same 1-parse as WKWebView's EvalDone.
         JSValue v = JSONParse(g, WTF::String::fromUTF8(valueSlice));
         settle(g, view, entry.slot, true, v ? v : jsUndefined());
         return;
@@ -1411,17 +1409,21 @@ JSPromise* navigate(JSGlobalObject* g, JSWebView* view, const WTF::String& url)
             .num("height"_s, static_cast<int32_t>(view->m_height)));
 }
 
-// Runtime.evaluate with returnByValue + awaitPromise. Chrome JSON-serializes
-// the result internally (same mechanism as WKWebView's page-side
-// JSON.stringify but implicit). exceptionDetails present → script threw.
+// Runtime.evaluate with returnByValue + awaitPromise. returnByValue is not
+// JSON.stringify (NaN/-0 become unserializableValue, functions {}, toJSON is
+// ignored), so the page applies the documented JSON round trip itself, as the
+// WebKit backend does; a throwing JSON.stringify surfaces as exceptionDetails.
 JSPromise* evaluate(JSGlobalObject* g, JSWebView* view, const WTF::String& script)
 {
     auto& t = transport();
     uint32_t id = t.nextId();
-    // Same "await (expr)" wrap as WKWebView: forces expression context,
-    // unwraps thenables. Chrome's awaitPromise does the await part; we
-    // just need the paren-wrap for statement-sequence rejection consistency.
-    auto body = makeString("(async()=>{return await ("_s, script, ")})()"_s);
+    // Same "await (expr)" wrap as WKWebView. The script is a separate thunk
+    // so `r`/`s` never shadow page globals; parsing page-side keeps .value
+    // plain JSON (one JSONParse in handleResponse, no double escaping).
+    auto body = makeString(
+        "(async(r)=>{const s=JSON.stringify(await r());return s===void 0?s:JSON.parse(s)})(async()=>{return await ("_s,
+        script,
+        ")})"_s);
     return sendChromeOp(g, view, view->m_pendingEval, PendingSlot::Evaluate,
         Method::RuntimeEvaluate, id,
         Command(id, "Runtime.evaluate"_s, sidSpan(view->m_sessionId))

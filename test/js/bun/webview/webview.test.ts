@@ -192,6 +192,45 @@ it("evaluate() returns native JS values via page-side JSON.stringify + parent JS
   expect(await view.evaluate("() => 1")).toBeUndefined();
 });
 
+it("evaluate() result is exactly the JSON round trip (same table as the Chrome backend)", async () => {
+  await using view = new Bun.WebView({ width: 200, height: 200 });
+  await view.navigate(html("<body></body>"));
+  // webview-chrome.test.ts checks this same table against Chrome, whose
+  // Runtime.evaluate does not JSON-serialize on its own; both backends must
+  // agree with what the docs promise.
+  const scripts = {
+    nan: "NaN",
+    infinity: "Infinity",
+    negativeInfinity: "-Infinity",
+    negativeZero: "-0",
+    symbol: "Symbol('x')",
+    date: "new Date(0)",
+    toJSON: "({ toJSON() { return 'custom' } })",
+    nested: "({ a: NaN, b: -0, c: [Infinity, undefined, () => 1] })",
+    awaited: "Promise.resolve(-0)",
+  };
+  const results: Record<string, unknown> = {};
+  for (const [name, script] of Object.entries(scripts)) {
+    results[name] = await view.evaluate(script).catch(e => ({ rejected: e.message }));
+  }
+  expect(results).toEqual({
+    nan: null,
+    infinity: null,
+    negativeInfinity: null,
+    negativeZero: 0,
+    symbol: undefined,
+    date: "1970-01-01T00:00:00.000Z",
+    toJSON: "custom",
+    nested: { a: null, b: 0, c: [null, null, null] },
+    awaited: 0,
+  });
+  expect(Object.is(results.negativeZero, 0)).toBe(true);
+  expect(Object.is(results.awaited, 0)).toBe(true);
+  // JSON.stringify throws for these; the TypeError is the rejection.
+  await expect(view.evaluate("1n")).rejects.toThrow(/BigInt/);
+  await expect(view.evaluate("(() => { const a = {}; a.self = a; return a })()")).rejects.toThrow(/cyclic|circular/);
+});
+
 it("evaluate() awaits Promises", async () => {
   await using view = new Bun.WebView({ width: 200, height: 200 });
   await view.navigate(html("<body></body>"));

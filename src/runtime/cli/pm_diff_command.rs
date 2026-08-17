@@ -710,6 +710,24 @@ fn fetch_registry_tree(
             "no version of {} matches {}",
             (BStr::new(name), BStr::new(version)),
         );
+        // What is there instead: the newest releases and the dist-tags.
+        let recent: Vec<String> = manifest
+            .release_versions()
+            .iter()
+            .rev()
+            .take(5)
+            .map(|v| v.fmt(&manifest.string_buf).to_string())
+            .collect();
+        if !recent.is_empty() {
+            bun_core::pretty_errorln!("<d>recent versions:<r> {}", recent.join(", "));
+        }
+        let tags: Vec<String> = manifest
+            .dist_tags()
+            .map(|(t, v)| format!("{}: {}", BStr::new(t), v.fmt(&manifest.string_buf)))
+            .collect();
+        if !tags.is_empty() {
+            bun_core::pretty_errorln!("<d>tags:<r> {}", tags.join(", "));
+        }
         Global::exit(1);
     };
 

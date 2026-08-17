@@ -475,6 +475,9 @@ diffme@1.0.0 → diffme@2.0.0
     const nover = await diff(["diffme@9.9.9", "2.0.0"]);
     expect(nover.exitCode).toBe(1);
     expect(nover.stderr).toContain("no version of diffme matches 9.9.9");
+    // …and what exists instead, newest first, plus the tags.
+    expect(nover.stderr).toContain("recent versions: 2.0.0, 1.0.0");
+    expect(nover.stderr).toMatch(/tags: .*latest: 2\.0\.0/);
     const many = await diff(["diffme@1", "diffme@2", "diffme@3"]);
     expect(many.stderr).toContain("no file in either side matches diffme@3");
     expect(many.exitCode).toBe(1);

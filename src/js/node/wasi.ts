@@ -1619,9 +1619,10 @@ var require_wasi = __commonJS({
             }
             try {
               bindings.kill(constants_1.SIGNAL_MAP[sig]);
-            } catch {
+            } catch (err) {
               // e.g. SIGPOLL/SIGPWR do not exist on every host.
-              return constants_1.WASI_ENOTSUP;
+              if (err?.code === "ERR_UNKNOWN_SIGNAL") return constants_1.WASI_ENOTSUP;
+              throw err;
             }
             return constants_1.WASI_ESUCCESS;
           },

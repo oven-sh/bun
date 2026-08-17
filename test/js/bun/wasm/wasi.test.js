@@ -130,16 +130,46 @@ it("proc_raise uses wasi_snapshot_preview1 signal numbering", () => {
   expect(raised.length).toBe(preview1.length);
 });
 
+it("proc_raise reports ENOTSUP for a signal the host does not have and rethrows anything else", () => {
+  const WASI_ENOTSUP = 58;
+  const makeWasi = kill => {
+    const wasi = new WASI({
+      bindings: {
+        hrtime: () => process.hrtime.bigint(),
+        exit: () => {},
+        kill,
+        randomFillSync: array => crypto.getRandomValues(array),
+        isTTY: () => false,
+        fs,
+        path,
+      },
+    });
+    wasi.setMemory(new WebAssembly.Memory({ initial: 1 }));
+    return wasi;
+  };
+
+  const unknownSignal = makeWasi(signal => {
+    throw Object.assign(new TypeError("Unknown signal: " + signal), { code: "ERR_UNKNOWN_SIGNAL" });
+  });
+  // 28 is SIGPOLL in preview1 numbering.
+  expect(unknownSignal.wasiImport.proc_raise(28)).toBe(WASI_ENOTSUP);
+
+  const broken = makeWasi(() => {
+    throw new Error("kill binding bug");
+  });
+  expect(() => broken.wasiImport.proc_raise(28)).toThrow("kill binding bug");
+});
+
 it.skipIf(isWindows)("bun prog.wasm: proc_raise(SIGTERM) delivers SIGTERM to the host process", () => {
   // (module
   //   (import "wasi_snapshot_preview1" "proc_raise" (func (param i32) (result i32)))
   //   (import "wasi_snapshot_preview1" "proc_exit" (func (param i32)))
   //   (memory (export "memory") 1)
-  //   (func (export "_start") (drop (call 0 (i32.const 15))) (call 1 (i32.const 77))))
+  //   (func (export "_start") (drop (call 0 (i32.const 15))) (call 1 (i32.const 42))))
   const s = t => [t.length, ...Buffer.from(t)];
   const sec = (id, b) => [id, b.length, ...b];
   const W = "wasi_snapshot_preview1";
-  const body = [0, 0x41, 15, 0x10, 0, 0x1a, 0x41, 77, 0x10, 1, 0x0b];
+  const body = [0, 0x41, 15, 0x10, 0, 0x1a, 0x41, 42, 0x10, 1, 0x0b];
   const mod = Buffer.from([
     ...[0, 97, 115, 109, 1, 0, 0, 0],
     ...sec(1, [3, 0x60, 1, 0x7f, 1, 0x7f, 0x60, 1, 0x7f, 0, 0x60, 0, 0]),
@@ -159,7 +189,7 @@ it.skipIf(isWindows)("bun prog.wasm: proc_raise(SIGTERM) delivers SIGTERM to the
   });
   expect(stdout.toString()).toBe("");
   expect(signalCode).toBe("SIGTERM");
-  expect(exitCode).not.toBe(77);
+  expect(exitCode).not.toBe(42);
 });
 
 it("path_open reports the host errno to the guest when the open fails", () => {

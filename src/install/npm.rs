@@ -2707,16 +2707,40 @@ impl PackageManifest {
                             package_version.unpacked_size = n.value() as u32;
                         }
 
-                        if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
-                            package_version.integrity = Integrity::parse(shasum_str);
+                        let integrity_str = dist
+                            .get(b"integrity")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or(b"");
+                        if !integrity_str.is_empty() {
+                            package_version.integrity = Integrity::parse(integrity_str);
                             if package_version.integrity.tag.is_supported() {
                                 break 'integrity;
                             }
                         }
 
+                        let mut malformed_shasum = false;
                         if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
-                            package_version.integrity =
-                                Integrity::parse_sha_sum(shasum_str).unwrap_or_default();
+                            match Integrity::parse_sha_sum(shasum_str) {
+                                Ok(integrity) => {
+                                    package_version.integrity = integrity;
+                                    if integrity.tag.is_supported() {
+                                        break 'integrity;
+                                    }
+                                }
+                                Err(_) => malformed_shasum = true,
+                            }
+                        }
+
+                        if !integrity_str.is_empty() || malformed_shasum {
+                            log.add_warning_fmt(
+                                None,
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "Unsupported or malformed integrity hash in registry metadata for {}@{}; its tarball will not be verified",
+                                    bstr::BStr::new(expected_name),
+                                    bstr::BStr::new(version_name),
+                                ),
+                            );
                         }
                     }
                 }

@@ -10,7 +10,6 @@
 [bun_css]
 
 [bun_install]
-"defaulted_failure:src/install/npm.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 
 [bun_js_parser]

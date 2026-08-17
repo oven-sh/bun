@@ -2785,4 +2785,85 @@ describe("GC pressure mid-rewrite", () => {
     const start = () => rw2.transform(rw1.transform(new Response("<p>x</p>"))).text();
     expect(await start()).toBe('<p one="" two="">x</p>');
   });
+
+  // Content ops coerce their first argument to a string, then coerce the
+  // second (the `{ html }` options getter / the attribute value), which runs
+  // user JS. A GC in that window must not free the first argument's bytes
+  // before lol-html copies them into the output.
+  it("content op string arguments survive a GC triggered while coercing a later argument", async () => {
+    const fixture = /* js */ `
+      const N = 20000;
+      const mk = (ch, n) => Array.from({ length: n }, () => ch).join("");
+      const churn = () => {
+        Bun.gc(true);
+        for (let i = 0; i < 50; i++) mk("SECRET", 20000);
+        Bun.gc(true);
+      };
+      // toString() hands back a temporary string nothing else references.
+      const content = ch => ({ toString: () => mk(ch, N) + "END" });
+      const opts = {
+        get html() {
+          churn();
+          return false;
+        },
+      };
+      const out = new HTMLRewriter()
+        .on("p", {
+          element(el) {
+            el.setInnerContent(content("I"), opts);
+            el.before(content("B"), opts);
+            el.setAttribute({ toString: () => mk("n", N) }, { toString: () => (churn(), "v") });
+            el.onEndTag(end => {
+              end.after(content("E"), opts);
+            });
+          },
+        })
+        .onDocument({
+          comments(c) {
+            c.replace(content("C"), opts);
+          },
+          text(t) {
+            if (t.text === "txt") t.after(content("T"), opts);
+          },
+          end(end) {
+            end.append(content("D"), opts);
+          },
+        })
+        .transform("<p>x</p><div>txt</div><!-- c -->");
+      const fragments = {
+        "element.before": mk("B", N) + "END<p ",
+        "element.setAttribute": "<p " + mk("n", N) + '="v">',
+        "element.setInnerContent": '="v">' + mk("I", N) + "END</p>",
+        "endTag.after": "</p>" + mk("E", N) + "END<div>",
+        "text.after": "<div>txt" + mk("T", N) + "END</div>",
+        "comment.replace": "</div>" + mk("C", N) + "END",
+        "documentEnd.append": "END" + mk("D", N) + "END",
+      };
+      const result = {};
+      for (const [op, fragment] of Object.entries(fragments)) result[op] = out.includes(fragment);
+      result.exact =
+        out ===
+        mk("B", N) + "END<p " + mk("n", N) + '="v">' + mk("I", N) + "END</p>" + mk("E", N) + "END" +
+        "<div>txt" + mk("T", N) + "END</div>" + mk("C", N) + "END" + mk("D", N) + "END";
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || "{}")).toEqual({
+      "element.before": true,
+      "element.setAttribute": true,
+      "element.setInnerContent": true,
+      "endTag.after": true,
+      "text.after": true,
+      "comment.replace": true,
+      "documentEnd.append": true,
+      exact: true,
+    });
+    expect(exitCode).toBe(0);
+  });
 });

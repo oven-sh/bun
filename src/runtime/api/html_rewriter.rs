@@ -28,6 +28,7 @@ use crate::webcore::streams::{
 };
 use crate::webcore::{self, ByteStream, DrainResult, ReadableStream, Response, SinkHandle};
 use bun_core::String as BunString;
+use bun_core::ZigStringSlice;
 // `ZigString` re-exports `bun_core::ZigString`; JSC-side methods
 // (`to_js`, `with_encoding`, …) come from the `ZigStringJsc` extension trait.
 use bun_jsc::ZigStringJsc as _;
@@ -65,20 +66,22 @@ fn system_error(code: &'static str, message: &'static str) -> SystemError {
 //
 // Note: a `#[bun_jsc::host_fn(method)]` proc-macro form of typed argument
 // decoding hasn't landed, so the per-type decode arms used by HTMLRewriter
-// (`ZigString`, `?ContentOptions`, `JSValue`) are open-coded here as small
+// (string, `?ContentOptions`, `JSValue`) are open-coded here as small
 // helpers.
 
-/// Decode arm for `ZigString` — eat next arg, throw
-/// "Missing argument" if absent, "Expected string" if undefined/null,
-/// otherwise `get_zig_string`.
-fn eat_zig_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigString> {
+/// Decode arm for a string — eat next arg, throw "Missing argument" if
+/// absent, "Expected string" if undefined/null, otherwise ToString it into a
+/// slice that owns (or holds a ref on) its bytes. A borrowed view of the
+/// temporary `JSString` would not survive the user JS (a later argument's
+/// `toString`/getter) that runs before lol-html copies the bytes.
+fn eat_string(iter: &mut ArgumentsSlice<'_>, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
     let Some(value) = iter.next_eat() else {
         return Err(global.throw_invalid_arguments(format_args!("Missing argument")));
     };
     if value.is_undefined_or_null() {
         return Err(global.throw_invalid_arguments(format_args!("Expected string")));
     }
-    value.get_zig_string(global)
+    value.to_slice(global)
 }
 
 /// Decode arm for `JSValue` (required) — eat next arg or
@@ -105,15 +108,15 @@ fn eat_content_options(
     }
 }
 
-/// Common `(content: ZigString, contentOptions: ?ContentOptions)` pair —
+/// Common `(content: string, contentOptions: ?ContentOptions)` pair —
 /// every `before/after/replace/append/prepend/setInnerContent` wrapper
 /// decodes exactly this shape.
 fn eat_content_args(
     global: &JSGlobalObject,
     call_frame: &CallFrame,
-) -> JsResult<(ZigString, Option<ContentOptions>)> {
+) -> JsResult<(ZigStringSlice, Option<ContentOptions>)> {
     let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-    let content = eat_zig_string(&mut iter, global)?;
+    let content = eat_string(&mut iter, global)?;
     let opts = eat_content_options(&mut iter, global)?;
     Ok((content, opts))
 }
@@ -152,15 +155,14 @@ macro_rules! lol_content_ops {
             callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: ZigString,
+            content: ZigStringSlice,
             content_options: Option<ContentOptions>,
         ) -> JsResult<JSValue> {
             let Some(raw) = self.$field.get_mut() else {
                 return Ok($null_ret);
             };
-            let content_slice = content.to_slice();
             // lol-html content ops are infallible, so the UTF-8 check is the only throw path.
-            let content_str = utf8_or_throw(global_object, content_slice.slice())?;
+            let content_str = utf8_or_throw(global_object, content.slice())?;
             callback(raw, content_str, content_type(content_options));
             Ok(this_object)
         }
@@ -171,7 +173,7 @@ macro_rules! lol_content_ops {
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: ZigString,
+                content: ZigStringSlice,
                 content_options: Option<ContentOptions>,
             ) -> JsResult<JSValue> {
                 self.content_handler(
@@ -183,7 +185,7 @@ macro_rules! lol_content_ops {
                 )
             }
 
-            // Decode `(content: ZigString, contentOptions: ?ContentOptions)`
+            // Decode `(content: string, contentOptions: ?ContentOptions)`
             // then forward.
             $(#[$attr])*
             pub fn $name(
@@ -363,11 +365,11 @@ impl HTMLRewriter {
     pub(crate) fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: ZigString,
+        selector_name: ZigStringSlice,
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
-        let selector_source = selector_name.to_string();
+        let selector_source = String::from_utf8_lossy(selector_name.slice());
         let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
@@ -524,7 +526,7 @@ impl HTMLRewriter {
 
     pub(crate) fn on(&self, global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let selector_name = eat_zig_string(&mut iter, global)?;
+        let selector_name = eat_string(&mut iter, global)?;
         let listener = eat_js_value(&mut iter, global)?;
         self.on_(global, selector_name, call_frame, listener)
     }
@@ -3016,15 +3018,14 @@ impl Element {
     pub(crate) fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: ZigString,
+        name: ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
         };
-        let slice = name.to_slice();
         // A non-UTF-8 name came back from the C API as a null-data `Str`,
         // which JS saw as `null` — not a throw. Keep that distinction.
-        let Ok(name) = core::str::from_utf8(slice.slice()) else {
+        let Ok(name) = core::str::from_utf8(name.slice()) else {
             return Ok(JSValue::NULL);
         };
         opt_string_to_js_or_null(el.get_attribute(name), global_object)
@@ -3034,13 +3035,12 @@ impl Element {
     pub(crate) fn has_attribute_(
         &self,
         global: &JSGlobalObject,
-        name: ZigString,
+        name: ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::FALSE);
         };
-        let slice = name.to_slice();
-        let name = utf8_or_throw(global, slice.slice())?;
+        let name = utf8_or_throw(global, name.slice())?;
         Ok(JSValue::from(el.has_attribute(name)))
     }
 
@@ -3049,8 +3049,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name_: ZigString,
-        value_: ZigString,
+        name: ZigStringSlice,
+        value: ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3060,10 +3060,8 @@ impl Element {
         // to, so end their iteration rather than let them repeat or skip one.
         self.detach_attribute_iterators();
 
-        let name_slice = name_.to_slice();
-        let value_slice = value_.to_slice();
-        let name = utf8_or_throw(global_object, name_slice.slice())?;
-        let value = utf8_or_throw(global_object, value_slice.slice())?;
+        let name = utf8_or_throw(global_object, name.slice())?;
+        let value = utf8_or_throw(global_object, value.slice())?;
         if let Err(e) = el.set_attribute(name, value) {
             let err = create_lolhtml_error(global_object, &e);
             return Err(global_object.throw_value(err));
@@ -3076,7 +3074,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: ZigString,
+        name: ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3086,8 +3084,7 @@ impl Element {
         // AttributeIterator's index would skip the one that took this slot.
         self.detach_attribute_iterators();
 
-        let name_slice = name.to_slice();
-        let name = utf8_or_throw(global_object, name_slice.slice())?;
+        let name = utf8_or_throw(global_object, name.slice())?;
         el.remove_attribute(name);
         Ok(call_frame.this())
     }
@@ -3110,7 +3107,7 @@ impl Element {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_zig_string(&mut iter, global)?;
+        let name = eat_string(&mut iter, global)?;
         self.get_attribute_(global, name)
     }
 
@@ -3120,7 +3117,7 @@ impl Element {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_zig_string(&mut iter, global)?;
+        let name = eat_string(&mut iter, global)?;
         self.has_attribute_(global, name)
     }
 
@@ -3130,8 +3127,8 @@ impl Element {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_zig_string(&mut iter, global)?;
-        let value = eat_zig_string(&mut iter, global)?;
+        let name = eat_string(&mut iter, global)?;
+        let value = eat_string(&mut iter, global)?;
         self.set_attribute_(call_frame, global, name, value)
     }
 
@@ -3141,7 +3138,7 @@ impl Element {
         call_frame: &CallFrame,
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
-        let name = eat_zig_string(&mut iter, global)?;
+        let name = eat_string(&mut iter, global)?;
         self.remove_attribute_(call_frame, global, name)
     }
 

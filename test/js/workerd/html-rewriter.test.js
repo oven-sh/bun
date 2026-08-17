@@ -2853,8 +2853,9 @@ describe("GC pressure mid-rewrite", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      // Malloc=1 routes JSC string allocations through the system allocator so ASan builds see the free.
-      env: { ...bunEnv, Malloc: "1" },
+      // Malloc=1 routes JSC string allocations through the system allocator so ASan builds see the free
+      // (bmalloc's SystemHeap is unavailable on Windows).
+      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: "detect_leaks=0" },
       stdout: "pipe",
       stderr: "inherit",
     });

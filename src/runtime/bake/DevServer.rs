@@ -4499,23 +4499,32 @@ pub(super) fn finalize_bundle(
     let css_chunks = &*css_chunks_mut;
     if will_hear_hot_update {
         if dev.client_graph.current_chunk_len > 0 || !css_chunks.is_empty() {
-            // Send CSS mutations
+            // Send CSS mutations; a root that failed after storing its chunk had its asset released, and the client keeps its old stylesheet.
             dev.assets.reindex_if_needed()?;
-            w_int!(u32, u32::try_from(css_chunks.len()).expect("int cast"));
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
-            for chunk in css_chunks {
+            let css_chunk_hashes = css_chunks.iter().filter_map(|chunk| {
                 let key = sources[chunk.entry_point.source_index() as usize]
                     .path
                     .key_for_incremental_graph();
                 let content_hash = hash(key);
+                dev.assets.get(content_hash).map(|_| content_hash)
+            });
+            w_int!(
+                u32,
+                u32::try_from(css_chunk_hashes.clone().count()).expect("int cast")
+            );
+            for content_hash in css_chunk_hashes {
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                let css_data: &[u8] = match dev.assets.get(content_hash) {
-                    Some(route) => &route.blob.internal_blob().bytes,
-                    None => b"",
-                };
+                let css_data: &[u8] = &dev
+                    .assets
+                    .get(content_hash)
+                    .unwrap()
+                    .blob
+                    .internal_blob()
+                    .bytes;
                 w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
                 w_all!(css_data);
             }

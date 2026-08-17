@@ -941,6 +941,8 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       }
       await c2.style(".second").color.expect.toBe("green");
       await c1.style(".second").notFound();
+      // The failed root keeps the rules it had before the rebuild.
+      await c1.style(".first").color.expect.toBe("red");
     }
     const greenSecond = await servedCss(dev, "/second");
     expect(greenSecond).toMatchInlineSnapshot(`
@@ -966,6 +968,181 @@ devTest("css hot update carries the edited stylesheet when another root fails in
       }
       "
     `);
+  },
+});
+
+// The importer bundled alongside a failing stylesheet is what gets served once the stylesheet recovers.
+devTest("importers bundled alongside a failing stylesheet serve correctly once it recovers", {
+  files: {
+    // html route strips its link tag
+    "html.html": emptyHtmlFile({
+      styles: ["html.css"],
+      body: `<div class="a">hello</div>`,
+    }),
+    "html.css": `
+      .a { color: red; }}
+    `,
+    // script importing a stylesheet still boots
+    "script.html": emptyHtmlFile({
+      scripts: ["script.ts"],
+      body: `<div class="a">hello</div>`,
+    }),
+    "script.ts": `
+      import "./script.css";
+    `,
+    "script.css": `
+      .a { color: red; }}
+    `,
+  },
+  async test(dev) {
+    // html route strips its link tag when the stylesheet is bundled alongside a failing version of itself
+    {
+      // Masks the route script's URL, which embeds a generation number that changes every re-bundle.
+      const routeHtml = async () => {
+        const res = await dev.fetch("/html");
+        expect(res.status).toBe(200);
+        return (await res.text()).replace(/src="\/_bun\/client\/[^"]*"/, 'src="<route script>"');
+      };
+      await expectBuildFailed(dev, "/html");
+      await dev.write("html.css", `.a { color: blue; }`);
+      const recovered = await routeHtml();
+      expect(recovered.match(/<link [^>]*>/g)).toEqual([expect.stringMatching(/^<link rel="stylesheet" href="\/_bun\/asset\/[0-9a-f]{16}\.css">$/)]);
+      expect(await servedCss(dev, "/html")).toMatch(/color:\s*#00f/);
+
+      // Syntax error, route requested while broken, then recovery.
+      await dev.write("html.css", `.a { color: blue; }}`);
+      await expectBuildFailed(dev, "/html");
+      await dev.write("html.css", `.a { color: green; }`);
+      expect(await routeHtml()).toBe(recovered);
+
+      // A stylesheet that parses but fails import resolution, HTML file edited while broken, then recovery.
+      await dev.write("html.css", `.a { background-image: url(./missing.png); }`);
+      await dev.writeNoChanges("html.html");
+      await dev.write("html.css", `.a { color: yellow; }`);
+      expect(await routeHtml()).toBe(recovered);
+    }
+
+    // script importing a stylesheet still boots after the stylesheet fails and recovers
+    {
+      await expectBuildFailed(dev, "/script");
+      await dev.write("script.css", `.a { color: blue; }`);
+      {
+        await using c = await dev.client("/script");
+        await c.style(".a").color.expect.toBe("#00f");
+      }
+
+      await dev.write("script.css", `.a { color: blue; }}`);
+      await expectBuildFailed(dev, "/script");
+      await dev.write("script.css", `.a { color: green; }`);
+      {
+        await using c = await dev.client("/script");
+        await c.style(".a").color.expect.toBe("green");
+      }
+
+      await dev.write("script.css", `.a { background-image: url(./missing.png); }`);
+      await dev.writeNoChanges("script.ts");
+      await dev.write("script.css", `.a { color: yellow; }`);
+      {
+        await using c = await dev.client("/script");
+        await c.style(".a").color.expect.toBe("#ff0");
+      }
+    }
+  },
+});
+
+// A stylesheet whose rebuild fails after parsing must keep the client's existing rules, like a syntax error does.
+const failedRootKeepsOldStylesFiles = {
+  "index.html": emptyHtmlFile({
+    styles: ["styles.css"],
+    body: `<div class="a">hello</div>`,
+  }),
+  "styles.css": `
+    .a { color: red; }
+  `,
+};
+devTest("css url that falls through a plugin onResolve and fails to resolve keeps old styles", {
+  files: {
+    ...failedRootKeepsOldStylesFiles,
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /missing\\.png$/ }, () => undefined);
+        },
+      };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+    await dev.write("styles.css", `.a { background-image: url(./missing.png); }`, {
+      errors: ['styles.css:1:24: error: Could not resolve: "./missing.png"'],
+    });
+    await c.style(".a").color.expect.toBe("red");
+
+    await dev.write("styles.css", `.a { color: green; }`);
+    await c.style(".a").color.expect.toBe("green");
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+devTest("css url whose plugin onResolve throws keeps old styles", {
+  files: {
+    ...failedRootKeepsOldStylesFiles,
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./css-plugin.ts"]
+    `,
+    "css-plugin.ts": `
+      export default {
+        name: "css-plugin",
+        setup(build) {
+          build.onResolve({ filter: /missing\\.png$/ }, () => {
+            throw new Error("css-plugin rejected this url");
+          });
+        },
+      };
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+    await dev.write("styles.css", `.a { background-image: url(./missing.png); }`, {
+      errors: ["styles.css: error: css-plugin rejected this url"],
+    });
+    await c.style(".a").color.expect.toBe("red");
+
+    await dev.write("styles.css", `.a { color: green; }`);
+    await c.style(".a").color.expect.toBe("green");
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+devTest("css root that imports a non-css file keeps old styles", {
+  files: {
+    ...failedRootKeepsOldStylesFiles,
+    "not-css.js": `export const x = 1;`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("red");
+    await dev.write(
+      "styles.css",
+      `
+        @import "./not-css.js";
+        .a { color: blue; }
+      `,
+      {
+        errors: ['styles.css:1:1: error: Cannot import a ".jsx" file into a CSS file'],
+      },
+    );
+    await c.style(".a").color.expect.toBe("red");
+
+    await dev.write("styles.css", `.a { color: green; }`);
+    await c.style(".a").color.expect.toBe("green");
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });
 

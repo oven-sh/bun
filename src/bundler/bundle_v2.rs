@@ -5243,55 +5243,44 @@ pub mod bv2_impl {
 
                 let asts = self.graph.ast.slice();
                 let css_asts = asts.items_css();
-                // SoA columns are physically disjoint slabs but rustc cannot
-                // see that through `&Slice`. Route the two columns we mutate (`parts`,
-                // `import_records`) through `split_raw()` (root-provenance `*mut [T]`,
-                // no `&mut` intermediate) so the per-index `&mut` does not conflict
-                // with the `&asts` reads (`css`, `target`). Mirrors the pattern at
-                // `find_reachable_files` (~L1457). The slab does not resize for the
-                // duration of this loop and no other `&mut` to these columns exists.
-                let ast_raw = asts.split_raw();
-                let parts_col: *mut bun_ast::PartList = ast_raw.parts.cast::<bun_ast::PartList>();
-                let import_records_col: *mut import_record::List =
-                    ast_raw.import_records.cast::<import_record::List>();
+                let parts = asts.items_parts();
+                let all_import_records = asts.items_import_records();
+                let targets = asts.items_target();
+
+                // Seeded before the loop so its removals of failed roots are final.
+                for entry_point in &self.graph.entry_points {
+                    if css_asts[entry_point.get() as usize].is_some() {
+                        start.css_entry_points.put(
+                            Index::init(entry_point.get()),
+                            CssEntryPointMeta {
+                                imported_on_server: false,
+                            },
+                        )?;
+                    }
+                }
 
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
                 for index in 1..self.graph.ast.len() {
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let part_list = unsafe { &mut *parts_col.add(index) };
-                    // SAFETY: `index < ast.len()`; see note above for column aliasing.
-                    let import_records = unsafe { &mut *import_records_col.add(index) };
-                    let maybe_css = &css_asts[index];
-                    let target = asts.items_target()[index];
-                    // Dev Server proceeds even with failed files.
-                    // These files are filtered out via the lack of any parts.
-                    //
-                    // Actual empty files will contain a part exporting an empty object.
-                    if part_list.len() != 0 {
-                        if maybe_css.is_some() {
-                            // CSS has restrictions on what files can be imported.
-                            // This means the file can become an error after
-                            // resolution, which is not usually the case.
+                    let import_records = &all_import_records[index];
+                    let target = targets[index];
+                    // Dev Server proceeds even with failed files, which are filtered out by having no parts.
+                    if parts[index].len() != 0 {
+                        if css_asts[index].is_some() {
+                            // CSS import restrictions can turn a file into an error after resolution.
                             css_total_files
                                 .push(Index::init(u32::try_from(index).expect("int cast")));
                             let mut log = bun_ast::Log::init();
                             if LinkerContext::scan_css_imports(
                                 u32::try_from(index).expect("int cast"),
                                 import_records.as_slice(),
-                                // `scan_css_imports` takes the column as a raw
-                                // `*const` slice (the scanImportsAndExports caller holds raw
-                                // SoA pointers); it only reads via `is_none()`.
                                 std::ptr::from_ref(css_asts),
                                 sources,
                                 loaders,
                                 &mut log,
                             ) == crate::linker_context_mod::ScanCssImportsResult::Errors
                             {
-                                // TODO: it could be possible for a plugin to change
-                                // the type of loader from whatever it was into a
-                                // css-compatible loader.
                                 dev_server
                                     .handle_parse_task_failure(
                                         crate::Error::InvalidCssImport,
@@ -5301,16 +5290,12 @@ pub mod bv2_impl {
                                         self,
                                     )
                                     .map_err(|_| AllocError)?;
-                                // Since there is an error, do not treat it as a
-                                // valid CSS chunk.
                                 let _ = start.css_entry_points.swap_remove(&Index::init(
                                     u32::try_from(index).expect("int cast"),
                                 ));
                             }
                         } else {
-                            // HTML files are special cased because they correspond
-                            // to routes in DevServer. They have a JS chunk too,
-                            // derived off of the import record list.
+                            // HTML files are routes in DevServer; they have a JS chunk derived off the import records.
                             if loaders[index] == Loader::Html {
                                 html_files.put(
                                     Index::init(u32::try_from(index).expect("int cast")),
@@ -5318,34 +5303,21 @@ pub mod bv2_impl {
                                 )?;
                             } else {
                                 js_files.push(Index::init(u32::try_from(index).expect("int cast")));
-
-                                // Part liveness for HMR is seeded after `linker.load`
-                                // (every part of every JS file is marked live).
                             }
 
                             // Discover all CSS roots.
-                            for record in import_records.as_mut_slice() {
-                                if !record.source_index.is_valid() {
-                                    continue;
-                                }
-                                if loaders[record.source_index.get() as usize] != Loader::Css {
-                                    continue;
-                                }
-                                // SAFETY: `source_index < ast.len()` (validated above); read
-                                // via the raw column ptr so we don't reborrow `asts.parts()`
-                                // while `import_records` (a sibling column) is held `&mut`.
-                                if unsafe {
-                                    (*parts_col.add(record.source_index.get() as usize)).len()
-                                } == 0
+                            for record in import_records.as_slice() {
+                                if !record.source_index.is_valid()
+                                    || loaders[record.source_index.get() as usize] != Loader::Css
                                 {
-                                    record.source_index = Index::INVALID;
+                                    continue;
+                                }
+                                // A failed root gets no chunk; the record still says it is CSS.
+                                if parts[record.source_index.get() as usize].len() == 0 {
                                     continue;
                                 }
 
-                                let gop = start
-                                    .css_entry_points
-                                    .get_or_put(record.source_index)
-                                    .expect("oom");
+                                let gop = start.css_entry_points.get_or_put(record.source_index)?;
                                 if target != Target::Browser {
                                     *gop.value_ptr = CssEntryPointMeta {
                                         imported_on_server: true,
@@ -5362,21 +5334,6 @@ pub mod bv2_impl {
                         let _ = start
                             .css_entry_points
                             .swap_remove(&Index::init(u32::try_from(index).expect("int cast")));
-                    }
-                }
-
-                // Find CSS entry points. Originally, this was computed up front, but
-                // failed files do not remember their loader, and plugins can
-                // asynchronously decide a file is CSS.
-                let css = asts.items_css();
-                for entry_point in &self.graph.entry_points {
-                    if css[entry_point.get() as usize].is_some() {
-                        start.css_entry_points.put(
-                            Index::init(entry_point.get()),
-                            CssEntryPointMeta {
-                                imported_on_server: false,
-                            },
-                        )?;
                     }
                 }
 

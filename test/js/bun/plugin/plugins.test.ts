@@ -1,5 +1,5 @@
 /// <reference types="./plugins" />
-import { plugin } from "bun";
+import { Loader, plugin } from "bun";
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 import { resolve } from "path";
@@ -197,6 +197,46 @@ plugin({
   },
 });
 
+// Loaders whose result is a parsed value rather than JavaScript source.
+const valueLoaderContents: Record<string, { contents: string; loader?: Loader }> = {
+  "json-object": { contents: `{"hello": "world", "nested": {"n": 1}}`, loader: "json" },
+  "json-string": { contents: `"hello world"`, loader: "json" },
+  "json-array": { contents: `[1, 2, 3]`, loader: "json" },
+  "json-invalid": { contents: `{"hello":`, loader: "json" },
+  "toml": { contents: `hello = "world"\n[nested]\nn = 1`, loader: "toml" },
+  "yaml": { contents: `hello: world\nnested:\n  n: 1`, loader: "yaml" },
+  "xml": { contents: `<root><hello>world</hello></root>`, loader: "xml" },
+  // No loader: Bun picks it from the specifier's extension.
+  "by-extension.json": { contents: `{"hello": "json"}` },
+  "by-extension.toml": { contents: `hello = "toml"` },
+  "by-extension.yaml": { contents: `hello: yaml` },
+};
+
+plugin({
+  name: "value loaders",
+  setup(builder) {
+    builder.onResolve({ filter: /.*/, namespace: "value-loader" }, ({ path }) => ({
+      path,
+      namespace: "value-loader",
+    }));
+    // The specifier is "value-loader:<how>/<name>". <how> only keeps the specifiers
+    // distinct so that every test loads a fresh module; "async/..." returns a promise.
+    builder.onLoad({ filter: /.*/, namespace: "value-loader" }, ({ path }) => {
+      const [how, name] = path.split("/");
+      const result = valueLoaderContents[name];
+      if (!result) throw new Error("no contents registered for " + path);
+      return how === "async" ? Promise.resolve(result) : result;
+    });
+
+    for (const how of ["import", "require"]) {
+      builder.module(`value-loader-module-json/${how}`, () => ({
+        contents: `{"hello": "from build.module()"}`,
+        loader: "json",
+      }));
+    }
+  },
+});
+
 // This is to test that it works when imported from a separate file
 import { tempDir } from "harness";
 import { render as svelteRender } from "svelte/server";
@@ -341,6 +381,69 @@ export default Hello;
     const { body } = svelteRender(SvelteApp);
 
     expect(body).toBe("<!--[--><h1>Hello world!</h1><!--]-->");
+  });
+});
+
+// These loaders must behave exactly like the same contents in a file on disk:
+// import gets the value as the default export (plus an object's keys as named
+// exports) and require() gets the value itself.
+describe("json, toml, yaml and xml loaders", () => {
+  const objectExports = { default: { hello: "world", nested: { n: 1 } }, hello: "world", nested: { n: 1 } };
+
+  it.each(["json-object", "toml", "yaml"])("%s: import() exposes the value and its keys", async name => {
+    expect({ ...(await import(`value-loader:import/${name}`)) }).toEqual(objectExports);
+  });
+
+  it.each(["json-object", "toml", "yaml"])("%s: require() returns the value", name => {
+    expect(require(`value-loader:require/${name}`)).toEqual({ hello: "world", nested: { n: 1 } });
+  });
+
+  it("xml: import() and require()", async () => {
+    const xml = { root: { hello: "world" } };
+    expect({ ...(await import("value-loader:import/xml")) }).toEqual({ default: xml, ...xml });
+    expect(require("value-loader:require/xml")).toEqual(xml);
+  });
+
+  it("json string: import() default export is the string", async () => {
+    expect({ ...(await import("value-loader:import/json-string")) }).toEqual({
+      __esModule: true,
+      default: "hello world",
+    });
+  });
+
+  it("json string: require() returns the string", () => {
+    expect(require("value-loader:require/json-string")).toBe("hello world");
+  });
+
+  it("json array: import() default export is the array, require() returns it", async () => {
+    expect({ ...(await import("value-loader:import/json-array")) }).toEqual({ __esModule: true, default: [1, 2, 3] });
+    expect(require("value-loader:require/json-array")).toEqual([1, 2, 3]);
+  });
+
+  it.each(["json", "toml", "yaml"])("loader defaults to the one for the .%s extension", async ext => {
+    expect({ ...(await import(`value-loader:import/by-extension.${ext}`)) }).toEqual({
+      default: { hello: ext },
+      hello: ext,
+    });
+    expect(require(`value-loader:require/by-extension.${ext}`)).toEqual({ hello: ext });
+  });
+
+  it.each(["json-object", "toml", "yaml"])("%s: works when onLoad returns a promise", async name => {
+    expect({ ...(await import(`value-loader:async/${name}`)) }).toEqual(objectExports);
+  });
+
+  it("works for build.module()", async () => {
+    expect({ ...(await import("value-loader-module-json/import")) }).toEqual({
+      default: { hello: "from build.module()" },
+      hello: "from build.module()",
+    });
+    expect(require("value-loader-module-json/require")).toEqual({ hello: "from build.module()" });
+  });
+
+  it("invalid json is reported by the JSON parser", async () => {
+    await expect(import("value-loader:import/json-invalid")).rejects.toThrow("JSON Parse error");
+    await expect(import("value-loader:async/json-invalid")).rejects.toThrow("JSON Parse error");
+    expect(() => require("value-loader:require/json-invalid")).toThrow("JSON Parse error");
   });
 });
 
@@ -801,5 +904,75 @@ it.concurrent("a no-op onResolve that returns args.path unchanged is transparent
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
   expect(stdout.trim() || stderr).toBe("entry ran:dep");
+  expect(exitCode).toBe(0);
+});
+
+it.concurrent("onLoad can replace the contents of .json, .toml, .yaml and .css files on disk", async () => {
+  using dir = tempDir("plugin-onload-value-loaders", {
+    "preload.js": `
+      Bun.plugin({
+        name: "replace contents",
+        setup(build) {
+          build.onLoad({ filter: /\\.json$/ }, () => ({ contents: '{"from": "plugin", "kind": "json"}' }));
+          build.onLoad({ filter: /\\.toml$/ }, () => ({ contents: 'from = "plugin"\\nkind = "toml"' }));
+          build.onLoad({ filter: /\\.yaml$/ }, () => ({ contents: 'from: plugin\\nkind: yaml' }));
+          build.onLoad({ filter: /\\.css$/ }, () => ({ contents: 'a { color: red }' }));
+        },
+      });
+    `,
+    "data.json": `{"from": "disk"}`,
+    "data.toml": `from = "disk"`,
+    "data.yaml": `from: disk`,
+    "style.css": `a { color: blue }`,
+    "entry.js": `
+      import json, { kind as jsonKind } from "./data.json";
+      import toml, { kind as tomlKind } from "./data.toml";
+      import yaml, { kind as yamlKind } from "./data.yaml";
+      import css from "./style.css";
+
+      console.log(
+        JSON.stringify({
+          imported: { json, jsonKind, toml, tomlKind, yaml, yamlKind, css },
+          required: {
+            json: require("./required.json"),
+            toml: require("./required.toml"),
+            yaml: require("./required.yaml"),
+            css: require("./required.css"),
+          },
+        }),
+      );
+    `,
+    "required.json": `{"from": "disk"}`,
+    "required.toml": `from = "disk"`,
+    "required.yaml": `from: disk`,
+    "required.css": `a { color: blue }`,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--preload", "./preload.js", "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stdout.trim() ? JSON.parse(stdout) : { stderr }).toEqual({
+    imported: {
+      json: { from: "plugin", kind: "json" },
+      jsonKind: "json",
+      toml: { from: "plugin", kind: "toml" },
+      tomlKind: "toml",
+      yaml: { from: "plugin", kind: "yaml" },
+      yamlKind: "yaml",
+      // The runtime css loader exports an empty object, like it does without a plugin.
+      css: {},
+    },
+    required: {
+      json: { from: "plugin", kind: "json" },
+      toml: { from: "plugin", kind: "toml" },
+      yaml: { from: "plugin", kind: "yaml" },
+      css: {},
+    },
+  });
   expect(exitCode).toBe(0);
 });

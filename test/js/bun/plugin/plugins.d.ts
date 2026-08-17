@@ -11,3 +11,5 @@ declare module "delay:*";
 declare module "./*.svelte";
 declare module "rejected-promise:*";
 declare module "rejected-promise2:*";
+declare module "value-loader:*";
+declare module "value-loader-module-json/*";

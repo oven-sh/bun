@@ -1,7 +1,18 @@
+import {
+  cloudFilesAvailable,
+  convertToPlaceholder,
+  exposePlaceholders,
+  hasDirectoryAttribute,
+  isReparsePoint,
+  registerSyncRoot,
+  setNonLinkReparsePoint,
+} from "_util/windows-reparse-points.ts";
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { isWindows, tempDir, tempDirWithFiles } from "harness";
+import { lstatSync, readdirSync, readFileSync, readlinkSync, symlinkSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +181,158 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+
+  // Only a reparse point whose tag is a name surrogate (symlink, junction) is a
+  // link. Cloud-file placeholders (including the sync root directory itself),
+  // deduplicated files and similar entries also carry
+  // FILE_ATTRIBUTE_REPARSE_POINT but are plain files and directories; cp used
+  // to recreate every one of them as a symlink pointing back at the source.
+  describe.if(isWindows)("reparse points that are not links", () => {
+    // What cp produced at `path`: for a link its flavor and target, otherwise
+    // the entry's kind, its contents and whether the copy is itself a reparse
+    // point.
+    function copied(path: string) {
+      const stat = lstatSync(path);
+      if (stat.isSymbolicLink()) {
+        return { link: hasDirectoryAttribute(path) ? "directory" : "file", target: readlinkSync(path) };
+      }
+      return {
+        kind: stat.isDirectory() ? "directory" : "file",
+        reparsePoint: isReparsePoint(path),
+        contents: stat.isDirectory() ? readdirSync(path).sort() : readFileSync(path, "utf8"),
+      };
+    }
+    const taggedDirectory = { kind: "directory", reparsePoint: false, contents: ["inner.txt"] };
+    const innerFile = { kind: "file", reparsePoint: false, contents: "tagged inner" };
+    const ok = { stderr: "", exitCode: 0 };
+
+    async function cp(commands: Record<string, string[]>) {
+      const results: Record<string, { stderr: string; exitCode: number }> = {};
+      for (const [name, args] of Object.entries(commands)) {
+        const { stderr, exitCode } = await $`cp ${args}`.quiet();
+        results[name] = { stderr: stderr.toString(), exitCode };
+      }
+      return results;
+    }
+
+    test("cp -R walks a tagged directory and still copies links as links", async () => {
+      using srcDir = tempDir("cp-reparse-src", {
+        "plain.txt": "plain",
+        "plain_dir/x.txt": "x",
+        "tagged_dir/inner.txt": "tagged inner",
+      });
+      using outDir = tempDir("cp-reparse-out", {});
+      const src = String(srcDir);
+      const fileTarget = join(src, "plain.txt");
+      const dirTarget = join(src, "plain_dir");
+      symlinkSync(fileTarget, join(src, "file_link.txt"), "file");
+      symlinkSync(dirTarget, join(src, "junction"), "junction");
+      setNonLinkReparsePoint(join(src, "tagged_dir"));
+      const entries = ["tagged_dir", "file_link.txt", "junction", "plain.txt", "plain_dir"];
+      expect(entries.map(name => isReparsePoint(join(src, name)))).toEqual([true, true, true, false, false]);
+
+      const copy = join(String(outDir), "copy");
+      expect(await cp({ tree: ["-R", src, copy] })).toEqual({ tree: ok });
+      expect({
+        "tagged_dir": copied(join(copy, "tagged_dir")),
+        "tagged_dir/inner.txt": copied(join(copy, "tagged_dir", "inner.txt")),
+        "plain.txt": copied(join(copy, "plain.txt")),
+        "file_link.txt": copied(join(copy, "file_link.txt")),
+        "junction": copied(join(copy, "junction")),
+      }).toEqual({
+        "tagged_dir": taggedDirectory,
+        "tagged_dir/inner.txt": innerFile,
+        "plain.txt": { kind: "file", reparsePoint: false, contents: "plain" },
+        "file_link.txt": { link: "file", target: fileTarget },
+        "junction": { link: "directory", target: dirTarget },
+      });
+    });
+
+    test("cp -R copies a tagged directory given as the operand", async () => {
+      using srcDir = tempDir("cp-reparse-operand-src", { "tagged_dir/inner.txt": "tagged inner" });
+      using outDir = tempDir("cp-reparse-operand-out", {});
+      const src = String(srcDir);
+      const out = String(outDir);
+      setNonLinkReparsePoint(join(src, "tagged_dir"));
+
+      expect(
+        await cp({
+          "directory": ["-R", join(src, "tagged_dir"), join(out, "dir")],
+          "directory with a trailing separator": ["-R", join(src, "tagged_dir") + "\\", join(out, "dir2")],
+        }),
+      ).toEqual({ "directory": ok, "directory with a trailing separator": ok });
+      expect({
+        "dir": copied(join(out, "dir")),
+        "dir/inner.txt": copied(join(out, "dir", "inner.txt")),
+        "dir2": copied(join(out, "dir2")),
+      }).toEqual({ "dir": taggedDirectory, "dir/inner.txt": innerFile, "dir2": taggedDirectory });
+    });
+
+    // Placeholder files are the only readable non-link reparse files we can
+    // make, so they are what exercises the file copy. Needs the Cloud Files
+    // platform (cldapi.dll, its filter driver, and permission to register a
+    // sync root); skipped where that is missing.
+    describe.if(isWindows && cloudFilesAvailable())("cloud-file placeholders", () => {
+      const placeholderFile = { kind: "file", reparsePoint: false, contents: "placeholder contents" };
+
+      test("cp -R copies a placeholder file and its folder inside a directory", async () => {
+        using srcDir = tempDir("cp-placeholder-src", {
+          "cloud/placeholder.txt": "placeholder contents",
+          "cloud/folder/inner.txt": "inner",
+        });
+        using outDir = tempDir("cp-placeholder-out", {});
+        const src = String(srcDir);
+        // Registering tags the `cloud` directory itself as well.
+        using _syncRoot = registerSyncRoot(join(src, "cloud"));
+        convertToPlaceholder(join(src, "cloud", "placeholder.txt"));
+        convertToPlaceholder(join(src, "cloud", "folder"));
+        using _exposed = exposePlaceholders();
+        const entries = ["cloud", "cloud/placeholder.txt", "cloud/folder", "cloud/folder/inner.txt"];
+        expect(entries.map(name => isReparsePoint(join(src, name)))).toEqual([true, true, true, false]);
+
+        const copy = join(String(outDir), "copy");
+        expect(await cp({ tree: ["-R", src, copy] })).toEqual({ tree: ok });
+        expect({
+          "cloud": copied(join(copy, "cloud")),
+          "cloud/placeholder.txt": copied(join(copy, "cloud", "placeholder.txt")),
+          "cloud/folder": copied(join(copy, "cloud", "folder")),
+          "cloud/folder/inner.txt": copied(join(copy, "cloud", "folder", "inner.txt")),
+        }).toEqual({
+          "cloud": { kind: "directory", reparsePoint: false, contents: ["folder", "placeholder.txt"] },
+          "cloud/placeholder.txt": placeholderFile,
+          "cloud/folder": { kind: "directory", reparsePoint: false, contents: ["inner.txt"] },
+          "cloud/folder/inner.txt": { kind: "file", reparsePoint: false, contents: "inner" },
+        });
+      });
+
+      test("cp copies a placeholder file or the sync root given as the operand", async () => {
+        using srcDir = tempDir("cp-placeholder-operand-src", { "placeholder.txt": "placeholder contents" });
+        using outDir = tempDir("cp-placeholder-operand-out", {});
+        const src = String(srcDir);
+        const out = String(outDir);
+        using _syncRoot = registerSyncRoot(src);
+        convertToPlaceholder(join(src, "placeholder.txt"));
+        using _exposed = exposePlaceholders();
+        expect([src, join(src, "placeholder.txt")].map(isReparsePoint)).toEqual([true, true]);
+
+        expect(
+          await cp({
+            "file": [join(src, "placeholder.txt"), join(out, "file.txt")],
+            "sync root": ["-R", src, join(out, "root")],
+          }),
+        ).toEqual({ "file": ok, "sync root": ok });
+        expect({
+          "file.txt": copied(join(out, "file.txt")),
+          "root": copied(join(out, "root")),
+          "root/placeholder.txt": copied(join(out, "root", "placeholder.txt")),
+        }).toEqual({
+          "file.txt": placeholderFile,
+          "root": { kind: "directory", reparsePoint: false, contents: ["placeholder.txt"] },
+          "root/placeholder.txt": placeholderFile,
+        });
+      });
+    });
   });
 });
 

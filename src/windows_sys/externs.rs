@@ -332,6 +332,7 @@ pub const OPEN_EXISTING: DWORD = 3;
 
 // `CreateFileW` dwFlagsAndAttributes (`winbase.h`).
 pub const FILE_FLAG_BACKUP_SEMANTICS: DWORD = 0x0200_0000;
+pub const FILE_FLAG_OPEN_REPARSE_POINT: DWORD = 0x0020_0000;
 pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 
 // Reparse tags (`winnt.h`). `IsReparseTagNameSurrogate` == bit 29: the reparse
@@ -341,6 +342,9 @@ pub const FILE_FLAG_OVERLAPPED: DWORD = 0x4000_0000;
 pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
     (tag & 0x2000_0000) != 0
 }
+/// Store app execution alias; not a name surrogate, but libuv's `readlink`
+/// and `lstat` treat it as a link.
+pub const IO_REPARSE_TAG_APPEXECLINK: DWORD = 0x8000_001B;
 
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
@@ -364,6 +368,15 @@ pub struct FILE_BASIC_INFORMATION {
     pub FileAttributes: ULONG,
 }
 
+/// `FILE_ATTRIBUTE_TAG_INFORMATION` (`ntifs.h`), output of
+/// `NtQueryInformationFile(FileAttributeTagInformation)`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct FILE_ATTRIBUTE_TAG_INFORMATION {
+    pub FileAttributes: ULONG,
+    pub ReparseTag: ULONG,
+}
+
 /// `FILE_DIRECTORY_INFORMATION` (`ntifs.h`) — `NtQueryDirectoryFile` record.
 /// `FileName` is a flexible array; declared `[WCHAR; 1]` to match C layout
 /// (read past it via `FileNameLength`).
@@ -382,6 +395,24 @@ pub struct FILE_DIRECTORY_INFORMATION {
     pub FileName: [WCHAR; 1],
 }
 
+/// `FILE_FULL_DIR_INFORMATION` (`ntifs.h`): `FILE_DIRECTORY_INFORMATION` plus
+/// `EaSize`, which for a reparse point holds the reparse tag instead.
+#[repr(C)]
+pub struct FILE_FULL_DIR_INFORMATION {
+    pub NextEntryOffset: ULONG,
+    pub FileIndex: ULONG,
+    pub CreationTime: LARGE_INTEGER,
+    pub LastAccessTime: LARGE_INTEGER,
+    pub LastWriteTime: LARGE_INTEGER,
+    pub ChangeTime: LARGE_INTEGER,
+    pub EndOfFile: LARGE_INTEGER,
+    pub AllocationSize: LARGE_INTEGER,
+    pub FileAttributes: ULONG,
+    pub FileNameLength: ULONG,
+    pub EaSize: ULONG,
+    pub FileName: [WCHAR; 1],
+}
+
 /// `FILE_INFORMATION_CLASS` (`wdm.h`) — selector for `NtQuery*` /
 /// `NtSetInformationFile`. Newtype-over-u32 so unmapped values round-trip.
 #[repr(transparent)]
@@ -389,10 +420,12 @@ pub struct FILE_DIRECTORY_INFORMATION {
 pub struct FILE_INFORMATION_CLASS(pub u32);
 impl FILE_INFORMATION_CLASS {
     pub const FileDirectoryInformation: Self = Self(1);
+    pub const FileFullDirectoryInformation: Self = Self(2);
     pub const FileBasicInformation: Self = Self(4);
     pub const FileDispositionInformation: Self = Self(13);
     pub const FileAllInformation: Self = Self(18);
     pub const FileEndOfFileInformation: Self = Self(20);
+    pub const FileAttributeTagInformation: Self = Self(35);
     pub const FileDispositionInformationEx: Self = Self(64);
 }
 

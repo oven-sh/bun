@@ -81,15 +81,6 @@ const BACKEND_PARAM: ParamType = clap::param!(
     "--backend <STR>                       Platform-specific optimizations for installing dependencies. Possible values: \"hardlink\" (default), \"symlink\", \"copyfile\""
 );
 
-const NETWORK_CONCURRENCY_PARAM: ParamType = clap::param!(
-    "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 64)"
-);
-const _: () = assert!(
-    super::DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL == 64
-        && super::DEFAULT_MAX_SIMULTANEOUS_REQUESTS_FOR_BUN_INSTALL_FOR_PROXIES == 64,
-    "update the default in the --network-concurrency help text (and docs/snippets/cli/*.mdx)"
-);
-
 const SHARED_HEAD_PARAMS: &[ParamType] = &[
     clap::param!("-c, --config <STR>?                   Specify path to config file (bunfig.toml)"),
     clap::param!("-y, --yarn                            Write a yarn.lock file (yarn v1)"),
@@ -156,7 +147,9 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--concurrent-scripts <NUM>            Maximum number of concurrent jobs for lifecycle scripts (default: 2x CPU cores)"
     ),
-    NETWORK_CONCURRENCY_PARAM,
+    clap::param!(
+        "--network-concurrency <NUM>           Maximum number of concurrent network requests (default 64)"
+    ),
     clap::param!("--save-text-lockfile                  Save a text-based lockfile"),
     clap::param!(
         "--omit <dev|optional|peer>...         Exclude 'dev', 'optional', or 'peer' dependencies from install"
@@ -1628,8 +1621,37 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.concurrent_scripts = strings::parse_int::<usize>(concurrency, 10).ok();
         }
 
-        if let Some(cwd) = args.option(b"--cwd") {
-            change_directory(cwd)?;
+        if let Some(cwd_) = args.option(b"--cwd") {
+            let mut buf = PathBuffer::uninit();
+            let mut buf2 = PathBuffer::uninit();
+
+            let final_path: Option<&bun_core::ZStr> = if !cwd_.is_empty() && cwd_[0] == b'.' {
+                let cwd_len = bun_sys::getcwd(&mut buf[..])?;
+                let cwd = &buf[..cwd_len];
+                let parts: [&[u8]; 1] = [cwd_];
+                Path::resolve_path::join_abs_string_buf_z_checked::<Path::platform::Auto>(
+                    cwd,
+                    &mut buf2[..],
+                    &parts,
+                )
+            } else if cwd_.len() < buf.len() {
+                buf[..cwd_.len()].copy_from_slice(cwd_);
+                buf[cwd_.len()] = 0;
+                Some(bun_core::ZStr::from_buf(&buf[..], cwd_.len()))
+            } else {
+                None
+            };
+            let too_long = bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir);
+            if let Err(err) = final_path.map_or(Err(too_long), bun_sys::chdir) {
+                Output::err_generic(
+                    "failed to change directory to \"{}\": {}\n",
+                    (
+                        bstr::BStr::new(final_path.map_or(cwd_, |p| p.as_bytes())),
+                        bstr::BStr::new(err.name()),
+                    ),
+                );
+                Global::crash();
+            }
         }
 
         if subcommand == Subcommand::Update {
@@ -1800,37 +1822,4 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
 
         Ok(cli)
     }
-}
-
-/// `--cwd`. Exits the process when the directory cannot be entered.
-fn change_directory(arg: &[u8]) -> Result<(), crate::Error> {
-    let mut buf = PathBuffer::uninit();
-    let mut buf2 = PathBuffer::uninit();
-    let path = if arg.first() == Some(&b'.') {
-        let cwd_len = bun_sys::getcwd(&mut buf[..])?;
-        Path::resolve_path::join_abs_string_buf_z_checked::<Path::platform::Auto>(
-            &buf[..cwd_len],
-            &mut buf2[..],
-            &[arg],
-        )
-    } else if arg.len() < buf.len() {
-        buf[..arg.len()].copy_from_slice(arg);
-        buf[arg.len()] = 0;
-        Some(bun_core::ZStr::from_buf(&buf[..], arg.len()))
-    } else {
-        None
-    };
-    let err = match path.map(bun_sys::chdir) {
-        Some(Ok(())) => return Ok(()),
-        Some(Err(err)) => err,
-        None => bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::chdir),
-    };
-    Output::err_generic(
-        "failed to change directory to \"{}\": {}\n",
-        (
-            bstr::BStr::new(path.map_or(arg, |p| p.as_bytes())),
-            bstr::BStr::new(err.name()),
-        ),
-    );
-    Global::crash();
 }

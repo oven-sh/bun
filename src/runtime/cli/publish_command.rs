@@ -15,7 +15,7 @@ use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::{self as install, Lockfile, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
-use bun_paths::resolve_path::{join_abs_string_buf_z, normalize_buf_spill, normalize_buf_z_spill};
+use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_spill, normalize_buf_z_spill};
 use bun_paths::{self as path, PathBuffer};
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -140,11 +140,18 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
-        let abs_tarball_path = join_abs_string_buf_z::<path::platform::Auto>(
+        let Some(abs_tarball_path) = join_abs_string_buf_checked::<path::platform::Auto>(
             original_cwd,
             &mut abs_buf,
             &[tarball_path],
-        );
+        ) else {
+            Output::err(
+                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open),
+                "failed to read tarball: '{}'",
+                (bstr::BStr::new(tarball_path),),
+            );
+            Global::crash();
+        };
 
         let tarball_bytes = match File::read_from(Fd::cwd(), abs_tarball_path) {
             Ok(b) => b,

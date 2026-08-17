@@ -545,6 +545,7 @@ it.concurrent(
 
     expect(err).not.toContain("error:");
     expect(out.trim()).not.toContain(Bun.version);
+    expect(out.trim()).toMatch(/^\d+\.\d+\.\d+/);
     expect(exited).toBe(0);
   },
   1000 * 60 * 2,

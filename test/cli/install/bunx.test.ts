@@ -4,7 +4,7 @@ import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
-import { delimiter, join, resolve } from "path";
+import { basename, delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
 
 setDefaultTimeout(1000 * 60 * 5);
@@ -563,6 +563,12 @@ describe("--package flag", () => {
     expect(exited).toBe(1);
   });
 
+  it("should error when multiple --package are provided without binary name", async () => {
+    const [err, out, exited] = await run("--package", "pkg-a", "--package", "pkg-b");
+    expect(err).toContain("When using --package, you must specify the binary to run");
+    expect(exited).toBe(1);
+  });
+
   describe("with mock registry", () => {
     let port: number;
 
@@ -836,6 +842,96 @@ console.log("EXECUTED: multi-tool-alt (alternate binary)");
       expect(out).toContain("EXECUTED: multi-tool-alt (alternate binary)");
       expect(out).not.toContain("EXECUTED: multi-tool (main binary)");
       expect(exited).toBe(0);
+    });
+
+    it("should install and run binaries from multiple --package values in the same environment", async () => {
+      const urls: string[] = [];
+
+      // Two distinct packages, each providing its own distinctly-named
+      // binary. Unlike `dummyRegistry` (whose "bin" metadata is the same
+      // for every requested package name), this handler varies the
+      // returned manifest by package name, since each package here has a
+      // different real bin.
+      const packages: Record<string, { bin: string; version: string }> = {
+        "multi-pkg-a": { bin: "bin-a", version: "1.0.0" },
+        "multi-pkg-b": { bin: "bin-b", version: "2.0.0" },
+      };
+
+      const buildDir = tmpdirSync();
+      const tgzDir = tmpdirSync();
+      for (const [name, { bin, version }] of Object.entries(packages)) {
+        const packageDir = join(buildDir, name, "package");
+        await Bun.$`mkdir -p ${packageDir}`;
+        await writeFile(
+          join(packageDir, "package.json"),
+          JSON.stringify({ name, version, bin: { [bin]: "index.js" } }),
+        );
+        await writeFile(join(packageDir, "index.js"), `#!/usr/bin/env node\nconsole.log("EXECUTED: ${bin}");\n`);
+        await Bun.$`chmod +x ${join(packageDir, "index.js")}`;
+        await Bun.$`cd ${join(buildDir, name)} && tar -czf ${join(tgzDir, `${name}-${version}.tgz`)} package`;
+      }
+
+      setHandler(async request => {
+        urls.push(request.url);
+        const pathname = new URL(request.url).pathname;
+        if (pathname.endsWith(".tgz")) {
+          return new Response(Bun.file(join(tgzDir, basename(pathname).toLowerCase())));
+        }
+
+        const name = decodeURIComponent(pathname.slice(1));
+        const info = packages[name];
+        if (!info) {
+          return new Response("not found", { status: 404 });
+        }
+        return new Response(
+          JSON.stringify({
+            name,
+            versions: {
+              [info.version]: {
+                name,
+                version: info.version,
+                bin: { [info.bin]: "index.js" },
+                dist: { tarball: `http://localhost:${port}/${name}-${info.version}.tgz` },
+              },
+            },
+            "dist-tags": { latest: info.version },
+          }),
+        );
+      });
+
+      const run1 = spawn({
+        cmd: [bunExe(), "x", "--package", "multi-pkg-a", "--package", "multi-pkg-b", "bin-a"],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "inherit",
+        stderr: "pipe",
+        env: { ...env, npm_config_registry: `http://localhost:${port}/` },
+      });
+      const [out1, exited1] = await Promise.all([run1.stdout.text(), run1.exited]);
+
+      expect(out1).toContain("EXECUTED: bin-a");
+      expect(exited1).toBe(0);
+      expect(urls.some(u => u.includes("/multi-pkg-a"))).toBe(true);
+      expect(urls.some(u => u.includes("/multi-pkg-b"))).toBe(true);
+
+      // Order independence: `--package b --package a` must resolve to the
+      // same cache directory as `--package a --package b` above, so this
+      // second run — which asks for the *other* package's binary — should
+      // find everything already installed and never touch the registry.
+      urls.length = 0;
+      const run2 = spawn({
+        cmd: [bunExe(), "x", "--package", "multi-pkg-b", "--package", "multi-pkg-a", "bin-b"],
+        cwd: x_dir,
+        stdout: "pipe",
+        stdin: "inherit",
+        stderr: "pipe",
+        env: { ...env, npm_config_registry: `http://localhost:${port}/` },
+      });
+      const [out2, exited2] = await Promise.all([run2.stdout.text(), run2.exited]);
+
+      expect(out2).toContain("EXECUTED: bin-b");
+      expect(exited2).toBe(0);
+      expect(urls).toEqual([]);
     });
   });
 });

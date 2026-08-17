@@ -1303,21 +1303,77 @@ unsafe extern "C" {
     ) -> *mut JSPromise;
 }
 
+/// Inverse of `resolve_disk_key`; never a `\\?\` path, since the module loader cuts specifiers at the first `?`.
 #[unsafe(no_mangle)]
 extern "C" fn BakeToWindowsPath(input: BunString) -> BunString {
-    #[cfg(unix)]
+    #[cfg(not(windows))]
     {
         let _ = input;
         panic!("This code should not be called on POSIX systems.");
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
     {
         let input_utf8 = input.to_utf8();
-        let input_slice = input_utf8.slice();
-        let mut output = bun_paths::w_path_buffer_pool::get();
-        let output_slice = strings::to_w_path_normalize_auto_extend(&mut output[..], input_slice);
-        BunString::clone_utf16(output_slice.as_slice())
+        let mut path = key_path_to_disk_path(input_utf8.slice()).to_vec();
+        resolve_path::slashes_to_windows_in_place(&mut path);
+        BunString::clone_utf8(&path)
     }
+}
+
+/// `/C:/a/b.mjs` -> `C:/a/b.mjs`; anything else is returned as is.
+#[cfg(windows)]
+fn key_path_to_disk_path(key_path: &[u8]) -> &[u8] {
+    match key_path.strip_prefix(b"/") {
+        Some(rest) if strings::starts_with_windows_drive_letter(rest) => rest,
+        _ => key_path,
+    }
+}
+
+/// Drive or UNC path, as opposed to a bundle output path like `/_bun/abc123.js`.
+#[cfg(windows)]
+fn is_disk_path(path: &[u8]) -> bool {
+    resolve_path::windows_volume_name_len(path).0 > 0 && bun_paths::is_absolute(path)
+}
+
+/// Keys a file outside the bundle by disk path (`bake:/C:/a/b.mjs`, `bake://server/share/b.mjs`), a fixed point under re-resolution; `None` when neither side is a disk path.
+#[cfg(windows)]
+fn resolve_disk_key(
+    global: &JSGlobalObject,
+    referrer_key_path: &[u8],
+    specifier: &[u8],
+) -> Option<BunString> {
+    let referrer = key_path_to_disk_path(referrer_key_path);
+    let specifier = key_path_to_disk_path(specifier);
+    if !is_disk_path(referrer) && !is_disk_path(specifier) {
+        return None;
+    }
+
+    let dir = bun_paths::Dirname::dirname(referrer).unwrap_or(referrer);
+    let mut buf = bun_paths::path_buffer_pool::get();
+    let Some(resolved) = resolve_path::join_abs_string_buf_checked::<platform::Windows>(
+        dir,
+        &mut buf[..],
+        &[specifier],
+    ) else {
+        let _ = global.throw(format_args!(
+            "Cannot import {}: the resolved path is too long",
+            bun_core::fmt::quote(specifier),
+        ));
+        return Some(BunString::dead());
+    };
+    let resolved_len = resolved.len();
+    let resolved = &mut buf[..resolved_len];
+    resolve_path::slashes_to_posix_in_place(resolved);
+
+    let slash = if strings::starts_with_windows_drive_letter(resolved) {
+        "/"
+    } else {
+        ""
+    };
+    Some(BunString::create_format(format_args!(
+        "bake:{slash}{}",
+        BStr::new(resolved)
+    )))
 }
 
 #[unsafe(no_mangle)]
@@ -1348,10 +1404,15 @@ extern "C" fn BakeProdResolve(
     }
 
     debug_assert!(strings::has_prefix(referrer.slice(), b"bake:"));
+    let referrer_key_path = &referrer.slice()[5..];
+
+    #[cfg(windows)]
+    if let Some(key) = resolve_disk_key(global, referrer_key_path, specifier.slice()) {
+        return key;
+    }
 
     // dirname semantics: returns None for the root / no-parent.
-    let after_scheme = &referrer.slice()[5..];
-    let dir = bun_paths::Dirname::dirname(after_scheme).unwrap_or(after_scheme);
+    let dir = bun_paths::Dirname::dirname(referrer_key_path).unwrap_or(referrer_key_path);
 
     BunString::create_format(format_args!(
         "bake:{}",

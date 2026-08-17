@@ -1044,7 +1044,7 @@ export default function Client() {
       exitCode: 0,
     };
 
-    const timeout = 30_000;
+    const timeout = 30_000 * WAIT_MULTIPLIER;
 
     test(
       "react framework: server, client and ssr graphs",
@@ -1179,7 +1179,11 @@ export function getStaticPaths() {
       });
 
       const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
-      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({ exitCode: 0, signalCode: null, uncheckedScopes: [] });
+      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({
+        exitCode: 0,
+        signalCode: null,
+        uncheckedScopes: [],
+      });
 
       const rendered = await Promise.all(
         ["index.html", "posts/first/index.html", "posts/second/index.html"].map(file =>
@@ -1200,7 +1204,11 @@ export function getStaticPaths() {
       });
 
       const { stderr, exitCode, signalCode, uncheckedScopes } = await buildApp(String(dir));
-      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({ exitCode: 1, signalCode: null, uncheckedScopes: [] });
+      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({
+        exitCode: 1,
+        signalCode: null,
+        uncheckedScopes: [],
+      });
       expect(stderr).toContain("Cannot find module './does-not-exist'");
     });
 
@@ -1219,7 +1227,11 @@ export default async function IndexPage() {
       });
 
       const { exitCode, signalCode, uncheckedScopes } = await buildApp(dir, "./src/index.tsx");
-      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({ exitCode: 0, signalCode: null, uncheckedScopes: [] });
+      expect({ exitCode, signalCode, uncheckedScopes }).toStrictEqual({
+        exitCode: 0,
+        signalCode: null,
+        uncheckedScopes: [],
+      });
       expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
         "<p>read from disk while rendering</p>",
       );
@@ -1324,5 +1336,47 @@ export default async function AboutPage() {
       },
       leakScanTimeout,
     );
+  });
+
+  test("a route can import a file outside the bundle while rendering", async () => {
+    // A path the bundler never saw is keyed under "bake:", misses the module map, and is read from disk; on Windows it is a drive path.
+    const dir = await tempDirWithBakeDeps("bake-production-disk-import", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "extra/banner.mjs": `import { detail } from "../shared/detail.mjs";
+
+export const banner = "read from disk while rendering";
+export { detail };`,
+      "shared/detail.mjs": `export const detail = "resolved relative to the file on disk";`,
+      "pages/index.tsx": `import { join } from "node:path";
+
+export default async function IndexPage() {
+  // Computed specifiers stay runtime import()s; both spellings must name the same module.
+  const joined = await import(join(import.meta.dir, "..", "extra", "banner.mjs"));
+  const unnormalized = await import([import.meta.dir, "..", "extra", "banner.mjs"].join("/"));
+  return (
+    <ul>
+      <li>{joined.banner}</li>
+      <li>{joined.detail}</li>
+      <li>{joined === unnormalized ? "one module instance" : "two module instances"}</li>
+    </ul>
+  );
+}`,
+    });
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "--app", "./src/index.tsx"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(html).toContain("<li>read from disk while rendering</li>");
+    expect(html).toContain("<li>resolved relative to the file on disk</li>");
+    expect(html).toContain("<li>one module instance</li>");
   });
 });

@@ -2324,8 +2324,11 @@ impl StandaloneModuleGraph {
                 .filter(|&&[start, run_len]| {
                     // SAFETY: every run lies inside the mapped `.bun` segment.
                     unsafe {
-                        libc::madvise(start as *mut core::ffi::c_void, run_len, libc::MADV_DONTNEED)
-                            == 0
+                        libc::madvise(
+                            start as *mut core::ffi::c_void,
+                            run_len,
+                            libc::MADV_DONTNEED,
+                        ) == 0
                     }
                 })
                 .map(|&[_, run_len]| run_len)
@@ -2393,7 +2396,10 @@ mod page_runs_tests {
         // Keep bytes [3.5P, 5.5P): pages 3 and 5 are shared, so runs stop at 3P and resume at 6P.
         let base = 0;
         let keep = [(3 * P + P / 2, 5 * P + P / 2)];
-        assert_eq!(page_runs(base, 10 * P, P, &keep), vec![[0, 3 * P], [6 * P, 4 * P]]);
+        assert_eq!(
+            page_runs(base, 10 * P, P, &keep),
+            vec![[0, 3 * P], [6 * P, 4 * P]]
+        );
     }
 
     #[test]

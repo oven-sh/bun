@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, symlinkSync } from "fs";
+import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "fs";
 import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
@@ -900,6 +900,119 @@ export default function IndexPage() {
           stderr.toString().includes(type),
         );
         expect(leaked).toEqual([]);
+      },
+      timeout,
+    );
+  });
+
+  describe.concurrent("output files that cannot be written", () => {
+    const app = {
+      "src/index.tsx": `
+        process.on("exit", code => console.log("exit event: " + code));
+        export default { app: { framework: "react" } };
+      `,
+      "pages/index.tsx": `import Client from "../components/Client";
+
+export default function IndexPage() {
+  return <Client />;
+}`,
+      "components/Client.tsx": `"use client";
+
+export default function Client() {
+  return "client";
+}`,
+    };
+
+    // With --debug-no-minify the outputs under dist/_bun are named after their sources; the page becomes dist/index.html.
+    const clientEntry = expect.stringMatching(/^bun-framework-react\/client\.\w+\.js$/);
+    const runtimeChunk = expect.stringMatching(/^bun-framework-react\/server\.\w+\.chunk\.js$/);
+    const clientComponent = expect.stringMatching(/^components\/Client\.\w+\.js$/);
+    const serverPage = expect.stringMatching(/^pages\/index\.\w+\.js$/);
+
+    async function build(dir: string, ...flags: string[]) {
+      const { exitCode, stdout, stderr } =
+        await Bun.$`${bunExe()} build --app ./src/index.tsx --debug-no-minify ${flags}`
+          .cwd(dir)
+          .env({ ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" })
+          .quiet()
+          .throws(false);
+      return {
+        exitCode,
+        stdout: stdout.toString(),
+        // Paths relative to dist/_bun, sorted.
+        failedWrites: Array.from(
+          normalizePath(stderr.toString()).matchAll(/Failed to write "_bun\/([^"]+)" to output directory/g),
+          match => match[1],
+        ).sort(),
+        prerendered: existsSync(path.join(dir, "dist", "index.html")),
+        stderr: stderr.toString(),
+      };
+    }
+
+    // The failure exits through the build VM (the config's 'exit' handler runs) and nothing is prerendered.
+    const failed = { exitCode: 1, stdout: "exit event: 1\n", prerendered: false };
+
+    // Every test bundles a react app once or twice; see "failures reported by the build" above.
+    const timeout = 30_000 * WAIT_MULTIPLIER;
+
+    test(
+      "every failed write is reported",
+      async () => {
+        // Files in the way of both output directories (not dist/_bun itself: on Windows, mkdir under a file never returns).
+        const dir = await tempDirWithBakeDeps("bake-production-unwritable-output-dirs", {
+          ...app,
+          "dist/_bun/bun-framework-react": "a file in the way of the directory",
+          "dist/_bun/components": "a file in the way of the directory",
+        });
+
+        expect(await build(dir)).toMatchObject({
+          ...failed,
+          failedWrites: [clientEntry, runtimeChunk, clientComponent],
+        });
+      },
+      timeout,
+    );
+
+    test(
+      "a client chunk that cannot be written fails the build",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-unwritable-client-chunk", {
+          ...app,
+          "dist/_bun/components": "a file in the way of the directory",
+        });
+
+        expect(await build(dir)).toMatchObject({ ...failed, failedWrites: [clientComponent] });
+      },
+      timeout,
+    );
+
+    test(
+      "a runtime chunk that cannot be written fails the build",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-unwritable-runtime-chunk", app);
+        expect(await build(dir)).toMatchObject({ exitCode: 0, failedWrites: [], prerendered: true });
+
+        // The hash in the chunk's name is only known from a build that wrote it.
+        const frameworkDir = path.join(dir, "dist", "_bun", "bun-framework-react");
+        const chunks = readdirSync(frameworkDir).filter(name => name.endsWith(".chunk.js"));
+        expect(chunks).toHaveLength(1);
+        rmSync(path.join(dir, "dist"), { recursive: true });
+        mkdirSync(path.join(frameworkDir, chunks[0]), { recursive: true });
+
+        expect(await build(dir)).toMatchObject({ ...failed, failedWrites: [`bun-framework-react/${chunks[0]}`] });
+      },
+      2 * timeout,
+    );
+
+    test(
+      "a dumped server file that cannot be written fails the build",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-unwritable-server-file", {
+          ...app,
+          "dist/_bun/pages": "a file in the way of the directory",
+        });
+
+        expect(await build(dir, "--debug-dump-server-files")).toMatchObject({ ...failed, failedWrites: [serverPage] });
       },
       timeout,
     );

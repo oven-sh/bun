@@ -499,9 +499,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.pending_requests.set(self.pending_requests.get() + 1);
     }
 
-    /// uWS filter: `+1` on accept (post-handshake for TLS), `-1` on
-    /// `HttpContext::onClose` / `HttpResponse::upgrade()`. Feeds
-    /// [`Self::active_connection_count`].
+    /// uWS filter: `+2` at TCP accept (before any TLS handshake), `-2` on
+    /// `HttpContext::onClose` / `HttpResponse::upgrade()` — see
+    /// `AsyncSocketData::filteredAccept`. Feeds [`Self::active_connection_count`].
     extern "C" fn on_connection_filter(
         _socket: *mut uws_sys::us_socket_t,
         opened: i32,
@@ -1385,7 +1385,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
                 match status {
                     jsc::js_promise::Status::Fulfilled => {
-                        global.handle_rejected_promises();
+                        let _ = global.handle_rejected_promises();
                         break 'brk HttpResult::Success;
                     }
                     jsc::js_promise::Status::Rejected => {
@@ -1393,7 +1393,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                         break 'brk HttpResult::Rejection(promise.result(global.vm()));
                     }
                     jsc::js_promise::Status::Pending => {
-                        global.handle_rejected_promises();
+                        let _ = global.handle_rejected_promises();
                         if !node_http_response.is_null() {
                             // SAFETY: out-param written by `on_request_ffi`;
                             // owned ref held until `deref()` below. Shared —

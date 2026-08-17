@@ -1120,14 +1120,10 @@ impl JSGlobalObject {
         VirtualMachine::get()
     }
 
-    pub fn handle_rejected_promises(&self) {
-        // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
-        // own exceptions; the only thing that escapes is a TerminationException
-        // (worker terminate() or process.exit()), and the request flag may
-        // already be cleared by the time we observe it. Nothing actionable here.
-        let _ = crate::from_js_host_call_generic(self, || {
-            JSC__JSGlobalObject__handleRejectedPromises(self)
-        });
+    /// Runs the `unhandledRejection` machinery, which catches and reports its own exceptions; what
+    /// can come back is the VM's termination (taken at this boundary when at loop level).
+    pub fn handle_rejected_promises(&self) -> JsResult<()> {
+        crate::from_js_host_call_generic(self, || JSC__JSGlobalObject__handleRejectedPromises(self))
     }
 
     pub fn readable_stream_to_array_buffer(&self, value: JSValue) -> JSValue {

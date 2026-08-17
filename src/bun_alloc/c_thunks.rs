@@ -18,12 +18,9 @@ use crate::default_alloc as raw;
 // ──────────────────────────────────────────────────────────────────────────
 
 /// zlib `alloc_func` → default allocator `malloc(items * size)` (non-zeroing).
+/// Null on failure, which zlib reports as `Z_MEM_ERROR`.
 pub extern "C" fn mi_malloc_items(_: *mut c_void, items: c_uint, size: c_uint) -> *mut c_void {
-    let p = raw::malloc((items * size) as usize);
-    if p.is_null() {
-        unreachable!();
-    }
-    p
+    raw::malloc(items as usize * size as usize)
 }
 
 /// `(opaque, ptr)` → default allocator `free(ptr)`; opaque cookie ignored.
@@ -57,6 +54,9 @@ pub unsafe extern "C" fn mi_free_bytes(bytes: *mut c_void, _ctx: *mut c_void) {
 /// - `free(_, ptr: *mut c_void)` — paired with either alloc. `unsafe`
 ///   (precondition: `ptr` was allocated by this zone / the default allocator).
 ///
+/// Both allocators return null on failure; zlib turns that into `Z_MEM_ERROR`
+/// and brotli into a failed instance creation or an OOM error state.
+///
 /// Intended to be invoked inside a `mod XxxAllocator { … }` so call sites can
 /// keep referring to `XxxAllocator::alloc` / `::free` via a local `pub use`.
 #[macro_export]
@@ -67,16 +67,11 @@ macro_rules! c_thunks_for_zone {
             len: usize,
         ) -> *mut ::core::ffi::c_void {
             if $crate::heap_breakdown::ENABLED {
-                return match $crate::get_zone!($name).malloc_zone_malloc(len) {
-                    Some(p) => p,
-                    None => $crate::out_of_memory(),
-                };
+                return $crate::get_zone!($name)
+                    .malloc_zone_malloc(len)
+                    .unwrap_or(::core::ptr::null_mut());
             }
-            let p = $crate::default_alloc::malloc(len);
-            if p.is_null() {
-                $crate::out_of_memory();
-            }
-            p
+            $crate::default_alloc::malloc(len)
         }
 
         pub extern "C" fn calloc_items(
@@ -85,18 +80,11 @@ macro_rules! c_thunks_for_zone {
             len: ::core::ffi::c_uint,
         ) -> *mut ::core::ffi::c_void {
             if $crate::heap_breakdown::ENABLED {
-                return match $crate::get_zone!($name)
+                return $crate::get_zone!($name)
                     .malloc_zone_calloc(items as usize, len as usize)
-                {
-                    Some(p) => p,
-                    None => $crate::out_of_memory(),
-                };
+                    .unwrap_or(::core::ptr::null_mut());
             }
-            let p = $crate::default_alloc::calloc(items as usize, len as usize);
-            if p.is_null() {
-                $crate::out_of_memory();
-            }
-            p
+            $crate::default_alloc::calloc(items as usize, len as usize)
         }
 
         pub unsafe extern "C" fn free(_: *mut ::core::ffi::c_void, data: *mut ::core::ffi::c_void) {

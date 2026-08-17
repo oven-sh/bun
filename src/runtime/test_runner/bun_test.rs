@@ -1943,10 +1943,7 @@ impl ExecutionEntry {
         entry
     }
 
-    /// Records a timeout failure on `sequence` if this entry's deadline has passed. `callback_completed`
-    /// is set when the callback has already finished (returned, settled, or called `done`) and merely
-    /// took too long; the "before its done callback was called" hint is only reported while it is still
-    /// running.
+    /// `callback_completed`: the callback already finished, so the missing-`done()` hint does not apply.
     pub(crate) fn evaluate_timeout(
         &self,
         sequence: &mut Execution::ExecutionSequence,

@@ -2711,7 +2711,9 @@ pub(crate) mod __gated_printer {
                 self.print_string_literal_utf8(path.pretty, false);
             }
 
-            if !import_options.is_missing() {
+            if !import_options.is_missing()
+                && !record.flags.contains(ImportRecordFlags::POINTS_TO_JS_CHUNK)
+            {
                 self.print_whitespacer(ws!(b", "));
                 self.print_expr(import_options, Level::Comma, ExprFlagSet::empty());
             }

@@ -72,6 +72,10 @@ bitflags::bitflags! {
 
         const WAS_ORIGINALLY_REQUIRE = 1 << 9;
 
+        /// Code splitting repointed this `import()` at a JavaScript chunk; the printer
+        /// drops its options object, which described the file originally imported.
+        const POINTS_TO_JS_CHUNK = 1 << 10;
+
         /// If true, this import can be removed if it's unused
         const IS_EXTERNAL_WITHOUT_SIDE_EFFECTS = 1 << 11;
 

@@ -766,8 +766,7 @@ impl Execution {
         }
     }
 
-    /// A callback that blocked past its deadline finishes before the timer can fire, so it is judged as its
-    /// completion arrives; by the time `step` processes the queued completion, other callbacks may have blocked.
+    /// Judged here rather than in `step`: other callbacks may block before the queued completion is processed.
     pub(crate) fn handle_callback_completed(&mut self, user_data: &RefDataValue) {
         let _g = group_begin!();
 

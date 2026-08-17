@@ -13,7 +13,7 @@ Most projects will upgrade without any code changes. Run your test suite after u
   [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792).
 </Note>
 
-```sh terminal icon="terminal"
+```bash terminal icon="terminal"
 bun upgrade
 ```
 
@@ -37,6 +37,10 @@ bun upgrade
 | Node.js compat        | `process.versions.node` is `26.3.0`                              | Rebuild non-N-API native addons                                         |
 | `node:dns`            | `dns.lookup()` uses the system resolver on Linux                 | Use `dns.resolve*()` if you need `dns.setServers()` to apply            |
 | `trustedDependencies` | `npm:` aliases are matched by the resolved name, not the alias   | List the real package name                                              |
+| `fetch` / `Headers`   | Duplicate response headers are combined with `", "`              | Update code that expected only the last value                           |
+| `Bun.Socket`          | `setKeepAlive()` delay is milliseconds, not seconds              | Pass milliseconds, as in `node:net`                                     |
+| `Bun.SQL` (MySQL)     | `DATETIME` / `TIMESTAMP` columns decode as UTC                   | Remove local-time compensation on values read back                      |
+| `HTMLRewriter`        | `transform()` throws for async handlers on string input          | Wrap the input in a `Response` and read the body asynchronously         |
 | Distribution          | Single x64 build (no separate AVX2 build)                        | None; `-baseline` names still resolve                                   |
 
 ---
@@ -78,7 +82,7 @@ For example, with a dependency `a` that declares `"c": "^0.6.0"`:
 }
 ```
 
-```sh terminal icon="terminal"
+```bash terminal icon="terminal"
 # Bun 1.3: the rule is ignored, bun.lock is lockfileVersion 1 and resolves c@0.6.x
 bun install
 

@@ -370,11 +370,10 @@ impl JSPromise {
             // The VM is dead: nothing settles.
             Err(JsError::Terminated) => return Err(JsError::Terminated),
             Err(JsError::Thrown) => {
-                let Some(exception) = global.try_take_exception() else {
-                    panic!(
-                        "A JavaScript exception was thrown, but it was cleared before it could be read."
-                    );
-                };
+                let exception = global.take_exception(JsError::Thrown);
+                if exception.is_termination_exception() {
+                    return Err(JsError::Terminated);
+                }
                 exception.to_error().unwrap_or(exception)
             }
         };

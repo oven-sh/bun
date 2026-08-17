@@ -221,7 +221,7 @@ pub enum IPCDecodeError {
     Stopped,
     // —— bun.JSError variants ——
     #[error("JSError")]
-    JSError,
+    Js(JsError),
     #[error("OutOfMemory")]
     OutOfMemory,
 }
@@ -229,7 +229,7 @@ pub enum IPCDecodeError {
 impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
         match e {
-            JsError::Thrown | JsError::Terminated => IPCDecodeError::JSError,
+            JsError::Thrown | JsError::Terminated => IPCDecodeError::Js(e),
             JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
         }
     }
@@ -2276,8 +2276,8 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         // restore) threw: that is this message's delivery failing, folded like
         // a throwing listener, and the channel is closed as for any undecodable
         // input.
-        DecodeStep::Fail(IPCDecodeError::JSError) => {
-            crate::dispatch::fold(Err(JsError::Thrown));
+        DecodeStep::Fail(IPCDecodeError::Js(err)) => {
+            crate::dispatch::fold(Err(*err));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {

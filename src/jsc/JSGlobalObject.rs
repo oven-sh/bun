@@ -81,6 +81,8 @@ impl core::fmt::Debug for GlobalRef {
     }
 }
 
+bun_core::declare_scope!(TerminationTaken, hidden);
+
 impl JSGlobalObject {
     /// Alias of the macro-provided [`as_mut_ptr`](Self::as_mut_ptr) kept for
     /// call-site readability where mutation is not the intent.
@@ -1016,11 +1018,21 @@ impl JSGlobalObject {
             JsError::OutOfMemory => {
                 let _ = self.throw_out_of_memory();
             }
-            // Already taken at the boundary; nothing is pending. Hand back the (inert) termination value.
+            // Already taken at the boundary; nothing is pending. Hand back the (inert) termination cell.
             JsError::Terminated => return self.vm().termination_exception(),
         }
 
         self.try_take_exception().unwrap_or_else(|| {
+            // Nothing pending behind a `Thrown`. On a VM whose stop has been carried out that is a
+            // `Terminated` that lost its name on the way here (through an error type that has none for
+            // it): stand down the same way. Anywhere else it is a bug — the exception was cleared early.
+            if self.vm().execution_forbidden() {
+                bun_core::scoped_log!(
+                    TerminationTaken,
+                    "take_exception(Thrown) with nothing pending on a stopped VM: a Terminated collapsed to Thrown"
+                );
+                return self.vm().termination_exception();
+            }
             panic!("A JavaScript exception was thrown, but it was cleared before it could be read.")
         })
     }

@@ -28,16 +28,16 @@ const denylist = readFileSync(join(testDir, "parallel-denylist.txt"), "utf8")
   .map(line => line.trim())
   .filter(line => line && !line.startsWith("#"));
 
-// Entries must name a file the same way the generator enumerates them: a
-// relative, forward-slash path under test/. A directory or a path with ".."
-// exists on disk but never matches anything the generator compares against.
-test("parallel-denylist.txt entries are files relative to test/", () => {
+// The generator compares entries byte-for-byte against the paths it enumerates
+// (forward slashes, relative to test/), so a spelling that merely resolves to
+// the right file ("./x", "a//b", "../test/x") or names a directory exists on
+// disk but denylists nothing.
+test("parallel-denylist.txt entries are files spelled the way the generator enumerates them", () => {
   const bad = denylist.filter(
     f =>
       f.includes("\\") ||
-      f.startsWith("/") ||
       f.startsWith("test/") ||
-      f.split("/").includes("..") ||
+      f.split("/").some(segment => segment === "" || segment === "." || segment === "..") ||
       !statSync(join(testDir, f), { throwIfNoEntry: false })?.isFile(),
   );
   expect(bad).toEqual([]);

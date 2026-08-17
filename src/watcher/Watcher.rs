@@ -18,6 +18,7 @@ use crate::inotify_watcher as platform;
 use crate::kevent_watcher as platform;
 #[cfg(windows)]
 use crate::windows_watcher as platform;
+use bun_collections::index_sort;
 #[cfg(target_arch = "wasm32")]
 compile_error!("Unsupported platform");
 
@@ -402,7 +403,7 @@ impl Watcher {
         // swapRemove messes up the order
         // But, it only messes up the order if any elements in the list appear after the item being removed
         // So if we just sort the list by the biggest index first, that should be fine
-        self.evict_list[0..evict_list_i].sort_by(|a, b| b.cmp(a));
+        index_sort::sort_slice_by(&mut self.evict_list[0..evict_list_i], |a, b| b.cmp(a));
 
         // reshaped for borrowck — capture fds.len() before loop
         let slice = self.watchlist.slice();

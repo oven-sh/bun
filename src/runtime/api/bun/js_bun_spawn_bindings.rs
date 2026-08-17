@@ -1061,7 +1061,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // - No stdin, stdout, stderr pipes
     // - No extra fds
     // - No auto killer (for tests)
-    // - No execution time limit (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
     let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && IS_SYNC)
@@ -1073,9 +1072,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
         && !jsc_vm.auto_killer.enabled
-        // `jsc_vm()` is the audited safe `&VM` accessor (centralised opaque-ZST
-        // deref proof in `VirtualMachine`).
-        && !jsc_vm.jsc_vm().has_execution_time_limit()
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()

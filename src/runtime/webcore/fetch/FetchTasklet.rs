@@ -615,21 +615,20 @@ impl FetchTasklet {
         self.get_current_response().map(|r| unsafe { &mut *r })
     }
 
-    fn start_request_stream(&mut self) {
+    fn start_request_stream(&mut self) -> JsResult<()> {
         self.is_waiting_request_stream_start = false;
         debug_assert!(matches!(
             self.request_body,
             HTTPRequestBody::ReadableStream(_)
         ));
         let HTTPRequestBody::ReadableStream(ref stream_ref) = self.request_body else {
-            return;
+            return Ok(());
         };
-        let Some(stream) = stream_ref.get(&self.global_this) else {
-            return;
+        let Some(stream) = stream_ref.get() else {
+            return Ok(());
         };
         if self.signal_aborted() {
-            stream.abort(&self.global_this);
-            return;
+            return stream.abort(&self.global_this);
         }
 
         let global_this = self.global_this;
@@ -651,7 +650,7 @@ impl FetchTasklet {
             let err_instance = err.to_error_instance(&global_this);
             err_instance.ensure_still_alive();
             self.write_end_request(Some(err_instance));
-            return;
+            return Ok(());
         }
 
         let self_ptr = std::ptr::from_mut::<FetchTasklet>(self);
@@ -670,7 +669,7 @@ impl FetchTasklet {
         match stream.wire_native_sink(&global_this, sink_handle, JSValue::UNDEFINED, |src| {
             sink.source = src;
         }) {
-            crate::webcore::readable_stream::NativeWireResult::Wired => return,
+            crate::webcore::readable_stream::NativeWireResult::Wired => return Ok(()),
             crate::webcore::readable_stream::NativeWireResult::EndedInline(err) => {
                 // The source finished inside the wire attempt, so leave the
                 // sink in the state `end_from_stream` leaves it: ended, with
@@ -689,7 +688,7 @@ impl FetchTasklet {
                     err_js
                 });
                 self.write_end_request(err_js);
-                return;
+                return Ok(());
             }
             crate::webcore::readable_stream::NativeWireResult::NotNative => {}
         }
@@ -704,7 +703,7 @@ impl FetchTasklet {
         if let Some(err) = assignment_result.to_error() {
             self.write_end_request(Some(err));
             self.clear_sink();
-            return;
+            return Ok(());
         }
 
         if !assignment_result.is_empty_or_undefined_or_null() {
@@ -729,7 +728,7 @@ impl FetchTasklet {
                         self.write_end_request(Some(result));
                     }
                 }
-                return;
+                return Ok(());
             }
         }
 
@@ -738,6 +737,7 @@ impl FetchTasklet {
         // path always balances the `+1` itself.
         sink.task = None;
         self.write_end_request(None);
+        Ok(())
     }
 
     fn on_body_received(&mut self) -> JsResult<()> {
@@ -777,7 +777,7 @@ impl FetchTasklet {
             let mut err = scopeguard::guard(self.on_reject(), |mut e| e.reset());
             let mut js_err = JSValue::ZERO;
             // if we are streaming update with error
-            if let Some(readable) = self.readable_stream_ref.get(&global_this) {
+            if let Some(readable) = self.readable_stream_ref.get() {
                 if let Some(bytes) = readable.ptr.bytes() {
                     js_err = err.to_js(&global_this);
                     js_err.ensure_still_alive();
@@ -813,7 +813,7 @@ impl FetchTasklet {
             return Ok(());
         }
 
-        if let Some(readable) = self.readable_stream_ref.get(&global_this) {
+        if let Some(readable) = self.readable_stream_ref.get() {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived readable_stream_ref");
             if let Some(bytes) = readable.ptr.bytes() {
                 bytes.size_hint.set(self.get_size_hint());
@@ -839,7 +839,7 @@ impl FetchTasklet {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived Current Response");
             let size_hint = self.get_size_hint();
             response.set_size_hint(size_hint);
-            if let Some(readable) = response.get_body_readable_stream(&global_this) {
+            if let Some(readable) = response.get_body_readable_stream() {
                 bun_output::scoped_log!(
                     FetchTasklet,
                     "onBodyReceived CurrentResponse BodyReadableStream"
@@ -959,7 +959,15 @@ impl FetchTasklet {
 
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
-            self.start_request_stream();
+            if let Err(err) = self.start_request_stream() {
+                // The VM is being stopped: leave like the `!script_allowed()` gate above does.
+                self.mutex.unlock();
+                if is_done {
+                    // SAFETY: `self` is the live heap tasklet; we hold a ref.
+                    FetchTasklet::deref(std::ptr::from_mut(self));
+                }
+                return Err(err);
+            }
             // Makes wpt-h2 number-chunk test deterministic.
             // `assign_to_stream` kicks off `await reader.read()`; an invalid
             // chunk type (e.g. a JS number) throws inside `sink.write` and lands in
@@ -2147,8 +2155,8 @@ impl FetchTasklet {
         if this.is_waiting_request_stream_start {
             if let HTTPRequestBody::ReadableStream(stream_ref) = &this.request_body {
                 this.is_waiting_request_stream_start = false;
-                if let Some(stream) = stream_ref.get(&this.global_this) {
-                    stream.cancel_with_reason(&this.global_this, reason);
+                if let Some(stream) = stream_ref.get() {
+                    crate::dispatch::fold(stream.cancel_with_reason(&this.global_this, reason));
                 }
             }
         }

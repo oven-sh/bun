@@ -163,7 +163,7 @@ impl From<JsError> for StringifyError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => StringifyError::OutOfMemory,
-            JsError::Thrown => StringifyError::JsError,
+            JsError::Thrown | JsError::Terminated => StringifyError::JsError,
         }
     }
 }
@@ -1093,7 +1093,7 @@ impl From<JsError> for ToJsError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => ToJsError::OutOfMemory,
-            JsError::Thrown => ToJsError::JsError,
+            JsError::Thrown | JsError::Terminated => ToJsError::JsError,
         }
     }
 }

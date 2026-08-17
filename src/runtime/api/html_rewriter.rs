@@ -155,7 +155,7 @@ macro_rules! lol_content_ops {
             callback: fn(&mut $Raw, &str, lol_html::html_content::ContentType),
             this_object: JSValue,
             global_object: &JSGlobalObject,
-            content: ZigStringSlice,
+            content: &ZigStringSlice,
             content_options: Option<ContentOptions>,
         ) -> JsResult<JSValue> {
             let Some(raw) = self.$field.get_mut() else {
@@ -173,7 +173,7 @@ macro_rules! lol_content_ops {
                 &self,
                 call_frame: &CallFrame,
                 global_object: &JSGlobalObject,
-                content: ZigStringSlice,
+                content: &ZigStringSlice,
                 content_options: Option<ContentOptions>,
             ) -> JsResult<JSValue> {
                 self.content_handler(
@@ -194,7 +194,7 @@ macro_rules! lol_content_ops {
                 call_frame: &CallFrame,
             ) -> JsResult<JSValue> {
                 let (content, opts) = eat_content_args(global, call_frame)?;
-                self.$name_(call_frame, global, content, opts)
+                self.$name_(call_frame, global, &content, opts)
             }
         )*
     };
@@ -365,11 +365,11 @@ impl HTMLRewriter {
     pub(crate) fn on_(
         &self,
         global: &JSGlobalObject,
-        selector_name: ZigStringSlice,
+        selector_name: &ZigStringSlice,
         call_frame: &CallFrame,
         listener: JSValue,
     ) -> JsResult<JSValue> {
-        let selector_source = String::from_utf8_lossy(selector_name.slice());
+        let selector_source = utf8_or_throw(global, selector_name.slice())?;
         let selector = match selector_source.parse::<lol_html::Selector>() {
             Ok(s) => s,
             Err(e) => return Err(global.throw_value(create_lolhtml_error(global, &e))),
@@ -528,7 +528,7 @@ impl HTMLRewriter {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let selector_name = eat_string(&mut iter, global)?;
         let listener = eat_js_value(&mut iter, global)?;
-        self.on_(global, selector_name, call_frame, listener)
+        self.on_(global, &selector_name, call_frame, listener)
     }
 
     pub(crate) fn on_document(
@@ -3018,7 +3018,7 @@ impl Element {
     pub(crate) fn get_attribute_(
         &self,
         global_object: &JSGlobalObject,
-        name: ZigStringSlice,
+        name: &ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::NULL);
@@ -3035,7 +3035,7 @@ impl Element {
     pub(crate) fn has_attribute_(
         &self,
         global: &JSGlobalObject,
-        name: ZigStringSlice,
+        name: &ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::FALSE);
@@ -3049,8 +3049,8 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: ZigStringSlice,
-        value: ZigStringSlice,
+        name: &ZigStringSlice,
+        value: &ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3074,7 +3074,7 @@ impl Element {
         &self,
         call_frame: &CallFrame,
         global_object: &JSGlobalObject,
-        name: ZigStringSlice,
+        name: &ZigStringSlice,
     ) -> JsResult<JSValue> {
         let Some(el) = self.element.get_mut() else {
             return Ok(JSValue::UNDEFINED);
@@ -3108,7 +3108,7 @@ impl Element {
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let name = eat_string(&mut iter, global)?;
-        self.get_attribute_(global, name)
+        self.get_attribute_(global, &name)
     }
 
     pub(crate) fn has_attribute(
@@ -3118,7 +3118,7 @@ impl Element {
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let name = eat_string(&mut iter, global)?;
-        self.has_attribute_(global, name)
+        self.has_attribute_(global, &name)
     }
 
     pub(crate) fn set_attribute(
@@ -3129,7 +3129,7 @@ impl Element {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let name = eat_string(&mut iter, global)?;
         let value = eat_string(&mut iter, global)?;
-        self.set_attribute_(call_frame, global, name, value)
+        self.set_attribute_(call_frame, global, &name, &value)
     }
 
     pub(crate) fn remove_attribute(
@@ -3139,7 +3139,7 @@ impl Element {
     ) -> JsResult<JSValue> {
         let mut iter = ArgumentsSlice::init(global.bun_vm_ref(), call_frame.arguments());
         let name = eat_string(&mut iter, global)?;
-        self.remove_attribute_(call_frame, global, name)
+        self.remove_attribute_(call_frame, global, &name)
     }
 
     lol_content_ops! { RawElement, element, JSValue::UNDEFINED;

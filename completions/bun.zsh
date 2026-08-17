@@ -23,7 +23,7 @@ _bun_add_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -77,7 +77,7 @@ _bun_unlink_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -121,7 +121,7 @@ _bun_link_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -387,7 +387,7 @@ _bun_install_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -437,7 +437,7 @@ _bun_remove_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--global[Add a package globally]' \
         '-g[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -656,7 +656,7 @@ _bun_update_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '-g[Add a package globally]' \
         '--global[Add a package globally]' \
         '--cwd[Set a specific cwd]:cwd' \
@@ -713,7 +713,7 @@ _bun_dedupe_completion() {
         '--no-progress[Disable the progress bar]' \
         '--no-summary[Don'"'"'t print a summary]' \
         '--no-verify[Skip verifying integrity of newly downloaded packages]' \
-        '--ignore-scripts[Skip lifecycle scripts in the package.json (dependency scripts are never run)]' \
+        '--ignore-scripts[Skip lifecycle scripts for all packages, including the project'"'"'s package.json and trusted dependencies]' \
         '--cwd[Set a specific cwd]:cwd' \
         '--backend[Platform-specific optimizations for installing dependencies]:backend:("copyfile" "hardlink" "symlink")' \
         '--linker[Linker strategy]:linker:(isolated hoisted)' \

@@ -6,7 +6,8 @@
 //   reader was that path's header decoder;
 // - native class methods no built-in JS calls (QuicSession.silentClose,
 //   QuicEndpoint.ref, NodeJSFS.unwatchFile, FSWatcher.hasRef), removed from
-//   the .classes.ts declarations together with their Rust implementations;
+//   the .classes.ts declarations together with their Rust implementations
+//   (and the MaybeTodo trait whose only unconditional user was unwatchFile);
 // - the watcher's write-only `WatchItem.loader` column, the `bun_watcher::Loader`
 //   cycle-break newtype that existed only to carry it, and the `loader`
 //   parameters that threaded it through every `add_file` caller;
@@ -121,8 +122,11 @@ test("native methods no built-in JS calls do not reappear", () => {
     ["src/runtime/node/quic/endpoint.rs", /\bfn do_ref\b/],
     ["src/runtime/node/node.classes.ts", /\bunwatchFile\b/],
     ["src/runtime/node/node_fs_binding.rs", /\bunwatch_file\b/],
-    ["src/runtime/node/node_fs.rs", /\bunwatch_file\b|\bUnwatchFile\b/],
+    ["src/runtime/node/node_fs.rs", /\bunwatch_file\b|\bUnwatchFile\b|\bMaybeTodo\b/],
     ["src/runtime/node/node_fs_watcher.rs", /\bfn has_ref\b/],
+    // unwatchFile was the only stub that needed the trait on every target; the
+    // remaining stubs spell `Err(sys::Error::todo())` directly.
+    ["src/runtime/node.rs", /\bMaybeTodo\b/],
   ];
   expect(resurrected(checks)).toEqual([]);
 

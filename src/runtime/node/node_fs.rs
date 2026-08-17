@@ -184,10 +184,6 @@ mod node {
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
 use super::util::validators;
-// `Maybe::todo()` is only called from the `lchmod` / `copy_file` arms that are
-// still stubs, and macOS and FreeBSD have none of those.
-#[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
-use super::MaybeTodo as _;
 
 // Trait imports for inherent-looking method calls on upstream types:
 //   - `bun_sys::FdExt`       → `Fd::close()`
@@ -5479,7 +5475,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = args;
-            return Maybe::<ret::Lchmod>::todo();
+            return Err(sys::Error::todo());
         }
         #[cfg(target_os = "android")]
         {
@@ -8678,7 +8674,7 @@ impl NodeFS {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
-                return Maybe::<ret::CopyFile>::todo();
+                return Err(sys::Error::todo());
             }
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
@@ -8974,7 +8970,7 @@ impl NodeFS {
                 // fall back to a non-CoW `CopyFileW`, per
                 // Node.js' documented FICLONE_FORCE contract and matching the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
-                // than `Maybe::todo()` so debug builds do not panic.
+                // than `sys::Error::todo()` so debug builds do not panic.
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
@@ -9121,7 +9117,7 @@ impl NodeFS {
         )))]
         {
             let _ = (src, dest, mode, reuse_stat);
-            Maybe::<ret::CopyFile>::todo()
+            Err(sys::Error::todo())
         }
     }
 

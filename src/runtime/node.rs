@@ -189,17 +189,3 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
         self.as_ref().err()
     }
 }
-
-/// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
-/// (= `core::result::Result<T, bun_sys::Error>`), the type-alias form of
-/// `Maybe` used throughout `node/`.
-pub trait MaybeTodo: Sized {
-    fn todo() -> Self;
-}
-
-impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
-    #[inline]
-    fn todo() -> Self {
-        Err(bun_sys::Error::todo())
-    }
-}

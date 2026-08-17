@@ -4257,7 +4257,7 @@ pub(super) fn finalize_bundle(
 
             match c::bake_load_server_hmr_patch_with_source_map(
                 global,
-                BunString::clone_utf8(&server_bundle),
+                OwnedString::new(BunString::clone_utf8(&server_bundle)),
                 json.as_ptr(),
                 json.len(),
             ) {
@@ -4275,7 +4275,10 @@ pub(super) fn finalize_bundle(
                 }
             }
         } else {
-            match c::bake_load_server_hmr_patch(global, BunString::clone_latin1(&server_bundle)) {
+            match c::bake_load_server_hmr_patch(
+                global,
+                OwnedString::new(BunString::clone_latin1(&server_bundle)),
+            ) {
                 Ok(v) => v,
                 Err(err) => {
                     // SAFETY: vm is JSC_BORROW — valid for DevServer lifetime;
@@ -5565,19 +5568,21 @@ impl DevServer {
 mod c {
     use super::*;
 
+    /// The C++ side releases `code` (transferToWTFString).
     pub(super) fn bake_load_server_hmr_patch(
         global: &JSGlobalObject,
-        code: BunString,
+        code: OwnedString,
     ) -> JsResult<JSValue> {
         unsafe extern "C" {
             safe fn BakeLoadServerHmrPatch(global: &JSGlobalObject, code: BunString) -> JSValue;
         }
-        jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code))
+        jsc::from_js_host_call(global, || BakeLoadServerHmrPatch(global, code.into_inner()))
     }
 
+    /// The C++ side releases `code` (transferToWTFString).
     pub(super) fn bake_load_server_hmr_patch_with_source_map(
         global: &JSGlobalObject,
-        code: BunString,
+        code: OwnedString,
         source_map_json_ptr: *const u8,
         source_map_json_len: usize,
     ) -> JsResult<JSValue> {
@@ -5600,7 +5605,7 @@ mod c {
         jsc::from_js_host_call(global, || unsafe {
             BakeLoadServerHmrPatchWithSourceMap(
                 global,
-                code,
+                code.into_inner(),
                 source_map_json_ptr,
                 source_map_json_len,
             )

@@ -1225,4 +1225,104 @@ export default async function IndexPage() {
       );
     });
   });
+
+  // Every BunString the build creates has exactly one consumer that releases it; only LSan with Malloc=1 can see a missed release (WTF strings otherwise live in bmalloc).
+  describe.skipIf(!isASAN || isWindows)("strings created for the build are released", () => {
+    // Both pages import the same chunks statically and via import(), so the same "bake:/" keys resolve more than once (only a repeat resolution leaks a reportable string).
+    const app = (aboutPageBody: string) => ({
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "components/Shared.tsx": `export function Shared({ page }: { page: string }) {
+  return <p>{"shared from " + page}</p>;
+}`,
+      "components/lazy.ts": `export const lazy = "lazy";`,
+      "pages/index.tsx": `import { Shared } from "../components/Shared";
+
+export default async function IndexPage() {
+  const { lazy } = await import("../components/lazy");
+  return <div>{"index " + lazy}<Shared page="index" /></div>;
+}`,
+      "pages/about.tsx": `import { Shared } from "../components/Shared";
+
+export default async function AboutPage() {
+  const { lazy } = await import("../components/lazy");
+  ${aboutPageBody}
+}`,
+    });
+
+    async function buildUnderLeakSanitizer(dir: string, env: Record<string, string> = {}): Promise<string> {
+      const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env({
+          ...bunEnv,
+          ...env,
+          Malloc: "1",
+          ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=1",
+          // ~20 bmalloc frames sit between malloc and the string's creator; log_threads makes the check announce itself.
+          LSAN_OPTIONS: "malloc_context_size=40:log_threads=1",
+        })
+        .quiet()
+        .throws(false);
+      const output = stderr.toString();
+      expect(output).toContain("Processing thread");
+      return output;
+    }
+    const leakScanTimeout = 120_000;
+
+    // Keep only the LSan records with BunString machinery on the stack, reduced to the two frames above it ("who created it").
+    const stringMachinery = /\bBunString__\w+|bun_core::string::/;
+    function leakedBunStrings(stderr: string): string[] {
+      return stderr
+        .split(/^(?=(?:Direct|Indirect) leak of )/m)
+        .filter(record => stringMachinery.test(record))
+        .map(record => {
+          const [header, ...lines] = record.split("\n");
+          const frames = lines.map(line => line.trim().replace(/^#\d+ 0x[0-9a-f]+ in /, ""));
+          const created = frames.findIndex(frame => stringMachinery.test(frame));
+          const creators = frames
+            .slice(created)
+            .filter(frame => !stringMachinery.test(frame))
+            .slice(0, 2)
+            .map(frame => frame.replace(/\(.*\) /, "() ").replace(/ \S*\/src\//, " src/"));
+          return [header, ...creators].join("\n");
+        });
+    }
+
+    test.concurrent(
+      "after a successful build",
+      async () => {
+        const dir = await tempDirWithBakeDeps(
+          "bake-production-string-leaks",
+          app(`return <div>{"about " + lazy}<Shared page="about" /></div>;`),
+        );
+
+        const stderr = await buildUnderLeakSanitizer(dir);
+
+        // Both pages rendered, so every import above was resolved and loaded.
+        const indexHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+        const aboutHtml = await Bun.file(path.join(dir, "dist", "about", "index.html")).text();
+        expect(indexHtml).toContain("<div>index lazy<p>shared from index</p></div>");
+        expect(aboutHtml).toContain("<div>about lazy<p>shared from about</p></div>");
+        expect(leakedBunStrings(stderr)).toStrictEqual([]);
+      },
+      leakScanTimeout,
+    );
+
+    // Under BUN_DESTRUCT_VM_ON_EXIT the VM releases the module registry, so only a leaked reference would still hold these strings.
+    test.concurrent(
+      "after a failed build tears the VM down",
+      async () => {
+        const dir = await tempDirWithBakeDeps(
+          "bake-production-string-leaks-teardown",
+          app(`throw new Error("about page failed to render");`),
+        );
+
+        const stderr = await buildUnderLeakSanitizer(dir, { BUN_DESTRUCT_VM_ON_EXIT: "1" });
+
+        // The build got as far as loading and running the page modules.
+        expect(stderr).toContain("about page failed to render");
+        expect(leakedBunStrings(stderr)).toStrictEqual([]);
+      },
+      leakScanTimeout,
+    );
+  });
 });

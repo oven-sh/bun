@@ -73,6 +73,7 @@ extern "C" JSC::EncodedJSValue BakeLoadModuleByKey(JSC::JSGlobalObject* global, 
   return JSC::JSValue::encode(promise);
 }
 
+// Both HMR patch entry points take ownership of `source` (DevServer.rs passes an OwnedString).
 extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(JSC::JSGlobalObject* global, BunString source) {
   JSC::VM&vm = global->vm();
   auto scope = DECLARE_THROW_SCOPE(vm);
@@ -81,7 +82,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatch(JSC::JSGlobalObject* globa
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(SourceProvider::create(
     global,
-    source.toWTFString(),
+    source.transferToWTFString(),
     origin,
     WTF::move(string),
     WTF::TextPosition(),
@@ -105,7 +106,7 @@ extern "C" JSC::EncodedJSValue BakeLoadServerHmrPatchWithSourceMap(JSC::JSGlobal
   // Use DevServerSourceProvider with the source map JSON
   auto provider = DevServerSourceProvider::create(
     global,
-    source.toWTFString(),
+    source.transferToWTFString(),
     sourceMapJSONPtr,
     sourceMapJSONLength,
     origin,

@@ -1412,8 +1412,7 @@ describe.concurrent(() => {
     });
 
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    // stderr carries the sanitizer or assertion report when a worker dies; show it before the exit code.
-    expect({ stdout: stdout.trim(), stderr: exitCode === 0 ? "" : stderr, exitCode }).toEqual({
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
       stdout: `exited ${workers}`,
       stderr: "",
       exitCode: 0,

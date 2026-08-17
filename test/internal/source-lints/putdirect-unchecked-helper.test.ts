@@ -105,10 +105,11 @@ function stripForScan(content: string): string {
       }
       continue;
     }
-    // raw string literal: R"delim( ... )delim"
-    if (c === "R" && next === '"' && !/\w/.test(content[i - 1] ?? "")) {
-      const open = content.indexOf("(", i + 2);
-      const delim = open === -1 ? null : content.slice(i + 2, open);
+    // raw string literal, with optional encoding prefix: (u8|u|U|L)?R"delim( ... )delim"
+    const rawPrefix = /^(?:u8|u|U|L)?R"/.exec(content.slice(i, i + 4))?.[0];
+    if (rawPrefix !== undefined && !/\w/.test(content[i - 1] ?? "")) {
+      const open = content.indexOf("(", i + rawPrefix.length);
+      const delim = open === -1 ? null : content.slice(i + rawPrefix.length, open);
       const end = delim === null ? -1 : content.indexOf(`)${delim}"`, open + 1);
       if (delim !== null && end !== -1) {
         const stop = end + delim.length + 2;
@@ -215,6 +216,12 @@ const detects: { label: string; rule: string; line: number; cpp: string }[] = [
     line: 2,
     cpp: `void f() {\n    header->putDirect(vm, name, JSValue::decode(Bun__Process__createExecArgv(globalObject)), 0);\n}\n`,
   },
+  {
+    label: 'an offender after a prefixed raw string containing " and //',
+    rule: "construct*()/create*() inline",
+    line: 3,
+    cpp: `void f() {\n    obj->putDirect(vm, name, jsString(vm, u8R"(a " quote and // slashes)"_s), 0);\n    obj->putDirect(vm, other, constructHeader(), 0);\n}\n`,
+  },
 ];
 const ignores: { label: string; cpp: string }[] = [
   {
@@ -240,6 +247,10 @@ const ignores: { label: string; cpp: string }[] = [
   {
     label: "a vm-first construct* builder, which this lint does not model",
     cpp: `void f() {\n    array->putDirectIndex(exec, i++, constructInternalProperty(vm, exec, name, value));\n}\n`,
+  },
+  {
+    label: "a banned shape inside a prefixed raw string literal",
+    cpp: `void f() {\n    obj->putDirect(vm, name, jsString(vm, LR"(createFoo(globalObject))"_s), 0);\n}\n`,
   },
 ];
 

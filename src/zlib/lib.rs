@@ -140,6 +140,28 @@ unsafe extern "C" {
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
 }
 
+/// `avail_in`/`avail_out` are u32; clamp so a >= 4 GiB length doesn't wrap to 0 via `as uInt`.
+#[inline]
+fn clamp_to_uint(n: usize) -> uInt {
+    n.min(uInt::MAX as usize) as uInt
+}
+
+#[inline]
+fn remaining_input(strm: &zStream_struct, input: &[u8]) -> usize {
+    // SAFETY: init sets next_in = input.as_ptr(); zlib only advances it
+    // within the window it was given.
+    let consumed = unsafe { strm.next_in.offset_from(input.as_ptr()) } as usize;
+    input.len() - consumed
+}
+
+#[inline]
+fn produced_output(strm: &zStream_struct, out_base: *const u8) -> usize {
+    // SAFETY: next_out was set into `out_base`'s allocation and zlib only
+    // advances it within the window it was given. Preferred over
+    // `strm.total_out`, which is a 32-bit `c_ulong` on Windows.
+    unsafe { strm.next_out.offset_from(out_base) as usize }
+}
+
 /// Safe CRC-32 over an arbitrary-length slice. zlib's `crc32` takes a 32-bit
 /// length, so inputs larger than `u32::MAX` are fed in chunks.
 pub fn crc32_bytes(crc: u32, data: &[u8]) -> u32 {
@@ -239,7 +261,7 @@ impl<'a> ZlibReaderArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
+            avail_in: clamp_to_uint(input.len()),
             total_in: input.len() as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
@@ -328,21 +350,27 @@ impl<'a> ZlibReaderArrayList<'a> {
                 //   or no more space in the output buffer (see below about the
                 //   flush parameter).
 
+                if self.zlib.avail_in == 0 {
+                    self.zlib.avail_in = clamp_to_uint(remaining_input(&self.zlib, self.input));
+                }
+
                 if self.zlib.avail_out == 0 {
-                    let produced = self.zlib.total_out as usize;
+                    let produced = produced_output(&self.zlib, self.list_ptr.as_ptr());
                     let remaining_budget = self.max_output_size.saturating_sub(produced);
                     if remaining_budget == 0 {
                         self.state = ZlibReaderArrayListState::Error;
                         return Err(ZlibError::ZlibError);
                     }
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
+                    // SAFETY: zlib has written `produced` bytes into list_ptr's buffer.
+                    unsafe { self.list_ptr.set_len(produced) };
+                    // SAFETY: zlib writes the tail; len is synced to `produced` before any read.
                     let (next_out, avail_out) = unsafe {
                         self.list_ptr
                             .reserve_expand_tail(remaining_budget.min(4096))
                     };
                     self.zlib.next_out = next_out;
                     // Clamp so a single inflate call cannot write past `max_output_size`.
-                    self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
+                    self.zlib.avail_out = clamp_to_uint(avail_out.min(remaining_budget));
                 }
 
                 // Try to inflate even if avail_in is 0, as this could be a valid empty gzip stream
@@ -388,12 +416,12 @@ impl<'a> ZlibReaderArrayList<'a> {
         })();
 
         // defer epilogue (runs unconditionally):
-        let total_out = self.zlib.total_out as usize;
-        if self.list_ptr.len() > total_out {
-            self.list_ptr.truncate(total_out);
-        } else if total_out < self.list_ptr.capacity() {
-            // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-            unsafe { self.list_ptr.set_len(total_out) };
+        let produced = produced_output(&self.zlib, self.list_ptr.as_ptr());
+        if self.list_ptr.len() > produced {
+            self.list_ptr.truncate(produced);
+        } else if produced < self.list_ptr.capacity() {
+            // SAFETY: zlib has written `produced` bytes into list_ptr's buffer.
+            unsafe { self.list_ptr.set_len(produced) };
         }
 
         result
@@ -736,7 +764,7 @@ impl<'a> ZlibCompressorArrayList<'a> {
         let list_len = zlib_reader.list_ptr.len();
         zlib_reader.zlib = zStream_struct {
             next_in: input.as_ptr(),
-            avail_in: input.len() as uInt,
+            avail_in: clamp_to_uint(input.len()),
             total_in: input.len() as _,
 
             next_out: zlib_reader.list_ptr.as_mut_ptr(),
@@ -777,13 +805,13 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 let bound = unsafe {
                     deflateBound(
                         &raw mut zlib_reader.zlib,
-                        uLong::try_from(input.len()).expect("int cast"),
+                        input.len().min(uLong::MAX as usize) as uLong,
                     )
                 };
                 // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
                 zlib_reader.list_ptr.reserve_exact(need);
-                zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
+                zlib_reader.zlib.avail_out = clamp_to_uint(zlib_reader.list_ptr.capacity());
                 zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
                 Ok(zlib_reader)
@@ -845,25 +873,41 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   or no more space in the output buffer (see below about the
                 //   flush parameter).
 
+                if self.zlib.avail_in == 0 {
+                    self.zlib.avail_in = clamp_to_uint(remaining_input(&self.zlib, self.input));
+                }
+                let last_window =
+                    remaining_input(&self.zlib, self.input) == self.zlib.avail_in as usize;
+
                 if self.zlib.avail_out == 0 {
-                    // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
+                    let produced = produced_output(&self.zlib, self.list_ptr.as_ptr());
+                    // SAFETY: zlib has written `produced` bytes into list_ptr's buffer.
+                    unsafe { self.list_ptr.set_len(produced) };
+                    // SAFETY: zlib writes the tail; len is synced to `produced` before any read.
                     let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
                     self.zlib.next_out = next_out;
-                    self.zlib.avail_out = avail_out as uInt;
+                    self.zlib.avail_out = clamp_to_uint(avail_out);
                 }
 
                 if self.zlib.avail_out == 0 {
                     return Err(ZlibError::ShortRead);
                 }
 
+                let flush = if last_window {
+                    FlushValue::Finish
+                } else {
+                    FlushValue::NoFlush
+                };
+
                 // SAFETY: self.zlib was initialized via deflateInit2_.
-                let rc = unsafe { deflate(&raw mut self.zlib, FlushValue::Finish) };
+                let rc = unsafe { deflate(&raw mut self.zlib, flush) };
                 self.state = ZlibCompressorArrayListState::Inflating;
 
                 match rc {
                     ReturnCode::StreamEnd => {
-                        // SAFETY: zlib has written `total_out` bytes into list_ptr's buffer.
-                        unsafe { self.list_ptr.set_len(self.zlib.total_out as usize) };
+                        let produced = produced_output(&self.zlib, self.list_ptr.as_ptr());
+                        // SAFETY: zlib has written `produced` bytes into list_ptr's buffer.
+                        unsafe { self.list_ptr.set_len(produced) };
                         self.end();
 
                         return Ok(());
@@ -890,7 +934,8 @@ impl<'a> ZlibCompressorArrayList<'a> {
         })();
 
         // epilogue (runs unconditionally): sync the output length back.
-        self.list_ptr.truncate(self.zlib.total_out as usize);
+        self.list_ptr
+            .truncate(produced_output(&self.zlib, self.list_ptr.as_ptr()));
 
         result
     }

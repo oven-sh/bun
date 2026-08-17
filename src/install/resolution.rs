@@ -1010,6 +1010,12 @@ impl Tag {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }
 
+    /// Cached under a hash of the path or URL, so the folder's contents can
+    /// change from one extraction to the next.
+    pub(crate) fn is_tarball(self) -> bool {
+        self == Tag::LocalTarball || self == Tag::RemoteTarball
+    }
+
     pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

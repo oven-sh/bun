@@ -3390,3 +3390,17 @@ test.concurrent("`bun update -i -r` installs the version a workspace member's pe
   await frozen(dir);
   expect(exitCode).toBe(0);
 });
+
+// A member whose package.json no longer parses is reported and skipped; the other members are still written.
+test.concurrent(
+  "`bun update -i -r` reports a member whose package.json cannot be parsed and still updates the rest",
+  async () => {
+    const { dir } = await staleMembers("~1.0.0", "~1.0.0");
+    await write(join(dir, "packages/pkg2/package.json"), "{ broken\n");
+    const { stderr, exitCode } = await runInteractive(dir, "a\r", "-r");
+    expect(stderr).toMatch(/^error: Failed to parse package\.json at .*pkg2[\\/]package\.json: ParserError$/m);
+    expect(await packageJsonOf(dir, "packages/pkg1")).toStrictEqual(member("pkg1", { "no-deps": "~1.0.1" }));
+    expect(await packageJsonText(dir, "packages/pkg2")).toBe("{ broken\n");
+    expect(exitCode).toBe(1);
+  },
+);

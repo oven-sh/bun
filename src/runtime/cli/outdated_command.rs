@@ -7,8 +7,8 @@ use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_glob as glob;
 use bun_install::dependency::{self, Behavior};
+use bun_install::lockfile::LoadResult;
 use bun_install::lockfile::package::PackageColumns as _;
-use bun_install::lockfile::{LoadResult, LoadStep};
 use bun_install::package_manager::{
     LogLevel, ManifestLoad, Subcommand, WorkspaceFilter, populate_manifest_cache,
 };
@@ -118,24 +118,10 @@ impl OutdatedCommand {
                 if not_silent
                     && !bun_install::migration::reported_unsupported_lockfile_version(&cause)
                 {
-                    match cause.step {
-                        LoadStep::OpenFile => Output::err_generic(
-                            "failed to open lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ParseFile => Output::err_generic(
-                            "failed to parse lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::ReadFile => Output::err_generic(
-                            "failed to read lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                        LoadStep::Migrating => Output::err_generic(
-                            "failed to migrate lockfile: {s}",
-                            (cause.value.name(),),
-                        ),
-                    }
+                    Output::err_generic(
+                        "failed to {s} lockfile: {s}",
+                        (cause.step.verb(), cause.value.name()),
+                    );
                     if ctx.log_ref().has_errors() {
                         // SAFETY: `log_ptr` aliases `manager.log` which is the
                         // `*logger.Log` borrowed from `Command::Context`; no

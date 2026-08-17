@@ -1172,7 +1172,25 @@ fn do_resolve_with_args<const IS_FILE_PATH: bool>(
     // by value without `dupe_ref()`/`deref()` refcount churn. Only the
     // URL-decoded branch produces a string we must release.
     let specifier_for_resolve = if specifier.has_prefix_comptime(b"file://") {
-        owned.decoded_specifier = jsc::URL::path_from_file_url(specifier);
+        // The query of a `file://` URL is part of the module key (#21346).
+        // `path_from_file_url` returns the pathname only, so re-append the
+        // raw query bytes and let the resolver split them off again — the
+        // same way a relative specifier's query flows through.
+        let query: Option<Vec<u8>> = {
+            let utf8 = specifier.to_utf8();
+            strings::index_of_char_usize(utf8.slice(), b'?').map(|i| utf8.slice()[i..].to_vec())
+        };
+        let decoded = jsc::URL::path_from_file_url(specifier);
+        owned.decoded_specifier = match query {
+            Some(query) => {
+                let mut combined: Vec<u8> = Vec::with_capacity(1024);
+                // Vec<u8> writes are infallible.
+                let _ = write!(&mut combined, "{}", decoded);
+                combined.extend_from_slice(&query);
+                BunString::clone_utf8(&combined)
+            }
+            None => decoded,
+        };
         owned.decoded_specifier
     } else {
         specifier

@@ -1,5 +1,7 @@
 import { beforeEach, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { writeFileSync } from "node:fs";
+import { join } from "node:path";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -232,5 +234,110 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   expect(stderr).toBe("");
   const resolved = JSON.parse(stdout.trim());
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
+  expect(exitCode).toBe(0);
+});
+
+test("Bun.resolveSync keeps a file:// URL's query in the resolved key", async () => {
+  using dir = tempDir("resolve-query-file-url", {
+    "target.js": ``,
+    "entry.js": `
+      const base = new URL("./target.js", import.meta.url);
+      console.log(JSON.stringify([
+        Bun.resolveSync(base.href, "."),
+        Bun.resolveSync(base.href + "?v=1", "."),
+        Bun.resolveSync(base.href + "?v=2", "."),
+      ]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [plain, v1, v2] = JSON.parse(stdout.trim());
+  expect(plain).toEndWith("target.js");
+  expect(v1).toBe(plain + "?v=1");
+  expect(v2).toBe(plain + "?v=2");
+  expect(exitCode).toBe(0);
+});
+
+// A file:// URL's query is part of the module key, the same way a relative
+// specifier's query is: distinct queries must evaluate distinct module
+// instances, and import.meta.url keeps the query.
+// https://github.com/oven-sh/bun/issues/21346
+test("dynamic import of a file:// URL with distinct queries evaluates distinct module instances", async () => {
+  using dir = tempDir("import-query-file-url-dynamic", {
+    "target.js": `export const captured = globalThis.__token;
+export const url = import.meta.url;
+`,
+    "entry.js": `
+      const base = new URL("./target.js", import.meta.url);
+      globalThis.__token = "one";
+      const first = await import(base.href + "?v=1");
+      globalThis.__token = "two";
+      const second = await import(base.href + "?v=2");
+      const repeat = await import(base.href + "?v=1");
+      console.log(JSON.stringify({
+        first: first.captured,
+        second: second.captured,
+        repeat: repeat.captured,
+        firstURL: first.url,
+        secondURL: second.url,
+      }));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const { first, second, repeat, firstURL, secondURL } = JSON.parse(stdout.trim());
+  expect(first).toBe("one");
+  expect(second).toBe("two");
+  expect(repeat).toBe(first);
+  expect(firstURL).toEndWith("target.js?v=1");
+  expect(secondURL).toEndWith("target.js?v=2");
+  expect(exitCode).toBe(0);
+});
+
+test("static import of a file:// URL with distinct queries evaluates distinct module instances", async () => {
+  using dir = tempDir("import-query-file-url-static", {
+    "target.js": `export const captured = globalThis.__token;
+`,
+    "setup1.js": `globalThis.__token = "one";
+`,
+    "setup2.js": `globalThis.__token = "two";
+`,
+  });
+  const targetURL = Bun.pathToFileURL(join(String(dir), "target.js")).href;
+  writeFileSync(
+    join(String(dir), "entry.js"),
+    [
+      `import "./setup1.js"`,
+      `import { captured as first } from ${JSON.stringify(targetURL + "?v=1")}`,
+      `import "./setup2.js"`,
+      `import { captured as second } from ${JSON.stringify(targetURL + "?v=2")}`,
+      `console.log(JSON.stringify({ first, second }))`,
+    ].join("\n"),
+  );
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.js"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  // Node prints {"first":"one","second":"two"}: "?v=2" is a fresh instance.
+  expect(JSON.parse(stdout.trim())).toEqual({ first: "one", second: "two" });
   expect(exitCode).toBe(0);
 });

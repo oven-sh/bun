@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isBroken, isWindows, tempDir } from "harness";
 import { readdirSync, writeFileSync } from "node:fs";
+import { SourceMap } from "node:module";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
 
@@ -1330,6 +1331,51 @@ describe("bundler", () => {
       const keepCol = js.split("\n")[0].indexOf("keep=[");
       expect(keepCol).toBeGreaterThan(0);
       expect(line1).toContainEqual({ gen: keepCol, src: 0, ol: 3, oc: 6 });
+    },
+  });
+  // The parser folds `require("./x")` and `require.resolve("./x")` into single
+  // nodes, which the printer emitted without a mapping of their own. Whatever
+  // they print as (here the `require_dep()` wrapper call and a rewritten
+  // `require.resolve`) then resolved to the previous token on the line, so a
+  // stack frame for a require() that throws pointed at `return`, `{`, etc.
+  itBundled("edgecase/SourceMapRequireCallMapsToItsCallee", {
+    files: {
+      "/entry.js": /* js */ `
+        function load() {
+          try {
+            return require("./dep.js");
+          } catch {}
+          return require.resolve("./dep.js");
+        }
+        module.exports = load;
+      `,
+      "/dep.js": /* js */ `module.exports = 1;`,
+    },
+    target: "node",
+    format: "cjs",
+    outdir: "/out",
+    sourceMap: "external",
+    onAfterBundle(api) {
+      const source = api.readFile("/entry.js").split("\n");
+      const generated = api.readFile("/out/entry.js").split("\n");
+      const map = new SourceMap(JSON.parse(api.readFile("/out/entry.js.map")));
+
+      // Original position (1-based "line:col") that the generated `token` maps to.
+      const mapsTo = (token: string) => {
+        const line = generated.findIndex(text => text.includes(token));
+        expect(line).not.toBe(-1);
+        const entry = map.findEntry(line, generated[line].indexOf(token));
+        expect(entry.originalSource).toEndWith("entry.js");
+        return `${entry.originalLine + 1}:${entry.originalColumn + 1}`;
+      };
+      // Position of the `require` token on the source line containing `text`.
+      const requireTokenOf = (text: string) => {
+        const line = source.findIndex(sourceLine => sourceLine.includes(text));
+        return `${line + 1}:${source[line].indexOf("require") + 1}`;
+      };
+
+      expect(mapsTo("require_dep()")).toBe(requireTokenOf('require("./dep.js")'));
+      expect(mapsTo("require.resolve(")).toBe(requireTokenOf('require.resolve("./dep.js")'));
     },
   });
   itBundled("edgecase/NoUselessConstructorTS", {

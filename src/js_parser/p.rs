@@ -1041,7 +1041,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     ) -> Expr {
         // The argument must be a string
         if matches!(arg.data, js_ast::ExprData::EString(_)) {
-            return self.transpose_require_resolve_known_string(arg);
+            return self.transpose_require_resolve_known_string(arg, require_resolve_ref.loc);
         }
 
         if self.options.warn_about_unbundled_modules {
@@ -1065,19 +1065,23 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 args: ExprNodeList::init_one(arg),
                 ..Default::default()
             },
-            arg.loc,
+            require_resolve_ref.loc,
         )
     }
 
     #[inline]
-    pub(crate) fn transpose_require_resolve_known_string(&mut self, arg: Expr) -> Expr {
+    pub(crate) fn transpose_require_resolve_known_string(
+        &mut self,
+        arg: Expr,
+        call_target_loc: bun_ast::Loc,
+    ) -> Expr {
         debug_assert!(matches!(arg.data, js_ast::ExprData::EString(_)));
 
         // Ignore calls to import() if the control flow is provably dead here.
         // We don't want to spend time scanning the required files if they will
         // never be used.
         if self.is_control_flow_dead {
-            return self.new_expr(E::Null {}, arg.loc);
+            return self.new_expr(E::Null {}, call_target_loc);
         }
 
         let import_record_index = self.add_import_record(
@@ -1103,19 +1107,22 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 import_record_index,
                 // .leading_interior_comments = arg.getString().
             },
-            arg.loc,
+            call_target_loc,
         )
     }
 
     pub(crate) fn transpose_require(&mut self, arg: Expr, state: &TransposeState) -> Expr {
+        // Stack frames map a call at its callee, so this lives at `require`, not at the argument.
+        let call_target_loc = state.loc;
+
         if !self.options.features.allow_runtime {
             return self.new_expr(
                 E::Call {
-                    target: self.value_for_require(arg.loc),
+                    target: self.value_for_require(call_target_loc),
                     args: ExprNodeList::init_one(arg),
                     ..Default::default()
                 },
-                arg.loc,
+                call_target_loc,
             );
         }
 
@@ -1127,7 +1134,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 if self.is_control_flow_dead {
                     return Expr {
                         data: null_expr_data(),
-                        loc: arg.loc,
+                        loc: call_target_loc,
                     };
                 }
 
@@ -1196,7 +1203,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                                 ref_: namespace_ref,
                                 ..Default::default()
                             },
-                            arg.loc,
+                            call_target_loc,
                         );
                     }
 
@@ -1210,7 +1217,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                             import_record_index,
                             unwrapped_id,
                         },
-                        arg.loc,
+                        call_target_loc,
                     );
                 }
 
@@ -1233,7 +1240,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                         import_record_index,
                         ..Default::default()
                     },
-                    arg.loc,
+                    call_target_loc,
                 )
             }
             _ => {
@@ -1241,11 +1248,11 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                 self.record_usage_of_runtime_require();
                 self.new_expr(
                     E::Call {
-                        target: self.value_for_require(arg.loc),
+                        target: self.value_for_require(call_target_loc),
                         args: ExprNodeList::init_one(arg),
                         ..Default::default()
                     },
-                    arg.loc,
+                    call_target_loc,
                 )
             }
         }

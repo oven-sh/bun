@@ -3313,6 +3313,7 @@ pub(crate) mod __gated_printer {
                     }
                 }
                 ExprData::ERequireString(e) => {
+                    self.add_source_mapping(expr.loc);
                     self.print_require_or_import_expr(
                         e.import_record_index,
                         e.unwrapped_id.is_some(),
@@ -3329,6 +3330,7 @@ pub(crate) mod __gated_printer {
                     }
 
                     self.print_space_before_identifier();
+                    self.add_source_mapping(expr.loc);
 
                     if let Some(require_ref) = self.options.require_ref {
                         self.print_symbol(require_ref);

@@ -166,7 +166,7 @@ async function startContainer(): Promise<ContainerConfiguration> {
   try {
     // First, try to use docker-compose
     console.log("Attempting to use docker-compose for Redis...");
-    const redisInfo = await dockerCompose.ensure("redis_unified");
+    const redisInfo = await dockerCompose.awaitService("redis_unified");
 
     const port = redisInfo.ports[6379];
     const tlsPort = redisInfo.ports[6380];
@@ -196,8 +196,6 @@ async function startContainer(): Promise<ContainerConfiguration> {
 
     dockerStarted = true;
     dockerComposeInfo = redisInfo;
-
-    console.log(`Redis container ready via docker-compose on ports ${port}:6379 and ${tlsPort}:6380`);
     return containerConfig;
   } catch (error) {
     console.error("Failed to start Redis via docker-compose:", error);

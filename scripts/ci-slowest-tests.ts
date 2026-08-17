@@ -3,7 +3,9 @@
 //
 // Downloads every test-bun job log from a BuildKite build, parses per-file
 // wall-clock from the `_bk;t=<ms>` timestamps that prefix each
-// `[N/TOTAL] <file>` header, aggregates as MAX across all platforms, and
+// `[N/TOTAL] <file>` header, subtracts the time a file spent blocked on
+// docker-compose container start-up (reported separately: it is a property of
+// the shard, not of the file), aggregates as MAX across all platforms, and
 // prints the top N.
 //
 // Usage:
@@ -18,6 +20,7 @@ import { $, spawn } from "bun";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
+import { prestartMap } from "../test/docker/prestart-map.mjs";
 
 // Per-file cost is the gap between the APC timestamps Buildkite injects into
 // consecutive `[N/M] <path>` headers (ESC `_bk;t=<ms>` BEL). runner.node.mjs
@@ -41,20 +44,54 @@ import { join } from "path";
 export const isPhaseGroupHeader = (body: string) =>
   /^--- (?:\[\d+-\d+\/\d+\]|napi prebuild:|Running \d+ parallel-safe|End\b|Summary\b|Received \w+, exiting)/.test(body);
 
-export function parseLog(text: string): Map<string, number> {
-  const out = new Map<string, number>();
+// awaitService (test/docker/index.ts; describeWithContainer goes through it)
+// prints this from the test process with how long it sat blocked waiting for
+// docker-compose to bring the service up. That wait is inside the file's
+// measured time, so the first file on a shard to touch a cold service would
+// otherwise rank as a 15-40 s test. The reported number is the only usable
+// signal: the line's timestamp is not, since a file with several container
+// describes runs real tests between its lines. Unanchored because bun's
+// progress dots can precede it on the same physical line.
+export const containerWaitLine = /Container ready via docker-compose: .*\(waited (\d+)ms\)/;
+
+// Inside the parallel bucket, `bun test --parallel` flushes each file's output
+// as one block introduced by `<path>:`, which is the only way to tell whose
+// wait a line in that phase is.
+const bucketOutputHeader = /^(\S+\.(?:[cm]?[jt]sx?)):$/;
+
+/** `ms` is what the file is charged: its measured time minus `containerMs`. */
+export type FileCost = { ms: number; containerMs: number };
+
+export function parseLog(text: string): Map<string, FileCost> {
+  const out = new Map<string, FileCost>();
+  const add = (name: string, ms: number, containerMs = 0) => {
+    const cost = out.get(name);
+    if (cost) {
+      cost.ms += ms;
+      cost.containerMs += containerMs;
+    } else {
+      out.set(name, { ms, containerMs });
+    }
+  };
   let curName: string | null = null;
   let curStart = 0;
+  let curContainerMs = 0;
   let concurrent = false;
   let lastTs = 0;
+  // Bucket phase: the file whose output block is streaming, and the waits
+  // reported so far, to take off each file's summary line once it arrives.
+  let inBucket = false;
+  let bucketFile: string | null = null;
+  const bucketWaits = new Map<string, number>();
   const close = (ts: number) => {
     if (!curName) return;
-    const span = ts - curStart;
+    const span = Math.max(0, ts - curStart - curContainerMs);
     // Concurrent-phase gaps are inter-dispatch deltas, not per-file wall
     // clock; clamp so the last-dispatched file on a shard does not absorb the
     // N-wide tail drain or a sibling's 5-15 s retry backoff.
-    out.set(curName, (out.get(curName) ?? 0) + (concurrent ? Math.min(span, 500) : span));
+    add(curName, concurrent ? Math.min(span, 500) : span, curContainerMs);
     curName = null;
+    curContainerMs = 0;
   };
   for (const line of text.split("\n")) {
     const apc = /_bk;t=(\d+)\x07(.*)/.exec(line);
@@ -64,14 +101,21 @@ export function parseLog(text: string): Map<string, number> {
     const hdr = /^(--- )?\[\d+\/\d+\] (.+)$/.exec(body);
     if (hdr) {
       close(ts);
+      inBucket = false;
+      bucketFile = null;
       const title = hdr[2]
         .replace(/ \[attempt #\d+\]$/, "")
         .replace(/\\/g, "/")
         .trim();
-      // Parallel-bucket summaries carry the authoritative wall clock inline.
+      // Parallel-bucket summaries carry the authoritative time inline: bun's
+      // junit figure for the file, which includes the hooks or not depending on
+      // which <testsuite> runner.node.mjs reads (#37483). Taking the file's
+      // reported wait off it, floored at 0, is its own time either way.
       const timed = !hdr[1] && /^(.+\.(?:[cm]?[jt]sx?|json)) \((\d+(?:\.\d+)?)s\)$/.exec(title);
       if (timed) {
-        out.set(timed[1], (out.get(timed[1]) ?? 0) + Math.round(parseFloat(timed[2]) * 1000));
+        const waited = bucketWaits.get(timed[1]) ?? 0;
+        bucketWaits.delete(timed[1]);
+        add(timed[1], Math.max(0, Math.round(parseFloat(timed[2]) * 1000) - waited));
         concurrent = false;
         continue;
       }
@@ -87,6 +131,27 @@ export function parseLog(text: string): Map<string, number> {
     if (isPhaseGroupHeader(body)) {
       close(ts);
       concurrent = false;
+      // `[N/M]` headers were handled above, so `--- [` here is the bucket's
+      // `[A-B/M] K files in parallel`.
+      inBucket = body.startsWith("--- [");
+      bucketFile = null;
+      continue;
+    }
+    if (inBucket) {
+      const block = bucketOutputHeader.exec(body);
+      if (block) {
+        bucketFile = block[1].replace(/\\/g, "/");
+        continue;
+      }
+    }
+    const wait = containerWaitLine.exec(body);
+    if (!wait) continue;
+    const waited = parseInt(wait[1], 10);
+    if (curName) {
+      curContainerMs += waited;
+    } else if (bucketFile) {
+      add(bucketFile, 0, waited);
+      bucketWaits.set(bucketFile, (bucketWaits.get(bucketFile) ?? 0) + waited);
     }
   }
   // A truncated log (job killed / timed out mid-run) has no `--- End`; charge
@@ -165,7 +230,15 @@ if (import.meta.main) {
     return out;
   }
 
-  type Agg = { maxMs: number; maxPlat: string; perPlat: Map<string, number> };
+  // maxMs/maxPlat rank the file; maxContainerMs/containerPlat is the longest it sat
+  // waiting for a container on any platform, reported but not ranked.
+  type Agg = {
+    maxMs: number;
+    maxPlat: string;
+    maxContainerMs: number;
+    containerPlat: string;
+    perPlat: Map<string, FileCost>;
+  };
   const agg = new Map<string, Agg>();
 
   let done = 0;
@@ -177,14 +250,21 @@ if (import.meta.main) {
       try {
         const log = await fetchLog(job);
         const plat = platOf(job.name);
-        for (const [file, ms] of parseLog(log)) {
+        for (const [file, { ms, containerMs }] of parseLog(log)) {
           let a = agg.get(file);
-          if (!a) agg.set(file, (a = { maxMs: 0, maxPlat: "", perPlat: new Map() }));
-          const total = (a.perPlat.get(plat) ?? 0) + ms;
-          a.perPlat.set(plat, total);
-          if (total > a.maxMs) {
-            a.maxMs = total;
+          if (!a)
+            agg.set(file, (a = { maxMs: 0, maxPlat: "", maxContainerMs: 0, containerPlat: "", perPlat: new Map() }));
+          let total = a.perPlat.get(plat);
+          if (!total) a.perPlat.set(plat, (total = { ms: 0, containerMs: 0 }));
+          total.ms += ms;
+          total.containerMs += containerMs;
+          if (total.ms > a.maxMs) {
+            a.maxMs = total.ms;
             a.maxPlat = plat;
+          }
+          if (total.containerMs > a.maxContainerMs) {
+            a.maxContainerMs = total.containerMs;
+            a.containerPlat = plat;
           }
         }
       } catch (e) {
@@ -199,20 +279,44 @@ if (import.meta.main) {
   // `package.json` / `test/package.json` are setup steps, not tests.
   const isTest = (f: string) => /\.(m|c)?(j|t)sx?$/.test(f);
 
-  const sorted = [...agg.entries()]
+  const tests = [...agg.entries()]
     .filter(([file]) => isTest(file))
-    .map(([file, a]) => ({ file, maxMs: a.maxMs, maxPlat: a.maxPlat }))
-    .sort((a, b) => b.maxMs - a.maxMs)
-    .slice(0, TOP_N);
+    .map(([file, { perPlat, ...a }]) => ({ file, ...a }));
+  const sorted = tests.toSorted((a, b) => b.maxMs - a.maxMs).slice(0, TOP_N);
+  // The waits are shard time all the same, so list the longest. A file missing
+  // from test/docker/prestart-map.mjs is the actionable kind: once listed, the
+  // runner starts its service as the shard starts and schedules the file last.
+  // A listed file that still waited ran before its service was up anyway:
+  // runner.node.mjs moves the files a PR modifies to the front of the shard,
+  // or the shard had too little other work to cover the start-up.
+  const prestartPrefixes = Object.keys(prestartMap);
+  const waited = tests
+    .filter(t => t.maxContainerMs > 0)
+    .map(t => {
+      const relative = t.file.replace(/^test\//, "");
+      return { ...t, prestarted: prestartPrefixes.some(prefix => relative.startsWith(prefix)) };
+    })
+    .toSorted((a, b) => b.maxContainerMs - a.maxContainerMs);
 
   console.error(`${agg.size} unique entries, ${sorted.length} test files after filtering`);
+  if (waited.length) {
+    console.error(`${waited.length} files waited for a container (not counted above); longest waits:`);
+    for (const t of waited.slice(0, 5)) {
+      const note = t.prestarted ? "" : "\t(not in test/docker/prestart-map.mjs)";
+      console.error(`  ${(t.maxContainerMs / 1000).toFixed(1).padStart(6)}s\t${t.file}\t${t.containerPlat}${note}`);
+    }
+  }
   console.error(`logs cached at ${CACHE}`);
 
   if (json) {
-    console.log(JSON.stringify({ build: BUILD, count: agg.size, top: sorted }, null, 2));
+    console.log(JSON.stringify({ build: BUILD, count: agg.size, top: sorted, containerWaits: waited }, null, 2));
   } else {
-    console.log(`rank\tseconds\tfile\tslowest_platform`);
-    sorted.forEach((t, i) => console.log(`${i + 1}\t${(t.maxMs / 1000).toFixed(2)}\t${t.file}\t${t.maxPlat}`));
+    console.log(`rank\tseconds\tfile\tslowest_platform\tmax_container_wait`);
+    sorted.forEach((t, i) =>
+      console.log(
+        `${i + 1}\t${(t.maxMs / 1000).toFixed(2)}\t${t.file}\t${t.maxPlat}\t${(t.maxContainerMs / 1000).toFixed(2)}`,
+      ),
+    );
   }
   process.exit(0);
 }

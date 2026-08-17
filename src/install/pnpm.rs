@@ -19,6 +19,8 @@ use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
 use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
+use crate::package_manager_real::add_remove_with_filter::root_package_json_path;
+use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -508,7 +510,6 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     data: &[u8],
-    dir: Fd,
 ) -> Result<LoadResult<'a>, MigratePnpmLockfileError> {
     lockfile.init_empty();
     crate::initialize_store();
@@ -1655,7 +1656,7 @@ pub(crate) fn migrate_pnpm_lockfile<'a>(
 
     lockfile.fetch_necessary_package_metadata_after_yarn_or_pnpm_migration::<false>(manager)?;
 
-    update_package_json_after_migration(lockfile, manager, log, dir, &found_patches)?;
+    update_package_json_after_migration(Some(&mut *lockfile), manager, log, &found_patches)?;
 
     Ok(LoadResult::Ok(LoadResultOk {
         lockfile,
@@ -2388,7 +2389,7 @@ fn rewrite_bare_patch_keys(
             bstr::BStr::new(&**res_str)
         )
         .map_err(|_| AllocError)?;
-        // Lives in the AST store like the key node below; nothing resets it before the caller prints the tree.
+        // `join_buf` is reused by the next key; the tree is printed after this fn returns.
         let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
         prop.key = Some(Expr::init(E::EString::init(interned), bun_ast::Loc::EMPTY));
     }
@@ -2419,7 +2420,7 @@ fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) ->
 /// The migrated root skips `Package::parse`, so the lockfile's list is filled in here as well.
 fn add_trusted_dependencies(
     json: &mut Expr,
-    lockfile: &mut Lockfile,
+    lockfile: Option<&mut Lockfile>,
     bump: &bun_alloc::Arena,
     names: &[&'static [u8]],
 ) -> Result<bool, AllocError> {
@@ -2451,15 +2452,18 @@ fn add_trusted_dependencies(
         added_any = true;
     }
 
-    let trusted = lockfile
-        .trusted_dependencies
-        .get_or_insert_with(Default::default);
-    for item in items.slice() {
-        if let Some(name) = as_string(item) {
-            trusted.put(
-                semver::string::Builder::string_hash(name) as crate::TruncatedPackageNameHash,
-                Box::from(name),
-            )?;
+    // A root parsed by `Package::parse` fills this from the file; the migrated root skips that.
+    if let Some(lockfile) = lockfile {
+        let trusted = lockfile
+            .trusted_dependencies
+            .get_or_insert_with(Default::default);
+        for item in items.slice() {
+            if let Some(name) = as_string(item) {
+                trusted.put(
+                    semver::string::Builder::string_hash(name) as crate::TruncatedPackageNameHash,
+                    Box::from(name),
+                )?;
+            }
         }
     }
 
@@ -2497,19 +2501,20 @@ pub(crate) fn migrate_pnpm_workspace_config(
     if root_pkg_json.root.get(b"workspaces").is_some() {
         return Ok(());
     }
-    update_package_json_after_migration(manager, log, Fd::cwd(), &StringArrayHashMap::new())
+    update_package_json_after_migration(None, manager, log, &StringArrayHashMap::new())
 }
 
-/// Moves the settings pnpm reads from package.json `pnpm.*` and pnpm-workspace.yaml into the fields bun reads.
+/// Copies the workspace, catalog, override, patch and onlyBuiltDependencies settings pnpm keeps in
+/// `pnpm-workspace.yaml` and the `pnpm` key into the fields bun reads, in the cached root package.json. Only the
+/// cache entry changes here: the rest of the load (frozen check, differ) reads it from there, and
+/// `package_json_write_back::record_migrated_root` writes it when the migrated lockfile is saved.
 fn update_package_json_after_migration(
-    lockfile: &mut Lockfile,
+    lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
-    dir: Fd,
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
     let bump = bun_alloc::Arena::new();
-    let silent = manager.options.log_level.is_silent();
 
     let Some(root_pkg_json) = root_package_json(manager, log) else {
         return Ok(());
@@ -2742,18 +2747,12 @@ fn update_package_json_after_migration(
         Global::crash();
     }
 
-    let copied = copied.join(", ");
-    // Continuing would save a bun.lock that does not match the package.json left on disk.
-    if let Err(err) = sys::File::write_file(
-        dir,
-        bun_core::zstr!("package.json"),
-        root_pkg_json.source.contents(),
-    ) {
-        Output::err(err, "failed to copy {} in package.json", (&copied,));
-        Global::crash();
-    }
-    if !silent {
-        bun_core::pretty_errorln!("<d>copied {} in <r><green>package.json<r>", copied);
+    // Commands that load the lockfile twice (`bun update -r`, `bun audit fix`) migrate the already
+    // edited entry the second time, so only the pnpm-workspace.yaml copies repeat.
+    for what in copied {
+        if !manager.migrated_package_json_moves.contains(&what) {
+            manager.migrated_package_json_moves.push(what);
+        }
     }
 
     Ok(())

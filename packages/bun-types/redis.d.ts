@@ -3433,6 +3433,19 @@ declare module "bun" {
     geoadd(key: RedisClient.KeyLike, ...args: (string | number)[]): Promise<number>;
 
     /**
+     * Return the distance in meters between two members in the geospatial index
+     * @param key The key of the geo set
+     * @param member1 The first member
+     * @param member2 The second member
+     * @returns Promise that resolves with the distance as a string, or null if one or both members are missing
+     *
+     * @example
+     * ```ts
+     * await redis.geodist("Sicily", "Palermo", "Catania"); // "166274.1516"
+     * ```
+     */
+    geodist(key: RedisClient.KeyLike, member1: string, member2: string): Promise<string | null>;
+    /**
      * Return the distance between two members in the geospatial index
      * @param key The key of the geo set
      * @param member1 The first member
@@ -3449,7 +3462,7 @@ declare module "bun" {
       key: RedisClient.KeyLike,
       member1: string,
       member2: string,
-      unit?: "m" | "km" | "mi" | "ft" | "M" | "KM" | "MI" | "FT",
+      unit: "m" | "km" | "mi" | "ft" | "M" | "KM" | "MI" | "FT",
     ): Promise<string | null>;
 
     /**
@@ -3581,18 +3594,28 @@ declare module "bun" {
     dbsize(): Promise<number>;
 
     /**
-     * Remove all keys from the current database
-     * @param mode Optional ASYNC or SYNC modifier
+     * Remove all keys from the current database, using the server's configured flush mode
      * @returns Promise that resolves with "OK"
      */
-    flushdb(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
+    flushdb(): Promise<"OK">;
+    /**
+     * Remove all keys from the current database
+     * @param mode Whether to flush asynchronously (ASYNC) or synchronously (SYNC)
+     * @returns Promise that resolves with "OK"
+     */
+    flushdb(mode: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
 
     /**
-     * Remove all keys from all databases
-     * @param mode Optional ASYNC or SYNC modifier
+     * Remove all keys from all databases, using the server's configured flush mode
      * @returns Promise that resolves with "OK"
      */
-    flushall(mode?: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
+    flushall(): Promise<"OK">;
+    /**
+     * Remove all keys from all databases
+     * @param mode Whether to flush asynchronously (ASYNC) or synchronously (SYNC)
+     * @returns Promise that resolves with "OK"
+     */
+    flushall(mode: "ASYNC" | "SYNC" | "async" | "sync"): Promise<"OK">;
 
     /**
      * Get information and statistics about the server

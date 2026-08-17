@@ -64,6 +64,8 @@ expectType(redis.geodist("geo", "Palermo", "Catania")).is<Promise<string | null>
 expectType(redis.geodist("geo", "Palermo", "Catania", "km")).is<Promise<string | null>>();
 // @ts-expect-error - not a GEODIST unit
 redis.geodist("geo", "Palermo", "Catania", "yd");
+// @ts-expect-error - an explicit undefined unit throws at runtime, so it is not accepted here either
+redis.geodist("geo", "Palermo", "Catania", undefined);
 expectType(redis.geohash("geo", "Palermo", "Catania")).is<Promise<(string | null)[]>>();
 expectType(redis.geopos("geo", "Palermo")).is<Promise<([number, number] | null)[]>>();
 expectType(redis.geosearch("geo", "FROMLONLAT", 15, 37, "BYRADIUS", 200, "km", "ASC")).is<Promise<unknown[]>>();
@@ -88,6 +90,10 @@ expectType(redis.flushall("sync")).is<Promise<"OK">>();
 redis.flushdb("NOW");
 // @ts-expect-error - FLUSHALL only takes ASYNC or SYNC
 redis.flushall("ASYNC", "SYNC");
+// @ts-expect-error - an explicit undefined mode throws at runtime, so it is not accepted here either
+redis.flushdb(undefined);
+// @ts-expect-error - an explicit undefined mode throws at runtime, so it is not accepted here either
+redis.flushall(undefined);
 expectType(redis.info()).is<Promise<string>>();
 expectType(redis.info("server", "clients")).is<Promise<string>>();
 expectType(redis.time()).is<Promise<[string, string]>>();

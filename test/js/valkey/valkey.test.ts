@@ -6392,7 +6392,7 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(() => redis.mset(other, undefined as any, "b")).toThrow("string or buffer");
         expect(() => redis.copy(src, undefined as any, dst)).toThrow("string or buffer");
         // The new commands follow the same rule, optional argument or not.
-        expect(() => redis.flushdb(undefined)).toThrow("string or buffer");
+        expect(() => redis.flushdb(undefined as any)).toThrow("string or buffer");
         expect(() => redis.bitop("AND", dst, undefined as any, src)).toThrow("string or buffer");
 
         expect(await redis.mget(other, dst)).toEqual([null, null]);
@@ -7497,7 +7497,7 @@ describe("RedisClient argument validation", () => {
         () => client.lcs("a", null as any),
         () => client.mset("a", undefined as any, "b"),
         () => client.copy("src", undefined as any, "dst"),
-        () => client.flushdb(undefined),
+        () => client.flushdb(undefined as any),
         () => client.bitop("AND", "dest", undefined as any, "src"),
         () => client.punsubscribe(undefined as any),
         () => client.punsubscribe("news.*", undefined as any),

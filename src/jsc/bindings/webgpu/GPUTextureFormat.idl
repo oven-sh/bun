@@ -1,0 +1,155 @@
+/*
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// https://gpuweb.github.io/gpuweb/#enumdef-gputextureformat
+
+[
+    EnabledBySetting=WebGPUEnabled
+] enum GPUTextureFormat {
+    // 8-bit formats
+    "r8unorm",
+    "r8snorm",
+    "r8uint",
+    "r8sint",
+
+    // 16-bit formats
+    "r16unorm",
+    "r16snorm",
+    "r16uint",
+    "r16sint",
+    "r16float",
+    "rg8unorm",
+    "rg8snorm",
+    "rg8uint",
+    "rg8sint",
+
+    // 32-bit formats
+    "r32uint",
+    "r32sint",
+    "r32float",
+    "rg16unorm",
+    "rg16snorm",
+    "rg16uint",
+    "rg16sint",
+    "rg16float",
+    "rgba8unorm",
+    "rgba8unorm-srgb",
+    "rgba8snorm",
+    "rgba8uint",
+    "rgba8sint",
+    "bgra8unorm",
+    "bgra8unorm-srgb",
+    // Packed 32-bit formats
+    "rgb9e5ufloat",
+    "rgb10a2uint",
+    "rgb10a2unorm",
+    "rg11b10ufloat",
+
+    // 64-bit formats
+    "rg32uint",
+    "rg32sint",
+    "rg32float",
+    "rgba16unorm",
+    "rgba16snorm",
+    "rgba16uint",
+    "rgba16sint",
+    "rgba16float",
+
+    // 128-bit formats
+    "rgba32uint",
+    "rgba32sint",
+    "rgba32float",
+
+    // Depth/stencil formats
+    "stencil8",
+    "depth16unorm",
+    "depth24plus",
+    "depth24plus-stencil8",
+    "depth32float",
+
+    // "depth32float-stencil8" feature
+    "depth32float-stencil8",
+
+    // BC compressed formats usable if "texture-compression-bc" is both
+    // supported by the device/user agent and enabled in requestDevice.
+    "bc1-rgba-unorm",
+    "bc1-rgba-unorm-srgb",
+    "bc2-rgba-unorm",
+    "bc2-rgba-unorm-srgb",
+    "bc3-rgba-unorm",
+    "bc3-rgba-unorm-srgb",
+    "bc4-r-unorm",
+    "bc4-r-snorm",
+    "bc5-rg-unorm",
+    "bc5-rg-snorm",
+    "bc6h-rgb-ufloat",
+    "bc6h-rgb-float",
+    "bc7-rgba-unorm",
+    "bc7-rgba-unorm-srgb",
+
+    // ETC2 compressed formats usable if "texture-compression-etc2" is both
+    // supported by the device/user agent and enabled in requestDevice.
+    "etc2-rgb8unorm",
+    "etc2-rgb8unorm-srgb",
+    "etc2-rgb8a1unorm",
+    "etc2-rgb8a1unorm-srgb",
+    "etc2-rgba8unorm",
+    "etc2-rgba8unorm-srgb",
+    "eac-r11unorm",
+    "eac-r11snorm",
+    "eac-rg11unorm",
+    "eac-rg11snorm",
+
+    // ASTC compressed formats usable if "texture-compression-astc" is both
+    // supported by the device/user agent and enabled in requestDevice.
+    "astc-4x4-unorm",
+    "astc-4x4-unorm-srgb",
+    "astc-5x4-unorm",
+    "astc-5x4-unorm-srgb",
+    "astc-5x5-unorm",
+    "astc-5x5-unorm-srgb",
+    "astc-6x5-unorm",
+    "astc-6x5-unorm-srgb",
+    "astc-6x6-unorm",
+    "astc-6x6-unorm-srgb",
+    "astc-8x5-unorm",
+    "astc-8x5-unorm-srgb",
+    "astc-8x6-unorm",
+    "astc-8x6-unorm-srgb",
+    "astc-8x8-unorm",
+    "astc-8x8-unorm-srgb",
+    "astc-10x5-unorm",
+    "astc-10x5-unorm-srgb",
+    "astc-10x6-unorm",
+    "astc-10x6-unorm-srgb",
+    "astc-10x8-unorm",
+    "astc-10x8-unorm-srgb",
+    "astc-10x10-unorm",
+    "astc-10x10-unorm-srgb",
+    "astc-12x10-unorm",
+    "astc-12x10-unorm-srgb",
+    "astc-12x12-unorm",
+    "astc-12x12-unorm-srgb"
+};

@@ -1,0 +1,72 @@
+/*
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// https://gpuweb.github.io/gpuweb/#enumdef-gpuvertexformat
+
+[
+    EnabledBySetting=WebGPUEnabled
+] enum GPUVertexFormat {
+    "uint8",
+    "uint8x2",
+    "uint8x4",
+    "sint8",
+    "sint8x2",
+    "sint8x4",
+    "unorm8",
+    "unorm8x2",
+    "unorm8x4",
+    "snorm8",
+    "snorm8x2",
+    "snorm8x4",
+    "uint16",
+    "uint16x2",
+    "uint16x4",
+    "sint16",
+    "sint16x2",
+    "sint16x4",
+    "unorm16",
+    "unorm16x2",
+    "unorm16x4",
+    "snorm16",
+    "snorm16x2",
+    "snorm16x4",
+    "float16",
+    "float16x2",
+    "float16x4",
+    "float32",
+    "float32x2",
+    "float32x3",
+    "float32x4",
+    "uint32",
+    "uint32x2",
+    "uint32x3",
+    "uint32x4",
+    "sint32",
+    "sint32x2",
+    "sint32x3",
+    "sint32x4",
+    "unorm10-10-10-2",
+    "unorm8x4-bgra",
+};

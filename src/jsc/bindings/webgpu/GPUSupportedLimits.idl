@@ -1,0 +1,69 @@
+/*
+ * Copyright (C) 2021-2023 Apple Inc. All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer.
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in the
+ *    documentation and/or other materials provided with the distribution.
+ *
+ * THIS SOFTWARE IS PROVIDED BY APPLE INC. AND ITS CONTRIBUTORS ``AS IS''
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO,
+ * THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL APPLE INC. OR ITS CONTRIBUTORS
+ * BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
+ * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
+ * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
+ * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+ * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF
+ * THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+// https://gpuweb.github.io/gpuweb/#gpusupportedlimits
+
+[
+    EnabledBySetting=WebGPUEnabled,
+    Exposed=(Window,Worker),
+    SecureContext
+]
+interface GPUSupportedLimits {
+    readonly attribute unsigned long maxTextureDimension1D;
+    readonly attribute unsigned long maxTextureDimension2D;
+    readonly attribute unsigned long maxTextureDimension3D;
+    readonly attribute unsigned long maxTextureArrayLayers;
+    readonly attribute unsigned long maxBindGroups;
+    readonly attribute unsigned long maxBindGroupsPlusVertexBuffers;
+    readonly attribute unsigned long maxBindingsPerBindGroup;
+    readonly attribute unsigned long maxDynamicUniformBuffersPerPipelineLayout;
+    readonly attribute unsigned long maxDynamicStorageBuffersPerPipelineLayout;
+    readonly attribute unsigned long maxSampledTexturesPerShaderStage;
+    readonly attribute unsigned long maxSamplersPerShaderStage;
+    readonly attribute unsigned long maxStorageBuffersPerShaderStage;
+    readonly attribute unsigned long maxStorageTexturesPerShaderStage;
+    readonly attribute unsigned long maxUniformBuffersPerShaderStage;
+    readonly attribute unsigned long long maxUniformBufferBindingSize;
+    readonly attribute unsigned long long maxStorageBufferBindingSize;
+    readonly attribute unsigned long minUniformBufferOffsetAlignment;
+    readonly attribute unsigned long minStorageBufferOffsetAlignment;
+    readonly attribute unsigned long maxVertexBuffers;
+    readonly attribute unsigned long long maxBufferSize;
+    readonly attribute unsigned long maxVertexAttributes;
+    readonly attribute unsigned long maxVertexBufferArrayStride;
+    readonly attribute unsigned long maxInterStageShaderVariables;
+    readonly attribute unsigned long maxColorAttachments;
+    readonly attribute unsigned long maxColorAttachmentBytesPerSample;
+    readonly attribute unsigned long maxComputeWorkgroupStorageSize;
+    readonly attribute unsigned long maxComputeInvocationsPerWorkgroup;
+    readonly attribute unsigned long maxComputeWorkgroupSizeX;
+    readonly attribute unsigned long maxComputeWorkgroupSizeY;
+    readonly attribute unsigned long maxComputeWorkgroupSizeZ;
+    readonly attribute unsigned long maxComputeWorkgroupsPerDimension;
+    readonly attribute unsigned long maxStorageBuffersInFragmentStage;
+    readonly attribute unsigned long maxStorageTexturesInFragmentStage;
+    readonly attribute unsigned long maxStorageBuffersInVertexStage;
+    readonly attribute unsigned long maxStorageTexturesInVertexStage;
+};

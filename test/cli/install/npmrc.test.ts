@@ -1,7 +1,8 @@
 import { write } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
+import { mkdirSync, writeFileSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, tempDir } from "harness";
+import { VerdaccioRegistry, bunExe, bunEnv as env, isIPv6, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 const { iniInternals } = require("bun:internal-for-testing");
 const { loadNpmrc } = iniInternals;
@@ -301,6 +302,53 @@ registry = http://localhost:${registry.port}/
         exitCode: 0,
       });
       expect(await authorization).toBe("Bearer npm_token-from-the-workflow-env");
+    });
+
+    // The candidate paths are built in a buffer of MAX_PATH_BYTES (4096 on Linux, 1024 on the
+    // other POSIX platforms; on Windows it is larger than any environment variable can be), so
+    // the longest directory whose "/.npmrc" and NUL terminator still fit is MAX_PATH_BYTES - 8
+    // bytes. A longer directory cannot contain an openable .npmrc and counts as having none.
+    describe.skipIf(isWindows)("$HOME longer than the path buffer", () => {
+      const MAX_PATH_BYTES = isLinux ? 4096 : 1024;
+      const LONGEST_HOME = MAX_PATH_BYTES - 8;
+
+      // xdg/ has no .npmrc, so the lookup falls through to $HOME. The global bunfig.toml lookup
+      // starts at $XDG_CONFIG_HOME too; the bunfig there keeps it away from the oversized $HOME,
+      // which is not what is under test here.
+      const xdg = { "xdg/.bunfig.toml": "" };
+      const envWith = (dir: string, home: string) => ({ XDG_CONFIG_HOME: join(dir, "xdg"), HOME: home });
+
+      // An absolute path of exactly `length` bytes. Nothing exists there.
+      const missingHome = (length: number) => "/" + Buffer.alloc(length - 1, "a").toString();
+
+      it.concurrent("reads $HOME/.npmrc from the longest $HOME that fits", async () => {
+        using dir = tempDir("npmrc-home-longest", { ...pkg, ...xdg });
+        // Pad `<dir>/home/` out to exactly LONGEST_HOME bytes with nested directories of 200
+        // bytes each (NAME_MAX is 255); the last byte is never a separator.
+        const prefix = join(String(dir), "home") + "/";
+        const padding = Buffer.alloc(LONGEST_HOME - Buffer.byteLength(prefix), "a");
+        for (let i = 200; i < padding.length - 1; i += 201) padding[i] = "/".charCodeAt(0);
+        const home = prefix + padding.toString();
+        expect(Buffer.byteLength(home)).toBe(LONGEST_HOME);
+        mkdirSync(home, { recursive: true });
+        writeFileSync(join(home, ".npmrc"), npmrc(1));
+
+        const result = await publishDryRun(String(dir), envWith(String(dir), home));
+        expect(result).toEqual(usesRegistry(1));
+      });
+
+      // The project .npmrc is the only one left, and shows the command still ran normally.
+      it.concurrent("skips a $HOME one byte longer than fits", async () => {
+        using dir = tempDir("npmrc-home-one-too-long", { ...pkg, ...xdg, "pkg/.npmrc": npmrc(3) });
+        const result = await publishDryRun(String(dir), envWith(String(dir), missingHome(LONGEST_HOME + 1)));
+        expect(result).toEqual(usesRegistry(3));
+      });
+
+      it.concurrent("skips a $HOME longer than the whole buffer", async () => {
+        using dir = tempDir("npmrc-home-too-long", { ...pkg, ...xdg, "pkg/.npmrc": npmrc(3) });
+        const result = await publishDryRun(String(dir), envWith(String(dir), missingHome(MAX_PATH_BYTES + 1000)));
+        expect(result).toEqual(usesRegistry(3));
+      });
     });
   });
 

@@ -5,7 +5,7 @@ use bun_core::Progress::Progress;
 use bun_core::{Global, Output};
 use bun_core::{MutableString, ZStr};
 use bun_paths::strings;
-use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer, SEP};
+use bun_paths::{self as path, OSPathChar, OSPathSlice, PathBuffer};
 use bun_semver::String as SemverString;
 #[cfg(not(windows))]
 use bun_sys::OpenDirOptions;
@@ -1097,7 +1097,7 @@ impl<'a> PackageInstall<'a> {
     #[cfg(target_os = "macos")]
     fn install_with_clonefile(&mut self, destination_dir: &Dir) -> crate::Result<InstallResult> {
         if self.destination_dir_subpath.as_bytes()[0] == b'@' {
-            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, SEP) {
+            if let Some(slash) = strings::index_of_char_z(self.destination_dir_subpath, path::SEP) {
                 let subdir = &self.destination_dir_subpath.as_bytes()[..slash as usize];
                 let _ = destination_dir.make_dir(subdir);
             }
@@ -1735,8 +1735,8 @@ impl<'a> PackageInstall<'a> {
         {
             let cache_dir_path = sys::get_fd_path(state.walker.root(), &mut buf2)?;
             let cache_len = cache_dir_path.len();
-            if cache_len > 0 && cache_dir_path[cache_len - 1] != SEP {
-                buf2[cache_len] = SEP;
+            if cache_len > 0 && cache_dir_path[cache_len - 1] != path::SEP {
+                buf2[cache_len] = path::SEP;
                 to_copy_buf2_offset = cache_len + 1;
             } else {
                 to_copy_buf2_offset = cache_len;

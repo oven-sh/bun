@@ -1092,17 +1092,6 @@ pub mod bv2_impl {
                 /// holds (`Graph::outstanding_resolves`); bundle thread only.
                 pub(crate) outstanding: crate::Graph::OutstandingLink<Resolve>,
             }
-            impl Default for Resolve {
-                fn default() -> Self {
-                    Self {
-                    bv2: core::ptr::null_mut(),
-                    import_record: MiniImportRecord::default(),
-                    value: ResolveValue::Pending,
-                    task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
-                    outstanding: Default::default(),
-                }
-                }
-            }
             impl bun_event_loop::Taskable for Resolve {
                 const TAG: bun_event_loop::TaskTag =
                     bun_event_loop::task_tag::BundleV2PluginResolve;
@@ -1122,26 +1111,9 @@ pub mod bv2_impl {
                     outstanding: Default::default(),
                 }
                 }
-                /// Hops to the JS thread to call the `onResolve` plugin chain —
-                /// unless the pass is already cancelled (that VM is stopping and
-                /// will never answer): then the request fails here and now.
-                pub(crate) fn dispatch(&mut self) {
-                    // SAFETY: `bv2` is a valid backref set by `init`; plugins is
-                    // Some (asserted by `enqueue_on_js_loop_for_plugins`).
-                    unsafe {
-                        let bv2 = &mut *self.bv2;
-                        bv2.graph.outstanding_resolves.push(self);
-                        if bv2.graph.cancelled {
-                            // Failed by `is_done` at the loop's top level (not
-                            // here, mid-caller); make sure it runs again.
-                            bv2.wake_own_loop();
-                            return;
-                        }
-                        let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                            bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                        );
-                        bv2.enqueue_on_js_loop_for_plugins(task);
-                    }
+                /// Bundle thread: hands the request to the `onResolve` plugin chain.
+                pub(crate) fn dispatch(self, bv2: &mut BundleV2<'_>) {
+                    bv2.dispatch_plugin_request(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
@@ -1257,26 +1229,9 @@ pub mod bv2_impl {
                 pub(crate) fn bake_graph(&self) -> crate::bake_types::Graph {
                     self.parse_task().known_target.bake_graph()
                 }
-                /// Hops to the JS thread to call the `onLoad` plugin chain —
-                /// unless the pass is already cancelled: see `Resolve::dispatch`.
-                pub(crate) fn dispatch(&mut self) {
-                    // SAFETY: `bv2` is a valid backref; plugins is Some (asserted
-                    // by `enqueue_on_js_loop_for_plugins`).
-                    unsafe {
-                        let bv2 = &mut *self.bv2;
-                        bv2.graph.outstanding_loads.push(self);
-                        if bv2.graph.cancelled {
-                            // Failed by `is_done` at the loop's top level (not
-                            // here, mid-caller); make sure it runs again.
-                            bv2.wake_own_loop();
-                            return;
-                        }
-                        let concurrent_task =
-                            bun_event_loop::ConcurrentTask::ConcurrentTask::create(
-                                bun_event_loop::Task::init(std::ptr::from_mut::<Self>(self)),
-                            );
-                        bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
-                    }
+                /// Bundle thread: hands the request to the `onLoad` plugin chain.
+                pub(crate) fn dispatch(self, bv2: &mut BundleV2<'_>) {
+                    bv2.dispatch_plugin_request(self);
                 }
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
@@ -1309,10 +1264,20 @@ pub mod bv2_impl {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
                     &mut self.outstanding
                 }
+                fn outstanding<'g>(
+                    graph: &'g mut crate::Graph::Graph<'_>,
+                ) -> &'g mut crate::Graph::OutstandingList<Self> {
+                    &mut graph.outstanding_loads
+                }
             }
             impl crate::Graph::OutstandingNode for Resolve {
                 fn link(&mut self) -> &mut crate::Graph::OutstandingLink<Self> {
                     &mut self.outstanding
+                }
+                fn outstanding<'g>(
+                    graph: &'g mut crate::Graph::Graph<'_>,
+                ) -> &'g mut crate::Graph::OutstandingList<Self> {
+                    &mut graph.outstanding_resolves
                 }
             }
         }
@@ -1522,6 +1487,28 @@ pub mod bv2_impl {
     pub use super::{BakeOptions, BundleV2, PendingImport};
 
     impl<'a> BundleV2<'a> {
+        /// Bundle thread: parks an onResolve / onLoad request in the arena, links it
+        /// into the pass and posts it to the plugins' thread. By value, so that the
+        /// pointer made here is the only one: the list, the JS thread and the answer
+        /// all hold it.
+        pub(crate) fn dispatch_plugin_request<T>(&mut self, request: T)
+        where
+            T: bun_event_loop::Taskable + crate::Graph::OutstandingNode,
+        {
+            let request: *mut T = self.arena_create(request);
+            T::outstanding(&mut self.graph).push(request);
+            if self.graph.cancelled {
+                // Failed by `is_done` at the loop's top level (not here,
+                // mid-caller); make sure it runs again.
+                self.wake_own_loop();
+                return;
+            }
+            let task = bun_event_loop::ConcurrentTask::ConcurrentTask::create(
+                bun_event_loop::Task::init(request),
+            );
+            self.enqueue_on_js_loop_for_plugins(task);
+        }
+
         /// Folds the JS-loop lookup + enqueue so the bundler never dereferences
         /// `JSBundleCompletionTask` (its layout lives in `bun_runtime`); the
         /// `completion` handle carries the `&'static` vtable.
@@ -5616,13 +5603,7 @@ pub mod bv2_impl {
                     );
                     self.increment_scan_counter();
 
-                    // Arena-owned; the dispatch
-                    // chain holds the raw `*mut Resolve` until the JS thread calls
-                    // back, at which point the bundle pass is still alive.
-                    // SAFETY: arena outlives the bundle pass.
-                    let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
-                    *resolve = jsc_api::JSBundler::Resolve::init(
+                    let resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
                             kind: import_record.kind,
@@ -5635,8 +5616,7 @@ pub mod bv2_impl {
                             original_target,
                         },
                     );
-
-                    resolve.dispatch();
+                    resolve.dispatch(self);
                     return true;
                 }
             }
@@ -5659,13 +5639,9 @@ pub mod bv2_impl {
                         bstr::BStr::new(entry_point)
                     );
 
-                    // Arena-owned.
-                    // SAFETY: arena outlives the bundle pass.
-                    let resolve: &mut jsc_api::JSBundler::Resolve =
-                        self.arena_create(jsc_api::JSBundler::Resolve::default());
                     self.increment_scan_counter();
 
-                    *resolve = jsc_api::JSBundler::Resolve::init(
+                    let resolve = jsc_api::JSBundler::Resolve::init(
                         self,
                         jsc_api::JSBundler::MiniImportRecord {
                             kind: ImportKind::EntryPointBuild,
@@ -5678,8 +5654,7 @@ pub mod bv2_impl {
                             original_target: target,
                         },
                     );
-
-                    resolve.dispatch();
+                    resolve.dispatch(self);
                     return true;
                 }
             }
@@ -5736,12 +5711,7 @@ pub mod bv2_impl {
                         bstr::BStr::new(&parse.path.namespace),
                         bstr::BStr::new(&parse.path.text)
                     );
-                    // Arena-owned; the dispatch
-                    // chain holds the raw `*mut Load` until the JS thread calls back.
-                    let load_val = jsc_api::JSBundler::Load::init(self, parse);
-                    // SAFETY: arena outlives the bundle pass.
-                    let load: &mut jsc_api::JSBundler::Load = self.arena_create(load_val);
-                    load.dispatch();
+                    jsc_api::JSBundler::Load::init(self, parse).dispatch(self);
                     return true;
                 }
             }

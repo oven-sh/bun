@@ -117,6 +117,18 @@ declare module "bun" {
       quiet(isQuiet?: boolean): this;
 
       /**
+       * Pass the parent process's stdout/stderr file descriptors to spawned
+       * commands instead of piping them. If the parent's stdout/stderr are
+       * terminals, `isatty(1)`/`isatty(2)` stay `true` inside the spawned
+       * commands, so colors, progress bars, and pagers work.
+       *
+       * Output is not captured — reading it back via `.text()`/`.json()`
+       * and the other output methods throws. Mutually exclusive with
+       * {@link quiet}.
+       */
+      inheritStdio(): this;
+
+      /**
        * Read from stdout as a string, line by line
        *
        * Automatically calls {@link quiet} to disable echoing to stdout.

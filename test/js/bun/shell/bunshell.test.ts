@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, it, test } from "bun:test";
-import { chmodSync, mkdirSync } from "fs";
+import { chmodSync, fstatSync, mkdirSync } from "fs";
 import { mkdir, rm, stat } from "fs/promises";
 import { bunExe, isPosix, isWindows, rss, runWithErrorPromise, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
@@ -3285,4 +3285,65 @@ test.skipIf(isWindows)("external command resolution uses the PATH from the shell
     expect(stdout.toString()).toBe("from-onlyintool\n");
     expect(exitCode).toBe(0);
   }
+});
+
+describe("$.inheritStdio()", () => {
+  test("passes the parent's stdout and stderr fds to spawned commands", async () => {
+    using dir = tempDir("shell-inherit-stdio", {});
+    const probeOut = join(String(dir), "probe.json");
+    // The child writes the identity of its stdout/stderr fds to a file so the
+    // parent can compare them against its own. `.inheritStdio()` makes each
+    // pair match; the default piped behavior does not.
+    const script = `import { fstatSync, writeFileSync } from "fs"; writeFileSync(process.env.PROBE_OUT, JSON.stringify({ out: { dev: fstatSync(1).dev, ino: fstatSync(1).ino }, err: { dev: fstatSync(2).dev, ino: fstatSync(2).ino } }));`;
+    const { exitCode } = await $`${BUN} -e ${script}`
+      .env({ ...bunEnv, PROBE_OUT: probeOut })
+      .inheritStdio();
+    expect(exitCode).toBe(0);
+    const child = JSON.parse(await Bun.file(probeOut).text());
+    const parentOut = fstatSync(1);
+    const parentErr = fstatSync(2);
+    expect(child.out).toEqual({ dev: parentOut.dev, ino: parentOut.ino });
+    expect(child.err).toEqual({ dev: parentErr.dev, ino: parentErr.ino });
+  });
+
+  test("default: stdout and stderr are piped, not the parent's fds", async () => {
+    using dir = tempDir("shell-inherit-stdio", {});
+    const probeOut = join(String(dir), "probe.json");
+    const script = `import { fstatSync, writeFileSync } from "fs"; writeFileSync(process.env.PROBE_OUT, JSON.stringify({ out: { dev: fstatSync(1).dev, ino: fstatSync(1).ino }, err: { dev: fstatSync(2).dev, ino: fstatSync(2).ino } }));`;
+    const { exitCode } = await $`${BUN} -e ${script}`.env({ ...bunEnv, PROBE_OUT: probeOut });
+    expect(exitCode).toBe(0);
+    const child = JSON.parse(await Bun.file(probeOut).text());
+    const parentOut = fstatSync(1);
+    const parentErr = fstatSync(2);
+    expect(child.out).not.toEqual({ dev: parentOut.dev, ino: parentOut.ino });
+    expect(child.err).not.toEqual({ dev: parentErr.dev, ino: parentErr.ino });
+  });
+
+  test("throws when combined with quiet()", () => {
+    expect(() => $`echo hi`.inheritStdio().quiet()).toThrow(/Cannot use quiet/);
+    expect(() => $`echo hi`.quiet().inheritStdio()).toThrow(/Cannot use inheritStdio/);
+  });
+
+  test("throws when combined with output methods", async () => {
+    await expect($`echo hi`.inheritStdio().text()).rejects.toThrow(/Cannot use quiet/);
+  });
+
+  test("output readers on the resolved output throw when inheritStdio() was used", async () => {
+    const output = await $`echo hi`.inheritStdio();
+    expect(() => output.text()).toThrow(/not captured when inheritStdio/);
+    expect(() => output.json()).toThrow(/not captured when inheritStdio/);
+    expect(() => output.arrayBuffer()).toThrow(/not captured when inheritStdio/);
+    expect(() => output.bytes()).toThrow(/not captured when inheritStdio/);
+    expect(() => output.blob()).toThrow(/not captured when inheritStdio/);
+  });
+
+  test("output readers on a non-zero exit error throw when inheritStdio() was used", async () => {
+    const error = await $`exit 1`.inheritStdio().catch(err => err);
+    expect(error.exitCode).toBe(1);
+    expect(() => error.text()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.json()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.arrayBuffer()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.bytes()).toThrow(/not captured when inheritStdio/);
+    expect(() => error.blob()).toThrow(/not captured when inheritStdio/);
+  });
 });

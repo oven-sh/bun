@@ -333,6 +333,12 @@ impl InterpreterFlags {
     pub(crate) fn set_quiet(&mut self, v: bool) {
         if v { self.0 |= 0b10 } else { self.0 &= !0b10 }
     }
+    pub(crate) const fn inherit_stdio(self) -> bool {
+        self.0 & 0b100 != 0
+    }
+    pub(crate) fn set_inherit_stdio(&mut self, v: bool) {
+        if v { self.0 |= 0b100 } else { self.0 &= !0b100 }
+    }
 }
 
 #[repr(u8)]
@@ -1131,8 +1137,13 @@ impl Interpreter {
 
         // On the JS event loop, hook captured buffers so the JS
         // `Bun.$` API can read stdout/stderr after completion. The mini path
-        // does not capture (it writes straight to the dup'd fd).
-        let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. }) {
+        // does not capture (it writes straight to the dup'd fd). When
+        // `.inheritStdio()` is set, skip the captured buffers entirely so
+        // subprocesses receive the dup'd terminal fd directly and `isatty()`
+        // stays true (see `OutKind::Fd` → `to_subproc_stdio`).
+        let (cap_out, cap_err) = if matches!(event_loop, EventLoopHandle::Js { .. })
+            && !self.flags.get().inherit_stdio()
+        {
             self.root_shell
                 .with_mut(|rs| (Some(rs.buffered_stdout()), Some(rs.buffered_stderr())))
         } else {
@@ -2879,7 +2890,7 @@ pub(crate) fn create_shell_interpreter(
         )));
     }
 
-    let (shargs, jsobjs, quiet, cwd, export_env) = parsed_shell_script.take(global);
+    let (shargs, jsobjs, quiet, inherit_stdio, cwd, export_env) = parsed_shell_script.take(global);
 
     let cwd = cwd.map(bun_core::OwnedString::new);
     let cwd_slice = cwd.as_deref().map(|c| c.to_utf8());
@@ -2919,6 +2930,7 @@ pub(crate) fn create_shell_interpreter(
     let js_value = unsafe {
         let it = &*interpreter;
         it.update_flags(|f| f.set_quiet(quiet));
+        it.update_flags(|f| f.set_inherit_stdio(inherit_stdio));
         it.global_this
             .set(std::ptr::from_ref::<crate::jsc::JSGlobalObject>(global).cast_mut());
         it.estimated_size_for_gc

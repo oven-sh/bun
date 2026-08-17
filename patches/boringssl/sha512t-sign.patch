@@ -1,0 +1,41 @@
+--- a/crypto/fipsmodule/rsa/rsa.cc.inc
++++ b/crypto/fipsmodule/rsa/rsa.cc.inc
+@@ -458,6 +458,22 @@
+         {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+          0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+     },
++    // id-sha512-224 / id-sha512-256 (NIST CSOR 2.16.840.1.101.3.4.2.{5,6}) with
++    // the NULL parameters RFC 8017 specifies for PKCS#1 v1.5.
++    {
++        NID_sha512_224,
++        SHA512_224_DIGEST_LENGTH,
++        19,
++        {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
++         0x04, 0x02, 0x05, 0x05, 0x00, 0x04, 0x1c},
++    },
++    {
++        NID_sha512_256,
++        SHA512_256_DIGEST_LENGTH,
++        19,
++        {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
++         0x04, 0x02, 0x06, 0x05, 0x00, 0x04, 0x20},
++    },
+     {
+         NID_undef,
+         0,
+--- a/crypto/evp/p_ec.cc
++++ b/crypto/evp/p_ec.cc
+@@ -428,9 +428,12 @@
+     case EVP_PKEY_CTRL_MD: {
+       const EVP_MD *md = reinterpret_cast<const EVP_MD *>(p2);
+       int md_type = EVP_MD_type(md);
++      // pkey_ec_sign/pkey_ec_verify hand the digest straight to ECDSA_sign and
++      // never read dctx->md, so the truncated SHA-512 variants only need this gate.
+       if (md_type != NID_sha1 && md_type != NID_sha224 &&
+           md_type != NID_sha256 && md_type != NID_sha384 &&
+-          md_type != NID_sha512) {
++          md_type != NID_sha512 && md_type != NID_sha512_224 &&
++          md_type != NID_sha512_256) {
+         OPENSSL_PUT_ERROR(EVP, EVP_R_INVALID_DIGEST_TYPE);
+         return 0;
+       }

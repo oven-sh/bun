@@ -186,7 +186,7 @@ extern "C" fn select_alpn_callback(
                         // The selection's ToString threw (a Symbol or a throwing
                         // toString): hand it to `error` like the callback's own
                         // throw, then refuse the protocol.
-                        let err_value = global.take_exception(err);
+                        let err_value = global.take_error(err);
                         crate::dispatch::fold(
                             handlers.call_error_handler(this_value, &[this_value, err_value]),
                         );

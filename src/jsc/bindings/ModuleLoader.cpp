@@ -975,12 +975,14 @@ static JSValue fetchESMSourceCode(
     };
 
     bool wasModuleMock = false;
-    bool suppressESModuleInterop = false;
+    // The ESM path has no commonJSModule target, so the interop-suppress
+    // report is unused here.
+    bool ignoredSuppressESModuleInterop = false;
 
     // When "bun test" is enabled, allow users to override builtin modules
     // This is important for being able to trivially mock things like the filesystem.
     if (isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock, suppressESModuleInterop);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock, ignoredSuppressESModuleInterop);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));
@@ -1077,7 +1079,7 @@ static JSValue fetchESMSourceCode(
 
     // When "bun test" is NOT enabled, disable users from overriding builtin modules
     if (!isBunTest) {
-        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock, suppressESModuleInterop);
+        JSC::JSValue virtualModuleResult = Bun::runVirtualModule(globalObject, specifier, wasModuleMock, ignoredSuppressESModuleInterop);
         RETURN_IF_EXCEPTION(scope, {});
         if (virtualModuleResult) {
             RELEASE_AND_RETURN(scope, handleVirtualModuleResult<allowPromise>(globalObject, virtualModuleResult, res, specifier, referrer, wasModuleMock));

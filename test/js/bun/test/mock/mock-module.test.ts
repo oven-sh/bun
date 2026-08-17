@@ -518,7 +518,7 @@ test("factory mocks shaped { __esModule, default } unwrap to the default for req
   expect(require("automock-esm-interop-fresh")).toEqual({ fresh: 2 });
 });
 
-test("re-mocking an already-required module with an async factory doesn't hang", async () => {
+test.concurrent("re-mocking an already-required module with an async factory doesn't hang", async () => {
   // The factory's promise is still pending while mock.module() patches the
   // cached CJS entry; the unwrap loop must break out instead of spinning on
   // the pending promise forever. Spawned so a regression fails by timeout
@@ -533,7 +533,9 @@ test("re-mocking an already-required module with an async factory doesn't hang",
           await Bun.sleep(0);
           return { value: 2 };
         });
-        expect(true).toBe(true);
+        // mock.module() returned without hanging and the module is still
+        // requireable.
+        expect(require("./real.ts")).toBeDefined();
       });
     `,
   });
@@ -580,7 +582,7 @@ test("jest.mock auto-mocks a plugin-provided module", () => {
   expect(mocked.greet()).toBeUndefined();
 });
 
-test("auto-mock of the fs builtin: import and requireMock see the mock, require sees the real module", async () => {
+test.concurrent("auto-mock of the fs builtin: import and requireMock see the mock, require sees the real module", async () => {
   // Fresh process so mocking a builtin can't leak into other test files.
   using dir = tempDir("automock-builtin", {
     "fixture.test.ts": `
@@ -657,7 +659,7 @@ test("jest.requireMock handles survive jest.restoreAllMocks", () => {
   expect(second).toBe(first);
 });
 
-test("jest.requireMock with a relative specifier doesn't break later ESM imports", async () => {
+test.concurrent("jest.requireMock with a relative specifier doesn't break later ESM imports", async () => {
   // Regression guard for the module loader's `!mustDoExpensiveRelativeLookup`
   // invariant: requireMock never installs into virtualModules, so it must not
   // leave the flag set. Fresh process so virtualModules starts null.
@@ -689,7 +691,7 @@ test("jest.requireMock with a relative specifier doesn't break later ESM imports
   expect(exitCode).toBe(0);
 });
 
-test("Bun.plugin.clearAll() after jest.mock doesn't break later ESM imports", async () => {
+test.concurrent("Bun.plugin.clearAll() after jest.mock doesn't break later ESM imports", async () => {
   // Regression guard: clearAll() deletes virtualModules, so it must also
   // clear `mustDoExpensiveRelativeLookup` or the module loader's assert on
   // the flag-without-map state fires on the next ESM import. Fresh process
@@ -722,7 +724,7 @@ test("Bun.plugin.clearAll() after jest.mock doesn't break later ESM imports", as
   expect(exitCode).toBe(0);
 });
 
-test("a failing jest.mock() with a relative specifier doesn't break later ESM imports", async () => {
+test.concurrent("a failing jest.mock() with a relative specifier doesn't break later ESM imports", async () => {
   // Regression guard: a jest.mock() whose internal require() throws (typo'd
   // path) must not leave the module loader's `!mustDoExpensiveRelativeLookup`
   // assert primed. Fresh process so virtualModules starts null.
@@ -755,7 +757,7 @@ test("a failing jest.mock() with a relative specifier doesn't break later ESM im
   expect(exitCode).toBe(0);
 });
 
-test("auto-mocking an already-required module doesn't re-run its side effects", async () => {
+test.concurrent("auto-mocking an already-required module doesn't re-run its side effects", async () => {
   // When the module was merely require()'d (never mocked), its requireMap
   // entry holds the real exports — the auto-mock's internal require() must
   // reuse it instead of dropping the cache and re-evaluating the source.

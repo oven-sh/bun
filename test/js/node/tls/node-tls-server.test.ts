@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isASAN, isDebug } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -1427,9 +1427,12 @@ describe("tls.Server socket destroySoon", () => {
   // destroySoon() after end(big) must deliver every byte even when the TLS write
   // batcher's final flush spills (#31584). The spill/kernel-buffer race hits ~4% of
   // connections at this payload, so loop (mirrors test-tls-client-destroy-soon.js).
+  // Under debug/ASAN each connection costs ~50-150ms (connection setup and teardown,
+  // not the payload), so 64 of them overran the 5s default timeout.
+  const connections = isDebug || isASAN ? 8 : 64;
   it("delivers the whole stream when destroySoon follows end", async () => {
     const big = Buffer.alloc(2 * 1024 * 1024, "Y");
-    for (let i = 0; i < 64; i++) {
+    for (let i = 0; i < connections; i++) {
       const { promise, resolve, reject } = Promise.withResolvers<number>();
       const server = createServer(COMMON_CERT, socket => {
         socket.on("error", reject);

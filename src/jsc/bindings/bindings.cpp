@@ -116,6 +116,7 @@
 #include "JSFetchHeaders.h"
 #include "FetchHeaders.h"
 #include "DOMURL.h"
+#include "JSDOMException.h"
 #include "JSDOMURL.h"
 
 #include <string_view>
@@ -1242,6 +1243,22 @@ static std::optional<bool> temporalObjectsDequal(JSC::JSObject* o1, JSC::JSObjec
     return std::nullopt;
 }
 
+// ErrorInstance::sanitizedNameString / sanitizedMessageString only see data properties, so for a
+// DOMException (whose name and message are prototype getters) they would say "Error" / "".
+static String errorNameForDeepEquals(JSC::JSGlobalObject* globalObject, JSC::ErrorInstance* error)
+{
+    if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(error))
+        return domException->name();
+    return error->sanitizedNameString(globalObject);
+}
+
+static String errorMessageForDeepEquals(JSC::JSGlobalObject* globalObject, JSC::ErrorInstance* error)
+{
+    if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(error))
+        return domException->message();
+    return error->sanitizedMessageString(globalObject);
+}
+
 template<bool isStrict, bool enableAsymmetricMatchers, bool checkPrototypes, bool skipPrototypeIdentity>
 std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, MarkedArgumentBuffer& gcBuffer, Vector<std::pair<JSC::JSValue, JSC::JSValue>, 16>& stack, ThrowScope& scope, JSCell* _Nonnull c1, JSCell* _Nonnull c2)
 {
@@ -1490,18 +1507,18 @@ std::optional<bool> specialObjectsDequal(JSC::JSGlobalObject* globalObject, Mark
                 return false;
             }
 
-            auto leftName = left->sanitizedNameString(globalObject);
+            auto leftName = errorNameForDeepEquals(globalObject, left);
             RETURN_IF_EXCEPTION(scope, {});
-            auto rightName = right->sanitizedNameString(globalObject);
+            auto rightName = errorNameForDeepEquals(globalObject, right);
             RETURN_IF_EXCEPTION(scope, {});
             if (leftName != rightName) {
                 // manual `.name` changes (usually in subclasses)
                 return false;
             }
 
-            auto leftMessage = left->sanitizedMessageString(globalObject);
+            auto leftMessage = errorMessageForDeepEquals(globalObject, left);
             RETURN_IF_EXCEPTION(scope, {});
-            auto rightMessage = right->sanitizedMessageString(globalObject);
+            auto rightMessage = errorMessageForDeepEquals(globalObject, right);
             RETURN_IF_EXCEPTION(scope, {});
             if (leftMessage != rightMessage) {
                 // `.message`

@@ -416,8 +416,10 @@ const uint8_t cryptoKeyOKPOpNameTagMaximumValue = 1;
  * Version 13. added support for ErrorInstance objects.
  * Version 14. Date, RegExp, Error, DOMException, CryptoKey, KeyObject, X509Certificate,
  * and Bun cloneable types are recorded in the object reference pool on both sides.
+ * Version 15. DOMException carries line, column, sourceURL and stack, like Error.
  */
-[[maybe_unused]] static constexpr unsigned CurrentVersion = 14;
+[[maybe_unused]] static constexpr unsigned CurrentVersion = 15;
+[[maybe_unused]] static constexpr unsigned FirstVersionWithDOMExceptionStack = 15;
 // Deserializers must not pool the version 14 terminal types for older payloads,
 // whose writers never counted them, or the pool indices stop matching the writer's.
 [[maybe_unused]] static constexpr unsigned FirstVersionWithPooledTerminals = 14;
@@ -488,7 +490,7 @@ static constexpr unsigned StringDataIs8BitFlag = 0x80000000;
  *    | OffscreenCanvasTransferTag <value:uint32_t>
  *    | WasmMemoryTag <value:uint32_t>
  *    | RTCDataChannelTransferTag <identifier:uint32_t>
- *    | DOMExceptionTag <message:String> <name:String>
+ *    | DOMExceptionTag <message:String> <name:String> <line:uint32_t> <column:uint32_t> <sourceURL:NullableString> <stack:NullableString>
  *    | WebCodecsEncodedVideoChunkTag <identifier:uint32_t>
  *
  * Inside certificate, data is serialized in this format as per spec:
@@ -1077,18 +1079,66 @@ private:
         return dumpIfTerminal(toJSArrayBuffer(*arrayBuffer), code);
     }
 
-    void dumpDOMException(JSObject* obj, SerializationReturnCode& code)
-    {
-        if (auto* exception = JSDOMException::toWrapped(m_lexicalGlobalObject->vm(), obj)) {
-            if (!startObjectInternal(obj)) // handle duplicates
-                return;
-            write(DOMExceptionTag);
-            write(exception->message());
-            write(exception->name());
-            return;
-        }
+    struct ErrorPositionAndStack {
+        unsigned line { 0 };
+        unsigned column { 0 };
+        String sourceURL;
+        String stack;
+    };
 
-        code = SerializationReturnCode::DataCloneError;
+    // .line/.column/.sourceURL: own data descriptors only, like WebKit. .stack: read via [[Get]]
+    // because Node does (it is what materializes V8's lazy accessor). A throwing getter or
+    // Error.prepareStackTrace propagates out of postMessage/structuredClone (Node parity): this
+    // returns with the exception pending and the caller bails out on it.
+    void collectErrorPositionAndStack(ErrorInstance& errorInstance, ErrorPositionAndStack& result)
+    {
+        auto& vm = m_lexicalGlobalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        // Trigger ErrorInstance's lazy materialization up front so a throwing
+        // prepareStackTrace propagates here instead of tripping the exception
+        // assertion inside JSObject::getOwnPropertyDescriptor.
+        errorInstance.materializeErrorInfoIfNeeded(vm);
+        RETURN_IF_EXCEPTION(scope, void());
+        {
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance.getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (found && d.isDataDescriptor() && d.value().isNumber())
+                result.line = d.value().toNumber(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        {
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance.getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (found && d.isDataDescriptor() && d.value().isNumber())
+                result.column = d.value().toNumber(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        {
+            JSC::PropertyDescriptor d;
+            bool found = errorInstance.getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (found && d.isDataDescriptor() && d.value().isString())
+                result.sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+        {
+            JSValue v = errorInstance.get(m_lexicalGlobalObject, vm.propertyNames->stack);
+            RETURN_IF_EXCEPTION(scope, void());
+            if (v.isString())
+                result.stack = v.toWTFString(m_lexicalGlobalObject);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
+    }
+
+    void write(const ErrorPositionAndStack& errorInfo)
+    {
+        write(errorInfo.line);
+        write(errorInfo.column);
+        writeNullableString(errorInfo.sourceURL);
+        writeNullableString(errorInfo.stack);
     }
 
     bool dumpIfTerminal(JSValue value, SerializationReturnCode& code)
@@ -1183,6 +1233,20 @@ private:
                 write(String::fromLatin1(JSC::Yarr::flagsString(regExp->regExp()->flags()).data()));
                 return true;
             }
+            // A DOMException is an ErrorInstance too; it has its own serialization (HTML's
+            // StructuredSerialize handles platform objects before values with [[ErrorData]]).
+            if (auto* domException = dynamicDowncast<JSDOMException>(obj)) {
+                if (!startObjectInternal(domException)) // handle duplicates
+                    return true;
+                ErrorPositionAndStack errorInfo;
+                collectErrorPositionAndStack(*domException, errorInfo);
+                RETURN_IF_EXCEPTION(scope, false);
+                write(DOMExceptionTag);
+                write(domException->message());
+                write(domException->name());
+                write(errorInfo);
+                return true;
+            }
             if (auto* errorInstance = dynamicDowncast<ErrorInstance>(obj)) {
                 if (!startObjectInternal(errorInstance)) // handle duplicates
                     return true;
@@ -1192,17 +1256,13 @@ private:
                 auto errorTypeString = errorTypeValue.toWTFString(m_lexicalGlobalObject);
                 RETURN_IF_EXCEPTION(scope, false);
 
-                // .message/.line/.column/.sourceURL: HTML spec + Node/WebKit read
-                // OWN data descriptors only (an inherited or accessor .message is
-                // NOT serialized). .stack: Node reads via [[Get]] to materialize
-                // V8's lazy accessor. Any getter/coercion/prepareStackTrace throw
-                // propagates out of postMessage/structuredClone (Node parity).
-                String message, sourceURL, stack;
-                unsigned line = 0, column = 0;
+                // .message: HTML spec + Node/WebKit read the OWN data descriptor only (an
+                // inherited or accessor .message is NOT serialized). It is ToString'd rather
+                // than gated on isString (node clones `e.message = 42` as "42"). Reading it
+                // before the position also keeps a Symbol message from reaching
+                // ErrorInstance's lazy materialization.
+                String message;
                 {
-                    // .message is ToString'd rather than gated on isString (node clones
-                    // `e.message = 42` as "42"). Reading it before .line also keeps a
-                    // Symbol message from reaching ErrorInstance's lazy materialization.
                     JSC::PropertyDescriptor d;
                     bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->message, d);
                     RETURN_IF_EXCEPTION(scope, false);
@@ -1211,50 +1271,14 @@ private:
                         RETURN_IF_EXCEPTION(scope, false);
                     }
                 }
-                // Trigger ErrorInstance's lazy materialization up front so a throwing
-                // prepareStackTrace propagates here instead of tripping the exception
-                // assertion inside JSObject::getOwnPropertyDescriptor.
-                errorInstance->materializeErrorInfoIfNeeded(vm);
+                ErrorPositionAndStack errorInfo;
+                collectErrorPositionAndStack(*errorInstance, errorInfo);
                 RETURN_IF_EXCEPTION(scope, false);
-                {
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->line, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value().isNumber())
-                        line = d.value().toNumber(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->column, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value().isNumber())
-                        column = d.value().toNumber(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSC::PropertyDescriptor d;
-                    bool found = errorInstance->getOwnPropertyDescriptor(m_lexicalGlobalObject, vm.propertyNames->sourceURL, d);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (found && d.isDataDescriptor() && d.value().isString())
-                        sourceURL = d.value().toWTFString(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
-                {
-                    JSValue v = errorInstance->get(m_lexicalGlobalObject, vm.propertyNames->stack);
-                    RETURN_IF_EXCEPTION(scope, false);
-                    if (v.isString())
-                        stack = v.toWTFString(m_lexicalGlobalObject);
-                    RETURN_IF_EXCEPTION(scope, false);
-                }
 
                 write(ErrorInstanceTag);
                 write(errorNameToSerializableErrorType(errorTypeString));
                 writeNullableString(message);
-                write(line);
-                write(column);
-                writeNullableString(sourceURL);
-                writeNullableString(stack);
+                write(errorInfo);
                 return true;
             }
             if (obj->inherits<JSMessagePort>()) {
@@ -1391,11 +1415,6 @@ private:
                 return true;
             }
 #endif
-            if (obj->inherits<JSDOMException>()) {
-                dumpDOMException(obj, code);
-                return true;
-            }
-
             // write bun types
             auto _cloneable = StructuredCloneableSerialize::fromJS(value);
             if (_cloneable) {
@@ -3461,10 +3480,24 @@ private:
         CachedStringRef name;
         if (!readStringData(name))
             return JSValue();
-        auto exception = DOMException::create(message->string(), name->string());
-        JSValue wrapper = getJSValue(exception);
-        addTerminalToObjectPool(wrapper);
-        return wrapper;
+        auto description = DOMException::create(message->string(), name->string());
+
+        JSValue exception;
+        if (m_version >= FirstVersionWithDOMExceptionStack) {
+            uint32_t line;
+            uint32_t column;
+            String sourceURL;
+            String stack;
+            if (!read(line) || !read(column) || !readNullableString(sourceURL) || !readNullableString(stack)) {
+                fail();
+                return JSValue();
+            }
+            exception = JSDOMException::createWithStack(*uncheckedDowncast<JSDOMGlobalObject>(m_globalObject), description.get(), { line, column }, WTF::move(sourceURL), WTF::move(stack));
+        } else {
+            exception = getJSValue(description.get());
+        }
+        addTerminalToObjectPool(exception);
+        return exception;
     }
 
     JSValue readBigInt()

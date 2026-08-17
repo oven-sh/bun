@@ -181,11 +181,7 @@ JSValue createDOMException(JSGlobalObject* lexicalGlobalObject, ExceptionCode ec
         // frames[0].document.createElement(null, null); // throws an exception which should have the subframe's prototypes.
         // https://bugs.webkit.org/show_bug.cgi?id=222229
         JSDOMGlobalObject* globalObject = deprecatedGlobalObjectForPrototype(lexicalGlobalObject);
-        JSValue errorObject = toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message));
-
-        ASSERT(errorObject);
-        addErrorInfo(lexicalGlobalObject, asObject(errorObject), true);
-        return errorObject;
+        return toJS(lexicalGlobalObject, globalObject, DOMException::create(ec, message).get());
     }
     }
     return {};

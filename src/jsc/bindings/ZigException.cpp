@@ -43,6 +43,7 @@
 
 #include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
+#include "JSDOMException.h"
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
@@ -454,21 +455,23 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     }
 }
 
+// Only data properties count: JS accessors and native custom getters (such as
+// DOMException.prototype.code) are skipped rather than run.
 static JSC::JSValue getNonObservable(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSObject* obj, const JSC::PropertyName& propertyName)
 {
+    auto scope = DECLARE_THROW_SCOPE(vm);
     PropertySlot slot = PropertySlot(obj, PropertySlot::InternalMethodType::VMInquiry, &vm);
-    if (obj->getNonIndexPropertySlot(global, propertyName, slot)) {
-        if (slot.isAccessor()) {
-            return {};
-        }
-
-        JSValue value = slot.getValue(global, propertyName);
-        if (!value || value.isUndefinedOrNull()) {
-            return {};
-        }
-        return value;
+    bool found = obj->getNonIndexPropertySlot(global, propertyName, slot);
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!found || !slot.isValue()) {
+        return {};
     }
-    return {};
+
+    JSValue value = slot.getPureResult();
+    if (!value || value.isUndefinedOrNull()) {
+        return {};
+    }
+    return value;
 }
 
 static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
@@ -512,9 +515,14 @@ static void fromErrorInstance(ZigException& except, JSC::JSGlobalObject* global,
         return;
     }
 
-    except.name = Bun::toStringRef(err->sanitizedNameString(global));
-    if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
-        return;
+    if (auto* domException = dynamicDowncast<WebCore::JSDOMException>(err)) {
+        // sanitizedNameString() only looks at data properties; a DOMException's name is a prototype getter.
+        except.name = Bun::toStringRef(domException->name());
+    } else {
+        except.name = Bun::toStringRef(err->sanitizedNameString(global));
+        if (!scope.clearExceptionExceptTermination()) [[unlikely]] {
+            return;
+        }
     }
 
     except.runtime_type = err->runtimeTypeForCause();

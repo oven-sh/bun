@@ -80,7 +80,6 @@ public:
 #include "ZigGeneratedClasses+DOMClientIsoSubspaces.h"
     /* --- bun --- */
 
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMException;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormData;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMFormDataIterator;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForDOMURL;

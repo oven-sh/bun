@@ -75,6 +75,9 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
+    macro(domExceptionCode) \
+    macro(domExceptionMessage) \
+    macro(domExceptionName) \
     macro(domain) \
     macro(drain) \
     macro(encoding) \

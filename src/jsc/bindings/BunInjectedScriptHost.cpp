@@ -2,9 +2,7 @@
 #include "BunInjectedScriptHost.h"
 
 #include "ZigGeneratedClasses.h"
-#include "DOMException.h"
 
-#include "JSDOMException.h"
 #include "JSEventListener.h"
 #include "JSEventTarget.h"
 #include "JSWorker.h"
@@ -26,8 +24,8 @@ JSValue BunInjectedScriptHost::subtype(JSGlobalObject* exec, JSValue value)
 {
     VM& vm = exec->vm();
 
-    if (
-        value.inherits<JSDOMException>() || value.inherits<JSResolveMessage>() || value.inherits<JSBuildMessage>())
+    // DOMException is an ErrorInstance, so JSC's own subtype() already reports it as "error".
+    if (value.inherits<JSResolveMessage>() || value.inherits<JSBuildMessage>())
         return jsNontrivialString(vm, "error"_s);
 
     return jsUndefined();

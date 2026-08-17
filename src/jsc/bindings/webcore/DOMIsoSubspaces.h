@@ -165,7 +165,6 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMap;
     std::unique_ptr<IsoSubspace> m_subspaceForCookieMapIterator;
 
-    std::unique_ptr<IsoSubspace> m_subspaceForDOMException;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
     std::unique_ptr<IsoSubspace> m_subspaceForURLPattern;
     std::unique_ptr<IsoSubspace> m_subspaceForJSSign;

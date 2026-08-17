@@ -198,30 +198,41 @@ impl ExtractTarball {
             debug_assert!(false);
             b"unnamed-package"
         };
-        let basename: &[u8] = 'brk: {
-            let mut tmp = name;
-            if strings::has_prefix(tmp, b"https://") || strings::has_prefix(tmp, b"http://") {
+        let basename: &[u8] =
+            if strings::has_prefix(name, b"https://") || strings::has_prefix(name, b"http://") {
+                // A URL name is the placeholder `bun add <url>` uses until package.json is read.
+                let mut tmp = name;
+                if let Some(i) = strings::index_of_any(tmp, b"?#") {
+                    tmp = &tmp[0..i];
+                }
                 tmp = bun_paths::basename(tmp);
                 if strings::ends_with(tmp, b".tgz") {
                     tmp = &tmp[0..tmp.len() - 4];
                 } else if strings::ends_with(tmp, b".tar.gz") {
                     tmp = &tmp[0..tmp.len() - 7];
                 }
-            } else if tmp[0] == b'@' {
-                if let Some(i) = strings::index_of_char(tmp, b'/') {
-                    tmp = &tmp[i as usize + 1..];
+                if bun_install::dependency::is_safe_install_folder_name(tmp) {
+                    tmp
+                } else {
+                    b"package"
                 }
-            }
-
-            #[cfg(windows)]
-            {
-                if let Some(i) = strings::last_index_of_char(tmp, b':') {
-                    tmp = &tmp[i + 1..];
+            } else {
+                let mut tmp = name;
+                if tmp[0] == b'@' {
+                    if let Some(i) = strings::index_of_char(tmp, b'/') {
+                        tmp = &tmp[i as usize + 1..];
+                    }
                 }
-            }
 
-            break 'brk tmp;
-        };
+                #[cfg(windows)]
+                {
+                    if let Some(i) = strings::last_index_of_char(tmp, b':') {
+                        tmp = &tmp[i + 1..];
+                    }
+                }
+
+                tmp
+            };
         (name, basename)
     }
 

@@ -1446,6 +1446,15 @@ impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashCont
     }
 }
 
+/// The scanned entry's absolute path, or `None` when it is too long to open, in which case the scan skips the entry.
+fn entry_abs_path<'b>(
+    fs: &bun_resolver::fs::FileSystem,
+    entry: &bun_resolver::fs::Entry,
+    buf: &'b mut PathBuffer,
+) -> Option<&'b [u8]> {
+    fs.abs_buf_checked(&[entry.dir, entry.base()], &mut buf[..MAX_PATH_BYTES - 1])
+}
+
 impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
@@ -1530,9 +1539,15 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
-                        {
+                        let child_info = {
+                            let mut abs_path_buf = paths::path_buffer_pool::get();
+                            let Some(abs_path) = entry_abs_path(fs_ref, file, &mut abs_path_buf)
+                            else {
+                                continue 'outer;
+                            };
+                            r.read_dir_info_ignore_error(abs_path)
+                        };
+                        if let Some(child_info) = child_info {
                             self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
                         }
                     }
@@ -1555,15 +1570,18 @@ impl FrameworkRouter {
                             }
                         }
 
+                        let mut abs_path_buf = paths::path_buffer_pool::get();
+                        let Some(abs_path) = entry_abs_path(fs_ref, file, &mut abs_path_buf) else {
+                            continue 'outer;
+                        };
+
                         let mut rel_path_buf = PathBuffer::uninit();
                         let full_rel_path_len = {
                             let full_rel_path = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,
                                 true,
                             >(
-                                &mut rel_path_buf[1..],
-                                &self.root,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &mut rel_path_buf[1..], &self.root, abs_path
                             );
                             full_rel_path.len()
                         };
@@ -1651,7 +1669,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1682,7 +1700,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1770,14 +1788,12 @@ impl JSFrameworkRouter {
             global,
         )?;
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
-            paths::platform::Auto,
-        >(
-            // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-            bun_resolver::fs::FileSystem::get().top_level_dir,
-            root.slice(),
-        ))
-        .into();
+        let Some(abs_root) = crate::bake::bake_body::resolve_dir_option(root.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "options.root must resolve to a path shorter than {} bytes",
+                MAX_PATH_BYTES
+            )));
+        };
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),

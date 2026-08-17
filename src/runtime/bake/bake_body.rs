@@ -490,6 +490,33 @@ impl Default for Framework {
     }
 }
 
+/// Resolves a directory from the app options; `None` once it is `MAX_PATH_BYTES` long, the length from which `Resolver::read_dir_info` rejects it too.
+pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Box<[u8]>> {
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut buf = paths::path_buffer_pool::get();
+    let resolved = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+        top_level_dir,
+        &mut buf[..paths::MAX_PATH_BYTES - 1],
+        &[dir],
+    )?;
+    Some(Box::from(
+        paths::string_paths::without_trailing_slash_windows_path(resolved),
+    ))
+}
+
+/// `resolve_dir_option` for `fileSystemRouterTypes[index].root`; a too-long root is reported like an unresolvable entry point.
+pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
+    let resolved = resolve_dir_option(root);
+    if resolved.is_none() {
+        Output::err(
+            "ENAMETOOLONG",
+            "Failed to resolve 'fileSystemRouterTypes[{}].root' for framework: the resolved path must be shorter than {} bytes",
+            (index, paths::MAX_PATH_BYTES),
+        );
+    }
+    resolved
+}
+
 impl Framework {
     /// Bun provides built-in support for using React as a framework.
     /// Depends on externally provided React
@@ -670,11 +697,11 @@ impl Framework {
             // self.resolve_helper(client, &mut sc.client_runtime_import, &mut had_errors);
         }
 
-        for fsr in clone.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(top_level_dir, fsr.root)));
+        for (i, fsr) in clone.file_system_router_types.iter_mut().enumerate() {
+            match resolve_router_root(i, fsr.root) {
+                Some(root) => fsr.root = arena_erase(arena.alloc_slice_copy(&root)),
+                None => had_errors = true,
+            }
             if let Some(entry_client) = &mut fsr.entry_client {
                 self.resolve_helper(
                     client,

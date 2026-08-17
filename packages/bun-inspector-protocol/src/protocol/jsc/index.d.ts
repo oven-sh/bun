@@ -1393,6 +1393,21 @@ export namespace JSC {
      */
     export type SetBlackboxBreakpointEvaluationsResponse = {};
   }
+  export namespace GenericTypes {
+    /**
+     * Search match in a resource.
+     */
+    export type SearchMatch = {
+      /**
+       * Line number in resource content.
+       */
+      lineNumber: number;
+      /**
+       * Line with match content.
+       */
+      lineContent: string;
+    };
+  }
   export namespace Heap {
     /**
      * Information about a garbage collection.
@@ -2039,6 +2054,16 @@ export namespace JSC {
        */
       argv: string[];
     };
+  }
+  export namespace Network {
+    /**
+     * Unique frame identifier.
+     */
+    export type FrameId = string;
+    /**
+     * Unique request identifier.
+     */
+    export type RequestId = string;
   }
   export namespace Runtime {
     /**

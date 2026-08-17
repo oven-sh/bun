@@ -312,6 +312,8 @@ impl EncodedPattern {
     }
 
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
+        // Discard captures left by a previous candidate that failed partway.
+        params.params.clear();
         let mut param_num: usize = 0;
         let mut it = self.iterate();
         let mut i: usize = 1;
@@ -326,13 +328,21 @@ impl EncodedPattern {
                     if !strings::eql(&path[i..i + expect.len()], expect) {
                         return false;
                     }
-                    i += 1 + expect.len();
+                    i += expect.len();
+                    if i < path.len() {
+                        // Consume the separator unless the text ends the path.
+                        i += 1;
+                    }
                 }
                 Part::Param(name) => {
-                    if i > path.len() {
+                    if i >= path.len() {
                         return false;
                     }
                     let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
+                    // A parameter matches exactly one non-empty segment.
+                    if end == i {
+                        return false;
+                    }
                     // Check if we're about to exceed the maximum number of parameters
                     if param_num >= MatchedParams::MAX_COUNT {
                         // TODO: ideally we should throw a nice user message
@@ -351,26 +361,27 @@ impl EncodedPattern {
                     i = if end == path.len() { end } else { end + 1 };
                 }
                 Part::CatchAllOptional(name) | Part::CatchAll(name) => {
+                    let params_before = param_num;
                     // Capture remaining path segments as individual parameters
                     if i < path.len() {
                         let mut segment_start = i;
                         while segment_start < path.len() {
                             let segment_end = strings::index_of_char_pos(path, b'/', segment_start)
                                 .unwrap_or(path.len());
-                            if segment_start < segment_end {
-                                // Check if we're about to exceed the maximum number of parameters
-                                if param_num >= MatchedParams::MAX_COUNT {
-                                    return false;
-                                }
-                                params.params.resize(param_num + 1).unwrap();
-                                params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(
-                                        &path[segment_start..segment_end],
-                                    ),
-                                };
-                                param_num += 1;
+                            // An empty segment (double slash) never matches.
+                            if segment_start == segment_end {
+                                return false;
                             }
+                            // Check if we're about to exceed the maximum number of parameters
+                            if param_num >= MatchedParams::MAX_COUNT {
+                                return false;
+                            }
+                            params.params.resize(param_num + 1).unwrap();
+                            params.params.slice()[param_num] = MatchedParamEntry {
+                                key: bun_ptr::RawSlice::new(name),
+                                value: bun_ptr::RawSlice::new(&path[segment_start..segment_end]),
+                            };
+                            param_num += 1;
                             segment_start = if segment_end == path.len() {
                                 segment_end
                             } else {
@@ -378,7 +389,8 @@ impl EncodedPattern {
                             };
                         }
                     }
-                    return true;
+                    // Only the optional form may match zero segments.
+                    return matches!(part, Part::CatchAllOptional(_)) || param_num > params_before;
                 }
                 Part::Group(_) => continue,
             }
@@ -1857,28 +1869,20 @@ impl JSFrameworkRouter {
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
         let path = path_value.to_slice(global)?;
+        // match_slow requires an origin-form path.
+        if path.slice().is_empty() || path.slice()[0] != b'/' {
+            return Err(global.throw(format_args!(
+                "Invalid path \"{}\": it should be non-empty and start with a slash",
+                bstr::BStr::new(path.slice())
+            )));
+        }
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
-            obj.put(
-                global,
-                b"params",
-                if params_out.params.len() > 0 {
-                    let params_obj =
-                        JSValue::create_empty_object(global, params_out.params.len() as usize);
-                    for param in params_out.params.slice() {
-                        // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
-                        params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
-                    }
-                    params_obj
-                } else {
-                    JSValue::NULL
-                },
-            );
+            obj.put(global, b"params", params_out.to_js(global));
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
             return Ok(obj);
         }

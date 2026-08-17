@@ -1233,6 +1233,139 @@ describe("bundledDependencies", () => {
       await check();
     });
 
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled names from dependencies and optionalDependencies`, async () => {
+      // bundled-with-optional@1.0.0 has dependencies { no-deps }, optionalDependencies { a-dep, basic-1 }
+      // and bundleDependencies [no-deps, a-dep, not-a-dependency]. Its tarball ships no-deps and a-dep.
+      // Only basic-1 should be installed from the registry; not-a-dependency is declared in no group
+      // (and does not exist in the registry), so listing it must have no effect.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-mixed-groups",
+          dependencies: {
+            "bundled-with-optional": "1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir, { saveTextLockfile: textLockfile });
+
+      async function check() {
+        expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["basic-1", "bundled-with-optional"]);
+        const bundledNodeModules = join(packageDir, "node_modules", "bundled-with-optional", "node_modules");
+        expect(
+          await Promise.all([
+            file(join(bundledNodeModules, "no-deps", "package.json")).json(),
+            file(join(bundledNodeModules, "a-dep", "package.json")).json(),
+          ]),
+        ).toEqual([
+          { name: "no-deps", version: "1.0.0" },
+          { name: "a-dep", version: "1.0.1" },
+        ]);
+      }
+
+      await check();
+
+      let lockfile: string | undefined;
+      if (textLockfile) {
+        lockfile = await file(join(packageDir, "bun.lock")).text();
+        expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchInlineSnapshot(`
+          "{
+            "lockfileVersion": 2,
+            "configVersion": 1,
+            "workspaces": {
+              "": {
+                "name": "bundled-mixed-groups",
+                "dependencies": {
+                  "bundled-with-optional": "1.0.0",
+                },
+              },
+            },
+            "packages": {
+              "basic-1": ["basic-1@1.0.0", "http://localhost:1234/basic-1/-/basic-1-1.0.0.tgz", {}, "sha512-NW5qBU1Kn7DzCjfVfnAbBBRGuQ7krbBtrnezZwOXutA9NvrCT4SI4EJMog3AGsNeK/1OygErysF8RN/FqDYunA=="],
+
+              "bundled-with-optional": ["bundled-with-optional@1.0.0", "http://localhost:1234/bundled-with-optional/-/bundled-with-optional-1.0.0.tgz", { "dependencies": { "no-deps": "1.0.0" }, "optionalDependencies": { "a-dep": "1.0.1", "basic-1": "1.0.0" } }, "sha512-rq4Jtdsk53QE4T00/KaOP5lyv3d8Gnt4VABtara3PFos+8POKMkRIQPYCXVRRBey7K+ttzkiA5MkHhe+T19eYA=="],
+
+              "bundled-with-optional/a-dep": ["a-dep@1.0.1", "http://localhost:1234/a-dep/-/a-dep-1.0.1.tgz", { "bundled": true }, "sha512-6nmTaPgO2U/uOODqOhbjbnaB4xHuZ+UB7AjKUA3g2dT4WRWeNxgp0dC8Db4swXSnO5/uLLUdFmUJKINNBO/3wg=="],
+
+              "bundled-with-optional/no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "bundled": true }, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+            }
+          }
+          "
+        `);
+      }
+
+      // The lockfile must record the bundled edges too: a cold install from it
+      // must not pull no-deps or a-dep from the registry either.
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+      await check();
+      if (textLockfile) {
+        expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile!);
+      }
+    });
+
+    test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled name declared in peerDependencies`, async () => {
+      // bundled-peer@1.0.0 has peerDependencies { no-deps } and bundleDependencies [no-deps], and its
+      // tarball ships no-deps. The peer is satisfied by the bundled copy, so nothing else is installed.
+      await write(
+        packageJson,
+        JSON.stringify({
+          name: "bundled-peer-root",
+          dependencies: {
+            "bundled-peer": "1.0.0",
+          },
+        }),
+      );
+
+      await runBunInstall(env, packageDir, { saveTextLockfile: textLockfile });
+
+      async function check() {
+        expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["bundled-peer"]);
+        expect(
+          await file(
+            join(packageDir, "node_modules", "bundled-peer", "node_modules", "no-deps", "package.json"),
+          ).json(),
+        ).toEqual({ name: "no-deps", version: "1.0.0" });
+      }
+
+      await check();
+
+      let lockfile: string | undefined;
+      if (textLockfile) {
+        lockfile = await file(join(packageDir, "bun.lock")).text();
+        expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchInlineSnapshot(`
+          "{
+            "lockfileVersion": 2,
+            "configVersion": 1,
+            "workspaces": {
+              "": {
+                "name": "bundled-peer-root",
+                "dependencies": {
+                  "bundled-peer": "1.0.0",
+                },
+              },
+            },
+            "packages": {
+              "bundled-peer": ["bundled-peer@1.0.0", "http://localhost:1234/bundled-peer/-/bundled-peer-1.0.0.tgz", { "peerDependencies": { "no-deps": "1.0.0" } }, "sha512-rmaahOTDrcPuhmBskBLcKEEfTotY+xH6bDPnQopcNlmdePtEvAbAehSpK8JQAegpBir4omjiFqBy1LFqXQBfgA=="],
+
+              "bundled-peer/no-deps": ["no-deps@1.0.0", "http://localhost:1234/no-deps/-/no-deps-1.0.0.tgz", { "bundled": true }, "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw=="],
+            }
+          }
+          "
+        `);
+      }
+
+      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+      await runBunInstall(env, packageDir, { frozenLockfile: true });
+
+      await check();
+      if (textLockfile) {
+        expect(await file(join(packageDir, "bun.lock")).text()).toBe(lockfile!);
+      }
+    });
+
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
       await Promise.all([
         write(

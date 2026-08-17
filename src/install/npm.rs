@@ -5,7 +5,7 @@ use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, IdentityContext, StringSet};
+use bun_collections::{HashMap, IdentityContext};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
@@ -944,8 +944,9 @@ pub mod package_manifest {
         // - v0.0.5: added bundled dependencies
         // - v0.0.6: changed semver major/minor/patch to each use u64 instead of u32
         // - v0.0.7: added version publish times and extended manifest flag for minimum release age
+        // - v0.0.8: fixed bundled dependencies being dropped from all but one dependency group
         const HEADER_BYTES: &'static str =
-            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.7\n");
+            concat!("#!/usr/bin/env bun\n", "bun-npm-manifest-cache-v0.0.8\n");
 
         // Field order is hardcoded (descending alignment). Re-verify if the
         // layout changes.
@@ -2071,35 +2072,6 @@ impl PackageManifest {
     }
 }
 
-/// Fills `set` with the names listed in `bundle(d)Dependencies`; returns whether it was `true` (bundle everything).
-fn collect_bundled_deps(
-    version_obj: Option<&JSON::E::ObjectJSON>,
-    set: &mut StringSet,
-) -> Result<bool, AllocError> {
-    set.map.clear_retaining_capacity();
-    let mut bundle_all_deps = false;
-    if let Some(bundled_deps_value) = version_obj
-        .and_then(|o| o.get(b"bundleDependencies"))
-        .or_else(|| version_obj.and_then(|o| o.get(b"bundledDependencies")))
-    {
-        match bundled_deps_value {
-            JSON::E::JsonValue::Boolean(boolean) => {
-                bundle_all_deps = *boolean;
-            }
-            JSON::E::JsonValue::Array(arr) => {
-                for bundled_dep in arr.get().items() {
-                    let Some(s) = bundled_dep.as_str() else {
-                        continue;
-                    };
-                    set.insert(s)?;
-                }
-            }
-            _ => {}
-        }
-    }
-    Ok(bundle_all_deps)
-}
-
 // Keys are pre-hashed string hashes, so don't re-hash them.
 type ExternalStringMapDeduper = HashMap<u64, ExternalStringList, IdentityContext<u64>>;
 
@@ -2110,6 +2082,16 @@ const DEPENDENCY_GROUPS: [DependencyGroup; 3] = [
     DependencyGroup::OPTIONAL,
     DependencyGroup::PEER,
 ];
+
+/// npm accepts both spellings; `bundleDependencies` is the documented one.
+fn bundled_dependencies_field(
+    version_obj: Option<&JSON::E::ObjectJSON>,
+) -> Option<&JSON::E::JsonValue> {
+    let version_obj = version_obj?;
+    version_obj
+        .get(b"bundleDependencies")
+        .or_else(|| version_obj.get(b"bundledDependencies"))
+}
 
 impl PackageManifest {
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
@@ -2163,9 +2145,6 @@ impl PackageManifest {
         let mut all_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut version_extern_strings_dedupe_map = ExternalStringMapDeduper::default();
         let mut optional_peer_dep_names: Vec<u64> = Vec::new();
-
-        let mut bundled_deps_set = StringSet::init();
-        let mut bundle_all_deps: bool;
 
         let mut bundled_deps_count: usize = 0;
 
@@ -2299,7 +2278,16 @@ impl PackageManifest {
                     }
                 }
 
-                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
+                if let Some(JSON::E::JsonValue::Array(arr)) =
+                    bundled_dependencies_field(version_obj)
+                {
+                    bundled_deps_count += arr
+                        .get()
+                        .items()
+                        .iter()
+                        .filter(|bundled_dep| bundled_dep.as_str().is_some())
+                        .count();
+                }
 
                 for pair in &DEPENDENCY_GROUPS {
                     if let Some(obj) = version_obj
@@ -2310,11 +2298,6 @@ impl PackageManifest {
                         dependency_sum += properties.len();
                         for property in properties {
                             let key = property.key.slice();
-                            if !bundle_all_deps && bundled_deps_set.swap_remove(key) {
-                                // swap remove the dependency name because it could exist in
-                                // multiple behavior groups.
-                                bundled_deps_count += 1;
-                            }
                             string_builder.count(key);
                             string_builder.count(property.value.as_str().unwrap_or(b""));
                         }
@@ -2503,9 +2486,29 @@ impl PackageManifest {
 
                 let version_obj = prop.value.as_object();
 
-                bundle_all_deps = collect_bundled_deps(version_obj, &mut bundled_deps_set)?;
-
                 let mut package_version: PackageVersion = empty_version;
+
+                // `Package::from_npm` matches these against the dependencies of every group.
+                package_version.bundled_dependencies = match bundled_dependencies_field(version_obj)
+                {
+                    Some(JSON::E::JsonValue::Boolean(true)) => ExternalPackageNameHashList::INVALID,
+                    Some(JSON::E::JsonValue::Array(arr)) => {
+                        let bundled_deps_begin = bundled_deps_offset;
+                        for bundled_dep in arr.get().items() {
+                            let Some(name) = bundled_dep.as_str() else {
+                                continue;
+                            };
+                            bundled_deps_buf[bundled_deps_offset] =
+                                Semver::semver_string::Builder::string_hash(name);
+                            bundled_deps_offset += 1;
+                        }
+                        ExternalPackageNameHashList::init(
+                            &bundled_deps_buf,
+                            &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
+                        )
+                    }
+                    _ => ExternalPackageNameHashList::default(),
+                };
 
                 if let Some(cpu) = version_obj.and_then(|o| o.get(b"cpu")) {
                     package_version.cpu = negatable_from_json_value::<Architecture>(cpu);
@@ -2728,13 +2731,7 @@ impl PackageManifest {
                     // For peer deps, fall through with an empty `items`
                     // slice when `peerDependencies` is absent so that
                     // `peerDependenciesMeta`-only entries (synthesised
-                    // below) still get a build pass. The fallthrough must
-                    // stay scoped to packages that actually have a
-                    // `peerDependenciesMeta`: the body sets
-                    // `package_version.bundled_dependencies` from this
-                    // iteration's slice of `bundled_deps_buf`, so an
-                    // unconditional empty pass would clobber the value the
-                    // `dependencies` iteration just produced.
+                    // below) still get a build pass.
                     let items: &[JSON::E::PropertyJSON] = version_obj
                         .and_then(|o| o.get(pair.prop))
                         .and_then(|deps| deps.as_object())
@@ -2783,8 +2780,6 @@ impl PackageManifest {
                             }
                         }
 
-                        let bundled_deps_begin = bundled_deps_offset;
-
                         let mut i: usize = 0;
 
                         for item in items {
@@ -2804,15 +2799,6 @@ impl PackageManifest {
                                 string_builder.append::<ExternalString>(name_str);
                             version_extern_strings[values_base + i] =
                                 string_builder.append::<ExternalString>(version_str);
-
-                            if !bundle_all_deps && bundled_deps_set.swap_remove(name_str) {
-                                // SAFETY: bundled_deps_buf sized in counting pass
-                                unsafe {
-                                    *bundled_deps_buf.as_mut_ptr().add(bundled_deps_offset) =
-                                        all_extern_strings[names_base + i].hash;
-                                }
-                                bundled_deps_offset += 1;
-                            }
 
                             if is_peer {
                                 if optional_peer_dep_names
@@ -2912,27 +2898,6 @@ impl PackageManifest {
                         let this_names = &all_extern_strings[names_base..names_base + count];
                         let this_versions =
                             &version_extern_strings[values_base..values_base + count];
-
-                        // Bundled deps are matched against the
-                        // `dependencies`/`optionalDependencies` groups
-                        // only; the peer pass never adds to
-                        // `bundled_deps_buf`. With the meta-only
-                        // synthesis above the peer body now runs even
-                        // when `peerDependencies` is absent, so writing
-                        // here would clobber the value the dependencies
-                        // pass already produced with an empty slice.
-                        if !is_peer {
-                            if bundle_all_deps {
-                                package_version.bundled_dependencies =
-                                    ExternalPackageNameHashList::INVALID;
-                            } else {
-                                package_version.bundled_dependencies =
-                                    ExternalPackageNameHashList::init(
-                                        &bundled_deps_buf,
-                                        &bundled_deps_buf[bundled_deps_begin..bundled_deps_offset],
-                                    );
-                            }
-                        }
 
                         let mut name_list =
                             ExternalStringList::init(&all_extern_strings, this_names);

@@ -517,10 +517,8 @@ pub(crate) fn parse_until_after<T, C>(
 
 const MAX_NESTING_DEPTH: u32 = 512;
 
-/// Stack `parse_nested_block` requires on top of `StackCheck`'s own threshold.
-/// Everything parsed below the last block it lets through has to fit in here,
-/// and that includes a whole declaration: `Property::parse` alone is a ~120 KB
-/// frame in debug/ASAN builds.
+/// Must hold one whole declaration below the last block that is let through;
+/// `Property::parse` alone is a ~120 KB frame in debug/ASAN builds.
 const NESTED_BLOCK_STACK_HEADROOM: usize = 256 * 1024;
 
 /// Records that the block whose content starts at `start_position` failed to

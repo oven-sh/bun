@@ -100,30 +100,6 @@ it("when prototype defines the same property, don't print the same property twic
   expect(Bun.inspect(obj).trim()).toBe('{\n  foo: "456",\n}'.trim());
 });
 
-it("Proxy prototype with a getter that throws does not crash", () => {
-  const proto = {
-    get foo() {
-      throw new Error("nope");
-    },
-  };
-  const obj = Object.create(new Proxy(proto, {}));
-  expect(Bun.inspect(obj)).toBe("{}");
-});
-
-it("Proxy prototype with a getPrototypeOf trap that throws does not crash", () => {
-  const obj = Object.create(
-    new Proxy(
-      { foo: 1 },
-      {
-        getPrototypeOf() {
-          throw new Error("nope");
-        },
-      },
-    ),
-  );
-  expect(Bun.inspect(obj)).toBe("{\n  foo: 1,\n}");
-});
-
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
@@ -600,6 +576,76 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
       "[\n  1, 2, 3, 4294967291 x empty items\n]\n",
     stderr: "",
     exitCode: 0,
+  });
+});
+
+// A property lookup that throws while an object is being formatted (a Proxy trap in the
+// prototype chain, or a lazily initialized property whose initializer throws) used to leave
+// the exception pending: the lookups of the following properties failed and were dropped from
+// the output, debug builds asserted, and moving on to the next prototype dereferenced the empty
+// value returned by the throwing getPrototype. Each case runs in a child so a regression fails
+// the test instead of taking down the runner.
+describe.concurrent("Bun.inspect when a property lookup throws", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("skips a prototype property whose Proxy get trap throws and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, b: 2, c: 3 }, {
+        get(target, key, receiver) {
+          if (key === "b") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a prototype getter that throws behind a Proxy and keeps the rest", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1, get b() { throw new Error("getter"); }, c: 3 }, {});
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect(result).toEqual({ stdout: "{\n  a: 1,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("stops walking the prototype chain at a Proxy whose getPrototypeOf trap throws", async () => {
+    const result = await inspectInChild(`
+      const proto = new Proxy({ a: 1 }, {
+        getPrototypeOf() {
+          throw new Error("getPrototypeOf trap");
+        },
+      });
+      const obj = Object.create(proto);
+      obj.own = 0;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "{\n  own: 0,\n  a: 1,\n}\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a lazily initialized Bun property whose initializer throws and keeps the rest", async () => {
+    // Bun.$ is the first property of the Bun object and is built by a builtin that calls
+    // Symbol(), as are Bun.sql and Bun.SQL further down, so breaking Symbol makes those
+    // initializers throw while Bun is formatted. Custom inspect functions (Bun.env has one on
+    // Windows) load node:util the first time one runs, which also needs Symbol, so load it first.
+    const result = await inspectInChild(`
+      Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
+      globalThis.Symbol = 0;
+      const out = Bun.inspect(Bun);
+      console.log(JSON.stringify(["$", "Archive", "version"].map(key => out.includes("\\n  " + key + ": "))));
+    `);
+    expect(result).toEqual({ stdout: "[false,true,true]\n", stderr: "", exitCode: 0 });
   });
 });
 

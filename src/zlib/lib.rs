@@ -178,8 +178,10 @@ fn avail_out_for(len: usize) -> uInt {
 }
 
 /// Grow `list` and point the stream's output at the new tail, capping
-/// `avail_out` at `budget` bytes (`usize::MAX` = unbounded). Fails only when
-/// the growth itself fails; callers decide how to tear the stream down.
+/// `avail_out` at `budget` bytes (`usize::MAX` = unbounded). On success
+/// `avail_out` is at least `min(budget, 4096)`, so callers need no zero
+/// check afterwards. Fails only when the growth itself fails; callers decide
+/// how to tear the stream down.
 fn regrow_output_tail(
     zlib: &mut zStream_struct,
     list: &mut Vec<u8>,
@@ -835,10 +837,6 @@ impl<'a> ZlibCompressorArrayList<'a> {
                         self.state = ZlibCompressorArrayListState::Error;
                         return Err(err);
                     }
-                }
-
-                if self.zlib.avail_out == 0 {
-                    return Err(ZlibError::ShortRead);
                 }
 
                 // SAFETY: self.zlib was initialized via deflateInit2_.

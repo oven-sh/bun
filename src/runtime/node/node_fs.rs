@@ -183,8 +183,11 @@ mod node {
 // `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
-use super::MaybeTodo as _;
 use super::util::validators;
+// `Maybe::todo()` is only called from the `lchmod` / `copy_file` arms that are
+// still stubs, and macOS and FreeBSD have none of those.
+#[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
+use super::MaybeTodo as _;
 
 // Trait imports for inherent-looking method calls on upstream types:
 //   - `bun_sys::FdExt`       → `Fd::close()`

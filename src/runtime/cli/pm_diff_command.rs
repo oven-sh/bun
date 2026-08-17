@@ -2109,6 +2109,8 @@ impl Style {
             ),
         };
         // Re-printed (un-minified) lines are numbered by where they sit in the original: `line:col`.
+        // `(0, 0)` is the no-mapping sentinel (CSS/JSON re-prints have no source map): plain numbering then.
+        let pos = pos.filter(|&(l, _)| l > 0);
         let gutter = match pos {
             Some((l, c)) => format!("{l}:{c}"),
             None => format!("{num}"),

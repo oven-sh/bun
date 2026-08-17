@@ -94,12 +94,23 @@ fn comma_leaves(e: &Expr, out: &mut Vec<Expr>) {
     out.extend(rights.into_iter().rev());
 }
 
+/// A body position holds one statement; when splitting turns it into several, wrap them in a block.
 fn body(arena: C, s: &mut Stmt) {
-    // A lone statement in a body position may itself need splitting; give it a list to split into.
     if let S::SBlock(b) = &mut s.data {
         stmt_list(arena, &mut b.stmts);
-    } else {
-        stmt(arena, s);
+        return;
+    }
+    let mut list = StoreSlice::new_mut(core::slice::from_mut(s));
+    stmt_list(arena, &mut list);
+    if list.len() > 1 {
+        *s = Stmt::allocate(
+            arena.arena,
+            bun_ast::S::Block {
+                stmts: list,
+                close_brace_loc: bun_ast::Loc::EMPTY,
+            },
+            s.loc,
+        );
     }
 }
 

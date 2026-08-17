@@ -1089,6 +1089,28 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   }, 30_000);
 
+  test("un-minified display: a bare `if(x)a(),b()` body splits like a block one; minified CSS/JSON keep plain gutters", async () => {
+    const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";
+    // The edit sits inside the `if` so the split body is in the shown context (`f` is renamed in lockstep to `a_`).
+    const js = (t: string) => pad + `function f(x){if(x)a(),b(),c(${t});else d(),e()}f(1);`;
+    const { text, exitCode } = await pretty({
+      "a/m.min.js": js("1"),
+      "b/m.min.js": js("2"),
+      "a/s.min.css": pad + ".a{color:red}.b{margin:0}.c{padding:0}",
+      "b/s.min.css": pad + ".a{color:blue}.b{margin:0}.c{padding:0}",
+    });
+    expect(text).toContain("│    if (a1) {\n");
+    expect(text).toContain("│      a();\n");
+    expect(text).toContain("│      b();\n");
+    expect(text).toContain("│-     c(1);\n");
+    expect(text).toContain("│+     c(2);\n");
+    expect(text).toContain("│    } else {\n");
+    expect(text).toContain("│      d();\n");
+    expect(text).not.toMatch(/0:0 │/);
+    expect(text).toMatch(/\n +\d+ │-   color: red;\n/);
+    expect(exitCode).toBe(0);
+  });
+
   test("package.json callouts: main, bin, exports, engines, license, types — changed, added, removed", async () => {
     const { text, exitCode } = await pretty({
       "a/package.json": JSON.stringify({

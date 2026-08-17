@@ -763,28 +763,25 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     };
 
     // Refuse an unsafe alias (a future folder) or registry name before either is fetched or printed; empty is tolerated.
-    let invalid_name = {
-        let alias = this.lockfile.str(&dependency.name);
-        let alias_is_safe = if alias == this.lockfile.str(&dependency.version.literal) {
-            // `bun add <specifier>` uses the specifier as the alias until
-            // `assign_resolution` names it: never a folder, but still printed.
-            !dependency::contains_control_character(alias)
-        } else {
-            alias.is_empty() || dependency::is_safe_install_folder_name(alias)
-        };
-        if !alias_is_safe {
-            Some(alias)
-        } else {
-            match version.tag {
-                dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
-                    let registry_name = this.lockfile.str(&name);
-                    (!registry_name.is_empty()
-                        && !dependency::is_safe_install_folder_name(registry_name))
-                    .then_some(registry_name)
-                }
-                _ => None,
-            }
+    let alias = this.lockfile.str(&dependency.name);
+    let alias_is_safe = if alias == this.lockfile.str(&dependency.version.literal) {
+        // `bun add <specifier>`'s alias until `assign_resolution` names it: never a folder, but printed.
+        !dependency::contains_control_character(alias)
+    } else {
+        alias.is_empty() || dependency::is_safe_install_folder_name(alias)
+    };
+    let registry_name: &[u8] = match version.tag {
+        dependency::version::Tag::Npm | dependency::version::Tag::DistTag => {
+            this.lockfile.str(&name)
         }
+        _ => b"",
+    };
+    let invalid_name = if !alias_is_safe {
+        Some(alias)
+    } else if !registry_name.is_empty() && !dependency::is_safe_install_folder_name(registry_name) {
+        Some(registry_name)
+    } else {
+        None
     };
     if let Some(invalid_name) = invalid_name {
         let name = bun_fmt::escape_control_chars(invalid_name);

@@ -68,7 +68,7 @@ test("String-object arguments whose toPrimitive triggers GC do not corrupt earli
       bunExe(),
       "-e",
       `const path = require("node:path");
-const long = "/dir/" + "seg_".repeat(4000);
+const long = "/dir/" + Buffer.alloc(16000, "seg_").toString();
 const first = () => Object.assign(new String("x"), {
   [Symbol.toPrimitive]() { return long.slice(1).padStart(long.length, "/"); },
 });
@@ -76,7 +76,7 @@ const second = value => Object.assign(new String("y"), {
   [Symbol.toPrimitive]() {
     Bun.gc(true);
     const keep = [];
-    for (let i = 0; i < 200; i++) keep.push("Q".repeat(50000 + i));
+    for (let i = 0; i < 200; i++) keep.push(Buffer.alloc(50000 + i, "Q").toString());
     globalThis.keep = keep;
     Bun.gc(true);
     return value;
@@ -100,7 +100,8 @@ for (const ns of ["posix", "win32"]) {
 }
 console.log(results.join("\\n"));`,
     ],
-    env: { ...bunEnv, Malloc: "1" },
+    // Malloc=1 lets ASan builds see the freed JSC string; bmalloc has no SystemHeap on Windows.
+    env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: "detect_leaks=0" },
     stdout: "pipe",
     stderr: "pipe",
   });

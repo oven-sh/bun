@@ -41,7 +41,7 @@ static inline JSC::EncodedJSValue createZigFunction(JSGlobalObject* globalObject
         // A String object can run user JS (Symbol.toPrimitive / toString) when
         // stringified; do it here so the resulting JSString is rooted in `args`
         // before the native side borrows characters from any argument.
-        if (Function != Bun__Path__format) {
+        if (Function != Bun__Path__format && Function != Bun__Path__toNamespacedPath) {
             if (arg.isCell()) {
                 const JSC::JSType type = arg.asCell()->type();
                 if (type == JSC::StringObjectType || type == JSC::DerivedStringObjectType) {

@@ -28,16 +28,29 @@
 
 #include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
+#include <optional>
+#include <wtf/text/StringCommon.h>
 
 namespace WebCore {
 
 // The WHATWG parser (WebKit) fast-paths all-ASCII hosts without validating
 // xn-- labels; Node's ada rejects invalid punycode in special-scheme hosts.
 // `input` is the string the host was parsed from (a base URL's host was checked when the base was parsed).
+template<typename CharacterType>
+static bool containsXNDashDash(std::span<const CharacterType> host)
+{
+    // "--" is rare in hosts; look for it and check the two characters before it. Special-scheme hosts are lowercase here.
+    for (size_t i = WTF::find(host, '-'); i != notFound && i + 1 < host.size(); i = WTF::find(host, '-', i + 1)) {
+        if (host[i + 1] == '-' && i >= 2 && host[i - 2] == 'x' && host[i - 1] == 'n')
+            return true;
+    }
+    return false;
+}
+
 static bool hasValidParsedHost(const URL& url, const String& input)
 {
     auto host = url.host();
-    if (host.length() < 4 || !host.contains("xn--"_s))
+    if (host.length() < 4 || !(host.is8Bit() ? containsXNDashDash(host.span8()) : containsXNDashDash(host.span16())))
         return true;
     // Non-special schemes have opaque hosts and skip IDNA entirely.
     if (!url.hasSpecialScheme())
@@ -96,10 +109,32 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base, cons
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
+// new URL(input, base) is very often called with the same base string over and over (a configured origin, the
+// current request's URL), so remember the last base that parsed and validated. A null URL means the base was invalid.
+static URL parseBase(const String& base)
+{
+    struct LastBase {
+        String input;
+        URL url;
+    };
+    static thread_local std::optional<LastBase> lastBase;
+    if (lastBase && lastBase->input == base) [[likely]]
+        return lastBase->url;
+    URL baseURL { base };
+    if (!baseURL.isValid() || !hasValidParsedHost(baseURL, base))
+        return { };
+    // Keep copies that are safe to destroy at thread exit, whatever kind of string the caller passed.
+    if (!lastBase)
+        lastBase.emplace();
+    lastBase->input = base.isolatedCopy();
+    lastBase->url = baseURL.string().impl() == base.impl() ? URL { lastBase->input } : baseURL.isolatedCopy();
+    return baseURL;
+}
+
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
-    URL baseURL { base };
-    if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL, base)))
+    URL baseURL = base.isNull() ? URL { } : parseBase(base);
+    if (!base.isNull() && !baseURL.isValid())
         return Exception { InvalidURLError, url, base };
     return create(url, baseURL, base);
 }
@@ -108,8 +143,8 @@ DOMURL::~DOMURL() = default;
 
 static URL parseInternal(const String& url, const String& base)
 {
-    URL baseURL { base };
-    if (!base.isNull() && (!baseURL.isValid() || !hasValidParsedHost(baseURL, base)))
+    URL baseURL = base.isNull() ? URL { } : parseBase(base);
+    if (!base.isNull() && !baseURL.isValid())
         return {};
     URL result { baseURL, url };
     if (result.isValid() && !hasValidParsedHost(result, url))

@@ -2793,7 +2793,11 @@ describe("GC pressure mid-rewrite", () => {
   it("content op string arguments survive a GC triggered while coercing a later argument", async () => {
     const fixture = /* js */ `
       const N = 20000;
-      const mk = (ch, n) => Array.from({ length: n }, () => ch).join("");
+      // A fresh, non-atom string each call (slice+concat resolves to a new StringImpl on toString()).
+      const mk = (ch, n) => {
+        const s = ch.repeat(n);
+        return s.slice(0, 1) + s.slice(1);
+      };
       const churn = () => {
         Bun.gc(true);
         for (let i = 0; i < 50; i++) mk("SECRET", 20000);
@@ -2849,7 +2853,8 @@ describe("GC pressure mid-rewrite", () => {
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: bunEnv,
+      // Malloc=1 routes JSC string allocations through the system allocator so ASan builds see the free.
+      env: { ...bunEnv, Malloc: "1" },
       stdout: "pipe",
       stderr: "inherit",
     });

@@ -598,6 +598,7 @@ static JSC::JSValue unwrapSynchronouslySettledPromise(JSC::JSGlobalObject* globa
     while (auto* promise = dynamicDowncast<JSC::JSPromise>(value)) {
         switch (promise->status()) {
         case JSC::JSPromise::Status::Rejected:
+            promise->markAsHandled();
             scope.throwException(globalObject, promise->result());
             return {};
         case JSC::JSPromise::Status::Fulfilled:

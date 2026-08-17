@@ -89,6 +89,22 @@ fn data_eql<'a, const STRICT: bool, const TYPESCRIPT: bool, const SCAN_ONLY: boo
     }
 }
 
+/// Replaces `require.main === module` (any equality operator) with `import.meta.main`.
+fn fold_require_main_and_module<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool>(
+    e_: &E::Binary,
+    p: &mut P<'a, TYPESCRIPT, SCAN_ONLY>,
+    inverted: bool,
+    loc: bun_ast::Loc,
+) -> Expr {
+    p.ignore_usage_of_runtime_require();
+    for operand in [e_.left, e_.right] {
+        if let ExprData::EIdentifier(id) = operand.data {
+            p.ignore_usage(id.ref_);
+        }
+    }
+    p.value_for_import_meta_main(inverted, loc)
+}
+
 pub struct BinaryExpressionVisitor {
     /// Arena handle to the in-place `E::Binary` node.
     /// `StoreRef` is the safe arena back-reference: `Copy` + `Deref`/`DerefMut`
@@ -237,9 +253,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinLooseEq => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage_of_runtime_require();
-                        p.ignore_usage(p.module_ref);
-                        return p.value_for_import_meta_main(false, v.loc);
+                        return fold_require_main_and_module(e_, p, false, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
@@ -267,9 +281,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinStrictEq => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
-                        p.ignore_usage_of_runtime_require();
-                        return p.value_for_import_meta_main(false, v.loc);
+                        return fold_require_main_and_module(e_, p, false, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: true }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: false }, v.loc),
@@ -290,9 +302,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinLooseNe => {
                 match data_eql::<false, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
-                        p.ignore_usage_of_runtime_require();
-                        return p.value_for_import_meta_main(true, v.loc);
+                        return fold_require_main_and_module(e_, p, true, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),
@@ -317,9 +327,7 @@ impl BinaryExpressionVisitor {
             Op::Code::BinStrictNe => {
                 match data_eql::<true, TYPESCRIPT, SCAN_ONLY>(&e_.left.data, &e_.right.data, p) {
                     Equality::RequireMainAndModule => {
-                        p.ignore_usage(p.module_ref);
-                        p.ignore_usage_of_runtime_require();
-                        return p.value_for_import_meta_main(true, v.loc);
+                        return fold_require_main_and_module(e_, p, true, v.loc);
                     }
                     Equality::Equal => return p.new_expr(E::Boolean { value: false }, v.loc),
                     Equality::NotEqual => return p.new_expr(E::Boolean { value: true }, v.loc),

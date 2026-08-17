@@ -2713,12 +2713,13 @@ impl EqlKindT for StrictEql {
 }
 
 /// Minimal parser surface needed by `Data::eql` — only the arena and the
-/// module ref are touched. Kept separate from
+/// CommonJS `module` check are touched. Kept separate from
 /// `ast::p::ParserLike` so this file does not grow that trait (out of scope);
 /// blanket-impl'd for every `P<...>` instantiation below.
 pub trait EqlParser {
     fn arena(&self) -> &Bump;
-    fn module_ref(&self) -> Ref;
+    /// Is `ref_` the `module` operand of `require.main === module`?
+    fn is_module_ref(&self, ref_: Ref) -> bool;
 }
 // `impl EqlParser for P<...>` lives in `bun_js_parser` (next to `P`).
 
@@ -2849,7 +2850,7 @@ impl Data {
                 // always re-ordered to the right side.
                 if matches!(right, Data::ERequireMain) {
                     if let Some(id) = left.as_e_identifier() {
-                        if id.ref_.eql(p.module_ref()) {
+                        if p.is_module_ref(id.ref_) {
                             return Equality::RequireMainAndModule;
                         }
                     }

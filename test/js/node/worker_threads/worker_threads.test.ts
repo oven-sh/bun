@@ -1102,12 +1102,12 @@ describe.concurrent("a message that fails to deserialize emits 'messageerror'", 
        const { port1, port2 } = new MessageChannel();
        const seen = [];
        const record = s => { seen.push(s); if (seen.length === 2) { console.log(seen.join(",")); port1.close(); port2.close(); } };
-       port2.on("messageerror", e => record("messageerror:" + (e instanceof Error)));
+       port2.on("messageerror", e => record("messageerror:" + e.constructor.name + ":" + e.message));
        port2.on("message", m => record("message:" + m));
        port1.postMessage(${undeserializable});
        port1.postMessage("after");`,
     );
-    expect(stdout).toBe("messageerror:true,message:after\n");
+    expect(stdout).toBe("messageerror:TypeError:Unable to deserialize data.,message:after\n");
     expect(exitCode).toBe(0);
   });
 
@@ -1121,10 +1121,10 @@ describe.concurrent("a message that fails to deserialize emits 'messageerror'", 
        const seen = [];
        const record = s => { seen.push(s); if (seen.length === 2) { console.log(seen.join(",")); w.terminate(); } };
        w.on("error", e => { console.log("error", e); process.exit(1); });
-       w.on("messageerror", e => record("messageerror:" + (e instanceof Error)));
+       w.on("messageerror", e => record("messageerror:" + e.constructor.name + ":" + e.message));
        w.on("message", m => record("message:" + m));`,
     );
-    expect(stdout).toBe("messageerror:true,message:after\n");
+    expect(stdout).toBe("messageerror:TypeError:Unable to deserialize data.,message:after\n");
     expect(exitCode).toBe(0);
   });
 });

@@ -1170,7 +1170,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
                 Ok(v) => v,
                 Err(_) => {
                     Output::err_generic(
-                        "Invalid value for --max-old-space-size: \"{}\". Must be a positive integer\n",
+                        "Invalid value for --max-old-space-size: \"{}\". Must be a non-negative integer (0 disables the limit)\n",
                         format_args!("{}", BStr::new(size_str)),
                     );
                     Global::exit(1);

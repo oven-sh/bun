@@ -178,14 +178,17 @@ public:
     JSC::JSGlobalObject* m_globalObject;
     JSHTTPParser* m_thisParser = nullptr;
 
-    llhttp_t m_parserData;
+    // Zeroed until initialize(); `m_parserData.settings == nullptr` means uninitialised.
+    llhttp_t m_parserData {};
     StringPtr m_fields[kMaxHeaderFieldsCount];
     StringPtr m_values[kMaxHeaderFieldsCount];
     StringPtr m_url;
     StringPtr m_statusMessage;
-    size_t m_numFields;
-    size_t m_numValues;
-    bool m_haveFlushed;
+    size_t m_numFields = 0;
+    size_t m_numValues = 0;
+    bool m_haveFlushed = false;
+
+    inline bool isInitialized() const { return m_parserData.settings != nullptr; }
 
     // We don't use m_gotException. Instead, we use RETURN_IF_EXCEPTION
     // bool m_gotException;

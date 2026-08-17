@@ -1150,6 +1150,57 @@ it("getServername on a closed TLS socket should not crash", async () => {
   expect(await promise).toBeUndefined();
   expect(client.getServername()).toBeUndefined();
 });
+it("exportKeyingMaterial with a context whose toPrimitive terminates the socket does not use-after-free", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const tls = ${JSON.stringify(tls)};
+      const listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls,
+        socket: { data() {}, open() {}, close() {} },
+      });
+      const { promise, resolve } = Promise.withResolvers();
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: listener.port,
+        tls: { ...tls, rejectUnauthorized: false },
+        socket: {
+          data() {},
+          open() {},
+          handshake(s) {
+            const ctx = Object.assign(new String("ctx"), {
+              [Symbol.toPrimitive]() { s.terminate(); Bun.gc(true); return "ctx"; },
+            });
+            let result;
+            try {
+              result = String(s.exportKeyingMaterial(32, "EXPORTER-test", ctx));
+            } catch (e) {
+              result = "threw: " + e.message;
+            }
+            resolve(result);
+          },
+          close() {},
+          error() {},
+        },
+      });
+      console.log(await promise);
+      listener.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("undefined\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("TLS client: flush() after end() does not double-teardown before deferred onClose", async () => {
   // `end()` on a TLS client sends close_notify and defers the raw close until the
   // peer replies, leaving `is_active` set so the eventual onClose can release the
@@ -1545,6 +1596,64 @@ describe.concurrent("TLS server: write() to the accepted socket from inside its 
       });
     });
   }
+});
+
+it("alpnCallback: a selection whose ToString throws surfaces the thrown Error, not an engine-internal cell", async () => {
+  // The thrown value must reach the `error` handler as a plain Error, not the
+  // JSC::Exception wrapper cell: `Object.prototype.toString.call` on the cell
+  // aborts the process and `instanceof Error` on it is false. The crash fires
+  // on the first property load of the value, so probe it in a subprocess.
+  using dir = tempDir("alpn-tostring-throw", {
+    "fixture.cjs": `
+      const tlsMod = require("node:tls");
+      const server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: { key: ${JSON.stringify(tls.key)}, cert: ${JSON.stringify(tls.cert)} },
+        socket: {
+          alpnCallback() {
+            // Not a boolean, and ToString on it throws a TypeError.
+            return Symbol("alpn-choice");
+          },
+          data() {},
+          error(_socket, v) {
+            const tag = Object.prototype.toString.call(v);
+            console.log("error:" + (v instanceof Error) + ":" + tag + ":" + (v && v.name));
+          },
+          close() {},
+        },
+      });
+      const client = tlsMod.connect({
+        port: server.port,
+        host: "127.0.0.1",
+        ca: ${JSON.stringify(tls.cert)},
+        servername: "localhost",
+        ALPNProtocols: ["x/1"],
+      });
+      // The server refuses the connection with a fatal no_application_protocol
+      // alert after its error handler ran; either client event ends the test.
+      client.on("error", () => server.stop(true));
+      client.on("secureConnect", () => {
+        client.end();
+        server.stop(true);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "fixture.cjs"],
+    env: { ...bunEnv, ASAN_OPTIONS: "symbolize=0:abort_on_error=1:allow_user_segv_handler=1" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect({ lines: stdout.trim().split(/\r?\n/), stderr, exitCode }).toEqual({
+    lines: ["error:true:[object Error]:TypeError"],
+    stderr: "",
+    exitCode: 0,
+  });
 });
 
 // Bun.connect() on a Windows named pipe takes a dedicated early branch in

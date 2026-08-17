@@ -2024,10 +2024,13 @@ impl<'a> Parser<'a> {
                 i += 1;
             }
 
-            runtime_imports[0..i].sort_unstable_by(|a, b| {
-                RuntimeImports::ALL_SORTED_INDEX[*a as usize]
-                    .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
-            });
+            bun_collections::index_sort::sort_slice_unstable_by(
+                &mut runtime_imports[0..i],
+                |a, b| {
+                    RuntimeImports::ALL_SORTED_INDEX[*a as usize]
+                        .cmp(&RuntimeImports::ALL_SORTED_INDEX[*b as usize])
+                },
+            );
 
             if i > 0 {
                 // snapshot to break the `&mut self` ↔ `&self.runtime_imports`

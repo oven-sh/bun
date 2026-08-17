@@ -39,7 +39,7 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--no-save" type="boolean">
-  Don't update <code>package.json</code> or save a lockfile
+  Has no effect. <code>bun link</code> updates <code>package.json</code> and the lockfile only with <code>--save</code>
 </ParamField>
 
 <ParamField path="--save" type="boolean">
@@ -70,7 +70,8 @@ bun link <packages>
 </ParamField>
 
 <ParamField path="--dry-run" type="boolean">
-  Perform a dry run without making changes
+  With <code>bun link &lt;package&gt;</code>, resolve but don't install packages, update <code>package.json</code>, or
+  save a lockfile. Has no effect on bare <code>bun link</code>, which still registers the current package
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">

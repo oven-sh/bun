@@ -4,7 +4,7 @@ import { existsSync, lstatSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
 import { VerdaccioRegistry, bunEnv, bunExe, readdirSorted, runBunInstall, tempDir } from "harness";
 import { createRequire } from "module";
-import { dirname, join } from "path";
+import { basename, dirname, join } from "path";
 
 const registry = new VerdaccioRegistry();
 
@@ -23,6 +23,12 @@ function withoutEntryHash(link: string): string {
 // always differ) but the hash suffix is what proves sharing/isolation.
 function entryStoreName(link: string): string {
   return link.slice(link.lastIndexOf("links") + "links".length + 1);
+}
+
+// What a store entry name carries in place of its URL's userinfo and query
+// string (see "store entry names of URL dependencies").
+function urlHash(url: string): string {
+  return Bun.hash(url).toString(16).padStart(16, "0");
 }
 
 beforeAll(async () => {
@@ -2041,6 +2047,8 @@ test("transitive peer deps are resolved when resolution is fully synchronous", a
 // A tarball URL with a query string must not put a literal `?` in the .bun
 // store directory name: module resolution parses `?` as a query-string
 // delimiter (truncating the path), and `?` is invalid in Windows filenames.
+// (The query string is now left out of the name altogether, see "store entry
+// names of URL dependencies" below.)
 test("tarball URL with query string resolves at runtime", async () => {
   const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
 
@@ -2056,13 +2064,14 @@ test("tarball URL with query string resolves at runtime", async () => {
     },
   });
 
+  const url = `http://localhost:${server.port}/pkg.tgz?x=y`;
   using cacheDir = tempDir("tarball-query-cache-", {});
   using packageDir = tempDir("tarball-query-test-", {
     "bunfig.toml": `[install]\ncache = "${String(cacheDir).replaceAll("\\", "\\\\")}"\nlinker = "isolated"\n`,
     "package.json": JSON.stringify({
       name: "test-tarball-query",
       dependencies: {
-        "no-deps": `http://localhost:${server.port}/pkg.tgz?x=y`,
+        "no-deps": url,
       },
     }),
     "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);`,
@@ -2072,7 +2081,7 @@ test("tarball URL with query string resolves at runtime", async () => {
 
   const bunDir = join(String(packageDir), "node_modules", ".bun");
   const storeEntries = (await readdirSorted(bunDir)).filter(entry => entry !== "node_modules");
-  expect(storeEntries).toEqual([`no-deps@http+++localhost+${server.port}+pkg.tgz+x=y`]);
+  expect(storeEntries).toEqual([`no-deps@http+++localhost+${server.port}+pkg.tgz+${urlHash(url)}`]);
 
   await using proc = spawn({
     cmd: [bunExe(), "index.mjs"],
@@ -2085,6 +2094,217 @@ test("tarball URL with query string resolves at runtime", async () => {
   expect(stderr).toBe("");
   expect(stdout).toBe("1.0.0\n");
   expect(exitCode).toBe(0);
+});
+
+// The store entry of a tarball or git dependency is named after its URL, and
+// that name ends up in every path under the entry (realpaths, stack traces,
+// `bun pm` output). Credentials travel in the userinfo (`user:token@`) or the
+// query string (`?token=`), so those parts are left out of the name; the hash
+// of the complete URL takes their place (see `urlHash`), which also keeps URLs
+// that differ only in those parts in separate entries. A URL without either
+// part keeps the name it always had.
+describe("store entry names of URL dependencies", () => {
+  const installEnv = (dir: string, env: NodeJS.Dict<string> = bunEnv) => ({
+    ...env,
+    BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache"),
+  });
+
+  async function storeEntries(dir: string): Promise<string[]> {
+    return (await readdirSorted(join(dir, "node_modules", ".bun"))).filter(entry => entry !== "node_modules");
+  }
+
+  async function runIndexMjs(dir: string) {
+    await using proc = spawn({
+      cmd: [bunExe(), "index.mjs"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // Serves the registry fixture `no-deps-<v>.tgz` at `/cdn/pkg.tgz?v=<v>`
+  // (1.0.0 without a query string), whatever else the query string contains.
+  function serveTarballs() {
+    return Bun.serve({
+      port: 0,
+      fetch(req) {
+        const { pathname, searchParams } = new URL(req.url);
+        if (pathname !== "/cdn/pkg.tgz") return new Response("not found", { status: 404 });
+        const version = searchParams.get("v") ?? "1.0.0";
+        return new Response(file(join(import.meta.dir, "registry", "packages", "no-deps", `no-deps-${version}.tgz`)));
+      },
+    });
+  }
+
+  // (A username without a password, `http://token@host:port/...`, is covered
+  // by the git cases below: the tarball downloader currently sends such a URL
+  // with the userinfo still in the Host header, which the server rejects.)
+  const tarballCases: [description: string, url: (port: number) => string, hashed: boolean][] = [
+    ["a plain URL", port => `http://127.0.0.1:${port}/cdn/pkg.tgz`, false],
+    ["a password in the URL", port => `http://carol:s3cret@127.0.0.1:${port}/cdn/pkg.tgz`, true],
+    ["a token in the query string", port => `http://127.0.0.1:${port}/cdn/pkg.tgz?token=npm_s3cret`, true],
+    [
+      "credentials in both places",
+      port => `http://carol:s3cret@127.0.0.1:${port}/cdn/pkg.tgz?token=npm_s3cret#fragment`,
+      true,
+    ],
+  ];
+
+  test.concurrent.each(tarballCases)("tarball dependency with %s", async (_, urlFor, hashed) => {
+    using server = serveTarballs();
+    const url = urlFor(server.port);
+    using dir = tempDir("store-name-tarball-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": url } }),
+      "index.mjs": `import pkg from "no-deps";\nconsole.log(pkg.version);`,
+    });
+    const env = installEnv(String(dir));
+
+    await runBunInstall(env, String(dir));
+
+    const entry = `no-deps@http+++127.0.0.1+${server.port}+cdn+pkg.tgz${hashed ? `+${urlHash(url)}` : ""}`;
+    expect(await storeEntries(String(dir))).toEqual([entry]);
+    expect(readlinkSync(join(String(dir), "node_modules", "no-deps"))).toBe(
+      join(".bun", entry, "node_modules", "no-deps"),
+    );
+    // Only the directory is named differently; the dependency still resolves
+    // to the URL as written.
+    expect(await file(join(String(dir), "bun.lock")).text()).toContain(`no-deps@${url}`);
+    expect(await runIndexMjs(String(dir))).toEqual({ stdout: "1.0.0\n", stderr: "", exitCode: 0 });
+
+    // The next install derives the same name from the lockfile.
+    await runBunInstall(env, String(dir), { savesLockfile: false });
+    expect(await storeEntries(String(dir))).toEqual([entry]);
+  });
+
+  test.concurrent("tarball URLs that differ only in their query string get separate store entries", async () => {
+    using server = serveTarballs();
+    const base = `http://127.0.0.1:${server.port}/cdn/pkg.tgz`;
+    const urls = { "no-deps-v1": `${base}?v=1.0.0`, "no-deps-v2": `${base}?v=2.0.0` };
+    using dir = tempDir("store-name-tarball-query-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: urls }),
+      "index.mjs": `import v1 from "no-deps-v1";\nimport v2 from "no-deps-v2";\nconsole.log(v1.version, v2.version);`,
+    });
+
+    await runBunInstall(installEnv(String(dir)), String(dir));
+
+    expect(await storeEntries(String(dir))).toEqual(
+      Object.values(urls)
+        .map(url => `no-deps@http+++127.0.0.1+${server.port}+cdn+pkg.tgz+${urlHash(url)}`)
+        .sort(),
+    );
+    expect(await runIndexMjs(String(dir))).toEqual({ stdout: "1.0.0 2.0.0\n", stderr: "", exitCode: 0 });
+  });
+
+  test.concurrent("the global store entry of a tarball dependency is named the same way", async () => {
+    using server = serveTarballs();
+    const url = `http://carol:s3cret@127.0.0.1:${server.port}/cdn/pkg.tgz?token=npm_s3cret`;
+    using dir = tempDir("store-name-tarball-global-", {
+      "bunfig.toml": `[install]\nlinker = "isolated"\nglobalStore = true\n`,
+      "package.json": JSON.stringify({ name: "app", dependencies: { "no-deps": url } }),
+    });
+
+    await runBunInstall(installEnv(String(dir)), String(dir));
+
+    const entry = `no-deps@http+++127.0.0.1+${server.port}+cdn+pkg.tgz+${urlHash(url)}`;
+    expect(await storeEntries(String(dir))).toEqual([entry]);
+    // `node_modules/.bun/<entry>` links to `<cache>/links/<entry>-<entry hash>`.
+    const target = readlinkSync(join(String(dir), "node_modules", ".bun", entry));
+    expect(basename(dirname(target))).toBe("links");
+    expect(basename(target).slice(0, entry.length)).toBe(entry);
+    expect(basename(target).slice(entry.length)).toMatch(/^-[0-9a-f]{16}$/);
+    expect(await file(join(target, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.0",
+    });
+  });
+
+  describe.skipIf(!gitExecutable)("git dependencies", () => {
+    const gitEnv = {
+      ...bunEnv,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_AUTHOR_NAME: "bun-test",
+      GIT_AUTHOR_EMAIL: "test@bun.sh",
+      GIT_COMMITTER_NAME: "bun-test",
+      GIT_COMMITTER_EMAIL: "test@bun.sh",
+    };
+
+    async function git(cwd: string, ...args: string[]): Promise<string> {
+      await using proc = spawn({ cmd: [gitExecutable!, ...args], cwd, env: gitEnv, stdout: "pipe", stderr: "pipe" });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).not.toContain("fatal:");
+      expect(exitCode).toBe(0);
+      return stdout;
+    }
+
+    // `<root>/repo.git`: a bare repository with one commit of the package
+    // `git-dep`, prepared for git's dumb HTTP protocol (after
+    // `git update-server-info` a bare repository is plain static files).
+    async function createBareRepo(root: string): Promise<{ bare: string; sha: string }> {
+      const src = join(root, "git-src");
+      const bare = join(root, "repo.git");
+      await write(join(src, "package.json"), JSON.stringify({ name: "git-dep", version: "1.0.0" }));
+      await git(src, "init", "-q");
+      await git(src, "add", "package.json");
+      await git(src, "commit", "-q", "-m", "init", "--no-gpg-sign");
+      const sha = (await git(src, "rev-parse", "HEAD")).trim();
+      await git(root, "clone", "-q", "--bare", src, bare);
+      await git(bare, "update-server-info");
+      return { bare, sha };
+    }
+
+    function serveBareRepo(bare: string) {
+      return Bun.serve({
+        port: 0,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          if (!pathname.startsWith("/repo.git/")) return new Response("not found", { status: 404 });
+          const f = file(join(bare, pathname.slice("/repo.git/".length)));
+          return (await f.exists()) ? new Response(f) : new Response("not found", { status: 404 });
+        },
+      });
+    }
+
+    const gitCases: [description: string, repo: (port: number) => string, hashed: boolean][] = [
+      ["a plain URL", port => `http://127.0.0.1:${port}/repo.git`, false],
+      ["a password in the URL", port => `http://carol:s3cret@127.0.0.1:${port}/repo.git`, true],
+      ["a token as the username", port => `http://ghp_s3cret@127.0.0.1:${port}/repo.git`, true],
+    ];
+
+    test.concurrent.each(gitCases)("git dependency with %s", async (_, repoFor, hashed) => {
+      using dir = tempDir("store-name-git-", {});
+      const { bare, sha } = await createBareRepo(String(dir));
+      using server = serveBareRepo(bare);
+      const repo = repoFor(server.port);
+      const project = join(String(dir), "project");
+      await write(
+        join(project, "package.json"),
+        JSON.stringify({ name: "app", dependencies: { "git-dep": `git+${repo}` } }),
+      );
+      await write(join(project, "bunfig.toml"), `[install]\nlinker = "isolated"\n`);
+      const env = installEnv(String(dir), gitEnv);
+
+      await runBunInstall(env, project);
+
+      const entry = `git-dep@git+http+++127.0.0.1+${server.port}+repo.git${hashed ? `+${urlHash(repo)}` : ""}+${sha}`;
+      expect(await storeEntries(project)).toEqual([entry]);
+      expect(readlinkSync(join(project, "node_modules", "git-dep"))).toBe(
+        join(".bun", entry, "node_modules", "git-dep"),
+      );
+      expect(await file(join(project, "node_modules", "git-dep", "package.json")).json()).toEqual({
+        name: "git-dep",
+        version: "1.0.0",
+      });
+      expect(await file(join(project, "bun.lock")).text()).toContain(`git-dep@git+${repo}#${sha}`);
+
+      await runBunInstall(env, project, { savesLockfile: false });
+      expect(await storeEntries(project)).toEqual([entry]);
+    });
+  });
 });
 
 describe("global virtual store", () => {

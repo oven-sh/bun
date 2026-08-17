@@ -78,7 +78,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         let Ok(data) = File::read_from(dir, b"yarn.lock") else {
             break 'yarn;
         };
-        let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data, dir) {
+        let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data) {
             Ok(r) => r,
             Err(e) => {
                 return LoadResult::Err(LoadResultErr {

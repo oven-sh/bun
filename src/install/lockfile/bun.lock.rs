@@ -3440,23 +3440,7 @@ pub(crate) fn resolve_peer_dep_version_based_among(
     is_candidate: impl Fn(PackageID) -> bool,
 ) -> Option<PackageID> {
     let range = deferred_peer_range(dep, catalogs, string_buf)?;
-    // `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
-    let name_hash = match range.tag {
-        DependencyVersionTag::Npm => StringBuilder::string_hash(range.npm().name.slice(string_buf)),
-        DependencyVersionTag::DistTag => {
-            StringBuilder::string_hash(range.dist_tag().name.slice(string_buf))
-        }
-        DependencyVersionTag::Git => {
-            StringBuilder::string_hash(range.git().package_name.slice(string_buf))
-        }
-        DependencyVersionTag::Github => {
-            StringBuilder::string_hash(range.github().package_name.slice(string_buf))
-        }
-        DependencyVersionTag::Tarball => {
-            StringBuilder::string_hash(range.tarball().package_name.slice(string_buf))
-        }
-        _ => dep.name_hash,
-    };
+    let name_hash = peer_candidate_name_hash(dep, range, string_buf);
 
     // The fresh resolver rewrites the name and range through
     // `lockfile.overrides` (and any catalog entry an override points at)
@@ -3478,6 +3462,41 @@ pub(crate) fn resolve_peer_dep_version_based_among(
         return None;
     }
 
+    resolve_peer_dep_by_range(range, name_hash, package_index, pkg_resolutions, string_buf)
+}
+
+/// `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
+pub(crate) fn peer_candidate_name_hash(
+    dep: &Dependency,
+    range: &DependencyVersion,
+    string_buf: &[u8],
+) -> PackageNameHash {
+    match range.tag {
+        DependencyVersionTag::Npm => StringBuilder::string_hash(range.npm().name.slice(string_buf)),
+        DependencyVersionTag::DistTag => {
+            StringBuilder::string_hash(range.dist_tag().name.slice(string_buf))
+        }
+        DependencyVersionTag::Git => {
+            StringBuilder::string_hash(range.git().package_name.slice(string_buf))
+        }
+        DependencyVersionTag::Github => {
+            StringBuilder::string_hash(range.github().package_name.slice(string_buf))
+        }
+        DependencyVersionTag::Tarball => {
+            StringBuilder::string_hash(range.tarball().package_name.slice(string_buf))
+        }
+        _ => dep.name_hash,
+    }
+}
+
+/// The scan itself; the yarn.lock migration also binds `*` and overridden peers with it.
+pub(crate) fn resolve_peer_dep_by_range(
+    range: &DependencyVersion,
+    name_hash: PackageNameHash,
+    package_index: &PackageIndexMap,
+    pkg_resolutions: &[Resolution],
+    string_buf: &[u8],
+) -> Option<PackageID> {
     let candidates = package_index.get(&name_hash)?.as_slice();
     candidates.iter().copied().find(|&id| {
         is_candidate(id)

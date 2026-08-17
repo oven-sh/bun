@@ -231,9 +231,34 @@ exports[`yarn.lock migration basic yarn.lock with workspace dependencies: worksp
         "lodash": "^4.17.21",
       },
     },
+    "packages/a": {
+      "name": "@workspace/a",
+      "version": "1.0.0",
+      "dependencies": {
+        "@workspace/b": "workspace:*",
+        "is-number": "^7.0.0",
+      },
+    },
+    "packages/b": {
+      "name": "@workspace/b",
+      "version": "1.0.0",
+      "dependencies": {
+        "is-odd": "^3.0.1",
+      },
+    },
   },
   "packages": {
+    "@workspace/a": ["@workspace/a@workspace:packages/a"],
+
+    "@workspace/b": ["@workspace/b@workspace:packages/b"],
+
+    "is-number": ["is-number@7.0.0", "", {}, "sha512-41Cifkg6e8TylSpdtTpeLVMqvSBEVzTttHvERD741+pnZ8ANv0004MRL43QKPDlK9cGvNp6NZWZUBlbGXYxxng=="],
+
+    "is-odd": ["is-odd@3.0.1", "", { "dependencies": { "is-number": "^6.0.0" } }, "sha512-CQpnWPrDwmP1+SMHXZhtLtJv90yiyVfluGsX5iNCVkrhQtU3TQHsUWPG9wkdk9Lgd5yNpAg9jQEo90CBaXgWMA=="],
+
     "lodash": ["lodash@4.17.21", "", {}, "sha512-v2kDEe57lecTulaDIuNTPy3Ry4gLGJ6Z1O3vE1krgXZNrsQ+LFTGHVxVjcXPs17LhbZVGedAJv8XZ1tvj5FvSg=="],
+
+    "is-odd/is-number": ["is-number@6.0.0", "", {}, "sha512-Wu1VHeILBK8KAWJUAiSZQX94GmOE45Rg6/538fKwiloUu21KncEkYGPqob2oSZ5mUT73vLGrHQjKw3KMPwfDzg=="],
   }
 }
 "
@@ -275,15 +300,15 @@ exports[`yarn.lock migration basic migration with realistic complex yarn.lock: c
     "": {
       "name": "complex-app",
       "dependencies": {
+        "@babel/core": "^7.20.0",
         "react": "^18.2.0",
         "react-dom": "^18.2.0",
-        "@babel/core": "^7.20.0",
         "webpack": "^5.75.0",
       },
       "devDependencies": {
         "@types/react": "^18.0.0",
-        "typescript": "^4.9.0",
         "eslint": "^8.0.0",
+        "typescript": "^4.9.0",
       },
       "optionalDependencies": {
         "fsevents": "^2.3.2",
@@ -3186,8 +3211,8 @@ exports[`bun pm migrate for existing yarn.lock yarn.lock with packages that have
     "": {
       "name": "os-cpu-test",
       "dependencies": {
-        "fsevents": "^2.3.2",
         "esbuild": "^0.17.0",
+        "fsevents": "^2.3.2",
       },
     },
   },

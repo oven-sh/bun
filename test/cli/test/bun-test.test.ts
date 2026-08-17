@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
 import { beforeAll, describe, expect, it, test } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
+import { bunEnv, bunExe, canCreateNonUtf8FileNames, isWindows, tempDir, tempDirWithFiles, tmpdirSync } from "harness";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
@@ -1881,5 +1881,121 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stdout).not.toContain("RAN other");
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
+  });
+});
+
+// A scanned file, and each --preload, is handed to the module loader as the
+// specifier itself. When that specifier does not resolve, the failure used to
+// end the whole run: the file's header, then exit 1 with nothing else printed.
+// Each case below is one way to make such a specifier; what is asserted is that
+// the failure is reported under the file and the other files still run.
+describe.concurrent("test files and preloads the module loader cannot resolve", () => {
+  const passing = (name: string) =>
+    `import { test } from "bun:test"; test("t", () => { console.log("RAN ${name}"); });`;
+
+  async function runBunTest(dir: string, ...args: string[]) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", ...args],
+      env: bunEnv,
+      cwd: dir,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a preload plugin whose onResolve throws for a file fails that file with the thrown error", async () => {
+    using dir = tempDir("unresolvable-plugin-throw", {
+      "plugin.ts": `
+        Bun.plugin({
+          name: "refuse",
+          setup(build) {
+            build.onResolve({ filter: /refused\\.test\\.ts$/ }, () => {
+              throw new Error("refused by onResolve");
+            });
+          },
+        });
+      `,
+      "a_first.test.ts": passing("a_first"),
+      "refused.test.ts": passing("refused"),
+      "z_last.test.ts": passing("z_last"),
+    });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir), "--preload", "./plugin.ts");
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN z_last");
+    expect(stdout).not.toContain("RAN refused");
+    expect(stderr).toContain("\nrefused.test.ts:\n");
+    expect(stderr).toContain("error: refused by onResolve\n");
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(stderr).toMatch(/\bacross 3 files\./);
+    expect(exitCode).toBe(1);
+  });
+
+  // '?' is not a legal file name character on Windows. Elsewhere the loader
+  // reads it as the start of a query string, so the file itself is not found.
+  test.skipIf(isWindows)("a file whose name contains '?' fails without stopping the run", async () => {
+    using dir = tempDir("unresolvable-question-mark", {
+      "a_first.test.ts": passing("a_first"),
+      "what?.test.ts": passing("what"),
+      "z_last.test.ts": passing("z_last"),
+    });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir));
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN z_last");
+    expect(stdout).not.toContain("RAN what");
+    expect(stderr).toContain("\nwhat?.test.ts:\n");
+    // Named as the entry point it was loaded as: no "from", nothing imported it.
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/what\?\.test\.ts'\n/);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(stderr).toMatch(/\bacross 3 files\./);
+    expect(exitCode).toBe(1);
+  });
+
+  // Such a name only survives as raw bytes; as a specifier it holds U+FFFD and
+  // no longer names the file (Node cannot load it either). Buffer paths are the
+  // only way to create one, so these files cannot be part of the tempDir tree.
+  test.skipIf(!canCreateNonUtf8FileNames())("file and directory names that are not valid UTF-8", async () => {
+    using dir = tempDir("unresolvable-non-utf8", {
+      "a_first.test.ts": passing("a_first"),
+      "z_last.test.ts": passing("z_last"),
+    });
+    const invalidByte = Buffer.from([0xff]);
+    const root = Buffer.from(String(dir) + "/");
+    writeFileSync(Buffer.concat([root, Buffer.from("b"), invalidByte, Buffer.from(".test.ts")]), passing("unloadable"));
+    const subdir = Buffer.concat([root, Buffer.from("dir"), invalidByte]);
+    mkdirSync(subdir);
+    writeFileSync(Buffer.concat([subdir, Buffer.from("/inner.test.ts")]), passing("unloadable"));
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir));
+
+    expect(stdout).toContain("RAN a_first");
+    expect(stdout).toContain("RAN z_last");
+    expect(stdout).not.toContain("RAN unloadable");
+    expect(stderr).toContain("\nb\uFFFD.test.ts:\n");
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/b\uFFFD\.test\.ts'\n/);
+    expect(stderr).toContain("\ndir\uFFFD/inner.test.ts:\n");
+    expect(stderr).toMatch(/error: Cannot find module '[^']*\/dir\uFFFD\/inner\.test\.ts'\n/);
+    expect(stderr).toContain(" 2 pass");
+    expect(stderr).toContain(" 2 fail");
+    expect(stderr).toMatch(/\bacross 4 files\./);
+    expect(exitCode).toBe(1);
+  });
+
+  // node: specifiers skip the file resolver, so the module loader is the first
+  // thing that rejects this one.
+  test("--preload of a node: module that does not exist reports it", async () => {
+    using dir = tempDir("unresolvable-node-preload", { "a.test.ts": passing("a") });
+    const { stdout, stderr, exitCode } = await runBunTest(String(dir), "--preload", "node:does_not_exist");
+
+    expect(stdout).not.toContain("RAN a");
+    expect(stderr).toContain("\na.test.ts:\n");
+    expect(stderr).toContain("error: No such built-in module: node:does_not_exist\n");
+    expect(stderr).toContain(" 0 pass");
+    expect(stderr).toContain(" 1 fail");
+    expect(exitCode).toBe(1);
   });
 });

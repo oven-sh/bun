@@ -278,6 +278,33 @@ export function canBuildNodeAddons(): boolean {
   return canBuildNodeAddonsCached;
 }
 
+let canCreateNonUtf8FileNamesCached: boolean | undefined;
+
+/**
+ * Whether the temp filesystem stores file names that are not valid UTF-8 byte
+ * for byte. Linux filesystems do, macOS's do not, and Windows names are UTF-16,
+ * so the situation does not exist there. Such a name can only be created by
+ * passing the path as a Buffer.
+ */
+export function canCreateNonUtf8FileNames(): boolean {
+  if (canCreateNonUtf8FileNamesCached === undefined) {
+    if (isWindows) {
+      canCreateNonUtf8FileNamesCached = false;
+    } else {
+      const dir = tmpdirSync("bun-non-utf8-name-probe-");
+      try {
+        fs.writeFileSync(Buffer.concat([Buffer.from(dir + "/"), Buffer.from([0xff])]), "");
+        canCreateNonUtf8FileNamesCached = fs.readdirSync(dir, { encoding: "buffer" }).some(name => name.includes(0xff));
+      } catch {
+        canCreateNonUtf8FileNamesCached = false;
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
+  }
+  return canCreateNonUtf8FileNamesCached;
+}
+
 export function shellExe(): string {
   return isWindows ? "pwsh" : "bash";
 }

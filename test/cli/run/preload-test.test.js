@@ -1,7 +1,7 @@
 import { spawnSync } from "bun";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 const preloadModule = `
@@ -209,5 +209,56 @@ plugin({
       expect(stdout.toString()).toBe("");
       expect(exitCode).toBe(1);
     }
+  });
+
+  async function run(dir, ...args) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+      env: bunEnv,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  // A preload is handed to the module loader as the specifier itself; node:
+  // names skip the file resolver, so this is the loader's own refusal, which
+  // used to be reported as nothing more than "Error occurred loading entry point: JSError".
+  test("reports a preloaded node: module that does not exist", async () => {
+    using dir = tempDir("bun-preload-missing-builtin", { "main.js": `console.log("RAN main");` });
+    const result = await run(dir, "--preload", "node:does_not_exist", "main.js");
+
+    expect(result).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("error: No such built-in module: node:does_not_exist\n"),
+      exitCode: 1,
+    });
+  });
+
+  // Resolving the entry point runs the plugin; its exception used to be
+  // replaced by an uninitialized one, which crashed the process.
+  test("reports the error thrown by a preloaded plugin's onResolve for the entry point", async () => {
+    using dir = tempDir("bun-preload-plugin-throws", {
+      "plugin.js": `
+        Bun.plugin({
+          name: "refuse",
+          setup(build) {
+            build.onResolve({ filter: /main\\.js$/ }, () => {
+              throw new Error("refused by onResolve");
+            });
+          },
+        });
+      `,
+      "main.js": `console.log("RAN main");`,
+    });
+    const result = await run(dir, "--preload", "./plugin.js", "./main.js");
+
+    expect(result).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("error: refused by onResolve\n"),
+      exitCode: 1,
+    });
   });
 });

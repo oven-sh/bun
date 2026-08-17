@@ -1,5 +1,16 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir, tls } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  canCreateNonUtf8FileNames,
+  isASAN,
+  isDebug,
+  isWindows,
+  normalizeBunSnapshot,
+  tempDir,
+  tls,
+} from "harness";
+import { writeFileSync } from "node:fs";
 
 test("--parallel: each worker has a unique JEST_WORKER_ID and BUN_TEST_WORKER_ID", async () => {
   // Sleep so worker 0 is busy when workers 1/2 come online and pick up the
@@ -1145,6 +1156,50 @@ test("--parallel --reporter=junit emits a synthetic suite for crashed files", as
   const innerFail = [...xml.matchAll(/<testsuite [^>]*\bfailures="(\d+)"/g)].reduce((a, m) => a + Number(m[1]), 0);
   expect({ innerTests, innerFail }).toEqual({ innerTests: outerTests, innerFail: outerFail });
 });
+
+test.skipIf(!canCreateNonUtf8FileNames())(
+  "--parallel --reporter=junit writes a crashed file's non-UTF-8 path as U+FFFD",
+  async () => {
+    using dir = tempDir("parallel-junit-non-utf8-path", {
+      // Every worker exits while setting up its first file, so both files end
+      // up in the synthetic crashed suite, the one place the coordinator writes
+      // a path itself. (A file with such a path cannot be loaded at all, so it
+      // never gets a regular suite.)
+      "exit-preload.js": `process.exit(7);`,
+      "ok.test.js": `import {test} from "bun:test"; test("ok", () => {});`,
+    });
+    writeFileSync(
+      Buffer.concat([Buffer.from(String(dir) + "/b"), Buffer.from([0xff]), Buffer.from(".test.js")]),
+      `import {test} from "bun:test"; test("t", () => {});`,
+    );
+    const out = String(dir) + "/out.xml";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        "--parallel=2",
+        "--preload",
+        "./exit-preload.js",
+        "--reporter=junit",
+        `--reporter-outfile=${out}`,
+      ],
+      env: { ...bunEnv, BUN_TEST_PARALLEL_SCALE_MS: "0" },
+      cwd: String(dir),
+      stderr: "pipe",
+      stdout: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("b\uFFFD.test.js (worker crashed: exit code 7)");
+
+    // The report declares encoding="UTF-8"; decoding it strictly is the first
+    // thing any XML parser does with it.
+    const xml = new TextDecoder("utf-8", { fatal: true }).decode(await Bun.file(out).bytes());
+    expect(xml).toContain('<testsuite name="b\uFFFD.test.js" file="b\uFFFD.test.js"');
+    expect(xml).toContain('<testcase name="(worker crashed)" classname="b\uFFFD.test.js">');
+    expect(xml).toContain('<testsuite name="ok.test.js"');
+    expect(exitCode).toBe(1);
+  },
+);
 
 test("--parallel: SIGTERM on coordinator kills workers and their grandchildren", async () => {
   const grandchild = `

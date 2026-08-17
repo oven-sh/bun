@@ -3626,7 +3626,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(jsGlobalObject);
 
     ErrorableString res;
-    res.success = false;
+    memset(&res, 0, sizeof(res));
 
     BunString keyZ;
     if (key.isString()) {
@@ -3699,7 +3699,9 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
         return result;
     } else {
         auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-        throwException(scope, res.result.err, globalObject);
+        // `res` is not written when the resolver threw (e.g. a plugin's onResolve); keep that exception.
+        if (!scope.exception())
+            throwException(scope, res.result.err, globalObject);
         return globalObject->vm().propertyNames->emptyIdentifier;
     }
 }

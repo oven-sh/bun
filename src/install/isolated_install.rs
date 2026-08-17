@@ -243,32 +243,23 @@ fn dependency_is_contained_folder(
         .contains_name(dep.name_hash, dep.name.slice(string_buf), string_buf)
 }
 
-/// `dependency_is_contained_folder` evaluated once for the whole lockfile.
-struct ContainedFolders {
-    /// Indexed by `DependencyID`.
-    dependencies: DynamicBitSet,
-    /// Indexed by `PackageID`: folders only such dependencies resolve to. They get
-    /// no store entry (`store::entry::Entry::nested_folder`).
-    packages: DynamicBitSet,
-}
-
-fn contained_folders(lockfile: &Lockfile) -> Result<ContainedFolders, AllocError> {
+/// `dependency_is_contained_folder` for every `DependencyID`, and the `PackageID`s only such
+/// dependencies resolve to: they get no store entry (`store::entry::Entry::nested_folder`).
+fn contained_folders(lockfile: &Lockfile) -> Result<(DynamicBitSet, DynamicBitSet), AllocError> {
     let pkgs = lockfile.packages.slice();
     let pkg_resolutions = pkgs.items_resolution();
     let resolutions = &lockfile.buffers.resolutions[..];
     let dependencies = &lockfile.buffers.dependencies[..];
 
-    let mut contained = ContainedFolders {
-        dependencies: DynamicBitSet::init_empty(dependencies.len())?,
-        packages: DynamicBitSet::init_empty(pkg_resolutions.len())?,
-    };
+    let mut contained = DynamicBitSet::init_empty(dependencies.len())?;
+    let mut nested = DynamicBitSet::init_empty(pkg_resolutions.len())?;
     for (pkg_id, pkg_res) in pkg_resolutions.iter().enumerate() {
         if pkg_res.tag == ResolutionTag::Folder {
-            contained.packages.set(pkg_id);
+            nested.set(pkg_id);
         }
     }
-    if contained.packages.count() == 0 {
-        return Ok(contained);
+    if nested.count() == 0 {
+        return Ok((contained, nested));
     }
 
     for (pkg_id, pkg_deps) in pkgs.items_dependencies().iter().enumerate() {
@@ -285,14 +276,14 @@ fn contained_folders(lockfile: &Lockfile) -> Result<ContainedFolders, AllocError
                 &pkg_resolutions[pkg_id],
                 &dependencies[dep_id as usize],
             ) {
-                contained.dependencies.set(dep_id as usize);
+                contained.set(dep_id as usize);
             } else {
-                contained.packages.unset(target as usize);
+                nested.unset(target as usize);
             }
         }
     }
 
-    Ok(contained)
+    Ok((contained, nested))
 }
 
 /// `pkg_id` has a `dependency_is_contained_folder` dependency resolving to `folder_pkg_id`.
@@ -331,8 +322,8 @@ pub(crate) fn build_store(
     let dependencies = &lockfile.buffers.dependencies[..];
     let string_buf = &lockfile.buffers.string_bytes[..];
 
-    let contained = contained_folders(lockfile)?;
-    let is_contained_folder = |dep_id: DependencyID| contained.dependencies.is_set(dep_id as usize);
+    let (contained, nested_folders) = contained_folders(lockfile)?;
+    let is_contained_folder = |dep_id: DependencyID| contained.is_set(dep_id as usize);
 
     let mut nodes: store::node::List = store::node::List::default();
 
@@ -392,8 +383,7 @@ pub(crate) fn build_store(
 
         // Per-package bits computed once: own peer-dep names, and non-peer
         // dependency names that will appear in `node_dependencies` (i.e., not
-        // filtered out by bundled/disabled/unresolved) and are peer providers for
-        // the packages below (contained folders are not, see the walk below).
+        // filtered out by bundled/disabled/unresolved).
         let own_peers: DynamicBitSetList =
             DynamicBitSetList::init_empty(lockfile.packages.len(), peer_name_count as usize)?;
         let provides: DynamicBitSetList =
@@ -1122,7 +1112,7 @@ pub(crate) fn build_store(
         let new_entry_parents: Vec<store::entry::Id> = vec![entry.entry_parent_id];
 
         // never hoisted, so it must not claim the hoist slots for its name below
-        let new_entry_nested_folder = contained.packages.is_set(pkg_id as usize);
+        let new_entry_nested_folder = nested_folders.is_set(pkg_id as usize);
 
         let hoisted = 'hoisted: {
             if !manager.options.hoist || new_entry_nested_folder {
@@ -2378,26 +2368,25 @@ pub(crate) fn install_isolated_packages(
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
 
-                    // An empty name is a local tarball whose integrity the lockfile
-                    // does not record; extracting it is what names its entry.
-                    let missing_from_cache = cache_subpath_z.is_empty()
-                        || match installer.manager().get_preinstall_state(pkg_id) {
-                            install::PreinstallState::Done => false,
-                            _ => {
-                                let exists = package_manager::directories::is_package_in_cache_at(
-                                    cache_dir,
-                                    cache_subpath_z,
-                                    pkg_res_tag,
-                                );
-                                if exists {
-                                    installer.manager_mut().set_preinstall_state(
-                                        pkg_id,
-                                        install::PreinstallState::Done,
-                                    );
-                                }
-                                !exists
+                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
+                    {
+                        // no entry name until extraction records a local tarball's integrity
+                        _ if cache_subpath_z.is_empty() => true,
+                        install::PreinstallState::Done => false,
+                        _ => {
+                            let exists = package_manager::directories::is_package_in_cache_at(
+                                cache_dir,
+                                cache_subpath_z,
+                                pkg_res_tag,
+                            );
+                            if exists {
+                                installer
+                                    .manager_mut()
+                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
                             }
-                        };
+                            !exists
+                        }
+                    };
 
                     if !missing_from_cache {
                         if let installer::PatchInfo::Patch(patch) = &patch_info {

@@ -30,7 +30,6 @@ pub use bv2_impl::{
     OnDependenciesAnalyze, singleton,
 };
 
-pub use crate::DeferredBatchTask::DeferredBatchTask;
 use crate::Graph::Graph;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports::RequestedExports;
@@ -118,8 +117,6 @@ pub struct BundleV2<'a> {
 
     pub(crate) finalizers: Vec<ExternalFreeFunction>,
 
-    pub(crate) drain_defer_task: DeferredBatchTask,
-
     /// Set true by DevServer. Currently every usage of the transpiler (Bun.build
     /// and `bun build` CLI) runs at the top of an event loop. When this is true,
     /// a callback is executed after all work is complete (`finishFromBakeDevServer`).
@@ -203,15 +200,6 @@ impl<'a> BundleV2<'a> {
         // bake DevServer, outlives the bundle pass. All `&self` methods on it
         // are FFI calls that take `*const`.
         self.plugins.map(|p| unsafe { p.as_ref() })
-    }
-
-    /// Mutable projection of the `plugins` backref for FFI calls that take
-    /// `*mut` (`drain_deferred`). The pointee is disjoint from `self` storage.
-    #[inline]
-    pub(crate) fn plugins_mut(&mut self) -> Option<&mut JSBundlerPlugin> {
-        // SAFETY: BACKREF — see `plugins_ref`. `&mut self` ensures no other
-        // `&JSBundlerPlugin` projection from this `BundleV2` overlaps.
-        self.plugins.map(|mut p| unsafe { p.as_mut() })
     }
 
     /// Mutable projection of the `bun_watcher` backref for `Watcher::add_file`.
@@ -738,7 +726,7 @@ pub mod bv2_impl {
                     kind: u8,
                 );
                 #[link_name = "JSBundlerPlugin__drainDeferred"]
-                safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin, rejected: bool);
+                safe fn JSBundlerPlugin__drainDeferred(this: &mut Plugin);
                 #[link_name = "JSBundlerPlugin__hasOnBeforeParsePlugins"]
                 safe fn JSBundlerPlugin__hasOnBeforeParsePlugins(this: &Plugin) -> i32;
                 // `ctx`/`args`/`result` are opaque cookies the C++ side round-trips
@@ -765,8 +753,8 @@ pub mod bv2_impl {
                 /// only bundler caller (`DeferredBatchTask::run_on_js_thread`)
                 /// ignores failures, so the void FFI call is the observable
                 /// behaviour at this tier.
-                pub(crate) fn drain_deferred(&mut self, rejected: bool) {
-                    JSBundlerPlugin__drainDeferred(self, rejected)
+                pub(crate) fn drain_deferred(&mut self) {
+                    JSBundlerPlugin__drainDeferred(self)
                 }
 
                 #[inline]
@@ -1083,7 +1071,10 @@ pub mod bv2_impl {
             /// are the real lower-tier `bun_event_loop` types, so `dispatch()` /
             /// `run_on_js_thread()` are implemented inherently (no T6 hook).
             pub struct Resolve {
+                /// Owning loop only (`dispatch()`, the answer); `run_on_js_thread` uses `plugins`.
                 pub bv2: *mut BundleV2<'static>,
+                /// `BundleV2::plugins` as of `init`.
+                pub(crate) plugins: Option<core::ptr::NonNull<Plugin>>,
                 pub import_record: MiniImportRecord,
                 pub value: ResolveValue,
                 /// `jsc.AnyEventLoop.Task` — intrusive node for the Mini-loop queue.
@@ -1096,6 +1087,7 @@ pub mod bv2_impl {
                 fn default() -> Self {
                     Self {
                     bv2: core::ptr::null_mut(),
+                    plugins: None,
                     import_record: MiniImportRecord::default(),
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
@@ -1116,6 +1108,7 @@ pub mod bv2_impl {
                     // SAFETY: lifetime erased — Resolve is owned by the dispatch
                     // chain and never outlives `bv2`.
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                    plugins: bv2.plugins,
                     import_record: record,
                     value: ResolveValue::Pending,
                     task: bun_event_loop::AnyTaskWithExtraContext::AnyTaskWithExtraContext::default(),
@@ -1143,25 +1136,19 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(task);
                     }
                 }
+                /// Plugins' JS thread.
                 pub fn run_on_js_thread(&mut self) {
                     let kind = self.import_record.kind;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.import_record.*` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_resolve(
-                            &self.import_record.specifier,
-                            &self.import_record.namespace,
-                            &self.import_record.source_file,
-                            self_ptr,
-                            kind,
-                        );
+                    Plugin::opaque_mut(self.plugins.expect("plugins").as_ptr()).match_on_resolve(
+                        &self.import_record.specifier,
+                        &self.import_record.namespace,
+                        &self.import_record.source_file,
+                        self_ptr,
+                        kind,
+                    );
                 }
             }
 
@@ -1190,7 +1177,10 @@ pub mod bv2_impl {
 
             /// Task driving an onLoad plugin invocation for one source file.
             pub struct Load {
+                /// See `Resolve::bv2`.
                 pub bv2: *mut BundleV2<'static>,
+                /// `BundleV2::plugins` as of `init`.
+                pub(crate) plugins: Option<core::ptr::NonNull<Plugin>>,
                 pub(crate) source_index: bun_ast::Index,
                 pub(crate) default_loader: Loader,
                 pub path: Box<[u8]>,
@@ -1219,6 +1209,7 @@ pub mod bv2_impl {
                         .unwrap_or(Loader::Js);
                     Self {
                     bv2: std::ptr::from_mut::<BundleV2<'_>>(bv2).cast::<BundleV2<'static>>(),
+                    plugins: bv2.plugins,
                     parse_task: bun_ptr::BackRef::new_mut(parse),
                     source_index: parse.source_index,
                     default_loader,
@@ -1278,26 +1269,20 @@ pub mod bv2_impl {
                         bv2.enqueue_on_js_loop_for_plugins(concurrent_task);
                     }
                 }
+                /// Plugins' JS thread.
                 pub fn run_on_js_thread(&mut self) {
                     let is_server_side = self.bake_graph() != crate::bake_types::Graph::Client;
                     let default_loader = self.default_loader;
                     // reshaped for borrowck — capture the erased self
                     // pointer before borrowing fields immutably for the FFI call.
                     let self_ptr = std::ptr::from_mut::<Self>(self).cast::<core::ffi::c_void>();
-                    // SAFETY: `bv2` is a valid backref set by `init`; the plugin
-                    // storage is disjoint from `self`, so the `&mut JSBundlerPlugin`
-                    // returned by `plugins_mut()` does not alias the
-                    // `&self.path` / `&self.namespace` borrows below.
-                    unsafe { &mut *self.bv2 }
-                        .plugins_mut()
-                        .expect("plugins")
-                        .match_on_load(
-                            &self.path,
-                            &self.namespace,
-                            self_ptr,
-                            default_loader,
-                            is_server_side,
-                        );
+                    Plugin::opaque_mut(self.plugins.expect("plugins").as_ptr()).match_on_load(
+                        &self.path,
+                        &self.namespace,
+                        self_ptr,
+                        default_loader,
+                        is_server_side,
+                    );
                 }
             }
             impl bun_event_loop::Taskable for Load {
@@ -1321,7 +1306,6 @@ pub mod bv2_impl {
     use bun_sourcemap as SourceMap;
 
     use crate::AstBuilder::AstBuilder;
-    use crate::DeferredBatchTask::DeferredBatchTask;
     use crate::Graph::Graph;
     use crate::LinkerContext;
     use crate::PathToSourceIndexMap::PathToSourceIndexMap;
@@ -1420,13 +1404,11 @@ pub mod bv2_impl {
 
         /// CYCLEBREAK GENUINE: `JSBundleCompletionTask` — the
         /// concrete struct lives in `bun_runtime` (its fields name `Config`/
-        /// `Plugin`/`HTMLBundle::Route`). The bundler reads exactly two things
-        /// from it (whether the result is an error, and the concurrent-task
+        /// `Plugin`/`HTMLBundle::Route`). The bundler needs exactly two things
+        /// from it (whether it was cancelled, and the concurrent-task
         /// enqueue), so the high tier hands the bundler an erased owner +
         /// `&'static` vtable pair (same shape as [`DevServerHandle`]).
         pub struct CompletionDispatch {
-            /// Whether the completion result is an error.
-            pub result_is_err: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
             /// Whether the VM that owns the plugins is shutting down: stop
             /// waiting for their answers and fail the build (any thread).
             pub is_cancelled: unsafe fn(core::ptr::NonNull<super::JSBundleCompletionTask>) -> bool,
@@ -1443,22 +1425,16 @@ pub mod bv2_impl {
             pub vtable: &'static CompletionDispatch,
         }
         // SAFETY: erased `*mut JSBundleCompletionTask` backref — set by the JS
-        // thread, read by the bundle thread; `enqueue_task_concurrent` is the only
-        // cross-thread call and it goes through `jsc::EventLoop`'s lock-free queue.
+        // thread, read by the bundle thread; the two cross-thread calls are an
+        // atomic load (`is_cancelled`) and a push onto `jsc::EventLoop`'s
+        // lock-free queue (`enqueue_task_concurrent`).
         unsafe impl Send for CompletionHandle {}
         // Intentionally not `Sync`: the opaque owner (`JSBundleCompletionTask`)
-        // is modeled as `!Sync`, and this wrapper exposes `result_is_err(&self)`
-        // in addition to the lock-free enqueue path, so blanket `&CompletionHandle`
-        // sharing across threads is not justified. The handle only needs to *move*
-        // to the bundle thread (`Send`), not be shared. If a cross-thread `&` ever
+        // is modeled as `!Sync`, and the handle only needs to *move* to the
+        // bundle thread (`Send`), not be shared. If a cross-thread `&` ever
         // becomes necessary, split out an enqueue-only wrapper and make only that
         // type `Sync`.
         impl CompletionHandle {
-            #[inline]
-            pub(crate) fn result_is_err(&self) -> bool {
-                // SAFETY: vtable contract.
-                unsafe { (self.vtable.result_is_err)(self.owner) }
-            }
             #[inline]
             pub(crate) fn is_cancelled(&self) -> bool {
                 // SAFETY: vtable contract.
@@ -2849,7 +2825,6 @@ pub mod bv2_impl {
                 unique_key: 0,
                 dynamic_import_entry_points: ArrayHashMap::new(),
                 finalizers: Vec::new(),
-                drain_defer_task: DeferredBatchTask::default(),
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),

@@ -5,80 +5,37 @@
 //! for every onLoad callback which called `.defer()`.
 
 use crate::BundleV2;
+use crate::bundle_v2::JSBundlerPlugin;
 // Task is `(tag: u8, ptr: *mut ())` owned by bun_event_loop;
 // runtime owns the match-loop. See PORTING.md §Dispatch.
 use bun_event_loop::ConcurrentTask::ConcurrentTask;
 use bun_event_loop::{Task, task_tag};
+use core::ptr::NonNull;
 
-#[derive(Default)]
+/// One per drain, allocated from the pass's arena like `Resolve` / `Load`.
 pub struct DeferredBatchTask {
-    // Debug-only flag; zero-sized in release.
-    #[cfg(debug_assertions)]
-    running: bool,
+    /// `BundleV2::plugins` as of `schedule`.
+    plugins: Option<NonNull<JSBundlerPlugin>>,
 }
 
 impl bun_event_loop::Taskable for DeferredBatchTask {
     const TAG: bun_event_loop::TaskTag = task_tag::BundleV2DeferredBatchTask;
-    /// Embedded in its `BundleV2`, which outlives the queue entry and owns
-    /// everything the drain would have touched; nothing to free.
+    /// As `Resolve`: arena-owned by its (cancelled) bundle pass; nothing to free.
     unsafe fn release_unrun(_: *mut Self) {}
 }
 
 impl DeferredBatchTask {
-    pub(crate) fn init(&mut self) {
-        // Kept as `&mut self` (not `-> Self`) — this struct is embedded
-        // by value in BundleV2 (recovered via container_of in `get_bundle_v2`), so
-        // it is reset in place, never separately constructed.
-        #[cfg(debug_assertions)]
-        debug_assert!(!self.running);
-        // No Drop / no owned fields — pure reset.
-        let _ = core::mem::take(self);
+    /// Bundle thread; `arena` is the pass's `graph.heap`.
+    pub(crate) fn schedule(bv2: &mut BundleV2<'_>, arena: &bun_alloc::Arena) {
+        let this = arena.alloc(Self {
+            plugins: bv2.plugins,
+        });
+        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(this)));
+        bv2.enqueue_on_js_loop_for_plugins(task);
     }
 
-    pub(crate) fn get_bundle_v2(&mut self) -> &mut BundleV2<'static> {
-        // SAFETY: `self` is always the `drain_defer_task` field of a live `BundleV2`;
-        // this struct is never instantiated standalone. Lifetime erased to 'static;
-        // callers must not outlive the owning bundle.
-        unsafe {
-            &mut *bun_core::from_field_ptr!(
-                BundleV2<'static>,
-                drain_defer_task,
-                std::ptr::from_mut::<Self>(self)
-            )
-        }
-    }
-
-    pub(crate) fn schedule(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            debug_assert!(!self.running);
-            self.running = false;
-        }
-        let task = ConcurrentTask::create(Task::init(std::ptr::from_mut::<Self>(self)));
-
-        self.get_bundle_v2().enqueue_on_js_loop_for_plugins(task);
-    }
-
-    pub fn run_on_js_thread(&mut self) {
-        // `deinit` only resets
-        // the debug `running` flag; nothing follows `drain_deferred`, so
-        // resetting the flag afterwards covers both paths.
-        {
-            let bv2 = self.get_bundle_v2();
-            let rejected = bv2.completion.map(|c| c.result_is_err()).unwrap_or(false);
-            // The void result is discarded — see
-            // `Plugin::drain_deferred` for the exception-scope note.
-            bv2.plugins_mut().expect("plugins").drain_deferred(rejected);
-        }
-        self.deinit();
-    }
-
-    // Not `impl Drop` — this struct is an intrusive field of `BundleV2`
-    // and `deinit` is a debug-flag reset, not resource teardown.
-    fn deinit(&mut self) {
-        #[cfg(debug_assertions)]
-        {
-            self.running = false;
-        }
+    /// Plugins' JS thread.
+    pub fn run_on_js_thread(&self) {
+        JSBundlerPlugin::opaque_mut(self.plugins.expect("plugins").as_ptr()).drain_deferred();
     }
 }

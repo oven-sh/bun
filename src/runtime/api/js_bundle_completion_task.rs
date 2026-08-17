@@ -854,7 +854,6 @@ fn from_completion_handle<'a>(c: NonNull<Bv2OpaqueCompletion>) -> &'a JSBundleCo
 }
 
 static COMPLETION_VTABLE: dispatch::CompletionDispatch = dispatch::CompletionDispatch {
-    result_is_err: |c| matches!(from_completion_handle(c).result, BundleV2Result::Err(_)),
     is_cancelled: |c| {
         from_completion_handle(c)
             .cancelled

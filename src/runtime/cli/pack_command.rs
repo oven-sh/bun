@@ -1443,10 +1443,7 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
                         else {
                             continue;
                         };
-                        let already_listed = bins.iter().any(|existing| {
-                            strings::eql_long(existing.path.as_bytes(), subpath, true)
-                        });
-                        if !already_listed {
+                        if !bins.iter().any(|listed| listed.path.as_bytes() == subpath) {
                             bins.push(BinInfo {
                                 path: ZBox::from_bytes(subpath),
                                 ty: BinType::File,

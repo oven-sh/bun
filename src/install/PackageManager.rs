@@ -550,20 +550,10 @@ impl Subcommand {
 
     /// `init` opens package.json read-write for these so a read-only file fails before any work.
     pub(crate) fn writes_package_json(self, has_package_args: bool) -> bool {
-        match self {
-            Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit => true,
-            Self::Install | Self::Link => has_package_args,
-            Self::Pm
-            | Self::Unlink
-            | Self::Outdated
-            | Self::Pack
-            | Self::Publish
-            | Self::Audit
-            | Self::Info
-            | Self::Why
-            | Self::Dedupe
-            | Self::Prune => false,
-        }
+        matches!(
+            self,
+            Self::Add | Self::Remove | Self::Update | Self::Patch | Self::PatchCommit
+        ) || (matches!(self, Self::Install | Self::Link) && has_package_args)
     }
 }
 
@@ -1704,11 +1694,8 @@ pub fn init(
                     let json_stat_size = json_file.get_end_pos()?;
                     let mut json_buf = vec![0u8; (json_stat_size + 64) as usize];
                     let json_len = json_file.pread_all(&mut json_buf, 0)?;
-                    // Use the cwd-space path the file was opened at, not the fd's
-                    // realpath: the realpath can sit on another drive letter
-                    // (subst / junction) or outside the project (symlink), and
-                    // relative paths cannot cross drives (#39357). Copied because
-                    // `parent_path_buf` is reused while `json_source` is live.
+                    // The path as opened, not the fd's realpath, which may be on another drive
+                    // (subst, junction) or outside the project (symlink) (#39357).
                     let json_path_len =
                         parent_without_trailing_slash.len() + b"/package.json".len();
                     // SAFETY: ROOT_PACKAGE_JSON_PATH_BUF is a process-global only touched on main
@@ -1863,9 +1850,7 @@ pub fn init(
         // until now). The slice excludes the NUL — `top_level_dir` is `[]u8`.
         // PathBuffer is repr(transparent) over [u8; N], so the raw cast is sound.
         fs.set_top_level_dir(bun_core::ffi::slice(CWD_BUF.get().cast::<u8>(), tld.len()));
-        // Build the root package.json path from `top_level_dir` instead of
-        // realpath'ing the fd, so later relative-path computations against
-        // `top_level_dir` never cross onto a different drive letter (#39357).
+        // From `top_level_dir`, not the fd's realpath, so relative paths never cross drives (#39357).
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
         let tld_no_slash = strings::without_trailing_slash(tld);
         let plen = tld_no_slash.len() + SEP_PACKAGE_JSON.len();

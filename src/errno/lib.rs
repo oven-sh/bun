@@ -305,18 +305,13 @@ pub fn from_errno(errno: i32) -> SystemErrno {
 }
 
 impl SystemErrno {
-    /// The OS error behind a `std::io::Error`; `None` if it is not an OS error or its code has no `SystemErrno`.
+    /// `None` if `err` is not an OS error or its code has no `SystemErrno`.
     pub fn from_io_error(err: &std::io::Error) -> Option<SystemErrno> {
-        let code = err.raw_os_error()?;
+        // A Win32 code there, which the `u32` entry point maps (`i64` would take it for an errno).
         #[cfg(windows)]
-        {
-            // A Win32 code: the `u32` entry point maps it, `i64` would read it as an errno discriminant.
-            SystemErrno::init(code as u32)
-        }
+        return SystemErrno::init(err.raw_os_error()? as u32);
         #[cfg(not(windows))]
-        {
-            SystemErrno::init(i64::from(code))
-        }
+        return SystemErrno::init(i64::from(err.raw_os_error()?));
     }
 }
 
@@ -521,28 +516,17 @@ mod errno_name_tests {
 
     #[test]
     fn io_error_to_errno() {
-        // Deliberately not EAGAIN, which is what the callers fall back to.
+        let of = |code| SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(code));
         #[cfg(not(windows))]
-        assert_eq!(
-            SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(libc::ENOMEM)),
-            Some(SystemErrno::ENOMEM)
-        );
+        assert_eq!(of(libc::ENOMEM), Some(SystemErrno::ENOMEM));
+        // Win32 ERROR_NOT_ENOUGH_MEMORY / ERROR_ACCESS_DENIED; as errno values 8 and 5 are ENOEXEC and EIO.
         #[cfg(windows)]
-        {
-            // Win32 ERROR_NOT_ENOUGH_MEMORY and ERROR_ACCESS_DENIED; read as errno values, 8 and 5 would be ENOEXEC and EIO.
-            assert_eq!(
-                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(8)),
-                Some(SystemErrno::ENOMEM)
-            );
-            assert_eq!(
-                SystemErrno::from_io_error(&std::io::Error::from_raw_os_error(5)),
-                Some(SystemErrno::EPERM)
-            );
-        }
         assert_eq!(
-            SystemErrno::from_io_error(&std::io::Error::other("not from the OS")),
-            None
+            (of(8), of(5)),
+            (Some(SystemErrno::ENOMEM), Some(SystemErrno::EPERM))
         );
+        let not_os = std::io::Error::other("not from the OS");
+        assert_eq!(SystemErrno::from_io_error(&not_os), None);
     }
 
     #[test]

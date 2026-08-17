@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tmpdirSync } from "harness";
 import { join } from "path";
 import util from "util";
 it("prototype", () => {
@@ -580,22 +580,25 @@ it("Bun.inspect huge sparse array summarizes holes without iterating them", asyn
 });
 
 // A property lookup that throws while an object is being formatted (a Proxy trap in the
-// prototype chain, or a lazily initialized property whose initializer throws) used to leave
-// the exception pending: the lookups of the following properties failed and were dropped from
-// the output, debug builds asserted, and moving on to the next prototype dereferenced the empty
-// value returned by the throwing getPrototype. Each case runs in a child so a regression fails
-// the test instead of taking down the runner.
+// prototype chain, a lazily initialized property whose initializer throws, a module namespace
+// export that is still in its temporal dead zone) used to leave the exception pending: the
+// lookups of the following properties failed and were dropped from the output or the formatter
+// rethrew the exception from the next property, debug builds asserted, and moving on to the
+// next prototype dereferenced the empty value returned by the throwing getPrototype. Each case
+// runs in a child so a regression fails the test instead of taking down the runner.
 describe.concurrent("Bun.inspect when a property lookup throws", () => {
-  async function inspectInChild(code) {
+  async function runChild(args, cwd) {
     await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", code],
+      cmd: [bunExe(), ...args],
       env: bunEnv,
+      cwd,
       stdout: "pipe",
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     return { stdout, stderr, exitCode };
   }
+  const inspectInChild = code => runChild(["-e", code]);
 
   it("skips a prototype property whose Proxy get trap throws and keeps the rest", async () => {
     const result = await inspectInChild(`
@@ -646,6 +649,25 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
       console.log(JSON.stringify(["$", "Archive", "version"].map(key => out.includes("\\n  " + key + ": "))));
     `);
     expect(result).toEqual({ stdout: "[false,true,true]\n", stderr: "", exitCode: 0 });
+  });
+
+  it("skips a module namespace export that is in its temporal dead zone and keeps the rest", async () => {
+    // b.mjs runs while a.mjs is still evaluating, so reading `later` off the namespace throws a
+    // ReferenceError. console.log used to rethrow it; util.inspect prints such an export as
+    // `<uninitialized>`, this formatter leaves it out.
+    using dir = tempDir("inspect-tdz-namespace", {
+      "a.mjs": `
+        import "./b.mjs";
+        export const later = 1;
+        export function hoisted() {}
+      `,
+      "b.mjs": `
+        import * as a from "./a.mjs";
+        console.log(a);
+      `,
+    });
+    const result = await runChild(["a.mjs"], String(dir));
+    expect(result).toEqual({ stdout: "Module {\n  hoisted: [Function: hoisted],\n}\n", stderr: "", exitCode: 0 });
   });
 });
 

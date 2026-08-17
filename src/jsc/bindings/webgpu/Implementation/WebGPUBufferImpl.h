@@ -40,9 +40,9 @@ class ConvertToBackingContext;
 class BufferImpl final : public Buffer {
     WTF_MAKE_TZONE_ALLOCATED(BufferImpl);
 public:
-    static Ref<BufferImpl> create(WebGPUPtr<WGPUBuffer>&& buffer, ConvertToBackingContext& convertToBackingContext)
+    static Ref<BufferImpl> create(WebGPUPtr<WGPUBuffer>&& buffer, bool mappedAtCreation, ConvertToBackingContext& convertToBackingContext)
     {
-        return adoptRef(*new BufferImpl(WTF::move(buffer), convertToBackingContext));
+        return adoptRef(*new BufferImpl(WTF::move(buffer), mappedAtCreation, convertToBackingContext));
     }
 
     virtual ~BufferImpl();
@@ -50,7 +50,7 @@ public:
 private:
     friend class DowncastConvertToBackingContext;
 
-    BufferImpl(WebGPUPtr<WGPUBuffer>&&, ConvertToBackingContext&);
+    BufferImpl(WebGPUPtr<WGPUBuffer>&&, bool mappedAtCreation, ConvertToBackingContext&);
 
     BufferImpl(const BufferImpl&) = delete;
     BufferImpl(BufferImpl&&) = delete;
@@ -64,7 +64,7 @@ private:
     void getMappedRange(Size64 offset, std::optional<Size64>, NOESCAPE const Function<void(std::span<uint8_t>)>&) final;
     std::span<uint8_t> getBufferContents() final;
     void unmap() final;
-    void NODELETE copyFrom(std::span<const uint8_t>, size_t offset) final;
+    void copyFrom(std::span<const uint8_t>, size_t offset) final;
 
     void destroy() final;
     void generateAValidationError() final;
@@ -73,6 +73,7 @@ private:
 
     const WebGPUPtr<WGPUBuffer> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;
+    MapModeFlags m_mapModeFlags;
 };
 
 } // namespace WebCore::WebGPU

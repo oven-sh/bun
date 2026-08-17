@@ -50,7 +50,6 @@
 
 namespace WebGPU {
 
-constexpr static auto largeBufferSize = 32 * 1024 * 1024;
 constexpr bool skipMemoryAttribution = true;
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(Queue);
@@ -592,17 +591,15 @@ static std::span<uint8_t> span(id<MTLBuffer> buffer)
     return unsafeMakeSpan(static_cast<uint8_t*>(buffer.contents), buffer.length);
 }
 
-std::pair<id<MTLBuffer>, uint64_t> Queue::newTemporaryBufferWithBytes(std::span<uint8_t> dataSpan, bool noCopy)
+std::pair<id<MTLBuffer>, uint64_t> Queue::newTemporaryBufferWithBytes(std::span<uint8_t> dataSpan)
 {
     auto device = m_device.get();
     if (!device)
         return std::make_pair(nil, 0ull);
 
+    // The data is always copied: the callers of wgpuQueueWriteBuffer/WriteTexture in this binary
+    // pass the JS-owned bytes straight through and are free to release them once the call returns.
     auto dataSize = dataSpan.size();
-    auto data = dataSpan.data();
-    if (noCopy)
-        return std::make_pair(device->newBufferWithBytesNoCopy(data, dataSize, MTLResourceStorageModeShared, skipMemoryAttribution), 0ull);
-
     if (!m_temporaryBuffer || m_temporaryBufferOffset + dataSize > m_temporaryBuffer.length) {
         m_temporaryBuffer = device->safeCreateBuffer(std::max(dataSize, 64 * KB), skipMemoryAttribution);
         m_temporaryBufferOffset = 0;
@@ -628,8 +625,7 @@ void Queue::writeBuffer(id<MTLBuffer> buffer, uint64_t bufferOffset, std::span<u
         return;
 
     ensureBlitCommandEncoder();
-    bool noCopy = data.size() >= largeBufferSize;
-    auto bufferWithOffset = newTemporaryBufferWithBytes(data, noCopy);
+    auto bufferWithOffset = newTemporaryBufferWithBytes(data);
     id<MTLBuffer> temporaryBuffer = bufferWithOffset.first;
     uint64_t temporaryBufferOffset = bufferWithOffset.second;
     if (!temporaryBuffer) {
@@ -643,9 +639,6 @@ void Queue::writeBuffer(id<MTLBuffer> buffer, uint64_t bufferOffset, std::span<u
         toBuffer:buffer
         destinationOffset:bufferOffset
         size:data.size()];
-
-    if (noCopy)
-        finalizeBlitCommandEncoder();
 }
 
 void Queue::clearBuffer(id<MTLBuffer> buffer, NSUInteger offset, NSUInteger size)
@@ -1123,8 +1116,7 @@ void Queue::writeTexture(const WGPUImageCopyTexture& destination, std::span<uint
     // FIXME(PERFORMANCE): Suballocate, so the common case doesn't need to hit the kernel.
     // FIXME(PERFORMANCE): Should this temporary buffer really be shared?
     NSUInteger newBufferSize = dataByteSize - dataLayoutOffset;
-    bool noCopy = newBufferSize >= largeBufferSize;
-    auto temporaryBufferWithOffset = newTemporaryBufferWithBytes(data.subspan(dataLayoutOffset), noCopy);
+    auto temporaryBufferWithOffset = newTemporaryBufferWithBytes(data.subspan(dataLayoutOffset));
     id<MTLBuffer> temporaryBuffer = temporaryBufferWithOffset.first;
     auto temporaryBufferOffset = temporaryBufferWithOffset.second;
     if (!temporaryBuffer)
@@ -1231,9 +1223,6 @@ void Queue::writeTexture(const WGPUImageCopyTexture& destination, std::span<uint
         ASSERT_NOT_REACHED();
         return;
     }
-
-    if (noCopy)
-        finalizeBlitCommandEncoder();
 }
 
 void Queue::setLabel(String&& label)

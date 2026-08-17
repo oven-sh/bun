@@ -82,6 +82,8 @@ private:
     void createRenderPipelineAsync(const RenderPipelineDescriptor&, CompletionHandler<void(RefPtr<RenderPipeline>&&, String&&)>&&) final;
 
     RefPtr<CommandEncoder> createCommandEncoder(const std::optional<CommandEncoderDescriptor>&) final;
+    Ref<CommandEncoder> createInvalidCommandEncoder();
+    Ref<BindGroupLayout> createEmptyBindGroupLayout();
     RefPtr<RenderBundleEncoder> createRenderBundleEncoder(const RenderBundleEncoderDescriptor&) final;
 
     RefPtr<QuerySet> createQuerySet(const QuerySetDescriptor&) final;
@@ -94,15 +96,20 @@ private:
     void setLabelInternal(const String&) final;
     void pauseAllErrorReporting(bool pause) final;
 
-    [[noreturn]] Ref<CommandEncoder> NODELETE invalidCommandEncoder() final;
-    [[noreturn]] Ref<CommandBuffer> NODELETE invalidCommandBuffer() final;
-    [[noreturn]] Ref<RenderPassEncoder> NODELETE invalidRenderPassEncoder() final;
-    [[noreturn]] Ref<ComputePassEncoder> NODELETE invalidComputePassEncoder() final;
-    [[noreturn]] Ref<BindGroupLayout> NODELETE emptyBindGroupLayout() const final;
+    Ref<CommandEncoder> NODELETE invalidCommandEncoder() final;
+    Ref<CommandBuffer> NODELETE invalidCommandBuffer() final;
+    Ref<RenderPassEncoder> NODELETE invalidRenderPassEncoder() final;
+    Ref<ComputePassEncoder> NODELETE invalidComputePassEncoder() final;
+    Ref<BindGroupLayout> NODELETE emptyBindGroupLayout() const final;
 
     WebGPUPtr<WGPUDevice> m_backing;
     const Ref<ConvertToBackingContext> m_convertToBackingContext;
     const Ref<QueueImpl> m_queue;
+    const Ref<CommandEncoder> m_invalidCommandEncoder;
+    const Ref<RenderPassEncoder> m_invalidRenderPassEncoder;
+    const Ref<ComputePassEncoder> m_invalidComputePassEncoder;
+    const Ref<CommandBuffer> m_invalidCommandBuffer;
+    const Ref<BindGroupLayout> m_emptyBindGroupLayout;
 };
 
 } // namespace WebCore::WebGPU

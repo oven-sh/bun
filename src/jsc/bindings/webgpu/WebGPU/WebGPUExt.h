@@ -79,6 +79,12 @@ WGPU_EXPORT WGPULimits wgpuDefaultLimits() WGPU_FUNCTION_ATTRIBUTE;
 
 WGPU_EXPORT void wgpuDevicePauseErrorReporting(WGPUDevice device, WGPUBool pauseErrors) WGPU_FUNCTION_ATTRIBUTE;
 
+// Queues workItem behind the device's own asynchronous callbacks, on the instance's
+// scheduleWorkBlock; like those callbacks it runs immediately once the instance is gone. Added for
+// bun: the device lost and uncaptured error callbacks are invoked synchronously, which WebKit's
+// GPU process turns into IPC replies and the in-process Implementation layer defers with this.
+WGPU_EXPORT void wgpuDeviceScheduleWork(WGPUDevice device, WGPUWorkItem workItem) WGPU_FUNCTION_ATTRIBUTE;
+
 WGPU_EXPORT WGPUBool wgpuAdapterXRCompatible(WGPUAdapter adapter) WGPU_FUNCTION_ATTRIBUTE;
 
 WGPU_EXPORT void wgpuDeviceClearDeviceLostCallback(WGPUDevice device) WGPU_FUNCTION_ATTRIBUTE;

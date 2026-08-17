@@ -1075,6 +1075,14 @@ void wgpuDevicePauseErrorReporting(WGPUDevice device, WGPUBool pauseErrors)
     WebGPU::fromAPI(device).pauseErrorReporting(!!pauseErrors);
 }
 
+void wgpuDeviceScheduleWork(WGPUDevice device, WGPUWorkItem workItem)
+{
+    if (auto instance = WebGPU::fromAPI(device).instance(); instance.get())
+        instance->scheduleWork(WebGPU::fromAPI(WTF::move(workItem)));
+    else
+        workItem();
+}
+
 void wgpuDeviceCreateComputePipelineAsync(WGPUDevice device, const WGPUComputePipelineDescriptor* descriptor, WGPUCreateComputePipelineAsyncCallback callback, void* userdata)
 {
     protect(WebGPU::fromAPI(device))->createComputePipelineAsync(*descriptor, [callback, userdata](WGPUCreatePipelineAsyncStatus status, Ref<WebGPU::ComputePipeline>&& pipeline, String&& message) {

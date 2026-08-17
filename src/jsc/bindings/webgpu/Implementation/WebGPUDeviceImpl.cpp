@@ -60,6 +60,7 @@
 #include "WebGPUValidationError.h"
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/BlockPtr.h>
+#include <wtf/Function.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore::WebGPU {
@@ -71,12 +72,51 @@ static auto invalidEntryPointName()
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(DeviceImpl);
 
+// The GPU* objects replace their backing with these once finish(), end() or submit() has consumed
+// the real one, so that anything done with them afterwards fails validation as the spec requires.
+// Beginning a render pass without attachments, beginning a compute pass while that pass is still
+// open and finishing the encoder in that state produces exactly such objects: the encoder ends up
+// ended and the passes belong to an ended encoder. Error reporting is paused while they are made
+// so that none of this reaches the device's error scopes or uncaptured error callback.
+Ref<CommandEncoder> DeviceImpl::createInvalidCommandEncoder()
+{
+    pauseAllErrorReporting(true);
+    return createCommandEncoder(std::nullopt).releaseNonNull();
+}
+
+static Ref<RenderPassEncoder> makeInvalidRenderPassEncoder(CommandEncoder& commandEncoder)
+{
+    RenderPassDescriptor descriptor;
+    return commandEncoder.beginRenderPass(descriptor).releaseNonNull();
+}
+
+static Ref<CommandBuffer> makeInvalidCommandBuffer(CommandEncoder& commandEncoder)
+{
+    CommandBufferDescriptor descriptor;
+    return commandEncoder.finish(descriptor).releaseNonNull();
+}
+
+Ref<BindGroupLayout> DeviceImpl::createEmptyBindGroupLayout()
+{
+    BindGroupLayoutDescriptor descriptor;
+    return createBindGroupLayout(descriptor).releaseNonNull();
+}
+
 DeviceImpl::DeviceImpl(WebGPUPtr<WGPUDevice>&& device, Ref<SupportedFeatures>&& features, Ref<SupportedLimits>&& limits, ConvertToBackingContext& convertToBackingContext)
     : Device(WTF::move(features), WTF::move(limits))
     , m_backing(device.copyRef())
     , m_convertToBackingContext(convertToBackingContext)
     , m_queue(QueueImpl::create(WebGPUPtr<WGPUQueue> { wgpuDeviceGetQueue(device.get()) }, convertToBackingContext))
+    , m_invalidCommandEncoder(createInvalidCommandEncoder())
+    , m_invalidRenderPassEncoder(makeInvalidRenderPassEncoder(m_invalidCommandEncoder))
+    , m_invalidComputePassEncoder(m_invalidCommandEncoder->beginComputePass(std::nullopt).releaseNonNull())
+    , m_invalidCommandBuffer(makeInvalidCommandBuffer(m_invalidCommandEncoder))
+    , m_emptyBindGroupLayout(createEmptyBindGroupLayout())
 {
+    m_invalidRenderPassEncoder->end();
+    m_invalidComputePassEncoder->end();
+
+    pauseAllErrorReporting(false);
 }
 
 DeviceImpl::~DeviceImpl()
@@ -107,7 +147,7 @@ RefPtr<Buffer> DeviceImpl::createBuffer(const BufferDescriptor& descriptor)
         .mappedAtCreation = descriptor.mappedAtCreation,
     };
 
-    return BufferImpl::create(adoptWebGPU(wgpuDeviceCreateBuffer(m_backing.get(), &backingDescriptor)), convertToBackingContext);
+    return BufferImpl::create(adoptWebGPU(wgpuDeviceCreateBuffer(m_backing.get(), &backingDescriptor)), descriptor.mappedAtCreation, convertToBackingContext);
 }
 
 RefPtr<Texture> DeviceImpl::createTexture(const TextureDescriptor& descriptor)
@@ -637,9 +677,22 @@ void DeviceImpl::popErrorScope(CompletionHandler<void(bool, std::optional<Error>
     wgpuDevicePopErrorScope(m_backing.get(), &popErrorScopeCallback, Block_copy(blockPtr.get())); // Block_copy is matched with Block_release above in popErrorScopeCallback().
 }
 
+// The backing device invokes the uncaptured error and device lost callbacks synchronously, from
+// inside whichever call generated the error or lost the device, and clears its callback slot only
+// once they return. GPUDevice is written against WebKit's GPU process, where both arrive later as
+// IPC replies: it installs the next uncaptured error callback from inside the current one (done
+// synchronously, that re-enters the callback still running and the device then clears the
+// replacement as soon as it returns), and the device lost callback is fired by ~DeviceImpl, in
+// the middle of GPUDevice's destruction. Delivering through the device's work queue gives both
+// the timing GPUDevice expects.
+static void scheduleWork(WGPUDevice device, Function<void()>&& work)
+{
+    wgpuDeviceScheduleWork(device, makeBlockPtr(WTF::move(work)).get());
+}
+
 void DeviceImpl::resolveUncapturedErrorEvent(CompletionHandler<void(bool, std::optional<Error>&&)>&& callback)
 {
-    auto blockPtr = makeBlockPtr([callback = WTF::move(callback)](WGPUErrorType errorType, const char* message) mutable {
+    auto blockPtr = makeBlockPtr([backing = m_backing, callback = WTF::move(callback)](WGPUErrorType errorType, const char* message) mutable {
         std::optional<Error> error;
         bool hasUncapturedError = true;
         switch (errorType) {
@@ -663,23 +716,30 @@ void DeviceImpl::resolveUncapturedErrorEvent(CompletionHandler<void(bool, std::o
             break;
         }
 
-        callback(hasUncapturedError, WTF::move(error));
+        scheduleWork(backing.get(), [callback = WTF::move(callback), hasUncapturedError, error = WTF::move(error)]() mutable {
+            callback(hasUncapturedError, WTF::move(error));
+        });
     });
-    wgpuDeviceSetUncapturedErrorCallback(m_backing.get(), &setUncapturedScopeCallback, Block_copy(blockPtr.get()));
+    wgpuDeviceSetUncapturedErrorCallback(m_backing.get(), &setUncapturedScopeCallback, Block_copy(blockPtr.get())); // Block_copy is matched with Block_release above in setUncapturedScopeCallback().
+}
+
+static WebCore::WebGPU::DeviceLostReason convertFromBacking(WGPUDeviceLostReason reason)
+{
+    switch (reason) {
+    case WGPUDeviceLostReason_Undefined:
+    case WGPUDeviceLostReason_Force32:
+        return WebCore::WebGPU::DeviceLostReason::Unknown;
+    case WGPUDeviceLostReason_Destroyed:
+        return WebCore::WebGPU::DeviceLostReason::Destroyed;
+    }
 }
 
 void DeviceImpl::resolveDeviceLostPromise(CompletionHandler<void(WebCore::WebGPU::DeviceLostReason)>&& callback)
 {
-    wgpuDeviceSetDeviceLostCallbackWithBlock(m_backing.get(), makeBlockPtr([callback = WTF::move(callback)](WGPUDeviceLostReason reason, const char*) mutable {
-        switch (reason) {
-        case WGPUDeviceLostReason_Undefined:
-        case WGPUDeviceLostReason_Force32:
-            callback(WebCore::WebGPU::DeviceLostReason::Unknown);
-            return;
-        case WGPUDeviceLostReason_Destroyed:
-            callback(WebCore::WebGPU::DeviceLostReason::Destroyed);
-            return;
-        }
+    wgpuDeviceSetDeviceLostCallbackWithBlock(m_backing.get(), makeBlockPtr([backing = m_backing, callback = WTF::move(callback)](WGPUDeviceLostReason backingReason, const char*) mutable {
+        scheduleWork(backing.get(), [callback = WTF::move(callback), reason = convertFromBacking(backingReason)]() mutable {
+            callback(reason);
+        });
     }).get());
 }
 
@@ -695,26 +755,27 @@ void DeviceImpl::setLabelInternal(const String& label)
 
 Ref<CommandEncoder> DeviceImpl::invalidCommandEncoder()
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    return m_invalidCommandEncoder;
 }
 
 Ref<CommandBuffer> DeviceImpl::invalidCommandBuffer()
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    return m_invalidCommandBuffer;
 }
 
 Ref<RenderPassEncoder> DeviceImpl::invalidRenderPassEncoder()
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    return m_invalidRenderPassEncoder;
 }
+
 Ref<ComputePassEncoder> DeviceImpl::invalidComputePassEncoder()
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    return m_invalidComputePassEncoder;
 }
 
 Ref<BindGroupLayout> DeviceImpl::emptyBindGroupLayout() const
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    return m_emptyBindGroupLayout;
 }
 
 } // namespace WebCore::WebGPU

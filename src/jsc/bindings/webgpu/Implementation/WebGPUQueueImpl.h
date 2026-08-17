@@ -64,14 +64,14 @@ private:
 
     void onSubmittedWorkDone(CompletionHandler<void()>&&) final;
 
-    void NODELETE writeBuffer(
+    void writeBuffer(
         const Buffer&,
         Size64 bufferOffset,
         std::span<const uint8_t> source,
         Size64 dataOffset,
         std::optional<Size64>) final;
 
-    void NODELETE writeTexture(
+    void writeTexture(
         const ImageCopyTexture& destination,
         std::span<const uint8_t> source,
         const ImageDataLayout&,

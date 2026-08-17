@@ -73,22 +73,24 @@ void QueueImpl::onSubmittedWorkDone(CompletionHandler<void()>&& callback)
 }
 
 void QueueImpl::writeBuffer(
-    const Buffer&,
-    Size64,
-    std::span<const uint8_t>,
-    Size64,
-    std::optional<Size64>)
+    const Buffer& buffer,
+    Size64 bufferOffset,
+    std::span<const uint8_t> source,
+    Size64 dataOffset,
+    std::optional<Size64> size)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    // Queue.mm copies the bytes into a Metal buffer before returning, so the span only needs to be
+    // mutable for the C API's signature; nothing writes through it.
+    writeBufferNoCopy(buffer, bufferOffset, spanConstCast<uint8_t>(source), dataOffset, size);
 }
 
 void QueueImpl::writeTexture(
-    const ImageCopyTexture&,
-    std::span<const uint8_t>,
-    const ImageDataLayout&,
-    const Extent3D&)
+    const ImageCopyTexture& destination,
+    std::span<const uint8_t> source,
+    const ImageDataLayout& dataLayout,
+    const Extent3D& size)
 {
-    RELEASE_ASSERT_NOT_REACHED();
+    writeTexture(destination, spanConstCast<uint8_t>(source), dataLayout, size);
 }
 
 void QueueImpl::writeBufferNoCopy(

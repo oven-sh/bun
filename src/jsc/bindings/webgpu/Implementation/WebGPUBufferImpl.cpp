@@ -31,15 +31,17 @@
 #include "WebGPUConvertToBackingContext.h"
 #include <WebGPU/WebGPUExt.h>
 #include <wtf/BlockPtr.h>
+#include <wtf/CheckedArithmetic.h>
 #include <wtf/TZoneMallocInlines.h>
 
 namespace WebCore::WebGPU {
 
 WTF_MAKE_TZONE_ALLOCATED_IMPL(BufferImpl);
 
-BufferImpl::BufferImpl(WebGPUPtr<WGPUBuffer>&& buffer, ConvertToBackingContext& convertToBackingContext)
+BufferImpl::BufferImpl(WebGPUPtr<WGPUBuffer>&& buffer, bool mappedAtCreation, ConvertToBackingContext& convertToBackingContext)
     : m_backing(WTF::move(buffer))
     , m_convertToBackingContext(convertToBackingContext)
+    , m_mapModeFlags(mappedAtCreation ? MapModeFlags(MapMode::Write) : MapModeFlags())
 {
 }
 
@@ -67,8 +69,11 @@ void BufferImpl::mapAsync(MapModeFlags mapModeFlags, Size64 offset, std::optiona
     auto usedSize = getMappedSize(m_backing.get(), size, offset);
 
     // FIXME: Check the casts.
-    auto blockPtr = makeBlockPtr([callback = WTF::move(callback)](WGPUBufferMapAsyncStatus status) mutable {
-        callback(status == WGPUBufferMapAsyncStatus_Success);
+    auto blockPtr = makeBlockPtr([protectedThis = protect(*this), mapModeFlags, callback = WTF::move(callback)](WGPUBufferMapAsyncStatus status) mutable {
+        bool success = status == WGPUBufferMapAsyncStatus_Success;
+        if (success)
+            protectedThis->m_mapModeFlags = mapModeFlags;
+        callback(success);
     });
     wgpuBufferMapAsync(m_backing.get(), backingMapModeFlags, static_cast<size_t>(offset), static_cast<size_t>(usedSize), &mapAsyncCallback, Block_copy(blockPtr.get())); // Block_copy is matched with Block_release above in mapAsyncCallback().
 }
@@ -88,22 +93,26 @@ std::span<uint8_t> BufferImpl::getBufferContents()
     return wgpuBufferGetBufferContents(m_backing.get());
 }
 
-#if ENABLE(WEBGPU_SWIFT)
+// GPUBuffer hands JavaScript copies of the mapped ranges and passes each one back here from
+// unmap(). Only a write mapping's bytes go back into the buffer; a read mapping's ArrayBuffer may
+// have been modified too, but those modifications are specified to be discarded.
 void BufferImpl::copyFrom(std::span<const uint8_t> data, size_t offset)
 {
-    RELEASE_ASSERT(backing());
-    return wgpuBufferCopy(backing(), data, offset);
+    if (!m_mapModeFlags.contains(MapMode::Write))
+        return;
+
+    auto contents = getBufferContents();
+    auto endOffset = checkedSum<size_t>(offset, data.size());
+    if (endOffset.hasOverflowed() || endOffset.value() > contents.size())
+        return;
+
+    memcpySpan(contents.subspan(offset, data.size()), data);
 }
-#else
-void BufferImpl::copyFrom(std::span<const uint8_t>, size_t)
-{
-    RELEASE_ASSERT_NOT_REACHED();
-}
-#endif
 
 void BufferImpl::unmap()
 {
     wgpuBufferUnmap(m_backing.get());
+    m_mapModeFlags = { };
 }
 
 void BufferImpl::destroy()

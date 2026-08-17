@@ -1510,6 +1510,89 @@ test.skipIf(!isWindows)(
   30000,
 );
 
+// On Windows, fs.watch() on a symlink watches the link's target. It used to hand
+// the raw readlink() result to libuv, so a link whose stored target is relative
+// (symlink("target.txt", "dir/link.txt")) was resolved against the process cwd
+// instead of the link's directory: ENOENT unless the cwd happened to be the
+// link's directory, or a same-named entry in the cwd silently watched instead.
+// The fixtures run with the cwd set to an unrelated directory, and the watched
+// link is passed as an absolute path so that only the link target is relative.
+describe.concurrent.skipIf(!isWindows)("fs.watch on a symlink with a relative target (windows)", () => {
+  test("file symlink: the target is resolved against the link's directory, not the cwd", async () => {
+    using dir = tempDir("fswatch-relative-symlink-file", {
+      "links/target.txt": "hello",
+      "cwd/.keep": "",
+    });
+    const links = path.join(String(dir), "links");
+    const link = path.join(links, "link.txt");
+    const target = path.join(links, "target.txt");
+    fs.symlinkSync("target.txt", link, "file");
+
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      // Unfixed builds throw ENOENT here: "target.txt" does not exist in the cwd.
+      const watcher = fs.watch(${JSON.stringify(link)}, event => {
+        console.log(JSON.stringify(event));
+        watcher.close();
+      });
+      // The watch is armed synchronously, so a single write is enough.
+      fs.writeFileSync(${JSON.stringify(target)}, "changed");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      cwd: path.join(String(dir), "cwd"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout.trim()).toBe('"change"');
+    expect(exitCode).toBe(0);
+  });
+
+  test("directory symlink: a same-named directory in the cwd is not watched instead of the target", async () => {
+    using dir = tempDir("fswatch-relative-symlink-dir", {
+      "links/real/.keep": "",
+      // Same name as the link target, but in the cwd: the directory unfixed
+      // builds end up watching.
+      "cwd/real/.keep": "",
+    });
+    const links = path.join(String(dir), "links");
+    const link = path.join(links, "link");
+    fs.symlinkSync("real", link, "dir");
+
+    const fixture = /* js */ `
+      const fs = require("node:fs");
+      const path = require("node:path");
+      const watcher = fs.watch(${JSON.stringify(link)}, (event, filename) => {
+        console.log(JSON.stringify([event, filename]));
+        watcher.close();
+      });
+      // Only one of these is inside the watched directory; the first event
+      // delivered says which directory the watcher is attached to.
+      fs.writeFileSync(path.join(process.cwd(), "real", "decoy.txt"), "");
+      fs.writeFileSync(${JSON.stringify(path.join(links, "real", "real.txt"))}, "");
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      cwd: path.join(String(dir), "cwd"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    // Unfixed builds print ["rename","decoy.txt"].
+    expect(stdout.trim()).toBe('["rename","real.txt"]');
+    expect(exitCode).toBe(0);
+  });
+});
+
 // FSWatcher::init joins the user-supplied watch path with the process cwd into a
 // fixed pooled path buffer. The raw-path length validator only bounds the path
 // itself, so a relative path just under the platform path limit used to overflow

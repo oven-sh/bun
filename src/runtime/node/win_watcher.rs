@@ -10,7 +10,6 @@ use bun_collections::{ArrayHashMap, StringArrayHashMap};
 use bun_core::{String as BunString, ZStr};
 use bun_jsc as jsc;
 use bun_jsc::JsCell;
-use bun_paths::PathBuffer;
 use bun_sys as sys;
 use bun_sys::ReturnCodeExt as _;
 use bun_sys::windows::libuv as uv;
@@ -339,23 +338,21 @@ impl PathWatcher {
         path: &ZStr,
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
-        let mut outbuf = PathBuffer::uninit();
-        // Windows `sys::readlink` returns the byte length; the link target is
-        // written into `outbuf[..len]` with `outbuf[len] == 0` (sys_uv NUL-terminates). Reconstruct
-        // the NUL-terminated string via `ZStr::from_buf`.
-        let readlink_result = sys::readlink(path, &mut outbuf);
-        let event_path: &ZStr = match readlink_result {
-            sys::Result::Err(err) => 'brk: {
-                if err.errno == sys::E::NOENT as _ {
-                    return sys::Result::Err(sys::Error {
-                        errno: err.errno,
-                        syscall: sys::Tag::open,
-                        ..Default::default()
-                    });
-                }
-                break 'brk path;
+        // Watch (and dedup on) the resolved path, like the posix backend. Not the
+        // raw readlink target: a symlink's stored target may be relative to the
+        // link's directory, and libuv resolves relative paths against the cwd.
+        let mut resolve_buf = bun_paths::path_buffer_pool::get();
+        let event_path: &ZStr = match sys::realpath(path, &mut resolve_buf) {
+            Ok(resolved) => {
+                let len = resolved.len();
+                resolve_buf[len] = 0;
+                ZStr::from_buf(&resolve_buf[..], len)
             }
-            sys::Result::Ok(len) => ZStr::from_buf(outbuf.as_slice(), len),
+            // The path (or, for a symlink, its target) does not exist.
+            Err(err) if err.get_errno() == sys::E::ENOENT => return Err(err),
+            // Exists but could not be opened (permissions, sharing): libuv only
+            // needs the parent directory to watch a file, so let it try.
+            Err(_) => path,
         };
 
         // SAFETY: `manager` is the live heap pointer for the calling VM's

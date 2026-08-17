@@ -928,3 +928,88 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe.concurrent("property lookup throws while formatting", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout), stderr, exitCode };
+  }
+
+  it("skips an inherited property whose Proxy get trap throws and keeps formatting", async () => {
+    const { stdout, stderr, exitCode } = await inspectInChild(`
+      const proto = new Proxy(
+        { a: 1, b: 2, c: 3 },
+        {
+          get(target, key) {
+            if (key === "a") throw new Error("a");
+            return target[key];
+          },
+        },
+      );
+      const obj = Object.create(proto);
+      obj.x = 1;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        x: 1,
+        b: 2,
+        c: 3,
+      }"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("stops walking the prototype chain when a Proxy getPrototypeOf trap throws", async () => {
+    const { stdout, stderr, exitCode } = await inspectInChild(`
+      const proto = new Proxy(
+        { a: 1 },
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf");
+          },
+        },
+      );
+      const obj = Object.create(proto);
+      obj.x = 1;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(stdout).toMatchInlineSnapshot(`
+      "{
+        x: 1,
+        a: 1,
+      }"
+    `);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
+  it("keeps formatting after a lazy property initializer throws", async () => {
+    // Bun.$ is the first property of the Bun object and is created on first
+    // access by the shell builtin, which calls Symbol("cwd"). Making that call
+    // throw leaves an exception behind while the remaining lazy properties
+    // (Archive is the next one) are still being initialized.
+    const { stdout, stderr, exitCode } = await inspectInChild(`
+      const OriginalSymbol = Symbol;
+      globalThis.Symbol = new Proxy(OriginalSymbol, {
+        apply(target, thisValue, args) {
+          if (args[0] === "cwd") throw new Error("cwd");
+          return Reflect.apply(target, thisValue, args);
+        },
+      });
+      const out = Bun.inspect(Bun);
+      globalThis.Symbol = OriginalSymbol;
+      console.log(out.includes("Archive:"));
+    `);
+    expect(stdout).toBe("true");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

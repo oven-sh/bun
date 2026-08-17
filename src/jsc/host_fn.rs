@@ -748,20 +748,6 @@ pub fn from_js_host_call_generic<R>(
     crate::call_check_slow(global_this, f)
 }
 
-/// bun_uws_sys's checked uSockets calls (`us_socket_t::close` and friends dispatch socket callbacks, which are
-/// script on a JS thread) land here by link-time dispatch; see `bun_uws_sys::js`.
-#[unsafe(no_mangle)]
-pub fn Bun__uws__runChecked(f: &mut dyn FnMut()) -> JsResult<()> {
-    match crate::virtual_machine::VirtualMachine::get_or_null() {
-        // SAFETY: a non-null per-thread VM is live for its thread.
-        Some(vm) => from_js_host_call_generic(unsafe { (*vm).global() }, f),
-        None => {
-            f();
-            Ok(())
-        }
-    }
-}
-
 // ───────────────────────── error conversion helpers ─────────────────────────
 
 // For when bubbling up errors to functions that require a C ABI boundary

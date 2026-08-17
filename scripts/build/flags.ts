@@ -809,6 +809,14 @@ export const defines: Flag[] = [
 
   // ─── Feature toggles ───
   {
+    // root.h turns this into ENABLE_WEBGPU=1, overriding the JSCOnly
+    // cmakeconfig.h, which has it off; the webgpu sources themselves are
+    // only compiled when cfg.webgpu (bun.ts).
+    flag: "BUN_WEBGPU=1",
+    when: c => c.webgpu,
+    desc: "navigator.gpu (WebKit's WebGPU on Metal), macOS only",
+  },
+  {
     flag: "LAZY_LOAD_SQLITE=0",
     when: c => c.staticSqlite,
     desc: "SQLite statically linked",
@@ -1569,6 +1577,22 @@ export function bunIncludes(cfg: Config): string[] {
     includes.push(join(cwd, "src/jsc/bindings/libuv"));
   }
 
+  if (cfg.webgpu) {
+    // What the rest of bun needs in order to reach the GPU wrappers
+    // (ZigGlobalObject, the event factories): the JS-facing objects, their
+    // bindings and the InternalAPI headers those objects include. Listed
+    // after webcore/ because every imported source carries its own config.h
+    // and nothing else may pick up webgpu/config.h. wtf-shim holds the Cocoa
+    // WTF headers the JSCOnly prebuilt leaves out; it shadows them because
+    // bun's includes precede the dep (WebKit) includes on the command line.
+    includes.push(
+      join(cwd, "src/jsc/bindings/webgpu/wtf-shim"),
+      join(cwd, "src/jsc/bindings/webgpu"),
+      join(cwd, "src/jsc/bindings/webgpu/bindings"),
+      join(cwd, "src/jsc/bindings/webgpu/InternalAPI"),
+    );
+  }
+
   // musl doesn't ship sys/queue.h (glibc-only BSDism). lshpack bundles
   // a compat copy for this case.
   if (cfg.linux && cfg.abi === "musl") {
@@ -1576,6 +1600,22 @@ export function bunIncludes(cfg: Config): string[] {
   }
 
   return includes;
+}
+
+/**
+ * Include dirs only the webgpu sources themselves compile with (on top of
+ * bunIncludes): the Implementation layer and the WGSL compiler. The WGSL
+ * headers have generic names (Types.h, Parser.h, Lexer.h, ...), so they stay
+ * off the path every other TU uses. `<WebGPU/WebGPU.h>`, the backend's C
+ * API, resolves through the webgpu/ entry in bunIncludes.
+ */
+export function webgpuIncludes(cfg: Config): string[] {
+  return [
+    "src/jsc/bindings/webgpu/Implementation",
+    "src/jsc/bindings/webgpu/WGSL",
+    "src/jsc/bindings/webgpu/WGSL/AST",
+    "src/jsc/bindings/webgpu/WGSL/Metal",
+  ].map(dir => join(cfg.cwd, dir));
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

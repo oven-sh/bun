@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GPUBuffer.h"
 
+#include "GPUEventLoopKeepAlive.h"
 #include "GPUDevice.h"
 #include "JSDOMConvertNull.h"
 #include "JSDOMPromiseDeferred.h"
@@ -81,7 +82,7 @@ void GPUBuffer::mapAsync(GPUMapModeFlags mode, GPUSize64 offset, std::optional<G
 
     m_pendingMapPromise = makeUnique<MapAsyncPromise>(promise);
     // FIXME: Should this capture a weak pointer to |this| instead?
-    m_backing->mapAsync(convertMapModeFlagsToBacking(mode), offset, size, [promise = WTF::move(promise), protectedThis = protect(*this), offset, size](bool success) mutable {
+    m_backing->mapAsync(convertMapModeFlagsToBacking(mode), offset, size, [eventLoop = GPUEventLoopKeepAlive(promise), promise = WTF::move(promise), protectedThis = protect(*this), offset, size](bool success) mutable {
         if (!protectedThis->m_pendingMapPromise) {
             if (protectedThis->m_destroyed)
                 promise.reject(Exception { ExceptionCode::OperationError, "buffer destroyed during mapAsync"_s });

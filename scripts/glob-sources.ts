@@ -115,6 +115,26 @@ const patterns = {
       "packages/bun-usockets/src/crypto/*.cpp",
     ],
   },
+  /**
+   * WebGPU, compiled only when `cfg.webgpu` (macOS): the WebCore GPU*
+   * objects, their generated bindings, the InternalAPI implementation and
+   * the WGSL compiler. Each layer is its own directory, so unified bundles
+   * never mix layers. See scripts/import-webgpu-from-webkit.ts.
+   */
+  webgpuCxx: {
+    paths: [
+      "src/jsc/bindings/webgpu/*.cpp",
+      "src/jsc/bindings/webgpu/bindings/*.cpp",
+      "src/jsc/bindings/webgpu/Implementation/*.cpp",
+      "src/jsc/bindings/webgpu/WGSL/*.cpp",
+      "src/jsc/bindings/webgpu/WGSL/AST/*.cpp",
+      "src/jsc/bindings/webgpu/WGSL/Metal/*.cpp",
+    ],
+  },
+  /** The Metal backend behind the webgpu.h C API: Objective-C++ under ARC, compiled without the PCH. */
+  webgpuObjCxx: {
+    paths: ["src/jsc/bindings/webgpu/WebGPU/*.mm"],
+  },
   /** all `*.c` compiled into bun (usockets, llhttp, uv polyfills) */
   c: {
     paths: [

@@ -244,6 +244,18 @@ export function cxx(n: Ninja, cfg: Config, src: string, opts: CompileOpts): stri
 }
 
 /**
+ * Compile an Objective-C++ source file (the WebGPU Metal backend) with the
+ * C++ rule: clang picks the language from the .mm extension, and the
+ * C++ flag set applies as-is. ARC because that is what the code is written
+ * for (WebKit builds it with CLANG_ENABLE_OBJC_ARC). Never uses the PCH,
+ * which is a C++ one.
+ */
+export function objcxx(n: Ninja, cfg: Config, src: string, opts: Omit<CompileOpts, "pch" | "pchHeader">): string {
+  assert(extname(src) === ".mm", `objcxx() expects .mm source, got: ${src}`);
+  return compile(n, cfg, src, { ...opts, flags: [...opts.flags, "-fobjc-arc", "-fobjc-weak"] }, "cxx");
+}
+
+/**
  * Compile a C source file. Returns absolute path to the .o output.
  *
  * `.S` (preprocessed assembly) is also accepted — clang dispatches on the

@@ -145,6 +145,16 @@ const eventRules: Rule[] = [
 // class is built from exactly that std::variant.
 const unionRules: Rule[] = [{ from: /\bIDLUnion<(?!IDLArrayBufferView, IDLArrayBuffer>)/g, to: "IDLVariantUnion<" }];
 
+// Bun exits when its event loop has nothing left to do, so every operation
+// that resolves a promise from the backend captures a GPUEventLoopKeepAlive
+// (bun-owned header next to the GPU* objects) alongside the promise. The
+// token is built from the promise before the promise itself is moved into the
+// lambda, which is why it is inserted in front of that capture.
+const eventLoopRules: Rule[] = [
+  { from: /\b(\w*[pP]romise) = WTF::move\((\w*[pP]romise)\)/g, to: "eventLoop = GPUEventLoopKeepAlive($2), $1 = WTF::move($2)" },
+  { from: /^(#include "config.h"\n#include "GPU\w*\.h"\n)(?=[\s\S]*GPUEventLoopKeepAlive\()/m, to: '$1\n#include "GPUEventLoopKeepAlive.h"' },
+];
+
 // generate-bindings.pl emits code for the current WebCore bindings layer;
 // bun's webcore/ copy predates a few of its changes. Each rule below rewrites
 // one such construct into what bun's layer provides (see the bun headers named
@@ -210,7 +220,7 @@ const sourceExt = /\.(cpp|h|mm|idl)$/;
 
 // Files that the import replaces with bun-specific versions, or adds; see the
 // corresponding files in the output tree. They are never overwritten.
-const bunOwned = new Set(["config.h", "StringCocoa.h"]);
+const bunOwned = new Set(["config.h", "StringCocoa.h", "GPUEventLoopKeepAlive.h", "NavigatorGPU.h", "NavigatorGPU.cpp"]);
 
 const dropXR = [/^XR/, /^WebGPUXR/, /XRBinding/, /XRProjectionLayer/, /XRSubImage/, /XRView/, /XREye/, /XRLayerBacking/];
 const dropPresentation = [/PresentationContext/, /CompositorIntegration/, /^GPUCanvas/, /^WebGPUCanvas/];
@@ -281,7 +291,11 @@ if (bindingsOnly) {
     keep: /\.(cpp|h)$/,
     drop: [...dropXR, ...dropPresentation, ...dropExternalTexture],
   });
-  copyDir(modules, out, { keep: sourceExt, drop: dropDom, rules: [...inspectorRules, ...eventRules, ...unionRules] });
+  copyDir(modules, out, {
+    keep: sourceExt,
+    drop: dropDom,
+    rules: [...inspectorRules, ...eventRules, ...unionRules, ...eventLoopRules],
+  });
 }
 
 // ─── JS bindings ───────────────────────────────────────────────────────────

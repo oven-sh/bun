@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GPUAdapter.h"
 
+#include "GPUEventLoopKeepAlive.h"
 #include "Exception.h"
 #include "JSDOMPromiseDeferred.h"
 #include "JSGPUAdapterInfo.h"
@@ -128,7 +129,7 @@ void GPUAdapter::requestDevice(ScriptExecutionContext& scriptExecutionContext, c
         return;
     }
 
-    m_backing->requestDevice(convertToBacking(deviceDescriptor), [protectedThis = protect(*this), deviceDescriptor, promise = WTF::move(promise), scriptExecutionContextRef = protect(scriptExecutionContext)](RefPtr<WebGPU::Device>&& device) mutable {
+    m_backing->requestDevice(convertToBacking(deviceDescriptor), [protectedThis = protect(*this), deviceDescriptor, eventLoop = GPUEventLoopKeepAlive(promise), promise = WTF::move(promise), scriptExecutionContextRef = protect(scriptExecutionContext)](RefPtr<WebGPU::Device>&& device) mutable {
         if (!device)
             promise.reject(Exception(ExceptionCode::OperationError));
         else {

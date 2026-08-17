@@ -30,13 +30,13 @@ import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync } from "
 import { dirname, relative, resolve, sep } from "node:path";
 import type { Sources } from "../glob-sources.ts";
 import { emitCodegen, type CodegenOutputs } from "./codegen.ts";
-import { ar, cc, cxx, link, pch } from "./compile.ts";
+import { ar, cc, cxx, link, objcxx, pch } from "./compile.ts";
 import { bunExeName, shouldStrip, type Config } from "./config.ts";
 import { generateDepVersionsHeader } from "./depVersionsHeader.ts";
 import { allDeps } from "./deps/index.ts";
 import { lolhtml } from "./deps/lolhtml.ts";
 import { assert } from "./error.ts";
-import { bunIncludes, computeFlags, extraFlagsFor, linkDepends } from "./flags.ts";
+import { bunIncludes, computeFlags, extraFlagsFor, linkDepends, webgpuIncludes } from "./flags.ts";
 import { writeIfChanged } from "./fs.ts";
 import type { BuildNode, Ninja } from "./ninja.ts";
 import { emitRust, linkerMapPath, rustLibPath, rustLtoLinkInputs } from "./rust.ts";
@@ -89,6 +89,9 @@ function systemLibs(cfg: Config): string[] {
     // icucore: system ICU framework.
     // resolv: DNS resolution (getaddrinfo et al).
     libs.push("-licucore", "-lresolv");
+    // The WebGPU backend (src/jsc/bindings/webgpu/WebGPU) drives Metal and
+    // uses Foundation collections; nothing else in bun links a framework.
+    if (cfg.webgpu) libs.push("-framework", "Metal", "-framework", "Foundation");
   }
 
   if (cfg.freebsd) {
@@ -301,7 +304,11 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // separate — those are already large single TUs (ZigGeneratedClasses.cpp
   // is 3.3 MB) and bundling them would serialize work. Always called so
   // stale bundles are pruned even with --unifiedSources=false.
-  const split = generateUnifiedSources(cfg, sources.cxx);
+  // WebGPU (macOS): its .cpp files bundle like everything else (one bundle
+  // set per layer directory) and only differ in compiling with the extra
+  // include dirs; the Objective-C++ backend is compiled further down.
+  const split = generateUnifiedSources(cfg, cfg.webgpu ? [...sources.cxx, ...sources.webgpuCxx] : sources.cxx);
+  const isWebgpuUnit = (unit: string) => split.sourceDir.get(unit)?.startsWith("src/jsc/bindings/webgpu") === true;
   const cxxSources = [...split.unified, ...split.standalone];
   const cSources = [...sources.c];
 
@@ -370,12 +377,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     });
   }
 
+  const webgpuIncludeFlags = cfg.webgpu ? webgpuIncludes(cfg).map(inc => `-I${inc}`) : [];
+
   const cxxObjects: string[] = [];
   for (const src of cxxSources) {
     const relSrc = relative(cfg.cwd, src);
     const extraFlags = extraFlagsFor(cfg, relSrc);
     const opts: Parameters<typeof cxx>[3] = {
-      flags: [...cxxFlagsFull, ...extraFlags],
+      flags: [...cxxFlagsFull, ...(isWebgpuUnit(src) ? webgpuIncludeFlags : []), ...extraFlags],
     };
     if (pchOut !== undefined && !noPchSources.has(src)) {
       // PCH has implicit deps on depHeaderSignal. cxx has implicit dep on PCH.
@@ -389,6 +398,20 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
       opts.orderOnlyInputs = codegenOrderOnly;
     }
     cxxObjects.push(cxx(n, cfg, src, opts));
+  }
+
+  // The Metal backend: Objective-C++ under ARC. The PCH is a C++ PCH, so
+  // these get the dep signal directly like the .c files do.
+  if (cfg.webgpu) {
+    for (const src of sources.webgpuObjCxx) {
+      cxxObjects.push(
+        objcxx(n, cfg, src, {
+          flags: [...cxxFlagsFull, ...webgpuIncludeFlags],
+          implicitInputs: depHeaderSignal,
+          orderOnlyInputs: codegenOrderOnly,
+        }),
+      );
+    }
   }
 
   // Compile all .c files. No PCH — dep signal applied directly.

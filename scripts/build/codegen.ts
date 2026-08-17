@@ -117,9 +117,13 @@ export function registerCodegenRules(n: Ninja, cfg: Config): void {
   // restat = 1 because most scripts use writeIfNotChanged(). Scripts that
   // don't (generate-jssink) always write → restat is a no-op for
   // them, no harm.
+  // TARGET_FEATURES: the ENABLE() features this build compiles in, for the
+  // `#if ENABLE(X)` blocks in LUT sources (create-hash-table.ts). Part of the
+  // rule's command line on purpose: toggling a feature re-runs the codegen.
+  const features = cfg.webgpu ? "webgpu" : "";
   const env = hostWin
-    ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& `
-    : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} `;
+    ? `set TARGET_PLATFORM=${platform}&& set TARGET_ARCH=${arch}&& set TARGET_FEATURES=${features}&& `
+    : `TARGET_PLATFORM=${platform} TARGET_ARCH=${arch} TARGET_FEATURES=${features} `;
   n.rule("codegen", {
     command: hostWin ? `cmd /c "cd /d $cwd && ${env}${bun} $args"` : `cd $cwd && ${env}${bun} $args`,
     description: "gen $desc",
@@ -935,8 +939,9 @@ function emitJsSink({ n, cfg, o, dirStamp }: Ctx): void {
  * script takes a single (src, out) pair.
  *
  * The source .cpp files contain `@begin XXXTable ... @end` blocks that the
- * perl script parses into JSC HashTableValue arrays. The TS wrapper adds
- * platform-specific #if preprocessing via TARGET_PLATFORM env var.
+ * perl script parses into JSC HashTableValue arrays. The TS wrapper strips
+ * `#if OS(...)` blocks for other platforms (TARGET_PLATFORM) and
+ * `#if ENABLE(...)` blocks for features the build leaves out (TARGET_FEATURES).
  */
 function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
   const script = resolve(cfg.cwd, "src", "codegen", "create-hash-table.ts");
@@ -969,8 +974,8 @@ function emitObjectLuts({ n, cfg, o, dirStamp }: Ctx): void {
     [resolve(cfg.cwd, "src/jsc/bindings/webcore/JSEvent.cpp"), resolve(cfg.codegenDir, "JSEvent.lut.h")],
   ];
 
-  // create-hash-table.ts reads TARGET_PLATFORM env (set in registerCodegenRules)
-  // with process.platform fallback.
+  // create-hash-table.ts reads TARGET_PLATFORM and TARGET_FEATURES from the
+  // env set in registerCodegenRules (process.platform / nothing as fallbacks).
   for (const [src, out] of pairs) {
     n.build({
       outputs: [out],

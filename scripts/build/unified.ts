@@ -145,6 +145,10 @@ const noUnify: readonly string[] = [
   // so it doesn't pull a CoreGraphics load command; bundled with files that
   // include the real CF headers those names become ambiguous.
   "src/jsc/bindings/image_coregraphics_shim.cpp",
+  // Marked @no-unify in WebKit's WGSL Sources.txt: both have a file-scope
+  // `using namespace Types;` that would leak into the rest of the bundle.
+  "src/jsc/bindings/webgpu/WGSL/TypeStore.cpp",
+  "src/jsc/bindings/webgpu/WGSL/Types.cpp",
   // Includes <windows.h> + <ocidl.h> for the real VARIANT/IPropertyBag2 ABI;
   // keeping it out of unified bundles avoids the macro pollution (`min`/`max`
   // /`ERROR`/etc.) leaking into siblings.
@@ -191,6 +195,13 @@ export interface UnifiedSplit {
    * opens an individual source instead of the bundle.
    */
   bundled: string[];
+  /**
+   * For every entry of `unified` and `standalone`: the repo-relative,
+   * posix-style source directory it was built from. Lets bun.ts give a
+   * directory tree (the webgpu layers) extra flags without caring whether
+   * its files ended up bundled or standalone.
+   */
+  sourceDir: Map<string, string>;
 }
 
 /**
@@ -219,16 +230,14 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
 
   const standalone: string[] = [];
   const byDir = new Map<string, string[]>();
+  const sourceDir = new Map<string, string>();
 
   for (const abs of cxxSources) {
-    if (!cfg.unifiedSources) {
-      standalone.push(abs);
-      continue;
-    }
     // slash(): noUnify keys and the dir tag below are posix-style.
     const rel = slash(relative(cfg.cwd, abs));
     const dir = dirname(rel);
-    if (skip.has(rel) || noUnifyDirs.includes(dir)) {
+    sourceDir.set(abs, dir);
+    if (!cfg.unifiedSources || skip.has(rel) || noUnifyDirs.includes(dir)) {
       standalone.push(abs);
       continue;
     }
@@ -277,6 +286,7 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
       const body = chunk.map(f => `#include "${slash(relative(outDir, f))}"`).join("\n") + "\n";
       writeIfChanged(out, body);
       unified.push(out);
+      sourceDir.set(out, dir);
       bundled.push(...chunk);
     }
   }
@@ -289,5 +299,5 @@ export function generateUnifiedSources(cfg: Config, cxxSources: readonly string[
     if (f.endsWith(".cpp") && !live.has(f)) rmSync(resolve(outDir, f));
   }
 
-  return { unified, standalone, bundled };
+  return { unified, standalone, bundled, sourceDir };
 }

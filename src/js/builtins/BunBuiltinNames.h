@@ -97,6 +97,7 @@ using namespace JSC;
     macro(flush) \
     macro(format) \
     macro(fulfillModuleSync) \
+    macro(gpu) \
     macro(handleEvent) \
     macro(headers) \
     macro(highWaterMark) \

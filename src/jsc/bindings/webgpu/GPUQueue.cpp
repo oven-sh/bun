@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GPUQueue.h"
 
+#include "GPUEventLoopKeepAlive.h"
 #include "GPUBuffer.h"
 #include "GPUDevice.h"
 #include "GPUTexture.h"
@@ -82,7 +83,7 @@ void GPUQueue::submit(Vector<Ref<GPUCommandBuffer>>&& commandBuffers)
 
 void GPUQueue::onSubmittedWorkDone(OnSubmittedWorkDonePromise&& promise)
 {
-    m_backing->onSubmittedWorkDone([promise = WTF::move(promise)]() mutable {
+    m_backing->onSubmittedWorkDone([eventLoop = GPUEventLoopKeepAlive(promise), promise = WTF::move(promise)]() mutable {
         promise.resolve(nullptr);
     });
 }

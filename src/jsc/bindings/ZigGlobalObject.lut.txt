@@ -91,5 +91,45 @@
   WritableStream                  WritableStreamConstructorCallback                    DontEnum|PropertyCallback
   WritableStreamDefaultController WritableStreamDefaultControllerConstructorCallback   DontEnum|PropertyCallback
   WritableStreamDefaultWriter     WritableStreamDefaultWriterConstructorCallback       DontEnum|PropertyCallback
+#if ENABLE(WEBGPU)
+  GPU                             Bun::GPUConstructorCallback                               PropertyCallback
+  GPUAdapter                      Bun::GPUAdapterConstructorCallback                        PropertyCallback
+  GPUAdapterInfo                  Bun::GPUAdapterInfoConstructorCallback                    PropertyCallback
+  GPUBindGroup                    Bun::GPUBindGroupConstructorCallback                      PropertyCallback
+  GPUBindGroupLayout              Bun::GPUBindGroupLayoutConstructorCallback                PropertyCallback
+  GPUBuffer                       Bun::GPUBufferConstructorCallback                         PropertyCallback
+  GPUBufferUsage                  Bun::GPUBufferUsageConstructorCallback                    PropertyCallback
+  GPUColorWrite                   Bun::GPUColorWriteConstructorCallback                     PropertyCallback
+  GPUCommandBuffer                Bun::GPUCommandBufferConstructorCallback                  PropertyCallback
+  GPUCommandEncoder               Bun::GPUCommandEncoderConstructorCallback                 PropertyCallback
+  GPUCompilationInfo              Bun::GPUCompilationInfoConstructorCallback                PropertyCallback
+  GPUCompilationMessage           Bun::GPUCompilationMessageConstructorCallback             PropertyCallback
+  GPUComputePassEncoder           Bun::GPUComputePassEncoderConstructorCallback             PropertyCallback
+  GPUComputePipeline              Bun::GPUComputePipelineConstructorCallback                PropertyCallback
+  GPUDevice                       Bun::GPUDeviceConstructorCallback                         PropertyCallback
+  GPUDeviceLostInfo               Bun::GPUDeviceLostInfoConstructorCallback                 PropertyCallback
+  GPUInternalError                Bun::GPUInternalErrorConstructorCallback                  PropertyCallback
+  GPUMapMode                      Bun::GPUMapModeConstructorCallback                        PropertyCallback
+  GPUOutOfMemoryError             Bun::GPUOutOfMemoryErrorConstructorCallback               PropertyCallback
+  GPUPipelineError                Bun::GPUPipelineErrorConstructorCallback                  PropertyCallback
+  GPUPipelineLayout               Bun::GPUPipelineLayoutConstructorCallback                 PropertyCallback
+  GPUQuerySet                     Bun::GPUQuerySetConstructorCallback                       PropertyCallback
+  GPUQueue                        Bun::GPUQueueConstructorCallback                          PropertyCallback
+  GPURenderBundle                 Bun::GPURenderBundleConstructorCallback                   PropertyCallback
+  GPURenderBundleEncoder          Bun::GPURenderBundleEncoderConstructorCallback            PropertyCallback
+  GPURenderPassEncoder            Bun::GPURenderPassEncoderConstructorCallback              PropertyCallback
+  GPURenderPipeline               Bun::GPURenderPipelineConstructorCallback                 PropertyCallback
+  GPUSampler                      Bun::GPUSamplerConstructorCallback                        PropertyCallback
+  GPUShaderModule                 Bun::GPUShaderModuleConstructorCallback                   PropertyCallback
+  GPUShaderStage                  Bun::GPUShaderStageConstructorCallback                    PropertyCallback
+  GPUSupportedFeatures            Bun::GPUSupportedFeaturesConstructorCallback              PropertyCallback
+  GPUSupportedLimits              Bun::GPUSupportedLimitsConstructorCallback                PropertyCallback
+  GPUTexture                      Bun::GPUTextureConstructorCallback                        PropertyCallback
+  GPUTextureUsage                 Bun::GPUTextureUsageConstructorCallback                   PropertyCallback
+  GPUTextureView                  Bun::GPUTextureViewConstructorCallback                    PropertyCallback
+  GPUUncapturedErrorEvent         Bun::GPUUncapturedErrorEventConstructorCallback           PropertyCallback
+  GPUValidationError              Bun::GPUValidationErrorConstructorCallback                PropertyCallback
+  WGSLLanguageFeatures            Bun::WGSLLanguageFeaturesConstructorCallback              PropertyCallback
+#endif
 @end
 */

@@ -16,7 +16,22 @@ const os = platform === "win32" ? "WINDOWS" : platform.toUpperCase();
 const other_oses = ["WINDOWS", "DARWIN", "LINUX"].filter(x => x !== os);
 const to_remove = new RegExp(`#if\\s+(!OS\\(${os}\\)|OS\\((${other_oses.join("|")})\\))\\n.*?#endif`, "gs");
 
-const input_preprocessed = to_preprocess.replace(to_remove, "");
+// `#if ENABLE(FEATURE)` blocks stay only for the features the build enables
+// (TARGET_FEATURES, set by scripts/build/codegen.ts from the Config; e.g.
+// "webgpu" for ENABLE(WEBGPU)). The perl script ignores the #if/#endif lines
+// themselves, so a kept block needs no further processing.
+const enabled_features = new Set(
+  (process.env.TARGET_FEATURES ?? "")
+    .split(",")
+    .filter(Boolean)
+    .map(f => f.toUpperCase()),
+);
+const remove_disabled_features = (text: string) =>
+  text.replace(/#if\s+ENABLE\((\w+)\)\n.*?#endif/gs, (block, feature: string) =>
+    enabled_features.has(feature) ? block : "",
+  );
+
+const input_preprocessed = remove_disabled_features(to_preprocess.replace(to_remove, ""));
 
 console.log("Generating " + output + " from " + input);
 const proc = spawn({

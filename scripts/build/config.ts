@@ -149,6 +149,11 @@ export interface Config {
   staticSqlite: boolean;
   staticLibatomic: boolean;
   tinycc: boolean;
+  /**
+   * Build `navigator.gpu` (src/jsc/bindings/webgpu, WebKit's implementation
+   * on Metal). macOS only; `--webgpu=off` builds a macOS binary without it.
+   */
+  webgpu: boolean;
   valgrind: boolean;
   fuzzilli: boolean;
   /**
@@ -349,6 +354,7 @@ export interface PartialConfig {
   staticSqlite?: boolean;
   staticLibatomic?: boolean;
   tinycc?: boolean;
+  webgpu?: boolean;
   valgrind?: boolean;
   fuzzilli?: boolean;
   socketFaultInjection?: boolean;
@@ -902,6 +908,10 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   // to dlopen-only) and FreeBSD (oven-sh/tinycc has no FreeBSD target).
   const tinycc = partial.tinycc ?? !(abi === "android" || freebsd);
 
+  // The WebGPU backend is Metal, so the feature only exists on macOS; there
+  // it is on unless a build opts out (--webgpu=off, e.g. to measure its size).
+  const webgpu = darwin && (partial.webgpu ?? true);
+
   const valgrind = partial.valgrind ?? false;
   const fuzzilli = partial.fuzzilli ?? false;
   // Default follows asan: on for local debug (Linux / arm64 macOS) and CI
@@ -1209,6 +1219,7 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     staticSqlite,
     staticLibatomic,
     tinycc,
+    webgpu,
     valgrind,
     fuzzilli,
     socketFaultInjection,
@@ -1578,6 +1589,7 @@ export function formatConfig(cfg: Config, exe: string): string {
   if (cfg.baseline) features.push("baseline");
   if (cfg.valgrind) features.push("valgrind");
   if (cfg.fuzzilli) features.push("fuzzilli");
+  if (cfg.darwin && !cfg.webgpu) features.push("webgpu:off");
   if (cfg.socketFaultInjection !== cfg.asan) {
     features.push(`socket-fault-injection:${cfg.socketFaultInjection ? "on" : "off"}`);
   }

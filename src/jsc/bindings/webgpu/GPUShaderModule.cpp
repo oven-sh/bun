@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GPUShaderModule.h"
 
+#include "GPUEventLoopKeepAlive.h"
 #include "GPUDevice.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMPromiseDeferred.h"
@@ -63,7 +64,7 @@ void GPUShaderModule::setLabel(String&& label)
 
 void GPUShaderModule::getCompilationInfo(CompilationInfoPromise&& promise)
 {
-    m_backing->compilationInfo([promise = WTF::move(promise)](Ref<WebGPU::CompilationInfo>&& compilationInfo) mutable {
+    m_backing->compilationInfo([eventLoop = GPUEventLoopKeepAlive(promise), promise = WTF::move(promise)](Ref<WebGPU::CompilationInfo>&& compilationInfo) mutable {
         promise.resolve(GPUCompilationInfo::create(WTF::move(compilationInfo)));
     });
 }

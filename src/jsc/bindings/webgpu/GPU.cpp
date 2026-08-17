@@ -26,6 +26,7 @@
 #include "config.h"
 #include "GPU.h"
 
+#include "GPUEventLoopKeepAlive.h"
 #include "GPUAdapter.h"
 #include "GPURequestAdapterOptions.h"
 #include "GPUTextureFormat.h"
@@ -59,7 +60,7 @@ struct GPU::PendingRequestAdapterArguments {
 
 void GPU::requestAdapter(const std::optional<GPURequestAdapterOptions>& options, RequestAdapterPromise&& promise)
 {
-    m_backing->requestAdapter(convertToBacking(options), [promise = WTF::move(promise)](RefPtr<WebGPU::Adapter>&& adapter) mutable {
+    m_backing->requestAdapter(convertToBacking(options), [eventLoop = GPUEventLoopKeepAlive(promise), promise = WTF::move(promise)](RefPtr<WebGPU::Adapter>&& adapter) mutable {
         if (!adapter) {
             promise.resolve(nullptr);
             return;

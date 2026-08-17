@@ -442,6 +442,7 @@ function parseArgs(argv: string[]): CliArgs {
     "staticSqlite",
     "staticLibatomic",
     "tinycc",
+    "webgpu",
     "valgrind",
     "fuzzilli",
     "socketFaultInjection",

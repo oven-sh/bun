@@ -94,6 +94,9 @@
 #include "webcore/JSMIMEBindings.h"
 #include "streams/JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
+#if ENABLE(WEBGPU)
+#include "NavigatorGPU.h"
+#endif
 #include "JSCommonJSExtensions.h"
 #include "streams/JSCountQueuingStrategy.h"
 #include "JSCustomEvent.h"
@@ -2376,6 +2379,9 @@ void GlobalObject::finishCreation(VM& vm)
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "userAgent"_s), functionNavigatorGetUserAgent, JSC::NoIntrinsic, accessorAttributes);
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "platform"_s), functionNavigatorGetPlatform, JSC::NoIntrinsic, accessorAttributes);
             obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "hardwareConcurrency"_s), functionNavigatorGetHardwareConcurrency, JSC::NoIntrinsic, accessorAttributes);
+#if ENABLE(WEBGPU)
+            obj->putDirectNativeIntrinsicGetter(init.vm, globalObject, JSC::Identifier::fromString(init.vm, "gpu"_s), Bun::jsNavigatorGetGPU, JSC::NoIntrinsic, accessorAttributes);
+#endif
 
             obj->putDirect(init.vm, init.vm.propertyNames->toStringTagSymbol,
                 jsNontrivialString(init.vm, "Navigator"_s), PropertyAttribute::DontEnum | PropertyAttribute::ReadOnly);

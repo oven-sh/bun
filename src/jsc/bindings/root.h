@@ -42,6 +42,14 @@
 #include "cmakeconfig.h"
 #endif
 
+// cmakeconfig.h describes the JSCOnly WebKit build, which has no WebGPU. On
+// macOS bun compiles WebKit's implementation itself (src/jsc/bindings/webgpu,
+// cfg.webgpu in scripts/build/config.ts) and exposes it as navigator.gpu.
+#if defined(BUN_WEBGPU)
+#undef ENABLE_WEBGPU
+#define ENABLE_WEBGPU 1
+#endif
+
 #define JSC_API_AVAILABLE(...)
 #define JSC_CLASS_AVAILABLE(...) JS_EXPORT
 #define JSC_API_DEPRECATED(...)

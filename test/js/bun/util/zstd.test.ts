@@ -330,6 +330,10 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
   const MiB = 1024 * 1024;
   const CAP_MIB = 8;
   const outOfMemory = { name: "RangeError", message: "Out of memory" };
+  // An empty frame (magic, descriptor, window descriptor, one empty raw last block) without a content
+  // size and with a 16 MiB window: our output buffer stays small, but zstd itself has to allocate a
+  // window-sized buffer before it can decode anything, and that allocation is what fails under the cap.
+  const emptyFrameWith16MiBWindow = new Uint8Array([0x28, 0xb5, 0x2f, 0xfd, 0x00, 14 << 3, 0x01, 0x00, 0x00]);
 
   // Runs `script` in a child whose native allocations above the cap fail. `inputs` arrive in the
   // child as Buffers in a `inputs` object; the script prints a JSON object, which is returned.
@@ -375,7 +379,7 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
   }
 
   it.concurrent("zstd: compress and decompress, sync and async", async () => {
-    // All three decompress to more than the cap and each reaches the allocation differently:
+    // The first three decompress to more than the cap and each reaches the allocation differently:
     // a header size under the 16 MiB limit is allocated up front; one above it starts the
     // streaming decoder at 16 MiB; no header size starts small and fails while growing.
     const frames = {
@@ -384,8 +388,10 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       noHeaderSize: await new Response(
         new Response(Buffer.alloc(12 * MiB)).body!.pipeThrough(new CompressionStream("zstd")),
       ).bytes(),
+      largeWindow: emptyFrameWith16MiBWindow,
     };
     expect(frames.noHeaderSize[4] & 0xe0).toBe(0);
+    expect(zstdDecompressSync(frames.largeWindow)).toHaveLength(0);
 
     const results = await runCapped(
       frames,
@@ -411,6 +417,8 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       "decompress headerSizeAboveLimit": outOfMemory,
       "decompressSync noHeaderSize": outOfMemory,
       "decompress noHeaderSize": outOfMemory,
+      "decompressSync largeWindow": outOfMemory,
+      "decompress largeWindow": outOfMemory,
       afterwards: "still works",
       afterwardsAsync: "still works",
     });
@@ -453,8 +461,8 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
   });
 
   it.concurrent("fetch() decompressing a response body", async () => {
-    // Each body decompresses to 12 MiB: the gzip trailer's size cannot be reserved up front and
-    // every streaming decoder (zlib, brotli, zstd) fails while growing its output.
+    // The first four bodies decompress to 12 MiB: the gzip trailer's size cannot be reserved up front
+    // and every streaming decoder (zlib, brotli, zstd) fails while growing its output.
     const zeros = Buffer.alloc(12 * MiB);
     const bodies = {
       gzip: gzipSync(zeros),
@@ -462,17 +470,20 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       deflate: zlib.deflateSync(zeros),
       br: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
       zstd: zstdCompressSync(zeros),
+      "zstd-large-window": emptyFrameWith16MiBWindow,
       afterwards: gzipSync(Buffer.from("still works")),
     };
+    const encodings: Record<string, string> = { "zstd-large-window": "zstd", afterwards: "gzip" };
 
     const results = await runCapped(
       bodies,
       /* js */ `
+        const encodings = ${JSON.stringify(encodings)};
         using server = Bun.serve({
           port: 0,
           fetch(req) {
             const name = new URL(req.url).pathname.slice(1);
-            return new Response(inputs[name], { headers: { "Content-Encoding": name === "afterwards" ? "gzip" : name } });
+            return new Response(inputs[name], { headers: { "Content-Encoding": encodings[name] ?? name } });
           },
         });
         for (const name of Object.keys(inputs)) {
@@ -488,6 +499,7 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       deflate: fetchOutOfMemory,
       br: fetchOutOfMemory,
       zstd: fetchOutOfMemory,
+      "zstd-large-window": fetchOutOfMemory,
       afterwards: "still works",
     });
   });

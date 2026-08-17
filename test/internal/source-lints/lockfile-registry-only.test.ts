@@ -20,18 +20,20 @@ import path from "node:path";
 const lockfiles = ["bun.lock", "test/bun.lock"];
 
 // Each lockfile entry starts with "name@resolution"; a scoped name contains a
-// "/" but only the leading "@". The registry resolves to a bare version, and
-// root:, workspace:, file: and link: never leave the checkout. Everything else
-// fails: github:, git+<url> and tarball URLs are fetched from another host, and
-// a shape this does not know needs someone to decide which of the two it is.
-const registryOrCheckout = /^@?[^@]+@(\d+\.\d+\.\d+|root:|workspace:|file:|link:)/;
+// "/" but only the leading "@". The registry resolves to exactly a version
+// (optionally with a prerelease or build suffix), and root:, workspace:, file:
+// and link: are followed by a path to something already on disk. Everything
+// else fails: github:, git+<url> and tarball URLs are fetched from another
+// host, and a shape this does not know needs someone to decide which it is.
+const registryOrLocal = /^@?[^@]+@(\d+\.\d+\.\d+([-+][\w.+-]*)?$|root:|workspace:|file:|link:)/;
 
-test("registryOrCheckout accepts registry versions and checkout-local resolutions only", () => {
+test("registryOrLocal accepts registry versions and on-disk resolutions only", () => {
   const classified = Object.fromEntries(
     [
       "esbuild@0.21.5",
       "@types/node@25.0.0",
       "@wolfy1339/lru-cache@11.0.2-patch.1",
+      "verdaccio@6.0.0-6-next.76",
       "bun@root:",
       "bun-types@workspace:packages/bun-types",
       "bun-plugin-svelte@file:../packages/bun-plugin-svelte",
@@ -40,14 +42,17 @@ test("registryOrCheckout accepts registry versions and checkout-local resolution
       "foo@git+ssh://git@github.com/oven-sh/foo.git#0123abc",
       "foo@git+https://github.com/oven-sh/foo.git#0123abc",
       "foo@https://example.com/foo-1.0.0.tgz",
+      "foo@1.2.3.tgz",
+      "foo@1.2.3@github:oven-sh/foo",
       "foo@",
       "no-resolution",
-    ].map(entry => [entry, registryOrCheckout.test(entry)]),
+    ].map(entry => [entry, registryOrLocal.test(entry)]),
   );
   expect(classified).toEqual({
     "esbuild@0.21.5": true,
     "@types/node@25.0.0": true,
     "@wolfy1339/lru-cache@11.0.2-patch.1": true,
+    "verdaccio@6.0.0-6-next.76": true,
     "bun@root:": true,
     "bun-types@workspace:packages/bun-types": true,
     "bun-plugin-svelte@file:../packages/bun-plugin-svelte": true,
@@ -56,6 +61,8 @@ test("registryOrCheckout accepts registry versions and checkout-local resolution
     "foo@git+ssh://git@github.com/oven-sh/foo.git#0123abc": false,
     "foo@git+https://github.com/oven-sh/foo.git#0123abc": false,
     "foo@https://example.com/foo-1.0.0.tgz": false,
+    "foo@1.2.3.tgz": false,
+    "foo@1.2.3@github:oven-sh/foo": false,
     "foo@": false,
     "no-resolution": false,
   });
@@ -72,7 +79,7 @@ test.each(lockfiles)("%s resolves every package from the npm registry", lockfile
   expect(entries.length).toBeGreaterThan(0);
 
   const violations = entries
-    .filter(([, [nameAtResolution]]) => !registryOrCheckout.test(nameAtResolution))
+    .filter(([, [nameAtResolution]]) => !registryOrLocal.test(nameAtResolution))
     .map(([key, [nameAtResolution]]) => `${key} -> ${nameAtResolution}`);
   expect(violations).toEqual([]);
 });

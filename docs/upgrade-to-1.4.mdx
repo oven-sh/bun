@@ -373,12 +373,6 @@ process.on("warning", w => myLogger.warn(w));
 
 As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on that, switch to `dns.resolve4()` / `dns.resolve()` (which still use c-ares and honor `setServers()`), or call [`Bun.dns.lookup()`](/runtime/networking/dns) with `{ backend: "c-ares" }`. `fetch()` and `Bun.dns.lookup()` defaults are unchanged.
 
-### `module.enableCompileCache()` is implemented
-
-In 1.3, `module.enableCompileCache()` was a no-op that returned `undefined`. In 1.4 it works as in Node: it returns a `{ status, directory }` object and Bun writes a bytecode cache to the directory (by default `node-compile-cache` under the OS temporary directory), and setting `NODE_COMPILE_CACHE=<dir>` in the environment enables the cache for the whole process. Tools that already call `enableCompileCache()` when it exists therefore start creating and filling a cache directory when run under Bun.
-
-This is a performance feature, and the output of your program is unchanged. If you do not want the cache (for example in CI jobs where the directory is discarded afterwards), set `NODE_DISABLE_COMPILE_CACHE=1`; `enableCompileCache()` then reports `status: DISABLED`.
-
 ### Other Node.js compatibility changes
 
 - `new URL("not a url")` throws with the message `Invalid URL` and `code: "ERR_INVALID_URL"` (plus `input` / `base` properties), matching Node. 1.3's message was `"..." cannot be parsed as a URL`. Tests matching the old message need updating.

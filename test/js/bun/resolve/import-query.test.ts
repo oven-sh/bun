@@ -265,6 +265,61 @@ test("Bun.resolveSync keeps a file:// URL's query in the resolved key", async ()
   expect(exitCode).toBe(0);
 });
 
+test("import.meta.resolveSync keeps a file:// URL's query in the resolved key", async () => {
+  using dir = tempDir("resolve-query-file-url-meta", {
+    "target.js": ``,
+    "entry.mjs": `
+      const base = new URL("./target.js", import.meta.url);
+      console.log(JSON.stringify([
+        import.meta.resolveSync(base.href),
+        import.meta.resolveSync(base.href + "?v=1"),
+        import.meta.resolveSync("./target.js?v=2"),
+      ]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [plain, v1, rel] = JSON.parse(stdout.trim());
+  expect(plain).toEndWith("target.js");
+  expect(v1).toBe(plain + "?v=1");
+  expect(rel).toBe(plain + "?v=2");
+  expect(exitCode).toBe(0);
+});
+
+test("import.meta.resolve keeps a file:// URL's query", async () => {
+  using dir = tempDir("resolve-url-query-file-url-meta", {
+    "target.js": ``,
+    "entry.mjs": `
+      const base = new URL("./target.js", import.meta.url);
+      console.log(JSON.stringify([
+        import.meta.resolve(base.href + "?v=1"),
+        import.meta.resolve("./target.js?v=2"),
+      ]));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "entry.mjs"],
+    env: bunEnv,
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  const [fileURL, rel] = JSON.parse(stdout.trim());
+  expect(fileURL.startsWith("file://")).toBe(true);
+  expect(fileURL).toEndWith("target.js?v=1");
+  expect(rel).toEndWith("target.js?v=2");
+  expect(exitCode).toBe(0);
+});
+
 // A file:// URL's query is part of the module key, the same way a relative
 // specifier's query is: distinct queries must evaluate distinct module
 // instances, and import.meta.url keeps the query.

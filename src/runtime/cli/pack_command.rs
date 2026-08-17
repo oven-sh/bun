@@ -1906,33 +1906,6 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let bump = pack_bump();
     let mut json = package_json_entry(manager_ptr, abs_package_json_path);
 
-    if FOR_PUBLISH {
-        if let Some(config) = json.root.get(b"publishConfig") {
-            if ctx.manager.options.publish_config.tag.is_empty() {
-                if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
-                    ctx.manager.options.publish_config.tag = tag;
-                }
-            }
-            if ctx.manager.options.publish_config.access.is_none() {
-                if let Some((access, _)) = config.get_string(bump, b"access")? {
-                    ctx.manager.options.publish_config.access =
-                        match bun_install::Access::from_str(access) {
-                            Some(a) => Some(a),
-                            None => {
-                                Output::err_generic(
-                                    "invalid `access` value: '{}'",
-                                    format_args!("{}", bstr::BStr::new(access)),
-                                );
-                                Global::crash();
-                            }
-                        };
-                }
-            }
-        }
-
-        // maybe otp
-    }
-
     let mut package_name_expr: Expr = json
         .root
         .get(b"name")
@@ -1943,6 +1916,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     if FOR_PUBLISH {
         let is_scoped = bun_install::dependency::is_scoped_package_name(package_name)
             .map_err(|_| PackError::InvalidPackageName)?;
+        ctx.manager
+            .options
+            .apply_publish_config(&json.root, bump, package_name)?;
         if let Some(access) = ctx.manager.options.publish_config.access {
             if access == bun_install::Access::Restricted && !is_scoped {
                 return Err(PackError::RestrictedUnscopedPackage);

@@ -1,6 +1,8 @@
 use crate::bun_schema::api as Api;
+use bun_alloc::{AllocError, Arena};
+use bun_ast::Expr;
 use bun_core::ZStr;
-use bun_core::{Output, env_var};
+use bun_core::{Global, Output, env_var};
 use bun_paths::PathBuffer;
 
 use super::Subcommand;
@@ -24,6 +26,8 @@ pub struct Options {
     pub bin_path: &'static ZStr,
 
     pub(crate) did_override_default_scope: bool,
+    /// `--registry` was given, so `publishConfig.registry` is ignored (as in npm).
+    pub(crate) registry_from_command_line: bool,
     pub scope: Npm::registry::Scope,
 
     pub(crate) registries: Npm::registry::Map,
@@ -113,6 +117,7 @@ impl Default for Options {
             explicit_global_directory: b"",
             bin_path: bun_paths::path_literal!("node_modules/.bin"),
             did_override_default_scope: false,
+            registry_from_command_line: false,
             // Always assigned in `load()` before read.
             scope: Npm::registry::Scope::default(),
             registries: Npm::registry::Map::default(),
@@ -394,6 +399,148 @@ impl core::fmt::Display for RegistryPath<'_> {
             f.write_str("/")?;
         }
         Ok(())
+    }
+
+    /// The scope for `url` once it replaces `current`, with the credentials configured for `url`.
+    fn scope_for_registry_url(
+        &self,
+        name: &[u8],
+        current: &Npm::registry::Scope,
+        url: &[u8],
+    ) -> Result<Npm::registry::Scope, AllocError> {
+        let url_hash = Npm::registry::Scope::hash(bun_core::without_trailing_slash(url));
+        if let Some(configured) = core::iter::once(&self.scope)
+            .chain(self.registries.values())
+            .find(|scope| scope.url_hash == url_hash)
+        {
+            return Ok(Npm::registry::Scope {
+                name: name.into(),
+                ..configured.clone()
+            });
+        }
+
+        let mut scope = Npm::registry::Scope {
+            name: name.into(),
+            url: bun_url::OwnedURL::from_href(url.into()),
+            url_hash,
+            ..Default::default()
+        };
+        if let Some(credentials) = Npm::registry::UrlAuth::find(&self.url_auth, &scope.url.url()) {
+            scope.copy_credentials_from(credentials);
+            return Ok(scope);
+        }
+        // Unconfigured `url`: `current`'s credentials follow it only same-origin, and never to http.
+        let new_url = scope.url.url();
+        let current_url = current.url.url();
+        if bun_core::without_trailing_slash(new_url.host)
+            == bun_core::without_trailing_slash(current_url.host)
+            && (new_url.is_https() || !current_url.is_https())
+        {
+            scope.token.clone_from(&current.token);
+            scope.auth.clone_from(&current.auth);
+            scope.user.clone_from(&current.user);
+        }
+        Ok(scope)
+    }
+
+    /// Replaces the registry used by packages that have no registry for their scope.
+    fn set_default_registry(
+        &mut self,
+        url: &[u8],
+    ) -> Result<(), AllocError> {
+        self.scope = self.scope_for_registry_url(b"", &self.scope, url)?;
+        self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
+        Ok(())
+    }
+
+    /// Replaces the registry used by the packages of `scope_name` (without the `@`).
+    fn set_scope_registry(
+        &mut self,
+        scope_name: &[u8],
+        url: &[u8],
+    ) -> Result<(), AllocError> {
+        let key = Npm::registry::Scope::hash(scope_name);
+        let current = match self.registries.get(&key) {
+            Some(scope) if *scope.name == *scope_name => scope,
+            _ => &self.scope,
+        };
+        let scope = self.scope_for_registry_url(scope_name, current, url)?;
+        self.registries.put(key, scope)
+    }
+
+    /// Applies the `publishConfig` of the package being published; command-line flags win over it.
+    pub fn apply_publish_config(
+        &mut self,
+        package_json: &Expr,
+        bump: &Arena,
+        package_name: &[u8],
+    ) -> Result<(), AllocError> {
+        let Some(config) = package_json.get(b"publishConfig") else {
+            return Ok(());
+        };
+
+        if self.publish_config.tag.is_empty() {
+            if let Some(tag) = config.get_string_cloned(bump, b"tag")? {
+                self.publish_config.tag = leak_static(tag);
+            }
+        }
+
+        if self.publish_config.access.is_none() {
+            if let Some(access) = config.get_string_cloned(bump, b"access")? {
+                self.publish_config.access = Some(Access::from_str(access).unwrap_or_else(|| {
+                    Output::err_generic("invalid `access` value: '{}'", (bstr::BStr::new(access),));
+                    Global::crash();
+                }));
+            }
+        }
+
+        // As in npm, `registry` replaces only the default registry; `@scope:registry` the scope's.
+        if !self.registry_from_command_line {
+            if let Some(url) = publish_config_registry(&config, bump, b"registry")? {
+                self.set_default_registry(url)?;
+            }
+        }
+
+        if !package_name.is_empty() && package_name[0] == b'@' {
+            let scope_name = Npm::registry::Scope::get_name(package_name);
+            let mut key = Vec::with_capacity(b"@:registry".len() + scope_name.len());
+            key.push(b'@');
+            key.extend_from_slice(scope_name);
+            key.extend_from_slice(b":registry");
+            if let Some(url) = publish_config_registry(&config, bump, &key)? {
+                self.set_scope_registry(scope_name, url)?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+/// `publishConfig[key]` as an http(s) URL; anything else errors rather than publishing elsewhere.
+fn publish_config_registry<'b>(
+    config: &Expr,
+    bump: &'b Arena,
+    key: &[u8],
+) -> Result<Option<&'b [u8]>, AllocError> {
+    let Some(value) = config.get(key) else {
+        return Ok(None);
+    };
+    match value.as_string_cloned(bump)? {
+        Some(url) if url.starts_with(b"https://") || url.starts_with(b"http://") => Ok(Some(url)),
+        Some(url) => {
+            Output::err_generic(
+                "invalid `{}` value in `publishConfig`: {}, expected a URL starting with 'https://' or 'http://'",
+                (bstr::BStr::new(key), bun_core::fmt::quote(url)),
+            );
+            Global::crash();
+        }
+        None => {
+            Output::err_generic(
+                "invalid `{}` value in `publishConfig`, expected a URL starting with 'https://' or 'http://'",
+                (bstr::BStr::new(key),),
+            );
+            Global::crash();
+        }
     }
 }
 
@@ -764,21 +911,12 @@ impl Options {
                 let api_registry = Api::NpmRegistry::from_url(cli.registry);
                 if api_registry.has_credentials() {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
+                    self.did_override_default_scope =
+                        self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
                 } else {
-                    let new_url = bun_url::URL::parse(&api_registry.url);
-                    let same_origin = {
-                        let prev_url = self.scope.url.url();
-                        bun_core::without_trailing_slash(new_url.host)
-                            == bun_core::without_trailing_slash(prev_url.host)
-                            && (new_url.is_https() || !prev_url.is_https())
-                    };
-                    if !same_origin {
-                        self.scope.token = Box::default();
-                        self.scope.auth = Box::default();
-                        self.scope.user = Box::default();
-                    }
-                    self.scope.set_url(api_registry.url);
+                    self.set_default_registry(&api_registry.url)?;
                 }
+                self.registry_from_command_line = true;
             }
         }
 

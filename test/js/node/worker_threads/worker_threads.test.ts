@@ -2803,7 +2803,8 @@ describe("no JS entry after a worker's termination has been thrown", () => {
       process.on("exit", B(7));
       parentPort.postMessage("stuck");
       const t = Date.now(); while (Date.now() - t < 30) {}
-      for (;;) {}
+      // Stuck in native code each iteration, so no JIT tier can turn this into a poll-free loop.
+      for (;;) Atomics.wait(c, 7, 0, 5);
     }
     const server = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: {
       open(s) { setInterval(() => { for (let k = 0; k < 8; k++) s.write("x"); }, 1); }, data() {}, drain() {} } });

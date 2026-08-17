@@ -3804,7 +3804,9 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to settle the promise with; it stays pending and unwinds.
+        if (!scope.tryClearException())
+            return;
 
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
             promise->reject(vm, exception->value());
@@ -3842,7 +3844,9 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to reject with; it stays pending and the caller unwinds on it.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -3857,7 +3861,9 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue resolved = JSC::JSPromise::resolvedPromise(globalObject, result);
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to reject with; it stays pending and the caller unwinds on it.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 

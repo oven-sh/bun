@@ -233,7 +233,7 @@ impl DependencyExt for Dependency {
                 Some(Semver::string::Builder::string_hash(
                     new_name.slice(out_slice),
                 )),
-                trim_literal(new_literal.slice(out_slice)),
+                new_literal.slice(out_slice),
                 self.version.tag,
                 &sliced,
                 None,
@@ -587,24 +587,15 @@ pub(crate) fn contains_control_character(name: &[u8]) -> bool {
     })
 }
 
-/// bun.lock stores a package as `"<name>@<resolution>"` and takes it apart again with
-/// `split_name_and_version`, then rejects names that fail `is_safe_install_folder_name`.
-/// A name containing any `@` other than a scope marker (`a@b`, `@s/a@b`) or failing that
-/// check would therefore be written out but could never be loaded back.
+/// A name bun.lock's `"<name>@<resolution>"` keys can round-trip: a safe folder name with no `@` past the scope marker.
 pub(crate) fn is_safe_lockfile_package_name(name: &[u8]) -> bool {
     is_safe_install_folder_name(name) && !strings::contains_char(&name[1..], b'@')
 }
 
-const FALLBACK_PACKAGE_NAME: &[u8] = b"unnamed-package";
-
-/// Name for a package whose own package.json has no `name`: the last component of where it
-/// came from, so `../pkgs/foo`, `https://host/foo.tgz?token=x` and `https://host/user/foo`
-/// all become `foo`. Always `is_safe_lockfile_package_name`, since it ends up in bun.lock.
+/// Name for a package whose package.json has none: the last component of where it came from
+/// (`../pkgs/foo`, `https://host/foo.tgz?token=x`, `https://host/user/foo` all become `foo`).
 pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
-    let without_query = match strings::index_of_char(location, b'?') {
-        Some(query_start) => &location[..query_start as usize],
-        None => location,
-    };
+    let without_query = location.split(|&b| b == b'?').next().unwrap_or(location);
     let basename = bun_paths::basename(without_query);
     let name = strings::without_suffix_comptime(
         strings::without_suffix_comptime(basename, b".tgz"),
@@ -613,7 +604,7 @@ pub(crate) fn fallback_package_name(location: &[u8]) -> &[u8] {
     if is_safe_lockfile_package_name(name) {
         name
     } else {
-        FALLBACK_PACKAGE_NAME
+        b"unnamed-package"
     }
 }
 
@@ -724,7 +715,7 @@ impl VersionExt for Version {
         parse_with_tag(
             alias,
             Some(alias_hash),
-            trim_literal(sliced.slice),
+            sliced.slice,
             tag,
             &sliced,
             Some(ctx.log),
@@ -913,8 +904,7 @@ impl TagExt for Tag {
                                 }
                             }
                             b'+' => {
-                                // `git+git:` is how a Git resolution of a `git://` dependency is
-                                // written back to bun.lock (`git+` label + the original URL).
+                                // bun.lock writes a `git://` dependency's resolution as `git+git:`.
                                 if url.starts_with(b"+ssh:")
                                     || url.starts_with(b"+file:")
                                     || url.starts_with(b"+git:")

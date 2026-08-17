@@ -4541,7 +4541,6 @@ pub mod bv2_impl {
                                     fd,
                                     &load.path,
                                     bun_wyhash::hash(load.path.as_ref()) as u32,
-                                    bun_watcher::Loader(code.loader as u8),
                                     bun_sys::Fd::INVALID,
                                     None,
                                 ),
@@ -6967,12 +6966,11 @@ pub mod bv2_impl {
             if this.bun_watcher.is_some() {
                 if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
                     let source_index = parse_result.value.source_index();
-                    // borrowck — read source path/loader before
+                    // borrowck — read the source path before
                     // `should_add_watcher(&self)` so the column borrow is released.
                     let source_path = this.graph.input_files.items_source()[source_index as usize]
                         .path
                         .text;
-                    let loader = this.graph.input_files.items_loader()[source_index as usize];
                     if this.should_add_watcher(source_path) {
                         // const generic `CLONE_FILE_PATH = isWindows`
                         // matches `cfg!(windows)` at compile time.
@@ -6983,7 +6981,6 @@ pub mod bv2_impl {
                                 parse_result.watcher_data.fd,
                                 source_path,
                                 bun_wyhash::hash(source_path) as u32,
-                                bun_watcher::Loader(loader as u8),
                                 parse_result.watcher_data.dir_fd,
                                 None,
                             );

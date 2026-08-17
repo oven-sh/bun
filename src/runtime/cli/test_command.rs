@@ -2717,8 +2717,7 @@ impl TestCommand {
             let watcher =
                 unsafe { &mut *vm.bun_watcher.cast::<jsc::hot_reloader::ImportWatcher>() };
             for path in &changed_module_graph_files {
-                let loader = vm.transpiler.options.loader(bun_path::extension(path));
-                let _ = watcher.add_file_by_path_slow(path, loader);
+                let _ = watcher.add_file_by_path_slow(path);
             }
         }
 

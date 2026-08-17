@@ -130,16 +130,6 @@ impl<T> RawSlice<T> {
     pub const fn new(s: &[T]) -> Self {
         RawSlice(core::ptr::from_ref(s))
     }
-    /// Wrap a raw slice pointer.
-    ///
-    /// # Safety
-    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
-    /// initialized `T` that remain live and stable for the lifetime of every
-    /// `RawSlice` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const [T]) -> Self {
-        RawSlice(p)
-    }
     #[inline]
     pub const fn as_ptr(self) -> *const [T] {
         self.0

@@ -4381,7 +4381,6 @@ pub mod args {
         }
     }
 
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -4553,7 +4552,6 @@ pub mod ret {
     pub(crate) type Symlink = ();
     pub(crate) type Truncate = ();
     pub(crate) type Unlink = ();
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch = JSValue;
     pub(crate) type WatchFile = JSValue;
     pub(crate) type Utimes = ();
@@ -8094,14 +8092,6 @@ impl NodeFS {
                 Ok(JSValue::UNDEFINED)
             }
         }
-    }
-
-    pub(crate) fn unwatch_file(
-        &mut self,
-        _: args::UnwatchFile,
-        _: Flavor,
-    ) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
     }
 
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {

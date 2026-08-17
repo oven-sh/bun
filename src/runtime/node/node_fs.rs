@@ -4330,6 +4330,10 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
+        /// Copy the file a symlink source points at instead of recreating the
+        /// link (`cp` without `-R`). Read by `copy_single_file_sync` only;
+        /// `fs.cp` never sets it.
+        pub(crate) dereference: bool,
     }
 
     pub struct Cp {
@@ -4376,6 +4380,7 @@ pub mod args {
                     recursive,
                     error_on_exist,
                     force,
+                    dereference: false,
                 },
             })
         }
@@ -8533,7 +8538,40 @@ impl NodeFS {
         Syscall::symlink(ZStr::from_buf(&resolved_buf[..], resolved_len), dest)
     }
 
-    /// This is `copyFile`, but it copies symlinks as-is
+    /// `reuse_stat` is the caller's `lstat`, so when dereferencing a symlink
+    /// is stat'd again to describe its target.
+    #[cfg(not(windows))]
+    fn cp_source_stat(
+        src: &ZStr,
+        reuse_stat: Option<&sys::Stat>,
+        dereference: bool,
+    ) -> Maybe<sys::Stat> {
+        if let Some(stat_) = reuse_stat {
+            if !dereference || !sys::S::ISLNK(stat_.st_mode as Mode) {
+                return Ok(*stat_);
+            }
+        }
+        if dereference {
+            Syscall::stat(src)
+        } else {
+            Syscall::lstat(src)
+        }
+    }
+
+    /// The kind is checked before the open: `open(2)` on a FIFO blocks.
+    #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
+    fn cp_open_dereferenced_source(src: &ZStr, reuse_stat: Option<&sys::Stat>) -> Maybe<FD> {
+        let stat_ = Self::cp_source_stat(src, reuse_stat, true)?;
+        if !sys::S::ISREG(stat_.st_mode as Mode) {
+            return Err(
+                sys::Error::from_code(E::ENOTSUP, sys::Tag::copyfile).with_path(src.as_bytes())
+            );
+        }
+        Syscall::open(src, sys::O::RDONLY, 0o644)
+    }
+
+    /// This is `copyFile`, but it copies symlinks as-is unless
+    /// `args.flags.dereference` is set.
     pub(crate) fn copy_single_file_sync(
         &mut self,
         src: &OSPathSliceZ,
@@ -8544,8 +8582,6 @@ impl NodeFS {
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,
     ) -> Maybe<ret::CopyFile> {
-        let _ = args; // only the Windows branch consults `args` (shouldIgnoreEbusy)
-
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {
@@ -8558,16 +8594,7 @@ impl NodeFS {
                 )
                 .unwrap_or(Ok(()));
             }
-            let stat_ = match reuse_stat {
-                Some(s) => *s,
-                None => match Syscall::lstat(src) {
-                    Ok(result) => result,
-                    Err(err) => {
-                        self.sync_error_buf[..src.len()].copy_from_slice(src.as_bytes());
-                        return Err(err.with_path(&self.sync_error_buf[..src.len()]));
-                    }
-                },
-            };
+            let stat_ = Self::cp_source_stat(src, reuse_stat, args.flags.dereference)?;
 
             if !sys::S::ISREG(stat_.st_mode as u32) {
                 if sys::S::ISLNK(stat_.st_mode as u32) {
@@ -8651,9 +8678,10 @@ impl NodeFS {
             // we fallback to copyfile() when the file is > 128 KB and clonefile fails
             // clonefile() isn't supported on all devices
             // nor is it supported across devices
-            let mut mode_: u32 = bun_sys::c::COPYFILE_ACL
-                | bun_sys::c::COPYFILE_DATA
-                | bun_sys::c::COPYFILE_NOFOLLOW_SRC;
+            let mut mode_: u32 = bun_sys::c::COPYFILE_ACL | bun_sys::c::COPYFILE_DATA;
+            if !args.flags.dereference {
+                mode_ |= bun_sys::c::COPYFILE_NOFOLLOW_SRC;
+            }
             if mode.shouldnt_overwrite() {
                 mode_ |= bun_sys::c::COPYFILE_EXCL;
             }
@@ -8682,21 +8710,24 @@ impl NodeFS {
 
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
                 return Maybe::<ret::CopyFile>::todo();
             }
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
-                Ok(result) => result,
-                Err(err) => {
-                    if err.get_errno() == E::ELOOP {
-                        // ELOOP is returned when you open a symlink with NOFOLLOW.
-                        // as in, it does not actually let you open it.
-                        return self.cp_symlink(src, dest);
+            let src_fd = if args.flags.dereference {
+                Self::cp_open_dereferenced_source(src, reuse_stat)?
+            } else {
+                match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        if err.get_errno() == E::ELOOP {
+                            // ELOOP is returned when you open a symlink with NOFOLLOW.
+                            // as in, it does not actually let you open it.
+                            return self.cp_symlink(src, dest);
+                        }
+                        return Err(err);
                     }
-                    return Err(err);
                 }
             };
             let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
@@ -8850,7 +8881,6 @@ impl NodeFS {
 
         #[cfg(target_os = "freebsd")]
         {
-            let _ = reuse_stat;
             if mode.is_force_clone() {
                 return Err(sys::Error {
                     errno: SystemErrno::EOPNOTSUPP as _,
@@ -8859,16 +8889,20 @@ impl NodeFS {
                 });
             }
 
-            let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
-                Ok(result) => result,
-                Err(err) => {
-                    // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
-                    // open(2) returns EMLINK for this case, though POSIX
-                    // specifies ELOOP; accept either.
-                    if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
-                        return self.cp_symlink(src, dest);
+            let src_fd = if args.flags.dereference {
+                Self::cp_open_dereferenced_source(src, reuse_stat)?
+            } else {
+                match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
+                    Ok(result) => result,
+                    Err(err) => {
+                        // O_NOFOLLOW on a symlink → recreate the link. FreeBSD's
+                        // open(2) returns EMLINK for this case, though POSIX
+                        // specifies ELOOP; accept either.
+                        if matches!(err.get_errno(), E::EMLINK | E::ELOOP) {
+                            return self.cp_symlink(src, dest);
+                        }
+                        return Err(err);
                     }
-                    return Err(err);
                 }
             };
             let _close_src = scopeguard::guard(src_fd, |fd| fd.close());
@@ -9019,7 +9053,8 @@ impl NodeFS {
                     a
                 }
             };
-            if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 {
+            // `CopyFileW` itself copies the file a symlink source points at.
+            if stat_ & sys::c::FILE_ATTRIBUTE_REPARSE_POINT == 0 || args.flags.dereference {
                 if unsafe {
                     sys::c::CopyFileW(
                         src.as_ptr(),
@@ -9127,7 +9162,7 @@ impl NodeFS {
             windows
         )))]
         {
-            let _ = (src, dest, mode, reuse_stat);
+            let _ = (src, dest, mode, reuse_stat, args);
             Maybe::<ret::CopyFile>::todo()
         }
     }

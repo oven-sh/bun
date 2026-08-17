@@ -288,6 +288,13 @@ void setUpReadableByteStreamControllerFromUnderlyingSource(JSC::JSGlobalObject*,
 // JSReadableStreamDefaultReader.cpp
 
 void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSReadRequest*); // userJS: yes ([[PullSteps]] → user pull; the TOTAL ControllerKind dispatch) — JSReadableStreamDefaultReader.cpp
+// A tee branch's controller, or nullptr if the branch is terminal: torn down (Bun's native-sink pumps clear
+// a consumed stream's controller slot in their finally step, so a tee reaction queued before that can see a
+// branch with no controller) or never recorded (a branch's start reaction is queued by its construction,
+// before the tee records it, so a tee whose construction was cut short after that leaves reactions that run
+// against unset branch slots). Callers skip a terminal branch.
+JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp

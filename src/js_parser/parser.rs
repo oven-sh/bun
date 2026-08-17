@@ -347,7 +347,7 @@ pub mod Runtime {
             // so sort the inputs first; the resulting `keys()` iteration order
             // is then byte-lexicographic.
             let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
-            sorted.sort_unstable();
+            bun_collections::index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
             let mut set = StringSet::new();
             for flag in sorted {
                 let _ = set.insert(flag);

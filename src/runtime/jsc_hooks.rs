@@ -1024,7 +1024,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
         // SAFETY: per fn contract.
         unsafe { (*vm).on_after_event_loop() };
         // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-        unsafe { (*(*vm).global).handle_rejected_promises() };
+        let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
         return;
     }
 
@@ -1112,7 +1112,7 @@ unsafe fn auto_tick(vm: *mut VirtualMachine) {
     // SAFETY: per fn contract.
     unsafe { (*vm).on_after_event_loop() };
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
-    unsafe { (*(*vm).global).handle_rejected_promises() };
+    let _ = unsafe { (*(*vm).global).handle_rejected_promises() };
 }
 
 /// `eventLoop().autoTickActive()`. Same shape as

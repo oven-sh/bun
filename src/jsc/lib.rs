@@ -556,15 +556,16 @@ Warning: options change between releases of Bun and WebKit without notice. This 
     bun_core::exit(1);
 }
 
-/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory}`), defined at
-/// tier 0 (`bun_core`) so every layer names the one type.
+/// `bun.JSError` — the canonical Bun JS error union (`error{Thrown, OutOfMemory, Terminated}`),
+/// defined at tier 0 (`bun_core`) so every layer names the one type.
 ///
 /// `Err(JsError::Thrown)` means exactly what a JSC `ThrowScope` seeing an exception means: one is
-/// pending on the VM. There is deliberately no "terminated" variant: a worker being terminated reaches
-/// native code the way it reaches JSC's own host functions -- as a pending TerminationException, i.e.
-/// `Thrown` -- and only the boundary that entered JS asks whether the exception it takes is the
-/// termination one and stands the loop down with [`Stopped`]. Loop-level code that learns of a stop
-/// from the gate and must return a `JsError` throws that exception for real ([`Stopped::throw`]).
+/// pending on the VM — beneath script that includes the VM's TerminationException, which JSC unwinds.
+/// Where a TerminationException unwinds past the outermost script frame it is taken off the VM at that
+/// boundary (as WebCore's entry helpers do; JSC resets its own termination state there and expects the
+/// embedder to), execution is already forbidden, and the frames above learn of it as `Terminated`:
+/// nothing pending, stand down ([`Stopped`] at loop level). Loop-level code that learns of a stop from
+/// the gate uses [`Stopped::throw`], which only really throws when there is script above to unwind.
 pub use bun_core::JsError;
 /// `bun.JSError!T`. Dropping a `JsResult` leaves a JS exception pending on the
 /// VM: `?`-propagate it to the frame's dispatcher (which folds it —
@@ -583,7 +584,7 @@ pub type JsResult<T> = core::result::Result<T, JsError>;
 pub fn js_error_to_write_error(e: JsError) -> core::fmt::Error {
     match e {
         // TODO: this might lose a JSError, causing exception check problems
-        JsError::Thrown => core::fmt::Error,
+        JsError::Thrown | JsError::Terminated => core::fmt::Error,
         // `bun.handleOom(error.OutOfMemory)` — panic-on-OOM wrapper fed a literal OOM,
         // i.e. unconditionally abort.
         JsError::OutOfMemory => bun_alloc::out_of_memory(),
@@ -629,6 +630,7 @@ impl From<JsError> for crate::CrateError {
         match e {
             JsError::OutOfMemory => crate::CrateError::Alloc(bun_alloc::AllocError),
             JsError::Thrown => crate::CrateError::JSError,
+            JsError::Terminated => crate::CrateError::WorkerTerminated,
         }
     }
 }

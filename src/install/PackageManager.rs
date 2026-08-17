@@ -9,7 +9,9 @@ use crate::bun_fs::FileSystem;
 use crate::bun_progress::{Node as ProgressNode, Progress};
 use crate::bun_schema::api as Api;
 use bun_collections::linear_fifo::{DynamicBuffer, StaticBuffer};
-use bun_collections::{ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap};
+use bun_collections::{
+    ArrayHashMap, HashMap, HiveArrayFallback, LinearFifo, StringArrayHashMap, index_sort,
+};
 use bun_core::ZBox;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
@@ -548,7 +550,7 @@ pub struct WorkspaceFilter {
 
 impl WorkspaceFilter {
     pub(crate) fn from_ids(mut ids: Vec<PackageID>) -> WorkspaceFilter {
-        ids.sort_unstable();
+        index_sort::sort_indices_unstable(&mut ids, &mut |a, b| a.cmp(&b));
         ids.dedup();
         WorkspaceFilter {
             workspace_ids: ids.into_boxed_slice(),

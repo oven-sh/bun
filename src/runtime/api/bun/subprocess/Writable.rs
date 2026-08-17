@@ -208,7 +208,7 @@ impl<'a> Writable<'a> {
                             bun_sys::Result::Err(_err) => {
                                 Self::pipe_release(pipe_nn);
                                 if let Stdio::ReadableStream(rs) = stdio {
-                                    rs.cancel(global);
+                                    rs.cancel(global)?;
                                 }
                                 return Err(crate::Error::UnexpectedCreatingStdin);
                             }
@@ -307,7 +307,7 @@ impl<'a> Writable<'a> {
                     bun_sys::Result::Err(_err) => {
                         Self::pipe_release(pipe_nn);
                         if let Stdio::ReadableStream(rs) = stdio {
-                            rs.cancel(global);
+                            rs.cancel(global)?;
                         }
 
                         return Err(crate::Error::UnexpectedCreatingStdin);

@@ -1,7 +1,7 @@
 use core::sync::atomic::Ordering;
 
 use bun_ast::Source;
-use bun_collections::DynamicBitSet;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -326,7 +326,7 @@ pub fn install_with_manager(
                         let mut v = Vec::new();
                         lf.overrides.append_overridden_name_hashes(&mut v);
                         lockfile.overrides.append_overridden_name_hashes(&mut v);
-                        v.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut v, |a, b| a.cmp(b));
                         v.dedup();
                         v
                     };
@@ -519,7 +519,9 @@ pub fn install_with_manager(
                             .lockfile
                             .overrides
                             .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        catalog_overridden.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| {
+                            a.cmp(b)
+                        });
                         catalog_overridden.dedup();
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
@@ -2019,7 +2021,7 @@ fn refresh_children_of_named(
             })
             .collect()
     };
-    package_ids.sort_unstable();
+    index_sort::sort_indices_unstable(&mut package_ids, &mut |a, b| a.cmp(&b));
     package_ids.dedup();
     if package_ids.is_empty() {
         return Ok(Vec::new());

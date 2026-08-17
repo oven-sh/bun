@@ -1131,10 +1131,10 @@ impl WebWorker {
         let (err, str) = match result {
             Ok(pair) => pair,
             Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-            Err(JsError::Thrown) => {
+            Err(err) => {
                 // The worker's start sequence is its outermost frame: building the error from the
                 // log threw, and that is reported here instead (a termination just stands down).
-                let _ = crate::task::report_error_or_terminate(global, JsError::Thrown);
+                let _ = crate::task::report_error_or_terminate(global, err);
                 return;
             }
         };
@@ -1382,7 +1382,7 @@ unsafe fn resolve_entry_point_specifier<'s>(
                     return None;
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
-                Err(JsError::Thrown) => {
+                Err(JsError::Thrown | JsError::Terminated) => {
                     *error_message = BunString::static_(b"unexpected exception");
                     return None;
                 }

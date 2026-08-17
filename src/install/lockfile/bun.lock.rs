@@ -1647,49 +1647,21 @@ pub(crate) enum ResolveError {
     Unresolvable,
 }
 
-/// Where `PkgMap::find_resolution` found the entry it returned.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum FoundAt {
-    /// `<pkg_path>/<name>`.
-    OwnPath,
-    /// `<some enclosing path>/<name>`.
-    EnclosingPath,
-    /// The top-level `<name>` entry.
-    Root,
-}
-
-/// Which row binds an edge of a package printed at more than one path. `append_package_dedupe`
-/// gives every such row the same package, so each row binds the same edges again, and the
-/// rows can walk into different copies of a peer. A row overwrites an earlier row's binding
-/// only when its find says at least as much about the binding; rows whose finds say the same
-/// keep the last one, and a package printed once binds each edge exactly once, as before.
-///
-/// What a find says follows from where `Tree::hoist_dependency` puts the package an edge is
-/// bound to: nested in the dependent's own path when a copy above blocks it, or at the root
-/// when nothing above holds the name. It never ends up at an enclosing path in between; a copy
-/// found there was placed for another package's edge, and this edge deduped onto it (a peer
-/// the copy satisfies), which says nothing about what the edge is bound to.
+/// Which row's `find_resolution` binds an edge of a package printed at several paths (each row
+/// binds the same edges again and can walk into a different copy of a peer): a row overwrites an
+/// earlier binding only with at least as much evidence. `Tree::hoist_dependency` puts an edge's
+/// target in the dependent's own path or at the root, never at an enclosing path in between (a
+/// copy there was placed for another edge and this one merely deduped onto it).
 #[derive(Debug, Clone, Copy, Eq, PartialEq, PartialOrd, Ord)]
 enum RowEvidence {
     Unbound,
-    /// A copy found by walking up. Every walked find of an optional peer ranks here: the
-    /// hoister rebinds those to whatever each placement dedupes onto
-    /// (`HoistDependencyResult::Rebind`), so which copy a row walked into decides nothing.
+    /// Found by walking up; every walked find of an optional peer too, since the hoister rebinds
+    /// those to whatever each placement dedupes onto (`HoistDependencyResult::Rebind`).
     Walked,
     /// The root's copy, which may be this edge's own binding, placed there from this row.
     WalkedToRoot,
     /// The copy printed in the package's own path, which is only there for the package's own edge.
     OwnEntry,
-}
-
-impl RowEvidence {
-    fn of(found_at: FoundAt, dep: &Dependency) -> RowEvidence {
-        match found_at {
-            FoundAt::OwnPath => RowEvidence::OwnEntry,
-            FoundAt::Root if !dep.behavior.is_optional_peer() => RowEvidence::WalkedToRoot,
-            FoundAt::Root | FoundAt::EnclosingPath => RowEvidence::Walked,
-        }
-    }
 }
 
 impl<T> PkgMap<T> {
@@ -1732,7 +1704,7 @@ impl<T> PkgMap<T> {
         dep: &Dependency,
         string_buf: &[u8],
         path_buf: &mut [u8],
-    ) -> Result<(&T, FoundAt), ResolveError> {
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, None)
     }
 
@@ -1753,7 +1725,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: &PkgPathSet,
-    ) -> Result<(&T, FoundAt), ResolveError> {
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         self.find_resolution_impl(pkg_path, dep, string_buf, path_buf, Some(bundled_pkgs))
     }
 
@@ -1764,7 +1736,7 @@ impl<T> PkgMap<T> {
         string_buf: &[u8],
         path_buf: &mut [u8],
         bundled_pkgs: Option<&PkgPathSet>,
-    ) -> Result<(&T, FoundAt), ResolveError> {
+    ) -> Result<(&T, RowEvidence), ResolveError> {
         let dep_name = dep.name.slice(string_buf);
 
         if pkg_path.len() + 1 + dep_name.len() > path_buf.len() {
@@ -1783,14 +1755,14 @@ impl<T> PkgMap<T> {
             let res_path = &path_buf[0..offset + dep_name.len()];
 
             if let Some(entry) = self.map.get(res_path) {
-                let found_at = if own_path {
-                    FoundAt::OwnPath
-                } else if offset == 0 {
-                    FoundAt::Root
+                let evidence = if own_path {
+                    RowEvidence::OwnEntry
+                } else if offset == 0 && !dep.behavior.is_optional_peer() {
+                    RowEvidence::WalkedToRoot
                 } else {
-                    FoundAt::EnclosingPath
+                    RowEvidence::Walked
                 };
-                return Ok((entry, found_at));
+                return Ok((entry, evidence));
             }
 
             if offset == 0 || at_bundle_root {
@@ -3125,14 +3097,40 @@ pub(crate) fn parse_into_binary_lockfile(
         let dependencies: &mut [Dependency] = buffers.dependencies.as_mut_slice();
         let resolutions: &mut [PackageID] = buffers.resolutions.as_mut_slice();
 
-        let workspace_links = WorkspaceLinks {
-            pkg_names,
-            pkg_name_hashes,
-            workspace_versions,
-            catalogs,
-            overrides,
-            string_buf,
-            link_workspace_packages,
+        // Whether `Package::parse_dependency` links `dep` to the workspace bun.lock bound it to, so
+        // `Diff::generate` sees the loaded and parsed rows as equal. With `linkWorkspacePackages` off it
+        // links no range (a range still bound to a workspace is loaded as linked so the diff re-resolves
+        // it); peers, overridden entries (never `npm:` aliases) and dist-tags bind to a workspace either way.
+        let links_workspace = |dep: &Dependency, workspace_pkg_id: PackageID| -> bool {
+            if dep.version.tag == DependencyVersionTag::Workspace {
+                return true;
+            }
+            let is_alias =
+                dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias;
+            let range = if link_workspace_packages {
+                &dep.version
+            } else if dep.behavior.is_peer()
+                || (!is_alias && overrides.has_rule_for_name(dep.name_hash))
+            {
+                return false;
+            } else {
+                catalogs.resolve_range(string_buf, dep)
+            };
+            if range.tag != DependencyVersionTag::Npm {
+                return false;
+            }
+            let npm = range.npm();
+            let workspace_pkg = workspace_pkg_id as usize;
+            // `workspace_versions` and a peer's binding are keyed by name hash; the names must match too.
+            npm.name
+                .eql(pkg_names[workspace_pkg], string_buf, string_buf)
+                && (!link_workspace_packages
+                    || workspace_versions
+                        .get(&pkg_name_hashes[workspace_pkg])
+                        .is_some_and(|workspace_version| {
+                            npm.version
+                                .satisfies(*workspace_version, string_buf, string_buf)
+                        }))
         };
 
         {
@@ -3167,14 +3165,14 @@ pub(crate) fn parse_into_binary_lockfile(
                     return Err(ParseError::InvalidPackageInfo);
                 };
 
-                map_manifest_dep_to_pkg(
+                map_dep_to_pkg(
                     dep,
                     dep_id,
                     res_id,
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
-                    &workspace_links,
+                    links_workspace,
                 );
             }
         }
@@ -3243,14 +3241,14 @@ pub(crate) fn parse_into_binary_lockfile(
                         return Err(ParseError::InvalidPackageInfo);
                     };
 
-                    map_manifest_dep_to_pkg(
+                    map_dep_to_pkg(
                         dep,
                         dep_id,
                         res_id,
                         resolutions,
                         lockfile_version,
                         pkg_resolutions,
-                        &workspace_links,
+                        links_workspace,
                     );
                 }
             }
@@ -3321,8 +3319,7 @@ pub(crate) fn parse_into_binary_lockfile(
                             pkg_map.find_resolution(pkg_path, dep, string_buf, &mut path_buf[..])
                         };
                         match found {
-                            Ok((&id, found_at)) => {
-                                let evidence = RowEvidence::of(found_at, dep);
+                            Ok((&id, evidence)) => {
                                 if bound_by[dep_id as usize] > evidence {
                                     continue 'deps;
                                 }
@@ -3358,6 +3355,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     resolutions,
                     lockfile_version,
                     pkg_resolutions,
+                    |_, _| true,
                 );
             }
         }
@@ -3578,11 +3576,16 @@ fn map_dep_to_pkg(
     resolutions: &mut [PackageID],
     text_lockfile_version: Version,
     pkg_resolutions: &[Resolution],
+    links_workspace: impl Fn(&Dependency, PackageID) -> bool,
 ) {
     resolutions[dep_id as usize] = pkg_id;
 
-    if text_lockfile_version != Version::V0 {
-        adopt_workspace_resolution(dep, &pkg_resolutions[pkg_id as usize]);
+    let res = &pkg_resolutions[pkg_id as usize];
+    if text_lockfile_version != Version::V0
+        && res.tag == ResolutionTag::Workspace
+        && links_workspace(dep, pkg_id)
+    {
+        adopt_workspace_resolution(dep, res);
     }
 }
 
@@ -3591,95 +3594,8 @@ fn may_stay_unresolved(dep: &Dependency) -> bool {
     dep.behavior.intersects(Behavior::OPTIONAL | Behavior::PEER)
 }
 
-fn map_manifest_dep_to_pkg(
-    dep: &mut Dependency,
-    dep_id: DependencyID,
-    pkg_id: PackageID,
-    resolutions: &mut [PackageID],
-    text_lockfile_version: Version,
-    pkg_resolutions: &[Resolution],
-    workspace_links: &WorkspaceLinks<'_>,
-) {
-    resolutions[dep_id as usize] = pkg_id;
-
-    if text_lockfile_version == Version::V0 {
-        return;
-    }
-
-    let res = &pkg_resolutions[pkg_id as usize];
-    if res.tag == ResolutionTag::Workspace && workspace_links.links(dep, pkg_id) {
-        adopt_workspace_resolution(dep, res);
-    }
-}
-
-struct WorkspaceLinks<'a> {
-    pkg_names: &'a [String],
-    pkg_name_hashes: &'a [PackageNameHash],
-    workspace_versions: &'a VersionHashMap,
-    catalogs: &'a CatalogMap,
-    overrides: &'a OverrideMap,
-    string_buf: &'a [u8],
-    link_workspace_packages: bool,
-}
-
-impl WorkspaceLinks<'_> {
-    /// Whether `Package::parse_dependency` links `dep` to the workspace `bun.lock`
-    /// bound it to, so that `Diff::generate` sees the loaded and the parsed
-    /// dependency as equal. With `linkWorkspacePackages` off it links no range, and
-    /// a range still bound to a workspace is loaded as linked on purpose: the diff
-    /// re-resolves it. Peers, overridden entries and dist-tags bind to a workspace
-    /// either way.
-    fn links(&self, dep: &Dependency, workspace_pkg_id: PackageID) -> bool {
-        if dep.version.tag == DependencyVersionTag::Workspace {
-            return true;
-        }
-
-        let range = if self.link_workspace_packages {
-            &dep.version
-        } else {
-            if dep.behavior.is_peer() || self.overridden(dep) {
-                return false;
-            }
-            self.catalogs.resolve_range(self.string_buf, dep)
-        };
-        if range.tag != DependencyVersionTag::Npm {
-            return false;
-        }
-
-        let npm = range.npm();
-        let workspace_pkg = workspace_pkg_id as usize;
-        // `workspace_versions` and a peer's binding are keyed by name hash; the
-        // names themselves have to match as well.
-        if !npm.name.eql(
-            self.pkg_names[workspace_pkg],
-            self.string_buf,
-            self.string_buf,
-        ) {
-            return false;
-        }
-
-        !self.link_workspace_packages
-            || self
-                .workspace_versions
-                .get(&self.pkg_name_hashes[workspace_pkg])
-                .is_some_and(|workspace_version| {
-                    npm.version
-                        .satisfies(*workspace_version, self.string_buf, self.string_buf)
-                })
-    }
-
-    /// Same exemption as `enqueue_dependency_with_main_and_success_fn`: an `npm:`
-    /// alias is never overridden.
-    fn overridden(&self, dep: &Dependency) -> bool {
-        let is_alias = dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias;
-        !is_alias && self.overrides.has_rule_for_name(dep.name_hash)
-    }
-}
-
-/// An edge bound to a workspace member takes the shape `Package::parse_dependency`
-/// gives it (`workspace` tag carrying the member's path, literal kept), so the
-/// differ compares equal against a fresh package.json parse. Other targets leave
-/// the edge as parsed.
+/// An edge bound to a workspace member takes the shape `Package::parse_dependency` gives it (`workspace`
+/// tag carrying the member's path, literal kept), so the differ compares equal against a fresh parse.
 pub(crate) fn adopt_workspace_resolution(dep: &mut Dependency, res: &Resolution) {
     if res.tag != ResolutionTag::Workspace {
         return;

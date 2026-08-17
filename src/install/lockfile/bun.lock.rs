@@ -3373,15 +3373,18 @@ pub(crate) fn parse_into_binary_lockfile(
 }
 
 /// The catalog-resolved range of a peer edge the fresh resolver binds by
-/// version in its `install_peer` pass. Optional peers are bound to the
-/// hoisted-tree sibling by `process_subtree` instead, which is what the path
-/// walk reproduces.
+/// version in its `install_peer` pass. Two exemptions keep the printed tree's
+/// path walk, which reproduces their saved binding exactly: optional peers are
+/// bound to the hoisted-tree sibling by `process_subtree` instead, and a bundled
+/// peer is always placed under its own package by `process_subtree`, so its
+/// entry is always printed and, like every other bundled edge (`bun update` and
+/// dedupe hold them in place too), it stays on the version recorded there.
 fn deferred_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
     string_buf: &[u8],
 ) -> Option<&'a DependencyVersion> {
-    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() {
+    if !dep.behavior.is_peer() || dep.behavior.is_optional_peer() || dep.behavior.is_bundled() {
         return None;
     }
     Some(catalogs.resolve_range(string_buf, dep))

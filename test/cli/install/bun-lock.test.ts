@@ -2859,3 +2859,37 @@ describe.concurrent("re-resolving file: dependencies declared by a file: package
     await run(["install", "--frozen-lockfile"]);
   });
 });
+
+it("re-saving bun.lock keeps a bundled peer on the version its own entry records", async () => {
+  const { packageDir, packageJson } = await registry.createTestDir({ bunfigOpts: { saveTextLockfile: true } });
+  const run = makeInstallRunner(packageDir);
+
+  const dependencies = { "no-deps": "1.1.0", "peer-deps-fixed": "1.0.0" };
+  await write(packageJson, JSON.stringify({ name: "foo", dependencies }));
+
+  // peer-deps-fixed's peer on no-deps (^1.0.0) has a bundled entry of its own,
+  // the shape bundled subtrees have in existing lockfiles (for example
+  // @napi-rs/wasm-runtime's peer on @emnapi/core inside
+  // @tailwindcss/oxide-wasm32-wasi). It stays on the no-deps@1.0.0 recorded
+  // there even though the root has since moved on to no-deps@1.1.0, which the
+  // range would also accept. Without a configVersion the install re-saves the
+  // file, as it does for every lockfile written before configVersion existed.
+  await write(
+    join(packageDir, "bun.lock"),
+    JSON.stringify({
+      lockfileVersion: 1,
+      workspaces: { "": { name: "foo", dependencies } },
+      packages: {
+        "no-deps": ["no-deps@1.1.0", "", {}, ""],
+        "peer-deps-fixed": ["peer-deps-fixed@1.0.0", "", { peerDependencies: { "no-deps": "^1.0.0" } }, ""],
+        "peer-deps-fixed/no-deps": ["no-deps@1.0.0", "", { bundled: true }, ""],
+      },
+    }),
+  );
+
+  await run(["install"]);
+  const lockfile = await file(join(packageDir, "bun.lock")).text();
+  expect(lockfile).toContain('"configVersion": 0,');
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.1.0", ');
+  expect(lockfile).toContain('"peer-deps-fixed/no-deps": ["no-deps@1.0.0", ');
+});

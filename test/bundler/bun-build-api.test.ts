@@ -180,6 +180,24 @@ describe("Bun.build", () => {
     ).toThrow();
   });
 
+  test("root longer than the path buffer throws ENAMETOOLONG", () => {
+    using dir = tempDir("bun-build-api-long-root", { "index.js": "export default 1;" });
+    // Longer than bun's path buffer on every platform (98302 bytes on Windows,
+    // 4096 on Linux, 1024 on macOS), so the errno is synthesized by bun rather
+    // than reported by the OS. Windows used to name it ENOSYS.
+    const root = Buffer.alloc(100_000, "a").toString();
+    let error: unknown;
+    try {
+      Bun.build({ entrypoints: [join(String(dir), "index.js")], root });
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message.replace(root, "<root>")).toBe(
+      "ENAMETOOLONG: failed to open root directory: <root>",
+    );
+  });
+
   test("returns errors properly", async () => {
     Bun.gc(true);
     const build = await buildNoThrow({

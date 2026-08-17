@@ -791,7 +791,7 @@ pub fn open_dir_for_iteration_os_path(dir: Fd, path: &bun_paths::OSPathSlice) ->
         // ENAMETOOLONG on
         // overflow, never silently truncate (would open the wrong directory).
         if path.len() >= buf.len() {
-            return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
         }
         let len = path.len();
         buf[..len].copy_from_slice(path);
@@ -2001,7 +2001,7 @@ mod posix_impl {
         {
             return match super::linux_syscall::close(fd.native()) {
                 Err(e) if e == libc::EBADF => {
-                    Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd))
+                    Err(Error::from_code(E::EBADF, Tag::close).with_fd(fd))
                 }
                 _ => Ok(()),
             };
@@ -2013,7 +2013,7 @@ mod posix_impl {
             #[cfg(not(target_os = "macos"))]
             let rc = safe_libc::close(fd.native());
             if rc < 0 && last_errno() == libc::EBADF {
-                return Err(Error::from_code_int(libc::EBADF, Tag::close).with_fd(fd));
+                return Err(Error::from_code(E::EBADF, Tag::close).with_fd(fd));
             }
             Ok(())
         }
@@ -2467,9 +2467,7 @@ mod posix_impl {
         bun_paths::make_path_with(it, |p| {
             if p.len() >= buf.len() {
                 // Tag as `.mkdir`; keep consistent with `mkdirat`.
-                return Err(
-                    Error::from_code_int(E::ENAMETOOLONG as _, Tag::mkdir).with_path(sub_path)
-                );
+                return Err(Error::from_code(E::ENAMETOOLONG, Tag::mkdir).with_path(sub_path));
             }
             buf[..p.len()].copy_from_slice(p);
             buf[p.len()] = 0;
@@ -2573,9 +2571,7 @@ mod posix_impl {
         #[cfg(not(any(target_os = "linux", target_os = "android", target_os = "macos")))]
         {
             if flags.int() != 0 {
-                return Err(
-                    Error::from_code_int(libc::ENOSYS, Tag::rename).with_path(from.as_bytes())
-                );
+                return Err(Error::from_code(E::ENOSYS, Tag::rename).with_path(from.as_bytes()));
             }
             renameat(from_dir, from, to_dir, to)
         }
@@ -2619,9 +2615,7 @@ mod posix_impl {
         let n = n as usize;
         // Truncation guard + NUL-terminate.
         if n >= buf.len() {
-            return Err(
-                Error::from_code_int(libc::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes())
-            );
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes()));
         }
         buf[n] = 0;
         Ok(n)
@@ -2756,7 +2750,7 @@ mod posix_impl {
     #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
     pub(crate) fn linkat_tmpfile(_tmpfd: Fd, _dirfd: Fd, name: &ZStr) -> Maybe<()> {
         // Tags as `.link` (matches Linux arm).
-        Err(Error::from_code_int(libc::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
+        Err(Error::from_code(E::EOPNOTSUPP, Tag::link).with_path(name.as_bytes()))
     }
     pub fn symlinkat(target: &ZStr, dirfd: impl AsFd, dest: &ZStr) -> Maybe<()> {
         let dirfd = dirfd.as_fd();
@@ -2788,9 +2782,7 @@ mod posix_impl {
         );
         let n = n as usize;
         if n >= buf.len() {
-            return Err(
-                Error::from_code_int(libc::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes())
-            );
+            return Err(Error::from_code(E::ENAMETOOLONG, Tag::readlink).with_path(path.as_bytes()));
         }
         buf[n] = 0;
         Ok(n)
@@ -4678,7 +4670,7 @@ pub fn writev(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     {
         // TODO(windows): route through `uv_fs_write` with `uv_buf_t[]`.
         let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::writev))
+        Err(Error::from_code(E::ENOSYS, Tag::writev))
     }
 }
 
@@ -4727,7 +4719,7 @@ pub fn readv(fd: Fd, vecs: &[PlatformIoVec]) -> Maybe<usize> {
     #[cfg(not(unix))]
     {
         let _ = (fd, vecs);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readv))
+        Err(Error::from_code(E::ENOSYS, Tag::readv))
     }
 }
 
@@ -4786,7 +4778,7 @@ pub fn preadv(fd: Fd, vecs: &[PlatformIoVec], position: i64) -> Maybe<usize> {
     #[cfg(not(unix))]
     {
         let _ = (fd, vecs, position);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::preadv))
+        Err(Error::from_code(E::ENOSYS, Tag::preadv))
     }
 }
 
@@ -6153,7 +6145,7 @@ pub fn openat_a(dir: impl AsFd, path: &[u8], flags: i32, perm: Mode) -> Maybe<Fd
     let dir = dir.as_fd();
     let mut buf = bun_paths::PathBuffer::default();
     if path.len() >= buf.0.len() {
-        return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(path));
+        return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(path));
     }
     buf.0[..path.len()].copy_from_slice(path);
     buf.0[path.len()] = 0;
@@ -7270,7 +7262,7 @@ pub fn get_fcntl_flags(fd: Fd) -> Maybe<FcntlInt> {
 }
 #[cfg(windows)]
 pub fn get_fcntl_flags(_fd: Fd) -> Maybe<FcntlInt> {
-    Err(Error::from_code_int(libc::ENOSYS, Tag::fcntl))
+    Err(Error::from_code(E::ENOSYS, Tag::fcntl))
 }
 #[inline]
 pub fn set_nonblocking(fd: Fd) -> Maybe<()> {
@@ -7457,7 +7449,7 @@ pub fn kevent(
 pub fn clonefileat(_from_dir: impl AsFd, from: &ZStr, _to_dir: impl AsFd, to: &ZStr) -> Maybe<()> {
     let _from_dir = _from_dir.as_fd();
     let _to_dir = _to_dir.as_fd();
-    Err(Error::from_code_int(libc::ENOTSUP, Tag::clonefileat)
+    Err(Error::from_code(E::ENOTSUP, Tag::clonefileat)
         .with_path_dest(from.as_bytes(), to.as_bytes()))
 }
 
@@ -7603,7 +7595,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         // The kernel fills kf_path from the namecache and leaves it empty when it
         // has no name for the vnode (seen for a just-created file on UFS).
         if len == 0 {
-            return Err(Error::from_code_int(libc::ENOENT, Tag::fcntl).with_fd(fd));
+            return Err(Error::from_code(E::ENOENT, Tag::fcntl).with_fd(fd));
         }
         // SAFETY: path_ptr has `len` initialized bytes (kernel-written).
         out.0[..len].copy_from_slice(unsafe { core::slice::from_raw_parts(path_ptr, len) });
@@ -7618,7 +7610,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
     )))]
     {
         let _ = (fd, out);
-        Err(Error::from_code_int(libc::ENOSYS, Tag::readlink))
+        Err(Error::from_code(E::ENOSYS, Tag::readlink))
     }
 }
 
@@ -7774,7 +7766,7 @@ pub fn copy_file(in_: Fd, out: Fd) -> Maybe<()> {
         while wrote < n {
             let w = write(out, &buf[wrote..n])?;
             if w == 0 {
-                return Err(Error::from_code_int(libc::EIO, Tag::write));
+                return Err(Error::from_code(E::EIO, Tag::write));
             }
             wrote += w;
         }
@@ -9229,7 +9221,7 @@ pub fn write_file_with_path_buffer(
         PathOrFileDescriptor::Fd(fd) => fd,
         PathOrFileDescriptor::Path(bytes) => {
             if bytes.len() >= path_buf.0.len() {
-                return Err(Error::from_code_int(libc::ENAMETOOLONG, Tag::open).with_path(bytes));
+                return Err(Error::from_code(E::ENAMETOOLONG, Tag::open).with_path(bytes));
             }
             path_buf.0[..bytes.len()].copy_from_slice(bytes);
             path_buf.0[bytes.len()] = 0;

@@ -144,7 +144,12 @@ impl Error {
         }
     }
 
-    // c_int covers all call sites in practice.
+    /// `errno` must already be an `E` discriminant, which is what the host
+    /// errno is on POSIX. Do not pass `libc::E*` constants: on Windows the
+    /// `libc` crate has the MSVC CRT's numbering (`ENAMETOOLONG` = 38,
+    /// `ENOSYS` = 40, `ENOTSUP` = 129), while `E` keeps Linux numbering there
+    /// (38 is `ENOSYS`, 40 is `ELOOP`, 129 is `EKEYREJECTED`). An errno known
+    /// at compile time goes through `from_code(E::X, tag)` instead.
     pub fn from_code_int(errno: c_int, syscall_tag: Tag) -> Error {
         #[cfg(windows)]
         let n = Int::try_from(errno.unsigned_abs()).unwrap();

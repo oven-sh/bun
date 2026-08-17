@@ -787,7 +787,7 @@ mod platform {
                         w::Errno::NOTDIR => unreachable!(),
                         w::Errno::INVAL => unreachable!(),
                         w::Errno::NOTCAPABLE => {
-                            return Err(sys::Error::from_code_int(libc::EACCES, Tag::getdents64));
+                            return Err(sys::Error::from_code(sys::E::EACCES, Tag::getdents64));
                         }
                         _ => {
                             return Err(sys::Error::from_code_int(errno as i32, Tag::getdents64));

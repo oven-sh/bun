@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, realpathSync, rmSync } from "fs";
+import { appendFileSync, existsSync, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, nodeModulesPackages, tempDir, VerdaccioRegistry } from "harness";
 import { dirname, join } from "path";
 
@@ -1086,6 +1086,63 @@ snapshots:
         );
       },
     );
+
+    // `bun patch --commit` loads the lockfile before it edits package.json, so the migration's rewrite of
+    // package.json (and of its cache entry) happens underneath the command.
+    test("bun patch --commit that has to migrate the lockfile keeps the migration's package.json edits", async () => {
+      const packageJson = { name: "patch-commit-migrates", dependencies: { "no-deps": "^1.0.0" } };
+      const { packageDir } = await verdaccio.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: {
+          "package.json": JSON.stringify(packageJson),
+          "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n",
+          "packages/a/package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+          "pnpm-lock.yaml": `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+  packages/a: {}
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+        },
+      });
+
+      // `bun patch` installs and unlinks node_modules/no-deps from the cache copy that `--commit` diffs against;
+      // the repo is then put back to how it was checked out, so `--commit` is the command that migrates.
+      expect((await run(packageDir, "patch", "no-deps")).exitCode).toBe(0);
+      rmSync(join(packageDir, "bun.lock"));
+      writeFileSync(join(packageDir, "package.json"), JSON.stringify(packageJson));
+      appendFileSync(join(packageDir, "node_modules/no-deps/index.js"), "globalThis.patchedAtCommit = true;\n");
+
+      const { stderr, exitCode } = await run(packageDir, "patch", "--commit", "node_modules/no-deps");
+      expect(stderr).toContain("copied pnpm-workspace.yaml to workspaces in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(exitCode).toBe(0);
+
+      expect(await Bun.file(join(packageDir, "package.json")).json()).toEqual({
+        ...packageJson,
+        workspaces: ["packages/*"],
+        patchedDependencies: { "no-deps@1.0.1": "patches/no-deps@1.0.1.patch" },
+      });
+      expect(await Bun.file(join(packageDir, "patches/no-deps@1.0.1.patch")).text()).toContain(
+        "+globalThis.patchedAtCommit = true;",
+      );
+      expect(await bunLockOf(packageDir)).toContain(`"no-deps@1.0.1": "patches/no-deps@1.0.1.patch"`);
+    });
   });
 
   test("catalog:default is the default catalog", async () => {

@@ -1936,6 +1936,11 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
+    // A loaded lockfile already describes the project; a migrated pnpm-lock.yaml imports the yaml itself.
+    if !matches!(load_result, lockfile::LoadResult::Ok { .. }) {
+        crate::pnpm::migrate_pnpm_workspace_config(manager)?;
+    }
+
     let source_copy = root_package_json_source(manager, root_package_json_path)?;
 
     let mut resolver: () = ();

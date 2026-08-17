@@ -6,7 +6,7 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
-use bun_core::strings;
+use bun_core::{Global, Output, strings};
 use bun_semver as semver;
 use bun_semver::{ExternalString, String};
 use bun_sys::{self as sys, Fd};
@@ -176,6 +176,25 @@ fn collect_patch_paths(
     Ok(())
 }
 
+fn root_package_json<'a>(
+    manager: &'a mut PackageManager,
+    log: &mut bun_ast::Log,
+) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
+    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
+    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
+    match manager.workspace_package_json_cache.get_with_path(
+        log,
+        pkg_json_path.slice(),
+        crate::GetJsonOptions {
+            guess_indentation: true,
+            ..Default::default()
+        },
+    ) {
+        crate::GetJsonResult::Entry(entry) => Some(entry),
+        crate::GetJsonResult::ReadErr(_) | crate::GetJsonResult::ParseErr(_) => None,
+    }
+}
+
 /// Current pnpm records only the patch hash in the lockfile; the patch file path lives in the config.
 fn read_config_patch_paths(
     manager: &mut PackageManager,
@@ -183,12 +202,7 @@ fn read_config_patch_paths(
 ) -> Result<StringArrayHashMap<Box<[u8]>>, AllocError> {
     let mut paths: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
 
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json");
-    if let crate::GetJsonResult::Entry(pkg_json) = manager
-        .workspace_package_json_cache
-        .get_with_path(log, pkg_json_path.slice(), Default::default())
-    {
+    if let Some(pkg_json) = root_package_json(manager, log) {
         if let Some(patched) = pkg_json
             .root
             .get(b"pnpm")
@@ -2369,7 +2383,7 @@ fn rewrite_bare_patch_keys(
             bstr::BStr::new(&**res_str)
         )
         .map_err(|_| AllocError)?;
-        // Interned into the DATA_STORE backing the cached package.json Expr tree, which outlives this fn.
+        // Lives in the AST store like the key node below; nothing resets it before the caller prints the tree.
         let interned: &[u8] = js_ast::data_store_dupe_str(join_buf.as_slice());
         prop.key = Some(Expr::init(E::EString::init(interned), bun_ast::Loc::EMPTY));
     }
@@ -2464,7 +2478,24 @@ fn add_trusted_dependencies(
     Ok(true)
 }
 
-/// Updates package.json with workspace and catalog information after migration
+/// Imports pnpm-workspace.yaml when no pnpm-lock.yaml was migrated; a root `workspaces` field means it already was.
+pub(crate) fn migrate_pnpm_workspace_config(
+    manager: &mut PackageManager,
+) -> Result<(), AllocError> {
+    if !sys::exists_z(bun_core::zstr!("pnpm-workspace.yaml")) {
+        return Ok(());
+    }
+    let log = manager.log_mut();
+    let Some(root_pkg_json) = root_package_json(manager, log) else {
+        return Ok(());
+    };
+    if root_pkg_json.root.get(b"workspaces").is_some() {
+        return Ok(());
+    }
+    update_package_json_after_migration(manager, log, Fd::cwd(), &StringArrayHashMap::new())
+}
+
+/// Moves the settings pnpm reads from package.json `pnpm.*` and pnpm-workspace.yaml into the fields bun reads.
 fn update_package_json_after_migration(
     lockfile: &mut Lockfile,
     manager: &mut PackageManager,
@@ -2472,26 +2503,11 @@ fn update_package_json_after_migration(
     dir: Fd,
     patches: &StringArrayHashMap<Box<[u8]>>,
 ) -> Result<(), AllocError> {
-    let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
-    let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
-
     let bump = bun_alloc::Arena::new();
     let silent = manager.options.log_level.is_silent();
 
-    let root_pkg_json = match manager
-        .workspace_package_json_cache
-        .get_with_path(
-            log,
-            pkg_json_path.slice(),
-            crate::GetJsonOptions {
-                guess_indentation: true,
-                ..Default::default()
-            },
-        )
-        .unwrap()
-    {
-        Ok(j) => j,
-        Err(_) => return Ok(()),
+    let Some(root_pkg_json) = root_package_json(manager, log) else {
+        return Ok(());
     };
 
     let mut json = root_pkg_json.root;
@@ -2535,10 +2551,7 @@ fn update_package_json_after_migration(
         }
     }
 
-    // Each `&'static [u8]` here is interned into the thread-local `DATA_STORE`
-    // (see `data_store_dupe_str` below) so it shares the lifetime of the
-    // `Expr` nodes it ends up backing inside the cached `root_pkg_json.root`.
-    let mut workspace_paths: Option<Vec<&'static [u8]>> = None;
+    let mut workspace_paths: Option<Vec<&[u8]>> = None;
     let mut catalog_obj: Option<Expr> = None;
     let mut catalogs_obj: Option<Expr> = None;
     let mut workspace_overrides_obj: Option<Expr> = None;
@@ -2546,16 +2559,9 @@ fn update_package_json_after_migration(
 
     match sys::File::read_from(Fd::cwd(), b"pnpm-workspace.yaml") {
         Ok(contents) => 'read_pnpm_workspace_yaml: {
-            // The `Vec<u8>` would drop at the end of this arm while the
-            // `Expr`s it backs (catalog/catalogs/overrides/patchedDependencies
-            // below) escape into `json` and the
-            // `workspace_package_json_cache`. Intern the bytes into the same
-            // thread-local `DATA_STORE` that owns the surrounding `Expr`
-            // nodes — arena ownership, not a leak (bulk-freed on
-            // `Expr::data_store_reset`).
-            let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
+            // Quoted and block scalars are copied into the parse arena, so it has to outlive the print below.
+            let contents: &[u8] = bump.alloc_slice_copy(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            // Quoted scalars are copied into the arena; `bump` lives until the print below.
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
                 &yaml_source,
                 log,
@@ -2567,16 +2573,10 @@ fn update_package_json_after_migration(
 
             if let Some(packages_expr) = ws_root.get(b"packages") {
                 if let Some(mut packages) = packages_expr.as_array() {
-                    let mut paths: Vec<&'static [u8]> = Vec::new();
+                    let mut paths: Vec<&[u8]> = Vec::new();
                     while let Some(package_path) = packages.next() {
                         if let Some(package_path_str) = as_string(&package_path) {
-                            // Intern (vs. the prior `Box<[u8]>`) so the
-                            // `EString` nodes built from these paths below do
-                            // not dangle once this function returns and the
-                            // boxes drop — they are stored into
-                            // `root_pkg_json.root` which is cached in
-                            // `manager.workspace_package_json_cache`.
-                            paths.push(js_ast::data_store_dupe_str(package_path_str));
+                            paths.push(package_path_str);
                         }
                     }
                     workspace_paths = Some(paths);
@@ -2718,36 +2718,37 @@ fn update_package_json_after_migration(
     if !trusted_names.is_empty()
         && add_trusted_dependencies(&mut json, lockfile, &bump, &trusted_names)?
     {
-        needs_update = true;
         if pnpm_only_built_deps {
-            moved.push("pnpm.onlyBuiltDependencies to trustedDependencies");
+            copied.push("pnpm.onlyBuiltDependencies to trustedDependencies");
         }
         if workspace_only_built_deps {
-            moved.push("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies");
+            copied.push("pnpm-workspace.yaml onlyBuiltDependencies to trustedDependencies");
         }
     }
 
-    if !copied.is_empty() {
-        print_package_json_into_cache_entry(root_pkg_json, json);
-        // The printed tree borrows from the replaced contents; `bun update` edits this entry next.
-        if let Err(err) = root_pkg_json.reparse_root(log) {
-            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
-            bun_core::Global::crash();
-        }
+    if copied.is_empty() {
+        return Ok(());
+    }
 
-        if sys::File::write_file(
-            dir,
-            bun_core::zstr!("package.json"),
-            root_pkg_json.source.contents(),
-        )
-        .is_ok()
-            && !silent
-        {
-            bun_core::pretty_errorln!(
-                "<d>copied {} in <r><green>package.json<r>",
-                copied.join(", ")
-            );
-        }
+    // The spliced-in nodes live in `bump` and the AST store; re-parse so the cache entry owns its tree.
+    print_package_json_into_cache_entry(root_pkg_json, json);
+    if let Err(err) = root_pkg_json.reparse_root(log) {
+        bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+        Global::crash();
+    }
+
+    let copied = copied.join(", ");
+    // Continuing would save a bun.lock that does not match the package.json left on disk.
+    if let Err(err) = sys::File::write_file(
+        dir,
+        bun_core::zstr!("package.json"),
+        root_pkg_json.source.contents(),
+    ) {
+        Output::err(err, "failed to copy {} in package.json", (&copied,));
+        Global::crash();
+    }
+    if !silent {
+        bun_core::pretty_errorln!("<d>copied {} in <r><green>package.json<r>", copied);
     }
 
     Ok(())
@@ -2797,7 +2798,7 @@ fn copy_into_root(
     Ok(true)
 }
 
-fn paths_array(paths: &[&'static [u8]]) -> Expr {
+fn paths_array(paths: &[&[u8]]) -> Expr {
     let mut items = js_ast::ExprNodeList::init_capacity(paths.len());
     for path in paths {
         VecExt::append(

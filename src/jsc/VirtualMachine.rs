@@ -5403,7 +5403,9 @@ impl VirtualMachine {
                     }
                 };
             }
-            if has_name && !frame.position.is_invalid() {
+            // Frames parsed back out of error.stack can have a file without a
+            // position ("at foo (native)"); the formatter then prints the file alone.
+            if has_name && (!file.is_empty() || !frame.position.is_invalid()) {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     frame.name_formatter(allow_ansi_colors),
@@ -5673,13 +5675,11 @@ impl VirtualMachine {
             Some(bun_sourcemap::mapping::Lookup {
                 mapping: bun_sourcemap::mapping::Mapping {
                     generated: bun_sourcemap::LineColumnOffset::default(),
+                    // Direct copy (both are `bun_core::Ordinal`) so that a frame
+                    // without a position stays INVALID instead of becoming 1:1.
                     original: bun_sourcemap::LineColumnOffset {
-                        lines: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.line.zero_based().max(0),
-                        ),
-                        columns: bun_sourcemap::Ordinal::from_zero_based(
-                            frames[top].position.column.zero_based().max(0),
-                        ),
+                        lines: frames[top].position.line,
+                        columns: frames[top].position.column,
                     },
                     source_index: 0,
                     name_index: -1,
@@ -5731,6 +5731,11 @@ impl VirtualMachine {
                 }
                 if top_frame_is_builtin {
                     // Avoid printing "export default 'native'"
+                    break 'code bun_core::ZigStringSlice::EMPTY;
+                }
+                if !mapping.original.lines.is_valid() {
+                    // No line to preview (a frame parsed out of error.stack that
+                    // only names a file); line 1 would be an arbitrary choice.
                     break 'code bun_core::ZigStringSlice::EMPTY;
                 }
                 let mut log = bun_ast::Log::default();
@@ -6602,16 +6607,19 @@ impl VirtualMachine {
 
         let mut has_location = false;
         if let Some(frame) = top_frame {
-            if !frame.position.is_invalid() {
+            if frame.position.line.is_valid() {
                 let source_url = frame.source_url.to_utf8();
                 let file = bun_paths::resolve_path::relative(dir, source_url.slice());
                 let _ = write!(
                     writer,
-                    "\n::error file={},line={},col={},title=",
+                    "\n::error file={},line={},",
                     bun_core::fmt::github_action_property(file),
                     frame.position.line.one_based(),
-                    frame.position.column.one_based(),
                 );
+                if frame.position.column.is_valid() {
+                    let _ = write!(writer, "col={},", frame.position.column.one_based());
+                }
+                let _ = writer.write_all(b"title=");
                 has_location = true;
             }
         }

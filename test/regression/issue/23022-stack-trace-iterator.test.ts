@@ -27,7 +27,8 @@ test("V8StackTraceIterator handles frames without parentheses (issue #23022)", a
   const stackFrames = err.stack?.split("\n").filter(line => line.trim().startsWith("at"));
   expect(stackFrames?.length).toBeGreaterThan(3);
 
-  // Ensure both "unknown" frames and regular frames are present
-  expect(inspected).toContain("at unknown");
+  // Ensure both "unknown" frames and regular frames are present. The "unknown"
+  // frame has no position in error.stack, so the printout must not invent one.
+  expect(inspected).toMatch(/^\s+at unknown$/m);
   expect(inspected).toContain("at _write");
 });

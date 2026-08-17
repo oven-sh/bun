@@ -11,7 +11,7 @@ use bun_http::{
     HeaderBuilder, async_http::Options as AsyncHTTPOptions,
 };
 use bun_threading::thread_pool::Batch;
-use bun_url::URL;
+use bun_url::{OwnedURL, URL};
 use std::io::Write as _;
 
 use crate::extract_tarball;
@@ -62,6 +62,8 @@ pub struct NetworkTask {
     // into `callback`; owning avoids that at the cost of one copy per tarball download.
     pub(crate) url_buf: Box<[u8]>,
     pub(crate) header_buf: Box<[u8]>,
+    /// Proxy href for this request (empty: direct); owned like `url_buf`, `AsyncHTTP` borrows it.
+    pub(crate) http_proxy_buf: Box<[u8]>,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -170,6 +172,22 @@ impl NetworkTask {
     fn pm_mut<'a>(&self) -> &'a mut PackageManager {
         // SAFETY: see fn doc — BACKREF, write provenance, single-threaded.
         unsafe { self.package_manager.assume_mut() }
+    }
+
+    /// Stores the proxy for `url` in `http_proxy_buf` and returns the view the `AsyncHTTP` keeps.
+    fn http_proxy_for(&mut self, pm: &PackageManager, url: &URL<'_>) -> Option<URL<'static>> {
+        self.http_proxy_buf = pm
+            .http_proxy(url)
+            .map_or_else(Box::default, OwnedURL::into_href);
+        if self.http_proxy_buf.is_empty() {
+            return None;
+        }
+        // SAFETY: lifetime extension, same as `url_buf` in `for_manifest` /
+        // `for_tarball` — `run_tasks` drops `unsafe_http_client` before the slot
+        // (and this buffer) goes back to the pool.
+        Some(URL::parse(unsafe {
+            bun_ptr::detach_lifetime(&self.http_proxy_buf)
+        }))
     }
 
     // Signature matches `HTTPClientResultCallback::new::<NetworkTask>`'s
@@ -688,7 +706,7 @@ impl NetworkTask {
 
         // SAFETY: `self.url_buf` outlives the request, same as `header_buf` above (see `s3/simple_request.rs`).
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
-        let http_proxy = pm.http_proxy(&url);
+        let http_proxy = self.http_proxy_for(pm, &url);
         let completion_callback = self.get_completion_callback();
         // MaybeUninit overwrite — see field doc; old slot value is
         // either uninitialized (fresh hive slot) or a stale bitwise copy from
@@ -912,7 +930,7 @@ impl NetworkTask {
         let url = URL::parse(unsafe { bun_ptr::detach_lifetime(&self.url_buf) });
 
         let mut http_options = AsyncHTTPOptions {
-            http_proxy: pm.http_proxy(&url),
+            http_proxy: self.http_proxy_for(pm, &url),
             ..Default::default()
         };
 
@@ -1047,6 +1065,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).response).write(HTTPClientResult::default());
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
+            addr_of_mut!((*slot).http_proxy_buf).write(Box::default());
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

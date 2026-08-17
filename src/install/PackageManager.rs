@@ -25,7 +25,7 @@ use bun_semver as Semver;
 use bun_sys::{self, Fd};
 use bun_threading::{ThreadPool, UnboundedQueue, thread_pool};
 use bun_transpiler as transpiler;
-use bun_url::URL;
+use bun_url::{OwnedURL, URL};
 
 // `bun.spawn.process.WaiterThread` — the force-waiter-thread flag was moved
 // down into `bun_spawn::process` (MOVE_DOWN b0); install just flips it during
@@ -908,10 +908,8 @@ impl PackageManager {
         Ok(unsafe { &mut *ptr })
     }
 
-    pub fn http_proxy(&self, url: &URL<'_>) -> Option<URL<'static>> {
-        // `env_mut()` yields an unbounded `&'a Loader` (process-lifetime
-        // singleton), so the returned `URL<'_>` borrows for `'static`.
-        self.env_mut().get_http_proxy_for(url)
+    pub fn http_proxy(&self, url: &URL<'_>) -> Option<OwnedURL> {
+        self.env().get_http_proxy_for(url)
     }
 
     pub fn tls_reject_unauthorized(&self) -> bool {

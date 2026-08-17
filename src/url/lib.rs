@@ -601,19 +601,22 @@ impl<'a> URL<'a> {
                 if !is_relative_path {
                     // if there's no protocol or @, it's ambiguous whether the colon is a port or a username.
                     if offset > 0 {
-                        // see https://github.com/oven-sh/bun/issues/1390
-                        let first_at =
-                            strings::index_of_char(&base[offset as usize..], b'@').unwrap_or(0);
-                        let first_colon =
-                            strings::index_of_char(&base[offset as usize..], b':').unwrap_or(0);
-
-                        if first_at > first_colon
-                            && first_at
-                                < strings::index_of_char(&base[offset as usize..], b'/')
-                                    .unwrap_or(u32::MAX)
-                        {
-                            offset += url.parse_username(&base[offset as usize..]).unwrap_or(0);
-                            offset += url.parse_password(&base[offset as usize..]).unwrap_or(0);
+                        let rest = &base[offset as usize..];
+                        // Userinfo ends at the last `@` before the path (#1390 had one in the
+                        // path). As in `parse_host`, `#` does not end the authority: raw
+                        // .npmrc / bunfig / tarball credentials may contain one unencoded.
+                        let authority =
+                            &rest[..strings::index_of_any(rest, b"/?").unwrap_or(rest.len())];
+                        if let Some(at) = strings::last_index_of_char(authority, b'@') {
+                            let userinfo = &authority[..at];
+                            match strings::index_of_char_usize(userinfo, b':') {
+                                Some(colon) => {
+                                    url.username = &userinfo[..colon];
+                                    url.password = &userinfo[colon + 1..];
+                                }
+                                None => url.username = userinfo,
+                            }
+                            offset += u32::try_from(at + 1).expect("int cast");
                         }
                     }
 
@@ -721,30 +724,6 @@ impl<'a> URL<'a> {
             }
         }
 
-        None
-    }
-
-    pub(crate) fn parse_username(&mut self, str: &'a [u8]) -> Option<u32> {
-        // reset it
-        self.username = b"";
-
-        if str.len() < b"@".len() {
-            return None;
-        }
-        for i in 0..str.len() {
-            match str[i] {
-                b':' | b'@' => {
-                    // we found a username, everything before this point in the slice is a username
-                    self.username = &str[0..i];
-                    return Some(u32::try_from(i + 1).expect("int cast"));
-                }
-                // if we reach a slash or "?", there's no username
-                b'?' | b'/' => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
         None
     }
 

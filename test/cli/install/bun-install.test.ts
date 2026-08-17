@@ -5200,6 +5200,92 @@ describe.concurrent("bun-install", () => {
     });
   });
 
+  // Tarball URLs reach the URL parser as written, without WHATWG normalization.
+  // `user@` with a port used to be read as the hostname `user@127.0.0.1`
+  // (#16181, the second repro of #7416; sending the credentials as Basic auth,
+  // the rest of #7416, is a separate feature). Userinfo is delimited by the last
+  // `@` before the path, so an unencoded `@` or `#` inside it stays userinfo.
+  it.each(["user@", "user:pw@", "user@pass@", "user:p@ss@", "user:p#ss@", "us#er:pw@"])(
+    "connects to the host of http://%s127.0.0.1:<port>/pkg.tgz",
+    async userinfo => {
+      const requests: string[] = [];
+      using server = Bun.serve({
+        hostname: "127.0.0.1",
+        port: 0,
+        fetch(req) {
+          requests.push(`${req.method} ${new URL(req.url).pathname}`);
+          return new Response(null, { status: 404 });
+        },
+      });
+      const tarballUrl = `http://${userinfo}127.0.0.1:${server.port}/pkg.tgz`;
+      using dir = tempDir("tarball-userinfo", {
+        "package.json": JSON.stringify({ name: "foo", dependencies: { pkg: tarballUrl } }),
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: String(dir),
+        env: {
+          ...env,
+          BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+          http_proxy: undefined,
+          HTTP_PROXY: undefined,
+          https_proxy: undefined,
+          HTTPS_PROXY: undefined,
+        },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ requests, stdout, stderr, exitCode }).toEqual({
+        requests: ["GET /pkg.tgz"],
+        stdout: expect.stringContaining("bun install v1."),
+        // The server's 404 is what fails the install; before, the request never left the machine.
+        stderr: expect.stringContaining(`error: GET ${tarballUrl} - 404`),
+        exitCode: 1,
+      });
+    },
+  );
+
+  // Registry URLs from bunfig / .npmrc are parsed as written as well, and their
+  // credentials become the Authorization header; an unencoded `#` in the
+  // password has always been accepted there.
+  it("sends the credentials of a bunfig registry URL whose password contains a #", async () => {
+    const requests: string[] = [];
+    using registry = Bun.serve({
+      hostname: "127.0.0.1",
+      port: 0,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname} ${req.headers.get("authorization")}`);
+        return new Response(null, { status: 404 });
+      },
+    });
+    using dir = tempDir("registry-userinfo", {
+      "package.json": JSON.stringify({ name: "foo", dependencies: { "some-pkg": "1.0.0" } }),
+      "bunfig.toml": `[install]\nregistry = "http://user:p#ss@127.0.0.1:${registry.port}/"\n`,
+    });
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: String(dir),
+      env: {
+        ...env,
+        BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache"),
+        http_proxy: undefined,
+        HTTP_PROXY: undefined,
+        https_proxy: undefined,
+        HTTPS_PROXY: undefined,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ requests, stdout, stderr, exitCode }).toEqual({
+      requests: [`GET /some-pkg Basic ${btoa("user:p#ss")}`],
+      stdout: expect.stringContaining("bun install v1."),
+      stderr: expect.stringContaining("some-pkg@1.0.0 failed to resolve"),
+      exitCode: 1,
+    });
+  });
+
   it("should handle GitHub URL with existing lockfile", async () => {
     await withContext(defaultOpts, async ctx => {
       const urls: string[] = [];

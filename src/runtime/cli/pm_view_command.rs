@@ -128,7 +128,7 @@ pub(crate) fn view(
         headers.entries,
         header_buf,
         b"",
-        http_proxy,
+        http_proxy.as_ref().map(|proxy| proxy.url()),
         None,
         http::FetchRedirect::Follow,
     );

@@ -20,7 +20,7 @@ use crate::webcore::s3::client::{
 };
 use bun_core::{ZigString, strings};
 use bun_http_types::MimeType::MimeType;
-use bun_url::URL;
+use bun_url::OwnedURL;
 
 #[cfg(unix)]
 use super::SizeType;
@@ -331,13 +331,13 @@ impl S3Ext for S3 {
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
+        let proxy_url: Option<OwnedURL> = global_this
             .bun_vm()
             .as_mut()
             .transpiler
             .env_mut()
             .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
+        let proxy = proxy_url.as_ref().map(OwnedURL::href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 
@@ -423,13 +423,13 @@ impl S3Ext for S3 {
         let value = promise.value();
         // `Transpiler::env_mut` is the safe accessor for the process-singleton
         // dotenv loader (never null once the VM is initialised).
-        let proxy_url: Option<URL<'_>> = global_this
+        let proxy_url: Option<OwnedURL> = global_this
             .bun_vm()
             .as_mut()
             .transpiler
             .env_mut()
             .get_http_proxy(true, None, None);
-        let proxy = proxy_url.as_ref().map(|url| url.href);
+        let proxy = proxy_url.as_ref().map(OwnedURL::href);
         let aws_options = self.get_credentials_with_options(extra_options, global_this)?;
         // `defer aws_options.deinit()` → Drop handles it.
 

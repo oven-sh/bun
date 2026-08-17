@@ -752,7 +752,7 @@ fn send_audit_request(
         headers.entries,
         headers_buf,
         &final_compressed_body,
-        http_proxy,
+        http_proxy.as_ref().map(|proxy| proxy.url()),
         None,
         http::FetchRedirect::Follow,
     );

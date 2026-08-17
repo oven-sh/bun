@@ -1834,7 +1834,7 @@ pub fn generate_network_task_for_tarball<'a>(
     // Full struct overwrite that resets
     // every other field (`retried`, `response`, `streaming_committed`,
     // `tarball_stream`, `streaming_extract_task`, `next`, `url_buf`,
-    // `signal_store`) to its struct default. The slot may be uninitialized
+    // `http_proxy_buf`, `signal_store`) to its struct default. The slot may be uninitialized
     // (`HiveArrayFallback::get()` heap fallback) or stale (reused hive slot).
     // SAFETY: `net_ptr` is the unique handle to a freshly-vended pool slot; no
     // other alias exists until we return it.

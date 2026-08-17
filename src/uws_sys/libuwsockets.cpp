@@ -1407,10 +1407,10 @@ extern "C"
       auto *data = uwsRes->getHttpResponseData();
       /* Once write()/flushHeaders() (HTTP_WRITE_CALLED) or an earlier end
        * (HTTP_END_CALLED) terminated the header section, header bytes written
-       * here would land inside the body (node:http res.destroy() mid-response
-       * ends up here). Setting HTTP_CONNECTION_CLOSE is what makes the close
-       * gates tear the connection down; the header itself is only advisory,
-       * same as in internalEnd(). */
+       * here would land inside the body (a node:http request listener that
+       * throws mid-response ends up here). Setting HTTP_CONNECTION_CLOSE is
+       * what makes the close gates tear the connection down; the header itself
+       * is only advisory, same as in internalEnd(). */
       bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
       if (close_connection)
       {
@@ -1461,16 +1461,18 @@ extern "C"
     }
   }
 
-  /* The application gave up on the response (node:http res.destroy() /
-   * req.destroy()) and is about to close the socket. Same state transitions
-   * as uws_res_end_without_body(res, true), without its writes: with the
-   * header section still open those writes form a complete empty
-   * "HTTP/1.1 200 OK" + "Connection: close" response, and after write() they
-   * land inside the body; a destroyed response puts nothing on the wire
-   * (Node writes nothing either). HTTP_CONNECTION_CLOSE keeps the connection
-   * from serving another request, HTTP_END_CALLED makes
-   * JSNodeHTTPServerSocket::close() discard (not flush) whatever is still
-   * corked, and markDone() drops the response's callbacks. */
+  /* node:http res.destroy() / req.destroy(): the application gave up on the
+   * response and closes the socket right after this. Writes nothing (while
+   * the header section is open, uws_res_end_without_body's status line +
+   * "Connection: close" would form a complete empty 200 response; Node sends
+   * nothing), but leaves the same state behind as that function would.
+   * HTTP_END_CALLED is what the close that follows reads:
+   * JSNodeHTTPServerSocket::close() flushes the corked write() bytes of an
+   * unfinished response and discards those of an ended one, and a destroyed
+   * response's must be discarded (Node drops what destroy() finds corked,
+   * too). HTTP_CONNECTION_CLOSE and markDone() only matter if the socket
+   * outlives this call, and then keep the close gates and callbacks behaving
+   * as they did after the old end. */
   void uws_res_abandon(int ssl, uws_res_r res)
   {
     if (ssl)

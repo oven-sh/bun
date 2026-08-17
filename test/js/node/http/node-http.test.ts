@@ -4140,45 +4140,36 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
   }
 });
 
-// Destroying a response (or its request) before anything was written must put
-// nothing on the wire, like Node: the client sees the connection close, not a
-// complete empty 200. The destroy is scheduled with setImmediate so it runs
-// after the request listener's dispatch has returned; while the dispatch is on
-// the stack the connection is corked and a stray write would be discarded
-// together with the cork buffer at close, which would hide the bug.
-describe("destroying a response before its headers are written sends nothing", () => {
+// A response that is given up on before its headers went out (res.destroy(),
+// req.destroy()) puts nothing on the wire, like Node: the client sees the
+// connection close, not a complete empty 200. The destroys below are scheduled
+// with setImmediate so they run after the request listener's dispatch has
+// returned; while the dispatch is on the stack the connection is corked and a
+// stray write would be discarded together with the cork buffer at close, which
+// would hide the bug. The cases that pass either way pin that corked behavior.
+describe("giving up on a response before its headers are sent", () => {
   async function bytesReceivedByClient({
     listener,
     https = false,
-    onData,
   }: {
     listener: (req: IncomingMessage, res: ServerResponse) => void;
     https?: boolean;
-    onData?: (received: string) => void;
   }) {
-    const server = https ? createHttpsServer(tlsCert, listener) : createServer(listener);
-    try {
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const { port } = server.address() as AddressInfo;
-      const request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
-      const socket = https
-        ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request))
-        : connect(port, "127.0.0.1", () => socket.write(request));
-      const closed = Promise.withResolvers<void>();
-      let received = "";
-      socket.on("data", (chunk: Buffer) => {
-        received += chunk.toString("latin1");
-        onData?.(received);
-      });
-      // Only the bytes matter; the teardown may also surface as ECONNRESET.
-      socket.on("error", () => {});
-      socket.on("close", () => closed.resolve());
-      await closed.promise;
-      return received;
-    } finally {
-      server.close();
-    }
+    await using server = https ? createHttpsServer(tlsCert, listener) : createServer(listener);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const request = "GET / HTTP/1.1\r\nHost: x\r\n\r\n";
+    const socket = https
+      ? tlsConnect({ port, host: "127.0.0.1", rejectUnauthorized: false }, () => socket.write(request))
+      : connect(port, "127.0.0.1", () => socket.write(request));
+    const closed = Promise.withResolvers<void>();
+    let received = "";
+    socket.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+    // Only the bytes matter; the teardown may also surface as ECONNRESET.
+    socket.on("error", () => {});
+    socket.on("close", () => closed.resolve());
+    await closed.promise;
+    return received;
   }
 
   it.concurrent("res.destroy() after writeHead()", async () => {
@@ -4210,16 +4201,6 @@ describe("destroying a response before its headers are written sends nothing", (
     expect(received).toBe("");
   });
 
-  it.concurrent("res.destroy() synchronously inside the request listener", async () => {
-    const received = await bytesReceivedByClient({
-      listener(req, res) {
-        res.writeHead(200);
-        res.destroy();
-      },
-    });
-    expect(received).toBe("");
-  });
-
   it.concurrent("req.destroy()", async () => {
     const received = await bytesReceivedByClient({
       listener(req, res) {
@@ -4241,42 +4222,87 @@ describe("destroying a response before its headers are written sends nothing", (
     expect(received).toBe("");
   });
 
-  it.concurrent("res.destroy() once the headers and part of the body are on the wire adds nothing", async () => {
-    const inFlight = Promise.withResolvers<ServerResponse>();
+  it.concurrent("res.destroy() synchronously inside the request listener", async () => {
+    const received = await bytesReceivedByClient({
+      listener(req, res) {
+        res.writeHead(200);
+        res.destroy();
+      },
+    });
+    expect(received).toBe("");
+  });
+
+  // Node drops whatever destroy() finds still corked, so a res.write() in the
+  // same tick never reaches the client either. Distinct from the cases above:
+  // here the header block and the chunk have been handed to the connection and
+  // are sitting in its cork buffer, and the close has to discard them.
+  it.concurrent("res.destroy() right after res.write() discards the corked headers and chunk", async () => {
     const received = await bytesReceivedByClient({
       listener(req, res) {
         res.writeHead(200, { "content-length": "10" });
         res.write("hello");
-        inFlight.resolve(res);
-      },
-      // Runs from the client socket's 'data' event, i.e. with the server
-      // connection uncorked, once everything the listener wrote has arrived.
-      onData(received) {
-        if (received.endsWith("hello")) inFlight.promise.then(res => res.destroy());
+        res.destroy();
       },
     });
-    expect(received).toStartWith("HTTP/1.1 200 OK\r\n");
-    expect(received).toEndWith("\r\n\r\nhello");
+    expect(received).toBe("");
   });
 
   it.concurrent("http.get() sees a socket hang up instead of an empty 200 response", async () => {
-    const server = createServer((req, res) => {
+    await using server = createServer((req, res) => {
       res.writeHead(200);
       setImmediate(() => res.destroy());
     });
-    try {
-      server.listen(0, "127.0.0.1");
-      await once(server, "listening");
-      const { port } = server.address() as AddressInfo;
-      const outcome = await new Promise<unknown>(resolve => {
-        get({ port, host: "127.0.0.1" }, res => {
-          res.resume();
-          resolve({ statusCode: res.statusCode });
-        }).on("error", (err: NodeJS.ErrnoException) => resolve({ code: err.code, message: err.message }));
-      });
-      expect(outcome).toEqual({ code: "ECONNRESET", message: "socket hang up" });
-    } finally {
-      server.close();
-    }
+    await once(server.listen(0, "127.0.0.1"), "listening");
+    const { port } = server.address() as AddressInfo;
+    const outcome = await new Promise<unknown>(resolve => {
+      get({ port, host: "127.0.0.1" }, res => {
+        res.resume();
+        resolve({ statusCode: res.statusCode });
+      }).on("error", (err: NodeJS.ErrnoException) => resolve({ code: err.code, message: err.message }));
+    });
+    expect(outcome).toEqual({ code: "ECONNRESET", message: "socket hang up" });
+  });
+
+  // A request listener that throws is the other way a response is given up on
+  // before its headers are sent. Node leaves that connection open; Bun answers
+  // it, and the answer must not be an empty 200. Runs in a child because the
+  // throw reaches uncaughtException.
+  it.concurrent("a request listener that throws before writing gets a 500, not an empty 200", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { createServer } = require("node:http");
+        const { connect } = require("node:net");
+        process.on("uncaughtException", err => {
+          if (err.message !== "boom") throw err;
+        });
+        const server = createServer(() => {
+          throw new Error("boom");
+        });
+        server.listen(0, "127.0.0.1", () => {
+          const socket = connect(server.address().port, "127.0.0.1", () => {
+            socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          });
+          let raw = "";
+          socket.on("data", chunk => (raw += chunk.toString("latin1")));
+          socket.on("error", () => {});
+          socket.on("close", () => {
+            const headerEnd = raw.indexOf("\\r\\n\\r\\n");
+            console.log(JSON.stringify({ statusLine: raw.slice(0, raw.indexOf("\\r\\n")), body: raw.slice(headerEnd + 4) }));
+            server.close();
+          });
+        });
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ statusLine: "HTTP/1.1 500 Internal Server Error", body: "" });
+    expect(exitCode).toBe(0);
   });
 });

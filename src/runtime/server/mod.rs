@@ -1456,12 +1456,13 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                             if !nhr_flags.contains(NhrFlags::REQUEST_HAS_COMPLETED)
                                 && raw.state().is_response_pending()
                             {
-                                if raw.state().is_http_status_called() {
+                                // Once the status line is on the wire the
+                                // failure can no longer be reported; before
+                                // that it must not come out as an empty 200.
+                                if !raw.state().is_http_status_called() {
                                     raw.write_status(b"500 Internal Server Error");
-                                    raw.end_without_body(true);
-                                } else {
-                                    raw.end_stream(true);
                                 }
+                                raw.end_without_body(true);
                             }
                         }
                     }

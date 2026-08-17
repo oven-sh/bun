@@ -360,6 +360,40 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         expect(result).toBe(0);
       });
 
+      test("EXPIRE/PEXPIRE/EXPIREAT/PEXPIREAT forward the NX/XX/GT/LT condition", async () => {
+        const redis = ctx.redis;
+        const key = "expire-condition-test-key";
+        const nxCalls = {
+          expire: () => redis.expire(key, 10, "NX"),
+          pexpire: () => redis.pexpire(key, 10_000, "NX"),
+          expireat: () => redis.expireat(key, Math.floor(Date.now() / 1000) + 10, "NX"),
+          pexpireat: () => redis.pexpireat(key, Date.now() + 10_000, "NX"),
+        };
+
+        // NX only sets a TTL when the key has none, so on a key that already
+        // has one every call must be a no-op that leaves the long TTL in place.
+        for (const [name, call] of Object.entries(nxCalls)) {
+          await redis.set(key, "value");
+          expect(await redis.expire(key, 1000)).toBe(1);
+          expect([name, await call()]).toEqual([name, 0]);
+          expect(await redis.ttl(key)).toBeGreaterThan(900);
+        }
+
+        // XX requires an existing TTL; GT/LT compare against it.
+        await redis.set(key, "value");
+        expect(await redis.expire(key, 1000, "XX")).toBe(0);
+        expect(await redis.ttl(key)).toBe(-1);
+        expect(await redis.expire(key, 1000, "NX")).toBe(1);
+        expect(await redis.pexpire(key, 500_000, "GT")).toBe(0);
+        expect(await redis.pexpire(key, 500_000, "LT")).toBe(1);
+        expect(await redis.expireat(key, Math.floor(Date.now() / 1000) + 2000, "LT")).toBe(0);
+        expect(await redis.pexpireat(key, Date.now() + 2_000_000, "GT")).toBe(1);
+        expect(await redis.ttl(key)).toBeGreaterThan(1900);
+
+        // The condition is forwarded as-is; the server validates it.
+        await expect(redis.expire(key, 10, "BOGUS" as any)).rejects.toThrow("ERR Unsupported option BOGUS");
+      });
+
       test("should determine the type of a key with TYPE", async () => {
         const redis = ctx.redis;
 
@@ -727,6 +761,23 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
 
         const result3 = await redis.pfadd(key, "element1");
         expect(result3).toBe(0);
+      });
+
+      test("PFADD sends every element, and accepts the key-only form", async () => {
+        const redis = ctx.redis;
+        const key = "pfadd-multi-test";
+
+        expect(await redis.pfadd(key, "a", "b", "c")).toBe(1);
+        expect(await redis.send("PFCOUNT", [key])).toBe(3);
+        expect(await redis.pfadd(key, "a", "b", "c")).toBe(0);
+        expect(await redis.pfadd(key, "c", Buffer.from("d"))).toBe(1);
+        expect(await redis.send("PFCOUNT", [key])).toBe(4);
+
+        // PFADD key (no elements) creates an empty HyperLogLog.
+        const emptyKey = "pfadd-empty-test";
+        expect(await redis.pfadd(emptyKey)).toBe(1);
+        expect(await redis.pfadd(emptyKey)).toBe(0);
+        expect(await redis.send("PFCOUNT", [emptyKey])).toBe(0);
       });
 
       test("should implement TTL command correctly for different cases", async () => {
@@ -7058,5 +7109,179 @@ describe("RedisClient argument validation", () => {
     } finally {
       client.close();
     }
+  });
+
+  test("pfadd() and the expire family still report a bad required argument by name", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    const badKey = (name: string) => ({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `Expected key to be a string or buffer for '${name}'.`,
+    });
+    try {
+      // @ts-expect-error: testing runtime behavior with no arguments
+      expect(syncThrow(() => client.pfadd())).toMatchObject(badKey("pfadd"));
+      expect(syncThrow(() => client.pfadd({} as any, "a"))).toMatchObject(badKey("pfadd"));
+      expect(syncThrow(() => client.expireat({} as any, 1, "NX"))).toMatchObject(badKey("expireat"));
+      expect(syncThrow(() => client.pexpire({} as any, 1, "NX"))).toMatchObject(badKey("pexpire"));
+      expect(syncThrow(() => client.pexpireat({} as any, 1, "NX"))).toMatchObject(badKey("pexpireat"));
+      // @ts-expect-error: testing runtime behavior with a missing argument
+      expect(syncThrow(() => client.pexpire("k"))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected milliseconds to be a string or buffer for 'pexpire'.",
+      });
+      // The condition is not promoted into the slot of a missing required argument.
+      // @ts-expect-error: testing runtime behavior with an undefined timestamp
+      expect(syncThrow(() => client.expireat("k", undefined, "NX"))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: "Expected timestamp to be a string or buffer for 'expireat'.",
+      });
+      expect(syncThrow(() => client.expire("k", NaN, "NX"))).toMatchObject({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining('"seconds"'),
+      });
+    } finally {
+      client.close();
+    }
+  });
+
+  test("pfadd() and the expire family reject a non-string trailing argument", () => {
+    const client = new RedisClient("redis://127.0.0.1:1", { autoReconnect: false });
+    const badRest = (name: string) => ({
+      code: "ERR_INVALID_ARG_TYPE",
+      message: `Expected additional arguments to be a string or buffer for '${name}'.`,
+    });
+    try {
+      expect(syncThrow(() => client.pfadd("hll", "a", {} as any))).toMatchObject(badRest("pfadd"));
+      expect(syncThrow(() => client.expire("k", 5, {} as any))).toMatchObject(badRest("expire"));
+      expect(syncThrow(() => client.pexpire("k", 5, {} as any))).toMatchObject(badRest("pexpire"));
+      expect(syncThrow(() => client.expireat("k", 5, {} as any))).toMatchObject(badRest("expireat"));
+      expect(syncThrow(() => client.pexpireat("k", 5, {} as any))).toMatchObject(badRest("pexpireat"));
+    } finally {
+      client.close();
+    }
+  });
+});
+
+describe("RedisClient command encoding", () => {
+  const CRLF = "\r\n";
+  const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
+  const HELLO_REPLY = `%2${CRLF}` + bulk("server") + bulk("redis") + bulk("proto") + `:3${CRLF}`;
+
+  /**
+   * Runs `body` against a fake server that answers HELLO, replies `:0` to
+   * everything else and records every command it received as an argv array.
+   */
+  async function recordCommands(body: (client: RedisClient) => Promise<unknown>): Promise<string[][]> {
+    const received: string[][] = [];
+    using server = Bun.listen<{ buf: Buffer }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buf: Buffer.alloc(0) };
+        },
+        error() {},
+        close() {},
+        data(socket, chunk) {
+          let buf = (socket.data.buf = Buffer.concat([socket.data.buf, chunk]));
+          // Each client command is a RESP array of bulk strings:
+          // `*<argc>\r\n` followed by argc `$<len>\r\n<bytes>\r\n` frames.
+          for (;;) {
+            const headerEnd = buf.indexOf(CRLF);
+            if (headerEnd < 0 || buf[0] !== 0x2a /* '*' */) break;
+            const argc = parseInt(buf.subarray(1, headerEnd).toString("latin1"), 10);
+            const argv: string[] = [];
+            let pos = headerEnd + 2;
+            let complete = true;
+            for (let i = 0; i < argc; i++) {
+              const lenEnd = buf.indexOf(CRLF, pos);
+              if (lenEnd < 0 || buf[pos] !== 0x24 /* '$' */) {
+                complete = false;
+                break;
+              }
+              const len = parseInt(buf.subarray(pos + 1, lenEnd).toString("latin1"), 10);
+              const next = lenEnd + 2 + len + 2;
+              if (next > buf.length) {
+                complete = false;
+                break;
+              }
+              argv.push(buf.subarray(lenEnd + 2, lenEnd + 2 + len).toString("latin1"));
+              pos = next;
+            }
+            if (!complete) break;
+            buf = socket.data.buf = buf.subarray(pos);
+            if (argv[0] === "HELLO") {
+              socket.write(HELLO_REPLY);
+            } else {
+              received.push(argv);
+              socket.write(`:0${CRLF}`);
+            }
+          }
+        },
+      },
+    });
+
+    const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+    try {
+      await client.connect();
+      await body(client);
+    } finally {
+      client.close();
+    }
+    return received;
+  }
+
+  test("pfadd() forwards every element", async () => {
+    const received = await recordCommands(async client => {
+      await client.pfadd("hll", "a", "b", "c");
+      await client.pfadd("hll", "a", Buffer.from("b"));
+      // PFADD key on its own is valid: it creates an empty HyperLogLog.
+      await client.pfadd("hll");
+    });
+    expect(received).toEqual([
+      ["PFADD", "hll", "a", "b", "c"],
+      ["PFADD", "hll", "a", "b"],
+      ["PFADD", "hll"],
+    ]);
+  });
+
+  test("expire(), pexpire(), expireat() and pexpireat() forward the NX|XX|GT|LT condition", async () => {
+    const received = await recordCommands(async client => {
+      await client.expire("k", 5, "NX");
+      await client.expire(Buffer.from("binary-key"), 5, "XX");
+      await client.pexpire("k", 5000, "XX");
+      await client.expireat("k", 1700000000, "GT");
+      await client.pexpireat("k", 1700000000000, "LT");
+    });
+    expect(received).toEqual([
+      ["EXPIRE", "k", "5", "NX"],
+      ["EXPIRE", "binary-key", "5", "XX"],
+      ["PEXPIRE", "k", "5000", "XX"],
+      ["EXPIREAT", "k", "1700000000", "GT"],
+      ["PEXPIREAT", "k", "1700000000000", "LT"],
+    ]);
+  });
+
+  test("the expire family without a condition (or with an undefined one) sends the two-argument form", async () => {
+    const received = await recordCommands(async client => {
+      await client.expire("k", 5);
+      await client.expire("k", 5, undefined);
+      await client.pexpire("k", 5000);
+      await client.pexpire("k", 5000, undefined);
+      await client.expireat("k", 1700000000);
+      await client.expireat("k", 1700000000, undefined);
+      await client.pexpireat("k", 1700000000000);
+      await client.pexpireat("k", 1700000000000, undefined);
+    });
+    expect(received).toEqual([
+      ["EXPIRE", "k", "5"],
+      ["EXPIRE", "k", "5"],
+      ["PEXPIRE", "k", "5000"],
+      ["PEXPIRE", "k", "5000"],
+      ["EXPIREAT", "k", "1700000000"],
+      ["EXPIREAT", "k", "1700000000"],
+      ["PEXPIREAT", "k", "1700000000000"],
+      ["PEXPIREAT", "k", "1700000000000"],
+    ]);
   });
 });

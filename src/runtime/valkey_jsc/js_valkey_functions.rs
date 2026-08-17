@@ -76,6 +76,29 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
 }
 
+/// Optional trailing arguments; `undefined`/`null` are skipped so an omitted option sends nothing.
+fn push_rest_args(
+    global: &JSGlobalObject,
+    function_name: &'static [u8],
+    args: &mut Vec<JSArgument>,
+    rest: &[JSValue],
+) -> JsResult<()> {
+    for arg in rest {
+        if arg.is_undefined_or_null() {
+            continue;
+        }
+        let Some(value) = from_js(global, *arg)? else {
+            return Err(global.throw_invalid_argument_type(
+                bname(function_name),
+                "additional arguments",
+                "string or buffer",
+            ));
+        };
+        args.push(value);
+    }
+    Ok(())
+}
+
 /// Shim around `protocol::valkey_error_to_js` that:
 /// 1. accepts whatever error type `JSValkeyClient::send` currently returns
 ///    (presently `crate::Error`) and
@@ -101,7 +124,7 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
 ///
-/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
+/// All 8 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
 /// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
 /// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
 /// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
@@ -165,6 +188,7 @@ pub(crate) mod compile {
 // cmd_key_varargs! (key: RedisKey, ...args: RedisKey[]),
 // cmd_key_value! (key: RedisKey, value: RedisValue),
 // cmd_key_value_value2! (key: RedisKey, value: RedisValue, value2: RedisValue),
+// cmd_required_varargs! (required0: RedisValue, ..., requiredN: RedisValue, ...optional: RedisValue[]),
 // cmd_strings_varargs! (...strings: string[]),
 // cmd_key_value_varargs! (key: RedisKey, value: RedisValue, ...args: RedisValue)
 
@@ -348,6 +372,53 @@ macro_rules! cmd_key_value_value2 {
                 frame.this(),
                 $command.as_bytes(),
                 CommandArgs::Args(&[key, value, value2]),
+                CommandMeta::default(),
+                concat!("Failed to send ", $command),
+            )
+        }
+    };
+}
+
+macro_rules! cmd_required_varargs {
+    ($fn_name:ident, $name:literal, $command:literal, $($required_name:literal,)+ $state:ident) => {
+        #[bun_jsc::host_fn(method)]
+        pub fn $fn_name(
+            this: &Self,
+            global: &JSGlobalObject,
+            frame: &CallFrame,
+        ) -> JsResult<JSValue> {
+            compile::test_correct_state::<{ compile::ClientStateRequirement::$state }>(
+                this, $name,
+            )?;
+
+            const REQUIRED: &[&str] = &[$($required_name),+];
+
+            let arguments = frame.arguments();
+            let mut args: Vec<JSArgument> = Vec::with_capacity(arguments.len());
+
+            for (index, required_name) in REQUIRED.iter().copied().enumerate() {
+                let Some(required) = from_js(global, frame.argument(index))? else {
+                    return Err(global.throw_invalid_argument_type(
+                        bname($name),
+                        required_name,
+                        "string or buffer",
+                    ));
+                };
+                args.push(required);
+            }
+
+            push_rest_args(
+                global,
+                $name,
+                &mut args,
+                arguments.get(REQUIRED.len()..).unwrap_or_default(),
+            )?;
+            send_cmd(
+                this,
+                global,
+                frame.this(),
+                $command.as_bytes(),
+                CommandArgs::Args(&args),
                 CommandMeta::default(),
                 concat!("Failed to send ", $command),
             )
@@ -684,15 +755,28 @@ impl JSValkeyClient {
             },
         )?;
 
+        // Optional trailing condition: EXPIRE key seconds [NX | XX | GT | LT]
+        let mut rest: Vec<JSArgument> = Vec::new();
+        push_rest_args(
+            global,
+            b"expire",
+            &mut rest,
+            frame.arguments().get(2..).unwrap_or_default(),
+        )?;
+
         // Convert seconds to a string
         let mut int_buf = bun_core::fmt::ItoaBuf::new();
         let seconds_slice = bun_core::fmt::itoa(&mut int_buf, seconds);
+        let mut args: Vec<&[u8]> = Vec::with_capacity(2 + rest.len());
+        args.push(key.slice());
+        args.push(seconds_slice);
+        args.extend(rest.iter().map(JSArgument::slice));
         send_cmd(
             this,
             global,
             frame.this(),
             b"EXPIRE",
-            CommandArgs::Raw(&[key.slice(), seconds_slice]),
+            CommandArgs::Raw(&args),
             CommandMeta::default(),
             "Failed to send EXPIRE command",
         )
@@ -1354,7 +1438,7 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key!(dump, b"dump", "DUMP", "key", NotSubscriber);
-    cmd_key_value!(
+    cmd_required_varargs!(
         expireat,
         b"expireat",
         "EXPIREAT",
@@ -1420,7 +1504,7 @@ impl JSValkeyClient {
         NotSubscriber
     );
     cmd_key!(persist, b"persist", "PERSIST", "key", NotSubscriber);
-    cmd_key_value!(
+    cmd_required_varargs!(
         pexpire,
         b"pexpire",
         "PEXPIRE",
@@ -1428,7 +1512,7 @@ impl JSValkeyClient {
         "milliseconds",
         NotSubscriber
     );
-    cmd_key_value!(
+    cmd_required_varargs!(
         pexpireat,
         b"pexpireat",
         "PEXPIREAT",
@@ -1552,7 +1636,7 @@ impl JSValkeyClient {
     );
     cmd_key_value_varargs!(lpush, b"lpush", "LPUSH", NotSubscriber);
     cmd_key_value_varargs!(lpushx, b"lpushx", "LPUSHX", NotSubscriber);
-    cmd_key_value!(pfadd, b"pfadd", "PFADD", "key", "value", NotSubscriber);
+    cmd_required_varargs!(pfadd, b"pfadd", "PFADD", "key", NotSubscriber);
     cmd_key_value_varargs!(rpush, b"rpush", "RPUSH", NotSubscriber);
     cmd_key_value_varargs!(rpushx, b"rpushx", "RPUSHX", NotSubscriber);
     cmd_key_value!(setnx, b"setnx", "SETNX", "key", "value", NotSubscriber);

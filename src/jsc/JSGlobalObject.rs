@@ -1016,6 +1016,8 @@ impl JSGlobalObject {
             JsError::OutOfMemory => {
                 let _ = self.throw_out_of_memory();
             }
+            // Already taken at the boundary; nothing is pending. Hand back the (inert) termination value.
+            JsError::Terminated => return self.vm().termination_exception(),
         }
 
         self.try_take_exception().unwrap_or_else(|| {

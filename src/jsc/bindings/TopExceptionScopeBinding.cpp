@@ -1,4 +1,5 @@
 #include <root.h>
+#include "BunClientData.h"
 
 using JSC::TopExceptionScope;
 
@@ -38,21 +39,11 @@ extern "C" void TopExceptionScope__construct(
 #endif
 }
 
-// Every Rust exception check lands in one of these: a termination it observes is being carried on to
-// its landing frame (see Bun__VM__terminationInFlight).
-static inline JSC::Exception* observed(TopExceptionScope& scope)
-{
-    auto* exception = scope.exception();
-    if (exception && scope.vm().isTerminationException(exception) && !scope.vm().hasTerminationRequest()) [[unlikely]]
-        scope.vm().setHasTerminationRequest();
-    return exception;
-}
-
 extern "C" JSC::Exception* TopExceptionScope__pureException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     auto* scope = static_cast<TopExceptionScope*>(ptr);
-    return observed(*scope);
+    return scope->exception();
 }
 
 extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
@@ -62,8 +53,27 @@ extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
     // this is different than `return scope->exception()` because `RETURN_IF_EXCEPTION` also checks
     // if there are traps that should throw an exception (like a termination request from another
     // thread)
-    RETURN_IF_EXCEPTION(*scope, observed(*scope));
+    RETURN_IF_EXCEPTION(*scope, scope->exception());
     return nullptr;
+}
+
+// See Bun__VM__takeTerminationOutsideScript.
+extern "C" bool TopExceptionScope__takeTerminationOutsideScript(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
+    auto* scope = static_cast<TopExceptionScope*>(ptr);
+    auto& vm = scope->vm();
+    if (vm.isEntered())
+        return false;
+    auto* exception = scope->exception();
+    if (!exception || !vm.isTerminationException(exception))
+        return false;
+    ASSERT(!WebCore::clientData(vm)->scriptAllowed());
+    scope->clearException();
+    if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.clearHasTerminationRequest();
+    vm.setExecutionForbidden();
+    return true;
 }
 
 extern "C" void TopExceptionScope__clearException(void* ptr)

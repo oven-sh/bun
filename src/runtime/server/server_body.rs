@@ -1441,7 +1441,7 @@ where
             // on this (single-threaded) JS thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
-                Err(JsError::Thrown) => {
+                Err(JsError::Thrown | JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -3750,7 +3750,7 @@ bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_class
 extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: &JSGlobalObject) {
     match server_set_idle_timeout(server, seconds, global) {
         Ok(()) => {}
-        Err(JsError::Thrown) => {}
+        Err(JsError::Thrown | JsError::Terminated) => {}
         Err(JsError::OutOfMemory) => {
             let _ = global.throw_out_of_memory_value();
         }

@@ -5517,7 +5517,7 @@ bun_jsc::jsc_host_abi! {
     ) -> Option<NonNull<Blob>> {
         match jsdom_file_construct(global_this, callframe) {
             Ok(b) => Some(NonNull::new(b).expect("jsdom_file_construct returns Blob::new (heap::alloc)")),
-            Err(jsc::JsError::Thrown) => None,
+            Err(jsc::JsError::Thrown | bun_jsc::JsError::Terminated) => None,
             Err(jsc::JsError::OutOfMemory) => {
                 let _ = global_this.throw_out_of_memory();
                 None

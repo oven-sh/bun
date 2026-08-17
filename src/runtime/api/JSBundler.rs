@@ -1601,7 +1601,7 @@ pub mod js_bundler {
                 Err(err) => {
                     match err {
                         JsError::OutOfMemory => bun_core::out_of_memory(),
-                        JsError::Thrown => {}
+                        JsError::Thrown | JsError::Terminated => {}
                     }
                     panic!("Unexpected: source_code is not a string");
                 }
@@ -1721,6 +1721,7 @@ pub mod js_bundler {
                 Err(JsError::Thrown) if global_this.has_pending_termination_exception() => {
                     return Err(JsError::Thrown);
                 }
+                Err(JsError::Terminated) => return Err(JsError::Terminated),
                 Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
             };
 

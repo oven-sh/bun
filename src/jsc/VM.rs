@@ -32,6 +32,8 @@ unsafe extern "C" {
     safe fn JSC__VM__setExecutionForbidden(vm: &VM, forbidden: bool);
     safe fn JSC__VM__executionForbidden(vm: &VM) -> bool;
     safe fn JSC__VM__notifyNeedTermination(vm: &VM);
+    safe fn JSC__VM__isEntered(vm: &VM) -> bool;
+    safe fn JSC__VM__terminationException(vm: &VM) -> JSValue;
     safe fn JSC__VM__throwError(vm: &VM, global_object: &JSGlobalObject, value: JSValue);
     safe fn JSC__VM__releaseWeakRefs(vm: &VM);
     safe fn JSC__VM__drainMicrotasks(vm: &VM);
@@ -111,6 +113,17 @@ impl VM {
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
     pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
+    }
+
+    /// A script frame is on this VM's stack (JSC::VM::isEntered — a VMEntryScope is live).
+    pub fn is_entered(&self) -> bool {
+        JSC__VM__isEntered(self)
+    }
+
+    /// The VM's TerminationException cell (created on demand) — what a pending one reads as; inert
+    /// until thrown.
+    pub fn termination_exception(&self) -> JSValue {
+        JSC__VM__terminationException(self)
     }
 
     /// Has termination been requested on this VM (worker.terminate(), or

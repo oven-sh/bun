@@ -5156,6 +5156,12 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
+// The TerminationException cell itself (what a pending one reads as), not the error object it wraps.
+extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
+{
+    return JSC::JSValue::encode(JSC::JSValue(vm->ensureTerminationException()));
+}
+
 [[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 {
@@ -6777,37 +6783,28 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
-// A TerminationException on its way to its landing frame has left JSC's outermost VMEntryScope, which
-// reset the VM's "termination in flight" bit; anything that would defer termination before the landing
-// (a LazyProperty's initializer, reifying static properties) asserts that bit while the exception is
-// pending. Whoever carries the exception on keeps the bit with it: every Rust exception read
-// (TopExceptionScope), the throwing FFI wrappers' cold path, and GlobalObject::drainMicrotasks.
-extern "C" void Bun__VM__terminationInFlight(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto* exception = vm.exceptionForInspection();
-    if (exception && vm.isTerminationException(exception) && !vm.hasTerminationRequest()) [[unlikely]]
-        vm.setHasTerminationRequest();
-}
-
-// A TerminationException reached a frame with no script left beneath it to unwind (a dispatcher's
-// fold, a loop-level microtask checkpoint, a timer's C++ caller): it is taken here — exception and
-// in-flight bit — so nothing stays pending between entries. Beneath script (the VM is still entered) it
-// is left alone: it is still unwinding the frames above, and their landing frame takes it. If the VM's
-// stop is what requested it, script is over for good: executionForbidden, as WebCore's forbidExecution().
-extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject* globalObject)
+// The VM's TerminationException has unwound past the outermost script frame (WebCore takes it at the
+// same point: JSExecState::profiledCall's returnedException + forbidExecution). It never stays pending
+// across native code out here — JSC resets its "termination in progress" state when the outermost VM
+// entry exits and expects the embedder to have taken the exception by then — so take it: nothing is
+// pending afterwards, execution is forbidden, and the caller stands down (Rust: JsError::Terminated /
+// Stopped). Beneath script (the VM is entered) it is left for JSC to unwind the frames above; false.
+// Every termination that gets this far is the VM's stop: a node:vm run converts its own beneath script.
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     if (vm.isEntered())
-        return;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    ASSERT(!scope.exception() || vm.isTerminationException(scope.exception()));
-    // Every termination that unwinds to loop level is the VM's stop (a node:vm run converts its own beneath).
+        return false;
+    auto* exception = vm.exceptionForInspection();
+    if (!exception || !vm.isTerminationException(exception))
+        return false;
     ASSERT(!WebCore::clientData(vm)->scriptAllowed());
-    scope.clearException();
+    DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    // Thrown by a trap check out here, no VM entry exit will reset this for JSC (VM::executeEntryScopeServicesOnExit).
     if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.clearHasTerminationRequest();
     vm.setExecutionForbidden();
+    return true;
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

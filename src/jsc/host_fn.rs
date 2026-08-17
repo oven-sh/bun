@@ -141,6 +141,7 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
             Ok(v) => v,
             Err(JsError::Thrown) => JSValue::ZERO,
             Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
+            Err(JsError::Terminated) => terminated_beneath_script(global_this),
         };
         debug_exception_assertion(global_this, value, "_unknown_");
         return value;
@@ -149,7 +150,17 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
+        Err(JsError::Terminated) => terminated_beneath_script(global_this),
     }
+}
+
+/// A host function is beneath script, where a termination stays pending (`Thrown`); `Terminated` only
+/// reaches one through code shared with loop-level callers. JSC still needs an exception to unwind the
+/// script above: rethrow the VM's.
+#[cold]
+fn terminated_beneath_script(global_this: &JSGlobalObject) -> JSValue {
+    let _ = crate::cpp::JSC__JSGlobalObject__throwTerminationException(global_this);
+    JSValue::ZERO
 }
 
 fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func: &'static str) {
@@ -181,6 +192,10 @@ pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsRes
         Err(JsError::Thrown) => false,
         Err(JsError::OutOfMemory) => {
             let _ = global_this.throw_out_of_memory_value();
+            false
+        }
+        Err(JsError::Terminated) => {
+            let _ = terminated_beneath_script(global_this);
             false
         }
         Ok(()) => true,
@@ -663,6 +678,7 @@ pub fn to_js_host_call(
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
+        Err(JsError::Terminated) => terminated_beneath_script(global_this),
     };
     scope.assert_exception_presence_matches(normal.is_empty());
     normal

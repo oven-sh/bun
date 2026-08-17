@@ -354,6 +354,7 @@ fn reject_on_exception(
         Ok(_) | Err(jsc::JsError::Thrown) if global_this.has_pending_termination_exception() => {
             return Err(jsc::JsError::Thrown);
         }
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {

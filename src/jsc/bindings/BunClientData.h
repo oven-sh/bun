@@ -8,8 +8,7 @@ extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS threa
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
 extern "C" void Bun__VmHandle__release(const BunVmHandleRef*);
 // bindings.cpp: a TerminationException carried on to / arriving at its landing frame (see definitions).
-extern "C" void Bun__VM__terminationInFlight(JSC::JSGlobalObject*);
-extern "C" void Bun__VM__terminationLanded(JSC::JSGlobalObject*);
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
 
 namespace WebCore {
 class EventLoopTask;

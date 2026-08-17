@@ -229,7 +229,7 @@ pub enum IPCDecodeError {
 impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
         match e {
-            JsError::Thrown => IPCDecodeError::JSError,
+            JsError::Thrown | JsError::Terminated => IPCDecodeError::JSError,
             JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
         }
     }
@@ -250,7 +250,7 @@ pub enum IPCSerializationError {
 impl From<JsError> for IPCSerializationError {
     fn from(e: JsError) -> Self {
         match e {
-            JsError::Thrown => IPCSerializationError::JSError,
+            JsError::Thrown | JsError::Terminated => IPCSerializationError::JSError,
             JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
         }
     }
@@ -530,7 +530,7 @@ mod json {
         }
         let deserialized = match parsed {
             Ok(v) => v,
-            Err(JsError::Thrown) => {
+            Err(JsError::Thrown | JsError::Terminated) => {
                 // A malformed message; a pending termination is not cleared by this and keeps unwinding.
                 global_this.clear_exception();
                 return Err(IPCDecodeError::InvalidFormat);

@@ -632,9 +632,8 @@ where
         }
     }
 
-    /// The microtask checkpoint after a synchronously dispatched handler. `Err`: the VM has stopped (its
-    /// termination landed here — a uWS callback's frame — or is unwinding an outer frame); the caller
-    /// leaves the request where it is and the stop closes the server's connections.
+    /// The microtask checkpoint after a synchronously dispatched handler. `Err`: the VM has stopped; the
+    /// caller leaves the request where it is and the stop closes the server's connections.
     fn drain_microtasks(&self) -> Result<(), bun_jsc::Stopped> {
         let Some(server) = self.server.get() else {
             return Ok(());
@@ -642,8 +641,7 @@ where
         if self.is_async() {
             return Ok(());
         }
-        (server.vm().as_mut().event_loop_mut().drain_microtasks())
-            .inspect_err(|_| bun_jsc::task::termination_landed(server.global_this()))
+        server.vm().as_mut().event_loop_mut().drain_microtasks()
     }
 
     pub(crate) fn set_abort_handler(&self) {

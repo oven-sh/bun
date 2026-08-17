@@ -188,11 +188,15 @@ impl JSGlobalObject {
 pub struct Stopped;
 
 impl Stopped {
-    /// Cross into a `JsResult` function: throw the VM's TerminationException for real (what `VMTraps`
-    /// does on trap), so `Err(Thrown)` keeps meaning "an exception is pending" for every caller above.
-    /// For a nested wait/drain *inside a host function* only; loop-level code propagates `Stopped`.
+    /// Cross into a `JsResult` function. Beneath script (a nested wait/drain inside a host function),
+    /// throw the VM's TerminationException for real — what `VMTraps` does on trap — so JSC unwinds the
+    /// script above and `Err(Thrown)` keeps meaning "an exception is pending". Outside script there is
+    /// nothing to unwind: `Terminated`, nothing pending.
     #[cold]
     pub fn throw(self, global: &JSGlobalObject) -> crate::JsError {
+        if !global.vm().is_entered() {
+            return crate::JsError::Terminated;
+        }
         match crate::cpp::JSC__JSGlobalObject__throwTerminationException(global) {
             Err(err) => err,
             Ok(()) => {
@@ -658,10 +662,8 @@ impl EventLoop {
         jsc::mark_binding();
         crate::top_scope!(scope, self.global_ref());
         self.entered_event_loop_count += 1;
-        if self.tick_turn(&mut scope).is_err() {
-            // A fold or checkpoint met the VM's termination: this is its landing frame; the turn is over.
-            crate::task::termination_landed(self.global_ref());
-        }
+        // `Err(Stopped)`: a fold or checkpoint met the VM's termination; the turn is over.
+        let _ = self.tick_turn(&mut scope);
         self.entered_event_loop_count -= 1;
     }
 
@@ -727,15 +729,8 @@ impl EventLoop {
         // overlap `&mut self: EventLoop`, which is a value field of the VM).
         let prev = self.vm_ref().suppress_microtask_drain.replace(true);
 
-        loop {
-            match self.tick_with_count(vm) {
-                Ok(0) => break,
-                Ok(_) => self.tick_concurrent(),
-                Err(Stopped) => {
-                    crate::task::termination_landed(self.global_ref());
-                    break;
-                }
-            }
+        while let Ok(1..) = self.tick_with_count(vm) {
+            self.tick_concurrent();
         }
 
         self.vm_ref().suppress_microtask_drain.set(prev);

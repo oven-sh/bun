@@ -367,6 +367,8 @@ impl JSPromise {
             Err(JsError::Thrown) if global.has_pending_termination_exception() => {
                 return Err(JsError::Thrown);
             }
+            // The VM is dead: nothing settles.
+            Err(JsError::Terminated) => return Err(JsError::Terminated),
             Err(JsError::Thrown) => {
                 let Some(exception) = global.try_take_exception() else {
                     panic!(

@@ -64,9 +64,8 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
         (void)scope.tryClearException();
-        // A timer callback is dispatched straight from the loop: this is its landing frame.
         if (vm.isTerminationException(exception))
-            Bun__VM__terminationLanded(globalObject);
+            Bun__VM__takeTerminationOutsideScript(globalObject);
         else
             Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
         hadException = true;

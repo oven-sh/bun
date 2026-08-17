@@ -36,28 +36,19 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 // `pub fn run_tasks` wrapper here had no callers and aliased the same body —
 // deleted r6 (one symbol per dispatch entry, per PORTING.md §extern-Rust-ban).
 
-unsafe extern "C" {
-    safe fn Bun__VM__terminationLanded(global: &JSGlobalObject);
-}
-
-/// A TerminationException came back to this frame. If no script is left beneath it (the VM is not
-/// entered), this is its landing frame: it is taken, and execution is forbidden if the VM's stop
-/// requested it. Beneath script it is left pending to unwind the frames above; their landing frame
-/// takes it. See `Bun__VM__terminationLanded`.
-#[inline]
-pub fn termination_landed(global: &JSGlobalObject) {
-    Bun__VM__terminationLanded(global)
-}
-
-/// The fold: what a dispatcher does with the exception a callback it invoked left pending — report it
-/// as uncaught, or, if what came back is a termination, land it (`termination_landed`) and stand
-/// down (WebCore: `isTerminationException(returned)`) — then run the microtask checkpoint the scopes
-/// beneath skipped over the pending exception.
+/// The fold: what a dispatcher does with the `Err` a callback it invoked came back with — report the
+/// exception as uncaught, or, if it is the VM's termination, stand down (WebCore:
+/// `isTerminationException(returned)`) — then run the microtask checkpoint the scopes beneath skipped
+/// over the pending exception. A termination that got here still pending (read through a proof-less
+/// `has_exception()`, or this fold runs beneath script) is taken now if no script is left to unwind.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
+    if proof == JsError::Terminated {
+        return Err(Stopped);
+    }
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
-        termination_landed(global);
+        crate::top_exception_scope::thrown(global);
         return Err(Stopped);
     }
     let vm = global.bun_vm();
@@ -65,9 +56,7 @@ pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Res
     if vm.is_shutting_down() {
         return Ok(());
     }
-    vm.event_loop_mut()
-        .maybe_drain_microtasks()
-        .inspect_err(|_| termination_landed(global))
+    vm.event_loop_mut().maybe_drain_microtasks()
 }
 
 // The full ~96-arm `match` (previously in this file) has been hoisted to

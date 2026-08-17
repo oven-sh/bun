@@ -3280,13 +3280,13 @@ uint8_t GlobalObject::drainMicrotasks()
     // A stopped VM has no checkpoint to run: whether or not its termination is still pending here (the
     // landing frame may already have taken it), nothing queued may execute any more.
     if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
-        Bun__VM__terminationInFlight(this);
+        Bun__VM__takeTerminationOutsideScript(this);
         return 1;
     }
 
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
-            Bun__VM__terminationInFlight(this); // for its landing frame — a caller — to take
+            Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
 
@@ -3309,7 +3309,7 @@ uint8_t GlobalObject::drainMicrotasks()
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {
-                Bun__VM__terminationInFlight(this); // for its landing frame — a caller — to take
+                Bun__VM__takeTerminationOutsideScript(this);
                 return 1;
             }
             (void)scope.tryClearException();
@@ -3320,7 +3320,7 @@ uint8_t GlobalObject::drainMicrotasks()
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
         if (vm.isTerminationException(exception)) {
-            Bun__VM__terminationInFlight(this); // for its landing frame — a caller — to take
+            Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
         (void)scope.tryClearException();

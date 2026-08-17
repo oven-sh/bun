@@ -20,8 +20,6 @@ pub(crate) fn from_binary(bytes: &[u8]) -> f64 {
     if microseconds == i64::MIN {
         return f64::NEG_INFINITY;
     }
-    // Floor in integers: a fractional f64 would be truncated toward zero by
-    // timeClip, landing pre-1970 instants 1 ms late. Text decoding floors.
     (microseconds.div_euclid(US_PER_MS) + POSTGRES_EPOCH_DATE) as f64
 }
 

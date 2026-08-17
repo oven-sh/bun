@@ -1054,14 +1054,18 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
   });
 
   // A debug build byte-scans the 64 MB line slowly (~30 s); release is well under a second.
-  test.skipIf(isDebug)("a file over the normalization size limit is diffed as text and says so", async () => {
-    // One long line, so the text diff over it is cheap and only the size check is exercised.
-    const big = "export const v = 1; /*" + Buffer.alloc(64 * 1024 * 1024, "x").toString() + "*/\n";
-    const { text, exitCode } = await pretty({ "a/big.js": big, "b/big.js": big.replace("v = 1", "v = 2") });
-    expect(text).toMatch(/\nbig\.js ─+ too large to normalize \+1 -1\n/);
-    expect(text).toContain("│- export const v = 1;");
-    expect(exitCode).toBe(0);
-  }, 60_000);
+  test.skipIf(isDebug)(
+    "a file over the normalization size limit is diffed as text and says so",
+    async () => {
+      // One long line, so the text diff over it is cheap and only the size check is exercised.
+      const big = "export const v = 1; /*" + Buffer.alloc(64 * 1024 * 1024, "x").toString() + "*/\n";
+      const { text, exitCode } = await pretty({ "a/big.js": big, "b/big.js": big.replace("v = 1", "v = 2") });
+      expect(text).toMatch(/\nbig\.js ─+ too large to normalize \+1 -1\n/);
+      expect(text).toContain("│- export const v = 1;");
+      expect(exitCode).toBe(0);
+    },
+    60_000,
+  );
 
   test("hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side", async () => {
     const deep = "export const f = " + "() => ".repeat(300) + "1;\n";

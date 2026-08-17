@@ -269,6 +269,145 @@ describe("vm", () => {
         expect(e).toBeTruthy();
       }
     });
+
+    describe("syntax errors in the body", () => {
+      const thrownBy = (fn: () => unknown): any => {
+        try {
+          fn();
+        } catch (e) {
+          return e;
+        }
+        throw new Error("expected a throw");
+      };
+      // What JSC says about the same text when it is compiled any other way.
+      const scriptMessage = (code: string) => thrownBy(() => new Script(code)).message;
+
+      // Node reports the body's first bad token as a SyntaxError whether or not
+      // params are given, and whether or not a `return` precedes it.
+      test.each([
+        ["%%", [], "Unexpected token '%'"],
+        ["%%", ["a"], "Unexpected token '%'"],
+        ["return 1;\n%%", [], "Unexpected token '%'"],
+        ["return 1;\n%%", ["a"], "Unexpected token '%'"],
+        ["}", [], "Unexpected token '}'"],
+        ["}", ["a"], "Unexpected token '}'"],
+        ["case 1:", ["a"], "Unexpected token 'case'"],
+        // A body that closes the function it is compiled into and opens another
+        // one parses fine as a program; it must still be rejected at the brace.
+        ["}); (function () {", [], "Unexpected token '}'"],
+        ["}); (function () {", ["a"], "Unexpected token '}'"],
+        ["return 1 }); (function () {", [], "Unexpected token '}'"],
+        ["return 1 }); (function () {", ["a"], "Unexpected token '}'"],
+        // Escapes without opening a second function: the program still holds
+        // exactly one function expression, it just ends before the wrapper does.
+        ["return 1 }); x = 1; ({", [], "Unexpected token '}'"],
+      ])("compileFunction(%j, %j) throws %j", (body, params, message) => {
+        expect(() => compileFunction(body, params)).toThrow({ name: "SyntaxError", message });
+      });
+
+      test("errors keep JSC's own message instead of being rewritten to 'Unexpected token'", () => {
+        for (const body of ["let x = 1; let x = 2;", "await 1", "'use strict'; with ({}) {}", "if (x) {"]) {
+          expect(thrownBy(() => compileFunction(body, ["a"]))).toBeInstanceOf(SyntaxError);
+          expect(thrownBy(() => compileFunction(body)).message).toBe(scriptMessage(body));
+          expect(thrownBy(() => compileFunction(body, ["a"])).message).toBe(scriptMessage(body));
+        }
+      });
+
+      test("errors only visible with the params in scope are SyntaxErrors too", () => {
+        const err = thrownBy(() => compileFunction("let a = 1;", ["a"]));
+        expect(err).toBeInstanceOf(SyntaxError);
+        expect(err.message).toBe(scriptMessage("(function (a) {\nlet a = 1;\n})"));
+      });
+
+      test("invalid params are SyntaxErrors", () => {
+        expect(thrownBy(() => compileFunction("return 1", ["a b"]))).toBeInstanceOf(SyntaxError);
+        expect(thrownBy(() => compileFunction("return 1", ["a) { return 2 } ); (function (b"]))).toBeInstanceOf(
+          SyntaxError,
+        );
+      });
+
+      test("constructs that are only valid inside a function body compile", () => {
+        expect(compileFunction("if (0) new.target; return 1")()).toBe(1);
+        expect(compileFunction("const f = () => new.target; return f()")()).toBeUndefined();
+        expect(compileFunction("return new.target", ["a"])()).toBeUndefined();
+      });
+
+      test("bodies and params that merely look like an escape compile", () => {
+        expect(compileFunction('return "}); (function () {"', ["a"])()).toBe("}); (function () {");
+        expect(compileFunction("return 1 // })")()).toBe(1);
+        expect(compileFunction("return a()", ["a = function () { return 7 }"])()).toBe(7);
+        expect(compileFunction("return a + b", ["a,\nb"])(1, 2)).toBe(3);
+      });
+
+      test("params are validated as parameters, not as programs", () => {
+        expect(compileFunction("return rest.length", ["...rest"])(1, 2, 3)).toBe(3);
+      });
+
+      test("a body too deeply nested to parse throws the parser's RangeError, without an arrow header", () => {
+        const body = "return " + Buffer.alloc(100_000, "(").toString();
+        for (const params of [[], ["a"]]) {
+          const err = thrownBy(() => compileFunction(body, params));
+          expect(err).toBeInstanceOf(RangeError);
+          expect(err.stack.startsWith("RangeError")).toBe(true);
+        }
+      });
+
+      test("the arrow header and line point into the body", () => {
+        const header = (err: any) => {
+          expect(err).toBeInstanceOf(SyntaxError);
+          return err.stack.split("\n").slice(0, 4);
+        };
+        // Located by parsing the body on its own.
+        expect(header(thrownBy(() => compileFunction("1;\n%%", ["a"], { filename: "f.js", lineOffset: 5 })))).toEqual([
+          "f.js:7",
+          "%%",
+          "^",
+          "",
+        ]);
+        // Located by the wrapped compile (the `return` hides it from the
+        // standalone parse) and moved onto the body.
+        const moved = thrownBy(() => compileFunction("return 1;\n  %%", ["a"], { filename: "f.js", lineOffset: 5 }));
+        expect(moved.message).toBe("Unexpected token '%'");
+        expect(header(moved)).toEqual(["f.js:7", "  %%", "  ^", ""]);
+        expect(header(thrownBy(() => compileFunction("return 1;\n%%", [], { lineOffset: -5 })))).toEqual([
+          ":-3",
+          "%%",
+          "^",
+          "",
+        ]);
+        // Params spanning lines do not shift the reported position.
+        expect(header(thrownBy(() => compileFunction("return 1;\n%%", ["a,\nb"], { filename: "f.js" })))).toEqual([
+          "f.js:2",
+          "%%",
+          "^",
+          "",
+        ]);
+        // Both routes record the same position on the error object itself.
+        const located = thrownBy(() => compileFunction("1;\n%%", [], { filename: "f.js", lineOffset: 5 }));
+        expect([located.line, located.sourceURL]).toEqual([7, "f.js"]);
+        expect([moved.line, moved.sourceURL]).toEqual([7, "f.js"]);
+        // The brace that closed the function early.
+        const escaped = thrownBy(() =>
+          compileFunction("return 1;\nx = 1 }); (function () {", [], { filename: "f.js" }),
+        );
+        expect(escaped.message).toBe("Unexpected token '}'");
+        expect(header(escaped)).toEqual(["f.js:2", "x = 1 }); (function () {", "      ^", ""]);
+        // An unterminated body is reported at its end, not inside the wrapper.
+        expect(header(thrownBy(() => compileFunction("return (", [], { filename: "f.js" })))).toEqual([
+          "f.js:1",
+          "return (",
+          "        ^",
+          "",
+        ]);
+        // A bad param is reported against the start of the body.
+        expect(header(thrownBy(() => compileFunction("return 1", ["a b"], { filename: "f.js" })))).toEqual([
+          "f.js:1",
+          "return 1",
+          "^",
+          "",
+        ]);
+      });
+    });
   });
 });
 
@@ -447,16 +586,23 @@ describe("Script", () => {
       expect(err.message).toBe("Unexpected token '%'");
       expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:1", "%%", "^", ""]);
 
-      // Same eager-materialization path via vm.compileFunction.
-      let fnErr: any;
-      try {
-        compileFunction("%%");
-      } catch (e) {
-        fnErr = e;
+      // Same eager-materialization path via vm.compileFunction, with the error
+      // found by the standalone parse of the body and by the wrapped compile.
+      for (const [body, params, caret] of [
+        ["%%", [], "^"],
+        ["%%", ["a"], "^"],
+        ["return;%%", ["a"], "       ^"],
+      ] as [string, string[], string][]) {
+        let fnErr: any;
+        try {
+          compileFunction(body, params);
+        } catch (e) {
+          fnErr = e;
+        }
+        expect(fnErr).toBeInstanceOf(SyntaxError);
+        expect(fnErr.message).toBe("Unexpected token '%'");
+        expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", body, caret, ""]);
       }
-      expect(fnErr).toBeInstanceOf(SyntaxError);
-      expect(fnErr.message).toBe("Unexpected token '%'");
-      expect(fnErr.stack.split("\n").slice(0, 4)).toEqual([":1", "%%", "^", ""]);
     } finally {
       Error.prepareStackTrace = prev;
     }

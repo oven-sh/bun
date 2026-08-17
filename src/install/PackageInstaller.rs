@@ -1901,11 +1901,15 @@ impl<'a> PackageInstaller<'a> {
                         // This is a transitive folder dependency. It is installed as a directory of symlinks
                         // to the target's files (see `PackageInstall::install`), and is not hoisted.
                         //
-                        // A transitive `Resolution::Folder` declared by a local `file:` package
-                        // is relative to the top-level dir (`Package::parse` normalized it), so
-                        // install it from `installer.cache_dir` (the cwd, set in the switch above).
+                        // A transitive `Resolution::Folder` is relative to the top-level dir when
+                        // a local `file:` package declared it (`Package::parse` normalized it) or
+                        // when a root `overrides`/`resolutions` rule, scoped or not, supplied the
+                        // path, so install it from `installer.cache_dir` (the cwd, set in the
+                        // switch above). Only the unsafe-path check in that switch is limited to
+                        // plain rules (see `OverrideMap::contains_name`).
                         if resolution.tag == resolution::Tag::Folder
-                            && self.lockfile().is_folder_tree_id(self.current_tree_id)
+                            && (self.lockfile().is_folder_tree_id(self.current_tree_id)
+                                || self.lockfile().is_overridden_dependency(dependency_id))
                         {
                             break 'result installer.install(
                                 self.skip_delete,

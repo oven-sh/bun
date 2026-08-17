@@ -1764,13 +1764,9 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
-// A lazy PropertyCallback builder that fails returns empty and leaves the exception pending:
-// reifyStaticProperty then stores nothing, the access that triggered it throws, and the next
-// access runs the builder again. Both JSC callers (setUpStaticFunctionSlot for a single access,
-// reifyAllStaticProperties for delete/spread, which stops at the failing entry and leaves the
-// rest lazy) defer termination around the builder and check for the exception afterwards with
-// vm.exceptionForInspection(). That check does not satisfy a ThrowScope's simulated throw, so
-// builders use a TopExceptionScope.
+// A builder that fails returns empty with the exception pending: nothing is stored, the access
+// throws, and the next access runs the builder again. TopExceptionScope rather than ThrowScope:
+// the JSC callers check with vm.exceptionForInspection(), which does not satisfy a simulated throw.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

@@ -159,6 +159,17 @@ The file is plain JSON, slowest first, so it doubles as a "what's slow" report:
 
 You can pass `--timings` more than once. Bun reads the files as one table and skips paths that don't exist yet. `--update-timings` writes to the **first** path. Under `--shard` that output contains only the files the shard ran, so the shards' outputs are disjoint. Read together on the next run, they add up to the whole suite with no merge step. [Large codebases](/test/index#large-codebases) on the main page has the full CI workflow.
 
+## Running affected files first with `--changed-first`
+
+```sh terminal icon="terminal"
+bun test --changed-first          # uncommitted + untracked vs HEAD
+bun test --changed-first=main     # vs a branch or commit
+```
+
+`--changed-first` uses the same git + module-graph detection as `--changed` to find which test files are affected by your edits, but instead of skipping the rest it moves the affected files to the front of the run. On a PR CI job that still wants full coverage, this surfaces failures in what you touched early; combined with `--bail` the run stops on the first such failure instead of working through the rest of the suite.
+
+Affected files are ordered slowest-first when `--timings` is available, otherwise by path; the remaining files keep the order they would otherwise have. Under `--parallel` the affected files are dispatched from a shared queue first, so every affected file is handed out before any worker starts on its own chunk (an unaffected file may already be running when the last affected one finishes). Under `--shard` each file stays in the shard it would normally belong to and is simply run first within that shard. `--changed` and `--changed-first` cannot be passed together.
+
 ## How it compares
 
 2 000 TypeScript test files × 8 small tests each, all importing a small app built on `zod`, `date-fns` and `lodash`, with a shared setup file (custom matcher + `beforeEach`/`afterEach`) loaded via each runner's preload mechanism — the shape of a large application's unit-test suite ([`bench/test/app`](https://github.com/oven-sh/bun/tree/main/bench/test/app), `bun app/setup.ts 2000 20`). 16-core Apple M4 Max:

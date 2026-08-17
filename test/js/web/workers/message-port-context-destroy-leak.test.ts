@@ -79,3 +79,53 @@ test.skipIf(isWindows)(
   },
   120_000,
 );
+
+// The other half of the contract above: once the wrapper and the peer are collected, the
+// self-ref taken by .ref() is the only thing keeping the native port alive. A context that
+// is torn down without a stop phase (a collected ShadowRealm global here) reaches
+// contextDestroyed() -> close() directly, and close() drops that self-ref part-way
+// through, so it has to hold its own reference for the rest of the teardown.
+//
+// ASAN only: the port lives in a bmalloc heap, which Malloc=1 routes to the system
+// allocator so ASAN can see a read of the freed port.
+test.skipIf(!isASAN)(
+  "closing a ref()'d port during context destruction does not free it mid-close",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { heapStats } = require("bun:jsc");
+       const globals = () => heapStats().objectTypeCounts.GlobalObject;
+       const baseline = globals();
+       let realm = new ShadowRealm();
+       realm.evaluate("(() => { const { port1 } = new MessageChannel(); port1.ref(); })()");
+       // Collect the wrapper and the peer while the realm is still alive: the ref()'d native
+       // port now survives on its self-ref alone.
+       for (let i = 0; i < 5; i++) Bun.gc(true);
+       // Drop the realm. Destroying its global destroys the context the port is registered on.
+       // A stale stack slot can keep the realm alive through a collection or two, so collect
+       // (with a different call in between each time) until its global is actually gone.
+       realm = null;
+       let collected = false;
+       for (let i = 0; i < 50 && !collected; i++) {
+         Bun.gc(true);
+         collected = globals() === baseline;
+       }
+       console.log(collected ? "PASS" : "the realm's global was never collected");`,
+      ],
+      env: { ...bunEnv, ...(isWindows ? {} : { Malloc: "1" }) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  // The passing run takes about a second; a failing one has to symbolize an ASAN report
+  // for the debug binary first, which takes longer than the default timeout.
+  30_000,
+);

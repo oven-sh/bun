@@ -224,15 +224,8 @@ void MessagePort::close()
     // it in hasPendingActivity()); marking our side Closed is sufficient.
     m_pipe->close(m_side, MessagePortPipe::CloseKind::Explicit);
 
-    // Release the self-reference taken by jsRef() (set when .onmessage is
-    // assigned or .ref() is called from JS). The JS .close() binding calls
-    // jsUnref() first; stop() and contextDestroyed() do not.
-    if (m_hasRef) {
-        m_hasRef = false;
-        if (auto* context = scriptExecutionContext())
-            context->unrefEventLoop();
-        deref();
-    }
+    // The JS .close() binding calls jsUnref() first; stop() and contextDestroyed() do not.
+    releaseJsRef();
 
     // close() can run without a prior jsUnref() (warn-and-close, contextDestroyed());
     // clear the listener keepalive so a later listener add can't re-ref the loop.
@@ -287,8 +280,7 @@ void MessagePort::peerClosed()
     dispatchCloseEvent();
     // jsUnref() clears both the listener loop-ref (m_isRefd) and the onmessage/ref()
     // keepalive (m_hasRef), so a listening transferred port stops pinning the loop.
-    auto* globalObject = defaultGlobalObject(context->globalObject());
-    jsUnref(globalObject);
+    jsUnref();
 }
 
 TransferredMessagePort MessagePort::disentangle()
@@ -301,17 +293,8 @@ TransferredMessagePort MessagePort::disentangle()
     removeAllEventListeners();
     m_hasMessageEventListener = false;
 
-    // Release the self-reference taken by jsRef() on the sending side. After
-    // transfer this object is inert (the receiving side gets a fresh
-    // MessagePort for the same pipe endpoint) and is no longer a destruction
-    // observer, so nothing else will ever release a ref taken here.
-    // The caller (disentanglePorts) holds a RefPtr, so deref() is safe.
-    if (m_hasRef) {
-        m_hasRef = false;
-        if (auto* context = scriptExecutionContext())
-            context->unrefEventLoop();
-        deref();
-    }
+    // Inert from here on and about to stop observing its context: nothing later could release a jsRef().
+    releaseJsRef();
 
     // A transferred port is inert; clear the listener keepalive too so hasRef()
     // reports false (the disentangle analogue of the close() reset above).
@@ -400,6 +383,8 @@ void MessagePort::contextDestroyed()
 {
     ASSERT(scriptExecutionContext());
 
+    // With no stop phase before this (ShadowRealm, retired test-isolation global), close() may drop the last reference.
+    Ref protectedThis { *this };
     close();
     ActiveDOMObject::contextDestroyed();
 }
@@ -497,6 +482,7 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         return;
 
     auto& port = static_cast<MessagePort&>(self);
+    bool hadListeners = port.m_messageEventCount > 0;
     switch (kind) {
     case Add:
         port.m_messageEventCount++;
@@ -510,6 +496,9 @@ void MessagePort::onDidChangeListenerImpl(EventTarget& self, const AtomString& e
         break;
     }
     port.updateListenerEventLoopRef();
+    // node (setupPortReferencing) unref()s outright when the last 'message' listener goes, .ref() or not.
+    if (hadListeners && port.m_messageEventCount == 0)
+        port.releaseJsRef();
 }
 
 bool MessagePort::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
@@ -576,7 +565,7 @@ void MessagePort::jsRef(JSGlobalObject* lexicalGlobalObject)
     }
 }
 
-void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
+void MessagePort::jsUnref()
 {
     // Also release the listener loop-ref; otherwise an always-listening transferred
     // port (a postMessageToThread control port) would pin the event loop forever.
@@ -584,11 +573,20 @@ void MessagePort::jsUnref(JSGlobalObject* lexicalGlobalObject)
         m_isRefd = false;
         updateListenerEventLoopRef();
     }
-    if (m_hasRef) {
-        m_hasRef = false;
-        deref();
-        Bun__eventLoop__refKeepAlive(WebCore::clientData(lexicalGlobalObject->vm())->bunVM, -1);
-    }
+    releaseJsRef();
+}
+
+void MessagePort::releaseJsRef()
+{
+    if (!m_hasRef)
+        return;
+    m_hasRef = false;
+    // The context's VM is the one jsRef() ref'd through the lexical global.
+    if (auto* context = scriptExecutionContext())
+        context->unrefEventLoop();
+    // Callers keep using the port afterwards, so this self-ref must not be its last reference.
+    ASSERT(!hasOneRef());
+    deref();
 }
 
 } // namespace WebCore

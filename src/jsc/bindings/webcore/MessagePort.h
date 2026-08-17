@@ -114,7 +114,7 @@ public:
     JSValue tryTakeMessage(JSGlobalObject*, bool& hadMessage);
 
     void jsRef(JSGlobalObject*);
-    void jsUnref(JSGlobalObject*);
+    void jsUnref();
     // Report the actual loop-ref state (matches Node's uv_has_ref), not the intent flag.
     bool jsHasRef() { return m_hasRef || m_listenerLoopRefActive; }
 
@@ -159,7 +159,9 @@ private:
     // Read from the GC thread: a port whose only listener is 'close' must survive
     // until that event is delivered, or the peer's close is lost to a collection.
     std::atomic<bool> m_hasCloseEventListener { false };
+    // jsRef() (.ref() or a callable .onmessage=) holds a self-ref plus an event-loop ref; releaseJsRef() drops both.
     bool m_hasRef { false };
+    void releaseJsRef();
 
     // Whether .ref()/.unref() want this port to keep the loop alive (default refd);
     // independent of m_hasRef (the .onmessage=/.ref() keepalive).

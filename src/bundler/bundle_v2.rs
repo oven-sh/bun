@@ -716,6 +716,12 @@ pub mod bv2_impl {
                     path: &mut BunString,
                     is_on_load: bool,
                 ) -> bool;
+                #[link_name = "JSBundlerPlugin__anyOnBeforeParseMatches"]
+                safe fn JSBundlerPlugin__anyOnBeforeParseMatches(
+                    this: &Plugin,
+                    namespace: &mut BunString,
+                    path: &mut BunString,
+                ) -> bool;
                 // `context` is an opaque cookie C++ round-trips back to a Rust
                 // callback without dereferencing, so the only pointer validity
                 // obligations are on `this`/`BunString` — discharged by `&`.
@@ -803,18 +809,36 @@ pub mod bv2_impl {
                     path: &crate::bun_fs::Path,
                     is_on_load: bool,
                 ) -> bool {
-                    let mut namespace_string = if path.is_file() {
-                        BunString::empty()
-                    } else {
-                        BunString::clone_utf8(path.namespace)
-                    };
-                    let mut path_string = BunString::clone_utf8(path.text);
+                    let (mut namespace_string, mut path_string) = Self::filter_input(path);
                     JSBundlerPlugin__anyMatches(
                         self,
                         &mut namespace_string,
                         &mut path_string,
                         is_on_load,
                     )
+                }
+
+                /// Whether a native `onBeforeParse` plugin would run on the file.
+                pub(crate) fn has_any_on_before_parse_matches(
+                    &self,
+                    path: &crate::bun_fs::Path,
+                ) -> bool {
+                    let (mut namespace_string, mut path_string) = Self::filter_input(path);
+                    JSBundlerPlugin__anyOnBeforeParseMatches(
+                        self,
+                        &mut namespace_string,
+                        &mut path_string,
+                    )
+                }
+
+                /// The C++ side takes ownership of both strings.
+                fn filter_input(path: &crate::bun_fs::Path) -> (BunString, BunString) {
+                    let namespace_string = if path.is_file() {
+                        BunString::empty()
+                    } else {
+                        BunString::clone_utf8(path.namespace)
+                    };
+                    (namespace_string, BunString::clone_utf8(path.text))
                 }
 
                 pub(crate) fn match_on_load(
@@ -2255,6 +2279,30 @@ pub mod bv2_impl {
                 ) {
                     let file_map_result = _file_map_result;
                     let mut path_primary = file_map_result.path_pair.primary;
+                    let attribute_loader = self.graph.ast.items_import_records()
+                        [import_record.importer_source_index as usize]
+                        .as_slice()[import_record.import_record_index as usize]
+                        .loader;
+                    let loader: Loader = attribute_loader.unwrap_or_else(|| {
+                        // SAFETY: see `transpiler` note above.
+                        Fs::Path::init(path_primary.text)
+                            .loader(unsafe { &(*transpiler).options.loaders })
+                            .unwrap_or(Loader::File)
+                    });
+                    if self.leaves_sqlite_import_to_runtime(
+                        loader,
+                        &path_primary,
+                        import_record.kind,
+                        target,
+                    ) {
+                        mark_sqlite_import_external(
+                            &mut self.graph.ast.items_import_records_mut()
+                                [import_record.importer_source_index as usize]
+                                .as_mut_slice()
+                                [import_record.import_record_index as usize],
+                        );
+                        return;
+                    }
                     // reshaped for borrowck — `get_or_put` borrows `*self` mutably via
                     // `self.graph`; capture the slot as `*mut u32` so subsequent `self.*` calls
                     // type-check. SAFETY: `path_to_source_index_map(target)` is not mutated again
@@ -2270,20 +2318,6 @@ pub mod bv2_impl {
                         )
                     };
                     if !found_existing {
-                        let loader: Loader = 'brk: {
-                            let record: &mut ImportRecord =
-                                &mut self.graph.ast.items_import_records_mut()
-                                    [import_record.importer_source_index as usize]
-                                    .as_mut_slice()
-                                    [import_record.import_record_index as usize];
-                            if let Some(out_loader) = record.loader {
-                                break 'brk out_loader;
-                            }
-                            // SAFETY: see `transpiler` note above.
-                            break 'brk Fs::Path::init(path_primary.text)
-                                .loader(unsafe { &(*transpiler).options.loaders })
-                                .unwrap_or(Loader::File);
-                        };
                         // For virtual files, use the path text as-is (no relative path computation needed).
                         path_primary.pretty = self.arena().alloc_slice_copy(path_primary.text);
                         let mut tmp_source = bun_ast::Source {
@@ -2487,6 +2521,24 @@ pub mod bv2_impl {
                 return;
             }
 
+            let attribute_loader = self.graph.ast.items_import_records()
+                [import_record.importer_source_index as usize]
+                .as_slice()[import_record.import_record_index as usize]
+                .loader;
+            let loader: Loader = attribute_loader.unwrap_or_else(|| {
+                // SAFETY: see `transpiler` note above.
+                path.loader(unsafe { &(*transpiler).options.loaders })
+                    .unwrap_or(Loader::File)
+            });
+            if self.leaves_sqlite_import_to_runtime(loader, &path, import_record.kind, target) {
+                mark_sqlite_import_external(
+                    &mut self.graph.ast.items_import_records_mut()
+                        [import_record.importer_source_index as usize]
+                        .as_mut_slice()[import_record.import_record_index as usize],
+                );
+                return;
+            }
+
             if path.pretty.as_ptr() == path.text.as_ptr() {
                 // TODO: outbase
                 let rel = bun_paths::resolve_path::relative_platform::<
@@ -2518,19 +2570,6 @@ pub mod bv2_impl {
                 if let Some(p) = resolve_result.path() {
                     *p = path;
                 }
-                let loader: Loader = 'brk: {
-                    let record: &ImportRecord = &self.graph.ast.items_import_records()
-                        [import_record.importer_source_index as usize]
-                        .as_slice()[import_record.import_record_index as usize];
-                    if let Some(out_loader) = record.loader {
-                        break 'brk out_loader;
-                    }
-                    // SAFETY: see `transpiler` note above.
-                    break 'brk path
-                        .loader(unsafe { &(*transpiler).options.loaders })
-                        .unwrap_or(Loader::File);
-                    // HTML is only allowed at the entry point.
-                };
                 let mut tmp_source = bun_ast::Source {
                     path: path_as_static(&path.dupe_alloc(self.arena()).expect("oom")),
                     contents: std::borrow::Cow::Borrowed(&b""[..]),
@@ -5918,6 +5957,38 @@ pub mod bv2_impl {
         }
     }
 
+    /// Prints like `with { type: "sqlite" }` does.
+    fn mark_sqlite_import_external(import_record: &mut ImportRecord) {
+        import_record.loader = Some(Loader::Sqlite);
+        import_record
+            .flags
+            .insert(bun_ast::ImportRecordFlags::IS_EXTERNAL_WITHOUT_SIDE_EFFECTS);
+    }
+
+    impl BundleV2<'_> {
+        /// The sqlite loader opens the database at runtime; bundling the file could only
+        /// print the build machine's path. A plugin that loads the file takes precedence.
+        fn leaves_sqlite_import_to_runtime(
+            &self,
+            loader: Loader,
+            path: &Fs::Path,
+            kind: ImportKind,
+            target: options::Target,
+        ) -> bool {
+            loader == Loader::Sqlite
+                && target.is_bun()
+                && self.dev_server.is_none()
+                && matches!(
+                    kind,
+                    ImportKind::Stmt | ImportKind::Require | ImportKind::Dynamic
+                )
+                && !self.plugins_ref().is_some_and(|plugins| {
+                    plugins.has_any_matches(path, true)
+                        || plugins.has_any_on_before_parse_matches(path)
+                })
+        }
+    }
+
     pub(crate) struct ResolveImportRecordCtx<'a> {
         pub(crate) import_records: &'a mut [ImportRecord],
         pub(crate) source: &'a bun_ast::Source,
@@ -6162,7 +6233,16 @@ pub mod bv2_impl {
                                 .loader(&transpiler.options.loaders)
                                 .unwrap_or(Loader::File)
                         });
-                        import_record.loader = Some(import_record_loader);
+
+                        if self.leaves_sqlite_import_to_runtime(
+                            import_record_loader,
+                            &path_primary,
+                            import_record.kind,
+                            target,
+                        ) {
+                            mark_sqlite_import_external(import_record);
+                            continue;
+                        }
 
                         if let Some(id) =
                             self.path_to_source_index_map(target).get(path_primary.text)
@@ -6525,7 +6605,16 @@ pub mod bv2_impl {
                     }
                     break 'brk resolved_loader;
                 };
-                import_record.loader = Some(import_record_loader);
+
+                if self.leaves_sqlite_import_to_runtime(
+                    import_record_loader,
+                    path,
+                    import_record.kind,
+                    target,
+                ) {
+                    mark_sqlite_import_external(import_record);
+                    continue;
+                }
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()

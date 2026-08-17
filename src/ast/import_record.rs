@@ -17,6 +17,8 @@ pub struct ImportRecord {
     pub path: Path<'static>,
     pub kind: ImportKind,
     pub tag: Tag,
+    /// Printed back as a `type` attribute: set by that attribute or for an import the
+    /// bundler leaves to the runtime, never to the loader of a bundled file.
     pub loader: Option<Loader>,
 
     pub source_index: Index,

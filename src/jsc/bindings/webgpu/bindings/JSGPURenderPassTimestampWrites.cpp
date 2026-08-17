@@ -63,7 +63,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassTimestampWrites>> convert
         beginningOfPassWriteIndexValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "beginningOfPassWriteIndex"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto beginningOfPassWriteIndexConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, beginningOfPassWriteIndexValue);
+    auto beginningOfPassWriteIndexConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, beginningOfPassWriteIndexValue);
     if (beginningOfPassWriteIndexConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue endOfPassWriteIndexValue;
@@ -73,7 +73,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassTimestampWrites>> convert
         endOfPassWriteIndexValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "endOfPassWriteIndex"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto endOfPassWriteIndexConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, endOfPassWriteIndexValue);
+    auto endOfPassWriteIndexConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, endOfPassWriteIndexValue);
     if (endOfPassWriteIndexConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue querySetValue;
@@ -87,7 +87,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassTimestampWrites>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "querySet"_s, "GPURenderPassTimestampWrites"_s, "GPUQuerySet"_s);
         return ConversionResultException { };
     }
-    auto querySetConversionResult = convert<IDLInterface<GPUQuerySet>>(lexicalGlobalObject, querySetValue);
+    auto querySetConversionResult = convertResult<IDLInterface<GPUQuerySet>>(lexicalGlobalObject, querySetValue);
     if (querySetConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURenderPassTimestampWrites {

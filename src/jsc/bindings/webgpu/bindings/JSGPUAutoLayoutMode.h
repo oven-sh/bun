@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUAutoLayoutMode);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUAutoLayoutMode);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUAutoLayoutMode);
 
 template<> std::optional<GPUAutoLayoutMode> parseEnumerationFromString<GPUAutoLayoutMode>(const String&);
 template<> std::optional<GPUAutoLayoutMode> parseEnumeration<GPUAutoLayoutMode>(JSC::JSGlobalObject&, JSC::JSValue);

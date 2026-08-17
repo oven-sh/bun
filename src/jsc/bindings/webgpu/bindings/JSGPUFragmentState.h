@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUFragmentState> = true;
 template<> ConversionResult<IDLDictionary<GPUFragmentState>> convertDictionary<GPUFragmentState>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

@@ -702,7 +702,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUSupportedLimits_maxStorageTexturesInVertexStage, (
 
 JSC::GCClient::IsoSubspace* JSGPUSupportedLimits::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUSupportedLimits, UseCustomHeapCellType::No>(vm, "JSGPUSupportedLimits"_s,
+    return WebCore::subspaceForImpl<JSGPUSupportedLimits, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUSupportedLimits.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUSupportedLimits = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUSupportedLimits.get(); },

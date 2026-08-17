@@ -134,6 +134,24 @@ template<typename T> struct Converter<IDLNullable<T>> : DefaultConverter<IDLNull
     }
 };
 
+// When the inner conversion reports failure through its ConversionResult there
+// is no value to pass through above; the failure is forwarded instead.
+template<typename T>
+    requires ConvertsToConversionResult<T>
+struct Converter<IDLNullable<T>> : DefaultConverter<IDLNullable<T>> {
+    using Result = ConversionResult<IDLNullable<T>>;
+    using ReturnType = Result;
+
+    static constexpr bool conversionHasSideEffects = Converter<T>::conversionHasSideEffects;
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        if (value.isUndefinedOrNull())
+            return Result { T::nullValue() };
+        return Converter<T>::convert(lexicalGlobalObject, value);
+    }
+};
+
 template<typename T> struct JSConverter<IDLNullable<T>> {
     using ImplementationType = typename IDLNullable<T>::ImplementationType;
 

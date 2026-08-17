@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUImageCopyTexture> = true;
 template<> ConversionResult<IDLDictionary<GPUImageCopyTexture>> convertDictionary<GPUImageCopyTexture>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

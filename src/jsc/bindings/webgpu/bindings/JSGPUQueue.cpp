@@ -53,7 +53,6 @@
 #include "JSGPUImageCopyTexture.h"
 #include "JSGPUImageDataLayout.h"
 #include "ScriptExecutionContext.h"
-#include "Settings.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -153,16 +152,6 @@ void JSGPUQueuePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSGPUQueue::info(), JSGPUQueuePrototypeTableValues, *this);
-    bool hasDisabledRuntimeProperties = false;
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "label"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (hasDisabledRuntimeProperties && structure()->isDictionary())
-        flattenDictionaryObject(vm);
     WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -240,7 +229,7 @@ static inline bool setJSGPUQueue_labelSetter(JSGlobalObject& lexicalGlobalObject
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    auto nativeValueConversionResult = convert<IDLUSVString>(lexicalGlobalObject, value);
+    auto nativeValueConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, value);
     if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]
         return false;
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
@@ -264,7 +253,7 @@ static inline JSC::EncodedJSValue jsGPUQueuePrototypeFunction_submitBody(JSC::JS
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto commandBuffersConversionResult = convert<IDLSequence<IDLInterface<GPUCommandBuffer>>>(*lexicalGlobalObject, argument0.value());
+    auto commandBuffersConversionResult = convertResult<IDLSequence<IDLInterface<GPUCommandBuffer>>>(*lexicalGlobalObject, argument0.value());
     if (commandBuffersConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.submit(commandBuffersConversionResult.releaseReturnValue()); })));
@@ -300,15 +289,15 @@ static inline JSC::EncodedJSValue jsGPUQueuePrototypeFunction_writeBufferBody(JS
     if (callFrame->argumentCount() < 3) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto bufferConversionResult = convert<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "buffer"_s, "GPUQueue"_s, "writeBuffer"_s, "GPUBuffer"_s); });
+    auto bufferConversionResult = convertResult<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "buffer"_s, "GPUQueue"_s, "writeBuffer"_s, "GPUBuffer"_s); });
     if (bufferConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto bufferOffsetConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument1.value());
+    auto bufferOffsetConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument1.value());
     if (bufferOffsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto dataConversionResult = convert<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>>(*lexicalGlobalObject, argument2.value());
+    auto dataConversionResult = convertResult<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>>(*lexicalGlobalObject, argument2.value());
     if (dataConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->argument(3);
@@ -316,7 +305,7 @@ static inline JSC::EncodedJSValue jsGPUQueuePrototypeFunction_writeBufferBody(JS
     if (dataOffsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument4 = callFrame->argument(4);
-    auto sizeConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument4.value());
+    auto sizeConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument4.value());
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.writeBuffer(bufferConversionResult.releaseReturnValue(), bufferOffsetConversionResult.releaseReturnValue(), dataConversionResult.releaseReturnValue(), dataOffsetConversionResult.releaseReturnValue(), sizeConversionResult.releaseReturnValue()); })));
@@ -337,19 +326,19 @@ static inline JSC::EncodedJSValue jsGPUQueuePrototypeFunction_writeTextureBody(J
     if (callFrame->argumentCount() < 4) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto destinationConversionResult = convert<IDLDictionary<GPUImageCopyTexture>>(*lexicalGlobalObject, argument0.value());
+    auto destinationConversionResult = convertResult<IDLDictionary<GPUImageCopyTexture>>(*lexicalGlobalObject, argument0.value());
     if (destinationConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto dataConversionResult = convert<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>>(*lexicalGlobalObject, argument1.value());
+    auto dataConversionResult = convertResult<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>>(*lexicalGlobalObject, argument1.value());
     if (dataConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto dataLayoutConversionResult = convert<IDLDictionary<GPUImageDataLayout>>(*lexicalGlobalObject, argument2.value());
+    auto dataLayoutConversionResult = convertResult<IDLDictionary<GPUImageDataLayout>>(*lexicalGlobalObject, argument2.value());
     if (dataLayoutConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
-    auto sizeConversionResult = convert<IDLUnion<IDLSequence<IDLEnforceRangeAdaptor<IDLUnsignedLong>>, IDLDictionary<GPUExtent3DDict>>>(*lexicalGlobalObject, argument3.value());
+    auto sizeConversionResult = convertResult<IDLVariantUnion<IDLSequence<IDLEnforceRangeAdaptor<IDLUnsignedLong>>, IDLDictionary<GPUExtent3DDict>>>(*lexicalGlobalObject, argument3.value());
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.writeTexture(destinationConversionResult.releaseReturnValue(), dataConversionResult.releaseReturnValue(), dataLayoutConversionResult.releaseReturnValue(), sizeConversionResult.releaseReturnValue()); })));
@@ -362,7 +351,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUQueuePrototypeFunction_writeTexture, (JSGlobalObje
 
 JSC::GCClient::IsoSubspace* JSGPUQueue::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUQueue, UseCustomHeapCellType::No>(vm, "JSGPUQueue"_s,
+    return WebCore::subspaceForImpl<JSGPUQueue, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUQueue.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUQueue = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUQueue.get(); },

@@ -65,7 +65,7 @@ template<> ConversionResult<IDLDictionary<GPUPipelineDescriptorBase>> convertDic
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue layoutValue;
@@ -79,7 +79,7 @@ template<> ConversionResult<IDLDictionary<GPUPipelineDescriptorBase>> convertDic
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "layout"_s, "GPUPipelineDescriptorBase"_s, "(GPUPipelineLayout or GPUAutoLayoutMode)"_s);
         return ConversionResultException { };
     }
-    auto layoutConversionResult = convert<IDLUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
+    auto layoutConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
     if (layoutConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUPipelineDescriptorBase {

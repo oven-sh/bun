@@ -53,6 +53,10 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         return toJS(state, globalObject, static_cast<WebSocket&>(impl));
     case WorkerEventTargetInterfaceType:
         return toJS(state, globalObject, static_cast<Worker&>(impl));
+#if ENABLE(WEBGPU)
+    case GPUDeviceEventTargetInterfaceType:
+        return toJS(state, globalObject, static_cast<GPUDevice&>(impl));
+#endif
     default: {
         break;
     }

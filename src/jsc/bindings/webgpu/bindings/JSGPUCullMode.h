@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUCullMode);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUCullMode);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUCullMode);
 
 template<> std::optional<GPUCullMode> parseEnumerationFromString<GPUCullMode>(const String&);
 template<> std::optional<GPUCullMode> parseEnumeration<GPUCullMode>(JSC::JSGlobalObject&, JSC::JSValue);

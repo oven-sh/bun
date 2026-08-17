@@ -216,7 +216,7 @@ static inline JSC::EncodedJSValue jsWGSLLanguageFeaturesPrototypeFunction_hasBod
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto keyConversionResult = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto keyConversionResult = convertResult<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     if (keyConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLAny>(*lexicalGlobalObject, throwScope, forwardHasToSetLike(*lexicalGlobalObject, *callFrame, *castedThis, keyConversionResult.releaseReturnValue()))));
@@ -278,7 +278,7 @@ static inline JSC::EncodedJSValue jsWGSLLanguageFeaturesPrototypeFunction_forEac
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto callbackConversionResult = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
+    auto callbackConversionResult = convertResult<IDLAny>(*lexicalGlobalObject, argument0.value());
     if (callbackConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLAny>(*lexicalGlobalObject, throwScope, forwardForEachToSetLike(*lexicalGlobalObject, *callFrame, *castedThis, callbackConversionResult.releaseReturnValue()))));
@@ -291,7 +291,7 @@ JSC_DEFINE_HOST_FUNCTION(jsWGSLLanguageFeaturesPrototypeFunction_forEach, (JSGlo
 
 JSC::GCClient::IsoSubspace* JSWGSLLanguageFeatures::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSWGSLLanguageFeatures, UseCustomHeapCellType::No>(vm, "JSWGSLLanguageFeatures"_s,
+    return WebCore::subspaceForImpl<JSWGSLLanguageFeatures, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForWGSLLanguageFeatures.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForWGSLLanguageFeatures = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForWGSLLanguageFeatures.get(); },

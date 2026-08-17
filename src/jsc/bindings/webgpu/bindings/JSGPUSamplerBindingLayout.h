@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUSamplerBindingLayout> = true;
 template<> ConversionResult<IDLDictionary<GPUSamplerBindingLayout>> convertDictionary<GPUSamplerBindingLayout>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

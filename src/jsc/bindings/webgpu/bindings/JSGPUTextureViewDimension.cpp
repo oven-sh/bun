@@ -51,9 +51,9 @@ String convertEnumerationToString(GPUTextureViewDimension enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUTextureViewDimension enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUTextureViewDimension enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUTextureViewDimension> parseEnumerationFromString<GPUTextureViewDimension>(const String& stringValue)

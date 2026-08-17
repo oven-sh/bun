@@ -46,7 +46,6 @@
 #include "JSGPUTextureView.h"
 #include "JSGPUTextureViewDescriptor.h"
 #include "ScriptExecutionContext.h"
-#include "Settings.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -156,16 +155,6 @@ void JSGPUTexturePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSGPUTexture::info(), JSGPUTexturePrototypeTableValues, *this);
-    bool hasDisabledRuntimeProperties = false;
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "label"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (hasDisabledRuntimeProperties && structure()->isDictionary())
-        flattenDictionaryObject(vm);
     WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -347,7 +336,7 @@ static inline bool setJSGPUTexture_labelSetter(JSGlobalObject& lexicalGlobalObje
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    auto nativeValueConversionResult = convert<IDLUSVString>(lexicalGlobalObject, value);
+    auto nativeValueConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, value);
     if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]
         return false;
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
@@ -369,7 +358,7 @@ static inline JSC::EncodedJSValue jsGPUTexturePrototypeFunction_createViewBody(J
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUTextureViewDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUTextureViewDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUTextureView>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createView(descriptorConversionResult.releaseReturnValue()))));
@@ -397,7 +386,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUTexturePrototypeFunction_destroy, (JSGlobalObject*
 
 JSC::GCClient::IsoSubspace* JSGPUTexture::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUTexture, UseCustomHeapCellType::No>(vm, "JSGPUTexture"_s,
+    return WebCore::subspaceForImpl<JSGPUTexture, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUTexture.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUTexture = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUTexture.get(); },

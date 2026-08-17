@@ -43,9 +43,9 @@ String convertEnumerationToString(GPULoadOp enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPULoadOp enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPULoadOp enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPULoadOp> parseEnumerationFromString<GPULoadOp>(const String& stringValue)

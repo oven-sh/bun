@@ -67,7 +67,7 @@ template<> ConversionResult<IDLDictionary<GPUShaderModuleCompilationHint>> conve
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "layout"_s, "GPUShaderModuleCompilationHint"_s, "(GPUPipelineLayout or GPUAutoLayoutMode)"_s);
         return ConversionResultException { };
     }
-    auto layoutConversionResult = convert<IDLUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
+    auto layoutConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
     if (layoutConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUShaderModuleCompilationHint {

@@ -67,7 +67,7 @@ template<> ConversionResult<IDLDictionary<GPURenderBundleEncoderDescriptor>> con
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue colorFormatsValue;
@@ -81,7 +81,7 @@ template<> ConversionResult<IDLDictionary<GPURenderBundleEncoderDescriptor>> con
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "colorFormats"_s, "GPURenderBundleEncoderDescriptor"_s, "sequence"_s);
         return ConversionResultException { };
     }
-    auto colorFormatsConversionResult = convert<IDLSequence<IDLNullable<IDLEnumeration<GPUTextureFormat>>>>(lexicalGlobalObject, colorFormatsValue);
+    auto colorFormatsConversionResult = convertResult<IDLSequence<IDLNullable<IDLEnumeration<GPUTextureFormat>>>>(lexicalGlobalObject, colorFormatsValue);
     if (colorFormatsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthStencilFormatValue;
@@ -91,7 +91,7 @@ template<> ConversionResult<IDLDictionary<GPURenderBundleEncoderDescriptor>> con
         depthStencilFormatValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthStencilFormat"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthStencilFormatConversionResult = convert<IDLOptional<IDLEnumeration<GPUTextureFormat>>>(lexicalGlobalObject, depthStencilFormatValue);
+    auto depthStencilFormatConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUTextureFormat>>>(lexicalGlobalObject, depthStencilFormatValue);
     if (depthStencilFormatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue sampleCountValue;
@@ -111,7 +111,7 @@ template<> ConversionResult<IDLDictionary<GPURenderBundleEncoderDescriptor>> con
         depthReadOnlyValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthReadOnly"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthReadOnlyConversionResult = convert<IDLBoolean>(lexicalGlobalObject, depthReadOnlyValue);
+    auto depthReadOnlyConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, depthReadOnlyValue);
     if (depthReadOnlyConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue stencilReadOnlyValue;
@@ -121,7 +121,7 @@ template<> ConversionResult<IDLDictionary<GPURenderBundleEncoderDescriptor>> con
         stencilReadOnlyValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "stencilReadOnly"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto stencilReadOnlyConversionResult = convert<IDLBoolean>(lexicalGlobalObject, stencilReadOnlyValue);
+    auto stencilReadOnlyConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, stencilReadOnlyValue);
     if (stencilReadOnlyConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURenderBundleEncoderDescriptor {

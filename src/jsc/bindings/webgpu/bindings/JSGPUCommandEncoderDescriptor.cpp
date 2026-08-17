@@ -58,7 +58,7 @@ template<> ConversionResult<IDLDictionary<GPUCommandEncoderDescriptor>> convertD
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUCommandEncoderDescriptor {

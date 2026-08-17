@@ -64,7 +64,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferBindingLayout>> convertDictio
         hasDynamicOffsetValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "hasDynamicOffset"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto hasDynamicOffsetConversionResult = convert<IDLBoolean>(lexicalGlobalObject, hasDynamicOffsetValue);
+    auto hasDynamicOffsetConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, hasDynamicOffsetValue);
     if (hasDynamicOffsetConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue minBindingSizeValue;

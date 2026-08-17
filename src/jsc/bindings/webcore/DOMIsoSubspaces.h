@@ -185,6 +185,45 @@ public:
 
     std::unique_ptr<IsoSubspace> m_subspaceForJSConnectionsList;
     std::unique_ptr<IsoSubspace> m_subspaceForJSHTTPParser;
+
+    std::unique_ptr<IsoSubspace> m_subspaceForGPU;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUAdapter;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUAdapterInfo;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUBindGroup;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUBindGroupLayout;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUBufferUsage;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUColorWrite;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUCommandBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUCommandEncoder;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUCompilationInfo;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUCompilationMessage;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUComputePassEncoder;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUComputePipeline;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUDevice;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUDeviceLostInfo;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUInternalError;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUMapMode;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUOutOfMemoryError;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUPipelineError;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUPipelineLayout;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUQuerySet;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUQueue;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPURenderBundle;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPURenderBundleEncoder;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPURenderPassEncoder;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPURenderPipeline;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUSampler;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUShaderModule;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUShaderStage;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUSupportedFeatures;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUSupportedLimits;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUTexture;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUTextureUsage;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUTextureView;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUUncapturedErrorEvent;
+    std::unique_ptr<IsoSubspace> m_subspaceForGPUValidationError;
+    std::unique_ptr<IsoSubspace> m_subspaceForWGSLLanguageFeatures;
 };
 } // namespace WebCore
 

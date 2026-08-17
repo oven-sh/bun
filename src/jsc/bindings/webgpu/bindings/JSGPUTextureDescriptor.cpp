@@ -74,7 +74,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureDescriptor>> convertDictiona
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue dimensionValue;
@@ -98,7 +98,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureDescriptor>> convertDictiona
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "format"_s, "GPUTextureDescriptor"_s, "GPUTextureFormat"_s);
         return ConversionResultException { };
     }
-    auto formatConversionResult = convert<IDLEnumeration<GPUTextureFormat>>(lexicalGlobalObject, formatValue);
+    auto formatConversionResult = convertResult<IDLEnumeration<GPUTextureFormat>>(lexicalGlobalObject, formatValue);
     if (formatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue mipLevelCountValue;
@@ -132,7 +132,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureDescriptor>> convertDictiona
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "size"_s, "GPUTextureDescriptor"_s, "(sequence or GPUExtent3DDict)"_s);
         return ConversionResultException { };
     }
-    auto sizeConversionResult = convert<IDLUnion<IDLSequence<IDLEnforceRangeAdaptor<IDLUnsignedLong>>, IDLDictionary<GPUExtent3DDict>>>(lexicalGlobalObject, sizeValue);
+    auto sizeConversionResult = convertResult<IDLVariantUnion<IDLSequence<IDLEnforceRangeAdaptor<IDLUnsignedLong>>, IDLDictionary<GPUExtent3DDict>>>(lexicalGlobalObject, sizeValue);
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue usageValue;
@@ -146,7 +146,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureDescriptor>> convertDictiona
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "usage"_s, "GPUTextureDescriptor"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto usageConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, usageValue);
+    auto usageConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, usageValue);
     if (usageConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue viewFormatsValue;

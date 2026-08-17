@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUVertexStepMode);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUVertexStepMode);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUVertexStepMode);
 
 template<> std::optional<GPUVertexStepMode> parseEnumerationFromString<GPUVertexStepMode>(const String&);
 template<> std::optional<GPUVertexStepMode> parseEnumeration<GPUVertexStepMode>(JSC::JSGlobalObject&, JSC::JSValue);

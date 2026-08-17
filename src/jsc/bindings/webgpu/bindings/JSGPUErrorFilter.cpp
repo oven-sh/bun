@@ -45,9 +45,9 @@ String convertEnumerationToString(GPUErrorFilter enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUErrorFilter enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUErrorFilter enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUErrorFilter> parseEnumerationFromString<GPUErrorFilter>(const String& stringValue)

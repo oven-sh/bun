@@ -43,9 +43,9 @@ String convertEnumerationToString(GPUDeviceLostReason enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUDeviceLostReason enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUDeviceLostReason enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUDeviceLostReason> parseEnumerationFromString<GPUDeviceLostReason>(const String& stringValue)

@@ -62,7 +62,7 @@ template<> ConversionResult<IDLDictionary<GPUMultisampleState>> convertDictionar
         alphaToCoverageEnabledValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "alphaToCoverageEnabled"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto alphaToCoverageEnabledConversionResult = convert<IDLBoolean>(lexicalGlobalObject, alphaToCoverageEnabledValue);
+    auto alphaToCoverageEnabledConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, alphaToCoverageEnabledValue);
     if (alphaToCoverageEnabledConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue countValue;

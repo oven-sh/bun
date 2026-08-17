@@ -45,9 +45,9 @@ String convertEnumerationToString(GPUSamplerBindingType enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUSamplerBindingType enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUSamplerBindingType enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUSamplerBindingType> parseEnumerationFromString<GPUSamplerBindingType>(const String& stringValue)

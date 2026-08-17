@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUDeviceLostReason);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUDeviceLostReason);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUDeviceLostReason);
 
 template<> std::optional<GPUDeviceLostReason> parseEnumerationFromString<GPUDeviceLostReason>(const String&);
 template<> std::optional<GPUDeviceLostReason> parseEnumeration<GPUDeviceLostReason>(JSC::JSGlobalObject&, JSC::JSValue);

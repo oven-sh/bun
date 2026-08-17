@@ -39,6 +39,10 @@
 #include "JSWebSocket.h"
 #include "Worker.h"
 #include "JSWorker.h"
+#if ENABLE(WEBGPU)
+#include "GPUDevice.h"
+#include "JSGPUDevice.h"
+#endif
 
 #include "GlobalEventScope.h"
 

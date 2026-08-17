@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUPipelineLayoutDescriptor> = true;
 template<> ConversionResult<IDLDictionary<GPUPipelineLayoutDescriptor>> convertDictionary<GPUPipelineLayoutDescriptor>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

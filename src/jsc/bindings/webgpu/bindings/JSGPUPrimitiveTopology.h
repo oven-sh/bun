@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUPrimitiveTopology);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUPrimitiveTopology);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUPrimitiveTopology);
 
 template<> std::optional<GPUPrimitiveTopology> parseEnumerationFromString<GPUPrimitiveTopology>(const String&);
 template<> std::optional<GPUPrimitiveTopology> parseEnumeration<GPUPrimitiveTopology>(JSC::JSGlobalObject&, JSC::JSValue);

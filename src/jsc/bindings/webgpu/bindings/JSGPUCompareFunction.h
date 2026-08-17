@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUCompareFunction);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUCompareFunction);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUCompareFunction);
 
 template<> std::optional<GPUCompareFunction> parseEnumerationFromString<GPUCompareFunction>(const String&);
 template<> std::optional<GPUCompareFunction> parseEnumeration<GPUCompareFunction>(JSC::JSGlobalObject&, JSC::JSValue);

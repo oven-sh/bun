@@ -63,7 +63,7 @@ template<> ConversionResult<IDLDictionary<GPUBlendState>> convertDictionary<GPUB
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "alpha"_s, "GPUBlendState"_s, "GPUBlendComponent"_s);
         return ConversionResultException { };
     }
-    auto alphaConversionResult = convert<IDLDictionary<GPUBlendComponent>>(lexicalGlobalObject, alphaValue);
+    auto alphaConversionResult = convertResult<IDLDictionary<GPUBlendComponent>>(lexicalGlobalObject, alphaValue);
     if (alphaConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue colorValue;
@@ -77,7 +77,7 @@ template<> ConversionResult<IDLDictionary<GPUBlendState>> convertDictionary<GPUB
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "color"_s, "GPUBlendState"_s, "GPUBlendComponent"_s);
         return ConversionResultException { };
     }
-    auto colorConversionResult = convert<IDLDictionary<GPUBlendComponent>>(lexicalGlobalObject, colorValue);
+    auto colorConversionResult = convertResult<IDLDictionary<GPUBlendComponent>>(lexicalGlobalObject, colorValue);
     if (colorConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUBlendState {

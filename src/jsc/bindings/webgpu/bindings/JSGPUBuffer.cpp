@@ -47,7 +47,6 @@
 #include "JSDOMWrapperCache.h"
 #include "JSGPUBufferMapState.h"
 #include "ScriptExecutionContext.h"
-#include "Settings.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -151,16 +150,6 @@ void JSGPUBufferPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSGPUBuffer::info(), JSGPUBufferPrototypeTableValues, *this);
-    bool hasDisabledRuntimeProperties = false;
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "label"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (hasDisabledRuntimeProperties && structure()->isDictionary())
-        flattenDictionaryObject(vm);
     WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -277,7 +266,7 @@ static inline bool setJSGPUBuffer_labelSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    auto nativeValueConversionResult = convert<IDLUSVString>(lexicalGlobalObject, value);
+    auto nativeValueConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, value);
     if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]
         return false;
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
@@ -301,7 +290,7 @@ static inline JSC::EncodedJSValue jsGPUBufferPrototypeFunction_mapAsyncBody(JSC:
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto modeConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto modeConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (modeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->argument(1);
@@ -309,7 +298,7 @@ static inline JSC::EncodedJSValue jsGPUBufferPrototypeFunction_mapAsyncBody(JSC:
     if (offsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto sizeConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument2.value());
+    auto sizeConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument2.value());
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLUndefined>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.mapAsync(modeConversionResult.releaseReturnValue(), offsetConversionResult.releaseReturnValue(), sizeConversionResult.releaseReturnValue(), WTF::move(promise)); })));
@@ -332,7 +321,7 @@ static inline JSC::EncodedJSValue jsGPUBufferPrototypeFunction_getMappedRangeBod
     if (offsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->argument(1);
-    auto sizeConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument1.value());
+    auto sizeConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument1.value());
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLArrayBuffer>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.getMappedRange(offsetConversionResult.releaseReturnValue(), sizeConversionResult.releaseReturnValue()))));
@@ -381,7 +370,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUBufferPrototypeFunction_destroy, (JSGlobalObject* 
 
 JSC::GCClient::IsoSubspace* JSGPUBuffer::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUBuffer, UseCustomHeapCellType::No>(vm, "JSGPUBuffer"_s,
+    return WebCore::subspaceForImpl<JSGPUBuffer, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUBuffer.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUBuffer = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUBuffer.get(); },

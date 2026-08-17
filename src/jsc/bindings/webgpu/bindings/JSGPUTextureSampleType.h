@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUTextureSampleType);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUTextureSampleType);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUTextureSampleType);
 
 template<> std::optional<GPUTextureSampleType> parseEnumerationFromString<GPUTextureSampleType>(const String&);
 template<> std::optional<GPUTextureSampleType> parseEnumeration<GPUTextureSampleType>(JSC::JSGlobalObject&, JSC::JSValue);

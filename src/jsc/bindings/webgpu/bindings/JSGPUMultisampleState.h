@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUMultisampleState> = true;
 template<> ConversionResult<IDLDictionary<GPUMultisampleState>> convertDictionary<GPUMultisampleState>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

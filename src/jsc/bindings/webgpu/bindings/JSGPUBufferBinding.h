@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUBufferBinding> = true;
 template<> ConversionResult<IDLDictionary<GPUBufferBinding>> convertDictionary<GPUBufferBinding>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

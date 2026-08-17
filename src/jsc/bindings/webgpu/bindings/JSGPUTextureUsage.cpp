@@ -110,7 +110,7 @@ void JSGPUTextureUsage::destroy(JSC::JSCell* cell)
 
 JSC::GCClient::IsoSubspace* JSGPUTextureUsage::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUTextureUsage, UseCustomHeapCellType::No>(vm, "JSGPUTextureUsage"_s,
+    return WebCore::subspaceForImpl<JSGPUTextureUsage, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUTextureUsage.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUTextureUsage = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUTextureUsage.get(); },

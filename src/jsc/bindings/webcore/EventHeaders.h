@@ -36,5 +36,9 @@
 #include "JSErrorEvent.h"
 #include "MessageEvent.h"
 #include "JSMessageEvent.h"
+#if ENABLE(WEBGPU)
+#include "GPUUncapturedErrorEvent.h"
+#include "JSGPUUncapturedErrorEvent.h"
+#endif
 
 #endif // EventHeaders_h

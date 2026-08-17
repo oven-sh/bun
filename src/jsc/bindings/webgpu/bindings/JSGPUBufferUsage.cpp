@@ -118,7 +118,7 @@ void JSGPUBufferUsage::destroy(JSC::JSCell* cell)
 
 JSC::GCClient::IsoSubspace* JSGPUBufferUsage::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUBufferUsage, UseCustomHeapCellType::No>(vm, "JSGPUBufferUsage"_s,
+    return WebCore::subspaceForImpl<JSGPUBufferUsage, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUBufferUsage.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUBufferUsage = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUBufferUsage.get(); },

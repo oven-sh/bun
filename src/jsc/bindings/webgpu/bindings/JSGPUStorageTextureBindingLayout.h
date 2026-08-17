@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUStorageTextureBindingLayout> = true;
 template<> ConversionResult<IDLDictionary<GPUStorageTextureBindingLayout>> convertDictionary<GPUStorageTextureBindingLayout>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

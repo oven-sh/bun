@@ -34,7 +34,6 @@
 #include "JSDOMGlobalObjectInlines.h"
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
-#include "Settings.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -121,16 +120,6 @@ void JSGPUPipelineLayoutPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSGPUPipelineLayout::info(), JSGPUPipelineLayoutPrototypeTableValues, *this);
-    bool hasDisabledRuntimeProperties = false;
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "label"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (hasDisabledRuntimeProperties && structure()->isDictionary())
-        flattenDictionaryObject(vm);
     WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -208,7 +197,7 @@ static inline bool setJSGPUPipelineLayout_labelSetter(JSGlobalObject& lexicalGlo
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    auto nativeValueConversionResult = convert<IDLUSVString>(lexicalGlobalObject, value);
+    auto nativeValueConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, value);
     if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]
         return false;
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
@@ -224,7 +213,7 @@ JSC_DEFINE_CUSTOM_SETTER(setJSGPUPipelineLayout_label, (JSGlobalObject* lexicalG
 
 JSC::GCClient::IsoSubspace* JSGPUPipelineLayout::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUPipelineLayout, UseCustomHeapCellType::No>(vm, "JSGPUPipelineLayout"_s,
+    return WebCore::subspaceForImpl<JSGPUPipelineLayout, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUPipelineLayout.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUPipelineLayout = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUPipelineLayout.get(); },

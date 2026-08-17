@@ -67,7 +67,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferBinding>> convertDictionary<G
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "buffer"_s, "GPUBufferBinding"_s, "GPUBuffer"_s);
         return ConversionResultException { };
     }
-    auto bufferConversionResult = convert<IDLInterface<GPUBuffer>>(lexicalGlobalObject, bufferValue);
+    auto bufferConversionResult = convertResult<IDLInterface<GPUBuffer>>(lexicalGlobalObject, bufferValue);
     if (bufferConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue offsetValue;
@@ -87,7 +87,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferBinding>> convertDictionary<G
         sizeValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "size"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto sizeConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(lexicalGlobalObject, sizeValue);
+    auto sizeConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(lexicalGlobalObject, sizeValue);
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUBufferBinding {

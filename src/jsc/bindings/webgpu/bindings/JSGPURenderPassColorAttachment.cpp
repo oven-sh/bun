@@ -75,7 +75,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convert
         clearValueValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "clearValue"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto clearValueConversionResult = convert<IDLOptional<IDLUnion<IDLSequence<IDLDouble>, IDLDictionary<GPUColorDict>>>>(lexicalGlobalObject, clearValueValue);
+    auto clearValueConversionResult = convertResult<IDLOptional<IDLVariantUnion<IDLSequence<IDLDouble>, IDLDictionary<GPUColorDict>>>>(lexicalGlobalObject, clearValueValue);
     if (clearValueConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthSliceValue;
@@ -85,7 +85,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convert
         depthSliceValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthSlice"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthSliceConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, depthSliceValue);
+    auto depthSliceConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, depthSliceValue);
     if (depthSliceConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue loadOpValue;
@@ -99,7 +99,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "loadOp"_s, "GPURenderPassColorAttachment"_s, "GPULoadOp"_s);
         return ConversionResultException { };
     }
-    auto loadOpConversionResult = convert<IDLEnumeration<GPULoadOp>>(lexicalGlobalObject, loadOpValue);
+    auto loadOpConversionResult = convertResult<IDLEnumeration<GPULoadOp>>(lexicalGlobalObject, loadOpValue);
     if (loadOpConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue resolveTargetValue;
@@ -109,7 +109,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convert
         resolveTargetValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "resolveTarget"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto resolveTargetConversionResult = convert<IDLOptional<IDLUnion<IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>>>>(lexicalGlobalObject, resolveTargetValue);
+    auto resolveTargetConversionResult = convertResult<IDLOptional<IDLVariantUnion<IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>>>>(lexicalGlobalObject, resolveTargetValue);
     if (resolveTargetConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue storeOpValue;
@@ -123,7 +123,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "storeOp"_s, "GPURenderPassColorAttachment"_s, "GPUStoreOp"_s);
         return ConversionResultException { };
     }
-    auto storeOpConversionResult = convert<IDLEnumeration<GPUStoreOp>>(lexicalGlobalObject, storeOpValue);
+    auto storeOpConversionResult = convertResult<IDLEnumeration<GPUStoreOp>>(lexicalGlobalObject, storeOpValue);
     if (storeOpConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue viewValue;
@@ -137,7 +137,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "view"_s, "GPURenderPassColorAttachment"_s, "(GPUTexture or GPUTextureView)"_s);
         return ConversionResultException { };
     }
-    auto viewConversionResult = convert<IDLUnion<IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>>>(lexicalGlobalObject, viewValue);
+    auto viewConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>>>(lexicalGlobalObject, viewValue);
     if (viewConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURenderPassColorAttachment {

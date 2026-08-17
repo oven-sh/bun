@@ -25,9 +25,6 @@
 
 // https://gpuweb.github.io/gpuweb/#gpuobjectbase
 
-[
-    EnabledBySetting=WebGPUEnabled
-]
 interface mixin GPUObjectBase {
     attribute USVString label;
 };

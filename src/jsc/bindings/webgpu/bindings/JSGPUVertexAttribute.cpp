@@ -66,7 +66,7 @@ template<> ConversionResult<IDLDictionary<GPUVertexAttribute>> convertDictionary
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "format"_s, "GPUVertexAttribute"_s, "GPUVertexFormat"_s);
         return ConversionResultException { };
     }
-    auto formatConversionResult = convert<IDLEnumeration<GPUVertexFormat>>(lexicalGlobalObject, formatValue);
+    auto formatConversionResult = convertResult<IDLEnumeration<GPUVertexFormat>>(lexicalGlobalObject, formatValue);
     if (formatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue offsetValue;
@@ -80,7 +80,7 @@ template<> ConversionResult<IDLDictionary<GPUVertexAttribute>> convertDictionary
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "offset"_s, "GPUVertexAttribute"_s, "unsigned long long"_s);
         return ConversionResultException { };
     }
-    auto offsetConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(lexicalGlobalObject, offsetValue);
+    auto offsetConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(lexicalGlobalObject, offsetValue);
     if (offsetConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue shaderLocationValue;
@@ -94,7 +94,7 @@ template<> ConversionResult<IDLDictionary<GPUVertexAttribute>> convertDictionary
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "shaderLocation"_s, "GPUVertexAttribute"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto shaderLocationConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, shaderLocationValue);
+    auto shaderLocationConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, shaderLocationValue);
     if (shaderLocationConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUVertexAttribute {

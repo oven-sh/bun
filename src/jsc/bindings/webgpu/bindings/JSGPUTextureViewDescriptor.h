@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUTextureViewDescriptor> = true;
 template<> ConversionResult<IDLDictionary<GPUTextureViewDescriptor>> convertDictionary<GPUTextureViewDescriptor>(JSC::JSGlobalObject&, JSC::JSValue);
 
 JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject&, JSDOMGlobalObject&, const GPUTextureViewDescriptor&);

@@ -95,7 +95,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGPUValidationErrorDOMConstr
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto messageConversionResult = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto messageConversionResult = convertResult<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     if (messageConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     auto object = GPUValidationError::create(messageConversionResult.releaseReturnValue());
@@ -233,7 +233,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUValidationError_stack, (JSGlobalObject* lexicalGlo
 
 JSC::GCClient::IsoSubspace* JSGPUValidationError::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUValidationError, UseCustomHeapCellType::No>(vm, "JSGPUValidationError"_s,
+    return WebCore::subspaceForImpl<JSGPUValidationError, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUValidationError.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUValidationError = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUValidationError.get(); },

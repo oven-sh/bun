@@ -63,7 +63,7 @@ template<> ConversionResult<IDLDictionary<GPURequestAdapterOptions>> convertDict
         forceFallbackAdapterValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "forceFallbackAdapter"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto forceFallbackAdapterConversionResult = convert<IDLBoolean>(lexicalGlobalObject, forceFallbackAdapterValue);
+    auto forceFallbackAdapterConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, forceFallbackAdapterValue);
     if (forceFallbackAdapterConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue powerPreferenceValue;
@@ -73,7 +73,7 @@ template<> ConversionResult<IDLDictionary<GPURequestAdapterOptions>> convertDict
         powerPreferenceValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "powerPreference"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto powerPreferenceConversionResult = convert<IDLOptional<IDLEnumeration<GPUPowerPreference>>>(lexicalGlobalObject, powerPreferenceValue);
+    auto powerPreferenceConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUPowerPreference>>>(lexicalGlobalObject, powerPreferenceValue);
     if (powerPreferenceConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue xrCompatibleValue;
@@ -83,7 +83,7 @@ template<> ConversionResult<IDLDictionary<GPURequestAdapterOptions>> convertDict
         xrCompatibleValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "xrCompatible"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto xrCompatibleConversionResult = convert<IDLBoolean>(lexicalGlobalObject, xrCompatibleValue);
+    auto xrCompatibleConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, xrCompatibleValue);
     if (xrCompatibleConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURequestAdapterOptions {

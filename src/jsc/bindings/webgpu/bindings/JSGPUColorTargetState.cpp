@@ -64,7 +64,7 @@ template<> ConversionResult<IDLDictionary<GPUColorTargetState>> convertDictionar
         blendValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "blend"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto blendConversionResult = convert<IDLOptional<IDLDictionary<GPUBlendState>>>(lexicalGlobalObject, blendValue);
+    auto blendConversionResult = convertResult<IDLOptional<IDLDictionary<GPUBlendState>>>(lexicalGlobalObject, blendValue);
     if (blendConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue formatValue;
@@ -78,7 +78,7 @@ template<> ConversionResult<IDLDictionary<GPUColorTargetState>> convertDictionar
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "format"_s, "GPUColorTargetState"_s, "GPUTextureFormat"_s);
         return ConversionResultException { };
     }
-    auto formatConversionResult = convert<IDLEnumeration<GPUTextureFormat>>(lexicalGlobalObject, formatValue);
+    auto formatConversionResult = convertResult<IDLEnumeration<GPUTextureFormat>>(lexicalGlobalObject, formatValue);
     if (formatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue writeMaskValue;

@@ -103,7 +103,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGPUPipelineErrorDOMConstruc
     if (messageConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto optionsConversionResult = convert<IDLDictionary<GPUPipelineErrorInit>>(*lexicalGlobalObject, argument1.value());
+    auto optionsConversionResult = convertResult<IDLDictionary<GPUPipelineErrorInit>>(*lexicalGlobalObject, argument1.value());
     if (optionsConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     auto object = GPUPipelineError::create(messageConversionResult.releaseReturnValue(), optionsConversionResult.releaseReturnValue());
@@ -234,7 +234,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUPipelineError_stack, (JSGlobalObject* lexicalGloba
 
 JSC::GCClient::IsoSubspace* JSGPUPipelineError::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUPipelineError, UseCustomHeapCellType::No>(vm, "JSGPUPipelineError"_s,
+    return WebCore::subspaceForImpl<JSGPUPipelineError, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUPipelineError.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUPipelineError = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUPipelineError.get(); },

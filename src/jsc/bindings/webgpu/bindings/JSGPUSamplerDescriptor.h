@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUSamplerDescriptor> = true;
 template<> ConversionResult<IDLDictionary<GPUSamplerDescriptor>> convertDictionary<GPUSamplerDescriptor>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

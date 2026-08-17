@@ -228,6 +228,7 @@ template<typename T> struct IDLWrapper : IDLType<RefPtr<T>> {
 };
 
 template<typename T> struct IDLInterface : IDLWrapper<T> {
+    using ConversionResultType = T&;
 };
 template<typename T> struct IDLCallbackInterface : IDLWrapper<T> {
 };
@@ -266,6 +267,10 @@ template<typename T> struct IDLOptional : IDLNullable<T> {
 template<typename T, typename VectorType = Vector<typename T::SequenceStorageType>>
 struct IDLSequence : IDLType<VectorType> {
     using InnerType = T;
+
+    // Interfaces are stored as RefPtr<> in the sequence but handed on as Ref<>, like upstream does.
+    using ConversionResultType = Vector<typename T::InnerParameterType>;
+    using NullableConversionResultType = std::optional<ConversionResultType>;
 
     using ParameterType = const VectorType&;
     using NullableParameterType = const std::optional<VectorType>&;
@@ -328,7 +333,23 @@ struct IDLUnion : IDLType<std::variant<typename Ts::ImplementationType...>> {
     using NullableParameterType = const std::optional<std::variant<typename Ts::ImplementationType...>>&;
 };
 
+// The union layout of current WebCore: a WTF::Variant whose alternatives are
+// stored the way an aggregate would store them (Ref<> for interfaces), which is
+// what implementation code imported from current WebKit (webgpu/) is written
+// against. IDLUnion above is the older std::variant-of-RefPtr<> layout that
+// bun's own bindings and implementations use; the two convert independently
+// (JSDOMConvertUnion.h).
+template<typename... Ts>
+struct IDLVariantUnion : IDLType<Variant<typename Ts::StorageType...>> {
+    using TypeList = brigand::list<Ts...>;
+
+    using ParameterType = const Variant<typename Ts::StorageType...>&;
+    using NullableParameterType = const std::optional<Variant<typename Ts::StorageType...>>&;
+};
+
 template<typename T> struct IDLBufferSource : IDLWrapper<T> {
+    using ConversionResultType = Ref<T>;
+    using NullableConversionResultType = RefPtr<T>;
 };
 
 struct IDLArrayBuffer : IDLBufferSource<JSC::ArrayBuffer> {

@@ -73,7 +73,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureViewDescriptor>> convertDict
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue arrayLayerCountValue;
@@ -83,7 +83,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureViewDescriptor>> convertDict
         arrayLayerCountValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "arrayLayerCount"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto arrayLayerCountConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, arrayLayerCountValue);
+    auto arrayLayerCountConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, arrayLayerCountValue);
     if (arrayLayerCountConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue aspectValue;
@@ -123,7 +123,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureViewDescriptor>> convertDict
         dimensionValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "dimension"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto dimensionConversionResult = convert<IDLOptional<IDLEnumeration<GPUTextureViewDimension>>>(lexicalGlobalObject, dimensionValue);
+    auto dimensionConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUTextureViewDimension>>>(lexicalGlobalObject, dimensionValue);
     if (dimensionConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue formatValue;
@@ -133,7 +133,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureViewDescriptor>> convertDict
         formatValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "format"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto formatConversionResult = convert<IDLOptional<IDLEnumeration<GPUTextureFormat>>>(lexicalGlobalObject, formatValue);
+    auto formatConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUTextureFormat>>>(lexicalGlobalObject, formatValue);
     if (formatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue mipLevelCountValue;
@@ -143,7 +143,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureViewDescriptor>> convertDict
         mipLevelCountValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "mipLevelCount"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto mipLevelCountConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, mipLevelCountValue);
+    auto mipLevelCountConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, mipLevelCountValue);
     if (mipLevelCountConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue usageValue;

@@ -70,7 +70,7 @@ template<> ConversionResult<IDLDictionary<GPUVertexBufferLayout>> convertDiction
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "arrayStride"_s, "GPUVertexBufferLayout"_s, "unsigned long long"_s);
         return ConversionResultException { };
     }
-    auto arrayStrideConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(lexicalGlobalObject, arrayStrideValue);
+    auto arrayStrideConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(lexicalGlobalObject, arrayStrideValue);
     if (arrayStrideConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue attributesValue;
@@ -84,7 +84,7 @@ template<> ConversionResult<IDLDictionary<GPUVertexBufferLayout>> convertDiction
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "attributes"_s, "GPUVertexBufferLayout"_s, "sequence"_s);
         return ConversionResultException { };
     }
-    auto attributesConversionResult = convert<IDLSequence<IDLDictionary<GPUVertexAttribute>>>(lexicalGlobalObject, attributesValue);
+    auto attributesConversionResult = convertResult<IDLSequence<IDLDictionary<GPUVertexAttribute>>>(lexicalGlobalObject, attributesValue);
     if (attributesConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue stepModeValue;

@@ -85,7 +85,7 @@ template<> ConversionResult<IDLDictionary<GPUExtent3DDict>> convertDictionary<GP
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "width"_s, "GPUExtent3DDict"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto widthConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, widthValue);
+    auto widthConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, widthValue);
     if (widthConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUExtent3DDict {

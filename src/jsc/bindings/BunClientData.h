@@ -148,6 +148,7 @@ public:
     WebCore::DOMWrapperWorld& normalWorld() { return *m_normalWorld; }
 
     JSC::GCClient::IsoSubspace& domConstructorSpace() { return m_domConstructorSpace; }
+    JSC::GCClient::IsoSubspace& domNamespaceObjectSpace() { return m_domNamespaceObjectSpace; }
 
     ExtendedDOMClientIsoSubspaces& clientSubspaces() { return *m_clientSubspaces.get(); }
 

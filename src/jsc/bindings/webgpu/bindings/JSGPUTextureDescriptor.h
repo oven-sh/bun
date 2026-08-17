@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUTextureDescriptor> = true;
 template<> ConversionResult<IDLDictionary<GPUTextureDescriptor>> convertDictionary<GPUTextureDescriptor>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

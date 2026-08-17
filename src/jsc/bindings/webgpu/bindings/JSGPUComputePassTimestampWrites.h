@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUComputePassTimestampWrites> = true;
 template<> ConversionResult<IDLDictionary<GPUComputePassTimestampWrites>> convertDictionary<GPUComputePassTimestampWrites>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

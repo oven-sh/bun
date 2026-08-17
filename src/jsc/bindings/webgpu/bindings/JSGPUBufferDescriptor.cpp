@@ -63,7 +63,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferDescriptor>> convertDictionar
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue mappedAtCreationValue;
@@ -73,7 +73,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferDescriptor>> convertDictionar
         mappedAtCreationValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "mappedAtCreation"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto mappedAtCreationConversionResult = convert<IDLBoolean>(lexicalGlobalObject, mappedAtCreationValue);
+    auto mappedAtCreationConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, mappedAtCreationValue);
     if (mappedAtCreationConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue sizeValue;
@@ -87,7 +87,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferDescriptor>> convertDictionar
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "size"_s, "GPUBufferDescriptor"_s, "unsigned long long"_s);
         return ConversionResultException { };
     }
-    auto sizeConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(lexicalGlobalObject, sizeValue);
+    auto sizeConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(lexicalGlobalObject, sizeValue);
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue usageValue;
@@ -101,7 +101,7 @@ template<> ConversionResult<IDLDictionary<GPUBufferDescriptor>> convertDictionar
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "usage"_s, "GPUBufferDescriptor"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto usageConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, usageValue);
+    auto usageConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, usageValue);
     if (usageConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUBufferDescriptor {

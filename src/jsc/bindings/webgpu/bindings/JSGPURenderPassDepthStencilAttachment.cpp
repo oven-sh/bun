@@ -76,7 +76,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         depthClearValueValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthClearValue"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthClearValueConversionResult = convert<IDLOptional<IDLFloat>>(lexicalGlobalObject, depthClearValueValue);
+    auto depthClearValueConversionResult = convertResult<IDLOptional<IDLFloat>>(lexicalGlobalObject, depthClearValueValue);
     if (depthClearValueConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthLoadOpValue;
@@ -86,7 +86,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         depthLoadOpValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthLoadOp"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthLoadOpConversionResult = convert<IDLOptional<IDLEnumeration<GPULoadOp>>>(lexicalGlobalObject, depthLoadOpValue);
+    auto depthLoadOpConversionResult = convertResult<IDLOptional<IDLEnumeration<GPULoadOp>>>(lexicalGlobalObject, depthLoadOpValue);
     if (depthLoadOpConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthReadOnlyValue;
@@ -96,7 +96,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         depthReadOnlyValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthReadOnly"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthReadOnlyConversionResult = convert<IDLBoolean>(lexicalGlobalObject, depthReadOnlyValue);
+    auto depthReadOnlyConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, depthReadOnlyValue);
     if (depthReadOnlyConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthStoreOpValue;
@@ -106,7 +106,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         depthStoreOpValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthStoreOp"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthStoreOpConversionResult = convert<IDLOptional<IDLEnumeration<GPUStoreOp>>>(lexicalGlobalObject, depthStoreOpValue);
+    auto depthStoreOpConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUStoreOp>>>(lexicalGlobalObject, depthStoreOpValue);
     if (depthStoreOpConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue stencilClearValueValue;
@@ -126,7 +126,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         stencilLoadOpValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "stencilLoadOp"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto stencilLoadOpConversionResult = convert<IDLOptional<IDLEnumeration<GPULoadOp>>>(lexicalGlobalObject, stencilLoadOpValue);
+    auto stencilLoadOpConversionResult = convertResult<IDLOptional<IDLEnumeration<GPULoadOp>>>(lexicalGlobalObject, stencilLoadOpValue);
     if (stencilLoadOpConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue stencilReadOnlyValue;
@@ -136,7 +136,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         stencilReadOnlyValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "stencilReadOnly"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto stencilReadOnlyConversionResult = convert<IDLBoolean>(lexicalGlobalObject, stencilReadOnlyValue);
+    auto stencilReadOnlyConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, stencilReadOnlyValue);
     if (stencilReadOnlyConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue stencilStoreOpValue;
@@ -146,7 +146,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         stencilStoreOpValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "stencilStoreOp"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto stencilStoreOpConversionResult = convert<IDLOptional<IDLEnumeration<GPUStoreOp>>>(lexicalGlobalObject, stencilStoreOpValue);
+    auto stencilStoreOpConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUStoreOp>>>(lexicalGlobalObject, stencilStoreOpValue);
     if (stencilStoreOpConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue viewValue;
@@ -160,7 +160,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDepthStencilAttachment>> 
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "view"_s, "GPURenderPassDepthStencilAttachment"_s, "(GPUTexture or GPUTextureView)"_s);
         return ConversionResultException { };
     }
-    auto viewConversionResult = convert<IDLUnion<IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>>>(lexicalGlobalObject, viewValue);
+    auto viewConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>>>(lexicalGlobalObject, viewValue);
     if (viewConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURenderPassDepthStencilAttachment {

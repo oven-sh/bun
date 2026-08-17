@@ -64,7 +64,7 @@ template<> ConversionResult<IDLDictionary<GPUTextureBindingLayout>> convertDicti
         multisampledValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "multisampled"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto multisampledConversionResult = convert<IDLBoolean>(lexicalGlobalObject, multisampledValue);
+    auto multisampledConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, multisampledValue);
     if (multisampledConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue sampleTypeValue;

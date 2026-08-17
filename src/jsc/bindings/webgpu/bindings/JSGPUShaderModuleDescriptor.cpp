@@ -65,7 +65,7 @@ template<> ConversionResult<IDLDictionary<GPUShaderModuleDescriptor>> convertDic
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue codeValue;
@@ -79,7 +79,7 @@ template<> ConversionResult<IDLDictionary<GPUShaderModuleDescriptor>> convertDic
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "code"_s, "GPUShaderModuleDescriptor"_s, "USVString"_s);
         return ConversionResultException { };
     }
-    auto codeConversionResult = convert<IDLUSVString>(lexicalGlobalObject, codeValue);
+    auto codeConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, codeValue);
     if (codeConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue hintsValue;
@@ -89,7 +89,7 @@ template<> ConversionResult<IDLDictionary<GPUShaderModuleDescriptor>> convertDic
         hintsValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "hints"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto hintsConversionResult = convert<IDLRecord<IDLUSVString, IDLDictionary<GPUShaderModuleCompilationHint>>>(lexicalGlobalObject, hintsValue);
+    auto hintsConversionResult = convertResult<IDLRecord<IDLUSVString, IDLDictionary<GPUShaderModuleCompilationHint>>>(lexicalGlobalObject, hintsValue);
     if (hintsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue sourceMapValue;
@@ -99,7 +99,7 @@ template<> ConversionResult<IDLDictionary<GPUShaderModuleDescriptor>> convertDic
         sourceMapValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "sourceMap"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto sourceMapConversionResult = convert<IDLOptional<IDLObject>>(lexicalGlobalObject, sourceMapValue);
+    auto sourceMapConversionResult = convertResult<IDLOptional<IDLObject>>(lexicalGlobalObject, sourceMapValue);
     if (sourceMapConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUShaderModuleDescriptor {

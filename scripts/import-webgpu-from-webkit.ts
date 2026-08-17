@@ -10,6 +10,13 @@
 //
 //   bun scripts/import-webgpu-from-webkit.ts
 //
+// The generated bindings are post-processed into the dialect of bun's
+// bindings layer (`bindingsRules` below). To rework those rules without
+// redoing the whole import, this regenerates only webgpu/*.idl and
+// webgpu/bindings/ from vendor/WebKit and leaves every other file alone:
+//
+//   bun scripts/import-webgpu-from-webkit.ts --bindings-only
+//
 // What gets copied, and where:
 //
 //   Source/WebGPU/WGSL                  -> webgpu/WGSL            WGSL -> MSL shader compiler
@@ -39,7 +46,7 @@ if (!existsSync(join(webkit, "Source/WebGPU/WGSL/WGSL.h"))) {
   process.exit(1);
 }
 
-const webkitCommit = (await Bun.$`git -C ${webkit} rev-parse HEAD`.text()).trim();
+const bindingsOnly = process.argv.includes("--bindings-only");
 
 type Rule = { from: RegExp; to: string };
 
@@ -58,7 +65,8 @@ const commonRules: Rule[] = [
 // itself for Web Inspector's canvas recording, which bun does not have. The
 // other browser-only attributes (EnabledBySetting, SecureContext) only affect
 // how the global constructors are installed, which is done by hand in
-// ZigGlobalObject, so they are left alone and the generated code is unaffected.
+// ZigGlobalObject, so they are left alone and the generated code is unaffected
+// (except on mixins, see idlRules).
 const droppedIdlAttributes = new Set(["CallTracer"]);
 
 function stripIdlAttributes(idl: string): string {
@@ -82,12 +90,22 @@ function stripIdlAttributes(idl: string): string {
   });
 }
 
-// IDL members whose types were dropped above.
 const idlRules: Rule[] = [
+  // IDL members whose types were dropped above.
   { from: / or GPUExternalTexture\)/g, to: ")" },
   { from: /^\s*GPUExternalTextureBindingLayout externalTexture;\n/m, to: "" },
   { from: /^\s*GPUExternalTexture importExternalTexture\([^)]*\);\n\n?/m, to: "" },
   { from: /\n\s*\[CallWith=CurrentScriptExecutionContext\] undefined copyExternalImageToTexture\([^;]*;\n/m, to: "\n" },
+  // On a mixin, EnabledBySetting turns every member into a runtime-enabled
+  // property of the including interfaces: their generated prototypes would
+  // consult Settings (which bun does not have) and delete the members when the
+  // setting is off. Only the mixins carry it into generated code, so only they
+  // lose it. (It cannot simply go into droppedIdlAttributes: preprocess-idls.pl
+  // reads interface attribute lists with a regex that mangles the first entry
+  // whenever an attributed typedef precedes the interface, and in these files
+  // that sacrificial first entry is EnabledBySetting; without it the [Exposed]
+  // check fails.)
+  { from: /\[\s*EnabledBySetting=\w+\s*\]\s*(?=interface mixin\b)/g, to: "" },
 ];
 
 // Bun has no Web Inspector. The canvas recording hooks in the GPU* objects are
@@ -116,6 +134,55 @@ const eventRules: Rule[] = [
     to: "EventTargetInterface eventTargetInterface() const final { return $1EventTargetInterfaceType; }",
   },
   { from: /\nSPECIALIZE_TYPE_TRAITS_EVENTTARGET\(\w+\)\n/g, to: "" },
+];
+
+// The GPU* objects type their IDL unions the way the current generator does,
+// as a Variant holding Ref<>s. Bun's IDLUnion predates that (std::variant of
+// RefPtr<>) and is kept for bun's own bindings; IDLVariantUnion (IDLTypes.h) is
+// the current layout. Applied to the GPU* objects and to the generated
+// bindings alike, since the two name the same types (GPUDevice.h's promise
+// types, for instance). BufferSource stays on IDLUnion: bun's BufferSource
+// class is built from exactly that std::variant.
+const unionRules: Rule[] = [{ from: /\bIDLUnion<(?!IDLArrayBufferView, IDLArrayBuffer>)/g, to: "IDLVariantUnion<" }];
+
+// generate-bindings.pl emits code for the current WebCore bindings layer;
+// bun's webcore/ copy predates a few of its changes. Each rule below rewrites
+// one such construct into what bun's layer provides (see the bun headers named
+// in the comments); everything else the generator emits compiles as is.
+const bindingsRules: Rule[] = [
+  ...unionRules,
+
+  // convert<IDL>() still returns the bare value in bun (JSDOMConvertBase.h); the
+  // generated code expects a ConversionResult, which convertResult<IDL>() returns.
+  { from: /\bconvert</g, to: "convertResult<" },
+
+  // Dictionaries are built as aggregates and return a ConversionResult; they
+  // opt into that overload of convertDictionary<> (JSDOMConvertDictionary.h).
+  {
+    from: /^(template<> ConversionResult<IDLDictionary<([\w:]+)>> convertDictionary<\2>\(JSC::JSGlobalObject&, JSC::JSValue\);)$/gm,
+    to: "template<> inline constexpr bool isConversionResultDictionary<$2> = true;\n$1",
+  },
+
+  // convertEnumerationToJS() takes the global object in JSDOMConvertEnumeration.h.
+  {
+    from: /^template<> JSC::JSString\* convertEnumerationToJS\(JSC::VM&, (\w+)\);$/gm,
+    to: "template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, $1);",
+  },
+  {
+    from: /^template<> JSString\* convertEnumerationToJS\(VM& vm, (\w+) enumerationValue\)\n\{\n    return jsStringWithCache\(vm, /gm,
+    to: "template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, $1 enumerationValue)\n{\n    return jsStringWithCache(lexicalGlobalObject.vm(), ",
+  },
+
+  // JSConverter<IDLInterface<T>> (JSDOMConvertInterface.h) converts pointers
+  // through a null-checking toJS() overload that bun's own wrapper headers
+  // declare next to the reference one; the current generator no longer emits it.
+  {
+    from: /^(JSC::JSValue toJS\(JSC::JSGlobalObject\*, JSDOMGlobalObject\*, (\w+)&\);)$/gm,
+    to: "$1\ninline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, $2* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }",
+  },
+
+  // subspaceForImpl() (BunClientData.h) has no name parameter.
+  { from: /\bsubspaceForImpl<(\w+), (UseCustomHeapCellType::\w+)>\(vm, "\1"_s,/g, to: "subspaceForImpl<$1, $2>(vm," },
 ];
 
 function shouldDrop(name: string, dropPatterns: RegExp[]): boolean {
@@ -153,63 +220,69 @@ const dropImageCopy = [/ImageCopyExternalImage/, /ImageCopyTextureTagged/];
 const dropColorSpace = [/PredefinedColorSpace/];
 const dropDom = [...dropXR, ...dropPresentation, ...dropExternalTexture, ...dropImageCopy, /^NavigatorGPU/];
 
-for (const dir of ["WGSL", "WGSL/AST", "WGSL/Metal", "WebGPU", "InternalAPI", "Implementation", "bindings"]) {
-  const d = join(out, dir);
-  if (!existsSync(d)) continue;
-  for (const name of readdirSync(d)) {
-    if (sourceExt.test(name) && !bunOwned.has(name)) rmSync(join(d, name));
-  }
-}
-if (existsSync(out)) {
-  for (const name of readdirSync(out)) {
-    if (sourceExt.test(name) && !bunOwned.has(name)) rmSync(join(out, name));
-  }
-}
-
-// ─── WGSL compiler ─────────────────────────────────────────────────────────
-
-const wgslSrc = join(webkit, "Source/WebGPU/WGSL");
-copyDir(wgslSrc, join(out, "WGSL"), {
-  keep: /\.(cpp|h|rb)$/,
-  drop: [/^wgslc\.cpp$/, /^wgslfuzz\.cpp$/, /^config\.h$/, /^WGSLPrefix\.h$/],
-});
-copyDir(join(wgslSrc, "AST"), join(out, "WGSL/AST"), { keep: /\.(cpp|h)$/ });
-copyDir(join(wgslSrc, "Metal"), join(out, "WGSL/Metal"), { keep: /\.(cpp|h)$/ });
-cpSync(join(wgslSrc, "generator/main.rb"), join(out, "WGSL/generator/main.rb"));
-
-// TypeDeclarations.h / TypeOverloads.h are generated by a ruby script in
-// WebKit's build. Ruby is not a bun build dependency, so the output is
-// checked in next to its inputs.
-await Bun.$`ruby ${join(out, "WGSL/generator/main.rb")} ${join(out, "WGSL/TypeDeclarations.rb")} ${join(out, "WGSL/TypeDeclarations.h")} ${join(out, "WGSL/TypeOverloads.h")}`;
-console.log("     generated WGSL/TypeDeclarations.h, WGSL/TypeOverloads.h");
-
-// ─── Metal backend ─────────────────────────────────────────────────────────
-
-copyDir(join(webkit, "Source/WebGPU/WebGPU"), join(out, "WebGPU"), {
-  keep: /\.(h|mm)$/,
-  drop: [...dropXR, ...dropExternalTexture, /^PresentationContext/, /^config\.h$/, /^WebGPUPrefix\.h$/],
-  rules: [
-    // String::createNSString() only exists in the Cocoa builds of WTF; WebGPU/StringCocoa.h
-    // (pulled in by WebGPU/config.h) provides it as a free function instead.
-    {
-      from: /((?:[A-Za-z_]\w*(?:\([^()]*\))?)(?:(?:\.|->)[A-Za-z_]\w*(?:\([^()]*\))?)*)\.createNSString\(\)/g,
-      to: "createNSString($1)",
-    },
-  ],
-});
-
-// ─── WebCore glue ──────────────────────────────────────────────────────────
-
 const modules = join(webkit, "Source/WebCore/Modules/WebGPU");
-copyDir(join(modules, "InternalAPI"), join(out, "InternalAPI"), {
-  keep: /\.h$/,
-  drop: [...dropXR, ...dropPresentation, ...dropExternalTexture, ...dropImageCopy, ...dropColorSpace],
-});
-copyDir(join(modules, "Implementation"), join(out, "Implementation"), {
-  keep: /\.(cpp|h)$/,
-  drop: [...dropXR, ...dropPresentation, ...dropExternalTexture],
-});
-copyDir(modules, out, { keep: sourceExt, drop: dropDom, rules: [...inspectorRules, ...eventRules] });
+
+function clearDir(dir: string, keep: RegExp) {
+  if (!existsSync(dir)) return;
+  for (const name of readdirSync(dir)) {
+    if (keep.test(name) && !bunOwned.has(name)) rmSync(join(dir, name));
+  }
+}
+
+if (bindingsOnly) {
+  clearDir(out, /\.idl$/);
+  clearDir(join(out, "bindings"), sourceExt);
+  copyDir(modules, out, { keep: /\.idl$/, drop: dropDom });
+} else {
+  for (const dir of ["WGSL", "WGSL/AST", "WGSL/Metal", "WebGPU", "InternalAPI", "Implementation", "bindings"]) {
+    clearDir(join(out, dir), sourceExt);
+  }
+  clearDir(out, sourceExt);
+
+  // ─── WGSL compiler ───────────────────────────────────────────────────────
+
+  const wgslSrc = join(webkit, "Source/WebGPU/WGSL");
+  copyDir(wgslSrc, join(out, "WGSL"), {
+    keep: /\.(cpp|h|rb)$/,
+    drop: [/^wgslc\.cpp$/, /^wgslfuzz\.cpp$/, /^config\.h$/, /^WGSLPrefix\.h$/],
+  });
+  copyDir(join(wgslSrc, "AST"), join(out, "WGSL/AST"), { keep: /\.(cpp|h)$/ });
+  copyDir(join(wgslSrc, "Metal"), join(out, "WGSL/Metal"), { keep: /\.(cpp|h)$/ });
+  cpSync(join(wgslSrc, "generator/main.rb"), join(out, "WGSL/generator/main.rb"));
+
+  // TypeDeclarations.h / TypeOverloads.h are generated by a ruby script in
+  // WebKit's build. Ruby is not a bun build dependency, so the output is
+  // checked in next to its inputs.
+  await Bun.$`ruby ${join(out, "WGSL/generator/main.rb")} ${join(out, "WGSL/TypeDeclarations.rb")} ${join(out, "WGSL/TypeDeclarations.h")} ${join(out, "WGSL/TypeOverloads.h")}`;
+  console.log("     generated WGSL/TypeDeclarations.h, WGSL/TypeOverloads.h");
+
+  // ─── Metal backend ───────────────────────────────────────────────────────
+
+  copyDir(join(webkit, "Source/WebGPU/WebGPU"), join(out, "WebGPU"), {
+    keep: /\.(h|mm)$/,
+    drop: [...dropXR, ...dropExternalTexture, /^PresentationContext/, /^config\.h$/, /^WebGPUPrefix\.h$/],
+    rules: [
+      // String::createNSString() only exists in the Cocoa builds of WTF; WebGPU/StringCocoa.h
+      // (pulled in by WebGPU/config.h) provides it as a free function instead.
+      {
+        from: /((?:[A-Za-z_]\w*(?:\([^()]*\))?)(?:(?:\.|->)[A-Za-z_]\w*(?:\([^()]*\))?)*)\.createNSString\(\)/g,
+        to: "createNSString($1)",
+      },
+    ],
+  });
+
+  // ─── WebCore glue ────────────────────────────────────────────────────────
+
+  copyDir(join(modules, "InternalAPI"), join(out, "InternalAPI"), {
+    keep: /\.h$/,
+    drop: [...dropXR, ...dropPresentation, ...dropExternalTexture, ...dropImageCopy, ...dropColorSpace],
+  });
+  copyDir(join(modules, "Implementation"), join(out, "Implementation"), {
+    keep: /\.(cpp|h)$/,
+    drop: [...dropXR, ...dropPresentation, ...dropExternalTexture],
+  });
+  copyDir(modules, out, { keep: sourceExt, drop: dropDom, rules: [...inspectorRules, ...eventRules, ...unionRules] });
+}
 
 // ─── JS bindings ───────────────────────────────────────────────────────────
 
@@ -264,22 +337,25 @@ await Bun.$`perl -I${scripts} ${join(scripts, "generate-bindings.pl")} \
   --supplementalDependencyFile ${supplemental} \
   ${idls}`;
 for (const name of readdirSync(bindingsDir)) {
+  if (bunOwned.has(name)) continue;
   if (!/\.(cpp|h)$/.test(name)) {
     rmSync(join(bindingsDir, name));
     continue;
   }
   let text = readFileSync(join(bindingsDir, name), "utf8");
-  for (const { from, to } of commonRules) text = text.replace(from, to);
+  for (const { from, to } of [...commonRules, ...bindingsRules]) text = text.replace(from, to);
   writeFileSync(join(bindingsDir, name), text);
 }
 console.log(`${readdirSync(bindingsDir).length.toString().padStart(4)} files -> src/jsc/bindings/webgpu/bindings`);
-console.log(`     iso subspace / constructor lists left in ${tmp.slice(bunRepo.length + 1)} for merging into webcore/DOM*.h`);
-
-writeFileSync(
-  join(out, "WEBKIT_COMMIT"),
-  `${webkitCommit}\n`,
+console.log(
+  `     iso subspace / constructor lists left in ${tmp.slice(bunRepo.length + 1)}; see the registries listed at the end of this script`,
 );
-console.log(`imported from WebKit ${webkitCommit}`);
+
+if (!bindingsOnly) {
+  const webkitCommit = (await Bun.$`git -C ${webkit} rev-parse HEAD`.text()).trim();
+  writeFileSync(join(out, "WEBKIT_COMMIT"), `${webkitCommit}\n`);
+  console.log(`imported from WebKit ${webkitCommit}`);
+}
 
 // Hand edits expected after a fresh import (the diff against the previous
 // import shows them; this list is what to look for). Everything below is a
@@ -330,3 +406,15 @@ console.log(`imported from WebKit ${webkitCommit}`);
 //   - GPUBindGroupEntry.h: the GPUExternalTexture alternative and the equal() helpers that only served the
 //     external texture bind group cache; GPUBindGroupDescriptor.h: externalTextureMatches;
 //     GPUBindGroupLayoutEntry.h: externalTexture; GPUBindGroup.*: updateExternalTextures
+//
+// Bindings (webgpu/bindings is entirely generated; nothing in it is edited by hand). What has to be kept
+// in step with it, by hand, is the set of registries in bun's bindings layer that list every interface
+// (additions only, whenever the IDL gains an interface or a namespace):
+//   - webcore/DOMIsoSubspaces.h, webcore/DOMClientIsoSubspaces.h: the m_subspaceFor* / m_clientSubspaceFor*
+//     members listed in build/webgpu-idl/DOM*IsoSubspaces.h
+//   - webcore/DOMConstructors.h: the DOMConstructorID enumerators from build/webgpu-idl/DOMConstructors.h
+//     that are missing (the base list already has most of WebGPU), and bunExtraConstructors
+//   - DOMStructureSlot.h: one slot per interface wrapper class (everything with a getDOMPrototype<> call)
+//   - webcore/EventInterfaces.h + EventFactory.cpp / EventHeaders.h, and webcore/EventTargetInterfaces.h +
+//     EventTargetFactory.cpp / EventTargetHeaders.h: the event (GPUUncapturedErrorEvent) and event target
+//     (GPUDevice) interfaces

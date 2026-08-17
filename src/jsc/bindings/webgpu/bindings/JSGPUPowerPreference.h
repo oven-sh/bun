@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUPowerPreference);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUPowerPreference);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUPowerPreference);
 
 template<> std::optional<GPUPowerPreference> parseEnumerationFromString<GPUPowerPreference>(const String&);
 template<> std::optional<GPUPowerPreference> parseEnumeration<GPUPowerPreference>(JSC::JSGlobalObject&, JSC::JSValue);

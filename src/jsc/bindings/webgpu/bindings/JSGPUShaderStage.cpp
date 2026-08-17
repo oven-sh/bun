@@ -104,7 +104,7 @@ void JSGPUShaderStage::destroy(JSC::JSCell* cell)
 
 JSC::GCClient::IsoSubspace* JSGPUShaderStage::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUShaderStage, UseCustomHeapCellType::No>(vm, "JSGPUShaderStage"_s,
+    return WebCore::subspaceForImpl<JSGPUShaderStage, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUShaderStage.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUShaderStage = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUShaderStage.get(); },

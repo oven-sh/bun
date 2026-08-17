@@ -183,5 +183,44 @@ public:
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSConnectionsList;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHTTPParser;
+
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPU;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUAdapter;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUAdapterInfo;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUBindGroup;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUBindGroupLayout;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUBuffer;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUBufferUsage;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUColorWrite;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUCommandBuffer;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUCommandEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUCompilationInfo;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUCompilationMessage;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUComputePassEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUComputePipeline;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUDevice;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUDeviceLostInfo;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUInternalError;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUMapMode;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUOutOfMemoryError;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUPipelineError;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUPipelineLayout;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUQuerySet;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUQueue;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPURenderBundle;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPURenderBundleEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPURenderPassEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPURenderPipeline;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUSampler;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUShaderModule;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUShaderStage;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUSupportedFeatures;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUSupportedLimits;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUTexture;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUTextureUsage;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUTextureView;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUUncapturedErrorEvent;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForGPUValidationError;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWGSLLanguageFeatures;
 };
 } // namespace WebCore

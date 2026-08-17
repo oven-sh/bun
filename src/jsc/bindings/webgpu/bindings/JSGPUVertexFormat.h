@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUVertexFormat);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUVertexFormat);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUVertexFormat);
 
 template<> std::optional<GPUVertexFormat> parseEnumerationFromString<GPUVertexFormat>(const String&);
 template<> std::optional<GPUVertexFormat> parseEnumeration<GPUVertexFormat>(JSC::JSGlobalObject&, JSC::JSValue);

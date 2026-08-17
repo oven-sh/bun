@@ -91,7 +91,7 @@ template<> ConversionResult<IDLDictionary<GPUImageCopyTexture>> convertDictionar
         originValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "origin"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto originConversionResult = convert<IDLOptional<IDLUnion<IDLSequence<IDLEnforceRangeAdaptor<IDLUnsignedLong>>, IDLDictionary<GPUOrigin3DDict>>>>(lexicalGlobalObject, originValue);
+    auto originConversionResult = convertResult<IDLOptional<IDLVariantUnion<IDLSequence<IDLEnforceRangeAdaptor<IDLUnsignedLong>>, IDLDictionary<GPUOrigin3DDict>>>>(lexicalGlobalObject, originValue);
     if (originConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue textureValue;
@@ -105,7 +105,7 @@ template<> ConversionResult<IDLDictionary<GPUImageCopyTexture>> convertDictionar
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "texture"_s, "GPUImageCopyTexture"_s, "GPUTexture"_s);
         return ConversionResultException { };
     }
-    auto textureConversionResult = convert<IDLInterface<GPUTexture>>(lexicalGlobalObject, textureValue);
+    auto textureConversionResult = convertResult<IDLInterface<GPUTexture>>(lexicalGlobalObject, textureValue);
     if (textureConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUImageCopyTexture {

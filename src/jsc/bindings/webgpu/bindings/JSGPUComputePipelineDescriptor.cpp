@@ -66,7 +66,7 @@ template<> ConversionResult<IDLDictionary<GPUComputePipelineDescriptor>> convert
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue layoutValue;
@@ -80,7 +80,7 @@ template<> ConversionResult<IDLDictionary<GPUComputePipelineDescriptor>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "layout"_s, "GPUComputePipelineDescriptor"_s, "(GPUPipelineLayout or GPUAutoLayoutMode)"_s);
         return ConversionResultException { };
     }
-    auto layoutConversionResult = convert<IDLUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
+    auto layoutConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
     if (layoutConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue computeValue;
@@ -94,7 +94,7 @@ template<> ConversionResult<IDLDictionary<GPUComputePipelineDescriptor>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "compute"_s, "GPUComputePipelineDescriptor"_s, "GPUProgrammableStage"_s);
         return ConversionResultException { };
     }
-    auto computeConversionResult = convert<IDLDictionary<GPUProgrammableStage>>(lexicalGlobalObject, computeValue);
+    auto computeConversionResult = convertResult<IDLDictionary<GPUProgrammableStage>>(lexicalGlobalObject, computeValue);
     if (computeConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUComputePipelineDescriptor {

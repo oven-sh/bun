@@ -68,7 +68,7 @@ template<> ConversionResult<IDLDictionary<GPUFragmentState>> convertDictionary<G
         constantsValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "constants"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto constantsConversionResult = convert<IDLRecord<IDLUSVString, IDLDouble>>(lexicalGlobalObject, constantsValue);
+    auto constantsConversionResult = convertResult<IDLRecord<IDLUSVString, IDLDouble>>(lexicalGlobalObject, constantsValue);
     if (constantsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue entryPointValue;
@@ -78,7 +78,7 @@ template<> ConversionResult<IDLDictionary<GPUFragmentState>> convertDictionary<G
         entryPointValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "entryPoint"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto entryPointConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, entryPointValue);
+    auto entryPointConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, entryPointValue);
     if (entryPointConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue moduleValue;
@@ -92,7 +92,7 @@ template<> ConversionResult<IDLDictionary<GPUFragmentState>> convertDictionary<G
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "module"_s, "GPUFragmentState"_s, "GPUShaderModule"_s);
         return ConversionResultException { };
     }
-    auto moduleConversionResult = convert<IDLInterface<GPUShaderModule>>(lexicalGlobalObject, moduleValue);
+    auto moduleConversionResult = convertResult<IDLInterface<GPUShaderModule>>(lexicalGlobalObject, moduleValue);
     if (moduleConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue targetsValue;
@@ -106,7 +106,7 @@ template<> ConversionResult<IDLDictionary<GPUFragmentState>> convertDictionary<G
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "targets"_s, "GPUFragmentState"_s, "sequence"_s);
         return ConversionResultException { };
     }
-    auto targetsConversionResult = convert<IDLSequence<IDLNullable<IDLDictionary<GPUColorTargetState>>>>(lexicalGlobalObject, targetsValue);
+    auto targetsConversionResult = convertResult<IDLSequence<IDLNullable<IDLDictionary<GPUColorTargetState>>>>(lexicalGlobalObject, targetsValue);
     if (targetsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUFragmentState {

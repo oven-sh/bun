@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUErrorFilter);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUErrorFilter);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUErrorFilter);
 
 template<> std::optional<GPUErrorFilter> parseEnumerationFromString<GPUErrorFilter>(const String&);
 template<> std::optional<GPUErrorFilter> parseEnumeration<GPUErrorFilter>(JSC::JSGlobalObject&, JSC::JSValue);

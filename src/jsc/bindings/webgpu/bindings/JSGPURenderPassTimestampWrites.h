@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPURenderPassTimestampWrites> = true;
 template<> ConversionResult<IDLDictionary<GPURenderPassTimestampWrites>> convertDictionary<GPURenderPassTimestampWrites>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

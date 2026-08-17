@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUBindGroupLayoutEntry> = true;
 template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDictionary<GPUBindGroupLayoutEntry>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

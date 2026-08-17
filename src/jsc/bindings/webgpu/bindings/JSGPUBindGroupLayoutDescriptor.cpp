@@ -62,7 +62,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutDescriptor>> convert
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue entriesValue;
@@ -76,7 +76,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutDescriptor>> convert
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "entries"_s, "GPUBindGroupLayoutDescriptor"_s, "sequence"_s);
         return ConversionResultException { };
     }
-    auto entriesConversionResult = convert<IDLSequence<IDLDictionary<GPUBindGroupLayoutEntry>>>(lexicalGlobalObject, entriesValue);
+    auto entriesConversionResult = convertResult<IDLSequence<IDLDictionary<GPUBindGroupLayoutEntry>>>(lexicalGlobalObject, entriesValue);
     if (entriesConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUBindGroupLayoutDescriptor {

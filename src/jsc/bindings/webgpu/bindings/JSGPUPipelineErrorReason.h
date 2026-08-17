@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUPipelineErrorReason);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUPipelineErrorReason);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUPipelineErrorReason);
 
 template<> std::optional<GPUPipelineErrorReason> parseEnumerationFromString<GPUPipelineErrorReason>(const String&);
 template<> std::optional<GPUPipelineErrorReason> parseEnumeration<GPUPipelineErrorReason>(JSC::JSGlobalObject&, JSC::JSValue);

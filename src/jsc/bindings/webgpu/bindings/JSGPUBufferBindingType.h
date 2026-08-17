@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUBufferBindingType);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUBufferBindingType);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUBufferBindingType);
 
 template<> std::optional<GPUBufferBindingType> parseEnumerationFromString<GPUBufferBindingType>(const String&);
 template<> std::optional<GPUBufferBindingType> parseEnumeration<GPUBufferBindingType>(JSC::JSGlobalObject&, JSC::JSValue);

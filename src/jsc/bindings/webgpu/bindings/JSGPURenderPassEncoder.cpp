@@ -52,7 +52,6 @@
 #include "JSGPURenderBundle.h"
 #include "JSGPURenderPipeline.h"
 #include "ScriptExecutionContext.h"
-#include "Settings.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -182,93 +181,6 @@ void JSGPURenderPassEncoderPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSGPURenderPassEncoder::info(), JSGPURenderPassEncoderPrototypeTableValues, *this);
-    bool hasDisabledRuntimeProperties = false;
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "pushDebugGroup"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "popDebugGroup"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "insertDebugMarker"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "setBindGroup"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "setPipeline"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "setIndexBuffer"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "setVertexBuffer"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "draw"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "drawIndexed"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "drawIndirect"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "drawIndexedIndirect"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "label"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (hasDisabledRuntimeProperties && structure()->isDictionary())
-        flattenDictionaryObject(vm);
     WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -346,7 +258,7 @@ static inline bool setJSGPURenderPassEncoder_labelSetter(JSGlobalObject& lexical
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    auto nativeValueConversionResult = convert<IDLUSVString>(lexicalGlobalObject, value);
+    auto nativeValueConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, value);
     if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]
         return false;
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
@@ -370,27 +282,27 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setVie
     if (callFrame->argumentCount() < 6) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto xConversionResult = convert<IDLFloat>(*lexicalGlobalObject, argument0.value());
+    auto xConversionResult = convertResult<IDLFloat>(*lexicalGlobalObject, argument0.value());
     if (xConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto yConversionResult = convert<IDLFloat>(*lexicalGlobalObject, argument1.value());
+    auto yConversionResult = convertResult<IDLFloat>(*lexicalGlobalObject, argument1.value());
     if (yConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto widthConversionResult = convert<IDLFloat>(*lexicalGlobalObject, argument2.value());
+    auto widthConversionResult = convertResult<IDLFloat>(*lexicalGlobalObject, argument2.value());
     if (widthConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
-    auto heightConversionResult = convert<IDLFloat>(*lexicalGlobalObject, argument3.value());
+    auto heightConversionResult = convertResult<IDLFloat>(*lexicalGlobalObject, argument3.value());
     if (heightConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
-    auto minDepthConversionResult = convert<IDLFloat>(*lexicalGlobalObject, argument4.value());
+    auto minDepthConversionResult = convertResult<IDLFloat>(*lexicalGlobalObject, argument4.value());
     if (minDepthConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument5 = callFrame->uncheckedArgument(5);
-    auto maxDepthConversionResult = convert<IDLFloat>(*lexicalGlobalObject, argument5.value());
+    auto maxDepthConversionResult = convertResult<IDLFloat>(*lexicalGlobalObject, argument5.value());
     if (maxDepthConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setViewport(xConversionResult.releaseReturnValue(), yConversionResult.releaseReturnValue(), widthConversionResult.releaseReturnValue(), heightConversionResult.releaseReturnValue(), minDepthConversionResult.releaseReturnValue(), maxDepthConversionResult.releaseReturnValue()); })));
@@ -411,19 +323,19 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setSci
     if (callFrame->argumentCount() < 4) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto xConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto xConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (xConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto yConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument1.value());
+    auto yConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument1.value());
     if (yConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto widthConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument2.value());
+    auto widthConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument2.value());
     if (widthConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
-    auto heightConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument3.value());
+    auto heightConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument3.value());
     if (heightConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setScissorRect(xConversionResult.releaseReturnValue(), yConversionResult.releaseReturnValue(), widthConversionResult.releaseReturnValue(), heightConversionResult.releaseReturnValue()); })));
@@ -444,7 +356,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setBle
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto colorConversionResult = convert<IDLUnion<IDLSequence<IDLDouble>, IDLDictionary<GPUColorDict>>>(*lexicalGlobalObject, argument0.value());
+    auto colorConversionResult = convertResult<IDLVariantUnion<IDLSequence<IDLDouble>, IDLDictionary<GPUColorDict>>>(*lexicalGlobalObject, argument0.value());
     if (colorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setBlendConstant(colorConversionResult.releaseReturnValue()); })));
@@ -465,7 +377,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setSte
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto referenceConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto referenceConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (referenceConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setStencilReference(referenceConversionResult.releaseReturnValue()); })));
@@ -486,7 +398,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_beginO
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto queryIndexConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto queryIndexConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (queryIndexConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.beginOcclusionQuery(queryIndexConversionResult.releaseReturnValue()); })));
@@ -522,7 +434,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_execut
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto bundlesConversionResult = convert<IDLSequence<IDLInterface<GPURenderBundle>>>(*lexicalGlobalObject, argument0.value());
+    auto bundlesConversionResult = convertResult<IDLSequence<IDLInterface<GPURenderBundle>>>(*lexicalGlobalObject, argument0.value());
     if (bundlesConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.executeBundles(bundlesConversionResult.releaseReturnValue()); })));
@@ -558,7 +470,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_pushDe
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto groupLabelConversionResult = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    auto groupLabelConversionResult = convertResult<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     if (groupLabelConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.pushDebugGroup(groupLabelConversionResult.releaseReturnValue()); })));
@@ -594,7 +506,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_insert
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto markerLabelConversionResult = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
+    auto markerLabelConversionResult = convertResult<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     if (markerLabelConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.insertDebugMarker(markerLabelConversionResult.releaseReturnValue()); })));
@@ -613,11 +525,11 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setBin
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto indexConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto indexConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (indexConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto bindGroupConversionResult = convert<IDLNullable<IDLInterface<GPUBindGroup>>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "bindGroup"_s, "GPURenderPassEncoder"_s, "setBindGroup"_s, "GPUBindGroup"_s); });
+    auto bindGroupConversionResult = convertResult<IDLNullable<IDLInterface<GPUBindGroup>>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "bindGroup"_s, "GPURenderPassEncoder"_s, "setBindGroup"_s, "GPUBindGroup"_s); });
     if (bindGroupConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->argument(2);
@@ -635,23 +547,23 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setBin
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto indexConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto indexConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (indexConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto bindGroupConversionResult = convert<IDLNullable<IDLInterface<GPUBindGroup>>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "bindGroup"_s, "GPURenderPassEncoder"_s, "setBindGroup"_s, "GPUBindGroup"_s); });
+    auto bindGroupConversionResult = convertResult<IDLNullable<IDLInterface<GPUBindGroup>>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "bindGroup"_s, "GPURenderPassEncoder"_s, "setBindGroup"_s, "GPUBindGroup"_s); });
     if (bindGroupConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto dynamicOffsetsDataConversionResult = convert<IDLAllowSharedAdaptor<IDLUint32Array>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "dynamicOffsetsData"_s, "GPURenderPassEncoder"_s, "setBindGroup"_s, "Uint32Array"_s); });
+    auto dynamicOffsetsDataConversionResult = convertResult<IDLAllowSharedAdaptor<IDLUint32Array>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "dynamicOffsetsData"_s, "GPURenderPassEncoder"_s, "setBindGroup"_s, "Uint32Array"_s); });
     if (dynamicOffsetsDataConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
-    auto dynamicOffsetsDataStartConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument3.value());
+    auto dynamicOffsetsDataStartConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument3.value());
     if (dynamicOffsetsDataStartConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument4 = callFrame->uncheckedArgument(4);
-    auto dynamicOffsetsDataLengthConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument4.value());
+    auto dynamicOffsetsDataLengthConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument4.value());
     if (dynamicOffsetsDataLengthConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setBindGroup(indexConversionResult.releaseReturnValue(), bindGroupConversionResult.releaseReturnValue(), dynamicOffsetsDataConversionResult.releaseReturnValue(), dynamicOffsetsDataStartConversionResult.releaseReturnValue(), dynamicOffsetsDataLengthConversionResult.releaseReturnValue()); })));
@@ -691,7 +603,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setPip
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto pipelineConversionResult = convert<IDLInterface<GPURenderPipeline>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "pipeline"_s, "GPURenderPassEncoder"_s, "setPipeline"_s, "GPURenderPipeline"_s); });
+    auto pipelineConversionResult = convertResult<IDLInterface<GPURenderPipeline>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "pipeline"_s, "GPURenderPassEncoder"_s, "setPipeline"_s, "GPURenderPipeline"_s); });
     if (pipelineConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setPipeline(pipelineConversionResult.releaseReturnValue()); })));
@@ -712,11 +624,11 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setInd
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto bufferConversionResult = convert<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "buffer"_s, "GPURenderPassEncoder"_s, "setIndexBuffer"_s, "GPUBuffer"_s); });
+    auto bufferConversionResult = convertResult<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "buffer"_s, "GPURenderPassEncoder"_s, "setIndexBuffer"_s, "GPUBuffer"_s); });
     if (bufferConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto indexFormatConversionResult = convert<IDLEnumeration<GPUIndexFormat>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 1, "indexFormat"_s, "GPURenderPassEncoder"_s, "setIndexBuffer"_s, expectedEnumerationValues<GPUIndexFormat>()); });
+    auto indexFormatConversionResult = convertResult<IDLEnumeration<GPUIndexFormat>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 1, "indexFormat"_s, "GPURenderPassEncoder"_s, "setIndexBuffer"_s, expectedEnumerationValues<GPUIndexFormat>()); });
     if (indexFormatConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->argument(2);
@@ -724,7 +636,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setInd
     if (offsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->argument(3);
-    auto sizeConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument3.value());
+    auto sizeConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument3.value());
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setIndexBuffer(bufferConversionResult.releaseReturnValue(), indexFormatConversionResult.releaseReturnValue(), offsetConversionResult.releaseReturnValue(), sizeConversionResult.releaseReturnValue()); })));
@@ -745,11 +657,11 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setVer
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto slotConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto slotConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (slotConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto bufferConversionResult = convert<IDLNullable<IDLInterface<GPUBuffer>>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "buffer"_s, "GPURenderPassEncoder"_s, "setVertexBuffer"_s, "GPUBuffer"_s); });
+    auto bufferConversionResult = convertResult<IDLNullable<IDLInterface<GPUBuffer>>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "buffer"_s, "GPURenderPassEncoder"_s, "setVertexBuffer"_s, "GPUBuffer"_s); });
     if (bufferConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument2 = callFrame->argument(2);
@@ -757,7 +669,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_setVer
     if (offsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument3 = callFrame->argument(3);
-    auto sizeConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument3.value());
+    auto sizeConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(*lexicalGlobalObject, argument3.value());
     if (sizeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.setVertexBuffer(slotConversionResult.releaseReturnValue(), bufferConversionResult.releaseReturnValue(), offsetConversionResult.releaseReturnValue(), sizeConversionResult.releaseReturnValue()); })));
@@ -778,7 +690,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_drawBo
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto vertexCountConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto vertexCountConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (vertexCountConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->argument(1);
@@ -811,7 +723,7 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_drawIn
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto indexCountConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
+    auto indexCountConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(*lexicalGlobalObject, argument0.value());
     if (indexCountConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->argument(1);
@@ -848,11 +760,11 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_drawIn
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto indirectBufferConversionResult = convert<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "indirectBuffer"_s, "GPURenderPassEncoder"_s, "drawIndirect"_s, "GPUBuffer"_s); });
+    auto indirectBufferConversionResult = convertResult<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "indirectBuffer"_s, "GPURenderPassEncoder"_s, "drawIndirect"_s, "GPUBuffer"_s); });
     if (indirectBufferConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto indirectOffsetConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument1.value());
+    auto indirectOffsetConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument1.value());
     if (indirectOffsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.drawIndirect(indirectBufferConversionResult.releaseReturnValue(), indirectOffsetConversionResult.releaseReturnValue()); })));
@@ -873,11 +785,11 @@ static inline JSC::EncodedJSValue jsGPURenderPassEncoderPrototypeFunction_drawIn
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto indirectBufferConversionResult = convert<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "indirectBuffer"_s, "GPURenderPassEncoder"_s, "drawIndexedIndirect"_s, "GPUBuffer"_s); });
+    auto indirectBufferConversionResult = convertResult<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 0, "indirectBuffer"_s, "GPURenderPassEncoder"_s, "drawIndexedIndirect"_s, "GPUBuffer"_s); });
     if (indirectBufferConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto indirectOffsetConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument1.value());
+    auto indirectOffsetConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>(*lexicalGlobalObject, argument1.value());
     if (indirectOffsetConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.drawIndexedIndirect(indirectBufferConversionResult.releaseReturnValue(), indirectOffsetConversionResult.releaseReturnValue()); })));
@@ -890,7 +802,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPURenderPassEncoderPrototypeFunction_drawIndexedIndi
 
 JSC::GCClient::IsoSubspace* JSGPURenderPassEncoder::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPURenderPassEncoder, UseCustomHeapCellType::No>(vm, "JSGPURenderPassEncoder"_s,
+    return WebCore::subspaceForImpl<JSGPURenderPassEncoder, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPURenderPassEncoder.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPURenderPassEncoder = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPURenderPassEncoder.get(); },

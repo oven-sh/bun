@@ -74,7 +74,7 @@ template<> ConversionResult<IDLDictionary<GPUSamplerDescriptor>> convertDictiona
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue addressModeUValue;
@@ -114,7 +114,7 @@ template<> ConversionResult<IDLDictionary<GPUSamplerDescriptor>> convertDictiona
         compareValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "compare"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto compareConversionResult = convert<IDLOptional<IDLEnumeration<GPUCompareFunction>>>(lexicalGlobalObject, compareValue);
+    auto compareConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUCompareFunction>>>(lexicalGlobalObject, compareValue);
     if (compareConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue lodMaxClampValue;

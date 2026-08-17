@@ -32,9 +32,7 @@ typedef [EnforceRange] unsigned long GPUIndex32;
 typedef [EnforceRange] long GPUSignedOffset32;
 
 // FIXME: Rename this to `GPURenderCommandsMixin` to match the latest specification.
-[
-    EnabledBySetting=WebGPUEnabled
-] interface mixin GPURenderEncoderBase {
+interface mixin GPURenderEncoderBase {
     undefined setPipeline(GPURenderPipeline pipeline);
 
     undefined setIndexBuffer(GPUBuffer buffer, GPUIndexFormat indexFormat, optional GPUSize64 offset = 0, optional GPUSize64 size);

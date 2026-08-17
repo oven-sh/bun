@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUTextureDimension);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUTextureDimension);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUTextureDimension);
 
 template<> std::optional<GPUTextureDimension> parseEnumerationFromString<GPUTextureDimension>(const String&);
 template<> std::optional<GPUTextureDimension> parseEnumeration<GPUTextureDimension>(JSC::JSGlobalObject&, JSC::JSValue);

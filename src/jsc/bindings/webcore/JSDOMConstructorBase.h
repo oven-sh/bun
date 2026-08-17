@@ -53,6 +53,7 @@ public:
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM&);
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(Base::globalObject()); }
+    JSDOMGlobalObject* realm() const { return uncheckedDowncast<JSDOMGlobalObject>(Base::realm()); }
     ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
     Bun::ErrorCode errorCode() const { return m_errorCode; }
 

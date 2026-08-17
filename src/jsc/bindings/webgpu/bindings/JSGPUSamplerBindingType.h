@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUSamplerBindingType);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUSamplerBindingType);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUSamplerBindingType);
 
 template<> std::optional<GPUSamplerBindingType> parseEnumerationFromString<GPUSamplerBindingType>(const String&);
 template<> std::optional<GPUSamplerBindingType> parseEnumeration<GPUSamplerBindingType>(JSC::JSGlobalObject&, JSC::JSValue);

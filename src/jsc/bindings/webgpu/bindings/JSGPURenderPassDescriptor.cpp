@@ -72,7 +72,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDescriptor>> convertDicti
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue colorAttachmentsValue;
@@ -86,7 +86,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDescriptor>> convertDicti
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "colorAttachments"_s, "GPURenderPassDescriptor"_s, "sequence"_s);
         return ConversionResultException { };
     }
-    auto colorAttachmentsConversionResult = convert<IDLSequence<IDLNullable<IDLDictionary<GPURenderPassColorAttachment>>>>(lexicalGlobalObject, colorAttachmentsValue);
+    auto colorAttachmentsConversionResult = convertResult<IDLSequence<IDLNullable<IDLDictionary<GPURenderPassColorAttachment>>>>(lexicalGlobalObject, colorAttachmentsValue);
     if (colorAttachmentsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthStencilAttachmentValue;
@@ -96,7 +96,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDescriptor>> convertDicti
         depthStencilAttachmentValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthStencilAttachment"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthStencilAttachmentConversionResult = convert<IDLOptional<IDLDictionary<GPURenderPassDepthStencilAttachment>>>(lexicalGlobalObject, depthStencilAttachmentValue);
+    auto depthStencilAttachmentConversionResult = convertResult<IDLOptional<IDLDictionary<GPURenderPassDepthStencilAttachment>>>(lexicalGlobalObject, depthStencilAttachmentValue);
     if (depthStencilAttachmentConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue maxDrawCountValue;
@@ -116,7 +116,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDescriptor>> convertDicti
         occlusionQuerySetValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "occlusionQuerySet"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto occlusionQuerySetConversionResult = convert<IDLOptional<IDLInterface<GPUQuerySet>>>(lexicalGlobalObject, occlusionQuerySetValue);
+    auto occlusionQuerySetConversionResult = convertResult<IDLOptional<IDLInterface<GPUQuerySet>>>(lexicalGlobalObject, occlusionQuerySetValue);
     if (occlusionQuerySetConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue timestampWritesValue;
@@ -126,7 +126,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassDescriptor>> convertDicti
         timestampWritesValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "timestampWrites"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto timestampWritesConversionResult = convert<IDLOptional<IDLDictionary<GPURenderPassTimestampWrites>>>(lexicalGlobalObject, timestampWritesValue);
+    auto timestampWritesConversionResult = convertResult<IDLOptional<IDLDictionary<GPURenderPassTimestampWrites>>>(lexicalGlobalObject, timestampWritesValue);
     if (timestampWritesConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURenderPassDescriptor {

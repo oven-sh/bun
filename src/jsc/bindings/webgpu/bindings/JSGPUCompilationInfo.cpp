@@ -196,7 +196,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUCompilationInfo_messages, (JSGlobalObject* lexical
 
 JSC::GCClient::IsoSubspace* JSGPUCompilationInfo::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUCompilationInfo, UseCustomHeapCellType::No>(vm, "JSGPUCompilationInfo"_s,
+    return WebCore::subspaceForImpl<JSGPUCompilationInfo, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUCompilationInfo.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUCompilationInfo = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUCompilationInfo.get(); },

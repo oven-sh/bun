@@ -209,7 +209,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUDeviceLostInfo_message, (JSGlobalObject* lexicalGl
 
 JSC::GCClient::IsoSubspace* JSGPUDeviceLostInfo::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUDeviceLostInfo, UseCustomHeapCellType::No>(vm, "JSGPUDeviceLostInfo"_s,
+    return WebCore::subspaceForImpl<JSGPUDeviceLostInfo, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUDeviceLostInfo.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUDeviceLostInfo = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUDeviceLostInfo.get(); },

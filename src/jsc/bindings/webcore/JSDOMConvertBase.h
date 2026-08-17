@@ -97,10 +97,47 @@ template<typename T, typename ExceptionThrower> inline typename Converter<T>::Re
     return Converter<T>::convert(lexicalGlobalObject, value, globalObject, std::forward<ExceptionThrower>(exceptionThrower));
 }
 
-// New code can opt into ConversionResult<> explicitly until call sites are migrated.
-template<typename T> inline ConversionResult<T> convertResult(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+// Converters written the way current WebCore writes them (the dictionaries of
+// JSDOMConvertDictionary.h that opt in, IDLVariantUnion, and IDLNullable /
+// IDLOptional of those) return a ConversionResult and declare it as their
+// ReturnType; the older ones return the value and leave the exception in the scope.
+template<typename T>
+concept ConvertsToConversionResult = std::is_same_v<typename Converter<T>::ReturnType, ConversionResult<T>>;
+
+namespace Detail {
+
+// The older converters return interfaces as T*, buffer sources as RefPtr<> and
+// sequences of either as vectors of those; ConversionResult carries the IDL
+// type's ConversionResultType (T&, Ref<>, Vector<Ref<>>) like upstream does.
+template<typename To, typename From> To toConversionResultType(From&& value)
 {
-    return Converter<T>::convert(lexicalGlobalObject, value);
+    if constexpr (std::is_constructible_v<To, From&&>)
+        return static_cast<To>(std::forward<From>(value));
+    else if constexpr (std::is_pointer_v<std::remove_cvref_t<From>>)
+        return toConversionResultType<To>(*value);
+    else if constexpr (requires { value.releaseNonNull(); })
+        return value.releaseNonNull();
+    else
+        return WTF::map(std::forward<From>(value), [](auto&& item) { return toConversionResultType<typename To::ValueType>(WTF::move(item)); });
+}
+
+}
+
+// The entry point used by code generated with the current generate-bindings.pl;
+// convert<>() above keeps returning bare values for the existing call sites.
+// `arguments` are whatever Converter<T>::convert takes after the global object
+// (the value, then optionally an exception thrower and the like).
+template<typename T, typename... Arguments> inline ConversionResult<T> convertResult(JSC::JSGlobalObject& lexicalGlobalObject, Arguments&&... arguments)
+{
+    if constexpr (ConvertsToConversionResult<T>)
+        return Converter<T>::convert(lexicalGlobalObject, std::forward<Arguments>(arguments)...);
+    else {
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        auto result = Converter<T>::convert(lexicalGlobalObject, std::forward<Arguments>(arguments)...);
+        RETURN_IF_EXCEPTION(scope, ConversionResultException {});
+        return ConversionResult<T> { Detail::toConversionResultType<typename ConversionResult<T>::ReturnType>(WTF::move(result)) };
+    }
 }
 
 // Conversion from Implementation -> JSValue

@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUOrigin2DDict> = true;
 template<> ConversionResult<IDLDictionary<GPUOrigin2DDict>> convertDictionary<GPUOrigin2DDict>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

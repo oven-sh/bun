@@ -108,7 +108,7 @@ void JSGPUColorWrite::destroy(JSC::JSCell* cell)
 
 JSC::GCClient::IsoSubspace* JSGPUColorWrite::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUColorWrite, UseCustomHeapCellType::No>(vm, "JSGPUColorWrite"_s,
+    return WebCore::subspaceForImpl<JSGPUColorWrite, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUColorWrite.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUColorWrite = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUColorWrite.get(); },

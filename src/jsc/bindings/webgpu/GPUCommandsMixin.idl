@@ -25,8 +25,5 @@
 
 // https://gpuweb.github.io/gpuweb/#gpucommandsmixin
 
-[
-    EnabledBySetting=WebGPUEnabled
-]
 interface mixin GPUCommandsMixin {
 };

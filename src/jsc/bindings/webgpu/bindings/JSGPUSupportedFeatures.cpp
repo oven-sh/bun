@@ -216,7 +216,7 @@ static inline JSC::EncodedJSValue jsGPUSupportedFeaturesPrototypeFunction_hasBod
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto keyConversionResult = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto keyConversionResult = convertResult<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     if (keyConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLAny>(*lexicalGlobalObject, throwScope, forwardHasToSetLike(*lexicalGlobalObject, *callFrame, *castedThis, keyConversionResult.releaseReturnValue()))));
@@ -278,7 +278,7 @@ static inline JSC::EncodedJSValue jsGPUSupportedFeaturesPrototypeFunction_forEac
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto callbackConversionResult = convert<IDLAny>(*lexicalGlobalObject, argument0.value());
+    auto callbackConversionResult = convertResult<IDLAny>(*lexicalGlobalObject, argument0.value());
     if (callbackConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLAny>(*lexicalGlobalObject, throwScope, forwardForEachToSetLike(*lexicalGlobalObject, *callFrame, *castedThis, callbackConversionResult.releaseReturnValue()))));
@@ -291,7 +291,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUSupportedFeaturesPrototypeFunction_forEach, (JSGlo
 
 JSC::GCClient::IsoSubspace* JSGPUSupportedFeatures::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUSupportedFeatures, UseCustomHeapCellType::No>(vm, "JSGPUSupportedFeatures"_s,
+    return WebCore::subspaceForImpl<JSGPUSupportedFeatures, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUSupportedFeatures.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUSupportedFeatures = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUSupportedFeatures.get(); },

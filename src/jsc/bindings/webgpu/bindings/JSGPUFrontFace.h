@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUFrontFace);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUFrontFace);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUFrontFace);
 
 template<> std::optional<GPUFrontFace> parseEnumerationFromString<GPUFrontFace>(const String&);
 template<> std::optional<GPUFrontFace> parseEnumeration<GPUFrontFace>(JSC::JSGlobalObject&, JSC::JSValue);

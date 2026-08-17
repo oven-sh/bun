@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUTextureBindingLayout> = true;
 template<> ConversionResult<IDLDictionary<GPUTextureBindingLayout>> convertDictionary<GPUTextureBindingLayout>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

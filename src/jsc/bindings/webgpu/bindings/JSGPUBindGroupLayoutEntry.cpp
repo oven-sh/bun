@@ -72,7 +72,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDicti
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "binding"_s, "GPUBindGroupLayoutEntry"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto bindingConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, bindingValue);
+    auto bindingConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, bindingValue);
     if (bindingConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue bufferValue;
@@ -82,7 +82,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDicti
         bufferValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "buffer"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto bufferConversionResult = convert<IDLOptional<IDLDictionary<GPUBufferBindingLayout>>>(lexicalGlobalObject, bufferValue);
+    auto bufferConversionResult = convertResult<IDLOptional<IDLDictionary<GPUBufferBindingLayout>>>(lexicalGlobalObject, bufferValue);
     if (bufferConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue samplerValue;
@@ -92,7 +92,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDicti
         samplerValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "sampler"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto samplerConversionResult = convert<IDLOptional<IDLDictionary<GPUSamplerBindingLayout>>>(lexicalGlobalObject, samplerValue);
+    auto samplerConversionResult = convertResult<IDLOptional<IDLDictionary<GPUSamplerBindingLayout>>>(lexicalGlobalObject, samplerValue);
     if (samplerConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue storageTextureValue;
@@ -102,7 +102,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDicti
         storageTextureValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "storageTexture"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto storageTextureConversionResult = convert<IDLOptional<IDLDictionary<GPUStorageTextureBindingLayout>>>(lexicalGlobalObject, storageTextureValue);
+    auto storageTextureConversionResult = convertResult<IDLOptional<IDLDictionary<GPUStorageTextureBindingLayout>>>(lexicalGlobalObject, storageTextureValue);
     if (storageTextureConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue textureValue;
@@ -112,7 +112,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDicti
         textureValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "texture"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto textureConversionResult = convert<IDLOptional<IDLDictionary<GPUTextureBindingLayout>>>(lexicalGlobalObject, textureValue);
+    auto textureConversionResult = convertResult<IDLOptional<IDLDictionary<GPUTextureBindingLayout>>>(lexicalGlobalObject, textureValue);
     if (textureConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue visibilityValue;
@@ -126,7 +126,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupLayoutEntry>> convertDicti
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "visibility"_s, "GPUBindGroupLayoutEntry"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto visibilityConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, visibilityValue);
+    auto visibilityConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, visibilityValue);
     if (visibilityConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUBindGroupLayoutEntry {

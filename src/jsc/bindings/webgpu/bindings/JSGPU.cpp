@@ -217,7 +217,7 @@ static inline JSC::EncodedJSValue jsGPUPrototypeFunction_requestAdapterBody(JSC:
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto optionsConversionResult = convert<IDLDictionary<GPURequestAdapterOptions>>(*lexicalGlobalObject, argument0.value());
+    auto optionsConversionResult = convertResult<IDLDictionary<GPURequestAdapterOptions>>(*lexicalGlobalObject, argument0.value());
     if (optionsConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLNullable<IDLInterface<GPUAdapter>>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.requestAdapter(optionsConversionResult.releaseReturnValue(), WTF::move(promise)); })));
@@ -245,7 +245,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUPrototypeFunction_getPreferredCanvasFormat, (JSGlo
 
 JSC::GCClient::IsoSubspace* JSGPU::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPU, UseCustomHeapCellType::No>(vm, "JSGPU"_s,
+    return WebCore::subspaceForImpl<JSGPU, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPU.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPU = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPU.get(); },

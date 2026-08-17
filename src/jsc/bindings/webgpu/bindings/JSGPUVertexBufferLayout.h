@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUVertexBufferLayout> = true;
 template<> ConversionResult<IDLDictionary<GPUVertexBufferLayout>> convertDictionary<GPUVertexBufferLayout>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

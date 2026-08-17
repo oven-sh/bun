@@ -31,9 +31,6 @@ typedef [EnforceRange] unsigned long long GPUSize64;
 typedef [EnforceRange] unsigned long GPUIndex32;
 typedef [EnforceRange] unsigned long GPUBufferDynamicOffset;
 
-[
-    EnabledBySetting=WebGPUEnabled
-]
 interface mixin GPUProgrammablePassEncoder {
     undefined setBindGroup(GPUIndex32 index, GPUBindGroup? bindGroup,
         optional sequence<GPUBufferDynamicOffset> dynamicOffsets = []);

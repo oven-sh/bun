@@ -81,7 +81,6 @@
 #include "JSGPUTextureDescriptor.h"
 #include "JSGPUValidationError.h"
 #include "ScriptExecutionContext.h"
-#include "Settings.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
@@ -217,16 +216,6 @@ void JSGPUDevicePrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSGPUDevice::info(), JSGPUDevicePrototypeTableValues, *this);
-    bool hasDisabledRuntimeProperties = false;
-    if (!uncheckedDowncast<JSDOMGlobalObject>(realm())->scriptExecutionContext()->settingsValues().webGPUEnabled) {
-        hasDisabledRuntimeProperties = true;
-        auto propertyName = Identifier::fromString(vm, "label"_s);
-        VM::DeletePropertyModeScope scope(vm, VM::DeletePropertyMode::IgnoreConfigurable);
-        DeletePropertySlot slot;
-        JSObject::deleteProperty(this, realm(), propertyName, slot);
-    }
-    if (hasDisabledRuntimeProperties && structure()->isDictionary())
-        flattenDictionaryObject(vm);
     WebCore::putDirectWithoutTransition(this, vm, vm.propertyNames->toStringTagSymbol, jsNontrivialString(vm, info()->className), JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly);
 }
 
@@ -390,7 +379,7 @@ static inline bool setJSGPUDevice_labelSetter(JSGlobalObject& lexicalGlobalObjec
     UNUSED_PARAM(vm);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    auto nativeValueConversionResult = convert<IDLUSVString>(lexicalGlobalObject, value);
+    auto nativeValueConversionResult = convertResult<IDLUSVString>(lexicalGlobalObject, value);
     if (nativeValueConversionResult.hasException(throwScope)) [[unlikely]]
         return false;
     invokeFunctorPropagatingExceptionIfNecessary(lexicalGlobalObject, throwScope, [&] {
@@ -432,7 +421,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createBufferBody(
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUBufferDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUBufferDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUBuffer>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createBuffer(descriptorConversionResult.releaseReturnValue()))));
@@ -453,7 +442,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createTextureBody
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUTextureDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUTextureDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUTexture>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createTexture(descriptorConversionResult.releaseReturnValue()))));
@@ -472,7 +461,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createSamplerBody
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUSamplerDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUSamplerDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUSampler>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createSampler(descriptorConversionResult.releaseReturnValue()))));
@@ -493,7 +482,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createBindGroupLa
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUBindGroupLayoutDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUBindGroupLayoutDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUBindGroupLayout>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createBindGroupLayout(descriptorConversionResult.releaseReturnValue()))));
@@ -514,7 +503,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createPipelineLay
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUPipelineLayoutDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUPipelineLayoutDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUPipelineLayout>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createPipelineLayout(descriptorConversionResult.releaseReturnValue()))));
@@ -535,7 +524,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createBindGroupBo
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUBindGroupDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUBindGroupDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUBindGroup>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createBindGroup(descriptorConversionResult.releaseReturnValue()))));
@@ -556,7 +545,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createShaderModul
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUShaderModuleDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUShaderModuleDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUShaderModule>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createShaderModule(descriptorConversionResult.releaseReturnValue()))));
@@ -577,7 +566,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createComputePipe
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUComputePipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUComputePipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUComputePipeline>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createComputePipeline(descriptorConversionResult.releaseReturnValue()))));
@@ -598,7 +587,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createRenderPipel
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPURenderPipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPURenderPipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPURenderPipeline>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createRenderPipeline(descriptorConversionResult.releaseReturnValue()))));
@@ -619,7 +608,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createComputePipe
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUComputePipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUComputePipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<GPUComputePipeline>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.createComputePipelineAsync(descriptorConversionResult.releaseReturnValue(), WTF::move(promise)); })));
@@ -640,7 +629,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createRenderPipel
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPURenderPipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPURenderPipelineDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<GPURenderPipeline>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.createRenderPipelineAsync(descriptorConversionResult.releaseReturnValue(), WTF::move(promise)); })));
@@ -659,7 +648,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createCommandEnco
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUCommandEncoderDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUCommandEncoderDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUCommandEncoder>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createCommandEncoder(descriptorConversionResult.releaseReturnValue()))));
@@ -680,7 +669,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createRenderBundl
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPURenderBundleEncoderDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPURenderBundleEncoderDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPURenderBundleEncoder>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createRenderBundleEncoder(descriptorConversionResult.releaseReturnValue()))));
@@ -701,7 +690,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_createQuerySetBod
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUQuerySetDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUQuerySetDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLInterface<GPUQuerySet>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, impl.createQuerySet(descriptorConversionResult.releaseReturnValue()))));
@@ -722,7 +711,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_pushErrorScopeBod
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto filterConversionResult = convert<IDLEnumeration<GPUErrorFilter>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "filter"_s, "GPUDevice"_s, "pushErrorScope"_s, expectedEnumerationValues<GPUErrorFilter>()); });
+    auto filterConversionResult = convertResult<IDLEnumeration<GPUErrorFilter>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "filter"_s, "GPUDevice"_s, "pushErrorScope"_s, expectedEnumerationValues<GPUErrorFilter>()); });
     if (filterConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&] -> decltype(auto) { return impl.pushErrorScope(filterConversionResult.releaseReturnValue()); })));
@@ -740,7 +729,7 @@ static inline JSC::EncodedJSValue jsGPUDevicePrototypeFunction_popErrorScopeBody
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLNullable<IDLUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.popErrorScope(WTF::move(promise)); })));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLNullable<IDLVariantUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.popErrorScope(WTF::move(promise)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsGPUDevicePrototypeFunction_popErrorScope, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
@@ -750,7 +739,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUDevicePrototypeFunction_popErrorScope, (JSGlobalOb
 
 JSC::GCClient::IsoSubspace* JSGPUDevice::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUDevice, UseCustomHeapCellType::No>(vm, "JSGPUDevice"_s,
+    return WebCore::subspaceForImpl<JSGPUDevice, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUDevice.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUDevice = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUDevice.get(); },

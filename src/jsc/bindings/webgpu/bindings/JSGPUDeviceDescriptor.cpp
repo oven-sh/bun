@@ -69,7 +69,7 @@ template<> ConversionResult<IDLDictionary<GPUDeviceDescriptor>> convertDictionar
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue defaultQueueValue;
@@ -79,7 +79,7 @@ template<> ConversionResult<IDLDictionary<GPUDeviceDescriptor>> convertDictionar
         defaultQueueValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "defaultQueue"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto defaultQueueConversionResult = convert<IDLDictionary<GPUQueueDescriptor>>(lexicalGlobalObject, defaultQueueValue);
+    auto defaultQueueConversionResult = convertResult<IDLDictionary<GPUQueueDescriptor>>(lexicalGlobalObject, defaultQueueValue);
     if (defaultQueueConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue requiredFeaturesValue;
@@ -99,7 +99,7 @@ template<> ConversionResult<IDLDictionary<GPUDeviceDescriptor>> convertDictionar
         requiredLimitsValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "requiredLimits"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto requiredLimitsConversionResult = convert<IDLRecord<IDLDOMString, IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(lexicalGlobalObject, requiredLimitsValue);
+    auto requiredLimitsConversionResult = convertResult<IDLRecord<IDLDOMString, IDLEnforceRangeAdaptor<IDLUnsignedLongLong>>>(lexicalGlobalObject, requiredLimitsValue);
     if (requiredLimitsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUDeviceDescriptor {

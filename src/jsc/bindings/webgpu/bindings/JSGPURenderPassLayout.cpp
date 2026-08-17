@@ -67,7 +67,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassLayout>> convertDictionar
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue colorFormatsValue;
@@ -81,7 +81,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassLayout>> convertDictionar
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "colorFormats"_s, "GPURenderPassLayout"_s, "sequence"_s);
         return ConversionResultException { };
     }
-    auto colorFormatsConversionResult = convert<IDLSequence<IDLNullable<IDLEnumeration<GPUTextureFormat>>>>(lexicalGlobalObject, colorFormatsValue);
+    auto colorFormatsConversionResult = convertResult<IDLSequence<IDLNullable<IDLEnumeration<GPUTextureFormat>>>>(lexicalGlobalObject, colorFormatsValue);
     if (colorFormatsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthStencilFormatValue;
@@ -91,7 +91,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPassLayout>> convertDictionar
         depthStencilFormatValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthStencilFormat"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthStencilFormatConversionResult = convert<IDLOptional<IDLEnumeration<GPUTextureFormat>>>(lexicalGlobalObject, depthStencilFormatValue);
+    auto depthStencilFormatConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUTextureFormat>>>(lexicalGlobalObject, depthStencilFormatValue);
     if (depthStencilFormatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue sampleCountValue;

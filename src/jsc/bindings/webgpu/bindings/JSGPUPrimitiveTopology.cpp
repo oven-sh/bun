@@ -49,9 +49,9 @@ String convertEnumerationToString(GPUPrimitiveTopology enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUPrimitiveTopology enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUPrimitiveTopology enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUPrimitiveTopology> parseEnumerationFromString<GPUPrimitiveTopology>(const String& stringValue)

@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPURequestAdapterOptions> = true;
 template<> ConversionResult<IDLDictionary<GPURequestAdapterOptions>> convertDictionary<GPURequestAdapterOptions>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

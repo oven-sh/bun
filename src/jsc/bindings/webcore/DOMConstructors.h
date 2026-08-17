@@ -858,11 +858,16 @@ enum class DOMConstructorID : uint16_t {
     CookieMap,
     EventEmitter,
     URLPattern,
+    // WebGPU interfaces added upstream after the list above was taken.
+    GPUAdapterInfo,
+    GPUInternalError,
+    GPUPipelineError,
+    WGSLLanguageFeatures,
 };
 
 static constexpr unsigned numberOfDOMConstructorsBase = 845;
 
-static constexpr unsigned bunExtraConstructors = 4;
+static constexpr unsigned bunExtraConstructors = 8;
 
 static constexpr unsigned numberOfDOMConstructors = numberOfDOMConstructorsBase + bunExtraConstructors;
 

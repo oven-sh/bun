@@ -74,7 +74,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue layoutValue;
@@ -88,7 +88,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "layout"_s, "GPURenderPipelineDescriptor"_s, "(GPUPipelineLayout or GPUAutoLayoutMode)"_s);
         return ConversionResultException { };
     }
-    auto layoutConversionResult = convert<IDLUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
+    auto layoutConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUPipelineLayout>, IDLEnumeration<GPUAutoLayoutMode>>>(lexicalGlobalObject, layoutValue);
     if (layoutConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue depthStencilValue;
@@ -98,7 +98,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         depthStencilValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "depthStencil"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto depthStencilConversionResult = convert<IDLOptional<IDLDictionary<GPUDepthStencilState>>>(lexicalGlobalObject, depthStencilValue);
+    auto depthStencilConversionResult = convertResult<IDLOptional<IDLDictionary<GPUDepthStencilState>>>(lexicalGlobalObject, depthStencilValue);
     if (depthStencilConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue fragmentValue;
@@ -108,7 +108,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         fragmentValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "fragment"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto fragmentConversionResult = convert<IDLOptional<IDLDictionary<GPUFragmentState>>>(lexicalGlobalObject, fragmentValue);
+    auto fragmentConversionResult = convertResult<IDLOptional<IDLDictionary<GPUFragmentState>>>(lexicalGlobalObject, fragmentValue);
     if (fragmentConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue multisampleValue;
@@ -118,7 +118,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         multisampleValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "multisample"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto multisampleConversionResult = convert<IDLOptional<IDLDictionary<GPUMultisampleState>>>(lexicalGlobalObject, multisampleValue);
+    auto multisampleConversionResult = convertResult<IDLOptional<IDLDictionary<GPUMultisampleState>>>(lexicalGlobalObject, multisampleValue);
     if (multisampleConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue primitiveValue;
@@ -128,7 +128,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         primitiveValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "primitive"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto primitiveConversionResult = convert<IDLOptional<IDLDictionary<GPUPrimitiveState>>>(lexicalGlobalObject, primitiveValue);
+    auto primitiveConversionResult = convertResult<IDLOptional<IDLDictionary<GPUPrimitiveState>>>(lexicalGlobalObject, primitiveValue);
     if (primitiveConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue vertexValue;
@@ -142,7 +142,7 @@ template<> ConversionResult<IDLDictionary<GPURenderPipelineDescriptor>> convertD
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "vertex"_s, "GPURenderPipelineDescriptor"_s, "GPUVertexState"_s);
         return ConversionResultException { };
     }
-    auto vertexConversionResult = convert<IDLDictionary<GPUVertexState>>(lexicalGlobalObject, vertexValue);
+    auto vertexConversionResult = convertResult<IDLDictionary<GPUVertexState>>(lexicalGlobalObject, vertexValue);
     if (vertexConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPURenderPipelineDescriptor {

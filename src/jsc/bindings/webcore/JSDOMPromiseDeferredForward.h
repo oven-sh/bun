@@ -71,6 +71,7 @@ struct IDLError;
 struct IDLDOMException;
 
 template<typename...> struct IDLUnion;
+template<typename...> struct IDLVariantUnion;
 template<typename> struct IDLBufferSource;
 
 struct IDLArrayBuffer;

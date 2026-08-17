@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUExtent3DDict> = true;
 template<> ConversionResult<IDLDictionary<GPUExtent3DDict>> convertDictionary<GPUExtent3DDict>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

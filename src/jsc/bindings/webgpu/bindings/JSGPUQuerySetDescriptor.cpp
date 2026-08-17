@@ -63,7 +63,7 @@ template<> ConversionResult<IDLDictionary<GPUQuerySetDescriptor>> convertDiction
         labelValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "label"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto labelConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
+    auto labelConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, labelValue);
     if (labelConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue countValue;
@@ -77,7 +77,7 @@ template<> ConversionResult<IDLDictionary<GPUQuerySetDescriptor>> convertDiction
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "count"_s, "GPUQuerySetDescriptor"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto countConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, countValue);
+    auto countConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, countValue);
     if (countConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue typeValue;
@@ -91,7 +91,7 @@ template<> ConversionResult<IDLDictionary<GPUQuerySetDescriptor>> convertDiction
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "type"_s, "GPUQuerySetDescriptor"_s, "GPUQueryType"_s);
         return ConversionResultException { };
     }
-    auto typeConversionResult = convert<IDLEnumeration<GPUQueryType>>(lexicalGlobalObject, typeValue);
+    auto typeConversionResult = convertResult<IDLEnumeration<GPUQueryType>>(lexicalGlobalObject, typeValue);
     if (typeConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUQuerySetDescriptor {

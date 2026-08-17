@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUBlendOperation);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUBlendOperation);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUBlendOperation);
 
 template<> std::optional<GPUBlendOperation> parseEnumerationFromString<GPUBlendOperation>(const String&);
 template<> std::optional<GPUBlendOperation> parseEnumeration<GPUBlendOperation>(JSC::JSGlobalObject&, JSC::JSValue);

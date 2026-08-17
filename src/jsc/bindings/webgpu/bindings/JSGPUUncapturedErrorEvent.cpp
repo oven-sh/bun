@@ -101,11 +101,11 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGPUUncapturedErrorEventDOMC
     if (callFrame->argumentCount() < 2) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto typeConversionResult = convert<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
+    auto typeConversionResult = convertResult<IDLAtomStringAdaptor<IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     if (typeConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto gpuUncapturedErrorEventInitDictConversionResult = convert<IDLDictionary<GPUUncapturedErrorEventInit>>(*lexicalGlobalObject, argument1.value());
+    auto gpuUncapturedErrorEventInitDictConversionResult = convertResult<IDLDictionary<GPUUncapturedErrorEventInit>>(*lexicalGlobalObject, argument1.value());
     if (gpuUncapturedErrorEventInitDictConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     auto object = GPUUncapturedErrorEvent::create(typeConversionResult.releaseReturnValue(), gpuUncapturedErrorEventInitDictConversionResult.releaseReturnValue());
@@ -212,7 +212,7 @@ static inline JSValue jsGPUUncapturedErrorEvent_errorGetter(JSGlobalObject& lexi
     SUPPRESS_UNCOUNTED_LOCAL auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     SUPPRESS_UNCOUNTED_LOCAL auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>(lexicalGlobalObject, *thisObject.realm(), throwScope, impl.error())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLVariantUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>(lexicalGlobalObject, *thisObject.realm(), throwScope, impl.error())));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsGPUUncapturedErrorEvent_error, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -222,7 +222,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUUncapturedErrorEvent_error, (JSGlobalObject* lexic
 
 JSC::GCClient::IsoSubspace* JSGPUUncapturedErrorEvent::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUUncapturedErrorEvent, UseCustomHeapCellType::No>(vm, "JSGPUUncapturedErrorEvent"_s,
+    return WebCore::subspaceForImpl<JSGPUUncapturedErrorEvent, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUUncapturedErrorEvent.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUUncapturedErrorEvent = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUUncapturedErrorEvent.get(); },

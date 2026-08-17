@@ -263,7 +263,7 @@ static inline JSC::EncodedJSValue jsGPUAdapterPrototypeFunction_requestDeviceBod
     if (!context) [[unlikely]]
         return JSValue::encode(jsUndefined());
     EnsureStillAliveScope argument0 = callFrame->argument(0);
-    auto descriptorConversionResult = convert<IDLDictionary<GPUDeviceDescriptor>>(*lexicalGlobalObject, argument0.value());
+    auto descriptorConversionResult = convertResult<IDLDictionary<GPUDeviceDescriptor>>(*lexicalGlobalObject, argument0.value());
     if (descriptorConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLInterface<GPUDevice>>>(*lexicalGlobalObject, *castedThis->realm(), throwScope, [&] -> decltype(auto) { return impl.requestDevice(*context, descriptorConversionResult.releaseReturnValue(), WTF::move(promise)); })));
@@ -276,7 +276,7 @@ JSC_DEFINE_HOST_FUNCTION(jsGPUAdapterPrototypeFunction_requestDevice, (JSGlobalO
 
 JSC::GCClient::IsoSubspace* JSGPUAdapter::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUAdapter, UseCustomHeapCellType::No>(vm, "JSGPUAdapter"_s,
+    return WebCore::subspaceForImpl<JSGPUAdapter, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUAdapter.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUAdapter = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUAdapter.get(); },

@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUMipmapFilterMode);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUMipmapFilterMode);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUMipmapFilterMode);
 
 template<> std::optional<GPUMipmapFilterMode> parseEnumerationFromString<GPUMipmapFilterMode>(const String&);
 template<> std::optional<GPUMipmapFilterMode> parseEnumeration<GPUMipmapFilterMode>(JSC::JSGlobalObject&, JSC::JSValue);

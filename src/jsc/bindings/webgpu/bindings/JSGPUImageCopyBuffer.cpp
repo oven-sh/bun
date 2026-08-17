@@ -61,7 +61,7 @@ template<> ConversionResult<IDLDictionary<GPUImageCopyBuffer>> convertDictionary
         bytesPerRowValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "bytesPerRow"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto bytesPerRowConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, bytesPerRowValue);
+    auto bytesPerRowConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, bytesPerRowValue);
     if (bytesPerRowConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue offsetValue;
@@ -81,7 +81,7 @@ template<> ConversionResult<IDLDictionary<GPUImageCopyBuffer>> convertDictionary
         rowsPerImageValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "rowsPerImage"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto rowsPerImageConversionResult = convert<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, rowsPerImageValue);
+    auto rowsPerImageConversionResult = convertResult<IDLOptional<IDLEnforceRangeAdaptor<IDLUnsignedLong>>>(lexicalGlobalObject, rowsPerImageValue);
     if (rowsPerImageConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue bufferValue;
@@ -95,7 +95,7 @@ template<> ConversionResult<IDLDictionary<GPUImageCopyBuffer>> convertDictionary
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "buffer"_s, "GPUImageCopyBuffer"_s, "GPUBuffer"_s);
         return ConversionResultException { };
     }
-    auto bufferConversionResult = convert<IDLInterface<GPUBuffer>>(lexicalGlobalObject, bufferValue);
+    auto bufferConversionResult = convertResult<IDLInterface<GPUBuffer>>(lexicalGlobalObject, bufferValue);
     if (bufferConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUImageCopyBuffer {

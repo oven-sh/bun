@@ -51,7 +51,8 @@ typedef (sequence<GPUIntegerCoordinate> or GPUExtent3DDict) GPUExtent3D;
         GPUImageCopyTexture destination,
         [AllowShared](ArrayBufferView or ArrayBuffer) data,
         GPUImageDataLayout dataLayout,
-        GPUExtent3D size);};
+        GPUExtent3D size);
+};
 GPUQueue includes GPUObjectBase;
 
 typedef [EnforceRange] unsigned long GPUBufferDynamicOffset;

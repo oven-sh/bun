@@ -64,7 +64,7 @@ template<> ConversionResult<IDLDictionary<GPUUncapturedErrorEventInit>> convertD
         bubblesValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "bubbles"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto bubblesConversionResult = convert<IDLBoolean>(lexicalGlobalObject, bubblesValue);
+    auto bubblesConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, bubblesValue);
     if (bubblesConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue cancelableValue;
@@ -74,7 +74,7 @@ template<> ConversionResult<IDLDictionary<GPUUncapturedErrorEventInit>> convertD
         cancelableValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "cancelable"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto cancelableConversionResult = convert<IDLBoolean>(lexicalGlobalObject, cancelableValue);
+    auto cancelableConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, cancelableValue);
     if (cancelableConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue composedValue;
@@ -84,7 +84,7 @@ template<> ConversionResult<IDLDictionary<GPUUncapturedErrorEventInit>> convertD
         composedValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "composed"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto composedConversionResult = convert<IDLBoolean>(lexicalGlobalObject, composedValue);
+    auto composedConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, composedValue);
     if (composedConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue errorValue;
@@ -98,7 +98,7 @@ template<> ConversionResult<IDLDictionary<GPUUncapturedErrorEventInit>> convertD
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "error"_s, "GPUUncapturedErrorEventInit"_s, "(GPUOutOfMemoryError or GPUValidationError or GPUInternalError)"_s);
         return ConversionResultException { };
     }
-    auto errorConversionResult = convert<IDLUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>(lexicalGlobalObject, errorValue);
+    auto errorConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>(lexicalGlobalObject, errorValue);
     if (errorConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUUncapturedErrorEventInit {

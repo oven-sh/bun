@@ -41,9 +41,9 @@ String convertEnumerationToString(GPUAutoLayoutMode enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUAutoLayoutMode enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUAutoLayoutMode enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUAutoLayoutMode> parseEnumerationFromString<GPUAutoLayoutMode>(const String& stringValue)

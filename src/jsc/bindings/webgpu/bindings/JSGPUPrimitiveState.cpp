@@ -88,7 +88,7 @@ template<> ConversionResult<IDLDictionary<GPUPrimitiveState>> convertDictionary<
         stripIndexFormatValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "stripIndexFormat"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto stripIndexFormatConversionResult = convert<IDLOptional<IDLEnumeration<GPUIndexFormat>>>(lexicalGlobalObject, stripIndexFormatValue);
+    auto stripIndexFormatConversionResult = convertResult<IDLOptional<IDLEnumeration<GPUIndexFormat>>>(lexicalGlobalObject, stripIndexFormatValue);
     if (stripIndexFormatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue topologyValue;
@@ -108,7 +108,7 @@ template<> ConversionResult<IDLDictionary<GPUPrimitiveState>> convertDictionary<
         unclippedDepthValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "unclippedDepth"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto unclippedDepthConversionResult = convert<IDLBoolean>(lexicalGlobalObject, unclippedDepthValue);
+    auto unclippedDepthConversionResult = convertResult<IDLBoolean>(lexicalGlobalObject, unclippedDepthValue);
     if (unclippedDepthConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUPrimitiveState {

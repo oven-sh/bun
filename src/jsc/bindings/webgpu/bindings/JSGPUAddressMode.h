@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUAddressMode);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUAddressMode);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUAddressMode);
 
 template<> std::optional<GPUAddressMode> parseEnumerationFromString<GPUAddressMode>(const String&);
 template<> std::optional<GPUAddressMode> parseEnumeration<GPUAddressMode>(JSC::JSGlobalObject&, JSC::JSValue);

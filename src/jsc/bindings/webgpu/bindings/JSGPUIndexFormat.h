@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUIndexFormat);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUIndexFormat);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUIndexFormat);
 
 template<> std::optional<GPUIndexFormat> parseEnumerationFromString<GPUIndexFormat>(const String&);
 template<> std::optional<GPUIndexFormat> parseEnumeration<GPUIndexFormat>(JSC::JSGlobalObject&, JSC::JSValue);

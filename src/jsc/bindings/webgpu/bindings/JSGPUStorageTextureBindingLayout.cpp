@@ -78,7 +78,7 @@ template<> ConversionResult<IDLDictionary<GPUStorageTextureBindingLayout>> conve
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "format"_s, "GPUStorageTextureBindingLayout"_s, "GPUTextureFormat"_s);
         return ConversionResultException { };
     }
-    auto formatConversionResult = convert<IDLEnumeration<GPUTextureFormat>>(lexicalGlobalObject, formatValue);
+    auto formatConversionResult = convertResult<IDLEnumeration<GPUTextureFormat>>(lexicalGlobalObject, formatValue);
     if (formatConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue viewDimensionValue;

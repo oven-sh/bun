@@ -63,7 +63,7 @@ template<> ConversionResult<IDLDictionary<GPUPipelineErrorInit>> convertDictiona
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "reason"_s, "GPUPipelineErrorInit"_s, "GPUPipelineErrorReason"_s);
         return ConversionResultException { };
     }
-    auto reasonConversionResult = convert<IDLEnumeration<GPUPipelineErrorReason>>(lexicalGlobalObject, reasonValue);
+    auto reasonConversionResult = convertResult<IDLEnumeration<GPUPipelineErrorReason>>(lexicalGlobalObject, reasonValue);
     if (reasonConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUPipelineErrorInit {

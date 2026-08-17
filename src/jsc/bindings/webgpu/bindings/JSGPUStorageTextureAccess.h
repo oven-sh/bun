@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUStorageTextureAccess);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUStorageTextureAccess);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUStorageTextureAccess);
 
 template<> std::optional<GPUStorageTextureAccess> parseEnumerationFromString<GPUStorageTextureAccess>(const String&);
 template<> std::optional<GPUStorageTextureAccess> parseEnumeration<GPUStorageTextureAccess>(JSC::JSGlobalObject&, JSC::JSValue);

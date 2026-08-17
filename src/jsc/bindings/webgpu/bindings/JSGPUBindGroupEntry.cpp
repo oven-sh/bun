@@ -71,7 +71,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupEntry>> convertDictionary<
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "binding"_s, "GPUBindGroupEntry"_s, "unsigned long"_s);
         return ConversionResultException { };
     }
-    auto bindingConversionResult = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, bindingValue);
+    auto bindingConversionResult = convertResult<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, bindingValue);
     if (bindingConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue resourceValue;
@@ -85,7 +85,7 @@ template<> ConversionResult<IDLDictionary<GPUBindGroupEntry>> convertDictionary<
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "resource"_s, "GPUBindGroupEntry"_s, "(GPUSampler or GPUTexture or GPUTextureView or GPUBuffer or GPUBufferBinding)"_s);
         return ConversionResultException { };
     }
-    auto resourceConversionResult = convert<IDLUnion<IDLInterface<GPUSampler>, IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>, IDLInterface<GPUBuffer>, IDLDictionary<GPUBufferBinding>>>(lexicalGlobalObject, resourceValue);
+    auto resourceConversionResult = convertResult<IDLVariantUnion<IDLInterface<GPUSampler>, IDLInterface<GPUTexture>, IDLInterface<GPUTextureView>, IDLInterface<GPUBuffer>, IDLDictionary<GPUBufferBinding>>>(lexicalGlobalObject, resourceValue);
     if (resourceConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUBindGroupEntry {

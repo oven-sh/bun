@@ -102,4 +102,32 @@ template<typename T> struct Converter<IDLOptional<T>> : DefaultConverter<IDLOpti
     }
 };
 
+// See the matching Converter<IDLNullable<T>> in JSDOMConvertNullable.h.
+template<typename T>
+    requires ConvertsToConversionResult<T>
+struct Converter<IDLOptional<T>> : DefaultConverter<IDLOptional<T>> {
+    using Result = ConversionResult<IDLOptional<T>>;
+    using ReturnType = Result;
+
+    static constexpr bool conversionHasSideEffects = Converter<T>::conversionHasSideEffects;
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        if (value.isUndefined())
+            return Result { T::nullValue() };
+        return Converter<T>::convert(lexicalGlobalObject, value);
+    }
+};
+
+// Optional arguments and dictionary members with a default value, as generated
+// by the current generate-bindings.pl: `defaultValue` is a functor returning the
+// ConversionResult to use when the value is undefined.
+template<typename T, typename DefaultValueFunctor>
+ConversionResult<T> convertOptionalWithDefault(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, DefaultValueFunctor&& defaultValue)
+{
+    if (value.isUndefined())
+        return defaultValue();
+    return convertResult<T>(lexicalGlobalObject, value);
+}
+
 } // namespace WebCore

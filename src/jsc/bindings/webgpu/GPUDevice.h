@@ -133,7 +133,7 @@ public:
     ExceptionOr<Ref<GPUQuerySet>> createQuerySet(GPUQuerySetDescriptor&&);
 
     void pushErrorScope(GPUErrorFilter);
-    using ErrorScopePromise = DOMPromiseDeferred<IDLNullable<IDLUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>>;
+    using ErrorScopePromise = DOMPromiseDeferred<IDLNullable<IDLVariantUnion<IDLInterface<GPUOutOfMemoryError>, IDLInterface<GPUValidationError>, IDLInterface<GPUInternalError>>>>;
     void popErrorScope(ErrorScopePromise&&);
 
     bool addEventListener(const AtomString& eventType, Ref<EventListener>&&, const AddEventListenerOptions&) override;

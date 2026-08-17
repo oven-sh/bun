@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUDepthStencilState> = true;
 template<> ConversionResult<IDLDictionary<GPUDepthStencilState>> convertDictionary<GPUDepthStencilState>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

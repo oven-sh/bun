@@ -45,9 +45,9 @@ String convertEnumerationToString(GPUStorageTextureAccess enumerationValue)
     return values[static_cast<size_t>(enumerationValue)];
 }
 
-template<> JSString* convertEnumerationToJS(VM& vm, GPUStorageTextureAccess enumerationValue)
+template<> JSString* convertEnumerationToJS(JSGlobalObject& lexicalGlobalObject, GPUStorageTextureAccess enumerationValue)
 {
-    return jsStringWithCache(vm, convertEnumerationToString(enumerationValue));
+    return jsStringWithCache(lexicalGlobalObject.vm(), convertEnumerationToString(enumerationValue));
 }
 
 template<> std::optional<GPUStorageTextureAccess> parseEnumerationFromString<GPUStorageTextureAccess>(const String& stringValue)

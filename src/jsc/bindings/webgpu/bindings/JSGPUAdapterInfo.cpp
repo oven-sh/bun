@@ -284,7 +284,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUAdapterInfo_subgroupMaxSize, (JSGlobalObject* lexi
 
 JSC::GCClient::IsoSubspace* JSGPUAdapterInfo::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUAdapterInfo, UseCustomHeapCellType::No>(vm, "JSGPUAdapterInfo"_s,
+    return WebCore::subspaceForImpl<JSGPUAdapterInfo, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUAdapterInfo.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUAdapterInfo = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUAdapterInfo.get(); },

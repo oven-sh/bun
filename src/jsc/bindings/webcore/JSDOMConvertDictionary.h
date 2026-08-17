@@ -33,6 +33,16 @@ namespace WebCore {
 // Specialized by generated code for IDL dictionary conversion.
 template<typename T> T convertDictionary(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value);
 
+// The current generate-bindings.pl instead builds the dictionary as an aggregate
+// once every member has converted, so that it can hold Ref<> members; when a
+// member fails there is no dictionary to return, and convertDictionary<> returns
+// a ConversionResult. Such dictionaries specialize this to true in their header.
+template<typename T> inline constexpr bool isConversionResultDictionary = false;
+
+template<typename T>
+    requires isConversionResultDictionary<T>
+ConversionResult<IDLDictionary<T>> convertDictionary(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value);
+
 template<typename T> struct Converter<IDLDictionary<T>> : DefaultConverter<IDLDictionary<T>> {
     using ReturnType = T;
 
@@ -47,6 +57,18 @@ template<typename T> struct Converter<IDLDictionary<T>> : DefaultConverter<IDLDi
     }
 
     static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        return convertDictionary<T>(lexicalGlobalObject, value);
+    }
+};
+
+template<typename T>
+    requires isConversionResultDictionary<T>
+struct Converter<IDLDictionary<T>> : DefaultConverter<IDLDictionary<T>> {
+    using Result = ConversionResult<IDLDictionary<T>>;
+    using ReturnType = Result;
+
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
     {
         return convertDictionary<T>(lexicalGlobalObject, value);
     }

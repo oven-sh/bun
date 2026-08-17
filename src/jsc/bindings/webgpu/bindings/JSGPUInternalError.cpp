@@ -95,7 +95,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSGPUInternalErrorDOMConstruc
     if (callFrame->argumentCount() < 1) [[unlikely]]
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto messageConversionResult = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
+    auto messageConversionResult = convertResult<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     if (messageConversionResult.hasException(throwScope)) [[unlikely]]
        return encodedJSValue();
     auto object = GPUInternalError::create(messageConversionResult.releaseReturnValue());
@@ -233,7 +233,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsGPUInternalError_stack, (JSGlobalObject* lexicalGloba
 
 JSC::GCClient::IsoSubspace* JSGPUInternalError::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUInternalError, UseCustomHeapCellType::No>(vm, "JSGPUInternalError"_s,
+    return WebCore::subspaceForImpl<JSGPUInternalError, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUInternalError.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUInternalError = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUInternalError.get(); },

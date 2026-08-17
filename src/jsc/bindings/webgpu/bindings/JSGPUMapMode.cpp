@@ -102,7 +102,7 @@ void JSGPUMapMode::destroy(JSC::JSCell* cell)
 
 JSC::GCClient::IsoSubspace* JSGPUMapMode::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSGPUMapMode, UseCustomHeapCellType::No>(vm, "JSGPUMapMode"_s,
+    return WebCore::subspaceForImpl<JSGPUMapMode, UseCustomHeapCellType::No>(vm,
         [] (auto& spaces) { return spaces.m_clientSubspaceForGPUMapMode.get(); },
         [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForGPUMapMode = std::forward<decltype(space)>(space); },
         [] (auto& spaces) { return spaces.m_subspaceForGPUMapMode.get(); },

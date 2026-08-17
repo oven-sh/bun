@@ -66,7 +66,7 @@ template<> ConversionResult<IDLDictionary<GPUProgrammableStage>> convertDictiona
         constantsValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "constants"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto constantsConversionResult = convert<IDLRecord<IDLUSVString, IDLDouble>>(lexicalGlobalObject, constantsValue);
+    auto constantsConversionResult = convertResult<IDLRecord<IDLUSVString, IDLDouble>>(lexicalGlobalObject, constantsValue);
     if (constantsConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue entryPointValue;
@@ -76,7 +76,7 @@ template<> ConversionResult<IDLDictionary<GPUProgrammableStage>> convertDictiona
         entryPointValue = WebCore::get(object, &lexicalGlobalObject, Identifier::fromString(vm, "entryPoint"_s));
         RETURN_IF_EXCEPTION(throwScope, ConversionResultException { });
     }
-    auto entryPointConversionResult = convert<IDLOptional<IDLUSVString>>(lexicalGlobalObject, entryPointValue);
+    auto entryPointConversionResult = convertResult<IDLOptional<IDLUSVString>>(lexicalGlobalObject, entryPointValue);
     if (entryPointConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue moduleValue;
@@ -90,7 +90,7 @@ template<> ConversionResult<IDLDictionary<GPUProgrammableStage>> convertDictiona
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "module"_s, "GPUProgrammableStage"_s, "GPUShaderModule"_s);
         return ConversionResultException { };
     }
-    auto moduleConversionResult = convert<IDLInterface<GPUShaderModule>>(lexicalGlobalObject, moduleValue);
+    auto moduleConversionResult = convertResult<IDLInterface<GPUShaderModule>>(lexicalGlobalObject, moduleValue);
     if (moduleConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUProgrammableStage {

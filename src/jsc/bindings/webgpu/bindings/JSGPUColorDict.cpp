@@ -65,7 +65,7 @@ template<> ConversionResult<IDLDictionary<GPUColorDict>> convertDictionary<GPUCo
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "a"_s, "GPUColorDict"_s, "double"_s);
         return ConversionResultException { };
     }
-    auto aConversionResult = convert<IDLDouble>(lexicalGlobalObject, aValue);
+    auto aConversionResult = convertResult<IDLDouble>(lexicalGlobalObject, aValue);
     if (aConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue bValue;
@@ -79,7 +79,7 @@ template<> ConversionResult<IDLDictionary<GPUColorDict>> convertDictionary<GPUCo
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "b"_s, "GPUColorDict"_s, "double"_s);
         return ConversionResultException { };
     }
-    auto bConversionResult = convert<IDLDouble>(lexicalGlobalObject, bValue);
+    auto bConversionResult = convertResult<IDLDouble>(lexicalGlobalObject, bValue);
     if (bConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue gValue;
@@ -93,7 +93,7 @@ template<> ConversionResult<IDLDictionary<GPUColorDict>> convertDictionary<GPUCo
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "g"_s, "GPUColorDict"_s, "double"_s);
         return ConversionResultException { };
     }
-    auto gConversionResult = convert<IDLDouble>(lexicalGlobalObject, gValue);
+    auto gConversionResult = convertResult<IDLDouble>(lexicalGlobalObject, gValue);
     if (gConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     JSValue rValue;
@@ -107,7 +107,7 @@ template<> ConversionResult<IDLDictionary<GPUColorDict>> convertDictionary<GPUCo
         throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "r"_s, "GPUColorDict"_s, "double"_s);
         return ConversionResultException { };
     }
-    auto rConversionResult = convert<IDLDouble>(lexicalGlobalObject, rValue);
+    auto rConversionResult = convertResult<IDLDouble>(lexicalGlobalObject, rValue);
     if (rConversionResult.hasException(throwScope)) [[unlikely]]
         return ConversionResultException { };
     return GPUColorDict {

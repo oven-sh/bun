@@ -33,8 +33,6 @@
 
 namespace WebCore {
 
-template<typename T> struct Converter;
-
 template<typename IDL> class ConversionResult;
 
 struct ConversionResultException {};
@@ -168,7 +166,10 @@ template<typename T>
 class ConversionResult {
 public:
     using IDL = T;
-    using ReturnType = typename Converter<IDL>::ReturnType;
+    // Not Converter<IDL>::ReturnType: the older converters return a different shape than they
+    // should carry here (see convertResult() in JSDOMConvertBase.h), and the newer ones declare
+    // this very class as their ReturnType.
+    using ReturnType = typename IDL::ConversionResultType;
 
     static ConversionResult exception() { return ConversionResult(ConversionResultException()); }
 

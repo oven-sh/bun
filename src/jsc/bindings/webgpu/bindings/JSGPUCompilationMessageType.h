@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUCompilationMessageType);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUCompilationMessageType);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUCompilationMessageType);
 
 template<> std::optional<GPUCompilationMessageType> parseEnumerationFromString<GPUCompilationMessageType>(const String&);
 template<> std::optional<GPUCompilationMessageType> parseEnumeration<GPUCompilationMessageType>(JSC::JSGlobalObject&, JSC::JSValue);

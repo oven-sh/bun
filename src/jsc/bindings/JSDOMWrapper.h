@@ -63,6 +63,7 @@ public:
     static void subspaceFor(JSC::VM&) { RELEASE_ASSERT_NOT_REACHED(); }
 
     JSDOMGlobalObject* globalObject() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::globalObject()); }
+    JSDOMGlobalObject* realm() const { return uncheckedDowncast<JSDOMGlobalObject>(JSC::JSNonFinalObject::realm()); }
     ScriptExecutionContext* scriptExecutionContext() const { return globalObject()->scriptExecutionContext(); }
 
 protected:

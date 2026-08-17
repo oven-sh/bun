@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUProgrammableStage> = true;
 template<> ConversionResult<IDLDictionary<GPUProgrammableStage>> convertDictionary<GPUProgrammableStage>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

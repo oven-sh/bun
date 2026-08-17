@@ -26,7 +26,7 @@
 namespace WebCore {
 
 String convertEnumerationToString(GPUStencilOperation);
-template<> JSC::JSString* convertEnumerationToJS(JSC::VM&, GPUStencilOperation);
+template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, GPUStencilOperation);
 
 template<> std::optional<GPUStencilOperation> parseEnumerationFromString<GPUStencilOperation>(const String&);
 template<> std::optional<GPUStencilOperation> parseEnumeration<GPUStencilOperation>(JSC::JSGlobalObject&, JSC::JSValue);

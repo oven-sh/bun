@@ -47,6 +47,10 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
     }
     case MessageEventInterfaceType:
         return createWrapper<MessageEvent>(globalObject, WTF::move(impl));
+#if ENABLE(WEBGPU)
+    case GPUUncapturedErrorEventInterfaceType:
+        return createWrapper<GPUUncapturedErrorEvent>(globalObject, WTF::move(impl));
+#endif
     default: {
         break;
     }

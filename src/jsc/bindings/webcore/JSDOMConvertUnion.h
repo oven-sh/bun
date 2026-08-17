@@ -28,9 +28,11 @@
 #include "IDLTypes.h"
 #include "JSDOMBinding.h"
 #include "JSDOMConvertBase.h"
+#include "JSDOMConvertBoolean.h"
 #include "JSDOMConvertBufferSource.h"
 #include "JSDOMConvertInterface.h"
 #include "JSDOMConvertNull.h"
+#include "JSDOMConvertObject.h"
 #include <JavaScriptCore/IteratorOperations.h>
 #include <variant>
 
@@ -394,6 +396,182 @@ template<typename... T> struct JSConverter<IDLUnion<T...>> {
     static constexpr bool needsGlobalObject = true;
 
     using Sequence = brigand::make_sequence<brigand::ptrdiff_t<0>, std::variant_size<ImplementationType>::value>;
+
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const ImplementationType& variant)
+    {
+        auto index = variant.index();
+
+        std::optional<JSC::JSValue> returnValue;
+        brigand::for_each<Sequence>([&](auto&& type) {
+            using I = typename std::remove_cvref_t<decltype(type)>::type;
+            if (I::value == index) {
+                ASSERT(!returnValue);
+                returnValue = toJS<brigand::at<TypeList, I>>(lexicalGlobalObject, globalObject, std::get<I::value>(variant));
+            }
+        });
+
+        ASSERT(returnValue);
+        return returnValue.value();
+    }
+};
+
+// BufferSource is spelled IDLUnion<IDLArrayBufferView, IDLArrayBuffer> by the
+// generator; [AllowShared] wraps that whole union, and the shared-ness is
+// really a property of its two members.
+template<> struct Converter<IDLAllowSharedAdaptor<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>> : DefaultConverter<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>> {
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        return Converter<IDLUnion<IDLAllowSharedAdaptor<IDLArrayBufferView>, IDLAllowSharedAdaptor<IDLArrayBuffer>>>::convert(lexicalGlobalObject, value);
+    }
+};
+
+// IDLVariantUnion (IDLTypes.h). Every member is converted through
+// convertResult<>, so the Variant is only built once the member conversion has
+// succeeded; members that can fail without a fallback value (the dictionaries
+// holding Ref<>s) therefore work here, unlike in Converter<IDLUnion>.
+template<typename T>
+struct IsIDLVariantUnionMember : public std::integral_constant<bool,
+                                     std::is_same_v<T, IDLNull> || std::is_same_v<T, IDLObject> || std::is_same_v<T, IDLBoolean> || IsIDLNumber<T>::value || IsIDLStringOrEnumeration<T>::value
+                                         || IsIDLInterface<T>::value || IsIDLDictionary<T>::value || IsIDLSequence<T>::value || IsIDLRecord<T>::value> {
+};
+
+template<typename... T> struct Converter<IDLVariantUnion<T...>> : DefaultConverter<IDLVariantUnion<T...>> {
+    using Type = IDLVariantUnion<T...>;
+    using TypeList = typename Type::TypeList;
+    using Result = ConversionResult<Type>;
+    using ReturnType = Result;
+
+    static_assert(brigand::all<TypeList, IsIDLVariantUnionMember<brigand::_1>>::value, "IDLVariantUnion supports null, object, boolean, numeric, string, enumeration, interface, dictionary, sequence and record members; buffer sources keep using IDLUnion.");
+
+    using NumericTypeList = brigand::filter<TypeList, IsIDLNumber<brigand::_1>>;
+    static constexpr bool hasNumericType = brigand::size<NumericTypeList>::value != 0;
+    static_assert(brigand::size<NumericTypeList>::value <= 1, "There can be 0 or 1 numeric types in an IDLVariantUnion.");
+    using NumericType = ConditionalFront<NumericTypeList, hasNumericType>;
+
+    using StringTypeList = brigand::filter<TypeList, IsIDLStringOrEnumeration<brigand::_1>>;
+    static constexpr bool hasStringType = brigand::size<StringTypeList>::value != 0;
+    static_assert(brigand::size<StringTypeList>::value <= 1, "There can be 0 or 1 string types in an IDLVariantUnion.");
+    using StringType = ConditionalFront<StringTypeList, hasStringType>;
+
+    using SequenceTypeList = brigand::filter<TypeList, IsIDLSequence<brigand::_1>>;
+    static constexpr bool hasSequenceType = brigand::size<SequenceTypeList>::value != 0;
+    static_assert(brigand::size<SequenceTypeList>::value <= 1, "There can be 0 or 1 sequence types in an IDLVariantUnion.");
+    using SequenceType = ConditionalFront<SequenceTypeList, hasSequenceType>;
+
+    using DictionaryTypeList = brigand::filter<TypeList, IsIDLDictionary<brigand::_1>>;
+    static constexpr bool hasDictionaryType = brigand::size<DictionaryTypeList>::value != 0;
+    static_assert(brigand::size<DictionaryTypeList>::value <= 1, "There can be 0 or 1 dictionary types in an IDLVariantUnion.");
+    using DictionaryType = ConditionalFront<DictionaryTypeList, hasDictionaryType>;
+
+    using RecordTypeList = brigand::filter<TypeList, IsIDLRecord<brigand::_1>>;
+    static constexpr bool hasRecordType = brigand::size<RecordTypeList>::value != 0;
+    static_assert(brigand::size<RecordTypeList>::value <= 1, "There can be 0 or 1 record types in an IDLVariantUnion.");
+    using RecordType = ConditionalFront<RecordTypeList, hasRecordType>;
+
+    static constexpr bool hasNullType = brigand::any<TypeList, std::is_same<IDLNull, brigand::_1>>::value;
+    static constexpr bool hasObjectType = brigand::any<TypeList, std::is_same<IDLObject, brigand::_1>>::value;
+    static constexpr bool hasBooleanType = brigand::any<TypeList, std::is_same<IDLBoolean, brigand::_1>>::value;
+    static constexpr bool hasInterfaceType = brigand::any<TypeList, IsIDLInterface<brigand::_1>>::value;
+    using InterfaceTypeList = brigand::filter<TypeList, IsIDLInterface<brigand::_1>>;
+
+    // The step numbers are those of https://webidl.spec.whatwg.org/#es-union;
+    // the steps for the member kinds excluded above are omitted.
+    static Result convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
+    {
+        auto& vm = JSC::getVM(&lexicalGlobalObject);
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        // 2. If the union type includes a nullable type and V is null or undefined, then return the IDL value null.
+        if constexpr (hasNullType) {
+            if (value.isUndefinedOrNull())
+                RELEASE_AND_RETURN(scope, convertResult<IDLNull>(lexicalGlobalObject, value));
+        }
+
+        // 4. If V is null or undefined, then if types includes a dictionary type, return the result of converting V to that dictionary type.
+        if constexpr (hasDictionaryType) {
+            if (value.isUndefinedOrNull())
+                RELEASE_AND_RETURN(scope, convertResult<DictionaryType>(lexicalGlobalObject, value));
+        }
+
+        // 5. If V is a platform object, then if types includes an interface type that V implements, return the IDL value that is a reference to the object V.
+        if constexpr (hasInterfaceType) {
+            std::optional<Result> result;
+            brigand::for_each<InterfaceTypeList>([&](auto&& type) {
+                if (result)
+                    return;
+                using InterfaceType = typename std::remove_cvref_t<decltype(type)>::type;
+                if (auto* wrapped = JSToWrappedOverloader<typename InterfaceType::RawType>::toWrapped(lexicalGlobalObject, value))
+                    result = ConversionResult<InterfaceType> { *wrapped };
+            });
+            if (result)
+                return WTF::move(*result);
+        }
+
+        // 11. If V is an Object, then:
+        if constexpr (hasSequenceType || hasDictionaryType || hasRecordType || hasObjectType) {
+            if (auto* object = value.getObject()) {
+                //     1. If types includes a sequence type, then let method be ? GetMethod(V, %Symbol.iterator%);
+                //        if method is not undefined, return the result of creating a sequence of that type from V and method.
+                if constexpr (hasSequenceType) {
+                    auto method = JSC::iteratorMethod(&lexicalGlobalObject, object);
+                    RETURN_IF_EXCEPTION(scope, ConversionResultException {});
+                    if (!method.isUndefined())
+                        RELEASE_AND_RETURN(scope, convertResult<SequenceType>(lexicalGlobalObject, object, method));
+                }
+
+                //     3. If types includes a dictionary type, then return the result of converting V to that dictionary type.
+                if constexpr (hasDictionaryType)
+                    RELEASE_AND_RETURN(scope, convertResult<DictionaryType>(lexicalGlobalObject, value));
+
+                //     4. If types includes a record type, then return the result of converting V to that record type.
+                if constexpr (hasRecordType)
+                    RELEASE_AND_RETURN(scope, convertResult<RecordType>(lexicalGlobalObject, value));
+
+                //     6. If types includes object, then return the IDL value that is a reference to the object V.
+                if constexpr (hasObjectType)
+                    RELEASE_AND_RETURN(scope, convertResult<IDLObject>(lexicalGlobalObject, value));
+            }
+        }
+
+        // 12. If V is a Boolean value, then if types includes boolean, return the result of converting V to boolean.
+        if constexpr (hasBooleanType) {
+            if (value.isBoolean())
+                RELEASE_AND_RETURN(scope, convertResult<IDLBoolean>(lexicalGlobalObject, value));
+        }
+
+        // 13. If V is a Number value, then if types includes a numeric type, return the result of converting V to that numeric type.
+        if constexpr (hasNumericType) {
+            if (value.isNumber())
+                RELEASE_AND_RETURN(scope, convertResult<NumericType>(lexicalGlobalObject, value));
+        }
+
+        // 15. If types includes a string type, then return the result of converting V to that type.
+        if constexpr (hasStringType)
+            RELEASE_AND_RETURN(scope, convertResult<StringType>(lexicalGlobalObject, value));
+
+        // 17. If types includes a numeric type, then return the result of converting V to that numeric type.
+        if constexpr (hasNumericType)
+            RELEASE_AND_RETURN(scope, convertResult<NumericType>(lexicalGlobalObject, value));
+
+        // 18. If types includes boolean, then return the result of converting V to boolean.
+        if constexpr (hasBooleanType)
+            RELEASE_AND_RETURN(scope, convertResult<IDLBoolean>(lexicalGlobalObject, value));
+
+        // 20. Throw a TypeError.
+        throwTypeError(&lexicalGlobalObject, scope);
+        return ConversionResultException {};
+    }
+};
+
+template<typename... T> struct JSConverter<IDLVariantUnion<T...>> {
+    using Type = IDLVariantUnion<T...>;
+    using TypeList = typename Type::TypeList;
+    using ImplementationType = typename Type::ImplementationType;
+
+    static constexpr bool needsState = true;
+    static constexpr bool needsGlobalObject = true;
+
+    using Sequence = brigand::make_sequence<brigand::ptrdiff_t<0>, WTF::VariantSizeV<ImplementationType>>;
 
     static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const ImplementationType& variant)
     {

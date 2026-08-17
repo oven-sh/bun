@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPURenderPassColorAttachment> = true;
 template<> ConversionResult<IDLDictionary<GPURenderPassColorAttachment>> convertDictionary<GPURenderPassColorAttachment>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

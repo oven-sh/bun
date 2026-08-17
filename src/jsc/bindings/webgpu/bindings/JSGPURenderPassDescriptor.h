@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPURenderPassDescriptor> = true;
 template<> ConversionResult<IDLDictionary<GPURenderPassDescriptor>> convertDictionary<GPURenderPassDescriptor>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

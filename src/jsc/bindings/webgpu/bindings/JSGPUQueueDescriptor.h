@@ -25,6 +25,7 @@
 
 namespace WebCore {
 
+template<> inline constexpr bool isConversionResultDictionary<GPUQueueDescriptor> = true;
 template<> ConversionResult<IDLDictionary<GPUQueueDescriptor>> convertDictionary<GPUQueueDescriptor>(JSC::JSGlobalObject&, JSC::JSValue);
 
 } // namespace WebCore

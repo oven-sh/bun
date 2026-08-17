@@ -1,7 +1,7 @@
 import { pathToFileURL } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { chmodSync, chownSync, mkdirSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, bunRun, isLinux, isMacOS, isRoot, isWindows, joinP, tempDir, tempDirWithFiles } from "harness";
 import { join, resolve, sep } from "path";
 
 const fixture = (...segs: string[]) => resolve(import.meta.dir, "fixtures", ...segs);
@@ -1043,7 +1043,6 @@ describe("dangling symlinks in node_modules", () => {
   // Root bypasses DAC, so chmod 0 won't yield EACCES. When running as root on
   // Linux we drop to `nobody` via runuser (and chown the temp dir so the
   // fixture can chmod it back). Otherwise we run the fixture directly.
-  const isRoot = !isWindows && process.getuid?.() === 0;
   const nobody = (() => {
     try {
       // /etc/passwd format: name:x:uid:gid:gecos:home:shell

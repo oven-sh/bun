@@ -151,7 +151,8 @@ test.concurrent("security scanner does not run on bun update when not configured
     expect(exitCode).toBe(0);
 
     expect(urls).toEqual([`${ctx.registry_url}moo`, `${ctx.registry_url}moo-0.2.0.tgz`]);
-    expect(await mooState(ctx)).toEqual({ range: "^0.2.0", locked: "moo@0.2.0", installed: "0.2.0" });
+    // `>=0.1.0` still covers 0.2.0, so the literal is kept.
+    expect(await mooState(ctx)).toEqual({ range: ">=0.1.0", locked: "moo@0.2.0", installed: "0.2.0" });
   } finally {
     destroyTestContext(ctx);
   }

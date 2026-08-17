@@ -4,7 +4,7 @@
 // it must be reported as a plain error with exit code 1 instead of going
 // through the crash reporter ("oh no: Bun has crashed", bun.report link).
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, compileFixture, isLinux, isMusl, tempDir } from "harness";
+import { bunEnv, bunExe, compileFixture, isASAN, isLinux, isMusl, tempDir } from "harness";
 import { join } from "node:path";
 
 const cc = Bun.which("cc") || Bun.which("gcc") || Bun.which("clang");
@@ -21,8 +21,9 @@ int pthread_create(pthread_t *thread, const pthread_attr_t *attr, void *(*start)
 }
 `;
 
-// bun-musl is statically linked, so LD_PRELOAD cannot intercept pthread_create.
-describe.skipIf(!isLinux || isMusl || !cc)("bun install when the HTTP client thread cannot be started", () => {
+// bun-musl is statically linked, and ASAN builds carry their own pthread_create
+// interceptor in the executable, so LD_PRELOAD cannot intercept pthread_create in either.
+describe.skipIf(!isLinux || isMusl || isASAN || !cc)("bun install when the HTTP client thread cannot be started", () => {
   test.concurrent.each([
     // [pthread_create result, how it is reported, whether the thread-limit hint applies]
     ["EAGAIN", "EAGAIN", true],

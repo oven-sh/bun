@@ -671,12 +671,11 @@ importers:
     });
     fs.chmodSync(join(dir, "package.json"), 0o444);
 
+    // The migrated package.json is written with the command's other package.json edits, after the lockfile.
     const { stderr, exitCode } = await runBun(dir, "install");
-    expect(stderr).toContain("failed to move pnpm-workspace.yaml to workspaces in package.json");
-    expect(stderr).not.toContain("copied pnpm");
+    expect(stderr).toContain("error: failed to write package.json: EACCES");
     expect(exitCode).toBe(1);
 
     expect(fs.readFileSync(join(dir, "package.json"), "utf8")).toBe(original);
-    expect(fs.existsSync(join(dir, "bun.lock"))).toBe(false);
   });
 });

@@ -21,6 +21,7 @@
 
 #include "BunClientData.h"
 #include "CallSite.h"
+#include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
@@ -243,11 +244,11 @@ WTF::String formatStackTrace(
     // file's map once instead of per frame.
     WTF::Vector<ZigStackFrame, 8> remappedFrames;
     WTF::Vector<WTF::String, 8> sourceURLs;
-    WTF::Vector<LineColumn, 8> originalLineColumns;
+    WTF::Vector<ZigStackFramePosition, 8> originalPositions;
     remappedFrames.grow(framesCount);
     memset(remappedFrames.begin(), 0, sizeof(ZigStackFrame) * framesCount);
     sourceURLs.grow(framesCount);
-    originalLineColumns.grow(framesCount);
+    originalPositions.grow(framesCount);
     bool anyRemap = false;
 
     for (size_t i = 0; i < framesCount; i++) {
@@ -260,11 +261,11 @@ WTF::String formatStackTrace(
         remappedFrame.position.line_zero_based = -1;
         remappedFrame.position.column_zero_based = -1;
         remappedFrame.position.byte_position = -1;
-        originalLineColumns[i] = {};
+        originalPositions[i] = remappedFrame.position;
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        originalPositions[i] = Bun::getLineColumnForStackFrame(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {
@@ -280,8 +281,7 @@ WTF::String formatStackTrace(
         if (isDefinitelyNotRunninginNodeVMGlobalObject || isDefaultGlobalObjectInAFinalizer) {
             // https://github.com/oven-sh/bun/issues/3595
             if (!sourceURLs[i].isEmpty()) {
-                remappedFrame.position.line_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line).zeroBasedInt();
-                remappedFrame.position.column_zero_based = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column).zeroBasedInt();
+                remappedFrame.position = originalPositions[i];
                 remappedFrame.source_url = Bun::toStringRef(sourceURLs[i]);
                 anyRemap = true;
             }
@@ -316,8 +316,8 @@ WTF::String formatStackTrace(
         WTF::String sourceURLForFrame = sourceURLs[i];
 
         if (frame.hasLineAndColumnInfo()) {
-            originalLine = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].line);
-            originalColumn = OrdinalNumber::fromOneBasedInt(originalLineColumns[i].column);
+            originalLine = originalPositions[i].line();
+            originalColumn = originalPositions[i].column();
             displayLine = originalLine;
             displayColumn = originalColumn;
 
@@ -576,6 +576,12 @@ static JSValue computeErrorInfoToJSValue(JSC::VM& vm, Vector<StackFrame>& stackT
     return computeErrorInfoToJSValueWithoutSkipping(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 }
 
+// ErrorInstance keeps error.line / error.column unsigned; a node:vm offset can put a position at or below 0, which reads as unset (0) there.
+static unsigned toUnsignedOneBased(OrdinalNumber ordinal)
+{
+    return static_cast<unsigned>(std::max(ordinal.oneBasedInt(), 0));
+}
+
 WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, void* bunErrorData)
 {
     UNUSED_PARAM(bunErrorData);
@@ -608,8 +614,8 @@ WTF::String computeErrorInfoWrapperToString(JSC::VM& vm, Vector<StackFrame>& sta
         result = WTF::emptyString();
     }
 
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
+    line_in = toUnsignedOneBased(line);
+    column_in = toUnsignedOneBased(column);
 
     return result;
 }
@@ -645,8 +651,8 @@ JSC::JSValue computeErrorInfoWrapperToJSValue(JSC::VM& vm, Vector<StackFrame>& s
 
     JSValue result = computeErrorInfoToJSValue(vm, stackTrace, line, column, sourceURL, errorInstance, bunErrorData);
 
-    line_in = line.oneBasedInt();
-    column_in = column.oneBasedInt();
+    line_in = toUnsignedOneBased(line);
+    column_in = toUnsignedOneBased(column);
 
     // materializeErrorInfoIfNeeded putDirect()s this unconditionally; an empty JSValue
     // in property storage crashes the next read. https://github.com/oven-sh/bun/issues/34095

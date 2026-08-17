@@ -1,12 +1,30 @@
 #include "root.h"
+#include "ErrorStackFrame.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "headers-handwritten.h"
-#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/StackFrame.h"
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
 
 namespace Bun {
 using namespace JSC;
+
+void applyNegativeSourceStart(CodeBlock* code, int& lineZeroBased, int& columnZeroBased)
+{
+    auto* provider = code->source().provider();
+    if (!provider)
+        return;
+
+    // Nested functions share the program's provider, so this is the whole source's start.
+    TextPosition start = provider->startPosition();
+    int startLine = start.m_line.zeroBasedInt();
+    int startColumn = start.m_column.zeroBasedInt();
+
+    // JSC applies the start column to the first physical line only, reported as the clamped start line.
+    if (startColumn < 0 && lineZeroBased == std::max(startLine, 0))
+        columnZeroBased += startColumn;
+    if (startLine < 0)
+        lineZeroBased += startLine;
+}
 
 /// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
 /// crosses line boundaries, and thus requires the source code in order to properly compute
@@ -95,6 +113,20 @@ ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::
         break;
     }
 
+    // After the walk: it works in JSC's coordinates and may end on a different line.
+    applyNegativeSourceStart(code, pos.line_zero_based, pos.column_zero_based);
+    return pos;
+}
+
+ZigStackFramePosition getLineColumnForStackFrame(const StackFrame& frame)
+{
+    auto lineColumn = frame.computeLineAndColumn();
+    ZigStackFramePosition pos {
+        .line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt(),
+        .column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt(),
+        .byte_position = -1,
+    };
+    applyNegativeSourceStart(frame.codeBlock(), pos.line_zero_based, pos.column_zero_based);
     return pos;
 }
 

@@ -351,6 +351,11 @@ impl ServerWebSocket {
             );
         }
 
+        // `to_slice` can run user `toString()`, which may close the socket.
+        if self.is_closed() {
+            return Ok(JSValue::FALSE);
+        }
+
         Ok(JSValue::from(op(self.websocket(), topic.slice())))
     }
 
@@ -1100,6 +1105,9 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
+            if self.is_closed() {
+                return Ok(JSValue::js_number(0.0));
+            }
             let view = js_string.view(global_this);
             let slice = view.to_slice();
 
@@ -1145,6 +1153,9 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
+        if self.is_closed() {
+            return Ok(JSValue::js_number(0.0));
+        }
         let view = js_string.view(global_this);
         let slice = view.to_slice();
 
@@ -1270,6 +1281,9 @@ impl ServerWebSocket {
                     let buffer = string_value.slice();
                     if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));
+                    }
+                    if self.is_closed() {
+                        return Ok(JSValue::js_number(0.0));
                     }
                     return Ok(send_status_to_js(
                         self.websocket().send(buffer, opcode, false, true),

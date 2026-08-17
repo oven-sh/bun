@@ -2,21 +2,11 @@
 
 use core::ffi::{c_char, c_int};
 
-pub use crate::shared::{
-    DataType, FlushValue, ReturnCode, alloc_func, free_func, struct_internal_state, z_alloc_fn,
-    z_free_fn, z_stream, z_streamp, zStream_struct,
-};
+pub use crate::shared::{DataType, FlushValue, ReturnCode, z_stream, z_streamp, zStream_struct};
 
 unsafe extern "C" {
     pub safe fn zlibVersion() -> *const c_char;
 
-    pub fn deflateInit_(
-        strm: z_streamp,
-        level: c_int,
-        version: *const c_char,
-        stream_size: c_int,
-    ) -> ReturnCode;
-    pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn deflateInit2_(
         strm: z_streamp,
         level: c_int,

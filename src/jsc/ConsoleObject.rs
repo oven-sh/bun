@@ -1996,12 +1996,6 @@ pub mod formatter {
     }
 
     impl TagPayload {
-        /// The constructor lives here as well as on the bare
-        /// discriminant `Tag`. Callers in sibling modules use either name.
-        #[inline]
-        pub fn get(value: JSValue, global_this: &JSGlobalObject) -> JsResult<TagResult> {
-            Tag::get(value, global_this)
-        }
         pub(crate) fn is_primitive(self) -> bool {
             self.tag().is_primitive()
         }

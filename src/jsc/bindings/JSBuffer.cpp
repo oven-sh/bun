@@ -486,11 +486,6 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
     return createBuffer(lexicalGlobalObject, data.data(), data.size());
 }
 
-JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const char* ptr, size_t length)
-{
-    return createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(ptr), length);
-}
-
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
 {
     return createBuffer(lexicalGlobalObject, data.begin(), data.size());
@@ -552,12 +547,6 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGl
 static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
 {
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
-}
-
-JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> bytes, WebCore::BufferEncodingType encoding)
-{
-    WTF::StringView view(bytes);
-    return constructFromEncoding(lexicalGlobalObject, view, encoding);
 }
 
 JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, WTF::StringView view, WebCore::BufferEncodingType encoding)

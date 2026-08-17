@@ -34,29 +34,11 @@ HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DEFINITIONS)
 
 #undef HTTP_HEADERS_ACCESSOR_DEFINITIONS
 
-#define HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES(literal, name) \
-    &HTTPHeaderIdentifiers::name##Identifier,
-
-    using IdentifierGetter
-    = JSC::Identifier & (HTTPHeaderIdentifiers::*)(JSC::VM&);
-
-static IdentifierGetter headerIdentifierFields[]
-    = {
-          HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES)
-      };
-
-JSC::Identifier& HTTPHeaderIdentifiers::identifierFor(JSC::VM& vm, HTTPHeaderName name)
-{
-    return (this->*headerIdentifierFields[static_cast<size_t>(name)])(vm);
-}
-
-#undef HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES
-
 #define HTTP_HEADERS_STRING_ARRAY_ENTRIES(literal, name) \
     &HTTPHeaderIdentifiers::name##String,
 
-using StringGetter
-    = JSC::JSString* (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObject*);
+    using StringGetter
+    = JSC::JSString * (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObject*);
 
 static StringGetter headerStringFields[]
     = {

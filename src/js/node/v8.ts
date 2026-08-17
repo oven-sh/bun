@@ -5,10 +5,8 @@ const { hideFromStack, throwNotImplemented } = require("internal/shared");
 const { validateString, validateOneOf } = require("internal/validators");
 const { isDataView, isAnyArrayBuffer } = require("node:util/types");
 const jsc: typeof import("bun:jsc") = require("bun:jsc");
-const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler } = $cpp(
-  "NodeV8.cpp",
-  "Bun::createNodeV8Binding",
-);
+const { isStringOneByteRepresentation, startGCProfiler, stopGCProfiler, discardGCProfiler, maxOldSpaceSizeBytes } =
+  $cpp("NodeV8.cpp", "Bun::createNodeV8Binding");
 
 const DateNow = Date.now;
 const FunctionPrototypeCall = Function.prototype.call;
@@ -168,34 +166,6 @@ function totalmem() {
   return totalmem_;
 }
 
-let maxOldSpaceSize_ = -1;
-
-// --max-old-space-size is enforced (the process aborts when a full GC cannot
-// keep the heap under it), so report it like V8 does. Last occurrence wins.
-function maxOldSpaceSizeBytes() {
-  if (maxOldSpaceSize_ === -1) {
-    let megabytes = 0;
-    const execArgv = process.execArgv;
-    for (let i = 0; i < execArgv.length; i++) {
-      const arg = execArgv[i];
-      let value: string | undefined;
-      if (arg.startsWith("--max-old-space-size=") || arg.startsWith("--max_old_space_size=")) {
-        value = arg.slice("--max-old-space-size=".length);
-      } else if (arg === "--max-old-space-size" || arg === "--max_old_space_size") {
-        value = execArgv[i + 1];
-      }
-      if (value !== undefined) {
-        // 0 is a valid value meaning "no limit", so it must reset an
-        // earlier positive value like the native parser does.
-        const parsed = Number.parseInt(value, 10);
-        if (parsed >= 0) megabytes = parsed;
-      }
-    }
-    maxOldSpaceSize_ = megabytes * 1024 * 1024;
-  }
-  return maxOldSpaceSize_;
-}
-
 function getHeapStatistics() {
   const stats = jsc.heapStats();
   const memory = jsc.memoryUsage();
@@ -212,7 +182,9 @@ function getHeapStatistics() {
     total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
     total_allocated_bytes: stats.heapCapacity,
-    heap_size_limit: maxOldSpaceSizeBytes() || Math.min(memory.peak * 10, totalmem()),
+    // --max-old-space-size is enforced (the process aborts when a full GC
+    // cannot keep the heap under it), so report it like V8 does.
+    heap_size_limit: maxOldSpaceSizeBytes || Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
     peak_malloced_memory: memory.peak,
 

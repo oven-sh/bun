@@ -2594,16 +2594,6 @@ impl VirtualMachine {
         unsafe {
             (*uws::Loop::get()).internal_loop_data.jsc_vm = jsc_vm.cast();
         }
-        // uSockets calls that dispatch socket callbacks (script) are checked against this thread's VM.
-        uws::js::install(|f| match VirtualMachine::get_or_null() {
-            // SAFETY: a non-null per-thread VM is live for its thread.
-            Some(vm) => crate::host_fn::from_js_host_call_generic(unsafe { (*vm).global() }, f),
-            None => {
-                f();
-                Ok(())
-            }
-        });
-
         // `ParentDeathWatchdog` install for the main thread.
         // Must run AFTER `ensure_waker()` (above) has set `event_loop_handle`,
         // since on macOS the kqueue registration resolves the platform loop via

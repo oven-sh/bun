@@ -379,31 +379,22 @@ impl WindowsNamedPipe {
 pub mod error;
 
 /// uSockets calls that dispatch a socket's callbacks synchronously (`close` → `on_close` / `on_connect_error`)
-/// enter script whenever a JS VM drives this thread's loop. This crate cannot see the VM; the JS layer installs
-/// how to run such a call checked, and those methods return [`js::JsResult`] for every caller to handle.
+/// enter script whenever a JS VM drives this thread's loop, so they return [`js::JsResult`]. The check itself
+/// lives in bun_jsc (this crate cannot depend on it) and is reached by link-time dispatch, like the
+/// `UpgradedDuplex__*` shims above.
 pub mod js {
     pub use bun_core::JsError;
-    use core::sync::atomic::{AtomicPtr, Ordering};
     pub type JsResult<T> = core::result::Result<T, JsError>;
-    /// Runs the closure; `Err` if it left a JS exception pending on this thread's VM, `Ok` on a thread with none.
-    pub type CheckedRunner = fn(&mut dyn FnMut()) -> JsResult<()>;
-    static RUNNER: AtomicPtr<()> = AtomicPtr::new(core::ptr::null_mut());
 
-    /// Installed once by bun_jsc when the first VM starts.
-    pub fn install(runner: CheckedRunner) {
-        RUNNER.store(runner as *mut (), Ordering::Release);
+    unsafe extern "Rust" {
+        /// Defined in `bun_jsc::host_fn`: runs `f` under an exception scope on this thread's VM and returns
+        /// what it left; on a thread with no VM just runs it.
+        safe fn Bun__uws__runChecked(f: &mut dyn FnMut()) -> JsResult<()>;
     }
 
     #[inline]
     pub fn checked(mut f: impl FnMut()) -> JsResult<()> {
-        let runner = RUNNER.load(Ordering::Acquire);
-        if runner.is_null() {
-            f();
-            return Ok(());
-        }
-        // SAFETY: only ever stored from a `CheckedRunner` in `install`.
-        let runner = unsafe { core::mem::transmute::<*mut (), CheckedRunner>(runner) };
-        runner(&mut f)
+        Bun__uws__runChecked(&mut f)
     }
 }
 pub use error::{Error, Result};

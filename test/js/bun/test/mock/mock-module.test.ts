@@ -518,6 +518,41 @@ test("factory mocks shaped { __esModule, default } unwrap to the default for req
   expect(require("automock-esm-interop-fresh")).toEqual({ fresh: 2 });
 });
 
+test("re-mocking an already-required module with an async factory doesn't hang", async () => {
+  // The factory's promise is still pending while mock.module() patches the
+  // cached CJS entry; the unwrap loop must break out instead of spinning on
+  // the pending promise forever. Spawned so a regression fails by timeout
+  // instead of hanging the suite.
+  using dir = tempDir("async-remock", {
+    "real.ts": `export const value = 1;`,
+    "fixture.test.ts": `
+      import { test, expect, mock } from "bun:test";
+      test("async re-mock completes", async () => {
+        require("./real.ts");
+        mock.module("./real.ts", async () => {
+          await Bun.sleep(0);
+          return { value: 2 };
+        });
+        expect(true).toBe(true);
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "fixture.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+    stdout: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toContain("1 pass");
+  expect(stderr).not.toContain("0 pass");
+  expect(exitCode).toBe(0);
+});
+
 test("jest.mock auto-mocks a plugin-provided module", () => {
   Bun.plugin({
     name: "auto-mock-plugin-test",

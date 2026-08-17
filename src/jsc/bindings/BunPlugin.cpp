@@ -799,21 +799,19 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         if (result && result.isObject()) {
             while (JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result)) {
                 switch (promise->status()) {
-                case JSC::JSPromise::Status::Rejected: {
+                case JSC::JSPromise::Status::Rejected:
                     result = promise->result();
                     scope.throwException(globalObject, result);
                     return {};
-                    break;
-                }
-                case JSC::JSPromise::Status::Fulfilled: {
+                case JSC::JSPromise::Status::Fulfilled:
                     result = promise->result();
+                    continue;
+                case JSC::JSPromise::Status::Pending:
+                    // Can't block synchronously here; surface the pending
+                    // promise as-is so the caller can await.
                     break;
                 }
-                // TODO: blocking wait for promise
-                default: {
-                    break;
-                }
-                }
+                break;
             }
         }
 

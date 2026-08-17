@@ -1166,9 +1166,7 @@ impl Stringifier {
             Negatable::<Npm::Architecture>::to_json(meta.arch, &mut AsFmt::new(writer))?;
         }
 
-        // Undeclared and "both" are the same thing at install time, so only a
-        // restriction to one libc is written. `Negatable::to_json` would spell
-        // it as the negation of the other one ("!musl"); the name is clearer.
+        // Only a restriction to one libc matters at install time; written by name rather than `Negatable`'s "!musl".
         if let Some(libc) = meta.libc.single_name() {
             if any {
                 writer.write_byte(b',')?;
@@ -3254,11 +3252,8 @@ pub(crate) fn parse_into_binary_lockfile(
             }
         }
 
-        // then each package dependency
-        //
-        // A package printed at several paths comes through here once per path; see
-        // `RowEvidence` for which path's find an edge ends up bound to. Edges bound by
-        // version below do not depend on the path, so every row writes them.
+        // then each package dependency; a package printed at several paths comes through once per
+        // path (see `RowEvidence`; edges bound by version do not depend on the path).
         let mut bound_by: Vec<RowEvidence> = vec![RowEvidence::Unbound; dependencies.len()];
         for row in pkg_rows {
             let pkg_path = row.key.slice();
@@ -3274,9 +3269,8 @@ pub(crate) fn parse_into_binary_lockfile(
                 continue;
             }
 
-            // A copy below another copy of its package has no node_modules of its own
-            // (`Tree::process_subtree`), so walking up from it finds the versions it sits
-            // under rather than the package's resolutions; the copy above binds those.
+            // A copy below another copy of itself has no node_modules of its own (`Tree::process_subtree`);
+            // the copy above binds the package's edges.
             if pkg_map.is_below_copy_of(pkg_path, pkg_id) {
                 continue;
             }
@@ -3368,13 +3362,9 @@ pub(crate) fn parse_into_binary_lockfile(
     Ok(())
 }
 
-/// The catalog-resolved range of a peer edge the fresh resolver binds by
-/// version in its `install_peer` pass. Two exemptions keep the printed tree's
-/// path walk, which reproduces their saved binding exactly: optional peers are
-/// bound to the hoisted-tree sibling by `process_subtree` instead, and a bundled
-/// peer is always placed under its own package by `process_subtree`, so its
-/// entry is always printed and, like every other bundled edge (`bun update` and
-/// dedupe hold them in place too), it stays on the version recorded there.
+/// The catalog-resolved range of a peer edge the fresh resolver binds by version in its `install_peer`
+/// pass. Optional peers (bound to the hoisted-tree sibling by `process_subtree`) and bundled peers (always
+/// printed under their own package) keep the path walk, which reproduces their saved binding exactly.
 fn deferred_peer_range<'a>(
     dep: &'a Dependency,
     catalogs: &'a CatalogMap,
@@ -3500,17 +3490,9 @@ pub(crate) fn resolve_peer_dep_by_range(
     })
 }
 
-/// Call after hoisting. The printed tree is the lockfile's only record of which packages
-/// exist, and a package whose incoming edges are all ranged peers that `Tree::hoist_dependency`
-/// deduped onto another version of the same name is in no tree at all (pnpm's auto-installed
-/// peers arrive like this from pnpm-lock.yaml; adding a pinned version of a package that was
-/// only auto-installed for a peer creates the same shape). `resolve_peer_dep_version_based`
-/// therefore binds such edges to another package on reload, and the install that wrote the
-/// lockfile links something different from every install that reads it. Binding them here over
-/// the packages the print will contain makes the writing install match its readers.
-///
-/// Every edge rebound here was deduped during hoisting, so it is not in `hoisted_dependencies`
-/// and the tree stays valid; the old target is dropped by the next `clean_with_logger`.
+/// Call after hoisting: a package reached only by ranged peers the hoister deduped onto another version is
+/// in no tree, so a reload would bind those edges elsewhere; bind them now over the packages the print will
+/// contain. Such edges are not in `hoisted_dependencies`, so the tree stays valid; `clean` drops the old target.
 pub(crate) fn rebind_peers_to_printed_packages(
     lockfile: &mut BinaryLockfile,
 ) -> Result<(), bun_alloc::AllocError> {

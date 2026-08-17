@@ -756,6 +756,7 @@ fn send_audit_request(
         None,
         http::FetchRedirect::Follow,
     );
+    req.client.flags.reject_unauthorized = pm.tls_reject_unauthorized();
     let reason = match req.send_sync(&mut response_buf) {
         Ok(res) if res.status_code() >= 400 => SkipReason::Status(res.status_code()),
         Ok(_) => {

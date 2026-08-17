@@ -11,6 +11,7 @@ import {
   pack,
   runBunInstall,
   tempDir,
+  tls,
   tmpdirSync,
 } from "harness";
 import { delimiter, join } from "path";
@@ -1823,5 +1824,98 @@ describe("--tolerate-republish", async () => {
     expect(exitCode).toBe(0);
     expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
     expect(err).not.toContain("error:");
+  });
+});
+
+describe.concurrent("NODE_TLS_REJECT_UNAUTHORIZED=0", () => {
+  const rejectUnauthorizedOff = { ...env, NODE_TLS_REJECT_UNAUTHORIZED: "0" };
+  const rejectUnauthorizedOn = { ...env, NODE_TLS_REJECT_UNAUTHORIZED: undefined };
+
+  // The harness certificate is self-signed, so every request to this registry
+  // fails verification unless the client has turned it off.
+  function selfSignedRegistry(name: string, opts: { otp?: string } = {}) {
+    const requests: string[] = [];
+    const server = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req) {
+        const { pathname } = new URL(req.url);
+        requests.push(`${req.method} ${pathname}`);
+        if (req.method === "PUT") {
+          if (opts.otp !== undefined && req.headers.get("npm-otp") !== opts.otp) {
+            return Response.json(
+              { authUrl: "customapp://login", doneUrl: `https://localhost:${server.port}/-/done` },
+              { status: 401, headers: { "www-authenticate": "OTP" } },
+            );
+          }
+          return new Response("OK");
+        }
+        if (pathname === "/-/done") {
+          return Response.json({ token: opts.otp });
+        }
+        // the --tolerate-republish manifest GET
+        return Response.json({ name, versions: { "1.0.0": {} } });
+      },
+    });
+    const dir = tempDir(`publish-self-signed-${name}`, {
+      "package.json": JSON.stringify({ name, version: "1.0.0" }),
+      "bunfig.toml": Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: { url: `https://localhost:${server.port}`, token: "self-signed-token" },
+        },
+      }),
+    });
+    return {
+      requests,
+      packageDir: String(dir),
+      [Symbol.dispose]() {
+        server.stop(true);
+        dir[Symbol.dispose]();
+      },
+    };
+  }
+
+  test("publishes to a registry with a self-signed certificate", async () => {
+    using registry = selfSignedRegistry("tls-publish");
+
+    const { out, err, exitCode } = await publish(rejectUnauthorizedOff, registry.packageDir);
+
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(out).toContain(" + tls-publish@1.0.0");
+    expect(registry.requests).toEqual(["PUT /tls-publish"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--tolerate-republish reads the manifest from a registry with a self-signed certificate", async () => {
+    using registry = selfSignedRegistry("tls-republish");
+
+    const { err, exitCode } = await publish(rejectUnauthorizedOff, registry.packageDir, "--tolerate-republish");
+
+    expect(err).toBe("warn: Registry already knows about version 1.0.0; skipping.\n");
+    expect(registry.requests).toEqual(["GET /tls-republish"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("web login polls the done url and retries with the OTP on a registry with a self-signed certificate", async () => {
+    using registry = selfSignedRegistry("tls-web-login", { otp: "123456" });
+
+    const { out, err, exitCode } = await publish(rejectUnauthorizedOff, registry.packageDir);
+
+    expect(err).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(out).toContain("Authenticate your account at:");
+    expect(out).toContain(" + tls-web-login@1.0.0");
+    expect(registry.requests).toEqual(["PUT /tls-web-login", "GET /-/done", "PUT /tls-web-login"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("certificate verification stays on when the variable is unset", async () => {
+    using registry = selfSignedRegistry("tls-verified");
+
+    const { err, exitCode } = await publish(rejectUnauthorizedOn, registry.packageDir);
+
+    expect(err).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(registry.requests).toEqual([]);
+    expect(exitCode).toBe(1);
   });
 });

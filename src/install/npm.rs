@@ -164,6 +164,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         None,
         http::FetchRedirect::Follow,
     );
+    req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
     let res = match req.send_sync(&mut response_buf) {
         Ok(res) => res,

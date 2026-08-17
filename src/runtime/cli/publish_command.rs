@@ -821,6 +821,7 @@ impl PublishCommand {
             None,
             http::FetchRedirect::Follow,
         );
+        req.client.flags.reject_unauthorized = manager.tls_reject_unauthorized();
 
         let Ok(res) = req.send_sync(&mut response_buf) else {
             return false;
@@ -938,6 +939,7 @@ impl PublishCommand {
         let publish_url = URL::parse(crate::cli::cli_dupe(&print_buf));
         print_buf.clear();
         let http_proxy = ctx.manager.http_proxy(&publish_url);
+        let reject_unauthorized = ctx.manager.tls_reject_unauthorized();
 
         let mut req = http::AsyncHTTP::init_sync(
             http::Method::PUT,
@@ -949,6 +951,7 @@ impl PublishCommand {
             None,
             http::FetchRedirect::Follow,
         );
+        req.client.flags.reject_unauthorized = reject_unauthorized;
 
         let res = match req.send_sync(&mut response_buf) {
             Ok(r) => r,
@@ -1043,6 +1046,7 @@ impl PublishCommand {
                     None,
                     http::FetchRedirect::Follow,
                 );
+                otp_req.client.flags.reject_unauthorized = reject_unauthorized;
 
                 let otp_res = match otp_req.send_sync(&mut response_buf) {
                     Ok(r) => r,
@@ -1257,6 +1261,7 @@ impl PublishCommand {
                     ctx.uses_workspaces,
                     ctx.manager.options.publish_config.auth_type,
                 )?;
+                let reject_unauthorized = ctx.manager.tls_reject_unauthorized();
 
                 let http_proxy = ctx.manager.http_proxy(&done_url);
 
@@ -1275,6 +1280,7 @@ impl PublishCommand {
                         None,
                         http::FetchRedirect::Follow,
                     );
+                    req.client.flags.reject_unauthorized = reject_unauthorized;
 
                     let res = match req.send_sync(response_buf) {
                         Ok(r) => r,

@@ -10,6 +10,7 @@ import {
   normalizeBunSnapshot,
   runBunInstall,
   tempDir,
+  tls,
 } from "harness";
 import { join } from "node:path";
 import { resolveBulkAdvisoryFixture } from "./registry/fixtures/audit/audit-fixtures";
@@ -4820,5 +4821,50 @@ describe("`bun audit fix --latest`", () => {
     expect(exitCode).toBe(1);
     expect(bulkHits.count).toBe(0);
     expect(await lock(dir)).toBe(lockBefore);
+  });
+});
+
+describe.concurrent("`bun audit` against a registry with a self-signed certificate", () => {
+  async function audit(env: NodeJS.Dict<string>) {
+    const requests: string[] = [];
+    using auditServer = Bun.serve({
+      port: 0,
+      tls,
+      fetch(req) {
+        requests.push(`${req.method} ${new URL(req.url).pathname}`);
+        return Response.json({});
+      },
+    });
+    using dir = tempDir("bun-test-audit-self-signed", fixture("safe-is-number@7"));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "audit"],
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd: String(dir),
+      env: {
+        ...env,
+        NPM_CONFIG_REGISTRY: `https://localhost:${auditServer.port}`,
+      },
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode, requests };
+  }
+
+  test("NODE_TLS_REJECT_UNAUTHORIZED=0 turns verification off", async () => {
+    const { stdout, stderr, exitCode, requests } = await audit({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: "0" });
+
+    expect(stderr).not.toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(stdout).toBe("No vulnerabilities found\n");
+    expect(requests).toEqual(["POST /-/npm/v1/security/advisories/bulk"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("verification stays on when the variable is unset", async () => {
+    const { stderr, exitCode, requests } = await audit({ ...bunEnv, NODE_TLS_REJECT_UNAUTHORIZED: undefined });
+
+    expect(stderr).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
+    expect(requests).toEqual([]);
+    expect(exitCode).toBe(1);
   });
 });

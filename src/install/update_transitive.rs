@@ -1145,10 +1145,8 @@ fn plan_edges(
             let Some(version) = dedupe::effective_version(lockfile, dep_id, dep) else {
                 continue;
             };
-            let names = match version.tag {
-                DependencyVersionTag::Npm => version.npm().name,
-                DependencyVersionTag::DistTag => version.dist_tag().name,
-                _ => continue,
+            let Some(names) = registry_name(&version) else {
+                continue;
             };
             if !names.eql(pkg_names[inst.pkg_id as usize], buf, buf) {
                 continue;
@@ -1453,17 +1451,15 @@ fn edges_on_instances(
                 else {
                     continue;
                 };
-                let names = match version.tag {
-                    DependencyVersionTag::Npm => version.npm().name,
-                    DependencyVersionTag::DistTag => version.dist_tag().name,
-                    _ => continue,
+                let Some(names) = registry_name(&version) else {
+                    continue;
                 };
                 let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
-                let locked_id = locked_resolutions[row] as usize;
-                let res_slot = slot_of.get(locked_id).copied().unwrap_or(u32::MAX);
+                let locked_pkg_id = locked_resolutions[row] as usize;
+                let res_slot = slot_of.get(locked_pkg_id).copied().unwrap_or(u32::MAX);
                 // An optional row the loaded lockfile left unresolved snapshots as invalid.
                 let locked = pkg_res
-                    .get(locked_id)
+                    .get(locked_pkg_id)
                     .filter(|res| res.tag == ResolutionTag::Npm)
                     .map(|res| res.npm().version);
                 for (i, inst) in instances.iter().enumerate() {
@@ -1702,4 +1698,13 @@ fn later_than(
         .map(|found| found.version)
         .filter(|latest| latest.order(v, manifest_buf, manifest_buf) == Ordering::Greater);
     latest.map_or_else(Box::default, |latest| text(latest.fmt(manifest_buf)))
+}
+
+/// The name a registry row asks for (its alias target); other kinds have none.
+fn registry_name(version: &dependency::Version) -> Option<Semver::String> {
+    match version.tag {
+        DependencyVersionTag::Npm => Some(version.npm().name),
+        DependencyVersionTag::DistTag => Some(version.dist_tag().name),
+        _ => None,
+    }
 }

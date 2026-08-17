@@ -2,7 +2,7 @@ import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
 import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
-import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
+import { chmodSync, copyFileSync, readdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
 import { dummyAfterAll, dummyBeforeAll, dummyBeforeEach, dummyRegistry, getPort, setHandler } from "./dummy.registry";
@@ -550,6 +550,58 @@ it.concurrent(
   },
   1000 * 60 * 2,
 );
+
+// Companion to the end-to-end test above: exercises the escape hatch directly,
+// so a regression fails as a bounded wrong-output assertion in under a second
+// (no network, no process chain). Covers the exec arm and a two-token
+// BUN_OPTIONS value the e2e path doesn't reach.
+it.concurrent("BUN_OPTIONS does not break the internal bunx install escape hatch", async () => {
+  const { env } = setup();
+  // Dispatch keys off argv[0] ending in "bunx".
+  const bunxDir = tmpdirSync();
+  const bunxPath = join(bunxDir, isWindows ? "bunx.exe" : "bunx");
+  if (isWindows) copyFileSync(bunExe(), bunxPath);
+  else symlinkSync(bunExe(), bunxPath);
+
+  // If the escape hatch misses, BunxCommand resolves "add"/"exec" as the
+  // package to run and finds these on PATH, so the failure is bounded
+  // wrong output instead of an unbounded chain of installs.
+  const decoyDir = tmpdirSync();
+  for (const name of ["add", "exec"]) {
+    if (isWindows) {
+      writeFileSync(join(decoyDir, `${name}.cmd`), `@echo MISDISPATCHED_${name.toUpperCase()}\r\n`);
+    } else {
+      writeFileSync(join(decoyDir, name), `#!/bin/sh\necho MISDISPATCHED_${name.toUpperCase()}\n`, { mode: 0o755 });
+    }
+  }
+
+  // One injected token and two, so skipping a fixed count instead of
+  // bun_options_argc() still fails.
+  for (const bunOptions of ["--smol", "--smol --silent"]) {
+    const childEnv = {
+      ...env,
+      BUN_OPTIONS: bunOptions,
+      BUN_INTERNAL_BUNX_INSTALL: "true",
+      PATH: `${decoyDir}${delimiter}${env.PATH || ""}`,
+    };
+
+    {
+      await using proc = spawn({ cmd: [bunxPath, "add", "--help"], env: childEnv, stdout: "pipe", stderr: "pipe" });
+      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(out).not.toContain("MISDISPATCHED_ADD");
+      expect(out).toContain("bun add");
+      expect(exitCode).toBe(0);
+    }
+
+    {
+      await using proc = spawn({ cmd: [bunxPath, "exec", "echo hatch-ok"], env: childEnv, stdout: "pipe", stderr: "pipe" });
+      const [out, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      expect(out).not.toContain("MISDISPATCHED_EXEC");
+      expect(out.trim()).toBe("hatch-ok");
+      expect(exitCode).toBe(0);
+    }
+  }
+});
 
 // Pinned to 20: its engines are "^20.19.0 || ^22.12.0 || >=24.0.0", so the node-24
 // requirement this test exercises holds no matter what Node.js version Bun reports.

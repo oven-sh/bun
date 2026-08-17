@@ -29,48 +29,24 @@ try {
 }
 
 it("ffi print", async () => {
-  await Bun.write(
-    import.meta.dir + "/ffi.test.fixture.callback.c",
-    viewSource(
-      {
-        returns: "bool",
-        args: ["ptr"],
-      },
-      true,
-    ),
-  );
-  await Bun.write(
-    import.meta.dir + "/ffi.test.fixture.receiver.c",
-    viewSource(
-      {
-        not_a_callback: {
-          returns: "float",
-          args: ["float"],
-        },
-      },
-      false,
-    )[0],
-  );
-  expect(
-    viewSource(
-      {
-        returns: "int8_t",
-        args: [],
-      },
-      true,
-    ).length > 0,
-  ).toBe(true);
-  expect(
-    viewSource(
-      {
-        a: {
-          returns: "int8_t",
-          args: [],
-        },
-      },
-      false,
-    ).length > 0,
-  ).toBe(true);
+  const callbackSource = viewSource({ returns: "bool", args: ["ptr"] }, true);
+  const [receiverSource] = viewSource({ not_a_callback: { returns: "float", args: ["float"] } }, false);
+  await Bun.write(import.meta.dir + "/ffi.test.fixture.callback.c", callbackSource);
+  await Bun.write(import.meta.dir + "/ffi.test.fixture.receiver.c", receiverSource);
+
+  // Callbacks are compiled by the engine, so their "source" is a fixed notice regardless of signature.
+  expect(callbackSource).toBeString();
+  expect(viewSource({ returns: "int8_t", args: [] }, true)).toBe(callbackSource);
+
+  expect(receiverSource).toContain("#define HAS_ARGUMENTS");
+  expect(receiverSource).toContain("#define USES_FLOAT 1");
+  expect(receiverSource).toContain("float not_a_callback(float arg0);");
+  expect(receiverSource).toContain("JSVALUE_TO_FLOAT(arg0)");
+
+  const receivers = viewSource({ a: { returns: "int8_t", args: [] } }, false);
+  expect(receivers).toHaveLength(1);
+  expect(receivers[0]).toContain("int8_t a();");
+  expect(receivers[0]).not.toContain("#define HAS_ARGUMENTS");
 });
 
 function getTypes(fast) {
@@ -485,8 +461,8 @@ function ffiRunner(fast) {
       Bun.gc(true);
       expect(is_null(null)).toBe(true);
       const cptr = ptr_should_point_to_42_as_int32_t();
-      expect(cptr != 0).toBe(true);
-      expect(typeof cptr === "number").toBe(true);
+      expect(typeof cptr).toBe("number");
+      expect(cptr).toBeGreaterThan(0);
       expect(does_pointer_equal_42_as_int32_t(cptr)).toBe(true);
       {
         // No finalizer: both views borrow `cptr` (static storage in the fixture),
@@ -538,95 +514,168 @@ function ffiRunner(fast) {
           args: ["bool"],
         },
       );
-      expect(toClose.ptr > 0).toBe(true);
+      expect(typeof toClose.ptr).toBe("number");
+      expect(toClose.ptr).toBeGreaterThan(0);
       toClose.close();
-      expect(toClose.ptr === null).toBe(true);
+      expect(toClose.ptr).toBeNull();
     });
 
     describe("callbacks", () => {
       // Return types, 1 argument
       for (let [returnName, returnValue] of Object.entries(typeMap)) {
         it("fn(" + returnName + ") " + returnName, () => {
-          var roundtripFunction = new CFunction({
-            ptr: new JSCallback(
-              input => {
-                return input;
-              },
-              {
-                returns: returnName,
-                args: [returnName],
-              },
-            ).ptr,
-            returns: returnName,
-            args: [returnName],
-          });
-          expect(roundtripFunction(returnValue)).toBe(returnValue);
+          const callback = new JSCallback(input => input, { returns: returnName, args: [returnName] });
+          try {
+            const roundtripFunction = new CFunction({ ptr: callback.ptr, returns: returnName, args: [returnName] });
+            expect(roundtripFunction(returnValue)).toBe(returnValue);
+          } finally {
+            callback.close();
+          }
         });
       }
       // Return types, no args
       for (let [name, value] of Object.entries(typeMap)) {
         it("fn() " + name, () => {
-          var roundtripFunction = new CFunction({
-            ptr: new JSCallback(() => value, {
-              returns: name,
-            }).ptr,
-            returns: name,
-          });
-          expect(roundtripFunction()).toBe(value);
+          const callback = new JSCallback(() => value, { returns: name });
+          try {
+            const roundtripFunction = new CFunction({ ptr: callback.ptr, returns: name });
+            expect(roundtripFunction()).toBe(value);
+          } finally {
+            callback.close();
+          }
         });
       }
     });
 
-    describe("threadsafe callback", done => {
-      // 1 arg, threadsafe
+    describe("threadsafe callback", () => {
       for (let [name, value] of Object.entries(typeMap)) {
         it("fn(" + name + ") " + name, async () => {
-          const cb = new JSCallback(
-            arg1 => {
-              expect(arg1).toBe(value);
-            },
-            {
-              args: [name],
-              threadsafe: true,
-            },
-          );
-          var roundtripFunction = new CFunction({
-            ptr: cb.ptr,
-            returns: "void",
-            args: [name],
-          });
-          roundtripFunction(value);
-          await 1;
+          const { promise, resolve } = Promise.withResolvers();
+          const callback = new JSCallback(resolve, { args: [name], threadsafe: true });
+          try {
+            expect(callback.threadsafe).toBe(true);
+            const fire = new CFunction({ ptr: callback.ptr, returns: "void", args: [name] });
+            expect(fire(value)).toBeUndefined();
+            // A threadsafe callback is queued on the owning event loop, never run inside the native call.
+            expect(Bun.peek.status(promise)).toBe("pending");
+            expect(await promise).toBe(value);
+          } finally {
+            callback.close();
+          }
         });
       }
     });
 
-    describe("integer identities work for all possible values", () => {
+    it("C code calls back into JS callbacks of every return type", () => {
+      const big = v => (fast ? v : BigInt(v));
+      const cases = {
+        cb_identity_true: [cb_identity_true, "bool", true, true],
+        cb_identity_false: [cb_identity_false, "bool", false, false],
+        cb_identity_42_char: [cb_identity_42_char, "char", 42, 42],
+        cb_identity_42_float: [cb_identity_42_float, "float", 42.5, 42.5],
+        cb_identity_42_double: [cb_identity_42_double, "double", 42.42, 42.42],
+        cb_identity_42_uint8_t: [cb_identity_42_uint8_t, "uint8_t", 42, 42],
+        cb_identity_neg_42_int8_t: [cb_identity_neg_42_int8_t, "int8_t", -42, -42],
+        cb_identity_42_uint16_t: [cb_identity_42_uint16_t, "uint16_t", 42, 42],
+        cb_identity_42_uint32_t: [cb_identity_42_uint32_t, "uint32_t", 42, 42],
+        cb_identity_42_uint64_t: [cb_identity_42_uint64_t, "uint64_t", 42n, big(42)],
+        cb_identity_neg_42_int16_t: [cb_identity_neg_42_int16_t, "int16_t", -42, -42],
+        cb_identity_neg_42_int32_t: [cb_identity_neg_42_int32_t, "int32_t", -42, -42],
+        cb_identity_neg_42_int64_t: [cb_identity_neg_42_int64_t, "int64_t", -42n, big(-42)],
+      };
+      const callbacks = [];
+      try {
+        const results = {};
+        const expected = {};
+        for (const [name, [cFunction, returns, jsReturnValue, expectedResult]] of Object.entries(cases)) {
+          const callback = new JSCallback(() => jsReturnValue, { returns, args: [] });
+          callbacks.push(callback);
+          results[name] = cFunction(callback.ptr);
+          expected[name] = expectedResult;
+        }
+        expect(results).toEqual(expected);
+      } finally {
+        for (const callback of callbacks) callback.close();
+      }
+    });
+
+    // The 8-bit types are checked exhaustively. A stride through a wider range mostly re-proves the
+    // same conversion, so the wider types check the values a conversion can actually get wrong:
+    // both ends of the range, 0 and +-1, every power of two in range with its neighbours (negated
+    // too for signed types), alternating bit patterns, plus a 16-step stride. The values are then
+    // cycled through a loop so the call site is also exercised after it has left the interpreter.
+    describe("integer identities at every width and sign boundary", () => {
       const cases = [
-        { type: "int8_t", min: -128, max: 127, fn: identity_int8_t },
-        { type: "int16_t", min: -32768, max: 32767, fn: identity_int16_t },
-        { type: "int32_t", min: -2147483648, max: 2147483647, fn: identity_int32_t },
-        { type: "int64_t", min: -9223372036854775808n, max: 9223372036854775807n, fn: identity_int64_t },
-        { type: "uint8_t", min: 0, max: 255, fn: identity_uint8_t },
-        { type: "uint16_t", min: 0, max: 65535, fn: identity_uint16_t },
-        { type: "uint32_t", min: 0, max: 4294967295, fn: identity_uint32_t },
-        { type: "uint64_t", min: 0n, max: 18446744073709551615n, fn: identity_uint64_t },
+        { type: "int8_t", bits: 8, signed: true, fn: identity_int8_t },
+        { type: "int16_t", bits: 16, signed: true, fn: identity_int16_t },
+        { type: "int32_t", bits: 32, signed: true, fn: identity_int32_t },
+        { type: "int64_t", bits: 64, signed: true, fn: identity_int64_t },
+        { type: "uint8_t", bits: 8, signed: false, fn: identity_uint8_t },
+        { type: "uint16_t", bits: 16, signed: false, fn: identity_uint16_t },
+        { type: "uint32_t", bits: 32, signed: false, fn: identity_uint32_t },
+        { type: "uint64_t", bits: 64, signed: false, fn: identity_uint64_t },
       ];
 
-      for (const { type, min, max, fn } of cases) {
-        const bigint = typeof min === "bigint";
-        const inc = bigint
-          ? //
-            (max - min) / 32768n
-          : Math.ceil((max - min) / 32768);
-        it(type, () => {
-          expect(bigint ? BigInt(fn(min)) : fn(min)).toBe(min);
-          expect(bigint ? BigInt(fn(max)) : fn(max)).toBe(max);
-          expect(bigint ? BigInt(fn(0n)) : fn(0)).toBe(bigint ? 0n : 0);
+      function valuesFor(bits, signed) {
+        const min = signed ? -(1n << BigInt(bits - 1)) : 0n;
+        const max = (signed ? 1n << BigInt(bits - 1) : 1n << BigInt(bits)) - 1n;
+        if (bits === 8) return Array.from({ length: 256 }, (_, i) => min + BigInt(i));
+        const values = new Set([min, min + 1n, -1n, 0n, 1n, max - 1n, max]);
+        for (let bit = 0; bit < bits; bit++) {
+          const power = 1n << BigInt(bit);
+          for (const v of [power - 1n, power, power + 1n, -power - 1n, -power, -power + 1n]) values.add(v);
+        }
+        for (const pattern of [0x5555_5555_5555_5555n, 0xaaaa_aaaa_aaaa_aaaan]) {
+          values.add(pattern & max);
+          values.add(-(pattern & max));
+        }
+        const stride = (max - min) / 16n;
+        for (let v = min; v <= max; v += stride) values.add(v);
+        return [...values].filter(v => v >= min && v <= max).sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+      }
 
-          for (let i = min; i <= max; i += inc) {
-            expect(bigint ? BigInt(fn(i)) : fn(i)).toBe(i);
+      for (const { type, bits, signed, fn } of cases) {
+        it(type, () => {
+          const is64 = bits === 64;
+          // Below 64 bits the values are plain numbers; i64/u64 take BigInts. The i64_fast/u64_fast
+          // variants return a number when the value is small enough, so normalize through BigInt().
+          const inputs = is64 ? valuesFor(bits, signed) : valuesFor(bits, signed).map(Number);
+          const normalize = is64 && fast ? BigInt : v => v;
+          expect(inputs.map(v => normalize(fn(v)))).toEqual(inputs);
+
+          const mismatches = [];
+          for (let i = 0; i < 10_000; i++) {
+            const input = inputs[i % inputs.length];
+            const output = normalize(fn(input));
+            if (output !== input && mismatches.length < 8) mismatches.push({ iteration: i, input, output });
           }
+          expect(mismatches).toEqual([]);
+        });
+      }
+
+      if (fast) {
+        it("i64_fast / u64_fast return a number for safe integers and a BigInt beyond them", () => {
+          const safe = 2n ** 53n - 2n;
+          const unsafe = 2n ** 53n;
+          expect([
+            identity_int64_t(safe),
+            identity_int64_t(-safe),
+            identity_uint64_t(safe),
+            identity_int64_t(unsafe),
+            identity_int64_t(-unsafe),
+            identity_uint64_t(unsafe),
+            identity_uint64_t(2n ** 64n - 1n),
+            identity_int64_t(-(2n ** 63n)),
+          ]).toEqual([
+            Number(safe),
+            -Number(safe),
+            Number(safe),
+            unsafe,
+            -unsafe,
+            unsafe,
+            2n ** 64n - 1n,
+            -(2n ** 63n),
+          ]);
         });
       }
     });
@@ -683,7 +732,12 @@ it("dlopen throws an error instead of returning it", () => {
   } catch (error) {
     err = error;
   }
-  expect(err).toBeTruthy();
+  expect(err).toBeInstanceOf(Error);
+  expect({ code: err.code, syscall: err.syscall, message: err.message }).toEqual({
+    code: "ERR_DLOPEN_FAILED",
+    syscall: "dlopen",
+    message: expect.stringContaining('Failed to open library "nonexistent"'),
+  });
 });
 
 // Windows: dlopen must accept paths with non-ASCII characters. Previously the
@@ -894,7 +948,12 @@ describe("CFunction", () => {
 
 // Runs in a subprocess: `bun test`'s exit path does not finalize the CFunction's native handle,
 // which the ASan lane's leak checker then reports against this file.
-it("JSCallback exceptions propagate out of the native call", async () => {
+//
+// This test and the ones after it through the toBuffer block are declared back to back and marked
+// concurrent, so bun:test runs them as one batch. The subprocess tests spend their time waiting on a
+// child process; the one in-process test among them (the explicit finalizer) is the only user of the
+// fixture state it reads.
+it.concurrent("JSCallback exceptions propagate out of the native call", async () => {
   await using proc = Bun.spawn({
     cmd: [
       bunExe(),
@@ -928,7 +987,7 @@ it("JSCallback exceptions propagate out of the native call", async () => {
   });
 });
 
-it("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
+it.concurrent("worker teardown drops queued threadsafe JSCallback invocations without crashing", async () => {
   using dir = tempDir("ffi-jscallback-terminate-queued", {
     "main.js": `
       import { join } from "node:path";
@@ -987,7 +1046,7 @@ it("worker teardown drops queued threadsafe JSCallback invocations without crash
 // worker.terminate() delivered inside a threadsafe JSCallback used to trip
 // "ASSERTION FAILED: !isTerminationException(exception) || hasTerminationRequest()"
 // in JSC::VM::setException on the worker thread and re-enter the terminated VM.
-it("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
+it.concurrent("JSCallback tolerates worker.terminate() arriving inside the callback", async () => {
   using dir = tempDir("ffi-jscallback-terminate", {
     "main.js": `
       import { join } from "node:path";
@@ -1058,6 +1117,110 @@ it("JSCallback tolerates worker.terminate() arriving inside the callback", async
     exitCode: 0,
     signalCode: null,
   });
+});
+
+// oven-sh/bun#35405: toBuffer without a finalizer used to mi_free caller-owned
+// memory on GC. Subprocess because unpatched builds crash.
+describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
+  async function runsClean(script) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const gcLoop = `for (let i = 0; i < 20; i++) { Bun.gc(true); Buffer.alloc(1024 * 1024); }`;
+
+  // Drops the borrowed view first, then the owner, so an invalid free shows up as
+  // corrupted caller memory rather than only as a crash.
+  const originalSurvives = (index, expected) => `
+      adopted = null;
+      ${gcLoop}
+      if (original[${index}] !== ${expected}) throw new Error("caller memory corrupted after adopted GC: " + original[${index}]);
+      original[${index}] = 0x55;
+      if (original[${index}] !== 0x55) throw new Error("caller memory not writable after adopted GC");
+      original = null;
+      ${gcLoop}
+  `;
+
+  it.concurrent("toBuffer(ptr(buffer)) does not free caller-owned memory on GC", async () => {
+    expect(
+      await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = Buffer.alloc(64, 0x41);
+      let adopted = toBuffer(ptr(original), 0, 64);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
+      ${originalSurvives(0, "0x42")}
+      console.log("survived-gc");
+    `),
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("toBuffer(ptr(buffer), offset) does not free an interior pointer on GC", async () => {
+    expect(
+      await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = Buffer.alloc(64, 0x41);
+      let adopted = toBuffer(ptr(original), 8, 48);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[8] !== 0x42) throw new Error("expected a view aliasing original[8]");
+      ${originalSurvives(8, "0x42")}
+      console.log("survived-gc");
+    `),
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
+
+  it.concurrent("toBuffer(ptr(typedArray)) does not free caller-owned memory on GC", async () => {
+    expect(
+      await runsClean(`
+      import { ptr, toBuffer } from "bun:ffi";
+      let original = new Uint8Array(64).fill(0x41);
+      let adopted = toBuffer(ptr(original), 0, 64);
+      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
+      adopted[0] = 0x42;
+      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
+      ${originalSurvives(0, "0x42")}
+      console.log("survived-gc");
+    `),
+    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
+  });
+
+  // Regression guard: an explicit finalizer still controls disposal and runs exactly
+  // once on GC. getDeallocatorBuffer/getDeallocatorCallback each reset the counter.
+  it.concurrent.skipIf(!FFI_FIXTURE_PATH)(
+    "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
+    async () => {
+      const {
+        symbols: { getDeallocatorCallback, getDeallocatorBuffer, getDeallocatorCalledCount },
+      } = dlopen(FFI_FIXTURE_PATH, {
+        getDeallocatorCallback: { args: [], returns: "ptr" },
+        getDeallocatorBuffer: { args: [], returns: "ptr" },
+        getDeallocatorCalledCount: { args: [], returns: "int" },
+      });
+      (() => {
+        const bufPtr = getDeallocatorBuffer();
+        let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
+        expect(buf.length).toBe(128);
+        expect(getDeallocatorCalledCount()).toBe(0);
+        buf = null;
+      })();
+      for (let i = 0; i < 100 && getDeallocatorCalledCount() === 0; i++) {
+        Bun.gc(true);
+        Buffer.alloc(1024 * 1024);
+        await Bun.sleep(0);
+      }
+      expect(getDeallocatorCalledCount()).toBe(1);
+      Bun.gc(true);
+      expect(getDeallocatorCalledCount()).toBe(1);
+    },
+  );
 });
 
 const libPath =
@@ -1347,115 +1510,11 @@ describe.if(!!libPath)("can open more than 63 symbols via", () => {
     it(description, () => {
       const libPath = libFn();
       const lib = dlopen(libPath, libSymbols);
-      expect(Object.keys(lib.symbols).length).toBe(Object.keys(libSymbols).length);
+      expect(Object.keys(lib.symbols).sort()).toEqual(Object.keys(libSymbols).sort());
       expect(lib.symbols.strcasecmp(Buffer.from("ciro\0"), Buffer.from("CIRO\0"))).toBe(0);
       expect(lib.symbols.strlen(Buffer.from("bunbun\0", "ascii"))).toBe(6n);
     });
   }
-});
-
-// oven-sh/bun#35405: toBuffer without a finalizer used to mi_free caller-owned
-// memory on GC. Subprocess because unpatched builds crash.
-describe("toBuffer borrowed-pointer ownership (no bad-free on GC)", () => {
-  async function runsClean(script) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), "-e", script],
-      env: bunEnv,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
-  const gcLoop = `for (let i = 0; i < 20; i++) { Bun.gc(true); Buffer.alloc(1024 * 1024); }`;
-
-  // Drops the borrowed view first, then the owner, so an invalid free shows up as
-  // corrupted caller memory rather than only as a crash.
-  const originalSurvives = (index, expected) => `
-      adopted = null;
-      ${gcLoop}
-      if (original[${index}] !== ${expected}) throw new Error("caller memory corrupted after adopted GC: " + original[${index}]);
-      original[${index}] = 0x55;
-      if (original[${index}] !== 0x55) throw new Error("caller memory not writable after adopted GC");
-      original = null;
-      ${gcLoop}
-  `;
-
-  it.concurrent("toBuffer(ptr(buffer)) does not free caller-owned memory on GC", async () => {
-    expect(
-      await runsClean(`
-      import { ptr, toBuffer } from "bun:ffi";
-      let original = Buffer.alloc(64, 0x41);
-      let adopted = toBuffer(ptr(original), 0, 64);
-      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
-      adopted[0] = 0x42;
-      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
-      ${originalSurvives(0, "0x42")}
-      console.log("survived-gc");
-    `),
-    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
-  });
-
-  it.concurrent("toBuffer(ptr(buffer), offset) does not free an interior pointer on GC", async () => {
-    expect(
-      await runsClean(`
-      import { ptr, toBuffer } from "bun:ffi";
-      let original = Buffer.alloc(64, 0x41);
-      let adopted = toBuffer(ptr(original), 8, 48);
-      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
-      adopted[0] = 0x42;
-      if (original[8] !== 0x42) throw new Error("expected a view aliasing original[8]");
-      ${originalSurvives(8, "0x42")}
-      console.log("survived-gc");
-    `),
-    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
-  });
-
-  it.concurrent("toBuffer(ptr(typedArray)) does not free caller-owned memory on GC", async () => {
-    expect(
-      await runsClean(`
-      import { ptr, toBuffer } from "bun:ffi";
-      let original = new Uint8Array(64).fill(0x41);
-      let adopted = toBuffer(ptr(original), 0, 64);
-      if (adopted[0] !== 0x41) throw new Error("expected a zero-copy view");
-      adopted[0] = 0x42;
-      if (original[0] !== 0x42) throw new Error("expected an aliasing view");
-      ${originalSurvives(0, "0x42")}
-      console.log("survived-gc");
-    `),
-    ).toEqual({ stdout: "survived-gc\n", stderr: "", exitCode: 0 });
-  });
-
-  // Regression guard: an explicit finalizer still controls disposal and runs exactly
-  // once on GC. getDeallocatorBuffer/getDeallocatorCallback each reset the counter.
-  it.skipIf(!FFI_FIXTURE_PATH)(
-    "toBuffer with an explicit finalizer calls the deallocator exactly once on GC",
-    async () => {
-      const {
-        symbols: { getDeallocatorCallback, getDeallocatorBuffer, getDeallocatorCalledCount },
-      } = dlopen(FFI_FIXTURE_PATH, {
-        getDeallocatorCallback: { args: [], returns: "ptr" },
-        getDeallocatorBuffer: { args: [], returns: "ptr" },
-        getDeallocatorCalledCount: { args: [], returns: "int" },
-      });
-      (() => {
-        const bufPtr = getDeallocatorBuffer();
-        let buf = toBuffer(bufPtr, 0, 128, getDeallocatorCallback());
-        expect(buf.length).toBe(128);
-        expect(getDeallocatorCalledCount()).toBe(0);
-        buf = null;
-      })();
-      for (let i = 0; i < 100 && getDeallocatorCalledCount() === 0; i++) {
-        Bun.gc(true);
-        Buffer.alloc(1024 * 1024);
-        await Bun.sleep(0);
-      }
-      expect(getDeallocatorCalledCount()).toBe(1);
-      Bun.gc(true);
-      expect(getDeallocatorCalledCount()).toBe(1);
-    },
-  );
 });
 
 describe.skipIf(!FFI_FIXTURE_PATH)("engine-native FFI (single implementation)", () => {

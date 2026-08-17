@@ -106,6 +106,17 @@ pub enum Protocol {
     Http3,
 }
 
+/// Which redirects the request's credential headers survive.
+#[repr(u8)]
+#[derive(Copy, Clone, PartialEq, Eq, Default)]
+pub enum RedirectCredentialsPolicy {
+    /// fetch(): https://fetch.spec.whatwg.org/#concept-http-redirect-fetch
+    #[default]
+    SameOrigin,
+    /// npm's rule, used by `bun install`: port and scheme changes keep them, except https -> http.
+    SameHostname,
+}
+
 pub use bun_http_types::Encoding::Encoding;
 pub use header_value_iterator::{
     HeaderValueIterator, connection_header_keep_alive, upgrade_header_is_not_h2,
@@ -214,6 +225,7 @@ pub struct Flags {
     pub forced_protocol: Option<Protocol>,
     pub(crate) h3_retried: bool,
     pub is_node_http_client: bool,
+    pub redirect_credentials: RedirectCredentialsPolicy,
 }
 
 impl Default for Flags {
@@ -235,6 +247,7 @@ impl Default for Flags {
             forced_protocol: None,
             h3_retried: false,
             is_node_http_client: false,
+            redirect_credentials: RedirectCredentialsPolicy::SameOrigin,
         }
     }
 }
@@ -1071,18 +1084,54 @@ bun_core::comptime_string_map! {
     };
 }
 
+#[derive(Copy, Clone)]
+enum StrippedOnRedirect {
+    /// Per `Flags::redirect_credentials`.
+    Credential,
+    /// Would suppress the default Host header derived from the new URL.
+    Host,
+}
+
 bun_core::comptime_string_map! {
     /// Headers deleted from the request on a cross-origin redirect.
-    /// `host` is included because a user-supplied Host header names the
-    /// previous origin; keeping it would also suppress the default Host
-    /// header derived from the new URL.
     /// Keys are lowercase: looked up via `get_ascii_case_insensitive`.
-    static CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS: () = {
-        b"authorization" => (),
-        b"proxy-authorization" => (),
-        b"cookie" => (),
-        b"host" => (),
+    static CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS: StrippedOnRedirect = {
+        b"authorization" => StrippedOnRedirect::Credential,
+        b"proxy-authorization" => StrippedOnRedirect::Credential,
+        b"cookie" => StrippedOnRedirect::Credential,
+        b"host" => StrippedOnRedirect::Host,
     };
+}
+
+#[derive(Copy, Clone)]
+struct RedirectHop {
+    same_origin: bool,
+    same_hostname: bool,
+    /// https -> http; credentials never follow this hop (cleartext replay).
+    downgrades_to_http: bool,
+}
+
+impl RedirectHop {
+    fn between(from: &URL<'_>, to: &URL<'_>) -> Self {
+        Self {
+            same_origin: strings::eql_case_insensitive_ascii(
+                strings::without_trailing_slash(to.origin),
+                strings::without_trailing_slash(from.origin),
+                true,
+            ),
+            same_hostname: strings::eql_case_insensitive_ascii(to.hostname, from.hostname, true),
+            downgrades_to_http: from.is_https() && !to.is_https(),
+        }
+    }
+
+    fn strips_credentials(self, policy: RedirectCredentialsPolicy) -> bool {
+        match policy {
+            RedirectCredentialsPolicy::SameOrigin => !self.same_origin,
+            RedirectCredentialsPolicy::SameHostname => {
+                !self.same_hostname || self.downgrades_to_http
+            }
+        }
+    }
 }
 
 // ── shared per-thread buffers ───────────────────────────────────────────
@@ -5023,7 +5072,7 @@ impl<'a> HTTPClient<'a> {
                 {
                     return Err(crate::Error::RequestBodyNotReusable);
                 }
-                let is_same_origin;
+                let hop: RedirectHop;
 
                 {
                     if let Some(i) = strings::index_of(location, b"://") {
@@ -5087,11 +5136,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(new_url.origin),
-                            strings::without_trailing_slash(self.url.origin),
-                            true,
-                        );
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         // connected_url still borrows from the previous hop's buffer
                         // until doRedirect releases the socket, so park it in
@@ -5142,11 +5187,7 @@ impl<'a> HTTPClient<'a> {
                         // `self.redirect` below, which lives as long as `self` (≥ `'a`).
                         let new_url: URL<'a> =
                             unsafe { URL::parse(&normalized_url_str).erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(new_url.origin),
-                            strings::without_trailing_slash(self.url.origin),
-                            true,
-                        );
+                        hop = RedirectHop::between(&self.url, &new_url);
                         self.url = new_url;
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect =
@@ -5170,11 +5211,7 @@ impl<'a> HTTPClient<'a> {
                         // SAFETY: self-borrow — `new_url` is moved into `self.redirect`
                         // below, which lives as long as `self` (≥ `'a`).
                         self.url = unsafe { parsed_url.erase_lifetime() };
-                        is_same_origin = strings::eql_case_insensitive_ascii(
-                            strings::without_trailing_slash(self.url.origin),
-                            strings::without_trailing_slash(original_url.origin),
-                            true,
-                        );
+                        hop = RedirectHop::between(&original_url, &self.url);
                         debug_assert!(self.prev_redirect.is_empty());
                         self.prev_redirect = core::mem::replace(&mut self.redirect, new_url);
                     }
@@ -5214,7 +5251,7 @@ impl<'a> HTTPClient<'a> {
                 // Cross-origin redirect: re-derive SNI / cert
                 // verification / Host from the redirect target. See
                 // `InternalStateFlags::clear_hostname_on_redirect`.
-                if !is_same_origin {
+                if !hop.same_origin {
                     self.state.flags.clear_hostname_on_redirect = true;
                 }
 
@@ -5223,14 +5260,20 @@ impl<'a> HTTPClient<'a> {
                 // locationURL's origin, then for each headerName of CORS
                 // non-wildcard request-header name, delete headerName from
                 // request's header list.
-                if !is_same_origin && self.header_entries.len() > 0 {
+                // The credential headers follow `Flags::redirect_credentials`.
+                if !hop.same_origin && self.header_entries.len() > 0 {
+                    let strip_credentials = hop.strips_credentials(self.flags.redirect_credentials);
                     let mut i = 0;
                     while i < self.header_entries.len() {
                         let name = self.header_str(self.header_entries.items_name()[i]);
-                        if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
+                        let strip = match CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
                             .get_ascii_case_insensitive(name)
-                            .is_some()
                         {
+                            Some(StrippedOnRedirect::Host) => true,
+                            Some(StrippedOnRedirect::Credential) => strip_credentials,
+                            None => false,
+                        };
+                        if strip {
                             let _ = self.header_entries.ordered_remove(i);
                         } else {
                             i += 1;

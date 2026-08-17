@@ -1288,10 +1288,7 @@ pub fn normalize_string_spill<'a, const ALLOW_ABOVE_ROOT: bool, P: PlatformT>(
     if needed <= PARSER_BUFFER_LEN {
         return normalize_string::<ALLOW_ABOVE_ROOT, P>(str);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, &mut spill[..])
+    normalize_string_buf::<ALLOW_ABOVE_ROOT, P, false>(str, grow(spill, needed))
 }
 
 pub fn normalize_buf<'a, P: PlatformT>(str: &[u8], buf: &'a mut [u8]) -> &'a mut [u8] {
@@ -1319,12 +1316,17 @@ pub fn normalize_buf_z_spill<'a, P: PlatformT>(
 /// `buf` when it holds `needed` bytes, otherwise `spill` grown to `needed`.
 fn buf_or_spill<'a>(buf: &'a mut [u8], spill: &'a mut Vec<u8>, needed: usize) -> &'a mut [u8] {
     if needed <= buf.len() {
-        return buf;
+        buf
+    } else {
+        grow(spill, needed)
     }
+}
+
+fn grow(spill: &mut Vec<u8>, needed: usize) -> &mut [u8] {
     if spill.len() < needed {
         spill.resize(needed, 0);
     }
-    &mut spill[..]
+    spill
 }
 
 pub fn normalize_buf_t<'a, T: PathChar, P: PlatformT>(str: &[T], buf: &'a mut [T]) -> &'a mut [T] {
@@ -1416,10 +1418,7 @@ pub fn join_abs_string_spill<'a, P: PlatformT>(
     if needed <= PARSER_JOIN_INPUT_BUFFER_LEN {
         return join_abs_string::<P>(cwd, parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_abs_string_buf::<P>(cwd, &mut spill[..], parts)
+    join_abs_string_buf::<P>(cwd, grow(spill, needed), parts)
 }
 
 /// Convert parts of potentially invalid file paths into a single valid filpeath
@@ -1468,10 +1467,7 @@ pub fn join_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -> 
     if needed <= JOIN_BUF_LEN {
         return join::<P>(parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_string_buf::<P>(&mut spill[..], parts)
+    join_string_buf::<P>(grow(spill, needed), parts)
 }
 
 /// [`join_z`] (thread-local buffer) when the result fits, otherwise into
@@ -1481,10 +1477,7 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
     if needed <= JOIN_BUF_LEN {
         return join_z::<P>(parts);
     }
-    if spill.len() < needed {
-        spill.resize(needed, 0);
-    }
-    join_z_buf::<P>(&mut spill[..], parts)
+    join_z_buf::<P>(grow(spill, needed), parts)
 }
 
 pub fn join_z_buf<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1625,9 +1618,7 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
 }
 
-/// Buffer length that holds `_join_abs_string_buf`'s concatenation of `cwd` and
-/// `parts` (one separator each, plus the one a bare Windows root gains) as well
-/// as its normalized output.
+/// Fits `_join_abs_string_buf`'s concatenation (a separator per part, one more for a bare Windows root).
 #[inline]
 fn join_abs_needed(cwd_len: usize, parts: &[&[u8]]) -> usize {
     parts.iter().map(|p| p.len() + 1).sum::<usize>() + cwd_len + 2

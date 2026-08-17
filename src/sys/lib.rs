@@ -122,25 +122,6 @@ pub mod dir_iterator {
         pub kind: EntryKind,
     }
 
-    impl IteratorResult {
-        /// See `WrappedIterator::resolve_unknown_entry_types`.
-        fn resolve_unknown_kind(&mut self, dir: Fd) {
-            #[cfg(not(windows))]
-            {
-                if self.kind == EntryKind::Unknown {
-                    if let Ok(stat) = super::lstatat(dir, self.name.as_zstr()) {
-                        self.kind = super::kind_from_mode(stat.st_mode as super::Mode);
-                    }
-                }
-            }
-            #[cfg(windows)]
-            {
-                // The Windows iterator always knows the kind.
-                let _ = dir;
-            }
-        }
-    }
-
     /// Length-known, NUL-terminated entry name in OS-native encoding.
     ///
     /// **POSIX**: lifetime-erased borrow (raw pointer + length) into the
@@ -749,9 +730,7 @@ pub mod dir_iterator {
         #[cfg(not(windows))]
         name_filter: Option<Vec<u16>>,
         state: State,
-        /// `lstat` entries whose kind the filesystem did not report (`Unknown`:
-        /// FUSE, NFS, XFS with `ftype=0`), so that, as with `d_type`, a symlink is
-        /// still a symlink. Entries that cannot be stat'ed stay `Unknown`.
+        /// `lstat` entries the filesystem reports as `Unknown` (FUSE, NFS, XFS `ftype=0`).
         pub resolve_unknown_entry_types: bool,
     }
     impl WrappedIterator {
@@ -781,13 +760,17 @@ pub mod dir_iterator {
         /// Copy it out before pushing the iterator into a `Vec` etc.
         #[inline]
         pub fn next(&mut self) -> Result<Option<IteratorResult>> {
-            let mut entry = self.state.next(self.dir)?;
+            #[cfg(not(windows))] // The Windows iterator always knows the kind.
             if self.resolve_unknown_entry_types {
-                if let Some(entry) = entry.as_mut() {
-                    entry.resolve_unknown_kind(self.dir);
+                let mut entry = self.state.next(self.dir)?;
+                if let Some(e) = entry.as_mut().filter(|e| e.kind == EntryKind::Unknown) {
+                    if let Ok(st) = super::lstatat(self.dir, e.name.as_zstr()) {
+                        e.kind = super::kind_from_mode(st.st_mode as super::Mode);
+                    }
                 }
+                return Ok(entry);
             }
-            Ok(entry)
+            self.state.next(self.dir)
         }
     }
 
@@ -1095,9 +1078,7 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// Mode for [`flock`] — a whole-file lock: advisory `flock(2)` on POSIX,
-/// mandatory `LockFileEx` on Windows (other handles' reads and writes into
-/// the locked range fail there). Released when the fd is closed.
+/// For [`flock`]: advisory `flock(2)` on POSIX, mandatory `LockFileEx` on Windows; released on close.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileLockMode {
     Shared,
@@ -1988,34 +1969,20 @@ mod posix_impl {
             Ok(Fd::from_native(rc))
         }
     }
-    /// Runtime Android detection. Android's app seccomp policy kills the
-    /// process with SIGSYS instead of returning ENOSYS for syscalls outside
-    /// its allowlist, so `openat2(2)`/`fchmodat2(2)` must never be issued
-    /// there, not even as a probe. Shipped linux builds run under Termux as
-    /// plain `target_os = "linux"`, hence runtime detection: the kernel
-    /// release string, or the `ANDROID_ROOT`/`ANDROID_DATA` env vars Android
-    /// init sets for every process.
+    /// Android's app seccomp policy answers `openat2(2)`/`fchmodat2(2)` with SIGSYS, not ENOSYS,
+    /// so they must not even be probed there; the linux build runs under Termux, hence at runtime.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn is_android_kernel() -> bool {
-        if cfg!(target_os = "android") {
-            return true;
-        }
-        use core::sync::atomic::{AtomicU8, Ordering};
-        // 0 = unprobed, 1 = not Android, 2 = Android.
-        static CACHED: AtomicU8 = AtomicU8::new(0);
-        match CACHED.load(Ordering::Relaxed) {
-            0 => {}
-            v => return v == 2,
-        }
-        let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
-        let detected = bun_core::strings::contains_case_insensitive_ascii(release, b"android")
-            || (bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some()
-                && bun_core::env_var::ANDROID_DATA::get_not_empty().is_some());
-        CACHED.store(if detected { 2 } else { 1 }, Ordering::Relaxed);
-        detected
+        static CACHED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *CACHED.get_or_init(|| {
+            let release = bun_core::ffi::c_field_bytes(&bun_core::ffi::cached_uname().release);
+            cfg!(target_os = "android")
+                || bun_core::strings::contains_case_insensitive_ascii(release, b"android")
+                || (bun_core::env_var::ANDROID_ROOT::get_not_empty().is_some()
+                    && bun_core::env_var::ANDROID_DATA::get_not_empty().is_some())
+        })
     }
-    /// `openat2(RESOLVE_BENEATH)`; ENOSYS on Android without issuing the
-    /// syscall (see [`is_android_kernel`]).
+    /// `openat2(RESOLVE_BENEATH)`; ENOSYS on Android (see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_beneath(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         let dir = dir.as_fd();
@@ -2028,7 +1995,6 @@ mod posix_impl {
     /// `openat2(RESOLVE_IN_ROOT | RESOLVE_NO_MAGICLINKS)`: resolves `path` as
     /// if `dir` were `/`. Falls back to plain `openat` on kernels without
     /// `openat2` (or when seccomp blocks it), caching the unavailability.
-    /// Never issued on Android (see [`is_android_kernel`]).
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub fn openat2_in_root(dir: impl AsFd, path: &ZStr, flags: i32, mode: Mode) -> Maybe<Fd> {
         use core::sync::atomic::{AtomicBool, Ordering};
@@ -2732,30 +2698,22 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
-    /// Advisory whole-file lock. Returns `Ok(false)` when `nonblocking` and
-    /// the lock is held elsewhere; retries `EINTR` internally.
+    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
-        let mut op = match mode {
+        let op = match mode {
             FileLockMode::Shared => libc::LOCK_SH,
             FileLockMode::Exclusive => libc::LOCK_EX,
-        };
-        if nonblocking {
-            op |= libc::LOCK_NB;
-        }
+        } | if nonblocking { libc::LOCK_NB } else { 0 };
         loop {
             // SAFETY: `fd` is a live descriptor; `op` is a valid flock op.
-            let rc = unsafe { libc::flock(fd.native(), op) };
-            if rc == 0 {
+            if unsafe { libc::flock(fd.native(), op) } == 0 {
                 return Ok(true);
             }
-            let e = last_errno();
-            if e == libc::EINTR {
-                continue;
+            match last_errno() {
+                libc::EINTR => continue,
+                libc::EWOULDBLOCK if nonblocking => return Ok(false),
+                e => return Err(Error::from_code_int(e, Tag::flock).with_fd(fd)),
             }
-            if nonblocking && (e == libc::EWOULDBLOCK || e == libc::EAGAIN) {
-                return Ok(false);
-            }
-            return Err(Error::from_code_int(e, Tag::flock).with_fd(fd));
         }
     }
     pub fn getcwd(buf: &mut [u8]) -> Maybe<usize> {
@@ -2814,18 +2772,12 @@ mod posix_impl {
                 }
             } else {
                 let mut buf = [0u8; 32];
-                let n = {
-                    use std::io::Write as _;
-                    let mut c = std::io::Cursor::new(&mut buf[..]);
-                    let _ = write!(c, "/proc/self/fd/{}\0", tmpfd.native());
-                    c.position() as usize - 1
-                };
-                let _ = n;
-                // SAFETY: NUL written by the format string above.
+                let proc_path = fd_path_z(b"/proc/self/fd/", tmpfd, &mut buf);
+                // SAFETY: `proc_path` is NUL-terminated; dirfd valid.
                 unsafe {
                     libc::linkat(
                         libc::AT_FDCWD,
-                        buf.as_ptr().cast(),
+                        proc_path.as_ptr(),
                         dirfd.native(),
                         name.as_ptr(),
                         libc::AT_SYMLINK_FOLLOW,
@@ -2934,10 +2886,9 @@ mod posix_impl {
         }
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         {
+            // glibc/musl `fchmodat(.., AT_SYMLINK_NOFOLLOW)` try `fchmodat2(2)` too.
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if is_android_kernel() {
-                // libc's `fchmodat(.., AT_SYMLINK_NOFOLLOW)` is no escape
-                // hatch here: current glibc/musl try `fchmodat2(2)` inside it.
                 return lchmod_no_fchmodat2(path, mode);
             }
             const SYS_FCHMODAT2: libc::c_long = 452;
@@ -2966,47 +2917,19 @@ mod posix_impl {
             }
         }
     }
-    /// `lchmod` without `fchmodat2(2)`: `O_PATH` + `chmod("/proc/self/fd/N")`,
-    /// musl's own fallback strategy. Symlinks are rejected with EOPNOTSUPP,
-    /// matching libc.
+    /// musl's fallback: `O_PATH` + `chmod("/proc/self/fd/N")`; symlinks get EOPNOTSUPP like libc.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     fn lchmod_no_fchmodat2(path: &ZStr, mode: Mode) -> Maybe<()> {
-        let fd = match open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0) {
-            Ok(fd) => fd,
-            Err(mut err) => {
-                err.syscall = Tag::lchmod;
-                return Err(err);
-            }
-        };
-        let st = match fstat(fd) {
-            Ok(st) => st,
-            Err(mut err) => {
-                let _ = close(fd);
-                err.syscall = Tag::lchmod;
-                return Err(err.with_path(path.as_bytes()));
-            }
-        };
-        if (st.st_mode as u32 & libc::S_IFMT as u32) == libc::S_IFLNK as u32 {
-            let _ = close(fd);
-            return Err(
-                Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod).with_path(path.as_bytes())
-            );
-        }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        let result = chmod(z, mode);
-        let _ = close(fd);
-        result.map_err(|mut err| {
+        let retag = |mut err: Error| {
             err.syscall = Tag::lchmod;
             err.with_path(path.as_bytes())
-        })
+        };
+        let fd = open(path, O::PATH | O::NOFOLLOW | O::CLOEXEC, 0).map_err(retag)?;
+        let _close = crate::CloseOnDrop::new(fd);
+        if kind_from_mode(fstat(fd).map_err(retag)?.st_mode as Mode) == FileKind::SymLink {
+            return Err(retag(Error::from_code_int(libc::EOPNOTSUPP, Tag::lchmod)));
+        }
+        chmod(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), mode).map_err(retag)
     }
     pub fn chown(path: &ZStr, uid: u32, gid: u32) -> Maybe<()> {
         check_p!(
@@ -3797,11 +3720,8 @@ mod windows_impl {
         }
         Ok(bytes_written as usize)
     }
-    /// Whole-file lock via `LockFileEx` (mandatory on Windows: other
-    /// handles' reads and writes into the range fail). Returns `Ok(false)` when
-    /// `nonblocking` and the lock is held elsewhere. Unlike POSIX `flock`,
-    /// `LockFileEx` does not upgrade/downgrade an already-held lock, but the
-    /// only caller pattern is acquire-once/close, which behaves identically.
+    /// `Ok(false)` when `nonblocking` and the lock is held elsewhere. Unlike `flock(2)`,
+    /// `LockFileEx` cannot convert a lock the handle already holds.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
         let mut flags: w::DWORD = 0;
         if mode == FileLockMode::Exclusive {
@@ -7682,22 +7602,22 @@ fn linux_kernel_is_freebsd() -> bool {
     detected == 2
 }
 
+/// `<prefix><fd number>`, NUL-terminated in `buf`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+fn fd_path_z<'a>(prefix: &[u8], fd: Fd, buf: &'a mut [u8; 32]) -> &'a ZStr {
+    buf[..prefix.len()].copy_from_slice(prefix);
+    let end = prefix.len() + bun_core::fmt::print_int(&mut buf[prefix.len()..], fd.native());
+    buf[end] = 0;
+    ZStr::from_buf(&buf[..], end)
+}
+
 /// readlink `/dev/fd/N` (fdescfs).
 #[cfg(any(target_os = "linux", target_os = "android"))]
 fn get_fd_path_freebsd_linuxulator<'a>(
     fd: Fd,
     out: &'a mut bun_paths::PathBuffer,
 ) -> Maybe<&'a mut [u8]> {
-    let mut dev = [0u8; 32];
-    let n = {
-        use std::io::Write as _;
-        let mut c = std::io::Cursor::new(&mut dev[..]);
-        let _ = write!(c, "/dev/fd/{}\0", fd.native());
-        c.position() as usize - 1
-    };
-    // SAFETY: NUL written above.
-    let z = ZStr::from_buf(&dev[..], n);
-    let len = readlink(z, &mut out.0)?;
+    let len = readlink(fd_path_z(b"/dev/fd/", fd, &mut [0u8; 32]), &mut out.0)?;
     Ok(&mut out.0[..len])
 }
 
@@ -7711,16 +7631,7 @@ pub fn get_fd_path<'a>(fd: Fd, out: &'a mut bun_paths::PathBuffer) -> Maybe<&'a 
         if linux_kernel_cached_is_freebsd() {
             return get_fd_path_freebsd_linuxulator(fd, out);
         }
-        let mut proc = [0u8; 32];
-        let n = {
-            use std::io::Write as _;
-            let mut c = std::io::Cursor::new(&mut proc[..]);
-            let _ = write!(c, "/proc/self/fd/{}\0", fd.native());
-            c.position() as usize - 1
-        };
-        // SAFETY: NUL written above.
-        let z = ZStr::from_buf(&proc[..], n);
-        match readlink(z, &mut out.0) {
+        match readlink(fd_path_z(b"/proc/self/fd/", fd, &mut [0u8; 32]), &mut out.0) {
             Ok(len) => return Ok(&mut out.0[..len]),
             Err(e) => {
                 // Under FreeBSD Linuxulator, fall back to
@@ -9226,8 +9137,7 @@ pub fn renameat_z(from_dir: impl AsFd, from: &ZStr, to_dir: impl AsFd, to: &ZStr
 #[derive(Default, Clone, Copy)]
 pub struct RenameatConcurrentlyOptions {
     pub move_fallback: bool,
-    /// If `to` already exists (another process published it first and may be
-    /// reading it), keep it and delete `from` instead of replacing it.
+    /// If `to` already exists (another process won the race), delete `from` instead of replacing `to`.
     pub keep_existing_destination: bool,
 }
 /// Alias: `bun_install` call sites spell this `RenameOptions`.
@@ -9247,8 +9157,7 @@ pub(crate) fn move_file_z_slow_maybe(
 
 /// `renameatConcurrently`. Tries an atomic NOREPLACE rename,
 /// then EXCHANGE, then a racy delete-tree + rename. With `move_fallback` set,
-/// an EXDEV result falls through to a slow open/copy; see
-/// [`RenameatConcurrentlyOptions`] for `keep_existing_destination`.
+/// an EXDEV result falls through to a slow open/copy.
 /// After an EXCHANGE, `from` holds the tree that was at `to`.
 pub fn renameat_concurrently(
     from_dir_fd: Fd,
@@ -9303,19 +9212,13 @@ pub(crate) fn renameat_concurrently_without_fallback(
                 Ok(()) => break 'attempt,
             };
 
-            // Not keyed on the errno: Windows and filesystems without
-            // RENAME_NOREPLACE report an existing `to` differently.
-            if opts.keep_existing_destination
-                && exists_at_type(
-                    if to_dir_fd.is_valid() {
-                        to_dir_fd
-                    } else {
-                        Fd::cwd()
-                    },
-                    to,
-                )
-                .is_ok()
-            {
+            // Not keyed on the errno: it varies across Windows and filesystems without RENAME_NOREPLACE.
+            let to_dir = if to_dir_fd.is_valid() {
+                to_dir_fd
+            } else {
+                Fd::cwd()
+            };
+            if opts.keep_existing_destination && exists_at_type(to_dir, to).is_ok() {
                 if from_dir_fd.is_valid() {
                     let _ = Dir::borrow(&from_dir_fd).delete_tree(from.as_bytes());
                 } else {

@@ -596,16 +596,14 @@ jobs:
           echo "artifact_path=${RUNNER_TEMP}/bun-release/${NAME}.tar.gz" >> "$GITHUB_ENV"
           echo "binary_path=${RUNNER_TEMP}/bun-release/${NAME}/bun" >> "$GITHUB_ENV"
 
-      - name: Upload artifact (tar.gz)
+      # github-act-runner marks the job complete after the first artifact
+      # upload; a second upload then 403s with "job is completed" (seen on
+      # 2026-08-17). Upload both artifacts in a single step.
+      - name: Upload artifacts (tar.gz + raw binary)
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.artifact_name }}
-          path: ${{ env.artifact_path }}
-          retention-days: 30
-
-      - name: Upload binary (raw)
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ env.artifact_name }}.bun
-          path: ${{ env.binary_path }}
+          path: |
+            ${{ env.artifact_path }}
+            ${{ env.binary_path }}
           retention-days: 30

@@ -154,12 +154,9 @@ impl<'a> Entry<'a> {
         self.specs.iter().any(|spec| {
             let name = Entry::get_name_from_spec(spec);
             let range = spec.get(name.len() + 1..).unwrap_or(b"");
-            let range = if Entry::is_npm_alias(range) {
-                Entry::parse_npm_alias(range).version
-            } else {
-                range
-            };
-            DepTag::infer(range).is_npm()
+            let alias = range.strip_prefix(b"npm:");
+            DepTag::infer(alias.map_or(range, |alias| Entry::parse_npm_alias(alias).version))
+                .is_npm()
         })
     }
 

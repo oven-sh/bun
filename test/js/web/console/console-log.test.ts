@@ -1,6 +1,7 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 
 it("should log to console correctly", async () => {
@@ -141,6 +142,48 @@ NamedError: console.error a named error
 
   Error log"
 `);
+});
+
+it.skipIf(isWindows)("console.log gives up quietly when stdout cannot be written", async () => {
+  // Each value formats to more than the 4 KB console buffer, so the write
+  // fails part-way through printing it.
+  const code = /* js */ `
+    const s = Buffer.alloc(64, "x").toString();
+    const entries = Array.from({ length: 200 }, (_, i) => ["k" + i, s]);
+    console.log(new Map(entries));
+    console.log(new Set(entries.map(e => e.join(""))));
+    console.log(entries.map(e => e[1]));
+    console.log(Object.fromEntries(entries));
+    console.log(new MessageEvent("message", { data: Buffer.alloc(8192, "d").toString() }));
+    console.log(new Request("http://example.com/" + Buffer.alloc(8192, "p").toString()));
+    const built = await Bun.build({
+      entrypoints: [import.meta.dir + "/big-artifact.js"],
+      target: "browser",
+    });
+    console.log(built.outputs[0]);
+    console.error("done");
+  `;
+  using dir = tempDir("console-log-ebadf", {
+    "index.js": code,
+    "big-artifact.js": "export default " + JSON.stringify(Buffer.alloc(8192, "a").toString()) + ";\n",
+  });
+  // A read-only descriptor as stdout makes the child's write(2) fail with EBADF.
+  const stdoutFd = openSync("/dev/null", "r");
+  try {
+    await using proc = spawn({
+      cmd: [bunExe(), "index.js"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: stdoutFd,
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("done\n");
+    expect(exitCode).toBe(0);
+  } finally {
+    closeSync(stdoutFd);
+  }
 });
 
 it("console.log with SharedArrayBuffer", () => {

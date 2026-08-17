@@ -43,6 +43,7 @@
 
 #include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
+#include "NodeVMScriptFetcher.h"
 #include "ObjectBindings.h"
 
 #include <JavaScriptCore/VMInlines.h>
@@ -161,6 +162,9 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
         return;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
+        // vm.compileFunction's wrapper starts the first line; it is not part of the user's source.
+        unsigned wrapperTextLength = Bun::NodeVMScriptFetcher::wrapperTextLength(*provider);
+
         // Search for the beginning of the line
         unsigned int lineStart = location.byte_position;
         while (lineStart > 0 && sourceString[lineStart] != '\n') {
@@ -185,7 +189,8 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
             (*referenced_source_provider)->deref();
         }
         *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
+        unsigned int textStart = lineStart == 0 ? std::min(wrapperTextLength, lineEnd) : lineStart;
+        source_lines[0] = Bun::toStringView(sourceString.substring(textStart, lineEnd - textStart));
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
@@ -211,7 +216,8 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
+                unsigned int contextStart = byte_offset_in_source_string == 0 ? std::min(wrapperTextLength, end_of_line_offset + 1) : byte_offset_in_source_string;
+                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(contextStart, end_of_line_offset + 1 - contextStart));
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;

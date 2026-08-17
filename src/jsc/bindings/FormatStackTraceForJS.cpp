@@ -22,6 +22,7 @@
 #include "BunClientData.h"
 #include "CallSite.h"
 #include "ErrorStackTrace.h"
+#include "NodeVMScriptFetcher.h"
 #include "headers-handwritten.h"
 
 #include <wtf/Scope.h>
@@ -265,6 +266,13 @@ WTF::String formatStackTrace(
         if (!frame.hasLineAndColumnInfo()) continue;
 
         originalLineColumns[i] = frame.computeLineAndColumn();
+        if (auto* codeBlock = frame.codeBlock()) {
+            if (auto* provider = codeBlock->source().provider()) {
+                LineColumn& lineColumn = originalLineColumns[i];
+                if (unsigned wrapperColumns = NodeVMScriptFetcher::wrapperColumnsOnLine(*provider, static_cast<int>(lineColumn.line) - 1))
+                    lineColumn.column = lineColumn.column > wrapperColumns ? lineColumn.column - wrapperColumns : 1;
+            }
+        }
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {

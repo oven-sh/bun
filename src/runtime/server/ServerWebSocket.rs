@@ -875,6 +875,10 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
+            // `to_js_string` can run user JS that stops the server.
+            let Some(ctx) = self.publish_ctx() else {
+                return Ok(JSValue::js_number(0.0));
+            };
             let view = js_string.view(global_this);
             let slice = view.to_slice();
 
@@ -903,10 +907,10 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some(ctx) = self.publish_ctx() else {
+        if self.publish_ctx().is_none() {
             bun_output::scoped_log!(WebSocketServer, "publish() closed");
             return Ok(JSValue::js_number(0.0));
-        };
+        }
 
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
@@ -927,6 +931,9 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
+        let Some(ctx) = self.publish_ctx() else {
+            return Ok(JSValue::js_number(0.0));
+        };
         let view = js_string.view(global_this);
         let slice = view.to_slice();
 

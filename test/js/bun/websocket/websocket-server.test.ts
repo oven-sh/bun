@@ -1580,6 +1580,61 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   expect(exitCode).toBe(0);
 });
 
+it("server.publish() keeps the topic alive while converting the message", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const TOPIC = "t_".repeat(4000);
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, s) { return s.upgrade(req) ? undefined : new Response("x"); },
+          websocket: { open(ws) { ws.subscribe(TOPIC); }, message() {} },
+        });
+        const client = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+        const got = Promise.withResolvers();
+        client.onmessage = e => got.resolve(e.data);
+        client.onclose = () => got.resolve("closed");
+        await new Promise((resolve, reject) => { client.onopen = resolve; client.onerror = reject; });
+        // A String object so toPrimitive hands back a fresh, otherwise-unreferenced JSString.
+        const topic = Object.assign(new String("z"), { [Symbol.toPrimitive]() { return "t_".repeat(4000).slice(0) + ""; } });
+        const data = Object.assign(new String("z"), {
+          [Symbol.toPrimitive]() {
+            Bun.gc(true);
+            const k = [];
+            for (let i = 0; i < 300; i++) k.push("Q".repeat(40000 + i));
+            globalThis.keep = k;
+            Bun.gc(true);
+            return "payload";
+          },
+        });
+        const rc = server.publish(topic, data);
+        // If the first publish went to a garbage topic, this one arrives first.
+        server.publish(TOPIC, "sentinel");
+        const result = await got.promise;
+        console.log(JSON.stringify({ rc, result }));
+        client.close();
+        server.stop(true);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // Route bmalloc through the system heap so ASAN builds observe the freed
+      // StringImpl (see the Sec-WebSocket-Protocol test above).
+      ...(isWindows ? {} : { Malloc: "1" }),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: JSON.stringify({ rc: 7, result: "payload" }),
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
 // publish() fans out to N subscribers and must report backpressure/drops the
 // same way ws.send() does for a single socket.
 describe.concurrent("publish() return value reflects subscriber backpressure", () => {

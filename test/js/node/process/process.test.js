@@ -2746,7 +2746,10 @@ describe.concurrent("lazy process properties whose builder throws", () => {
     expect(exitCode).toBe(0);
   });
 
-  it("inspecting process while out of stack leaves every property buildable", async () => {
+  // Windows: process.env is built by a JS builtin and has a JS custom inspect function. Building
+  // it or inspecting it at the stack limit still aborts the process (initializers of JSC
+  // LazyPropertys, which cannot fail), so Bun.inspect(process) cannot be run there.
+  it.skipIf(isWindows)("inspecting process while out of stack leaves every property buildable", async () => {
     // Bun.inspect(process) reads every property, so it runs all of the builders in one go. Done
     // while unwinding, the deepest inspections fail every builder that calls into JS. Whatever
     // failed must be missing from that inspection only.

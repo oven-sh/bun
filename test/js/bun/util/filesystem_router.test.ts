@@ -222,13 +222,237 @@ it("should support catch-all routes", () => {
     expect(match?.name).not.toBe("/posts/[...id]");
   }
 
-  for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123", "/posts/wow/hey/there"]) {
+  for (let fixture of ["/posts/hey/there", "/posts/hey/there/you", "/posts/zorp/123"]) {
     const { name, params, filePath } = router.match(fixture)!;
 
     expect(name).toBe("/posts/[...id]");
     expect(filePath).toBe(`${dir}/posts/[...id].tsx`);
     expect(params.id).toBe(fixture.split("/").slice(2).join("/"));
   }
+
+  // The static "wow" segment beats "[...id]" at the same depth, as in Next.js;
+  // otherwise posts/wow/[[...id]] could never match anything.
+  for (const [fixture, params] of [
+    ["/posts/wow", {}],
+    ["/posts/wow/hey/there", { id: "hey/there" }],
+  ] as const) {
+    const match = router.match(fixture)!;
+    expect({ fixture, name: match.name, filePath: match.filePath, params: match.params }).toEqual({
+      fixture,
+      name: "/posts/wow/[[...id]]",
+      filePath: `${dir}/posts/wow/[[...id]].tsx`,
+      params,
+    });
+  }
+});
+
+// Route precedence follows Next.js (getSortedRoutes): routes are compared one
+// segment at a time and at the first depth where they differ a static segment
+// beats [param], which beats [...rest], which beats [[...rest]]. In particular a
+// route's precedence is not decided by its most dynamic segment.
+it.each([
+  {
+    label: "a static directory holding an optional catch-all beats a root dynamic route",
+    files: ["[slug].tsx", "opt/[[...rest]].tsx"],
+    matches: [
+      ["/opt", { name: "/opt/[[...rest]]", params: {} }],
+      ["/opt/", { name: "/opt/[[...rest]]", params: {} }],
+      ["/opt/x/y", { name: "/opt/[[...rest]]", params: { rest: "x/y" } }],
+      ["/other", { name: "/[slug]", params: { slug: "other" } }],
+    ],
+  },
+  {
+    label: "a static directory holding a catch-all beats a root dynamic route",
+    files: ["[slug]/[id].tsx", "opt/[...rest].tsx"],
+    matches: [
+      ["/opt/x", { name: "/opt/[...rest]", params: { rest: "x" } }],
+      ["/opt/x/y", { name: "/opt/[...rest]", params: { rest: "x/y" } }],
+      ["/a/b", { name: "/[slug]/[id]", params: { slug: "a", id: "b" } }],
+      // A catch-all still needs at least one segment; nothing else is two segments deep.
+      ["/opt", null],
+    ],
+  },
+  {
+    label: "a static first segment beats a dynamic one even when its route ends in an optional catch-all",
+    files: ["[team]/[...rest].tsx", "docs/[[...rest]].tsx"],
+    matches: [
+      ["/docs", { name: "/docs/[[...rest]]", params: {} }],
+      ["/docs/intro", { name: "/docs/[[...rest]]", params: { rest: "intro" } }],
+      ["/acme/intro", { name: "/[team]/[...rest]", params: { team: "acme", rest: "intro" } }],
+    ],
+  },
+  {
+    label: "a static segment below a dynamic one beats the sibling catch-all",
+    files: ["[team]/[...rest].tsx", "[team]/docs/[[...path]].tsx"],
+    matches: [
+      ["/acme/docs", { name: "/[team]/docs/[[...path]]", params: { team: "acme" } }],
+      ["/acme/docs/intro", { name: "/[team]/docs/[[...path]]", params: { team: "acme", path: "intro" } }],
+      ["/acme/billing", { name: "/[team]/[...rest]", params: { team: "acme", rest: "billing" } }],
+    ],
+  },
+  {
+    label: "a static second segment beats a dynamic one regardless of the parameter names",
+    files: ["[a]/settings.tsx", "[ab]/[page].tsx"],
+    matches: [
+      ["/acme/settings", { name: "/[a]/settings", params: { a: "acme" } }],
+      ["/acme/billing", { name: "/[ab]/[page]", params: { ab: "acme", page: "billing" } }],
+    ],
+  },
+  {
+    label: "a static second segment beats a dynamic one regardless of the parameter names (swapped)",
+    files: ["[abc]/settings.tsx", "[a]/[page].tsx"],
+    matches: [
+      ["/acme/settings", { name: "/[abc]/settings", params: { abc: "acme" } }],
+      ["/acme/billing", { name: "/[a]/[page]", params: { a: "acme", page: "billing" } }],
+    ],
+  },
+  {
+    label: "at one depth, [param] beats [...rest] beats [[...rest]]",
+    files: ["docs/[page].tsx", "docs/[...rest].tsx", "docs/[[...optional]].tsx"],
+    matches: [
+      ["/docs/intro", { name: "/docs/[page]", params: { page: "intro" } }],
+      ["/docs/a/b", { name: "/docs/[...rest]", params: { rest: "a/b" } }],
+    ],
+  },
+  {
+    label: "at one depth, [...rest] beats [[...rest]] but still needs a segment",
+    files: ["docs/[...rest].tsx", "docs/[[...optional]].tsx"],
+    matches: [
+      ["/docs/intro", { name: "/docs/[...rest]", params: { rest: "intro" } }],
+      ["/docs", { name: "/docs/[[...optional]]", params: {} }],
+    ],
+  },
+  {
+    label: "a dynamic segment beats a catch-all at the same depth however deep the dynamic route goes on",
+    files: ["[...all].tsx", "[a]/[b].tsx", "[a]/[b]/[c].tsx", "[a]/[...rest].tsx"],
+    matches: [
+      ["/x", { name: "/[...all]", params: { all: "x" } }],
+      ["/x/y", { name: "/[a]/[b]", params: { a: "x", b: "y" } }],
+      ["/x/y/z", { name: "/[a]/[b]/[c]", params: { a: "x", b: "y", c: "z" } }],
+      ["/x/y/z/w", { name: "/[a]/[...rest]", params: { a: "x", rest: "y/z/w" } }],
+    ],
+  },
+  {
+    label: "fully static routes still beat every dynamic route",
+    files: ["index.tsx", "[[...all]].tsx", "[slug].tsx", "docs.tsx", "docs/[[...rest]].tsx"],
+    matches: [
+      ["/", { name: "/", params: {} }],
+      ["/docs", { name: "/docs", params: {} }],
+      ["/docs/intro", { name: "/docs/[[...rest]]", params: { rest: "intro" } }],
+      ["/about", { name: "/[slug]", params: { slug: "about" } }],
+      ["/a/b", { name: "/[[...all]]", params: { all: "a/b" } }],
+    ],
+  },
+] as const)("route precedence: $label", ({ files, matches }) => {
+  const { dir } = make([...files]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  for (const [pathname, expected] of matches) {
+    const match = router.match(pathname);
+    expect({ pathname, match: match && { name: match.name, params: match.params } }).toEqual({
+      pathname,
+      match: expected,
+    });
+  }
+});
+
+it("lists routes in match order", () => {
+  const { dir } = make([
+    "index.tsx",
+    "blog.tsx",
+    "blog/[slug].tsx",
+    "blog/archive/[[...date]].tsx",
+    "blog/[...rest].tsx",
+    "[user].tsx",
+    "[user]/[repo].tsx",
+    "[user]/settings.tsx",
+    "[[...fallback]].tsx",
+  ]);
+  const router = new Bun.FileSystemRouter({ dir, style: "nextjs" });
+
+  // Static routes come first (they are looked up by name); the dynamic routes
+  // follow in the order match() tries them, which is Next.js's sorted order.
+  expect(Object.keys(router.routes).filter(name => name.includes("["))).toEqual([
+    "/blog/archive/[[...date]]",
+    "/blog/[slug]",
+    "/blog/[...rest]",
+    "/[user]",
+    "/[user]/settings",
+    "/[user]/[repo]",
+    "/[[...fallback]]",
+  ]);
+});
+
+// With static segments winning, a deeper route is often tried (and rejected) before
+// the shallower route that wins. The rejected candidate has already recorded the
+// params of the segments it did match; if they survived, the winner would report
+// them too (`team: ["acme", "acme"]`), or crash in `.params` when the leaked name is
+// not one of its own (https://github.com/oven-sh/bun/issues/12206). The crash takes
+// the process down, so the routers run in a subprocess.
+it("a candidate rejected before the winner leaves no params behind", async () => {
+  const trees = {
+    "catch-all stops on an empty remainder, winner shares the param name": {
+      files: ["[team]/docs/[...topic].tsx", "[team]/[page].tsx"],
+      pathname: "/acme/docs",
+      expected: { name: "/[team]/[page]", params: { team: "acme", page: "docs" } },
+    },
+    "catch-all stops on an empty remainder, winner has other param names": {
+      files: ["[a]/docs/[...topic].tsx", "[z]/[...rest].tsx"],
+      pathname: "/bob/docs",
+      expected: { name: "/[z]/[...rest]", params: { z: "bob", rest: "docs" } },
+    },
+    "pattern ends with URL left over, winner shares the param name": {
+      files: ["[team]/settings.tsx", "[team]/[section]/[item].tsx"],
+      pathname: "/acme/settings/profile",
+      expected: { name: "/[team]/[section]/[item]", params: { team: "acme", section: "settings", item: "profile" } },
+    },
+    "pattern ends with URL left over, winner has other param names": {
+      files: ["[a]/settings.tsx", "[z]/[b]/[c].tsx"],
+      pathname: "/bob/settings/profile",
+      expected: { name: "/[z]/[b]/[c]", params: { z: "bob", b: "settings", c: "profile" } },
+    },
+  };
+
+  const fixture: Record<string, string> = {};
+  const cases: Record<string, { tree: string; pathname: string }> = {};
+  Object.entries(trees).forEach(([label, { files, pathname }], i) => {
+    for (const file of files) fixture[`tree-${i}/${file}`] = "export default 1;";
+    cases[label] = { tree: `tree-${i}`, pathname };
+  });
+  using dir = tempDir("fsr-rejected-candidate", fixture);
+
+  const code = /* ts */ `
+    import path from "path";
+    const out = {};
+    for (const [label, { tree, pathname }] of Object.entries(${JSON.stringify(cases)})) {
+      const router = new Bun.FileSystemRouter({
+        dir: path.join(${JSON.stringify(String(dir))}, tree),
+        style: "nextjs",
+      });
+      const match = router.match(pathname);
+      // .query is built from the same param list as .params, so it must agree with it.
+      out[label] = match && { name: match.name, params: match.params, query: match.query };
+    }
+    console.log(JSON.stringify(out));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", code],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual(
+    Object.fromEntries(
+      Object.entries(trees).map(([label, { expected }]) => [
+        label,
+        { name: expected.name, params: expected.params, query: expected.params },
+      ]),
+    ),
+  );
+  expect(exitCode).toBe(0);
 });
 
 it("should support index routes", () => {
@@ -504,7 +728,7 @@ it("origin should be validated", async () => {
 });
 
 // POSIX allows arbitrary bytes (except '/' and NUL) in filenames, including 0xFF.
-// The route sorter's lookup table must cover the full u8 range.
+// The route sorter must handle the full u8 range (https://github.com/oven-sh/bun/pull/29973).
 // Windows and macOS (APFS/HFS+) require filenames to be valid Unicode, so skip there.
 it.skipIf(isWindows || isMacOS)("handles filenames containing byte 0xFF", () => {
   using dir = tempDir("fsr-byte-ff", {});

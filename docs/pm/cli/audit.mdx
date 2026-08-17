@@ -123,4 +123,4 @@ Same as `bun audit fix`, but ranges in your own `package.json` files, catalogs, 
 
 `0` if no vulnerabilities remain after Bun applies `--audit-level` and `--ignore`, `1` otherwise. For `bun audit fix`, this is based on the re-audit after installing (or the plan, with `--dry-run`).
 
-If the registry request fails, both commands print `audit request failed` to stderr and exit `1`.
+If the registry request fails, both commands print `audit request failed` to stderr and exit `1`. The same goes for a response that is not an advisory report (for example, a registry or proxy that answers the audit request with an HTML page or an error object): a response Bun cannot read never counts as a clean audit.

@@ -258,7 +258,11 @@ fn print_elapsed_line() {
 
 fn print_tokens(tokens: &[Box<[u8]>]) {
     for (i, token) in tokens.iter().enumerate() {
-        pretty!("{}{}", if i > 0 { ", " } else { "" }, BStr::new(token));
+        pretty!(
+            "{}{}",
+            if i > 0 { ", " } else { "" },
+            bun_core::fmt::escape_control_chars(token)
+        );
     }
 }
 
@@ -313,14 +317,14 @@ pub fn print_unaudited(groups: &[UnauditedRegistry]) {
             bun_core::warn!(
                 "{} did not answer the audit request; skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
-                BStr::new(&packages)
+                bun_core::fmt::escape_control_chars(&packages)
             );
         } else {
             bun_core::warn!(
                 "{} did not answer the audit request ({}); skipped {}",
                 bun_core::fmt::redacted_npm_url(&group.registry),
                 BStr::new(&group.reason),
-                BStr::new(&packages)
+                bun_core::fmt::escape_control_chars(&packages)
             );
         }
     }
@@ -1080,7 +1084,7 @@ impl FixPlan {
             }
             pretty!("    <cyan>bun audit fix");
             for token in &all_tokens {
-                pretty!(" --ignore {}", BStr::new(token));
+                pretty!(" --ignore {}", bun_core::fmt::escape_control_chars(token));
             }
             prettyln!("<r>");
             prettyln!("");
@@ -1088,7 +1092,11 @@ impl FixPlan {
         if !self.unmatched.is_empty() {
             prettyln!("not matched to an installed version:");
             for item in &self.unmatched {
-                prettyln!("  {}@{}", BStr::new(&item.name), BStr::new(&item.range));
+                prettyln!(
+                    "  {}@{}",
+                    bun_core::fmt::escape_control_chars(&item.name),
+                    bun_core::fmt::escape_control_chars(&item.range)
+                );
             }
             prettyln!("");
         }

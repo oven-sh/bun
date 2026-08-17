@@ -751,6 +751,167 @@ describe("`bun audit`", () => {
     expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
     expect(exitCode).toBe(0);
   });
+
+  describe("registry responses", () => {
+    const projectDependingOnMs: DirectoryTree = {
+      "package.json": JSON.stringify({
+        name: "test",
+        version: "1.0.0",
+        dependencies: {
+          ms: "0.7.0",
+        },
+      }),
+      "bun.lock": JSON.stringify({
+        "lockfileVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "test",
+            "dependencies": {
+              ms: "0.7.0",
+            },
+          },
+        },
+        "packages": {
+          ms: ["ms@0.7.0", "", {}, fakeIntegrity],
+        },
+      }),
+    };
+
+    const NON_JSON = (registry: string) => `error: ${registry} returned a non-JSON audit response`;
+    const NOT_ADVISORIES = (registry: string) =>
+      `error: ${registry} returned an audit response that is not a list of advisories`;
+
+    async function auditAgainst(responseBody: string, args: string[] = []) {
+      await using registry = Bun.serve({
+        port: 0,
+        fetch: () => new Response(responseBody, { headers: { "content-type": "application/json" } }),
+      });
+      using dir = tempDir("bun-test-audit-registry-response", projectDependingOnMs);
+
+      await using proc = spawn({
+        cmd: [bunExe(), "audit", ...args],
+        cwd: String(dir),
+        env: { ...bunEnv, NPM_CONFIG_REGISTRY: registry.url.href },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      return { stdout, stderr: normalizeBunSnapshot(stderr), exitCode, registry: registry.url.href.slice(0, -1) };
+    }
+
+    // The text report starts with the `bun audit v...` header and a blank line; --json prints neither.
+    function withoutHeader(stdout: string) {
+      expect(stdout).toStartWith("bun audit v");
+      return stdout.slice(stdout.indexOf("\n\n") + 2);
+    }
+
+    const notAdvisoryLists = [
+      "[]",
+      "null",
+      '"all clear"',
+      '{"error":"audit is not supported by this registry"}',
+      '{"ms":{"severity":"high","title":"advisory object where the array should be"}}',
+      '{"ms":["high"]}',
+    ];
+
+    test.concurrent.each(notAdvisoryLists)("%s is a failed audit, not a clean one", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody);
+      expect(withoutHeader(stdout)).toBe("");
+      expect(stderr).toBe(NOT_ADVISORIES(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each(notAdvisoryLists)("--json relays %s and exits 1", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody, ["--json"]);
+      expect(stdout).toBe(`${responseBody}\n`);
+      expect(stderr).toBe(NOT_ADVISORIES(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    const notJson = ["<html>\x1b[2J\x1b]0;owned\x07sign in to continue</html>", "Not Found"];
+
+    test.concurrent.each(notJson)("a non-JSON body (%j) is neither echoed nor a clean audit", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody);
+      expect(withoutHeader(stdout)).toBe("");
+      expect(stderr).toBe(NON_JSON(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent.each(notJson)("--json does not echo a non-JSON body (%j) either", async responseBody => {
+      const { stdout, stderr, exitCode, registry } = await auditAgainst(responseBody, ["--json"]);
+      expect(stdout).toBe("");
+      expect(stderr).toBe(NON_JSON(registry));
+      expect(exitCode).toBe(1);
+    });
+
+    test.concurrent("a package listed with no advisories is a clean audit", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst('{"ms":[]}');
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("--json exits 0 when the packages are listed with no advisories", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst('{"ms":[]}', ["--json"]);
+      expect(stdout).toBe('{"ms":[]}\n');
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("an empty body is a clean audit", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst("");
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1));
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("--audit-level filtering out every advisory prints a clean audit, not nothing", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst(
+        JSON.stringify({ ms: [{ severity: "low", title: "minor", url: "https://example.com/minor" }] }),
+        ["--audit-level", "critical"],
+      );
+      expect(normalizeBunSnapshot(stdout)).toBe(AUDIT_HEADER + noVulnerabilities(1, "1 below --audit-level=critical"));
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+    });
+
+    test.concurrent("control characters in advisories and package names are escaped in the report", async () => {
+      const { stdout, stderr, exitCode } = await auditAgainst(
+        JSON.stringify({
+          ms: [
+            {
+              severity: "high",
+              title: "ms \x1b[2J\x1b]0;owned\x07 ReDoS in \\d+\r\n\tparsing\x7f \x9b \u00a9 2015",
+              url: "https://example.com/ms\x1b]8;;https://evil.example/\x07",
+              vulnerable_versions: "<2.0.0\x1b[0m",
+            },
+          ],
+          "ms\x1b[31m": [{ severity: "critical", title: "not a real package", url: "https://example.com/fake" }],
+        }),
+      );
+      // Not normalizeBunSnapshot: it rewrites the backslashes the escapes are made of.
+      expect(withoutHeader(stdout)).toBe(
+        [
+          "ms@0.7.0",
+          "  (direct dependency)",
+          "  high: ms \\x1b[2J\\x1b]0;owned\\x07 ReDoS in \\d+\\r\\n\\tparsing\\x7f \\u009b \u00a9 2015 (<2.0.0\\x1b[0m) - https://example.com/ms\\x1b]8;;https://evil.example/\\x07",
+          "",
+          "ms\\x1b[31m",
+          "  critical: not a real package - https://example.com/fake",
+          "",
+          "2 vulnerabilities (1 critical, 1 high)",
+          "",
+          REPORT_FOOTER,
+          "",
+        ].join("\n"),
+      );
+      expect(stdout).not.toContain("\x1b");
+      expect(stdout).not.toContain("\x07");
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
 });
 
 // Every audit line that names a registry prints it through the same redaction as the install error lines, which
@@ -838,7 +999,7 @@ describe("`bun audit` with a secret in the registry URL", () => {
 
     const json = await auditAgainst(dir, url, "--json");
     expect(normalizeBunSnapshot(json.stderr)).toBe(NON_JSON(printed));
-    expect(json.stdout).toBe(body + "\n");
+    expect(json.stdout).toBe("");
     expect(json.exitCode).toBe(1);
 
     const fix = await auditAgainst(dir, url, "fix");
@@ -1201,13 +1362,13 @@ describe("`bun audit` report", () => {
     expect(json.exitCode).toBe(1);
   });
 
-  test.concurrent("--json prints an unparsable response and reports the parse failure", async () => {
+  test.concurrent("--json reports an unparsable response without printing it", async () => {
     const body = "<html><body>registry is down</body></html>";
     await using server = startRegistry({}, { bulkBody: body });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
 
     const { stdout, stderr, exitCode } = await audit(dir, "--json");
-    expect(stdout).toBe(body + "\n");
+    expect(stdout).toBe("");
     expect(normalizeBunSnapshot(stderr)).toBe(`error: ${registryHref(server)} returned a non-JSON audit response`);
     expect(exitCode).toBe(1);
 
@@ -1217,18 +1378,33 @@ describe("`bun audit` report", () => {
     expect(text.exitCode).toBe(1);
   });
 
-  test.concurrent("a response whose root is not an object is a parse failure", async () => {
+  test.concurrent("a response whose root is not an object is not an advisory report", async () => {
     await using server = startRegistry({}, { bulkBody: "[]" });
     using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
     const lockBefore = await lock(dir);
+    const rejected = `error: ${registryHref(server)} returned an audit response that is not a list of advisories`;
 
     const json = await audit(dir, "--json");
     expect(json.stdout).toBe("[]\n");
-    expect(json.stderr).toContain(`error: ${registryHref(server)} returned a non-JSON audit response`);
+    expect(normalizeBunSnapshot(json.stderr)).toBe(rejected);
     expect(json.exitCode).toBe(1);
 
     const fix = await auditFix(dir);
-    expect(normalizeBunSnapshot(fix.stderr)).toBe(`error: ${registryHref(server)} returned a non-JSON audit response`);
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(rejected);
+    expect(normalizeBunSnapshot(fix.stdout)).toBe("bun audit fix <version> (<revision>)");
+    expect(fix.exitCode).toBe(1);
+    expect(await lock(dir)).toBe(lockBefore);
+  });
+
+  test.concurrent("an object that is not a list of advisories fails `bun audit fix` too", async () => {
+    await using server = startRegistry({}, { bulkResponse: { error: "audit is not supported by this registry" } });
+    using dir = await setup(server, { name: "foo", dependencies: { "a-dep": "1.0.2" } });
+    const lockBefore = await lock(dir);
+
+    const fix = await auditFix(dir);
+    expect(normalizeBunSnapshot(fix.stderr)).toBe(
+      `error: ${registryHref(server)} returned an audit response that is not a list of advisories`,
+    );
     expect(normalizeBunSnapshot(fix.stdout)).toBe("bun audit fix <version> (<revision>)");
     expect(fix.exitCode).toBe(1);
     expect(await lock(dir)).toBe(lockBefore);

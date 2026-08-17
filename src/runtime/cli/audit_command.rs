@@ -3,6 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::{ExprData, e as E};
 use bun_collections::{DynamicBitSet, HashMap, StringHashMap, index_sort};
+use bun_core::fmt::escape_control_chars;
 use bun_core::{Global, Output, pretty, prettyln};
 use bun_core::{MutableString, strings};
 use bun_http::{self as http, HeaderBuilder};
@@ -97,9 +98,13 @@ fn default_registry_href(pm: &PackageManager) -> &[u8] {
     strings::without_trailing_slash(pm.options.scope.url.href())
 }
 
-fn report_non_json_response(registry: &[u8]) {
+fn report_bad_response(registry: &[u8], reason: &SkipReason) {
     Output::err_generic(
-        "{f} returned a non-JSON audit response",
+        if matches!(reason, SkipReason::NotAdvisories) {
+            "{f} returned an audit response that is not a list of advisories"
+        } else {
+            "{f} returned a non-JSON audit response"
+        },
         (bun_core::fmt::redacted_npm_url(registry),),
     );
 }
@@ -199,22 +204,19 @@ impl AuditCommand {
         let response_text = responses.response_text;
 
         if json_output {
-            let _ = Output::writer().write_all(&response_text);
-            let _ = Output::writer().write_all(b"\n");
-
-            if response_text.is_empty() {
-                return Ok(0);
-            }
-
             let vulnerabilities =
                 collect_vulnerabilities(&response_text, audit_level, ignore_list, &mut stats)?;
-            return match vulnerabilities {
-                Some(vulnerabilities) => Ok(u32::from(!vulnerabilities.is_empty())),
-                None => {
-                    report_non_json_response(default_registry_href(pm));
-                    Ok(1)
+            if !matches!(vulnerabilities, Err(SkipReason::NotJson)) {
+                let _ = Output::writer().write_all(&response_text);
+                let _ = Output::writer().write_all(b"\n");
+            }
+            return Ok(match vulnerabilities {
+                Ok(vulnerabilities) => u32::from(!vulnerabilities.is_empty()),
+                Err(reason) => {
+                    report_bad_response(default_registry_href(pm), &reason);
+                    1
                 }
-            };
+            });
         }
 
         if response_text.is_empty() {
@@ -404,6 +406,7 @@ enum SkipReason {
     Status(u32),
     Send(&'static str),
     NotJson,
+    NotAdvisories,
 }
 
 impl core::fmt::Display for SkipReason {
@@ -412,6 +415,7 @@ impl core::fmt::Display for SkipReason {
             SkipReason::Status(status) => write!(f, "{status}"),
             SkipReason::Send(name) => f.write_str(name),
             SkipReason::NotJson => f.write_str("non-JSON response"),
+            SkipReason::NotAdvisories => f.write_str("not a list of advisories"),
         }
     }
 }
@@ -585,14 +589,14 @@ fn send_audit_requests(
     pm: &mut PackageManager,
     collected: &CollectPackagesResult,
     warn: bool,
-    echo_non_json: bool,
+    echo_json: bool,
 ) -> Result<AuditResponses, bun_alloc::AllocError> {
     let mut bodies: Vec<Box<[u8]>> = Vec::with_capacity(collected.requests.len());
     let mut unaudited_registries: Vec<audit_fix::UnauditedRegistry> = Vec::new();
     let mut stats = AuditStats::default();
 
     for request in &collected.requests {
-        match send_audit_request(pm, &request.registry, &request.body, echo_non_json)? {
+        match send_audit_request(pm, &request.registry, &request.body, echo_json)? {
             Ok(body) => {
                 stats.checked += request.packages.len();
                 bodies.push(body);
@@ -634,9 +638,9 @@ fn audit_for_fix(
             ignore_list,
             &mut stats,
         )? {
-            Some(vulnerabilities) => vulnerabilities,
-            None => {
-                report_non_json_response(default_registry_href(pm));
+            Ok(vulnerabilities) => vulnerabilities,
+            Err(reason) => {
+                report_bad_response(default_registry_href(pm), &reason);
                 Global::exit(1);
             }
         }
@@ -692,7 +696,7 @@ fn send_audit_request(
     pm: &mut PackageManager,
     registry: &AuditRegistry,
     body: &[u8],
-    echo_non_json: bool,
+    echo_json: bool,
 ) -> Result<Result<Box<[u8]>, SkipReason>, bun_alloc::AllocError> {
     libdeflate::load();
     let mut compressor = libdeflate::OwnedCompressor::new(6).ok_or(bun_alloc::AllocError)?;
@@ -765,7 +769,12 @@ fn send_audit_request(
             if trimmed.is_empty() || trimmed[0] == b'{' {
                 return Ok(Ok(Box::<[u8]>::from(response)));
             }
-            SkipReason::NotJson
+            let source = bun_ast::Source::init_path_string(b"audit-response.json", response);
+            if bun_json::ParsedJson::parse_json(&source, &mut bun_ast::Log::init()).is_ok() {
+                SkipReason::NotAdvisories
+            } else {
+                SkipReason::NotJson
+            }
         }
         Err(err) => SkipReason::Send(err.name()),
     };
@@ -774,13 +783,13 @@ fn send_audit_request(
         return Ok(Err(reason));
     }
     match reason {
-        SkipReason::NotJson => {
-            if echo_non_json {
+        SkipReason::NotJson | SkipReason::NotAdvisories => {
+            if echo_json && matches!(reason, SkipReason::NotAdvisories) {
                 let _ = Output::writer().write_all(response_buf.list.as_slice());
                 let _ = Output::writer().write_all(b"\n");
                 Output::flush();
             }
-            report_non_json_response(&registry.href);
+            report_bad_response(&registry.href, &reason);
         }
         reason => {
             bun_core::pretty_errorln!(
@@ -1039,17 +1048,19 @@ fn collect_vulnerabilities(
     audit_level: Option<AuditLevel>,
     ignore_list: &[&[u8]],
     stats: &mut AuditStats,
-) -> Result<Option<Vec<VulnerabilityInfo>>, bun_alloc::AllocError> {
+) -> Result<Result<Vec<VulnerabilityInfo>, SkipReason>, bun_alloc::AllocError> {
     let source = bun_ast::Source::init_path_string(b"audit-response.json", response_text);
     let mut log = bun_ast::Log::init();
 
     let parsed = match bun_json::ParsedJson::parse_json(&source, &mut log) {
         Ok(e) => e,
-        Err(_) => return Ok(None),
+        Err(_) => return Ok(Err(SkipReason::NotJson)),
     };
 
+    // The bulk endpoint answers `{ [package name]: Advisory[] }`; a document of any other shape (a
+    // mirror's `{"error": ...}`, ...) must not pass for a clean audit.
     let ExprData::EObjectJSON(obj) = &parsed.root.data else {
-        return Ok(None);
+        return Ok(Err(SkipReason::NotAdvisories));
     };
 
     let mut vulnerabilities: Vec<VulnerabilityInfo> = Vec::new();
@@ -1057,11 +1068,11 @@ fn collect_vulnerabilities(
         let package_name: &[u8] = prop.key.slice();
 
         let Some(arr) = prop.value.as_array() else {
-            continue;
+            return Ok(Err(SkipReason::NotAdvisories));
         };
         for vuln in arr.items() {
             let Some(vuln_obj) = vuln.as_object() else {
-                continue;
+                return Ok(Err(SkipReason::NotAdvisories));
             };
             let vulnerability = parse_vulnerability(package_name, vuln_obj)?;
             if keep_vulnerability(&vulnerability, audit_level, ignore_list, stats) {
@@ -1070,7 +1081,7 @@ fn collect_vulnerabilities(
         }
     }
 
-    Ok(Some(vulnerabilities))
+    Ok(Ok(vulnerabilities))
 }
 
 #[derive(Default)]
@@ -1091,9 +1102,13 @@ fn print_severity(severity: &[u8]) {
 }
 
 fn print_package_heading(name: &[u8], installed: &[Box<[u8]>]) {
-    pretty!("<red>{}<r>", BStr::new(name));
+    pretty!("<red>{}<r>", escape_control_chars(name));
     for (i, version) in installed.iter().enumerate() {
-        pretty!("{}{}", if i == 0 { "@" } else { ", " }, BStr::new(version));
+        pretty!(
+            "{}{}",
+            if i == 0 { "@" } else { ", " },
+            escape_control_chars(version)
+        );
     }
     prettyln!("");
 }
@@ -1117,9 +1132,9 @@ fn print_dependency_path(path: &DependencyPath, separator: &str) {
     }
     prettyln!(
         "  <d>{} {}<r> <red>{}<r>",
-        BStr::new(&via),
+        escape_control_chars(&via),
         separator,
-        BStr::new(vulnerable_pkg)
+        escape_control_chars(vulnerable_pkg)
     );
 }
 
@@ -1132,12 +1147,14 @@ fn print_enhanced_audit_report(
     ignore_list: &[&[u8]],
     mut stats: AuditStats,
 ) -> Result<u32, bun_alloc::AllocError> {
-    let Some(mut vulnerabilities) =
-        collect_vulnerabilities(response_text, audit_level, ignore_list, &mut stats)?
-    else {
-        report_non_json_response(default_registry_href(pm));
-        return Ok(1);
-    };
+    let mut vulnerabilities =
+        match collect_vulnerabilities(response_text, audit_level, ignore_list, &mut stats)? {
+            Ok(vulnerabilities) => vulnerabilities,
+            Err(reason) => {
+                report_bad_response(default_registry_href(pm), &reason);
+                return Ok(1);
+            }
+        };
 
     if vulnerabilities.is_empty() {
         print_no_vulnerabilities(&stats, audit_level);
@@ -1186,11 +1203,14 @@ fn print_enhanced_audit_report(
                 continue;
             }
             print_severity(&vuln.severity);
-            pretty!(" {}", BStr::new(&vuln.title));
+            pretty!(" {}", escape_control_chars(&vuln.title));
             if !vuln.vulnerable_versions.is_empty() {
-                pretty!(" <d>({})<r>", BStr::new(&vuln.vulnerable_versions));
+                pretty!(
+                    " <d>({})<r>",
+                    escape_control_chars(&vuln.vulnerable_versions)
+                );
             }
-            prettyln!(" - <d>{}<r>", BStr::new(&vuln.url));
+            prettyln!(" - <d>{}<r>", escape_control_chars(&vuln.url));
         }
 
         prettyln!("");

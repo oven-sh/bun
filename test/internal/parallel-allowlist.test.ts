@@ -1,9 +1,16 @@
 import { expect, test } from "bun:test";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 
 const testDir = join(import.meta.dir, "..");
 const table = JSON.parse(readFileSync(join(testDir, "parallel-allowlist.json"), "utf8"));
+
+// Same keying as isParallelAllowlisted in scripts/runner.node.mjs: the root of
+// test/ is "" (path.dirname would say "."), which is how `dirs` lists it.
+function dirOf(file: string): string {
+  const slash = file.lastIndexOf("/");
+  return slash === -1 ? "" : file.slice(0, slash);
+}
 
 test("test/parallel-allowlist.json has the shape the runner reads", () => {
   expect(table._meta).toBeObject();
@@ -19,7 +26,7 @@ test("test/parallel-allowlist.json has the shape the runner reads", () => {
 
 test("excludeFiles are real files inside listed dirs", () => {
   const dirs = new Set(table.dirs);
-  const bad = table.excludeFiles.filter((f: string) => !dirs.has(dirname(f)) || !existsSync(join(testDir, f)));
+  const bad = table.excludeFiles.filter((f: string) => !dirs.has(dirOf(f)) || !existsSync(join(testDir, f)));
   expect(bad).toEqual([]);
 });
 
@@ -50,6 +57,6 @@ test("parallel-denylist.txt entries are files spelled the way the generator enum
 test("denylisted files in listed dirs are in excludeFiles", () => {
   const dirs = new Set(table.dirs);
   const excluded = new Set(table.excludeFiles);
-  const inBatch = denylist.filter(f => dirs.has(dirname(f)) && !excluded.has(f));
+  const inBatch = denylist.filter(f => dirs.has(dirOf(f)) && !excluded.has(f));
   expect(inBatch).toEqual([]);
 });

@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 
 const testDir = join(import.meta.dir, "..");
@@ -10,6 +10,19 @@ const table = JSON.parse(readFileSync(join(testDir, "parallel-allowlist.json"), 
 function dirOf(file: string): string {
   const slash = file.lastIndexOf("/");
   return slash === -1 ? "" : file.slice(0, slash);
+}
+
+// The runner and the generator compare these entries byte-for-byte against the
+// paths the generator enumerates (relative to test/, forward slashes), so a
+// spelling that merely resolves to the right file ("./x", "a//b", "../test/x")
+// or names a directory exists on disk but matches nothing.
+function isFileAsEnumerated(file: string): boolean {
+  return (
+    !file.includes("\\") &&
+    !file.startsWith("test/") &&
+    !file.split("/").some(segment => segment === "" || segment === "." || segment === "..") &&
+    statSync(join(testDir, file), { throwIfNoEntry: false })?.isFile() === true
+  );
 }
 
 test("test/parallel-allowlist.json has the shape the runner reads", () => {
@@ -24,9 +37,9 @@ test("test/parallel-allowlist.json has the shape the runner reads", () => {
   }
 });
 
-test("excludeFiles are real files inside listed dirs", () => {
+test("excludeFiles are files inside listed dirs", () => {
   const dirs = new Set(table.dirs);
-  const bad = table.excludeFiles.filter((f: string) => !dirs.has(dirOf(f)) || !existsSync(join(testDir, f)));
+  const bad = table.excludeFiles.filter((f: string) => !dirs.has(dirOf(f)) || !isFileAsEnumerated(f));
   expect(bad).toEqual([]);
 });
 
@@ -35,19 +48,8 @@ const denylist = readFileSync(join(testDir, "parallel-denylist.txt"), "utf8")
   .map(line => line.trim())
   .filter(line => line && !line.startsWith("#"));
 
-// The generator compares entries byte-for-byte against the paths it enumerates
-// (forward slashes, relative to test/), so a spelling that merely resolves to
-// the right file ("./x", "a//b", "../test/x") or names a directory exists on
-// disk but denylists nothing.
-test("parallel-denylist.txt entries are files spelled the way the generator enumerates them", () => {
-  const bad = denylist.filter(
-    f =>
-      f.includes("\\") ||
-      f.startsWith("test/") ||
-      f.split("/").some(segment => segment === "" || segment === "." || segment === "..") ||
-      !statSync(join(testDir, f), { throwIfNoEntry: false })?.isFile(),
-  );
-  expect(bad).toEqual([]);
+test("parallel-denylist.txt entries are files", () => {
+  expect(denylist.filter(f => !isFileAsEnumerated(f))).toEqual([]);
 });
 
 // The runner only consults parallel-allowlist.json, so a denylist entry keeps a

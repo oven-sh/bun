@@ -2161,23 +2161,25 @@ pub(crate) fn install_isolated_packages(
                         .store(installer::Step::Done as u32, Ordering::Relaxed);
 
                     // Same target check as the hoisted linker's `install_from_link`.
-                    let mut link_target: AbsPath = AbsPath::init_top_level_dir();
-                    installer.append_store_path(&mut link_target, entry_id);
-                    match sys::openat(
-                        Fd::cwd(),
-                        link_target.slice_z(),
-                        sys::O::RDONLY | sys::O::DIRECTORY,
-                        0,
-                    ) {
+                    let mut link_target = bun_paths::AutoAbsPath::init_top_level_dir();
+                    let checked = installer
+                        .append_dependency_path(&mut link_target, entry_id)
+                        .and_then(|()| {
+                            sys::openat(
+                                Fd::cwd(),
+                                link_target.slice_z(),
+                                sys::O::RDONLY | sys::O::DIRECTORY,
+                                0,
+                            )
+                            .map_err(installer::TaskError::LinkPackage)
+                        });
+                    match checked {
                         Ok(fd) => {
                             use bun_sys::FdExt as _;
                             fd.close();
                             installer.on_task_complete(entry_id, installer::CompleteState::Skipped);
                         }
-                        Err(err) => {
-                            installer
-                                .on_task_fail(entry_id, &installer::TaskError::LinkPackage(err));
-                        }
+                        Err(err) => installer.on_task_fail(entry_id, &err),
                     }
                     continue;
                 }

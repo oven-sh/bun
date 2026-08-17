@@ -432,23 +432,18 @@ impl Options {
         current: &Npm::registry::Scope,
         url: &[u8],
     ) -> Result<Npm::registry::Scope, AllocError> {
-        let url_hash = Npm::registry::Scope::hash(bun_core::without_trailing_slash(url));
-        if let Some(configured) = core::iter::once(&self.scope)
-            .chain(self.registries.values())
-            .find(|scope| scope.url_hash == url_hash)
-        {
-            return Ok(Npm::registry::Scope {
-                name: name.into(),
-                ..configured.clone()
-            });
-        }
-
         let mut scope = Npm::registry::Scope {
             name: name.into(),
-            url: bun_url::OwnedURL::from_href(url.into()),
-            url_hash,
             ..Default::default()
         };
+        scope.set_url(url.into());
+        if let Some(configured) = core::iter::once(&self.scope)
+            .chain(self.registries.values())
+            .find(|configured| configured.url_hash == scope.url_hash)
+        {
+            scope.copy_credentials_from(configured);
+            return Ok(scope);
+        }
         if let Some(credentials) = Npm::registry::UrlAuth::find(&self.url_auth, &scope.url.url()) {
             scope.copy_credentials_from(credentials);
             return Ok(scope);

@@ -2080,9 +2080,15 @@ impl Task {
         dep_name: &[u8],
         pkg_res: &Resolution,
     ) -> u8 {
-        // A global-store entry stays in its staging dir until `Step::Binaries` renames it.
+        // A global-store entry stays in its staging dir until `Step::Binaries` renames it; a
+        // project-local one was renamed into place by `Step::LinkPackage`.
         let mut pkg_dir = AutoAbsPath::init_top_level_dir();
-        installer.append_real_store_path(&mut pkg_dir, self.entry_id, Which::Staging);
+        let which = if installer.entry_uses_global_store(self.entry_id) {
+            Which::Staging
+        } else {
+            Which::Final
+        };
+        installer.append_real_store_path(&mut pkg_dir, self.entry_id, which);
 
         let mut log = Log::init();
         match pkg_scripts.get_list(&mut log, lockfile, &mut pkg_dir, dep_name, pkg_res) {

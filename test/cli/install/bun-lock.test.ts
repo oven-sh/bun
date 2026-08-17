@@ -1021,7 +1021,7 @@ it("names folder and tarball packages without a package.json name after their fo
   expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234").replaceAll(/"sha512-[^"]*"/g, '"<integrity>"'))
     .toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 2,
+      "lockfileVersion": 1,
       "configVersion": 1,
       "workspaces": {
         "": {
@@ -2301,7 +2301,7 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     const lockfile = await file(lockfilePath).text();
     expect(lockfile).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 2,
+        "lockfileVersion": 1,
         "configVersion": 1,
         "workspaces": {
           "": {
@@ -2368,36 +2368,31 @@ describe("loading bun.lock binds the edges of a package printed at several paths
       "star-peer": "star-peer@1.0.0",
     });
 
-    // peer-target leaves package.json as parent enters it. star-peer's peer edge is still bound
-    // to peer-target@1.0.0, which keeps it in the file: the edge's own copy is placed at the root
-    // and mid's 1.1.0 is printed next to mid, which is where star-peer's second printing finds
-    // the name first.
+    // peer-target leaves package.json as parent enters it. Nothing but star-peer's `*` peer holds
+    // peer-target@1.0.0 any more, so the peer pass re-resolves the edge onto mid's 1.1.0, the only
+    // copy a dependency still holds, and that copy hoists to the root for both printings.
     await write(join(cwd, "package.json"), packageJson({ "star-peer": "1.0.0", "mid": "2.0.0", "parent": "1.0.0" }));
     await installWithOwnCache(cwd);
     expect(printedPackages(await file(lockfilePath).text())).toEqual({
       "mid": "mid@2.0.0",
       "parent": "parent@1.0.0",
-      "peer-target": "peer-target@1.0.0",
+      "peer-target": "peer-target@1.1.0",
       "star-peer": "star-peer@1.0.0",
       "parent/mid": "mid@1.0.0",
       "parent/star-peer": "star-peer@2.0.0",
-      "parent/mid/peer-target": "peer-target@1.1.0",
       "parent/mid/star-peer": "star-peer@1.0.0",
     });
 
-    // Loading used to bind the edge from parent/mid/star-peer, the printing that comes last, to
-    // the 1.1.0 next to it. Nothing held peer-target@1.0.0 any more, so the tree built from the
-    // file differed from the file: --frozen-lockfile rejected it and an install rewrote it.
+    // Both printings of star-peer load the edge as the root copy, so the tree built from the
+    // file is the file's own and --frozen-lockfile accepts it.
     await rm(join(cwd, "node_modules"), { recursive: true });
     await installWithOwnCache(cwd, "--frozen-lockfile");
     expect(await file(join(cwd, "node_modules", "peer-target", "package.json")).json()).toMatchObject({
-      version: "1.0.0",
+      version: "1.1.0",
     });
     expect(
-      await file(
-        join(cwd, "node_modules", "parent", "node_modules", "mid", "node_modules", "peer-target", "package.json"),
-      ).json(),
-    ).toMatchObject({ version: "1.1.0" });
+      await exists(join(cwd, "node_modules", "parent", "node_modules", "mid", "node_modules", "peer-target")),
+    ).toBe(false);
   });
 
   // The shapes below are written by hand so nothing needs to be fetched: every row has an empty
@@ -2699,9 +2694,10 @@ it.each<{
     z: { "z": "z@1.0.5" },
   },
   {
-    // The root's z is in place for every later row, so a's pin on it must not change what c gets,
+    // The root's z is in place for every later row, so c's `*` lands on it (across the major, as
+    // every `@types/*` package's `@types/node: *` lands on the project's own `@types/node`)
     // whether a's row is resolved before c's or after.
-    shape: "a -> z@1.0.5 pinning the root's z@~1.0.0 does not make it absorb c -> z@*",
+    shape: "the root's z@~1.0.0 absorbs c -> z@* whether or not a -> z@1.0.5 has pinned it yet",
     manifests: {
       a: { "1.0.0": { dependencies: { z: "1.0.5" } } },
       c: { "1.0.0": { dependencies: { z: "*" } } },
@@ -2709,23 +2705,23 @@ it.each<{
     },
     files: { "package.json": { name: "foo", dependencies: { a: "1.0.0", c: "1.0.0", z: "~1.0.0" } } },
     orders: {
-      "a's manifest last": [{ manifest: "a", until: "/z-2.0.0.tgz" }],
+      "a's manifest last": [{ manifest: "a", until: "/c-1.0.0.tgz" }],
       "c's manifest last": [
         { manifest: "a", until: "/z" },
         { manifest: "c", until: "/a-1.0.0.tgz" },
       ],
     },
-    z: { "z": "z@1.0.5", "c/z": "z@2.0.0" },
+    z: { "z": "z@1.0.5" },
   },
   {
-    shape: "root z@^1.0.0 does not absorb c -> z@* from another major",
+    shape: "root z@^1.0.0 absorbs c -> z@* from another major",
     manifests: { c: { "1.0.0": { dependencies: { z: "*" } } }, z: zVersions },
     files: { "package.json": { name: "foo", dependencies: { c: "1.0.0", z: "^1.0.0" } } },
     orders: {
       "c's manifest last": [{ manifest: "c", until: "/z-1.1.0.tgz" }],
       "z's manifest last": [{ manifest: "z", until: "/c-1.0.0.tgz" }],
     },
-    z: { "z": "z@1.1.0", "c/z": "z@2.0.0" },
+    z: { "z": "z@1.1.0" },
   },
   {
     // p is installed as a's peer once every regular row is resolved; by then a's z is in place on every install.

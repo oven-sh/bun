@@ -1269,18 +1269,15 @@ pub fn prepare_install(manager: &mut PackageManager, plan: &FixPlan) -> crate::R
     package_json_edits::apply(manager, plan)?;
 
     if plan.fixes.iter().any(|fix| fix.too_recent) {
-        let mut names: Vec<&'static [u8]> = manager
-            .options
-            .minimum_release_age_excludes
-            .map_or_else(Vec::new, <[_]>::to_vec);
-        names.extend(
+        let excludes = crate::npm::MinimumReleaseAgeExcludes::with_packages(
+            manager.options.minimum_release_age_excludes,
             plan.fixes
                 .iter()
                 .filter(|fix| fix.too_recent)
                 .map(|fix| &*bun_core::heap::release(fix.name.clone())),
         );
         manager.options.minimum_release_age_excludes =
-            Some(&*bun_core::heap::release(names.into_boxed_slice()));
+            Some(&*bun_core::heap::release(Box::new(excludes)));
     }
 
     manager.audit_fix_pins = plan

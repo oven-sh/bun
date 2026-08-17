@@ -33,7 +33,6 @@ use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_core::ZBox;
 use bun_core::{ZStr, strings};
 use bun_paths::resolve_path::{self, normalize_buf_spill};
-use bun_semver as Semver;
 use bun_sha_hmac::sha;
 use bun_sys::{
     self, CloseOnDrop, Dir, Fd, FdDirExt as _, FdExt as _, File, dir_iterator as DirIterator,

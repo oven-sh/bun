@@ -602,6 +602,7 @@ impl Binder<'_> {
                 &this.package_index,
                 this.packages.items_resolution(),
                 string_bytes,
+                |_| true,
             );
         }
         self.spec.clear();
@@ -963,7 +964,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             }
         };
 
-        if resolution.tag == ResolutionTag::Uninitialized {
+        if resolution.tag == crate::resolution::Tag::Uninitialized {
             if !silent {
                 let specs = bstr::join(", ", &entry.specs);
                 let specs = bstr::BStr::new(&specs);

@@ -160,7 +160,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
         headers.entries,
         header_buf,
         b"",
-        http_proxy,
+        http_proxy.as_ref().map(|proxy| proxy.url()),
         None,
         http::FetchRedirect::Follow,
     );
@@ -1660,6 +1660,20 @@ impl MinimumReleaseAgeExcludes {
         }
     }
 
+    /// `self` (if any) plus bare-name exemptions for `names`; `bun audit fix` exempts the packages it must move past the age gate.
+    pub(crate) fn with_packages(
+        base: Option<&MinimumReleaseAgeExcludes>,
+        names: impl IntoIterator<Item = &'static [u8]>,
+    ) -> MinimumReleaseAgeExcludes {
+        let mut packages: Vec<&'static [u8]> =
+            base.map_or_else(Vec::new, |base| base.packages.to_vec());
+        packages.extend(names);
+        MinimumReleaseAgeExcludes {
+            packages: packages.into_boxed_slice(),
+            versions: base.map_or_else(Box::default, |base| base.versions.clone()),
+        }
+    }
+
     fn excludes_package(&self, name: &[u8]) -> bool {
         self.packages.contains(&name)
     }
@@ -1747,7 +1761,7 @@ impl PackageManifest {
     }
 
     #[inline]
-    fn is_package_version_too_recent(
+    pub(crate) fn is_package_version_too_recent(
         package_version: &PackageVersion,
         minimum_release_age_ms: f64,
     ) -> bool {

@@ -756,6 +756,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                     let name = dependencies[dependency_id as usize]
                         .name
                         .slice(string_bytes);
+                    let name = bun_fmt::escape_control_chars(name);
                     let resolution = bun_core::fmt::EscapeControlChars(bun_fmt::redacted(
                         resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
                     ));
@@ -1090,7 +1091,8 @@ fn print_trusted_dependencies_flat(
 
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];
-        let name = dependencies[dep_id as usize].name.slice(string_bytes);
+        let name =
+            bun_fmt::escape_control_chars(dependencies[dep_id as usize].name.slice(string_bytes));
         let resolution = bun_core::fmt::EscapeControlChars(bun_fmt::redacted(
             resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
         ));

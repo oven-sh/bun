@@ -3466,7 +3466,14 @@ pub(crate) fn resolve_peer_dep_version_based_among(
         return None;
     }
 
-    resolve_peer_dep_by_range(range, name_hash, package_index, pkg_resolutions, string_buf)
+    resolve_peer_dep_by_range(
+        range,
+        name_hash,
+        package_index,
+        pkg_resolutions,
+        string_buf,
+        is_candidate,
+    )
 }
 
 /// `package_index` is keyed by real package names; `range` (not `dep.name`) carries them for aliases.
@@ -3500,6 +3507,7 @@ pub(crate) fn resolve_peer_dep_by_range(
     package_index: &PackageIndexMap,
     pkg_resolutions: &[Resolution],
     string_buf: &[u8],
+    is_candidate: impl Fn(PackageID) -> bool,
 ) -> Option<PackageID> {
     let candidates = package_index.get(&name_hash)?.as_slice();
     candidates.iter().copied().find(|&id| {

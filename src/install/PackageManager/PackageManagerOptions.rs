@@ -422,7 +422,9 @@ impl core::fmt::Display for RegistryPath<'_> {
         }
         Ok(())
     }
+}
 
+impl Options {
     /// The scope for `url` once it replaces `current`, with the credentials configured for `url`.
     fn scope_for_registry_url(
         &self,

@@ -3,8 +3,8 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
+use bun_core::fmt::EscapeControlChars;
 use bun_core::fmt::redacted;
-use bun_core::fmt::{EscapeControlChars, escape_control_chars};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};

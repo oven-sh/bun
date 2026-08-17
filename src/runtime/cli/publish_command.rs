@@ -745,7 +745,7 @@ impl PublishCommand {
             headers.entries,
             headers.content.written_slice(),
             b"",
-            http_proxy,
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             http::FetchRedirect::Follow,
         );
@@ -875,7 +875,7 @@ impl PublishCommand {
             publish_headers.entries,
             publish_headers.content.written_slice(),
             publish_req_body,
-            http_proxy.clone(),
+            http_proxy.as_ref().map(|proxy| proxy.url()),
             None,
             http::FetchRedirect::Follow,
         );
@@ -970,7 +970,7 @@ impl PublishCommand {
                     otp_headers.entries,
                     otp_headers.content.written_slice(),
                     publish_req_body,
-                    http_proxy,
+                    http_proxy.as_ref().map(|proxy| proxy.url()),
                     None,
                     http::FetchRedirect::Follow,
                 );
@@ -1204,7 +1204,7 @@ impl PublishCommand {
                         auth_headers.entries.clone()?,
                         auth_headers.content.written_slice(),
                         b"",
-                        http_proxy.clone(),
+                        http_proxy.as_ref().map(|proxy| proxy.url()),
                         None,
                         http::FetchRedirect::Follow,
                     );

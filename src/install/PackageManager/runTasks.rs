@@ -27,7 +27,7 @@ use crate::isolated_install::installer as store_installer;
 use crate::isolated_install::store::{EntryColumns as _, NodeColumns as _};
 use crate::lifecycle_script_runner::InstallCtx;
 use crate::network_task::{Authorization, ForTarballError};
-use bun_core::fmt::{EscapeControlChars, PathSep, escape_control_chars, redacted};
+use bun_core::fmt::{PathSep, redacted};
 use bun_install::lockfile::Package;
 use bun_install::package_manager_task as Task;
 // Import the *module* under the `Options` name so `Options::LogLevel` resolves as a path

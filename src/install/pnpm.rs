@@ -6,7 +6,7 @@ use bun_alloc::AllocError;
 use bun_collections::StringArrayHashMap;
 
 use bun_ast::{self, self as js_ast, E, Expr, ExprData, G};
-use bun_core::{Global, Output, strings};
+use bun_core::{Global, strings};
 use bun_semver as semver;
 use bun_semver::query::token::Wildcard;
 use bun_semver::{ExternalString, String};
@@ -18,8 +18,6 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
-use crate::package_manager_real::add_remove_with_filter::root_package_json_path;
-use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
@@ -2511,7 +2509,7 @@ pub(crate) fn migrate_pnpm_workspace_config(
 /// cache entry changes here: the rest of the load (frozen check, differ) reads it from there, and
 /// `package_json_write_back::record_migrated_root` writes it when the migrated lockfile is saved.
 fn update_package_json_after_migration(
-    lockfile: Option<&mut Lockfile>,
+    mut lockfile: Option<&mut Lockfile>,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     patches: &StringArrayHashMap<Box<[u8]>>,
@@ -2598,12 +2596,14 @@ fn update_package_json_after_migration(
             catalog_obj = ws_root.get_object(b"catalog").filter(is_non_empty_object);
             catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
             // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
-            crate::lockfile_real::CatalogMap::put_missing_from_pnpm_workspace(
-                &mut lockfile.catalogs,
-                catalog_obj,
-                catalogs_obj,
-                &mut sbuf!(lockfile),
-            )?;
+            if let Some(lockfile) = lockfile.as_deref_mut() {
+                crate::lockfile_real::CatalogMap::put_missing_from_pnpm_workspace(
+                    &mut lockfile.catalogs,
+                    catalog_obj,
+                    catalogs_obj,
+                    &mut sbuf!(lockfile),
+                )?;
+            }
             workspace_overrides_obj = ws_root.get_object(b"overrides").filter(is_non_empty_object);
             workspace_patched_deps_obj = ws_root
                 .get_object(b"patchedDependencies")

@@ -873,3 +873,122 @@ describe("dns.lookupService with a numeric-string port", () => {
     );
   });
 });
+
+// A resolver keeps a 32-slot pending cache per query kind. The first in-flight
+// query for a name owns a slot; identical queries issued while it is in flight
+// are chained onto it and settled together when it completes, so the server
+// sees one query per distinct name. Queries issued while all 32 slots are taken
+// get no slot and settle on their own. The fake server below records every
+// query it receives and answers an A query for "a<n>.pending.test" with
+// 10.0.0.<n>, so a promise settled from the wrong slot shows up as the wrong
+// address.
+describe("pending cache", () => {
+  function encodeName(name) {
+    return Buffer.concat([
+      ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
+      Buffer.from([0]),
+    ]);
+  }
+
+  async function startFakeServer() {
+    const socket = dgram.createSocket("udp4");
+    const queries = [];
+    socket.on("message", (query, rinfo) => {
+      const labels = [];
+      let off = 12;
+      while (query[off] !== 0) {
+        labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+        off += query[off] + 1;
+      }
+      const qtype = query.readUInt16BE(off + 1);
+      const question = query.subarray(12, off + 5);
+      const qname = labels.join(".");
+      queries.push(`${qtype === 1 ? "A" : qtype === 12 ? "PTR" : qtype} ${qname}`);
+
+      const rdata =
+        qtype === 1 ? Buffer.from([10, 0, 0, Number(/\d+/.exec(labels[0])[0])]) : encodeName("ptr.pending.test");
+      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      const answer = Buffer.from([0xc0, 0x0c, 0, qtype, 0, 1, 0, 0, 0, 60, rdata.length >> 8, rdata.length & 0xff]);
+      socket.send(Buffer.concat([header, question, answer, rdata]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    return { socket, queries, resolver, port: socket.address().port };
+  }
+
+  test.concurrent("concurrent resolve4() of the same names share one query per name", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const names = Array.from({ length: 3 }, (_, i) => `a${i}.pending.test`);
+      const results = await Promise.all(
+        names.flatMap(name =>
+          Array.from({ length: 4 }, () => resolver.resolve4(name).then(addresses => [name, addresses])),
+        ),
+      );
+      expect(results).toEqual(names.flatMap((name, i) => Array(4).fill([name, ["10.0.0." + i]])));
+      expect(queries.sort()).toEqual(names.map(name => "A " + name));
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("more distinct resolve4() than pending-cache slots all settle with their own answers", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const names = Array.from({ length: 40 }, (_, i) => `a${i}.pending.test`);
+      const results = await Promise.all(names.map(name => resolver.resolve4(name)));
+      expect(results).toEqual(names.map((_, i) => ["10.0.0." + i]));
+      expect(queries.sort()).toEqual(names.map(name => "A " + name).sort());
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("concurrent reverse() of the same address share one PTR query", async () => {
+    const { socket, queries, resolver } = await startFakeServer();
+    try {
+      const results = await Promise.all(Array.from({ length: 4 }, () => resolver.reverse("192.0.2.7")));
+      expect(results).toEqual(Array(4).fill(["ptr.pending.test"]));
+      expect(queries).toEqual(["PTR 7.2.0.192.in-addr.arpa"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // Bun.dns.lookup with the c-ares backend goes through the default resolver,
+  // so point that resolver at the fake server in a child process. The trailing
+  // dot keeps c-ares from also trying the host's search domains.
+  test.concurrent("concurrent c-ares lookup() of the same name share one query", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `require("node:dns").setServers(["127.0.0.1:" + process.argv[1]]);
+           const lookups = Array.from({ length: 4 }, () => Bun.dns.lookup("a5.pending.test.", { backend: "c-ares", family: 4 }));
+           Promise.all(lookups).then(results => console.log(JSON.stringify(results.map(r => r.map(({ address, family }) => ({ address, family }))))));`,
+          String(port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual(Array(4).fill([{ address: "10.0.0.5", family: 4 }]));
+      expect(exitCode).toBe(0);
+      expect(queries).toEqual(["A a5.pending.test"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  // dns.lookup() uses the OS resolver, which answers "localhost" from the hosts
+  // file, so this stays offline while still coalescing onto one slot.
+  test.concurrent("concurrent lookup() of the same name all settle", async () => {
+    const results = await Promise.all(Array.from({ length: 8 }, () => dns_promises.lookup("localhost", { family: 4 })));
+    expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
+  });
+});

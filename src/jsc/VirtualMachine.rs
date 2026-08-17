@@ -1131,6 +1131,17 @@ impl VirtualMachine {
         self.rare_data.as_mut().unwrap()
     }
 
+    /// Raw projection to the lazily-allocated `RareData`, for callers holding a borrow into it across re-entry (never forms `&mut RareData`).
+    pub fn rare_data_ptr(&mut self) -> *mut RareData {
+        if self.rare_data.is_none() {
+            self.rare_data();
+        }
+        match &mut self.rare_data {
+            Some(rd) => &raw mut **rd,
+            None => unreachable!(),
+        }
+    }
+
     pub(crate) fn is_main_thread(&self) -> bool {
         self.worker.is_none()
     }
@@ -1596,15 +1607,25 @@ impl VirtualMachine {
         let mut dispatch = false;
         loop {
             while self.is_event_loop_alive() {
+                // A stop requested meanwhile (worker.terminate(), or process.exit()
+                // from a listener) ends the drain, as it ends the worker's main
+                // loop: what is still in flight is cancelled by teardown, and its
+                // completions would no longer be delivered to release the loop.
+                if !self.script_allowed() {
+                    return;
+                }
                 self.tick();
+                if !self.script_allowed() {
+                    return;
+                }
                 self.auto_tick_active();
                 dispatch = true;
             }
 
-            // Same guard as on entry: a fatal throw during the inner drain
-            // must not re-dispatch. The main-thread case already hard-exits
-            // via `exit_on_uncaught_exception`; this covers workers.
-            if dispatch && self.unhandled_error_counter == 0 {
+            // Same guards as on entry: a fatal throw or a stop requested during
+            // the inner drain must not re-dispatch. The main-thread case already
+            // hard-exits via `exit_on_uncaught_exception`; this covers workers.
+            if dispatch && self.unhandled_error_counter == 0 && self.script_allowed() {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 
@@ -2240,9 +2261,7 @@ bun_io::link_impl_EventLoopCtx! {
             vm.after_event_loop_callback = cb;
             vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
-        pipe_read_buffer() => {
-            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
-        },
+        pipe_read_scratch() => &raw const *(*vm_from_owner(this.cast()).rare_data_ptr()).pipe_read_scratch,
     }
 }
 
@@ -5342,6 +5361,7 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
+        use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
@@ -5387,12 +5407,12 @@ impl VirtualMachine {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     frame.name_formatter(allow_ansi_colors),
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if !frame.position.is_invalid() {
                 pretty_write!(
                     "<r>      <d>at <r>{}\n",
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if has_name {
                 pretty_write!(
@@ -5402,7 +5422,7 @@ impl VirtualMachine {
             } else {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             }
         }
@@ -6569,6 +6589,7 @@ impl VirtualMachine {
     #[cold]
     #[inline(never)]
     pub(crate) fn print_github_annotation(exception: &ZigException) {
+        use crate::zig_stack_frame::LineColumn;
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
@@ -6658,7 +6679,7 @@ impl VirtualMachine {
                     let _ = write!(
                         loc_str,
                         "{}",
-                        frame.source_url_formatter(file, origin, false, false)
+                        frame.source_url_formatter(file, origin, LineColumn::Include, false)
                     );
                     (name_str, loc_str)
                 };

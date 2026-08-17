@@ -4,7 +4,7 @@ use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, DynamicBitSet, MultiArrayList};
 use bun_core::Output;
 use bun_core::ZStr;
-use bun_paths::{self, MAX_PATH_BYTES, PathBuffer, SEP};
+use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP};
 
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{DepSorter, DependencyIDList, DependencyIDSlice, Lockfile};
@@ -155,8 +155,6 @@ pub(crate) struct Placement {
 pub enum SubtreeError {
     #[error("OutOfMemory")]
     OutOfMemory,
-    #[error("DependencyLoop")]
-    DependencyLoop,
 }
 
 bun_core::oom_from_alloc!(SubtreeError);
@@ -572,7 +570,6 @@ pub(crate) fn is_filtered_dependency_or_workspace(
     let pkg_resolutions = pkgs.items_resolution();
 
     let dep = &lockfile.buffers.dependencies.as_slice()[dep_id as usize];
-    let res = &pkg_resolutions[pkg_id as usize];
     let parent_res = &pkg_resolutions[parent_pkg_id as usize];
 
     if pkg_metas[pkg_id as usize].is_disabled(manager.options.cpu, manager.options.os) {
@@ -614,64 +611,19 @@ pub(crate) fn is_filtered_dependency_or_workspace(
         return true;
     }
 
-    // Filtering only applies to the root package dependencies. Also
-    // --filter has a different meaning if a new package is being installed.
-    if manager.subcommand != crate::package_manager::Subcommand::Install || parent_pkg_id != 0 {
+    if parent_pkg_id != 0 {
         return false;
     }
 
     if !dep.behavior.is_workspace() {
-        if !install_root_dependencies {
-            return true;
-        }
-
-        return false;
+        return !install_root_dependencies;
     }
 
-    let mut workspace_matched = workspace_filters.is_empty();
-
-    for filter in workspace_filters {
-        // Separator is a const generic on `bun_paths::AbsPath`.
-        let mut filter_path = bun_paths::AbsPath::<
-            u8,
-            { bun_paths::path_options::PathSeparators::POSIX },
-        >::init_top_level_dir();
-        // filter_path drops at end of iteration.
-
-        let (pattern, name_or_path): (&[u8], &[u8]) = match filter {
-            WorkspaceFilter::All => {
-                workspace_matched = true;
-                continue;
-            }
-            WorkspaceFilter::Name(name_pattern) => (
-                name_pattern,
-                pkg_names[pkg_id as usize].slice(lockfile.buffers.string_bytes.as_slice()),
-            ),
-            WorkspaceFilter::Path(path_pattern) => 'path_pattern: {
-                if res.tag != crate::resolution::Tag::Workspace {
-                    return false;
-                }
-
-                // path-buffer overflow unreachable for bounded inputs
-                let _ = filter_path.join(&[res
-                    .workspace()
-                    .slice(lockfile.buffers.string_bytes.as_slice())]);
-
-                break 'path_pattern (path_pattern, filter_path.slice());
-            }
-        };
-
-        let result = bun_glob::r#match(pattern, name_or_path);
-        if result.matches() {
-            workspace_matched = true;
-        } else if result.is_negated() {
-            // always skip if a pattern specifically says "!<name|path>"
-            workspace_matched = false;
-            break;
-        }
+    if manager.summary.pruned_workspaces.contains(&dep.name_hash) {
+        return true;
     }
 
-    !workspace_matched
+    !WorkspaceFilter::is_selected(workspace_filters, pkg_id)
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -822,8 +774,9 @@ impl Tree {
                             hoist_root_id,
                             pkg_id,
                             dep_id,
+                            resolution_list,
                             builder,
-                        )?;
+                        );
                     }
 
                     // skip unresolvable dependencies
@@ -831,6 +784,20 @@ impl Tree {
                 }
 
                 if pkg_resolutions[pkg_id as usize].tag == crate::resolution::Tag::Folder {
+                    // Folder packages never hoist, so a cycle between them would nest forever.
+                    let mut tree_id = next_id;
+                    while tree_id != INVALID_ID {
+                        let tree: Tree = builder.list.items_tree()[tree_id as usize];
+                        let ancestor_dep_id = tree.dependency_id;
+                        if (ancestor_dep_id as usize) < dependencies.len()
+                            && builder.resolutions[ancestor_dep_id as usize] == pkg_id
+                            && dependencies[ancestor_dep_id as usize].name_hash
+                                == dependency.name_hash
+                        {
+                            continue 'dep;
+                        }
+                        tree_id = tree.parent;
+                    }
                     break 'hoisted HoistDependencyResult::Placement(Placement {
                         id: next_id,
                         bundled: false,
@@ -842,8 +809,9 @@ impl Tree {
                     hoist_root_id,
                     pkg_id,
                     dep_id,
+                    resolution_list,
                     builder,
-                )?
+                )
             };
 
             match hoisted {
@@ -935,7 +903,6 @@ impl Tree {
                     {
                         // Go through ListExt
                         // accessors sequentially so the &mut borrows do not overlap.
-                        // bun.handleOom -> push (aborts on OOM via global allocator)
                         builder.list.items_dependencies_mut()[dest.id as usize].push(dep_id);
                         builder.list.items_tree_mut()[dest.id as usize]
                             .dependencies
@@ -981,30 +948,22 @@ impl Tree {
         hoist_root_id: Id,
         package_id: PackageID,
         input_dep_id: DependencyID,
+        input_dep_range: DependencyIDSlice,
         builder: &mut Builder<'_, METHOD>,
-    ) -> Result<HoistDependencyResult, SubtreeError> {
+    ) -> HoistDependencyResult {
         // Copy the slice ref out of `builder` so subsequent `&mut builder` does not conflict.
         let deps: &[Dependency] = builder.dependencies;
         let dependency: &Dependency = &deps[input_dep_id as usize];
 
         // Tree is Copy — snapshot the fields we need so we don't hold a borrow of builder.list.
         let this: Tree = builder.list.items_tree()[self_id as usize];
-        // Hoist the dep-id slice once.
-        // `builder.list` is not mutated for the duration of this loop (the recursive call happens
-        // *after* it), so the slice is stable; detach to raw ptr/len so the loop body can freely
-        // take `&builder` / `&mut builder.log` without borrowck re-deriving the view per iteration.
-        let (this_deps_ptr, this_deps_len): (*const DependencyID, usize) = {
-            let s = this
-                .dependencies
-                .get(builder.list.items_dependencies()[self_id as usize].as_slice());
-            (s.as_ptr(), s.len())
-        };
+        // The loop body only reads through `builder`; the recursive call comes after the loop.
+        let this_deps: &[DependencyID] = this
+            .dependencies
+            .get(builder.list.items_dependencies()[self_id as usize].as_slice());
         // Keep the comparand in a register; `deps.get_unchecked` may alias `dependency`.
         let target_name_hash = dependency.name_hash;
-        for i in 0..this_deps_len {
-            // SAFETY: `i < this_deps_len` and `builder.list` is not mutated until after this loop
-            // (see invariant above), so `this_deps_ptr[0..this_deps_len)` remains valid.
-            let dep_id: DependencyID = unsafe { *this_deps_ptr.add(i) };
+        for &dep_id in this_deps {
             // SAFETY: `dep_id` was produced by the same lockfile that produced `deps`,
             // so it is always in bounds.
             let dep = unsafe { deps.get_unchecked(dep_id as usize) };
@@ -1019,36 +978,32 @@ impl Tree {
                 debug_assert!(dependency.behavior.is_optional_peer());
                 // both optional peers will need to be resolved if they can resolve later.
                 // remember input package_id and dependency for later
-                return Ok(HoistDependencyResult::ResolveLater);
+                return HoistDependencyResult::ResolveLater;
             }
 
             if res_id == invalid_package_id {
                 debug_assert!(dep.behavior.is_optional_peer());
-                return Ok(HoistDependencyResult::ResolveReplace(ResolveReplace {
+                return HoistDependencyResult::ResolveReplace(ResolveReplace {
                     id: this.id,
                     dep_id,
-                }));
+                });
             }
 
             if package_id == invalid_package_id {
                 debug_assert!(dependency.behavior.is_optional_peer());
                 debug_assert!(res_id != invalid_package_id);
                 // resolve optional peer to `builder.resolutions[dep_id]`
-                return Ok(HoistDependencyResult::Resolve(res_id)); // 1
+                return HoistDependencyResult::Resolve(res_id); // 1
             }
 
             if res_id == package_id {
                 // this dependency is the same package as the other, hoist
-                return Ok(HoistDependencyResult::Hoisted); // 1
+                return HoistDependencyResult::Hoisted; // 1
             }
 
-            if AS_DEFINED {
-                if dep.behavior.is_dev() != dependency.behavior.is_dev() {
-                    // will only happen in workspaces and root package because
-                    // dev dependencies won't be included in other types of
-                    // dependencies
-                    return Ok(HoistDependencyResult::Hoisted); // 1
-                }
+            if input_dep_range.contains(dep_id) {
+                // same package lists this name in another dependency group
+                return HoistDependencyResult::Hoisted; // 1
             }
 
             // now we either keep the dependency at this place in the tree,
@@ -1065,14 +1020,18 @@ impl Tree {
                     }
                 };
 
-                if dependency.version.tag == crate::dependency::VersionTag::Npm {
+                let peer_range: &crate::dependency::Version = builder
+                    .lockfile()
+                    .catalogs
+                    .resolve_range(builder.buf(), dependency);
+                if peer_range.tag == crate::dependency::VersionTag::Npm {
                     let resolution: Resolution =
                         builder.lockfile().packages.items_resolution()[res_id as usize];
-                    let version = &dependency.version.npm().version;
+                    let version = &peer_range.npm().version;
                     if resolution.tag == crate::resolution::Tag::Npm
                         && version.satisfies(resolution.npm().version, builder.buf(), builder.buf())
                     {
-                        return Ok(dedupe()); // 1
+                        return dedupe(); // 1
                     }
                 }
 
@@ -1080,66 +1039,33 @@ impl Tree {
                 // to hoist other peers even if they don't satisfy the version
                 if builder.lockfile().is_workspace_root_dependency(dep_id) {
                     // TODO: warning about peer dependency version mismatch
-                    return Ok(dedupe()); // 1
+                    return dedupe(); // 1
                 }
             }
 
-            if AS_DEFINED && !dep.behavior.is_peer() {
-                // reshaped for borrowck — `maybe_report_error` takes
-                // `&mut self` but the format args borrow `&self` (via
-                // `package_name`/`package_version`/`buf`). Inline against split
-                // field borrows: copy the `ParentRef` out so the `&Lockfile` is
-                // not tied to `&builder`, then write to `builder.log`.
-                let lockfile_ref = builder.lockfile;
-                let lockfile: &Lockfile = lockfile_ref.get();
-                let buf = lockfile.buffers.string_bytes.as_slice();
-                let names = lockfile.packages.items_name();
-                let resolutions = lockfile.packages.items_resolution();
-                let _ = builder.log.add_error_fmt(
-                    None,
-                    bun_ast::Loc::EMPTY,
-                    format_args!(
-                        "Package \"{}@{}\" has a dependency loop\n  Resolution: \"{}@{}\"\n  Dependency: \"{}@{}\"",
-                        names[package_id as usize].fmt(buf),
-                        resolutions[package_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
-                        names[res_id as usize].fmt(buf),
-                        resolutions[res_id as usize].fmt(buf, bun_core::fmt::PathSep::Auto),
-                        dependency.name.fmt(buf),
-                        dependency.version.literal.fmt(buf),
-                    ),
-                );
-                return Err(SubtreeError::DependencyLoop);
-            }
-
-            return Ok(HoistDependencyResult::DependencyLoop); // 3
+            return HoistDependencyResult::DependencyLoop; // 3
         }
 
         // this dependency was not found in this tree, try hoisting or placing in the next parent
         if this.parent != INVALID_ID && this.id != hoist_root_id {
-            let id = match Tree::hoist_dependency::<false, METHOD>(
+            let id = Tree::hoist_dependency::<false, METHOD>(
                 this.parent,
                 hoist_root_id,
                 package_id,
                 input_dep_id,
+                input_dep_range,
                 builder,
-            ) {
-                Ok(id) => id,
-                // SAFETY: `hoist_dependency::<false, _>` never returns `Err` —
-                // the only `Err(SubtreeError::DependencyLoop)` site above is
-                // gated on `AS_DEFINED`. Avoids faulting panic-format pages on
-                // the per-dependency recursion.
-                Err(_) => unsafe { core::hint::unreachable_unchecked() },
-            };
+            );
             if !AS_DEFINED || !matches!(id, HoistDependencyResult::DependencyLoop) {
-                return Ok(id); // 1 or 2
+                return id; // 1 or 2
             }
         }
 
         // place the dependency in the current tree
-        Ok(HoistDependencyResult::Placement(Placement {
+        HoistDependencyResult::Placement(Placement {
             id: this.id,
             bundled: false,
-        })) // 2
+        }) // 2
     }
 }
 

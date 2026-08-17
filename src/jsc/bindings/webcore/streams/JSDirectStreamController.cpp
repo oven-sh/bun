@@ -299,7 +299,12 @@ static String finishTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirect
         throwOutOfMemoryError(globalObject, scope);
         return String();
     }
-    return String::fromUTF8ReplacingInvalidSequences(bytes.span());
+    String text = Zig::convertUTF8ToString(bytes.span());
+    if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return String();
+    }
+    return text;
 }
 
 static JSValue endTextSink(JSC::VM& vm, JSGlobalObject* globalObject, JSDirectStreamController* controller)

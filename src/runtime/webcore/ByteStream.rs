@@ -5,9 +5,8 @@ use bun_jsc::strong::Optional as StrongOptional;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsCell};
 use bun_sys::Error as SysError;
 
-use crate::webcore::SinkHandle;
 use crate::webcore::streams::{self, BufferAction, IntoArray};
-use crate::webcore::{blob, readable_stream};
+use crate::webcore::{DrainResult, SinkHandle, blob, readable_stream};
 
 bun_output::declare_scope!(ByteStream, visible);
 
@@ -103,10 +102,9 @@ impl readable_stream::SourceContext for ByteStream {
 }
 
 // SAFETY: `ByteStream` is always the `context` field of a `Source`
-// (ReadableStream.NewSource); never constructed standalone. `parent` returns
-// `*mut Source` (not `&mut`) — retained for the `finalize` (GC-teardown) path
-// only; all host-fn-reachable callers use `parent_const`.
-bun_core::impl_field_parent! { ByteStream => Source.context; pub fn parent_const; pub fn parent; }
+// (ReadableStream.NewSource); never constructed standalone. Everything it
+// touches on the `Source` is a `Cell`, so the `&Source` arm suffices.
+bun_core::impl_field_parent! { ByteStream => Source.context; pub fn shared parent_const; }
 
 impl ByteStream {
     #[inline]
@@ -121,6 +119,25 @@ impl ByteStream {
         // the old value owns nothing the new one
         // reuses, so dropping it is the intended reset.
         drop(core::mem::take(self));
+    }
+
+    /// Seeds the stream with what the producer's `on_start_streaming` handed
+    /// over: the bytes it had already buffered, or its estimate of the total.
+    /// Init-time like [`Self::setup`] (no JS wrapper yet, so `&mut self` is
+    /// sound). Callers drop the body to `Null` on `Empty` / `Aborted` instead
+    /// of realising a stream, so those arms have nothing to seed.
+    pub(crate) fn apply_drain_result(&mut self, drain_result: DrainResult) {
+        match drain_result {
+            DrainResult::EstimatedSize(estimated_size) => {
+                self.high_water_mark = estimated_size as blob::SizeType;
+                self.size_hint.set(estimated_size as blob::SizeType);
+            }
+            DrainResult::Owned { list, size_hint } => {
+                self.buffer.set(list);
+                self.size_hint.set(size_hint as blob::SizeType);
+            }
+            DrainResult::Empty | DrainResult::Aborted => {}
+        }
     }
 
     fn on_start(&self) -> streams::Start {
@@ -227,11 +244,16 @@ impl ByteStream {
         self.parent_const().producer.get().ready(None, None);
     }
 
-    /// Take the buffered bytes without signalling the producer; the caller
-    /// writes them to the sink before [`Self::signal_drained`].
+    /// Take the unread buffered bytes (`buffer[offset..]`) without signalling
+    /// the producer; the caller writes them to the sink before
+    /// [`Self::signal_drained`].
     pub(crate) fn take_buffer(&self) -> Vec<u8> {
-        self.offset.set(0);
-        Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()))
+        let consumed = self.offset.replace(0);
+        let mut list = self.buffer.replace(Vec::new());
+        if consumed > 0 {
+            list.drain(..consumed);
+        }
+        Vec::<u8>::move_from_list(list)
     }
 
     /// Called by native fast-paths after wiring `self.sink`. Restores
@@ -690,11 +712,14 @@ impl ByteStream {
     }
 
     pub(crate) fn drain(&self) -> Vec<u8> {
-        if !self.buffer.get().is_empty() {
+        let drained = self.take_buffer();
+        if !drained.is_empty() {
+            // After taking, as in `on_pull`: the producer decides whether to
+            // resume from `buffer.len()`, and anything it emits inline queues
+            // behind these bytes for the next pull.
             self.signal_drained();
-            return Vec::<u8>::move_from_list(self.buffer.replace(Vec::new()));
         }
-        Vec::<u8>::default()
+        drained
     }
 
     /// Take a pre-attach `StreamResult::Err` stashed by [`Self::append`].

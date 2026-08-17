@@ -58,7 +58,7 @@ pub enum Tag {
     DebugHTTPSServerH3RequestContext,
     HTMLRewriterSuspension,
     /// Task-only tag (never a context cell): drops the last ref of a
-    /// `RewriterPipe` on behalf of `RewriterPipe::release_pump_ref`.
+    /// `RewriterPipe` on behalf of `RewriterPipe::deref_outside_caller`.
     HTMLRewriterPipeFree,
 }
 
@@ -224,7 +224,7 @@ impl DeferredDerefTask {
         // of the type indicated by `tag`, and this task owns one ref on it,
         // released below (for the HTMLRewriter tags: the ref taken in
         // `begin_suspension`, or the last ref handed over by
-        // `release_pump_ref`). We are on the JS thread.
+        // `deref_outside_caller`). We are on the JS thread.
         unsafe {
             match tag {
                 Tag::HTTPServerRequestContext => (*ctx.cast::<HTTPServerRequestContext>()).deref(),

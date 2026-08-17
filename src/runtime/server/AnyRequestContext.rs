@@ -176,10 +176,6 @@ impl AnyRequestContext {
         dispatch!(self, (), |_T, ctx| ctx.set_cookies(cookie_map))
     }
 
-    pub(crate) fn enable_timeout_events(self) {
-        dispatch!(self, (), |_T, ctx| ctx.set_timeout_handler())
-    }
-
     pub(crate) fn get_remote_socket_info(self) -> Option<uws::SocketAddress> {
         dispatch!(self, None, |_T, ctx| ctx.get_remote_socket_info())
     }

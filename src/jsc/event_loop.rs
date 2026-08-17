@@ -332,14 +332,6 @@ impl EventLoop {
         result
     }
 
-    /// SAFETY: returns `&mut` into VM-owned scratch; two calls alias the same
-    /// buffer. Caller must not hold another live `&mut` to it.
-    pub unsafe fn pipe_read_buffer(&mut self) -> &mut [u8] {
-        // SAFETY: vm() is the live owning VM; rare_data() lazily inits the
-        // per-VM scratch buffer. Caller contract (see doc): no concurrent &mut.
-        unsafe { &mut (*self.vm()).rare_data().pipe_read_buffer()[..] }
-    }
-
     pub fn drain_microtasks_with_global(
         &mut self,
         global_object: &JSGlobalObject,
@@ -1377,7 +1369,6 @@ bun_event_loop::link_impl_JsEventLoop! {
             (*store).put(core::ptr::NonNull::new_unchecked(poll), ctx, was_ever_registered);
         },
         uws_loop() => (*this).usockets_loop(),
-        pipe_read_buffer() => core::ptr::from_mut::<[u8]>((*this).pipe_read_buffer()),
         tick() => (*this).tick(),
         auto_tick() => (*this).auto_tick(),
         auto_tick_active() => (*this).auto_tick_active(),

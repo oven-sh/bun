@@ -236,6 +236,7 @@ pub(crate) trait CompressionStreamImpl: Sized + Taskable + 'static {
     fn this_value(&self) -> &JsCell<StrongOptional>;
     fn task(&self) -> &JsCell<WorkPoolTask>;
     fn write_in_progress(&self) -> &Cell<bool>;
+    fn pinned_buffers(&self) -> &Cell<u8>;
     fn pending_close(&self) -> &Cell<bool>;
     fn closed(&self) -> &Cell<bool>;
 
@@ -424,22 +425,26 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         // Pin both buffers before mutating any state: materializing a
         // FastTypedArray's backing store can fail on OOM, and failing here
         // leaves nothing to unwind.
-        let in_buf: jsc::ArrayBuffer;
-        let in_: Option<&[u8]> = if arguments[1].is_null() {
+        let in_buf: Option<jsc::ArrayBuffer> = if arguments[1].is_null() {
             None
         } else {
             let Some(buf) = arguments[1].as_pinned_arraybuffer(global_this) else {
                 return Err(global_this.throw_out_of_memory());
             };
-            in_buf = buf;
-            Some(&in_buf.byte_slice()[in_off as usize..in_off as usize + in_len as usize])
+            Some(buf)
         };
+        let in_: Option<&[u8]> = in_buf
+            .as_ref()
+            .map(|b| &b.byte_slice()[in_off as usize..in_off as usize + in_len as usize]);
         let Some(mut out_buf) = arguments[4].as_pinned_arraybuffer(global_this) else {
-            if !arguments[1].is_null() {
-                arguments[1].unpin_array_buffer();
+            if let Some(buf) = &in_buf {
+                buf.unpin();
             }
             return Err(global_this.throw_out_of_memory());
         };
+        this.pinned_buffers().set(
+            u8::from(in_buf.as_ref().is_some_and(|b| b.pinned)) | (u8::from(out_buf.pinned) << 1),
+        );
         let out: Option<&mut [u8]> = Some(
             &mut out_buf.byte_slice_mut()[out_off as usize..out_off as usize + out_len as usize],
         );
@@ -507,6 +512,21 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         ticket.post(ConcurrentTask::create(Task::init(this)));
     }
 
+    /// Releases the pins `write()` took; the cached slots keep rooting the values either way.
+    fn unpin_pending_buffers(this: &T, this_value: JSValue) {
+        let pinned = this.pinned_buffers().replace(0);
+        if pinned & 1 != 0 {
+            if let Some(value) = T::pending_input_get_cached(this_value) {
+                value.unpin_array_buffer();
+            }
+        }
+        if pinned & 2 != 0 {
+            if let Some(value) = T::pending_output_get_cached(this_value) {
+                value.unpin_array_buffer();
+            }
+        }
+    }
+
     /// VM teardown, JS thread, heap alive: a completion that was queued but
     /// will not run. The cleanup half of `run_from_js_thread`, no callbacks.
     ///
@@ -518,19 +538,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
         let vm = global.bun_vm();
         this.write_in_progress().set(false);
         if let Some(this_value) = this.this_value().with_mut(|v| v.try_swap()) {
-            for pinned in [
-                T::pending_input_get_cached(this_value),
-                T::pending_output_get_cached(this_value),
-            ]
-            .into_iter()
-            .flatten()
-            {
-                if pinned.is_cell() {
-                    if let Some(buf) = pinned.as_array_buffer(global) {
-                        buf.unpin();
-                    }
-                }
-            }
+            Self::unpin_pending_buffers(&this, this_value);
         }
         this.poll_ref().with_mut(|p| p.unref(vm));
         // SAFETY: fn contract — the write's ref.
@@ -573,19 +581,7 @@ impl<T: CompressionStreamImpl> CompressionStream<T> {
 
         this_value.ensure_still_alive();
 
-        for pinned in [
-            T::pending_input_get_cached(this_value),
-            T::pending_output_get_cached(this_value),
-        ]
-        .into_iter()
-        .flatten()
-        {
-            if pinned.is_cell() {
-                if let Some(buf) = pinned.as_array_buffer(global) {
-                    buf.unpin();
-                }
-            }
-        }
+        Self::unpin_pending_buffers(&this, this_value);
         T::pending_input_set_cached(this_value, global, JSValue::ZERO);
         T::pending_output_set_cached(this_value, global, JSValue::ZERO);
 
@@ -1054,6 +1050,7 @@ macro_rules! __impl_compression_stream {
             #[inline] fn this_value(&self) -> &::bun_jsc::JsCell<::bun_jsc::StrongOptional> { &self.this_value }
             #[inline] fn task(&self) -> &::bun_jsc::JsCell<::bun_jsc::WorkPoolTask> { &self.task }
             #[inline] fn write_in_progress(&self) -> &::core::cell::Cell<bool> { &self.write_in_progress }
+            #[inline] fn pinned_buffers(&self) -> &::core::cell::Cell<u8> { &self.pinned_buffers }
             #[inline] fn pending_close(&self) -> &::core::cell::Cell<bool> { &self.pending_close }
             #[inline] fn closed(&self) -> &::core::cell::Cell<bool> { &self.closed }
 

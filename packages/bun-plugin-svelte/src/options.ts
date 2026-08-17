@@ -28,8 +28,9 @@ export interface SvelteOptions extends Pick<CompileOptions, "runes"> {
   /**
    * Options to forward to the Svelte compiler.
    *
-   * `preserveWhitespace` and `preserveComments` default to Svelte's own defaults
-   * (`false`, and `false` when minifying) and can be overridden here.
+   * `preserveWhitespace` follows Svelte's own default (`false`). `preserveComments`
+   * defaults to `true`, or `false` when the bundler is minifying. Both can be
+   * overridden here.
    */
   compilerOptions?: OverrideCompileOptions;
 }

@@ -13,10 +13,17 @@ describe("getBaseCompileOptions", () => {
       fullDefault = Object.freeze(getBaseCompileOptions(pluginOptions, {}));
     });
 
-    it("when minification is disabled, comments are preserved", () => {
-      expect(getBaseCompileOptions(pluginOptions, { minify: false })).toEqual(
+    it.each([
+      [undefined, true],
+      [false, true],
+      [true, false],
+      // any explicit minify object is truthy, so it counts as minifying
+      [{ whitespace: true }, false],
+      [{ whitespace: false }, false],
+    ] as [BuildConfig["minify"], boolean][])("preserveComments follows minify (%o -> %p)", (minify, expected) => {
+      expect(getBaseCompileOptions(pluginOptions, { minify })).toEqual(
         expect.objectContaining({
-          preserveComments: true,
+          preserveComments: expected,
         }),
       );
     });
@@ -75,6 +82,17 @@ describe("getBaseCompileOptions", () => {
     it("preserveWhitespace overrides the minify-derived default", () => {
       expect(getBaseCompileOptions({ compilerOptions: { preserveWhitespace: true } }, { minify: true })).toEqual(
         expect.objectContaining({ preserveWhitespace: true }),
+      );
+    });
+
+    it.each([
+      [true, true],
+      [false, true],
+      [true, false],
+      [false, false],
+    ])("preserveComments: %p overrides the minify-derived default (minify: %p)", (preserveComments, minify) => {
+      expect(getBaseCompileOptions({ compilerOptions: { preserveComments } }, { minify })).toEqual(
+        expect.objectContaining({ preserveComments }),
       );
     });
   }); // compilerOptions

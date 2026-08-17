@@ -1550,6 +1550,7 @@ it("ws.subscribe()/send() with an argument whose toPrimitive terminates the sock
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
   expect(stdout).toBe(
     [
       "isSubscribed=false subscribed=false",
@@ -1561,7 +1562,6 @@ it("ws.subscribe()/send() with an argument whose toPrimitive terminates the sock
       "",
     ].join("\n"),
   );
-  if (exitCode !== 0) expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

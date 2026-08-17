@@ -2248,26 +2248,21 @@ fn get_or_put_resolved_package_with_find_result(
                     .is_root_dependency(unsafe { &mut *this_ptr }, dependency_id)
         };
 
-    // A patched package is held while the range still allows it (update_transitive holds the transitive rows the same way); audit fix does not set to_update and moves it.
+    // A patched package is held while the range still allows it (audit fix does not set to_update and moves it);
+    // a row owned by a regular package stays on the copy a direct row (enqueued first) resolves to when its
+    // range allows, as a fresh resolution would dedupe it there.
     if should_update && !behavior.is_peer() {
-        if let Some(id) = patched_package_satisfying(this, name_hash, version) {
+        let lockfile = &this.lockfile;
+        let held = if let Some(id) = lockfile.patched_package_satisfying(name_hash, version) {
             this.kept_patched.push(id);
-            success_fn(this, dependency_id, id);
-            return Ok(Some(ResolvedPackageResult {
-                package: *this.lockfile.packages.get(id as usize),
-                is_first_time: false,
-                task: None,
-            }));
-        }
-    }
-
-    // `bun update <name>` re-resolves every row of the name. A row owned by a
-    // regular package stays on the copy a root/workspace dependency resolves to
-    // whenever its range allows, as a fresh resolution would dedupe it there;
-    // the direct rows themselves (enqueued first) move within their own ranges.
-    if should_update && !behavior.is_peer() && !this.lockfile.is_workspace_dependency(dependency_id)
-    {
-        if let Some(id) = direct_dependency_package_satisfying(this, name_hash, version) {
+            Some(id)
+        } else if !lockfile.is_workspace_dependency(dependency_id) {
+            let direct = |id| lockfile.is_direct_dependency_resolution(id);
+            lockfile.package_satisfying(name_hash, version, direct)
+        } else {
+            None
+        };
+        if let Some(id) = held {
             success_fn(this, dependency_id, id);
             return Ok(Some(ResolvedPackageResult {
                 package: *this.lockfile.packages.get(id as usize),
@@ -3010,23 +3005,12 @@ fn locked_version_in_lockfile<'a>(
     name_hash: PackageNameHash,
     version: &dependency::Version,
 ) -> Option<(Semver::Version, &'a [u8])> {
-    if version.tag != dependency::version::Tag::Npm {
-        return None;
-    }
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let range = &version.npm().version;
-    candidates
-        .iter()
-        .copied()
-        .filter(|&id| id < lockfile.loaded_package_count)
-        .map(|id| &pkg_res[id as usize])
-        .filter(|res| res.tag == ResolutionTag::Npm)
-        .map(|res| res.npm().version)
-        .find(|&locked| range.satisfies(locked, buf, buf))
-        .map(|locked| (locked, buf))
+    let in_lockfile = |id| id < lockfile.loaded_package_count;
+    let id = lockfile.package_satisfying(name_hash, version, in_lockfile)?;
+    let res = &lockfile.packages.items_resolution()[id as usize];
+    (res.tag == ResolutionTag::Npm)
+        .then(|| (res.npm().version, lockfile.buffers.string_bytes.as_slice()))
 }
 
 /// The package to bind a deferred peer row to and whether it satisfies the row; the highest-or-nothing fallback is what `resolve_peer_dep_version_based` rebinds to on load.
@@ -3037,13 +3021,7 @@ fn existing_peer_target(
     row: DependencyID,
 ) -> Option<(PackageID, bool)> {
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    if let Some(&id) = candidates.iter().find(|&&id| {
-        (id as usize) < pkg_res.len()
-            && pkg_res[id as usize].satisfies_dependency_version(version, buf, buf)
-    }) {
+    if let Some(id) = lockfile.package_satisfying(name_hash, version, |_| true) {
         return Some((id, true));
     }
     let highest = highest_peer_candidate(lockfile, name_hash, version)?;
@@ -3056,7 +3034,7 @@ fn highest_peer_candidate(
     name_hash: PackageNameHash,
     version: &dependency::Version,
 ) -> Option<PackageID> {
-    let &highest = lockfile.package_index.get(&name_hash)?.as_slice().first()?;
+    let &highest = lockfile.packages_named(name_hash).first()?;
     let resolution = lockfile.packages.items_resolution().get(highest as usize)?;
     let same_kind = matches!(
         (resolution.tag, version.tag),
@@ -3125,54 +3103,6 @@ fn would_revive_leftover(
         });
     !owned_rows.any(|(owner, dep, resolved)| {
         resolved == package_id && (owner == 0 || !dep.behavior.is_peer())
-    })
-}
-
-/// The first npm package of this name that `version` allows and `accept` takes.
-fn npm_package_satisfying(
-    lockfile: &Lockfile::Lockfile,
-    name_hash: PackageNameHash,
-    version: &dependency::Version,
-    accept: impl Fn(PackageID) -> bool,
-) -> Option<PackageID> {
-    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    candidates.iter().copied().find(|&id| {
-        let res = &pkg_res[id as usize];
-        res.tag == ResolutionTag::Npm
-            && res.satisfies_dependency_version(version, buf, buf)
-            && accept(id)
-    })
-}
-
-fn patched_package_satisfying(
-    this: &PackageManager,
-    name_hash: PackageNameHash,
-    version: &dependency::Version,
-) -> Option<PackageID> {
-    let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    if lockfile.patched_dependencies.count() == 0 {
-        return None;
-    }
-    npm_package_satisfying(lockfile, name_hash, version, |id| {
-        lockfile
-            .patched_dependencies
-            .contains(&Semver::string::Builder::string_hash(
-                &crate::dedupe::label(lockfile, id),
-            ))
-    })
-}
-
-/// The package of this name that a root or workspace dependency resolves to, if `version` allows it.
-fn direct_dependency_package_satisfying(
-    this: &PackageManager,
-    name_hash: PackageNameHash,
-    version: &dependency::Version,
-) -> Option<PackageID> {
-    let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    npm_package_satisfying(lockfile, name_hash, version, |id| {
-        lockfile.is_direct_dependency_resolution(id)
     })
 }
 

@@ -789,7 +789,7 @@ pub fn install_with_manager(
     }
 
     if manager.options.enable.frozen_lockfile() && !manager.options.do_.save_lockfile() {
-        if let Some(source) = load_result.migrated().source_lockfile_name() {
+        if let Some(source) = load_result.migrated_from() {
             note_migrated_lockfile_not_saved(manager, source);
         }
     }
@@ -1428,7 +1428,7 @@ fn overrides_field_name(
 }
 
 pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'static str {
-    if let Some(source) = load_result.migrated().source_lockfile_name() {
+    if let Some(source) = load_result.migrated_from() {
         source
     } else if load_result.loaded_from_binary_lockfile() {
         "bun.lockb"

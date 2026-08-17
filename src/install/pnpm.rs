@@ -156,6 +156,7 @@ fn resolve_peer_like_bun_lock(lockfile: &Lockfile, dep: &Dependency) -> Option<P
         &lockfile.overrides,
         lockfile.packages.items_resolution(),
         string_bytes!(lockfile),
+        |_| true,
     )
 }
 

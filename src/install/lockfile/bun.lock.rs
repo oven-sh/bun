@@ -3148,6 +3148,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     overrides,
                     pkg_resolutions,
                     string_buf,
+                    |_| true,
                 );
                 let Some(res_id) =
                     peer_res_id.or_else(|| pkg_map.get(dep.name.slice(string_buf)).copied())
@@ -3220,6 +3221,7 @@ pub(crate) fn parse_into_binary_lockfile(
                         overrides,
                         pkg_resolutions,
                         string_buf,
+                        |_| true,
                     );
                     let Some(res_id) = peer_res_id.or_else(|| {
                         pkg_map
@@ -3299,6 +3301,7 @@ pub(crate) fn parse_into_binary_lockfile(
                     overrides,
                     pkg_resolutions,
                     string_buf,
+                    |_| true,
                 );
                 let res_id = match peer_res_id {
                     Some(id) => id,
@@ -3413,28 +3416,9 @@ fn deferred_peer_range<'a>(
 /// so the isolated store's ancestor walk and the hoisted tree's dedupe
 /// both resolve the name through the root's workspace entry before the
 /// edge value is ever consulted.
+///
+/// `is_candidate` restricts the scan for lockfiles holding packages a reload will not see.
 pub(crate) fn resolve_peer_dep_version_based(
-    dep: &Dependency,
-    catalogs: &CatalogMap,
-    package_index: &PackageIndexMap,
-    overrides: &OverrideMap,
-    pkg_resolutions: &[Resolution],
-    string_buf: &[u8],
-) -> Option<PackageID> {
-    resolve_peer_dep_version_based_among(
-        dep,
-        catalogs,
-        package_index,
-        overrides,
-        pkg_resolutions,
-        string_buf,
-        |_| true,
-    )
-}
-
-/// `resolve_peer_dep_version_based` over the candidates `is_candidate` accepts, for callers
-/// whose lockfile holds packages a reload will not see (`rebind_peers_to_printed_packages`).
-pub(crate) fn resolve_peer_dep_version_based_among(
     dep: &Dependency,
     catalogs: &CatalogMap,
     package_index: &PackageIndexMap,
@@ -3511,10 +3495,10 @@ pub(crate) fn resolve_peer_dep_by_range(
 ) -> Option<PackageID> {
     let candidates = package_index.get(&name_hash)?.as_slice();
     candidates.iter().copied().find(|&id| {
-        is_candidate(id)
-            && pkg_resolutions
-                .get(id as usize)
-                .is_some_and(|res| res.satisfies_dependency_version(range, string_buf, string_buf))
+        pkg_resolutions
+            .get(id as usize)
+            .is_some_and(|res| res.satisfies_dependency_version(range, string_buf, string_buf))
+            && is_candidate(id)
     })
 }
 
@@ -3566,7 +3550,7 @@ pub(crate) fn rebind_peers_to_printed_packages(
         {
             continue;
         }
-        if let Some(printed_target) = resolve_peer_dep_version_based_among(
+        if let Some(printed_target) = resolve_peer_dep_version_based(
             dep,
             catalogs,
             package_index,

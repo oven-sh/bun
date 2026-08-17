@@ -541,6 +541,7 @@ impl<'a, const METHOD: BuilderMethod> Builder<'a, METHOD> {
             &lockfile.overrides,
             lockfile.packages.items_resolution(),
             lockfile.buffers.string_bytes.as_slice(),
+            |_| true,
         ) {
             self.resolutions[dep_id as usize] = pkg_id;
         }

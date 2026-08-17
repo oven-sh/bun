@@ -1645,58 +1645,24 @@ fn original_literal_is_dist_tag(manager: &PackageManager, dep_id: DependencyID) 
         })
 }
 
-/// Mirrors `patched_package_satisfying`: a patched loaded instance the row's range accepts captures the row before any lookup.
-fn patched_capture(lockfile: &Lockfile, dep_id: DependencyID) -> Option<Semver::Version> {
-    if lockfile.patched_dependencies.count() == 0 {
-        return None;
-    }
+/// The version of the npm instance `find` picks for the row's effective range (by the range's name hash).
+fn instance_version(
+    lockfile: &Lockfile,
+    dep_id: DependencyID,
+    find: impl FnOnce(PackageNameHash, &dependency::Version) -> Option<PackageID>,
+) -> Option<Semver::Version> {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let dep = &lockfile.buffers.dependencies[dep_id as usize];
-    let version = dedupe::effective_version(lockfile, dep_id, dep)?;
-    if version.tag != DependencyVersionTag::Npm {
-        return None;
-    }
-    let hash = Semver::string::Builder::string_hash(version.npm().name.slice(buf));
-    let candidates = lockfile.package_index.get(&hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let range = &version.npm().version;
-    candidates
-        .iter()
-        .copied()
-        .filter(|&id| (id as usize) < lockfile.packages.len())
-        .find(|&id| {
-            let res = &pkg_res[id as usize];
-            res.tag == ResolutionTag::Npm
-                && range.satisfies(res.npm().version, buf, buf)
-                && lockfile
-                    .patched_dependencies
-                    .contains(&Semver::string::Builder::string_hash(&dedupe::label(
-                        lockfile, id,
-                    )))
-        })
-        .map(|id| pkg_res[id as usize].npm().version)
-}
-
-/// Mirrors `locked_version_in_lockfile`: the highest loaded npm instance the row's range accepts.
-fn locked_in_lockfile(lockfile: &Lockfile, dep_id: DependencyID) -> Option<Semver::Version> {
-    let buf = lockfile.buffers.string_bytes.as_slice();
-    let dep = &lockfile.buffers.dependencies[dep_id as usize];
-    let version = dedupe::effective_version(lockfile, dep_id, dep)?;
-    if version.tag != DependencyVersionTag::Npm {
-        return None;
-    }
-    let hash = Semver::string::Builder::string_hash(version.npm().name.slice(buf));
-    let candidates = lockfile.package_index.get(&hash)?.as_slice();
-    let pkg_res = lockfile.packages.items_resolution();
-    let range = &version.npm().version;
-    candidates
-        .iter()
-        .copied()
-        .filter(|&id| id < lockfile.loaded_package_count)
-        .map(|id| &pkg_res[id as usize])
-        .filter(|res| res.tag == ResolutionTag::Npm)
-        .map(|res| res.npm().version)
-        .find(|&locked| range.satisfies(locked, buf, buf))
+    let range = dedupe::effective_npm_range(lockfile, dep_id, dep)?;
+    let id = find(
+        Semver::string::Builder::string_hash(range.npm().name.slice(buf)),
+        &range,
+    )?;
+    Some(
+        lockfile.packages.items_resolution()[id as usize]
+            .npm()
+            .version,
+    )
 }
 
 /// The pre-differ resolution of a root/workspace row, matched by owner, name hash and behavior like `moved_pairs`.
@@ -1762,7 +1728,8 @@ fn direct_row_landing(
         .behavior
         .is_peer()
     {
-        if let Some(patched) = patched_capture(lockfile, dep_id) {
+        let patched = |hash, range: &_| lockfile.patched_package_satisfying(hash, range);
+        if let Some(patched) = instance_version(lockfile, dep_id, patched) {
             return Some((patched, false));
         }
     }
@@ -1788,7 +1755,10 @@ fn direct_row_landing(
     let locked = match keep {
         KeepLocked::No => None,
         KeepLocked::Version(locked) => Some(locked),
-        KeepLocked::Range => locked_in_lockfile(lockfile, dep_id),
+        // As `locked_version_in_lockfile`: the highest loaded instance the range accepts.
+        KeepLocked::Range => instance_version(lockfile, dep_id, |hash, range| {
+            lockfile.package_satisfying(hash, range, |id| id < lockfile.loaded_package_count)
+        }),
     };
     if let Some(locked) = locked {
         if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less

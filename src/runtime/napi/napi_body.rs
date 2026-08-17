@@ -976,7 +976,13 @@ extern "C" fn napi_get_prototype(
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
-    result.set(env, object.get_prototype(env.to_js()));
+    // A Proxy's getPrototypeOf trap runs here. If it throws, the exception stays
+    // pending for the addon and *result must be left untouched.
+    let prototype = match object.get_prototype(env.to_js()) {
+        Ok(prototype) => prototype,
+        Err(_) => return env.pending_exception(),
+    };
+    result.set(env, prototype);
     env.ok()
 }
 

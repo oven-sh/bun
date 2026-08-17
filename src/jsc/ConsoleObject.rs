@@ -3239,7 +3239,7 @@ pub mod formatter {
         value.get_class_name(global_this, &mut name_str)?;
         if !name_str.eql_comptime(b"Object") {
             return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+        } else if value.get_prototype(global_this)?.eql_value(JSValue::NULL) {
             return Ok(Some(ZigString::static_("[Object: null prototype]")));
         }
         Ok(None)
@@ -3969,7 +3969,7 @@ pub mod formatter {
             // (i.e. `class Foo extends Bar`). Built-in and DOM constructors
             // have `Function.prototype` as their prototype, which would
             // render as `[class X extends Function]` and is noise.
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             let proto_is_class = !proto.is_empty_or_undefined_or_null()
                 && proto.is_cell()
                 && proto.is_class(self.global_this);
@@ -4035,7 +4035,7 @@ pub mod formatter {
             }
             let printable = OwnedString::new(value.get_name(self.global_this)?);
 
-            let proto = value.get_prototype(self.global_this);
+            let proto = value.get_prototype(self.global_this)?;
             // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
             let func_name = OwnedString::new(proto.get_name(self.global_this)?);
 

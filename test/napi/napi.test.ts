@@ -1779,6 +1779,32 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_get_prototype", () => {
+    it("returns napi_pending_exception and leaves *result untouched when [[GetPrototypeOf]] throws", async () => {
+      // Bun runs the Proxy's getPrototypeOf trap (Object.getPrototypeOf
+      // semantics), so a throwing trap has to be reported the way every other
+      // Node-API call reports JS that threw: napi_pending_exception (10), the
+      // exception left for napi_get_and_clear_last_exception, *result not
+      // written. This is not a checkSameOutput test because V8's
+      // Object::GetPrototype never runs proxy traps: Node prints
+      // "status=0 ... result=null exception=none" for all three proxies.
+      const output = await runOn(bunExe(), "test_napi_get_prototype_exceptions", []);
+      const lines = output
+        .trim()
+        .split(/\r?\n/)
+        // remove all debug logs
+        .filter(line => !/^\[\w+\]/.test(line));
+      expect(lines).toEqual([
+        "plain object: status=0 pending=false result=Object.prototype exception=none",
+        "null prototype: status=0 pending=false result=null exception=none",
+        "trap throws: status=10 pending=true result=untouched exception=the trap's error",
+        "trap returns a number: status=10 pending=true result=untouched exception=TypeError",
+        "revoked proxy: status=10 pending=true result=untouched exception=TypeError",
+        "plain object again: status=0 pending=false result=Object.prototype exception=none",
+      ]);
+    });
+  });
+
   describe("napi_object_freeze and napi_object_seal", () => {
     it("should handle arrays with indexed properties", async () => {
       const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);

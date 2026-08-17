@@ -1197,6 +1197,65 @@ nativeTests.test_napi_instanceof = () => {
   dump("undefined ctor", nativeTests.perform_instanceof({}, undefined));
 };
 
+// Each line reports what napi_get_prototype did with an argument whose
+// [[GetPrototypeOf]] throws. result= is "untouched" when *result was left
+// alone and "null handle" when a NULL napi_value was written (see
+// perform_get_prototype in js_test_helpers.cpp).
+nativeTests.test_napi_get_prototype_exceptions = () => {
+  const trapError = new RangeError("from getPrototypeOf trap");
+
+  function dump(label, object) {
+    const r = nativeTests.perform_get_prototype(object);
+    const result =
+      typeof r.result === "string" ? r.result : r.result === Object.prototype ? "Object.prototype" : String(r.result);
+    const exception =
+      r.exception === undefined
+        ? "none"
+        : r.exception === trapError
+          ? "the trap's error"
+          : r.exception instanceof TypeError
+            ? "TypeError"
+            : String(r.exception);
+    console.log(`${label}: status=${r.status} pending=${r.pending} result=${result} exception=${exception}`);
+  }
+
+  dump("plain object", {});
+  dump("null prototype", Object.create(null));
+
+  dump(
+    "trap throws",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          throw trapError;
+        },
+      },
+    ),
+  );
+
+  // The engine throws a TypeError for these two: a trap result that is neither
+  // an object nor null, and a revoked proxy.
+  dump(
+    "trap returns a number",
+    new Proxy(
+      {},
+      {
+        getPrototypeOf() {
+          return 42;
+        },
+      },
+    ),
+  );
+  const revocable = Proxy.revocable({}, {});
+  revocable.revoke();
+  dump("revoked proxy", revocable.proxy);
+
+  // Each exception above was reported to and cleared by the addon, so nothing
+  // is left pending.
+  dump("plain object again", {});
+};
+
 nativeTests.test_get_value_string = () => {
   function to16Bit(string) {
     if (typeof Bun != "object") return string;

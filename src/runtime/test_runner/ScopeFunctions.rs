@@ -806,7 +806,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JS
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name.clone(), __jsc_host_call_as_function, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &name, 1.0, &[])?;
-    set_prototype_direct(bound, value.get_prototype(global), global)?;
+    set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }
 

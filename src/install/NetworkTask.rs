@@ -64,6 +64,10 @@ pub struct NetworkTask {
     pub(crate) header_buf: Box<[u8]>,
     /// Proxy href for this request (empty: direct); owned like `url_buf`, `AsyncHTTP` borrows it.
     pub(crate) http_proxy_buf: Box<[u8]>,
+    /// Whether this request was allowed to carry registry credentials at all
+    /// (`github:` and URL tarball dependencies are not). Read back when a
+    /// 401/403 is reported, so the suggested fix is one that would apply.
+    pub(crate) authorization: Authorization,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -635,6 +639,8 @@ impl NetworkTask {
             }
         }
 
+        self.authorization = Authorization::AllowAuthorization;
+
         let mut header_builder = HeaderBuilder::default();
 
         count_auth(&mut header_builder, scope);
@@ -866,35 +872,22 @@ impl NetworkTask {
             None => None,
         };
 
-        // Only attach the registry `Authorization` header when the tarball URL
-        // origin matches the configured registry scope origin. The npm manifest
-        // is registry-controlled, so a malicious registry could otherwise point
-        // the tarball at an attacker-controlled host and receive the scope
-        // credentials. The empty-`tarball_url` branch builds the URL from
-        // `scope.url.href()`, so its origin matches and authorized downloads
-        // keep working.
-        // Compare (protocol, hostname, effective port) rather than the raw
-        // `URL.origin` slice — `origin` is a borrowed prefix of the input
-        // string and is not normalized for default ports, so a tarball URL of
-        // `https://host:443/...` would not byte-match a `.npmrc` registry of
-        // `https://host/...` even though they are the same origin. Some
-        // registries emit `dist.tarball` URLs with the default port spelled
-        // out; without normalization those installs lose the `Authorization`
-        // header and fail with 401.
-        let send_auth = matches!(authorization, Authorization::AllowAuthorization) && {
-            let tarball = URL::parse(&self.url_buf);
-            let registry = scope.url.url();
-            tarball.protocol == registry.protocol
-                && tarball.hostname == registry.hostname
-                && tarball.get_port_auto() == registry.get_port_auto()
+        self.authorization = authorization;
+        // The empty-`tarball_url` branch above built the URL from `scope.url`,
+        // so it is same-origin and gets the scope's credentials.
+        let credentials = match authorization {
+            Authorization::NoAuthorization => None,
+            Authorization::AllowAuthorization => pm
+                .options
+                .tarball_credentials(scope, &URL::parse(&self.url_buf)),
         };
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if send_auth {
-            count_auth(&mut header_builder, scope);
+        if let Some(credentials) = credentials {
+            count_auth(&mut header_builder, credentials);
         }
 
         // Same precedence as npm, where node derives `Authorization` from the
@@ -910,9 +903,10 @@ impl NetworkTask {
 
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-            match &url_authorization {
-                Some(value) => header_builder.append("Authorization", value),
-                None => append_auth(&mut header_builder, scope),
+            match (&url_authorization, credentials) {
+                (Some(value), _) => header_builder.append("Authorization", value),
+                (None, Some(credentials)) => append_auth(&mut header_builder, credentials),
+                (None, None) => {}
             }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();
@@ -1066,6 +1060,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
             addr_of_mut!((*slot).http_proxy_buf).write(Box::default());
+            addr_of_mut!((*slot).authorization).write(Authorization::NoAuthorization);
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

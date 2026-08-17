@@ -131,7 +131,7 @@ mod draft {
     use core::ptr;
 
     use bun_alloc::{AllocError, Arena, ArenaVec, ArenaVecExt as _};
-    use bun_api::{self, BunInstall, NpmRegistry, npm_registry};
+    use bun_api::{self, BunInstall, NpmRegistry, NpmUrlAuth, npm_registry};
     use bun_ast::E::Rope;
     use bun_ast::{E, Expr, ExprData, StoreRef};
     use bun_ast::{Loc, Log, Source};
@@ -1183,6 +1183,26 @@ mod draft {
                 RegistryCredential::Email(email) => registry.email.clone_from(email),
             }
         }
+
+        /// Record this line under its `//host/path/` prefix so the package
+        /// manager can also resolve it by request URL (see `NpmUrlAuth`).
+        fn apply_to_url_auth(&self, url_auth: &mut Vec<NpmUrlAuth>) {
+            let entry = match url_auth
+                .iter_mut()
+                .find(|entry| entry.host == self.host && entry.pathname == self.pathname)
+            {
+                Some(entry) => entry,
+                None => {
+                    url_auth.push(NpmUrlAuth {
+                        host: self.host.clone(),
+                        pathname: self.pathname.clone(),
+                        credentials: NpmRegistry::default(),
+                    });
+                    url_auth.last_mut().expect("just pushed")
+                }
+            };
+            self.apply_to(&mut entry.credentials);
+        }
     }
 
     // ──────────────────────────────────────────────────────────────────────────
@@ -1594,6 +1614,7 @@ mod draft {
                     continue;
                 }
                 if let Some(auth) = RegistryAuth::from_config_item(conf_item, iter.log, source) {
+                    auth.apply_to_url_auth(&mut install.url_auth);
                     configs.push(auth);
                 }
             }

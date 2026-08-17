@@ -331,6 +331,18 @@ pub mod registry {
             self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
         }
 
+        /// Whether requests to this scope carry an `Authorization` header.
+        pub(crate) fn has_credentials(&self) -> bool {
+            !self.token.is_empty() || !self.auth.is_empty()
+        }
+
+        /// Take `other`'s credentials, leaving this scope's registry URL as is.
+        pub(crate) fn copy_credentials_from(&mut self, other: &Scope) {
+            self.token.clone_from(&other.token);
+            self.auth.clone_from(&other.auth);
+            self.user.clone_from(&other.user);
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -540,6 +552,83 @@ pub mod registry {
 
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
+
+    /// Credentials from a `.npmrc` `//host/path/:...` line, matched against
+    /// request URLs the way npm resolves credentials for a URL: the host
+    /// (including the port) must be the same and the key's path must be the
+    /// request path or one of its parent directories. Keys have no scheme, so
+    /// a key applies to both `http` and `https` requests to its host.
+    pub(crate) struct UrlAuth {
+        hostname: Box<[u8]>,
+        /// `None` when the key does not spell out a port, which means the
+        /// scheme's default port of whatever request is being matched.
+        port: Option<u16>,
+        /// Without trailing slash; `/` for a bare host.
+        pathname: Box<[u8]>,
+        /// Only the credential fields are meaningful; `url` is empty.
+        credentials: Scope,
+    }
+
+    impl UrlAuth {
+        /// `None` when the line carries nothing that can be sent as an
+        /// `Authorization` header (for example only an `email`), so it never
+        /// shadows a shallower key that does.
+        pub(crate) fn from_api(
+            api: &api::NpmUrlAuth,
+            env: &mut DotEnv,
+        ) -> Result<Option<UrlAuth>, AllocError> {
+            let credentials = Scope::from_api(b"", api.credentials.clone(), env)?;
+            if !credentials.has_credentials() {
+                return Ok(None);
+            }
+            let host = URL::parse(&api.host);
+            let port = if host.port.is_empty() {
+                None
+            } else {
+                match host.get_port() {
+                    Some(port) => Some(port),
+                    // `//host:notaport/` cannot match any request.
+                    None => return Ok(None),
+                }
+            };
+            if host.hostname.is_empty() {
+                return Ok(None);
+            }
+            Ok(Some(UrlAuth {
+                hostname: host.hostname.into(),
+                port,
+                pathname: api.pathname.clone(),
+                credentials,
+            }))
+        }
+
+        fn matches(&self, url: &URL) -> bool {
+            if !strings::eql_case_insensitive_ascii(url.hostname, &self.hostname, true) {
+                return false;
+            }
+            let port = url.get_port_auto();
+            let port_matches = match self.port {
+                Some(expected) => port == expected,
+                None => port == if url.is_https() { 443 } else { 80 },
+            };
+            if !port_matches {
+                return false;
+            }
+            let prefix: &[u8] = &self.pathname;
+            prefix == b"/"
+                || (url.pathname.starts_with(prefix)
+                    && url.pathname.get(prefix.len()).is_none_or(|&c| c == b'/'))
+        }
+
+        /// The credentials configured for `url`: the matching key with the
+        /// longest path (`//host/a/b/` beats `//host/`).
+        pub(crate) fn find<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a Scope> {
+            list.iter()
+                .filter(|entry| entry.matches(url))
+                .max_by_key(|entry| entry.pathname.len())
+                .map(|entry| &entry.credentials)
+        }
+    }
 
     pub(crate) enum PackageVersionResponse {
         Cached(PackageManifest),

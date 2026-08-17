@@ -1398,6 +1398,7 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
     let Api::BunInstall {
         default_registry,
         scoped,
+        url_auth,
         lockfile_path,
         save_lockfile_path,
         cache_directory,
@@ -1445,6 +1446,8 @@ fn overlay_bunfig_install(install: &mut Api::BunInstall, bunfig: Api::BunInstall
             }
         }
     }
+
+    install.url_auth.extend(url_auth);
 
     macro_rules! overlay {
         ($($field:ident),* $(,)?) => {

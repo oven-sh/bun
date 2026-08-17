@@ -492,6 +492,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
     pub(crate) fn init_with_client_config(
         &mut self,
         client: &mut HTTPClient,
+        loop_: *mut uws::Loop,
     ) -> Result<(), InitError> {
         // Rust cannot reject a const-generic bool branch at compile time on
         // stable, so this is a debug_assert.
@@ -502,12 +503,17 @@ impl<const SSL: bool> HTTPContext<SSL> {
             .unwrap()
             .get()
             .as_usockets_for_client_verification();
-        self.init_with_opts(&opts)
+        self.init_with_opts(&opts, loop_)
     }
 
+    // `loop_` is passed in rather than read from `http::http_thread()`: `init`
+    // and `init_with_thread_opts` run inside `&mut HttpThread` methods
+    // (`attach_loop`, `init_https_context`), which that borrow would alias.
+    // `init_with_client_config` (custom contexts) just shares the signature.
     fn init_with_opts(
         &mut self,
         opts: &uws::SocketContext::BunSocketContextOptions,
+        loop_: *mut uws::Loop,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let mut err = uws::create_bun_socket_error_t::none;
@@ -530,14 +536,14 @@ impl<const SSL: bool> HTTPContext<SSL> {
         // SAFETY: secure was just set to Some.
         unsafe { ssl_ctx_setup(self.ssl_ctx()) };
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(loop_, None, owner_ptr);
         Ok(())
     }
 
     pub(crate) fn init_with_thread_opts(
         &mut self,
         init_opts: &HTTPThreadInitOpts,
+        loop_: *mut uws::Loop,
     ) -> Result<(), InitError> {
         debug_assert!(SSL, "ssl only");
         let opts = uws::SocketContext::BunSocketContextOptions {
@@ -555,13 +561,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
             request_cert: 1,
             ..Default::default()
         };
-        self.init_with_opts(&opts)
+        self.init_with_opts(&opts, loop_)
     }
 
-    pub(crate) fn init(&mut self) {
+    pub(crate) fn init(&mut self, loop_: *mut uws::Loop) {
         let owner_ptr = std::ptr::from_mut::<Self>(self).cast::<c_void>();
-        self.group
-            .init(http::http_thread().uws_loop(), None, owner_ptr);
+        self.group.init(loop_, None, owner_ptr);
         if SSL {
             let mut err = uws::create_bun_socket_error_t::none;
             self.secure = Some(

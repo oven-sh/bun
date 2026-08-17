@@ -956,11 +956,13 @@ pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPT
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// The initialized singleton, for callers that project a field out of it
+/// without forming a `&mut` (`HTTPThread::default_context_ptr`).
 #[inline]
-pub fn http_thread() -> &'static mut HTTPThread {
+pub(crate) fn http_thread_ptr() -> *mut HTTPThread {
     // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
     // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
-    // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
+    // dereferencing the uninitialized static is *immediate* UB — a
     // `debug_assert!` leaves release builds unguarded. The `Acquire` load
     // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`,
     // establishing happens-before for cross-thread callers that did not
@@ -970,15 +972,28 @@ pub fn http_thread() -> &'static mut HTTPThread {
         HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
         "http_thread() called before HTTPThread::init()"
     );
-    // SAFETY: `HTTP_THREAD_INIT == true` (checked above) is set only after
-    // `HTTP_THREAD.write(..)` in `init_once`, so the `MaybeUninit` is fully
-    // written. Thread-affinity is documented (HTTP-thread-only after
-    // `on_start`); the `ThreadCell` owner assert covers debug.
-    unsafe { (*HTTP_THREAD.get()).assume_init_mut() }
+    // `MaybeUninit<T>` is `repr(transparent)`, so this is the `T`'s address.
+    HTTP_THREAD.get().cast::<HTTPThread>()
 }
+
+/// Borrow the HTTP-thread singleton for one statement.
+///
+/// Request code reaches the thread through this (`deflater()`,
+/// `get_request_body_send_buffer()`, the completion callback, ...) and runs
+/// from under the thread's own frames, so a borrow those frames were still
+/// holding would alias it. Hence: use the result as `http_thread().method()`
+/// / `http_thread().field`, never bind it, and keep request code out of the
+/// methods called this way (the frames that do run it, `process_events` /
+/// `drain_*` / `connect`, have no `self`). Enforced by
+/// `test/internal/source-lints/http-thread-held-borrow.test.ts`.
 #[inline]
-pub(crate) fn http_thread_mut() -> &'static mut HTTPThread {
-    http_thread()
+pub fn http_thread() -> &'static mut HTTPThread {
+    // SAFETY: `HTTP_THREAD_INIT` (asserted in `http_thread_ptr`) is set after
+    // the static is written, so this points at a live `HTTPThread`. Borrows are
+    // statement-scoped (doc above), so none overlaps another on this thread;
+    // thread affinity is HTTP-thread-only after `on_start` (`ThreadCell`
+    // asserts it in debug).
+    unsafe { &mut *http_thread_ptr() }
 }
 
 // TODO: this needs to be freed when Worker Threads are implemented
@@ -2321,10 +2336,8 @@ impl<'a> HTTPClient<'a> {
             if let Some(ctx) = self.custom_ssl_ctx.as_ref() {
                 return ctx.as_ptr().cast::<GenHttpContext<IS_SSL>>();
             }
-            (&raw mut http_thread().https_context).cast::<GenHttpContext<IS_SSL>>()
-        } else {
-            (&raw mut http_thread().http_context).cast::<GenHttpContext<IS_SSL>>()
         }
+        HTTPThread::default_context_ptr::<IS_SSL>()
     }
 
     /// Upgrade a `*mut GenHttpContext<SSL>` (the value [`get_ssl_ctx`]
@@ -2332,8 +2345,8 @@ impl<'a> HTTPClient<'a> {
     /// through as a parameter) to `&mut`.
     ///
     /// INVARIANT: every value reaching here is one of two thread-owned,
-    /// set-once non-null pointers — `&raw mut http_thread().http(s)_context`
-    /// or the heap-boxed `custom_ssl_ctx` on which the client holds a strong
+    /// set-once non-null pointers — `HTTPThread::default_context_ptr()` or
+    /// the heap-boxed `custom_ssl_ctx` on which the client holds a strong
     /// intrusive ref — both live for the call. The context is a separate
     /// allocation from `HTTPClient`, so the returned `&mut` does not alias any
     /// `&self` borrow used to compute the call's other arguments.
@@ -2851,7 +2864,7 @@ impl<'a> HTTPClient<'a> {
             return;
         }
 
-        let socket = match http_thread().connect::<IS_SSL>(self) {
+        let socket = match HTTPThread::connect::<IS_SSL>(self) {
             Ok(Some(s)) => s,
             Ok(None) => {
                 // Coalesced onto an in-flight h2 connect; the leader will attach us

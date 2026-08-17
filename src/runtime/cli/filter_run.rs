@@ -14,6 +14,7 @@ use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
+use bun_install::lifecycle_script_runner::ScriptArgv;
 use bun_io::{BufferedReader, ReadState};
 use bun_sys as sys;
 
@@ -91,16 +92,7 @@ impl<'a> ProcessHandle<'a> {
         state.remaining_scripts += 1;
         let handle = self;
 
-        let argv: [*const c_char; 4] = [
-            state.shell_bin.as_ptr().cast(),
-            if cfg!(unix) {
-                c"-c".as_ptr()
-            } else {
-                c"exec".as_ptr()
-            },
-            handle.config.combined.as_ptr().cast(),
-            core::ptr::null(),
-        ];
+        let argv = ScriptArgv::new(state.shell_bin, handle.config.combined)?;
         let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
@@ -122,8 +114,8 @@ impl<'a> ProcessHandle<'a> {
             }
             // SAFETY: see above; reborrow through raw ptr to avoid overlapping &mut with guard.
             let envp = unsafe { (*env_ptr).map.create_null_delimited_env_map()? };
-            // SAFETY: `argv`/`envp` are local null-terminated C-string arrays
-            // with argv[0] non-null; valid for this call.
+            // SAFETY: `argv` and `envp` are null-terminated C-string arrays
+            // (argv[0] non-null) owned by locals that outlive this call.
             break 'brk unsafe {
                 spawn::spawn_process(
                     &handle.options,
@@ -327,7 +319,8 @@ struct State<'a> {
     draw_buf: Vec<u8>,
     last_lines_written: usize,
     pretty_output: bool,
-    shell_bin: &'static ZStr, // intentionally leaked (process exits)
+    /// POSIX shell the scripts run under; `None` on Windows (see `ScriptArgv`).
+    shell_bin: Option<&'static ZStr>,
     aborted: bool,
     // Raw `*mut` — process-lifetime singleton owned
     // by Transpiler; ProcessHandle::start mutates `env.map` (PATH swap) so a
@@ -935,20 +928,16 @@ pub(crate) fn run_scripts_with_filter(
     bun_io::ParentDeathWatchdog::install_on_event_loop(MiniEventLoop::as_event_loop_ctx(unsafe {
         &mut *event_loop
     }));
-    let shell_bin: &'static ZStr = {
-        #[cfg(unix)]
-        {
-            RunCommand::find_shell(
-                // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
-                unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
-                fsinstance.top_level_dir,
-            )
-            .ok_or(crate::Error::MissingShell)?
-        }
-        #[cfg(not(unix))]
-        {
-            bun_core::self_exe_path().map_err(|_| crate::Error::MissingShell)?
-        }
+    let shell_bin: Option<&'static ZStr> = if cfg!(unix) {
+        let shell = RunCommand::find_shell(
+            // SAFETY: env_ptr is the live process-lifetime DotEnv loader.
+            unsafe { (*env_ptr).get(b"PATH") }.unwrap_or(b""),
+            fsinstance.top_level_dir,
+        )
+        .ok_or(crate::Error::MissingShell)?;
+        Some(shell)
+    } else {
+        None
     };
 
     let handles: Box<[ProcessHandle]> = Vec::with_capacity(scripts.len()).into();

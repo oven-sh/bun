@@ -247,6 +247,67 @@ pub fn replace_package_manager_run(
     Ok(())
 }
 
+/// argv for spawning a package.json script: `<shell> -c <script>` with the
+/// POSIX shell the caller found, otherwise (always on Windows)
+/// `bun exec --no-env-file <script>`.
+///
+/// The envp the caller spawns with is the script's entire environment either
+/// way: `sh` adds nothing to it, and `--no-env-file` keeps `bun exec` from
+/// loading the `.env*` files in the script's cwd on top of it.
+pub struct ScriptArgv<'a> {
+    /// Elements are bare nullable pointers (an `Option<*const c_char>` would
+    /// not be one word each); terminated by a null after the last argument,
+    /// which for the shell form is one slot early.
+    argv: [*const c_char; 5],
+    _borrowed: core::marker::PhantomData<&'a ZStr>,
+}
+
+impl<'a> ScriptArgv<'a> {
+    pub fn new(shell: Option<&'a ZStr>, script: &'a ZStr) -> Result<Self, crate::Error> {
+        // `find_shell` yields cmd.exe on Windows, which does not take `-c`.
+        let argv = match shell {
+            Some(shell) if cfg!(unix) => [
+                shell.as_ptr(),
+                c"-c".as_ptr(),
+                script.as_ptr(),
+                core::ptr::null(),
+                core::ptr::null(),
+            ],
+            _ => [
+                bun_core::self_exe_path()?.as_ptr(),
+                c"exec".as_ptr(),
+                c"--no-env-file".as_ptr(),
+                script.as_ptr(),
+                core::ptr::null(),
+            ],
+        };
+        Ok(Self {
+            argv,
+            _borrowed: core::marker::PhantomData,
+        })
+    }
+
+    /// `bun install --ignore-scripts --no-save`, for a git dependency's `prepare` step.
+    pub fn install_dependencies() -> Result<Self, crate::Error> {
+        let mut argv: [*const c_char; 5] = [core::ptr::null(); 5];
+        argv[0] = bun_core::self_exe_path()?.as_ptr();
+        for (slot, arg) in argv[1..].iter_mut().zip(INSTALL_DEPENDENCIES_ARGS) {
+            *slot = arg.as_ptr();
+        }
+        const _: () = assert!(INSTALL_DEPENDENCIES_ARGS.len() + 2 <= 5);
+        Ok(Self {
+            argv,
+            _borrowed: core::marker::PhantomData,
+        })
+    }
+
+    /// The null-terminated array `spawn_process` takes; valid while `self`
+    /// (and the strings it borrows) is.
+    pub fn as_ptr(&self) -> *const *const c_char {
+        self.argv.as_ptr()
+    }
+}
+
 pub struct LifecycleScriptSubprocess<'a> {
     pub(crate) package_name: Box<[u8]>,
 
@@ -670,45 +731,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 == PrepareDependencies::Pending
                 && next_script_index as usize >= ScriptsList::FIRST_PREPARE_INDEX;
 
-            // `[_]?[*:0]const u8` argv array with trailing null. Element type MUST be
-            // bare `*const c_char` (null sentinel), never `Option<*const c_char>` —
-            // raw pointers are already nullable, and `Option<*const T>` is a 2-word
-            // (tag, ptr) pair, not niche-optimized. Casting a `[Option<*const c_char>; N]`
-            // to `Argv` would interleave discriminant words and EFAULT in the kernel.
-            // Sized for the longer of the two argvs built below.
-            const ARGV_LEN: usize = INSTALL_DEPENDENCIES_ARGS.len() + 2;
-            let mut argv: [*const c_char; ARGV_LEN] = [core::ptr::null(); ARGV_LEN];
-            const _: () = assert!(
-                core::mem::size_of::<[*const c_char; ARGV_LEN]>()
-                    == ARGV_LEN * core::mem::size_of::<usize>()
-            );
-
             // Owns the script bytes `argv` points into until the spawn below.
             let mut copy_script: Vec<u8> = Vec::new();
-            let command_line: &[u8] = if installing_dependencies {
+            let (argv, command_line): (ScriptArgv, &[u8]) = if installing_dependencies {
                 (*this).prepare_dependencies = PrepareDependencies::Installing(
                     NestedInstallCleanup::begin(cwd, &(*this).package_name),
                 );
-                argv[0] = bun_core::self_exe_path()?.as_ptr();
-                for (slot, arg) in argv[1..].iter_mut().zip(INSTALL_DEPENDENCIES_ARGS) {
-                    *slot = arg.as_ptr();
-                }
-                INSTALL_DEPENDENCIES_COMMAND_LINE
+                (ScriptArgv::install_dependencies()?, INSTALL_DEPENDENCIES_COMMAND_LINE)
             } else {
                 copy_script.reserve_exact(original_script.len() + 1);
                 replace_package_manager_run(&mut copy_script, original_script)?;
                 copy_script.push(0);
                 let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
-
-                if (*this).shell_bin.is_some() && !cfg!(windows) {
-                    argv[0] = (*this).shell_bin.unwrap().as_ptr();
-                    argv[1] = c"-c".as_ptr();
-                } else {
-                    argv[0] = bun_core::self_exe_path()?.as_ptr();
-                    argv[1] = c"exec".as_ptr();
-                }
-                argv[2] = combined_script.as_ptr();
-                combined_script.as_bytes()
+                (ScriptArgv::new((*this).shell_bin, combined_script)?, combined_script.as_bytes())
             };
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
@@ -818,9 +853,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
             let spawned = match bun_spawn::spawn_process(
                 &spawn_options,
-                // argv is a `[*const c_char; N]` with trailing null — exactly the
-                // `[*:null]?[*:0]const u8` layout `spawn_process` expects (1 word/elt).
-                argv.as_mut_ptr().cast(),
+                argv.as_ptr(),
                 envp,
             ) {
                 Ok(Ok(s)) => s,

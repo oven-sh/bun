@@ -1,7 +1,7 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { copyFileSync, existsSync, mkdirSync } from "fs";
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
@@ -24,7 +24,7 @@ import {
   VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
-import { join, resolve } from "path";
+import { delimiter, join, resolve } from "path";
 const { parseLockfile } = install_test_helpers;
 
 expect.extend({
@@ -10092,6 +10092,24 @@ describe("outdated", () => {
 // This test is to verify that BinLinkingShim.zig creates correct shim files as
 // well as bun_shim_impl.exe works in various edge cases. There are many fast
 // paths for many many cases.
+// The parts of a Windows `.bunx` file that the tests below look at (the layout
+// is documented in src/install/windows-shim/BinLinkingShim.rs): the UTF-16
+// target path, which ends at a `"`, and the flags word that ends the file. Bit 3
+// of the flags is `is_absolute_target`; the bits above it are the format
+// version. Launchers built before that bit existed check the version bits for
+// exactly this value, so it must stay the same for both kinds of shim.
+const BUNX_VERSION_BITS = 0xab30;
+function readBunxShim(path: string) {
+  const bytes = readFileSync(path);
+  const text = bytes.toString("utf16le");
+  const flags = bytes.readUInt16LE(bytes.length - 2);
+  return {
+    target: text.slice(0, text.indexOf('"')),
+    isAbsoluteTarget: (flags & 0b1000) !== 0,
+    versionBits: flags & 0xfff0,
+  };
+}
+
 describe("windows bin linking shim should work", async () => {
   if (!isWindows) return;
 
@@ -10170,6 +10188,20 @@ describe("windows bin linking shim should work", async () => {
     { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
   ];
 
+  test("the .bunx files store the target relative to node_modules", () => {
+    const binDir = join(packageDir, "node_modules", ".bin");
+    expect(readBunxShim(join(binDir, "native.bunx"))).toEqual({
+      target: "bunx-bins\\native.exe",
+      isAbsoluteTarget: false,
+      versionBits: BUNX_VERSION_BITS,
+    });
+    expect(readBunxShim(join(binDir, "bin-bun.bunx"))).toEqual({
+      target: "bunx-bins\\bin-bun.ts",
+      isAbsoluteTarget: false,
+      versionBits: BUNX_VERSION_BITS,
+    });
+  });
+
   for (const { bin, name } of bins) {
     test(`bun run ${bin} arg1 arg2`, async () => {
       var { stdout, stderr, exited } = spawn({
@@ -10242,6 +10274,118 @@ describe("windows bin linking shim should work", async () => {
       expect(err.trim()).toBe("");
       const out = await stdout.text();
       expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+      expect(await exited).toBe(0);
+    });
+  }
+});
+
+// Bin links are created relative to the bin dir, and a global install can put
+// the global bin dir and the global package dir anywhere relative to each
+// other. Bin linking used to assume that path always starts with `..`. On
+// Windows that matters: a `.bunx` file stores the target relative to the parent
+// of the directory holding the shim, which is impossible when the two dirs are
+// on different drives (https://github.com/oven-sh/bun/issues/23414), so the
+// shim has to store the absolute target instead. CI machines have a single
+// drive, so this uses the other layout whose relative path does not start with
+// `..`: the package dir nested inside the bin dir. Both layouts take the same
+// path through the linker and the shim.
+describe("global bin links when the package dir is inside the bin dir", () => {
+  let root: string;
+  let binDir: string;
+  let globalDir: string;
+  let globalEnv: Record<string, string | undefined>;
+
+  beforeAll(async () => {
+    root = tmpdirSync();
+    binDir = join(root, "bin");
+    globalDir = join(binDir, "global");
+    const tmp = join(root, "tmp");
+    await mkdir(tmp);
+    // `env` is shared with the file-level beforeEach, which points its cache and
+    // temp dirs at whichever test ran last; pin them so `bunx` below (which puts
+    // `<temp>/bunx-*/node_modules/.bin` ahead of PATH) sees the same thing in
+    // every run.
+    globalEnv = mergeWindowEnvs([
+      env,
+      {
+        BUN_INSTALL_BIN: binDir,
+        BUN_INSTALL_GLOBAL_DIR: globalDir,
+        BUN_INSTALL_CACHE_DIR: join(root, "cache"),
+        BUN_TMPDIR: tmp,
+        TMPDIR: tmp,
+        TEMP: tmp,
+        PATH: binDir + delimiter + process.env.PATH,
+      },
+    ]);
+
+    await writeFile(
+      join(root, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: false,
+          registry: `http://localhost:${port}/`,
+        },
+      }),
+    );
+
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", "-g", "--linker=hoisted", `--config=${join(root, "bunfig.toml")}`, "bunx-bins"],
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+      env: globalEnv,
+    });
+    const err = await stderr.text();
+    expect(err).not.toContain("error:");
+    expect(await stdout.text()).toContain("bunx-bins@1.0.0");
+    expect(await exited).toBe(0);
+  });
+
+  test.skipIf(isWindows)("the bins are symlinks relative to the bin dir", async () => {
+    expect(await readlink(join(binDir, "bin-bun"))).toBe(join("global", "node_modules", "bunx-bins", "bin-bun.ts"));
+    expect(await exists(join(binDir, "bin-bun"))).toBe(true);
+  });
+
+  test.skipIf(!isWindows)("the .bunx files store the absolute path of the target", () => {
+    const packageDir = join(globalDir, "node_modules", "bunx-bins");
+    expect(readBunxShim(join(binDir, "native.bunx"))).toEqual({
+      target: join(packageDir, "native.exe"),
+      isAbsoluteTarget: true,
+      versionBits: BUNX_VERSION_BITS,
+    });
+    expect(readBunxShim(join(binDir, "bin-bun.bunx"))).toEqual({
+      target: join(packageDir, "bin-bun.ts"),
+      isAbsoluteTarget: true,
+      versionBits: BUNX_VERSION_BITS,
+    });
+  });
+
+  // `native` has no shebang, so the shim launches the target itself. `bin-bun`
+  // has a `#!/usr/bin/env bun` shebang, so the shim launches `bun <target>`.
+  // Running the `.exe` exercises the standalone shim; `bunx` finds the `.exe`
+  // in PATH and reads the `.bunx` file inside bun.exe instead; `bun --bun x`
+  // additionally runs the target in-process instead of spawning `bun`.
+  const runs: [name: string, cmd: () => string[], expected: string][] = [
+    ["native.exe", () => [join(binDir, "native.exe")], "i am exe arg1 arg2"],
+    ["bin-bun.exe", () => [join(binDir, "bin-bun.exe")], "i am bin-bun arg1 arg2"],
+    ["bun x native", () => [bunExe(), "x", "native"], "i am exe arg1 arg2"],
+    ["bun x bin-bun", () => [bunExe(), "x", "bin-bun"], "i am bin-bun arg1 arg2"],
+    ["bun --bun x bin-bun", () => [bunExe(), "--bun", "x", "bin-bun"], "i am bin-bun arg1 arg2"],
+  ];
+
+  for (const [name, cmd, expected] of runs) {
+    test.skipIf(!isWindows)(`${name} arg1 arg2`, async () => {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [...cmd(), "arg1", "arg2"],
+        cwd: root,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: globalEnv,
+      });
+      const err = await stderr.text();
+      expect(err.trim()).toBe("");
+      const out = await stdout.text();
+      expect(out.trim()).toBe(expected);
       expect(await exited).toBe(0);
     });
   }

@@ -19,6 +19,9 @@
 namespace Bun {
 using namespace NodeVM;
 
+// As in Node's lib/vm.js, timeout / displayErrors / breakOnSigint are not
+// constructor options: RunningScriptOptions reads them on each runIn*Context
+// call, and vm.runIn*Context() passes one options object through both parsers.
 bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg, JSValue* importer)
 {
     if (importer) {
@@ -49,11 +52,6 @@ bool ScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
                 ERR::INVALID_ARG_TYPE(scope, globalObject, "options.contextOrigin"_s, "string"_s, contextOriginOpt);
                 return false;
             }
-            any = true;
-        }
-
-        if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
-            RETURN_IF_EXCEPTION(scope, false);
             any = true;
         }
 
@@ -732,6 +730,13 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);
 
+        // Same order as Node's getRunInContextArgs (lib/vm.js): timeout,
+        // displayErrors, breakOnSigint. Observable when several are invalid.
+        if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
+            any = true;
+        }
+        RETURN_IF_EXCEPTION(scope, false);
+
         auto displayErrorsOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "displayErrors"_s));
         RETURN_IF_EXCEPTION(scope, false);
         if (displayErrorsOpt) {
@@ -744,11 +749,6 @@ bool RunningScriptOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm
                 any = true;
             }
         }
-
-        if (validateTimeout(globalObject, vm, scope, options, this->timeout)) {
-            any = true;
-        }
-        RETURN_IF_EXCEPTION(scope, {});
 
         auto breakOnSigintOpt = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "breakOnSigint"_s));
         RETURN_IF_EXCEPTION(scope, false);

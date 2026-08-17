@@ -475,17 +475,12 @@ fn publish_config_registry<'b>(
     };
     match value.as_string_cloned(bump)? {
         Some(url) if url.starts_with(b"https://") || url.starts_with(b"http://") => Ok(Some(url)),
-        Some(url) => {
+        not_a_url => {
+            let got =
+                not_a_url.map_or_else(String::new, |v| format!(": {}", bun_core::fmt::quote(v)));
             Output::err_generic(
-                "invalid `{}` value in `publishConfig`: {}, expected a URL starting with 'https://' or 'http://'",
-                (bstr::BStr::new(key), bun_core::fmt::quote(url)),
-            );
-            Global::crash();
-        }
-        None => {
-            Output::err_generic(
-                "invalid `{}` value in `publishConfig`, expected a URL starting with 'https://' or 'http://'",
-                (bstr::BStr::new(key),),
+                "invalid `{}` value in `publishConfig`{}, expected a URL starting with 'https://' or 'http://'",
+                (bstr::BStr::new(key), got),
             );
             Global::crash();
         }

@@ -988,7 +988,7 @@ impl PublishCommand {
 
                         Output::err_generic(
                             "unable to authenticate, need: {}",
-                            (bstr::BStr::new(www_authenticate),),
+                            (bun_fmt::escape_control_chars(www_authenticate),),
                         );
                         Global::crash();
                     } else if strings::contains(&response_buf.list, b"one-time pass") {
@@ -1014,7 +1014,7 @@ impl PublishCommand {
                 if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                 {
                     Output::print_error(format_args!("\n"));
-                    bun_core::note!("{}", bstr::BStr::new(notice));
+                    bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
                     Output::flush();
                 }
 
@@ -1075,7 +1075,7 @@ impl PublishCommand {
                             otp_res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                         {
                             Output::print_error(format_args!("\n"));
-                            bun_core::note!("{}", bstr::BStr::new(notice));
+                            bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
                             Output::flush();
                         }
                     }
@@ -1355,7 +1355,7 @@ impl PublishCommand {
                                 res.header_if_other_is_absent(b"npm-notice", b"x-local-cache")
                             {
                                 Output::print_error(format_args!("\n"));
-                                bun_core::note!("{}", bstr::BStr::new(notice));
+                                bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
                                 Output::flush();
                             }
 

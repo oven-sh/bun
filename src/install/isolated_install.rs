@@ -2456,7 +2456,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue package for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_fmt::EscapeControlChars(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();
@@ -2514,7 +2516,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue github package for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_fmt::EscapeControlChars(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();
@@ -2567,7 +2571,9 @@ pub(crate) fn install_isolated_packages(
                                         "failed to enqueue tarball for download: {}@{}",
                                         (
                                             BStr::new(pkg_name.slice(string_buf)),
-                                            pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            bun_fmt::EscapeControlChars(
+                                                pkg_res.fmt(string_buf, bun_fmt::PathSep::Auto),
+                                            ),
                                         ),
                                     );
                                     Output::flush();

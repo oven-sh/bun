@@ -184,7 +184,7 @@ pub fn whoami(manager: &mut PackageManager) -> Result<Vec<u8>, WhoamiError> {
 
     if let Some(notice) = res.header_if_other_is_absent(b"npm-notice", b"x-local-cache") {
         Output::print_error("\n");
-        bun_core::note!("{}", bstr::BStr::new(notice));
+        bun_core::note!("{}", bun_fmt::escape_control_chars(notice));
         Output::flush();
     }
 
@@ -250,7 +250,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
         } else {
             ""
         },
-        bstr::BStr::new(res.status_text()),
+        bun_fmt::escape_control_chars(res.status_text()),
         bun_fmt::redacted_npm_url(req.url.href),
     );
 
@@ -274,7 +274,7 @@ pub fn response_error<const OTP_RESPONSE: bool>(
                 Global::crash();
             }
         }
-        bun_core::pretty_errorln!("\n - {}", bstr::BStr::new(msg));
+        bun_core::pretty_errorln!("\n - {}", bun_fmt::escape_control_chars(msg));
     }
 
     Global::crash();
@@ -2129,7 +2129,7 @@ impl PackageManifest {
                 log.add_error_fmt(
                     Some(&source),
                     bun_ast::Loc::EMPTY,
-                    format_args!("npm error: {}", bstr::BStr::new(err)),
+                    format_args!("npm error: {}", bun_fmt::escape_control_chars(err)),
                 );
                 return Ok(None);
             }
@@ -2165,7 +2165,7 @@ impl PackageManifest {
                     bun_core::warn!(
                         "Package name mismatch. Expected <b>\"{}\"<r> but received <red>\"{}\"<r>",
                         bstr::BStr::new(expected_name),
-                        bstr::BStr::new(received_name),
+                        bun_fmt::escape_control_chars(received_name),
                     );
                 }
             }
@@ -2207,7 +2207,7 @@ impl PackageManifest {
                         prop.key_loc,
                         format_args!(
                             "Failed to parse dependency {}",
-                            bstr::BStr::new(version_name)
+                            bun_fmt::escape_control_chars(version_name)
                         ),
                     );
                     continue;

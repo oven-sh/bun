@@ -152,6 +152,18 @@ describe("util", () => {
       let err8 = new Error3();
       strictEqual(util.isError(err8), true);
     });
+
+    it("propagates an exception from a getPrototypeOf trap", () => {
+      const proxy = new Proxy(
+        {},
+        {
+          getPrototypeOf() {
+            throw new Error("getPrototypeOf trap");
+          },
+        },
+      );
+      expect(() => util.isError(proxy)).toThrow("getPrototypeOf trap");
+    });
   });
 
   describe("isObject", () => {

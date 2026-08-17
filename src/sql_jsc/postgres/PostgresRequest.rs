@@ -49,9 +49,7 @@ pub enum MessageType {
 /// The PostgreSQL wire protocol uses 16-bit integers for parameter and column counts.
 const MAX_PARAMETERS: usize = u16::MAX as usize;
 
-/// True when a JS value should be serialized to postgres as JSON text: a plain
-/// object or array, matching what `tag_jsc::from_js` classifies as json/jsonb.
-/// Strings, dates, typed arrays/buffers, and bigints are handled by other arms.
+/// Plain object or array, the same set `tag_jsc::from_js` classifies as json.
 fn value_is_json(value: JSValue) -> bool {
     use crate::jsc::JSType;
     if !value.is_cell() {
@@ -185,19 +183,13 @@ pub(crate) fn write_bind<Context: WriterContext>(
                 tag
             }
         } else if value_is_json(value) {
-            // The server-declared OID is unknown (0) or text on the unnamed
-            // one-shot path because Bind is written before ParameterDescription
-            // arrives. Serialize plain objects/arrays as JSON text regardless,
-            // which json, jsonb, and text columns all accept.
+            // With prepare: false the OID is still 0 here (Bind precedes ParameterDescription).
             types::Tag::json
         } else {
             tag
         };
         match effective_tag {
             types::Tag::jsonb | types::Tag::json => {
-                // OwnedString derefs the +1 WTFStringImpl ref from
-                // json_stringify_fast on scope exit; bun_core::String is Copy
-                // with no Drop, so a bare BunString here would leak it.
                 let mut str = bun_core::OwnedString::new(BunString::empty());
                 // Use jsonStringifyFast for SIMD-optimized serialization
                 value

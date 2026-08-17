@@ -575,9 +575,7 @@ function normalizeQuery(
     }
   }
 
-  // SQLArrayParameter reaches here as an object when nested inside an UPDATE /
-  // INSERT / WHERE IN helper (those push raw, unlike adapter.bindParam). Send
-  // its pre-serialized string so native never has to special-case the wrapper.
+  // The INSERT / UPDATE / IN helpers above push values raw, bypassing adapter.bindParam.
   for (let i = 0; i < binding_values.length; i++) {
     const v = binding_values[i];
     if (v instanceof SQLArrayParameter) binding_values[i] = v.serializedValues;

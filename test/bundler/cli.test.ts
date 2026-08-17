@@ -516,6 +516,22 @@ describe("CLI argument error messages", () => {
     expect(stderr).toContain("key=value");
     expect(exitCode).toBe(1);
   });
+
+  test("--outdir together with --outfile errors instead of silently dropping --outfile", async () => {
+    using dir = tempDir("build-outdir-outfile-err", { "main.ts": "export const x = 1;" });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "build", "main.ts", "--outdir=dist", "--outfile=myfile.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toContain("cannot use both --outdir and --outfile");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+    expect(fs.existsSync(path.join(String(dir), "dist"))).toBe(false);
+  });
 });
 
 describe.concurrent("modules that fail to print", () => {

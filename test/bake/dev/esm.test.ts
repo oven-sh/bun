@@ -206,6 +206,64 @@ devTest("export { default as y }", {
     await dev.fetch("/").equals("Value: 2");
   },
 });
+devTest("server module throwing while it is hot reloaded is reported and fixed by the next save", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "routes/index.ts": `
+      import { value } from '../config';
+      export default function(req, meta) {
+        return new Response(value);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1");
+
+    // The new version of the module throws while the server runtime evaluates
+    // it during the update. Before the fix this was an unhandled rejection in
+    // the dev server process, which exited; every `dev.write` below then
+    // failed because nothing was listening any more.
+    await dev.write(
+      "config.ts",
+      `
+        throw new Error("config boom sync");
+        export const value = "v2";
+      `,
+    );
+    await dev.output.waitForLine(/config boom sync/);
+    // The route keeps being served from the modules evaluated before the failed
+    // update (the route module is a root and is not re-evaluated by it), and
+    // saving the file again replaces the module whatever state the failed
+    // evaluation left it in.
+    await dev.fetch("/").equals("v1");
+    await dev.write("config.ts", `export const value = "v3";`);
+    await dev.fetch("/").equals("v3");
+
+    // Same thing when the module fails asynchronously: with top-level await the
+    // update is applied through a promise that rejects instead of a throw.
+    await dev.write(
+      "config.ts",
+      `
+        await 1;
+        throw new Error("config boom async");
+        export const value = "v4";
+      `,
+    );
+    await dev.output.waitForLine(/config boom async/);
+    await dev.fetch("/").equals("v3");
+    await dev.write(
+      "config.ts",
+      `
+        await 1;
+        export const value = "v5";
+      `,
+    );
+    await dev.fetch("/").equals("v5");
+  },
+});
 devTest("export * as namespace", {
   files: {
     "index.html": emptyHtmlFile({

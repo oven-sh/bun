@@ -1721,18 +1721,17 @@ test("a module whose evaluation times out is errored", async () => {
 // A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
 // wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
 // ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
-test("timeout during a nested event-loop wait beneath the script", () => {
-  const never = new Promise(() => {});
-  const iv = setInterval(() => {}, 1);
-  const t0 = Date.now();
-  let code: string | undefined;
-  try {
-    runInNewContext(`expect(never).resolves.toBe(1)`, { expect, never }, { timeout: 100 });
-  } catch (e: any) {
-    code = e?.code ?? String(e);
-  } finally {
-    clearInterval(iv);
-  }
-  expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
-  expect(Date.now() - t0).toBeLessThan(5000);
+// In a child, like the other unbounded waits above.
+test.concurrent("timeout during a nested event-loop wait beneath the script", async () => {
+  const code = `
+    const vm = require("node:vm"); const { expect } = require("bun:test");
+    const never = new Promise(() => {}); const iv = setInterval(() => {}, 1);
+    try { vm.runInNewContext("expect(never).resolves.toBe(1)", { expect, never }, { timeout: 100 }); console.log("returned"); }
+    catch (e) { console.log(e.code); } finally { clearInterval(iv); }
+  `;
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", code], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
+  expect(exitCode).toBe(0);
 });

@@ -64,9 +64,7 @@ pub struct NetworkTask {
     pub(crate) header_buf: Box<[u8]>,
     /// Proxy href for this request (empty: direct); owned like `url_buf`, `AsyncHTTP` borrows it.
     pub(crate) http_proxy_buf: Box<[u8]>,
-    /// Whether this request was allowed to carry registry credentials at all
-    /// (`github:` and URL tarball dependencies are not). Read back when a
-    /// 401/403 is reported, so the suggested fix is one that would apply.
+    /// Read back when a 401/403 is reported (`Options::missing_credentials_note`).
     pub(crate) authorization: Authorization,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
@@ -132,21 +130,14 @@ pub struct DedupeMapEntry {
     /// later `enqueue_*_for_download` can observe the failure instead of
     /// re-scheduling the entire network task (and its retry cycle) a second time.
     pub(crate) failed: bool,
-    /// Manifest tasks only: a request for the extended document has been issued
-    /// for this task id. See `PackageManager::has_created_manifest_task`.
+    /// Manifest tasks only (these three): see `PackageManager::has_created_manifest_task`.
     pub(crate) is_extended_manifest: bool,
-    /// Manifest tasks only: a request for the abbreviated document has been
-    /// issued for this task id.
     pub(crate) has_abbreviated_manifest_request: bool,
-    /// Manifest tasks only: the extended request failed. Every dependency on the
-    /// package now resolves from the abbreviated document instead
-    /// (`PackageManager::needs_extended_manifest`), which is the pre-libc
-    /// behavior for this one package.
+    /// The package then resolves from the abbreviated document (`PackageManager::needs_extended_manifest`).
     pub(crate) extended_manifest_failed: bool,
 }
 
 impl DedupeMapEntry {
-    /// Whether the document a dependency needs has been requested.
     pub(crate) fn manifest_requested(&mut self, extended: bool) -> &mut bool {
         if extended {
             &mut self.is_extended_manifest
@@ -453,39 +444,28 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
     header_builder.count("npm-auth-type", "legacy");
 }
 
-/// Splits `http://user:pass@host/pkg.tgz` into `user:pass` and
-/// `http://host/pkg.tgz`. `None` when the authority has no `@`; the `@` of a
-/// scoped package in the path (`/@scope/pkg/-/pkg.tgz`) is not one.
+/// `http://user:pass@host/pkg.tgz` -> (`user:pass`, `http://host/pkg.tgz`). Like `bun_url`, userinfo
+/// ends at the last `@` before the first `/` (so `#`/`?` in a password stay, `/@scope/` is path).
 fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     let authority_start = strings::index_of(url, b"://")? + b"://".len();
     let rest = &url[authority_start..];
-    // Like `bun_url`: userinfo ends at the last `@` before the path, so an unencoded `#` or `?` in
-    // a password stays part of it.
     let authority = &rest[..strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len())];
     let at = strings::last_index_of_char(authority, b'@')?;
-
-    let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));
-    without_userinfo.extend_from_slice(&url[..authority_start]);
-    without_userinfo.extend_from_slice(&rest[at + 1..]);
+    let without_userinfo = [&url[..authority_start], &rest[at + 1..]].concat();
     Some((&rest[..at], without_userinfo.into_boxed_slice()))
 }
 
-/// `Basic base64(userinfo)`, the header npm sends for credentials embedded in a
-/// tarball URL: minipass-fetch (`getNodeRequestOptions` in `lib/request.js`)
-/// hands the URL's `username:password` to node's `auth` option as is, so
-/// nothing is percent-decoded here either, and a userinfo without a `:` is a
-/// username with an empty password.
+/// `Basic base64(userinfo)` as npm sends it: not percent-decoded, and no `:` means an empty password.
 fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
-    const SCHEME: &[u8] = b"Basic ";
-    let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
-    user_pass.extend_from_slice(userinfo);
+    let mut user_pass = userinfo.to_vec();
     if !strings::contains_char(userinfo, b':') {
         user_pass.push(b':');
     }
-    let mut value = vec![0u8; SCHEME.len() + bun_core::base64::encode_len(&user_pass)];
-    value[..SCHEME.len()].copy_from_slice(SCHEME);
-    let encoded_len = bun_core::base64::encode(&mut value[SCHEME.len()..], &user_pass);
-    value.truncate(SCHEME.len() + encoded_len);
+    let mut value = b"Basic ".to_vec();
+    let start = value.len();
+    value.resize(start + bun_core::base64::encode_len(&user_pass), 0);
+    let encoded_len = bun_core::base64::encode(&mut value[start..], &user_pass);
+    value.truncate(start + encoded_len);
     value
 }
 
@@ -881,56 +861,41 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
-        // `"dep": "https://user:pass@host/dep.tgz"`: the credentials become a
-        // header, as npm sends them, and the URL is requested without them.
-        // They cannot stay in the URL: `bun_url` keeps the userinfo in `origin`,
-        // and the HTTP client compares origins to decide whether `Authorization`
-        // follows a redirect, so a redirect to the same host would lose it.
-        let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
-            Some((userinfo, url_without_userinfo)) => {
-                let value =
-                    (!userinfo.is_empty()).then(|| basic_authorization_from_userinfo(userinfo));
-                self.url_buf = url_without_userinfo;
-                value
-            }
-            None => None,
-        };
+        // `https://user:pass@host/dep.tgz`: sent as a header, as npm does; left in the URL it would
+        // be part of `origin` to `bun_url` and a same-host redirect would drop `Authorization`.
+        let mut url_authorization: Option<Vec<u8>> = None;
+        if let Some((userinfo, url_without_userinfo)) = split_url_userinfo(&self.url_buf) {
+            url_authorization =
+                (!userinfo.is_empty()).then(|| basic_authorization_from_userinfo(userinfo));
+            self.url_buf = url_without_userinfo;
+        }
 
         self.authorization = authorization;
-        // The empty-`tarball_url` branch above built the URL from `scope.url`,
-        // so it is same-origin and gets the scope's credentials.
         let credentials = match authorization {
             Authorization::NoAuthorization => None,
             Authorization::AllowAuthorization => pm
                 .options
                 .tarball_credentials(scope, &URL::parse(&self.url_buf)),
         };
+        // As in npm, credentials configured for the host win over the ones embedded in the URL.
+        let url_authorization = url_authorization.filter(|_| credentials.is_none());
 
         self.response_buffer = MutableString::init_empty();
 
         let mut header_builder = HeaderBuilder::default();
 
-        if let Some(credentials) = credentials {
+        if let Some(value) = &url_authorization {
+            header_builder.count("Authorization", value);
+        } else if let Some(credentials) = credentials {
             count_auth(&mut header_builder, credentials);
         }
 
-        // Same precedence as npm, where node derives `Authorization` from the
-        // URL only when the request does not carry one already: credentials
-        // configured for the registry win over the ones embedded in the URL.
-        let url_authorization = match url_authorization {
-            Some(value) if header_builder.header_count == 0 => {
-                header_builder.count("Authorization", &value);
-                Some(value)
-            }
-            _ => None,
-        };
-
         let header_buf: &'static [u8] = if header_builder.header_count > 0 {
             header_builder.allocate()?;
-            match (&url_authorization, credentials) {
-                (Some(value), _) => header_builder.append("Authorization", value),
-                (None, Some(credentials)) => append_auth(&mut header_builder, credentials),
-                (None, None) => {}
+            if let Some(value) = &url_authorization {
+                header_builder.append("Authorization", value);
+            } else if let Some(credentials) = credentials {
+                append_auth(&mut header_builder, credentials);
             }
             debug_assert_eq!(header_builder.content.len, header_builder.content.cap);
             self.header_buf = header_builder.content.move_to_slice();

@@ -1066,31 +1066,25 @@ bun_core::comptime_string_map! {
     };
 }
 
-#[derive(Copy, Clone)]
-enum StrippedOnRedirect {
-    /// Per `Flags::redirect_credentials`.
-    Credential,
-    /// Would suppress the default Host header derived from the new URL.
-    Host,
-}
-
 bun_core::comptime_string_map! {
     /// Headers deleted from the request on a cross-origin redirect.
+    /// `host` is included because a user-supplied Host header names the
+    /// previous origin; keeping it would also suppress the default Host
+    /// header derived from the new URL.
     /// Keys are lowercase: looked up via `get_ascii_case_insensitive`.
-    static CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS: StrippedOnRedirect = {
-        b"authorization" => StrippedOnRedirect::Credential,
-        b"proxy-authorization" => StrippedOnRedirect::Credential,
-        b"cookie" => StrippedOnRedirect::Credential,
-        b"host" => StrippedOnRedirect::Host,
+    static CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS: () = {
+        b"authorization" => (),
+        b"proxy-authorization" => (),
+        b"cookie" => (),
+        b"host" => (),
     };
 }
 
 #[derive(Copy, Clone)]
 struct RedirectHop {
     same_origin: bool,
-    same_hostname: bool,
-    /// https -> http; credentials never follow this hop (cleartext replay).
-    downgrades_to_http: bool,
+    /// What `RedirectCredentialsPolicy::SameHostname` keeps credentials on: never https -> http.
+    same_hostname_no_downgrade: bool,
 }
 
 impl RedirectHop {
@@ -1101,17 +1095,8 @@ impl RedirectHop {
                 strings::without_trailing_slash(from.origin),
                 true,
             ),
-            same_hostname: strings::eql_case_insensitive_ascii(to.hostname, from.hostname, true),
-            downgrades_to_http: from.is_https() && !to.is_https(),
-        }
-    }
-
-    fn strips_credentials(self, policy: RedirectCredentialsPolicy) -> bool {
-        match policy {
-            RedirectCredentialsPolicy::SameOrigin => !self.same_origin,
-            RedirectCredentialsPolicy::SameHostname => {
-                !self.same_hostname || self.downgrades_to_http
-            }
+            same_hostname_no_downgrade: !(from.is_https() && !to.is_https())
+                && strings::eql_case_insensitive_ascii(to.hostname, from.hostname, true),
         }
     }
 }
@@ -5242,20 +5227,20 @@ impl<'a> HTTPClient<'a> {
                 // locationURL's origin, then for each headerName of CORS
                 // non-wildcard request-header name, delete headerName from
                 // request's header list.
-                // The credential headers follow `Flags::redirect_credentials`.
+                // The credential headers (all but `host`) follow `Flags::redirect_credentials`.
                 if !hop.same_origin && self.header_entries.len() > 0 {
-                    let strip_credentials = hop.strips_credentials(self.flags.redirect_credentials);
+                    let strip_credentials = match self.flags.redirect_credentials {
+                        RedirectCredentialsPolicy::SameOrigin => true,
+                        RedirectCredentialsPolicy::SameHostname => !hop.same_hostname_no_downgrade,
+                    };
                     let mut i = 0;
                     while i < self.header_entries.len() {
                         let name = self.header_str(self.header_entries.items_name()[i]);
-                        let strip = match CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
+                        if CROSS_ORIGIN_STRIPPED_REQUEST_HEADERS
                             .get_ascii_case_insensitive(name)
+                            .is_some()
+                            && (strip_credentials || name.eq_ignore_ascii_case(b"host"))
                         {
-                            Some(StrippedOnRedirect::Host) => true,
-                            Some(StrippedOnRedirect::Credential) => strip_credentials,
-                            None => false,
-                        };
-                        if strip {
                             let _ = self.header_entries.ordered_remove(i);
                         } else {
                             i += 1;

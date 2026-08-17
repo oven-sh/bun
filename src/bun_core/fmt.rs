@@ -257,11 +257,8 @@ impl Display for RedactedNpmUrlFormatter<'_> {
             }
 
             // Emit the run of bytes up to the next position where a uuid/npm
-            // secret could possibly start. Runs split only at ASCII bytes, so
-            // multi-byte sequences stay intact; `BStr` turns invalid UTF-8 (the
-            // URL is package metadata, not guaranteed UTF-8) into U+FFFD instead
-            // of handing a bogus `&str` to a `Display` wrapper such as
-            // [`EscapeControlChars`].
+            // secret could possibly start, so multi-byte UTF-8 sequences are
+            // written intact (`BStr`: invalid UTF-8 becomes U+FFFD, not a bogus `&str`).
             let mut next = i + 1;
             while next < self.url.len() {
                 let b = self.url[next];
@@ -285,20 +282,14 @@ pub fn redacted_npm_url(str: &[u8]) -> RedactedNpmUrlFormatter<'_> {
     RedactedNpmUrlFormatter { url: str }
 }
 
-/// [`redacted_npm_url`] for a value that only exists as a `Display` impl: a
-/// lockfile resolution or a dependency specifier, which is the tarball or git
-/// URL written in package.json when the package came from one. Anything that
-/// does not contain a URL (a version, a path, a `github:` specifier) is written
-/// unchanged: the token and UUID masks are meant for URLs, and a version whose
-/// pre-release tag happens to look like one must not be masked.
+/// [`redacted_npm_url`] over a `Display` (a lockfile resolution, a dependency specifier); values
+/// without `://` pass unchanged so a version whose pre-release tag looks like a token is not masked.
 pub struct Redacted<T>(T);
 
 impl<T: Display> Display for Redacted<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        // Rendered in full first: the inner impl may write in pieces, and the
-        // password scan is anchored at the start of the whole value.
-        let mut text = String::new();
-        write!(text, "{}", self.0)?;
+        // Rendered in full first: the password scan is anchored at the start of the whole value.
+        let text = self.0.to_string();
         if !strings::contains(text.as_bytes(), b"://") {
             return f.write_str(&text);
         }
@@ -308,6 +299,11 @@ impl<T: Display> Display for Redacted<T> {
 
 pub fn redacted<T: Display>(value: T) -> Redacted<T> {
     Redacted(value)
+}
+
+/// [`redacted`] + [`EscapeControlChars`]: how untrusted specifiers/resolutions go to a terminal.
+pub fn for_terminal<T: Display>(value: T) -> EscapeControlChars<Redacted<T>> {
+    EscapeControlChars(Redacted(value))
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -3358,80 +3354,63 @@ fn escape_powershell_impl(str: &[u8], writer: &mut impl fmt::Write) -> fmt::Resu
 // escapeControlChars
 // ───────────────────────────────────────────────────────────────────────────
 
-/// Renders the wrapped `Display` with C0 controls, DEL and C1 controls
-/// spelled out (`\n`, `\r`, `\t`, `\x1b`, `\x7f`, `\u009b`) instead of
-/// written raw. For text somebody else authored (a registry manifest, a
-/// dependency's `package.json`): printed raw, an ESC/CR/C1 sequence can erase
-/// or repaint the line it is shown on and a newline can forge further lines
-/// of our output. Everything else passes through unchanged.
+/// Spells out C0/C1 controls and DEL (`\n`, `\x1b`, `\u009b`) in text somebody else authored
+/// (registry manifests, a dependency's `package.json`) so it cannot repaint or forge our output.
 pub struct EscapeControlChars<T>(pub T);
 
-/// [`EscapeControlChars`] for a value that is legitimately multi-line and is
-/// printed on its own (`bun pm view <pkg> readme`): `\t`, `\n` and `\r\n`
-/// pass through. A `\r` not followed by `\n` is still escaped; on a terminal
-/// it only overwrites the line printed so far.
+/// [`EscapeControlChars`] that lets `\t`, `\n` and `\r\n` through (`bun pm view <pkg> readme`).
 pub struct EscapeControlCharsMultiline<T>(pub T);
 
-/// [`EscapeControlChars`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+/// Invalid UTF-8 renders as U+FFFD.
 pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
     EscapeControlChars(bstr::BStr::new(text))
 }
 
-/// [`EscapeControlCharsMultiline`] over raw bytes; invalid UTF-8 renders as U+FFFD.
 pub fn escape_control_chars_multiline(text: &[u8]) -> EscapeControlCharsMultiline<&bstr::BStr> {
     EscapeControlCharsMultiline(bstr::BStr::new(text))
 }
 
 impl<T: Display> Display for EscapeControlChars<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut writer = EscapeControlCharsWriter {
-            f,
-            keep_line_breaks: false,
-        };
-        write!(writer, "{}", self.0)
+        write!(EscapeControlCharsWriter(f, false), "{}", self.0)
     }
 }
 
 impl<T: Display> Display for EscapeControlCharsMultiline<T> {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        let mut writer = EscapeControlCharsWriter {
-            f,
-            keep_line_breaks: true,
-        };
-        write!(writer, "{}", self.0)
+        write!(EscapeControlCharsWriter(f, true), "{}", self.0)
     }
 }
 
-struct EscapeControlCharsWriter<'a, 'f> {
-    f: &'a mut Formatter<'f>,
-    keep_line_breaks: bool,
-}
+/// `.1`: keep `\t`, `\n`, `\r\n`.
+struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>, bool);
 
 impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
     fn write_str(&mut self, s: &str) -> fmt::Result {
+        let Self(f, keep_line_breaks) = self;
         let mut start = 0;
         let mut chars = s.char_indices().peekable();
         while let Some((i, c)) = chars.next() {
             let pass_through = match c {
-                '\t' | '\n' => self.keep_line_breaks,
-                '\r' => self.keep_line_breaks && matches!(chars.peek(), Some((_, '\n'))),
+                '\t' | '\n' => *keep_line_breaks,
+                '\r' => *keep_line_breaks && matches!(chars.peek(), Some((_, '\n'))),
                 '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}' => false,
                 _ => true,
             };
             if pass_through {
                 continue;
             }
-            self.f.write_str(&s[start..i])?;
+            f.write_str(&s[start..i])?;
             match c {
-                '\n' => self.f.write_str("\\n")?,
-                '\r' => self.f.write_str("\\r")?,
-                '\t' => self.f.write_str("\\t")?,
-                c if c.is_ascii() => write!(self.f, "\\x{:02x}", c as u32)?,
-                c => write!(self.f, "\\u{:04x}", c as u32)?,
+                '\n' => f.write_str("\\n")?,
+                '\r' => f.write_str("\\r")?,
+                '\t' => f.write_str("\\t")?,
+                c if c.is_ascii() => write!(f, "\\x{:02x}", c as u32)?,
+                c => write!(f, "\\u{:04x}", c as u32)?,
             }
             start = i + c.len_utf8();
         }
-        self.f.write_str(&s[start..])
+        f.write_str(&s[start..])
     }
 }
 

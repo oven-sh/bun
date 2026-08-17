@@ -36,10 +36,7 @@ pub(crate) struct NodeModulesFolder {
     dependencies: Box<[DependencyID]>,
 }
 
-/// Disk-existence check for `bun pm ls`: the lockfile also contains entries
-/// that were never installed (platform-mismatched optionals) or were removed
-/// after install (`bun prune --production`), and those must not be listed as
-/// the contents of `node_modules`.
+/// `bun pm ls` lists what is on disk: the lockfile also has never-installed optionals and pruned entries.
 struct InstalledFilter {
     path: AutoAbsPath,
     top_len: usize,
@@ -47,38 +44,28 @@ struct InstalledFilter {
 }
 
 impl InstalledFilter {
-    fn init() -> Self {
-        let path = AutoAbsPath::init_top_level_dir();
+    /// `None` when there is no `node_modules`.
+    fn init() -> Option<Self> {
+        let mut path = AutoAbsPath::init_top_level_dir();
         let top_len = path.len();
-        Self {
+        let _ = path.append(b"node_modules");
+        let store = BunStore::init();
+        bun_sys::exists(path.slice()).then(|| Self {
             path,
             top_len,
-            store: BunStore::init(),
-        }
+            store,
+        })
     }
 
-    fn node_modules_exists(&mut self) -> bool {
-        self.path.set_length(self.top_len);
-        let _ = self.path.append(b"node_modules");
-        let exists = bun_sys::exists(self.path.slice());
-        self.path.set_length(self.top_len);
-        exists
-    }
-
-    fn is_installed(
-        &mut self,
-        lockfile: &Lockfile,
-        relative_path: &[u8],
-        dep_id: DependencyID,
-    ) -> bool {
-        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
-        if package_id as usize >= lockfile.packages.len() {
+    fn is_installed(&mut self, lockfile: &Lockfile, dir: &[u8], dep_id: DependencyID) -> bool {
+        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize] as usize;
+        if package_id >= lockfile.packages.len() {
             return false;
         }
         let slice = lockfile.packages.slice();
-        let resolution = &slice.items_resolution()[package_id as usize];
-        // Local sources (the project itself, workspaces, `bun link`ed packages)
-        // always exist on disk outside of node_modules.
+        let name = slice.items_name()[package_id];
+        let resolution = &slice.items_resolution()[package_id];
+        // Local sources always exist on disk, outside of node_modules.
         if matches!(
             resolution.tag,
             ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Symlink
@@ -91,25 +78,14 @@ impl InstalledFilter {
             .name
             .slice(buf);
         self.path.set_length(self.top_len);
-        let _ = self.path.append(relative_path);
+        let _ = self.path.append(dir);
         let _ = self.path.append(alias);
-        let exists = bun_sys::exists(self.path.slice());
-        self.path.set_length(self.top_len);
-        if exists {
-            return true;
-        }
-
-        // Isolated installs (`node_modules/.bun`) only link direct dependencies
-        // into each package's node_modules; transitive packages live in the store.
-        self.store
-            .lookup(
-                &mut self.path,
-                self.top_len,
-                slice.items_name()[package_id as usize],
-                resolution,
-                buf,
-            )
-            .is_some()
+        // Isolated installs only link direct dependencies into each node_modules; the rest is in the store.
+        bun_sys::exists(self.path.slice())
+            || self
+                .store
+                .lookup(&mut self.path, self.top_len, name, resolution, buf)
+                .is_some()
     }
 }
 
@@ -615,14 +591,13 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
 
-            let mut installed = InstalledFilter::init();
-            if !installed.node_modules_exists() {
+            let Some(mut installed) = InstalledFilter::init() else {
                 if log_level != LogLevel::Silent {
                     Output::err_generic("node_modules not found, nothing to list", ());
                     bun_core::note!("run 'bun install' first");
                 }
                 Global::exit(1);
-            }
+            };
 
             let mut iterator =
                 tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
@@ -637,18 +612,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 path.extend_from_slice(node_modules.relative_path.as_bytes());
                 path.push(0);
 
-                let dependencies: Box<[DependencyID]> = node_modules
-                    .dependencies
-                    .iter()
-                    .copied()
-                    .filter(|&dep_id| {
-                        installed.is_installed(
-                            lockfile,
-                            node_modules.relative_path.as_bytes(),
-                            dep_id,
-                        )
-                    })
-                    .collect();
+                let dir = node_modules.relative_path.as_bytes();
+                let mut dependencies = node_modules.dependencies.to_vec();
+                dependencies.retain(|&dep_id| installed.is_installed(lockfile, dir, dep_id));
                 installed_count += dependencies.len();
 
                 if max_depth < node_modules.depth + 1 {
@@ -658,7 +624,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 directories.push(NodeModulesFolder {
                     // SAFETY: NUL terminator just appended above.
                     relative_path: bun_core::ZBox::from_vec_with_nul(path),
-                    dependencies,
+                    dependencies: dependencies.into(),
                 });
             }
 
@@ -757,9 +723,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                         .name
                         .slice(string_bytes);
                     let name = bun_fmt::escape_control_chars(name);
-                    let resolution = bun_core::fmt::EscapeControlChars(bun_fmt::redacted(
+                    let resolution = bun_fmt::for_terminal(
                         resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
-                    ));
+                    );
 
                     if index < sorted_dependencies.len() - 1 {
                         bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
@@ -902,20 +868,12 @@ fn print_node_modules_folder_structure(
                 }
             }
             let directory_version =
-                bun_fmt::redacted(resolutions[id as usize].fmt(string_bytes, PathSep::Auto));
+                bun_fmt::for_terminal(resolutions[id as usize].fmt(string_bytes, PathSep::Auto));
             if let Some(j) = strings::index_of(path, b"node_modules") {
-                bun_core::prettyln!(
-                    "{}<d>@{}<r>",
-                    bun_fmt::escape_control_chars(&path[0..j - 1]),
-                    bun_fmt::EscapeControlChars(directory_version),
-                );
-            } else {
-                bun_core::prettyln!(
-                    "{}<d>@{}<r>",
-                    bun_fmt::escape_control_chars(path),
-                    bun_fmt::EscapeControlChars(directory_version),
-                );
+                path = &path[0..j - 1];
             }
+            let path = bun_fmt::escape_control_chars(path);
+            bun_core::prettyln!("{}<d>@{}<r>", path, directory_version);
         } else {
             let mut cwd_buf = PathBuffer::uninit();
             let path = match bun_sys::getcwd(&mut cwd_buf[..]) {
@@ -1024,9 +982,9 @@ fn print_node_modules_folder_structure(
         bun_core::prettyln!(
             "{}<d>@{}<r>",
             bun_fmt::escape_control_chars(package_name),
-            bun_fmt::EscapeControlChars(bun_fmt::redacted(
-                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
-            )),
+            bun_fmt::for_terminal(
+                resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)
+            ),
         );
     }
 
@@ -1093,9 +1051,9 @@ fn print_trusted_dependencies_flat(
         let package_id = resolutions_buf[dep_id as usize];
         let name =
             bun_fmt::escape_control_chars(dependencies[dep_id as usize].name.slice(string_bytes));
-        let resolution = bun_core::fmt::EscapeControlChars(bun_fmt::redacted(
+        let resolution = bun_fmt::for_terminal(
             resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
-        ));
+        );
         if index + 1 < trusted.len() {
             bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
         } else {

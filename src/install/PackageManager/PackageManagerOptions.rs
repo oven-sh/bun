@@ -31,9 +31,7 @@ pub struct Options {
     pub scope: Npm::registry::Scope,
 
     pub(crate) registries: Npm::registry::Map,
-    /// `.npmrc` `//host/path/` credential lines, resolved by request URL. Fills
-    /// in scopes whose registry was configured without credentials of its own
-    /// and authenticates tarballs hosted somewhere other than their registry.
+    /// `.npmrc` `//host/path/` credential lines, resolved by request URL.
     pub(crate) url_auth: Vec<Npm::registry::UrlAuth>,
     pub(crate) cache_directory: &'static [u8],
     pub enable: Enable,
@@ -111,19 +109,13 @@ pub struct Options {
 }
 
 impl Options {
-    /// Whether picking versions needs the full registry document instead of the
-    /// abbreviated one: only the full one has the publish times `minimumReleaseAge`
-    /// filters on.
+    /// Only the full registry document has the publish times `minimumReleaseAge` filters on.
     pub(crate) fn needs_extended_manifest_to_pick_versions(&self) -> bool {
         self.minimum_release_age_ms.is_some()
     }
 
-    /// Whether resolving `dependency` needs the full registry document. Besides
-    /// the publish times, the abbreviated document lacks the `libc` field, which
-    /// is only enforced for optional dependencies (`Libc::for_dependency`), so
-    /// only those pay for the larger document. This is also what decides the
-    /// `libc` recorded in the lockfile, so it does not depend on the host: a
-    /// lockfile written on macOS still filters on Linux.
+    /// The abbreviated document also lacks `libc`, which is only enforced for optional
+    /// dependencies (`Libc::for_dependency`); host-independent so lockfiles stay portable.
     pub(crate) fn needs_extended_manifest(&self, dependency: Behavior) -> bool {
         self.needs_extended_manifest_to_pick_versions() || dependency.is_optional()
     }
@@ -294,16 +286,8 @@ impl Options {
         }
     }
 
-    /// The credentials a tarball download may carry.
-    ///
-    /// The manifest that names the tarball URL comes from the registry, so a
-    /// malicious registry could point `dist.tarball` at a host of its choosing;
-    /// `scope`'s credentials therefore only go to `scope`'s own origin. Any
-    /// other origin gets exactly what the user configured for it in `.npmrc`
-    /// (`//that-host/:_authToken=...`), which covers registries that serve
-    /// tarballs from a separate host and lockfiles recorded against a
-    /// registry that has since moved; an origin without such a line gets
-    /// nothing.
+    /// `scope`'s credentials only go to its own origin (the registry controls `dist.tarball`);
+    /// any other origin gets exactly what `.npmrc` configures for it, or nothing.
     pub(crate) fn tarball_credentials<'a>(
         &'a self,
         scope: &'a Npm::registry::Scope,
@@ -315,12 +299,8 @@ impl Options {
         Npm::registry::UrlAuth::find(&self.url_auth, tarball)
     }
 
-    /// Text to append to the `GET <url> - 401` line of a request that bun sent
-    /// without an `Authorization` header, saying which `.npmrc` line would have
-    /// supplied one. Empty when credentials were sent (the registry rejected
-    /// them, and the status line already says everything bun knows) and for
-    /// downloads that never carry registry credentials, where no `.npmrc` line
-    /// would change anything.
+    /// Appended to the `GET <url> - 401` line of a request bun sent without `Authorization`:
+    /// which `.npmrc` line would have supplied one. Empty when credentials were sent.
     pub(crate) fn missing_credentials_note(
         &self,
         package_name: &[u8],
@@ -332,19 +312,20 @@ impl Options {
         let scope = self.scope_for_package_name(package_name);
         let mut note = Vec::new();
         match request {
-            RequestKind::Manifest => {
-                if scope.has_credentials() {
-                    return note;
-                }
+            RequestKind::Manifest if !scope.has_credentials() => {
                 let registry = scope.url.url();
+                let slash = if registry.pathname.ends_with(b"/") {
+                    ""
+                } else {
+                    "/"
+                };
                 let _ = write!(
                     note,
-                    "\n  no credentials are configured for this registry; add //{}{}:_authToken=<token> to .npmrc",
+                    "\n  no credentials are configured for this registry; add //{}{}{slash}:_authToken=<token> to .npmrc",
                     bstr::BStr::new(registry.host),
-                    RegistryPath(registry.pathname),
+                    bstr::BStr::new(registry.pathname),
                 );
             }
-            RequestKind::Tarball(Authorization::NoAuthorization) => {}
             RequestKind::Tarball(Authorization::AllowAuthorization) => {
                 let url = bun_url::URL::parse(url);
                 if self.tarball_credentials(scope, &url).is_some() {
@@ -367,35 +348,25 @@ impl Options {
                     );
                 }
             }
+            _ => {}
         }
         note
     }
 
-    /// Give every scope that ended up without credentials the ones `.npmrc`
-    /// configures for its registry URL. This is how `--registry` and
-    /// `$NPM_CONFIG_REGISTRY` pick up a `//host/:_authToken=` line: they are
-    /// applied after the `.npmrc` files were read, so the loader could not
-    /// attach the line to them.
+    /// How `--registry` and `$NPM_CONFIG_REGISTRY` pick up a `//host/:_authToken=` line.
     fn fill_credentials_from_url_auth(&mut self) {
-        if self.url_auth.is_empty() {
-            return;
-        }
         let url_auth = &self.url_auth;
         for scope in core::iter::once(&mut self.scope).chain(self.registries.values_mut()) {
-            if scope.has_credentials() {
-                continue;
-            }
-            let found = Npm::registry::UrlAuth::find(url_auth, &scope.url.url());
-            if let Some(credentials) = found {
-                scope.copy_credentials_from(credentials);
+            if !scope.has_credentials() {
+                if let Some(found) = Npm::registry::UrlAuth::find(url_auth, &scope.url.url()) {
+                    scope.copy_credentials_from(found);
+                }
             }
         }
     }
 }
 
-/// Scheme, host and effective port are equal. Compared component-wise rather
-/// than on the raw `URL.origin` slice: some registries spell out the default
-/// port in `dist.tarball` (`https://host:443/...`) while `.npmrc` does not.
+/// Component-wise, so `https://host:443/` in `dist.tarball` matches `https://host/` in `.npmrc`.
 fn is_same_origin(a: &bun_url::URL, b: &bun_url::URL) -> bool {
     a.protocol.eq_ignore_ascii_case(b.protocol)
         && a.hostname.eq_ignore_ascii_case(b.hostname)
@@ -404,24 +375,9 @@ fn is_same_origin(a: &bun_url::URL, b: &bun_url::URL) -> bool {
 
 #[derive(Clone, Copy)]
 pub(crate) enum RequestKind {
-    /// Always on the package's registry, so it carries the scope's credentials.
     Manifest,
-    /// May be anywhere; see `Options::tarball_credentials`. Carries what the
-    /// request was enqueued with (`NetworkTask::authorization`).
+    /// What the request was enqueued with (`NetworkTask::authorization`).
     Tarball(Authorization),
-}
-
-/// A registry pathname in the form `.npmrc` keys use: `/` or `/some/path/`.
-struct RegistryPath<'a>(&'a [u8]);
-
-impl core::fmt::Display for RegistryPath<'_> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}", bstr::BStr::new(self.0))?;
-        if !self.0.ends_with(b"/") {
-            f.write_str("/")?;
-        }
-        Ok(())
-    }
 }
 
 impl Options {
@@ -431,53 +387,34 @@ impl Options {
         name: &[u8],
         current: &Npm::registry::Scope,
         url: &[u8],
-    ) -> Result<Npm::registry::Scope, AllocError> {
+    ) -> Npm::registry::Scope {
         let mut scope = Npm::registry::Scope {
             name: name.into(),
             ..Default::default()
         };
         scope.set_url(url.into());
-        if let Some(configured) = core::iter::once(&self.scope)
+        let configured = core::iter::once(&self.scope)
             .chain(self.registries.values())
             .find(|configured| configured.url_hash == scope.url_hash)
-        {
+            .or_else(|| Npm::registry::UrlAuth::find(&self.url_auth, &scope.url.url()));
+        if let Some(configured) = configured {
             scope.copy_credentials_from(configured);
-            return Ok(scope);
+            return scope;
         }
-        if let Some(credentials) = Npm::registry::UrlAuth::find(&self.url_auth, &scope.url.url()) {
-            scope.copy_credentials_from(credentials);
-            return Ok(scope);
-        }
-        // Unconfigured `url`: `current`'s credentials follow it only same-origin, and never to http.
-        let new_url = scope.url.url();
-        let current_url = current.url.url();
+        // Unconfigured `url`: `current`'s credentials follow it only same-host, and never to http.
+        let (new_url, current_url) = (scope.url.url(), current.url.url());
         if bun_core::without_trailing_slash(new_url.host)
             == bun_core::without_trailing_slash(current_url.host)
             && (new_url.is_https() || !current_url.is_https())
         {
-            scope.token.clone_from(&current.token);
-            scope.auth.clone_from(&current.auth);
-            scope.user.clone_from(&current.user);
+            scope.copy_credentials_from(current);
         }
-        Ok(scope)
+        scope
     }
 
-    /// Replaces the registry used by packages that have no registry for their scope.
-    fn set_default_registry(&mut self, url: &[u8]) -> Result<(), AllocError> {
-        self.scope = self.scope_for_registry_url(b"", &self.scope, url)?;
+    fn set_default_registry(&mut self, url: &[u8]) {
+        self.scope = self.scope_for_registry_url(b"", &self.scope, url);
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
-        Ok(())
-    }
-
-    /// Replaces the registry used by the packages of `scope_name` (without the `@`).
-    fn set_scope_registry(&mut self, scope_name: &[u8], url: &[u8]) -> Result<(), AllocError> {
-        let key = Npm::registry::Scope::hash(scope_name);
-        let current = match self.registries.get(&key) {
-            Some(scope) if *scope.name == *scope_name => scope,
-            _ => &self.scope,
-        };
-        let scope = self.scope_for_registry_url(scope_name, current, url)?;
-        self.registries.put(key, scope)
     }
 
     /// Applies the `publishConfig` of the package being published; command-line flags win over it.
@@ -509,18 +446,18 @@ impl Options {
         // As in npm, `registry` replaces only the default registry; `@scope:registry` the scope's.
         if !self.registry_from_command_line {
             if let Some(url) = publish_config_registry(&config, bump, b"registry")? {
-                self.set_default_registry(url)?;
+                self.set_default_registry(url);
             }
         }
 
-        if !package_name.is_empty() && package_name[0] == b'@' {
+        if package_name.starts_with(b"@") {
             let scope_name = Npm::registry::Scope::get_name(package_name);
-            let mut key = Vec::with_capacity(b"@:registry".len() + scope_name.len());
-            key.push(b'@');
-            key.extend_from_slice(scope_name);
-            key.extend_from_slice(b":registry");
+            let key = [b"@".as_slice(), scope_name, b":registry"].concat();
             if let Some(url) = publish_config_registry(&config, bump, &key)? {
-                self.set_scope_registry(scope_name, url)?;
+                let current = self.scope_for_package_name(package_name);
+                let scope = self.scope_for_registry_url(scope_name, current, url);
+                self.registries
+                    .put(Npm::registry::Scope::hash(scope_name), scope)?;
             }
         }
 
@@ -923,10 +860,8 @@ impl Options {
                 let api_registry = Api::NpmRegistry::from_url(cli.registry);
                 if api_registry.has_credentials() {
                     self.scope = Npm::registry::Scope::from_api(b"", api_registry, env)?;
-                    self.did_override_default_scope =
-                        self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
                 } else {
-                    self.set_default_registry(&api_registry.url)?;
+                    self.set_default_registry(&api_registry.url);
                 }
                 self.registry_from_command_line = true;
             }
@@ -1190,8 +1125,6 @@ impl Options {
             self.enable.set(Enable::FORCE_SAVE_LOCKFILE, false);
         }
 
-        // After every source that can set a registry URL (bunfig, .npmrc,
-        // environment, command line) has been applied.
         self.fill_credentials_from_url_auth();
 
         // moved from `defer { ... }` after scope assignment (see note above).

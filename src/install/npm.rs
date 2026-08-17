@@ -553,15 +553,11 @@ pub mod registry {
     // Keys are pre-hashed (`Scope::hash`), so don't re-hash them.
     pub type Map = HashMap<u64, Scope, bun_collections::IdentityContext<u64>>;
 
-    /// Credentials from a `.npmrc` `//host/path/:...` line, matched against
-    /// request URLs the way npm resolves credentials for a URL: the host
-    /// (including the port) must be the same and the key's path must be the
-    /// request path or one of its parent directories. Keys have no scheme, so
-    /// a key applies to both `http` and `https` requests to its host.
+    /// A `.npmrc` `//host/path/:...` line, matched like npm does: same host and port, and the
+    /// key's path is the request path or a parent directory of it; either scheme.
     pub(crate) struct UrlAuth {
         hostname: Box<[u8]>,
-        /// `None` when the key does not spell out a port, which means the
-        /// scheme's default port of whatever request is being matched.
+        /// `None`: the default port of the request's scheme.
         port: Option<u16>,
         /// Without trailing slash; `/` for a bare host.
         pathname: Box<[u8]>,
@@ -570,58 +566,41 @@ pub mod registry {
     }
 
     impl UrlAuth {
-        /// `None` when the line carries nothing that can be sent as an
-        /// `Authorization` header (for example only an `email`), so it never
-        /// shadows a shallower key that does.
+        /// `None` when the line has nothing to send as `Authorization` (e.g. only `email`), so it
+        /// never shadows a shallower key that does.
         pub(crate) fn from_api(
             api: &api::NpmUrlAuth,
             env: &mut DotEnv,
         ) -> Result<Option<UrlAuth>, AllocError> {
             let credentials = Scope::from_api(b"", api.credentials.clone(), env)?;
-            if !credentials.has_credentials() {
-                return Ok(None);
-            }
             let host = URL::parse(&api.host);
-            let port = if host.port.is_empty() {
-                None
-            } else {
-                match host.get_port() {
-                    Some(port) => Some(port),
-                    // `//host:notaport/` cannot match any request.
-                    None => return Ok(None),
-                }
-            };
-            if host.hostname.is_empty() {
+            // `//host:notaport/` cannot match any request.
+            if !credentials.has_credentials()
+                || host.hostname.is_empty()
+                || (!host.port.is_empty() && host.get_port().is_none())
+            {
                 return Ok(None);
             }
             Ok(Some(UrlAuth {
                 hostname: host.hostname.into(),
-                port,
+                port: host.get_port(),
                 pathname: api.pathname.clone(),
                 credentials,
             }))
         }
 
         fn matches(&self, url: &URL) -> bool {
-            if !strings::eql_case_insensitive_ascii(url.hostname, &self.hostname, true) {
-                return false;
-            }
-            let port = url.get_port_auto();
-            let port_matches = match self.port {
-                Some(expected) => port == expected,
-                None => port == if url.is_https() { 443 } else { 80 },
-            };
-            if !port_matches {
-                return false;
-            }
-            let prefix: &[u8] = &self.pathname;
-            prefix == b"/"
-                || (url.pathname.starts_with(prefix)
-                    && url.pathname.get(prefix.len()).is_none_or(|&c| c == b'/'))
+            let (path, default_port) = (&*self.pathname, if url.is_https() { 443 } else { 80 });
+            strings::eql_case_insensitive_ascii(url.hostname, &self.hostname, true)
+                && url.get_port_auto() == self.port.unwrap_or(default_port)
+                && (path == b"/"
+                    || url
+                        .pathname
+                        .strip_prefix(path)
+                        .is_some_and(|r| matches!(r, [] | [b'/', ..])))
         }
 
-        /// The credentials configured for `url`: the matching key with the
-        /// longest path (`//host/a/b/` beats `//host/`).
+        /// The matching key with the longest path (`//host/a/b/` beats `//host/`).
         pub(crate) fn find<'a>(list: &'a [UrlAuth], url: &URL) -> Option<&'a Scope> {
             list.iter()
                 .filter(|entry| entry.matches(url))
@@ -833,9 +812,7 @@ pub struct PackageVersion {
     /// `"cpu"` field in package.json
     pub(crate) cpu: Architecture,
 
-    /// `"libc"` field in package.json. The abbreviated registry document omits
-    /// it, so this is only populated when the manifest was fetched with
-    /// `has_extended_manifest` (`Libc::NONE` = not declared).
+    /// `"libc"` field in package.json; only in the extended manifest (`Libc::NONE` = not declared).
     pub(crate) libc: Libc,
 
     /// `hasInstallScript` field in registry API.
@@ -966,9 +943,7 @@ pub struct NpmPackage {
     pub(crate) versions_buf: VersionSlice,
     pub(crate) string_lists_buf: ExternalStringList,
 
-    /// Fetched with `Accept: application/json` (the full document) rather than
-    /// the abbreviated one, so `publish_timestamp_ms` and `PackageVersion.libc`
-    /// are populated. See `PackageManager::needs_extended_manifest`.
+    // The full document was fetched: `publish_timestamp_ms` and `PackageVersion.libc` are populated.
     pub(crate) has_extended_manifest: bool,
     pub(crate) _padding_tail: [u8; 7],
 }
@@ -1741,14 +1716,6 @@ impl PackageManifest {
         exclusions.is_some_and(|excludes| excludes.excludes_package(self.name()))
     }
 
-    fn is_version_excluded_from_age_filter(
-        &self,
-        version: Semver::Version,
-        exclusions: Option<&MinimumReleaseAgeExcludes>,
-    ) -> bool {
-        exclusions.is_some_and(|excludes| excludes.excludes_version(self.name(), version))
-    }
-
     /// Too recent for the gate and not listed in `exclusions`.
     pub(crate) fn is_version_blocked_by_age_filter(
         &self,
@@ -1757,7 +1724,7 @@ impl PackageManifest {
         exclusions: Option<&MinimumReleaseAgeExcludes>,
     ) -> bool {
         Self::is_package_version_too_recent(result.package, minimum_release_age_ms)
-            && !self.is_version_excluded_from_age_filter(result.version, exclusions)
+            && !exclusions.is_some_and(|e| e.excludes_version(self.name(), result.version))
     }
 
     #[inline]
@@ -1795,7 +1762,7 @@ impl PackageManifest {
             if group.satisfies(version, group_buf, &self.string_buf) {
                 let package = &packages[i];
                 // Listed versions count as stable: no age gate, and they replace an unstable fallback in `best_version`.
-                if self.is_version_excluded_from_age_filter(version, exclusions) {
+                if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
                     best_version = Some(FindResult { version, package });
                     break;
                 }
@@ -1967,7 +1934,7 @@ impl PackageManifest {
             }
 
             // See `search_version_list`.
-            if self.is_version_excluded_from_age_filter(version, exclusions) {
+            if exclusions.is_some_and(|e| e.excludes_version(self.name(), version)) {
                 best_version = Some(FindResult { version, package });
                 break;
             }
@@ -2815,31 +2782,27 @@ impl PackageManifest {
                             package_version.unpacked_size = n.value() as u32;
                         }
 
-                        let integrity_str = dist
-                            .get(b"integrity")
-                            .and_then(|v| v.as_str())
-                            .unwrap_or(b"");
-                        if !integrity_str.is_empty() {
-                            package_version.integrity = Integrity::parse(integrity_str);
+                        let mut malformed = false;
+                        if let Some(shasum_str) = dist.get(b"integrity").and_then(|v| v.as_str()) {
+                            package_version.integrity = Integrity::parse(shasum_str);
                             if package_version.integrity.tag.is_supported() {
                                 break 'integrity;
                             }
+                            malformed = !shasum_str.is_empty();
                         }
 
-                        let mut malformed_shasum = false;
                         if let Some(shasum_str) = dist.get(b"shasum").and_then(|v| v.as_str()) {
                             match Integrity::parse_sha_sum(shasum_str) {
-                                Ok(integrity) => {
+                                Ok(integrity) if integrity.tag.is_supported() => {
                                     package_version.integrity = integrity;
-                                    if integrity.tag.is_supported() {
-                                        break 'integrity;
-                                    }
+                                    break 'integrity;
                                 }
-                                Err(_) => malformed_shasum = true,
+                                Ok(_) => {}
+                                Err(_) => malformed = true,
                             }
                         }
 
-                        if !integrity_str.is_empty() || malformed_shasum {
+                        if malformed {
                             log.add_warning_fmt(
                                 None,
                                 bun_ast::Loc::EMPTY,

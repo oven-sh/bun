@@ -1057,9 +1057,13 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                         }
 
                         if !dependency.behavior.is_peer() || install_peer {
-                            let needs_extended_manifest =
-                                this.needs_extended_manifest(dependency.behavior, task_id);
-                            if !this.has_created_manifest_task(
+                            let needs_extended_manifest = run_tasks::needs_extended_manifest(
+                                this,
+                                dependency.behavior,
+                                task_id,
+                            );
+                            if !run_tasks::has_created_manifest_task(
+                                this,
                                 task_id,
                                 dependency.behavior.is_required(),
                                 needs_extended_manifest,
@@ -1134,7 +1138,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                         // Reported by the `TooRecentVersion` arm above, like a fresh manifest would be.
                                                         resolve_result_ =
                                                             Err(crate::Error::TooRecentVersion);
-                                                        this.manifest_request_not_sent(
+                                                        run_tasks::manifest_request_not_sent(
+                                                            this,
                                                             task_id,
                                                             needs_extended_manifest,
                                                         );
@@ -1169,7 +1174,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                     .flatten()
                                                 {
                                                     resolve_result_ = Ok(Some(new_resolve_result));
-                                                    this.manifest_request_not_sent(
+                                                    run_tasks::manifest_request_not_sent(
+                                                        this,
                                                         task_id,
                                                         needs_extended_manifest,
                                                     );
@@ -1181,7 +1187,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                         // Was it recent enough to just load it without the network call?
                                         if this.options.enable.manifest_cache_control() && !expired
                                         {
-                                            this.manifest_request_not_sent(
+                                            run_tasks::manifest_request_not_sent(
+                                                this,
                                                 task_id,
                                                 needs_extended_manifest,
                                             );
@@ -2522,7 +2529,8 @@ fn get_or_put_resolved_package(
             // materializing `&mut *this_ptr` after `name_str`/`scope` are
             // derived from it would pop their borrow-stack tags under SB.
             let cache_ctx = this.manifest_disk_cache_ctx();
-            let needs_ext = this.needs_extended_manifest(
+            let needs_ext = run_tasks::needs_extended_manifest(
+                this,
                 behavior,
                 Task::Id::for_manifest(this.lockfile.str(&name)),
             );

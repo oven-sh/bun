@@ -421,13 +421,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     .metadata
                     .as_ref()
                     .is_none_or(|metadata| metadata.response.status_code > 399);
-                // Only while resolving: the manifests-only callers (lockfile
-                // migrations, `bun outdated`, ...) have nothing waiting that
-                // could fall back, so for them a failed request is just that.
+                // Manifests-only callers (migrations, `bun outdated`) have nothing waiting that could fall back.
                 if request_failed
                     && is_extended_manifest
                     && !C::MANIFESTS_ONLY
-                    && manager.fall_back_to_abbreviated_manifest(task.task_id)
+                    && fall_back_to_abbreviated_manifest(manager, task.task_id)
                 {
                     let reason = match task.response.metadata.as_ref() {
                         Some(metadata) => format!("HTTP {}", metadata.response.status_code),
@@ -522,13 +520,15 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    let note = http_status_note(
-                        manager,
-                        response.status_code,
-                        name,
-                        &task.url_buf,
-                        RequestKind::Manifest,
-                    );
+                    // What to configure, on 401/403.
+                    let note = match response.status_code {
+                        401 | 403 => manager.options.missing_credentials_note(
+                            name,
+                            &task.url_buf,
+                            RequestKind::Manifest,
+                        ),
+                        _ => Vec::new(),
+                    };
                     if manager.is_network_task_required(task.task_id) {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -876,13 +876,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         continue;
                     }
 
-                    let note = http_status_note(
-                        manager,
-                        response.status_code,
-                        extract.name.slice(),
-                        &task.url_buf,
-                        RequestKind::Tarball(task.authorization),
-                    );
+                    let note = match response.status_code {
+                        401 | 403 => manager.options.missing_credentials_note(
+                            extract.name.slice(),
+                            &task.url_buf,
+                            RequestKind::Tarball(task.authorization),
+                        ),
+                        _ => Vec::new(),
+                    };
                     if is_required {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -1613,24 +1614,6 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     Ok(())
 }
 
-/// Extra line for the `GET <url> - <status>` message: on 401/403, what the
-/// user can configure to authenticate the request (see
-/// `Options::missing_credentials_note`); empty for every other status.
-fn http_status_note(
-    manager: &PackageManager,
-    status_code: u32,
-    package_name: &[u8],
-    url: &[u8],
-    request: RequestKind,
-) -> Vec<u8> {
-    match status_code {
-        401 | 403 => manager
-            .options
-            .missing_credentials_note(package_name, url, request),
-        _ => Vec::new(),
-    }
-}
-
 #[inline]
 pub fn pending_task_count(manager: &PackageManager) -> u32 {
     manager.pending_tasks.load(Ordering::Acquire)
@@ -1814,13 +1797,8 @@ pub fn has_created_network_task(
     gpe.found_existing
 }
 
-/// `has_created_network_task` for manifest requests, which are deduplicated per
-/// document: a package that is a regular dependency of one package and an
-/// optional dependency of another is requested both ways, whichever of the two
-/// dependencies comes first, since the abbreviated document does not cover the
-/// dependency that needs the extended one (see
-/// `PackageManager::needs_extended_manifest`). Both responses drain the same
-/// `task_queue` entry and `PackageManifestMap::insert` keeps the extended one.
+/// `has_created_network_task` per manifest document (abbreviated or extended, see `needs_extended_manifest`);
+/// both responses drain the same `task_queue` entry and `PackageManifestMap::insert` keeps the extended one.
 pub fn has_created_manifest_task(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1835,11 +1813,8 @@ pub fn has_created_manifest_task(
     core::mem::replace(entry.manifest_requested(needs_extended_manifest), true)
 }
 
-/// The caller of `has_created_manifest_task` resolved from the manifest cache
-/// instead of sending the request it was cleared to send. Forget that request;
-/// the entry stays as long as it records anything else (a request of the other
-/// kind that is in flight, or a failed extended request), otherwise a later
-/// dependency would request that document again or wait for it.
+/// The caller of `has_created_manifest_task` resolved from the cache instead of sending the request;
+/// the entry stays while it records anything else (the other kind in flight, a failed extended request).
 pub fn manifest_request_not_sent(
     this: &mut PackageManager,
     task_id: Task::Id,
@@ -1857,11 +1832,8 @@ pub fn manifest_request_not_sent(
     }
 }
 
-/// `Options::needs_extended_manifest`, unless the extended request for this
-/// package has failed and the abbreviated one stands in for it
-/// (`fall_back_to_abbreviated_manifest`). Every lookup on the resolve path goes
-/// through this so that dependencies enqueued after the failure resolve from the
-/// abbreviated document too instead of waiting for a response that is not coming.
+/// `Options::needs_extended_manifest`, unless the extended request failed and the abbreviated document
+/// stands in (`fall_back_to_abbreviated_manifest`); every lookup on the resolve path goes through this.
 pub fn needs_extended_manifest(
     this: &PackageManager,
     dependency: Behavior,
@@ -1877,17 +1849,9 @@ pub fn needs_extended_manifest(
             .is_some_and(|entry| entry.extended_manifest_failed)
 }
 
-/// Called when the request for the extended document of a manifest has failed
-/// for good. From then on the package behaves as it did before libc was read:
-/// every dependency on it resolves from the abbreviated document, losing only
-/// the `libc` filtering of this one package. The caller re-enqueues the
-/// dependencies that were waiting for the extended document; each of them then
-/// resolves from the abbreviated document if it is cached or was requested as
-/// well, and otherwise the first of them requests it (`has_created_manifest_task`
-/// dedupes that request), whose failure is then reported like that of any other
-/// manifest. Returns false when there is nothing to fall back to because the
-/// extended document is what versions are picked from (`minimumReleaseAge`):
-/// the abbreviated one has no publish times.
+/// The extended request failed for good: dependencies on the package resolve from the abbreviated document
+/// from now on (losing its `libc` filtering); the caller re-enqueues the waiting ones. False when versions are
+/// picked from the extended document (`minimumReleaseAge` needs its publish times).
 pub fn fall_back_to_abbreviated_manifest(this: &mut PackageManager, task_id: Task::Id) -> bool {
     if this.options.needs_extended_manifest_to_pick_versions() {
         return false;
@@ -2088,31 +2052,6 @@ impl PackageManager {
         has_created_network_task(self, task_id, is_required)
     }
     #[inline]
-    pub(crate) fn has_created_manifest_task(
-        &mut self,
-        task_id: Task::Id,
-        is_required: bool,
-        needs_extended_manifest: bool,
-    ) -> bool {
-        has_created_manifest_task(self, task_id, is_required, needs_extended_manifest)
-    }
-    #[inline]
-    pub(crate) fn manifest_request_not_sent(
-        &mut self,
-        task_id: Task::Id,
-        needs_extended_manifest: bool,
-    ) {
-        manifest_request_not_sent(self, task_id, needs_extended_manifest)
-    }
-    #[inline]
-    pub(crate) fn needs_extended_manifest(&self, dependency: Behavior, task_id: Task::Id) -> bool {
-        needs_extended_manifest(self, dependency, task_id)
-    }
-    #[inline]
-    pub(crate) fn fall_back_to_abbreviated_manifest(&mut self, task_id: Task::Id) -> bool {
-        fall_back_to_abbreviated_manifest(self, task_id)
-    }
-    #[inline]
     pub(crate) fn is_network_task_required(&self, task_id: Task::Id) -> bool {
         is_network_task_required(self, task_id)
     }
@@ -2134,9 +2073,7 @@ impl PackageManager {
     }
 }
 
-/// Resolves the dependencies waiting for the manifest with this task id. A
-/// dependency that still cannot be resolved (it needs the extended document and
-/// the response was the abbreviated one) queues itself up again.
+/// Resolves the rows waiting for this manifest; one that needs the extended document re-queues itself on the abbreviated one.
 fn process_manifest_task_queue<C: RunTasksCallbacks>(
     manager: &mut PackageManager,
     task_id: Task::Id,

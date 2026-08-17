@@ -14,6 +14,8 @@ use crate::{JSGlobalObject, JSValue, JsError};
 unsafe extern "C" {
     safe fn JSC__VM__enableControlFlowProfiler(vm: &VM);
     safe fn JSC__VM__hasExecutionTimeLimit(vm: &VM) -> bool;
+    safe fn JSC__VM__setExecutionTimeLimit(vm: &VM, timeout_seconds: f64);
+    safe fn JSC__VM__clearExecutionTimeLimit(vm: &VM);
     // safe: `VM` is an opaque `UnsafeCell`-backed ZST handle (`&` is ABI-identical
     // to non-null `*const`); `ctx` is an opaque round-trip pointer C++ only forwards
     // to `callback` (never dereferenced as Rust data) — same contract as
@@ -56,6 +58,14 @@ impl VM {
 
     pub fn has_execution_time_limit(&self) -> bool {
         JSC__VM__hasExecutionTimeLimit(self)
+    }
+
+    pub fn set_execution_time_limit(&self, timeout_seconds: f64) {
+        JSC__VM__setExecutionTimeLimit(self, timeout_seconds)
+    }
+
+    pub fn clear_execution_time_limit(&self) {
+        JSC__VM__clearExecutionTimeLimit(self)
     }
 
     /// deprecated in favor of `get_api_lock` to avoid an annoying callback wrapper

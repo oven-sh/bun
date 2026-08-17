@@ -1146,13 +1146,30 @@ impl BunTest {
 
         // SAFETY: `UnsafeCell`-derived; sole `&mut` at this point (before JS re-entry).
         unsafe { (*this).update_min_timeout(global_this, timeout) };
+
+        // JSC's watchdog catches callbacks that never yield back to the event-loop timer above.
+        // The grace lets callbacks that do yield be timed by that timer instead of racing it.
+        const WATCHDOG_GRACE_SECONDS: f64 = 1.0;
+        let watchdog_armed = !timeout.eql(&Timespec::EPOCH);
+        if watchdog_armed {
+            let now = Timespec::now_force_real_time();
+            let remaining_ns: u64 = if timeout.order(&now).is_gt() { timeout.duration(&now).ns() } else { 0 };
+            let remaining_seconds = remaining_ns as f64 / bun_core::time::NS_PER_S as f64;
+            vm.jsc_vm().set_execution_time_limit(remaining_seconds + WATCHDOG_GRACE_SECONDS);
+        }
+
         let args_slice: &[JSValue] = if !done_arg.is_empty() { core::slice::from_ref(&done_arg) } else { &[] };
-        let result: JSValue = match vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
+        let call_result = vm.event_loop_mut().run_callback_with_result_and_forcefully_drain_microtasks(
             cfg_callback,
             global_this,
             JSValue::UNDEFINED,
             args_slice,
-        ) {
+        );
+        // Relax before reporting: printing the error runs user getters, after the clear below.
+        if watchdog_armed {
+            vm.jsc_vm().clear_execution_time_limit();
+        }
+        let result: JSValue = match call_result {
             Ok(v) => v,
             Err(_) => {
                 global_this.clear_termination_exception();

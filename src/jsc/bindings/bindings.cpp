@@ -3047,12 +3047,14 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
+// Finite, not noTimeLimit: an in-flight Watchdog timer asserts hasTimeLimit() when it fires.
+static constexpr WTF::Seconds idleExecutionTimeLimit { static_cast<double>(INT32_MAX) };
+
 extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
+    if (auto* watchdog = vm->watchdog())
+        return watchdog->getTimeLimit() < idleExecutionTimeLimit;
 
     return false;
 }
@@ -5093,13 +5095,16 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 void JSC__VM__clearExecutionTimeLimit(JSC::VM* vm)
 {
     JSC::JSLockHolder locker(vm);
-    if (vm->watchdog())
-        vm->watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
+    if (auto* watchdog = vm->watchdog())
+        watchdog->setTimeLimit(idleExecutionTimeLimit);
 }
 void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
 {
     JSC::JSLockHolder locker(vm);
     JSC::Watchdog& watchdog = vm->ensureWatchdog();
+    // VMEntryScope enters the watchdog itself; a scopeless enteredVM() makes VMTraps deref a null entryScope.
+    if (vm->entryScope)
+        watchdog.enteredVM();
     watchdog.setTimeLimit(WTF::Seconds { limit });
 }
 

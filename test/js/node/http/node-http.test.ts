@@ -4139,3 +4139,39 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+it("connectionListener applies server.maxHeadersCount to req.headers like Node", async () => {
+  // Sockets served through server.emit("connection", ...) take the JS fallback
+  // parser. Node's parserOnHeadersComplete clamps the number of header lines it
+  // folds into req.headers to parser.maxHeaderPairs (server.maxHeadersCount * 2,
+  // 0 = unlimited, null = the parser's 2000-pair default); req.rawHeaders keeps
+  // every field either way.
+  const rawHeaders = ["Host", "example", "X-A", "1", "X-B", "2", "Connection", "close"];
+  const results: unknown[] = [];
+  for (const maxHeadersCount of [1, 2, 3, 0, null]) {
+    const seen = Promise.withResolvers<{ headers: string[]; rawHeaders: string[] }>();
+    const server = createServer((req, res) => {
+      seen.resolve({ headers: Object.keys(req.headers), rawHeaders: req.rawHeaders });
+      res.end();
+    });
+    server.maxHeadersCount = maxHeadersCount;
+    const [clientSide, serverSide] = duplexPair();
+    try {
+      server.emit("connection", serverSide);
+      const maxHeaderPairs = (serverSide as any).parser.maxHeaderPairs;
+      clientSide.resume();
+      clientSide.write("GET / HTTP/1.1\r\nHost: example\r\nX-A: 1\r\nX-B: 2\r\nConnection: close\r\n\r\n");
+      results.push({ maxHeadersCount, maxHeaderPairs, ...(await seen.promise) });
+    } finally {
+      clientSide.destroy();
+      serverSide.destroy();
+    }
+  }
+  expect(results).toEqual([
+    { maxHeadersCount: 1, maxHeaderPairs: 2, headers: ["host"], rawHeaders },
+    { maxHeadersCount: 2, maxHeaderPairs: 4, headers: ["host", "x-a"], rawHeaders },
+    { maxHeadersCount: 3, maxHeaderPairs: 6, headers: ["host", "x-a", "x-b"], rawHeaders },
+    { maxHeadersCount: 0, maxHeaderPairs: 0, headers: ["host", "x-a", "x-b", "connection"], rawHeaders },
+    { maxHeadersCount: null, maxHeaderPairs: 2000, headers: ["host", "x-a", "x-b", "connection"], rawHeaders },
+  ]);
+});

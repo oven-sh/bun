@@ -6,6 +6,9 @@ const { SafeSet } = require("internal/primordials");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+// node:_http_common's MAX_HEADER_PAIRS: what a freelist parser carries when
+// server.maxHeadersCount is left at null. This path constructs its parser directly.
+const MAX_HEADER_PAIRS = 2000;
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -263,9 +266,7 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.socket = socket;
   socket.parser = parser;
   const { maxHeadersCount } = server;
-  if (typeof maxHeadersCount === "number") {
-    parser.maxHeaderPairs = maxHeadersCount << 1;
-  }
+  parser.maxHeaderPairs = typeof maxHeadersCount === "number" ? maxHeadersCount << 1 : MAX_HEADER_PAIRS;
 
   let req = null;
   let pendingUpgrade = null;
@@ -291,7 +292,12 @@ function connectionListenerHTTP1(server, socket, options) {
     req.url = url;
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
-    req._addHeaderLines(rawHeaders, rawHeaders.length);
+    // Node's parserOnHeadersComplete: maxHeaderPairs <= 0 means unlimited. Only the
+    // count fed into req.headers is clamped; req.rawHeaders keeps every field.
+    let headerCount = rawHeaders.length;
+    const maxHeaderPairs = parser.maxHeaderPairs;
+    if (maxHeaderPairs > 0 && headerCount > maxHeaderPairs) headerCount = maxHeaderPairs;
+    req._addHeaderLines(rawHeaders, headerCount);
 
     // Node's parserOnIncoming: upgrade only sticks for CONNECT or when an 'upgrade' listener
     // exists; otherwise fall through to normal dispatch. Returning 2 makes llhttp stop after

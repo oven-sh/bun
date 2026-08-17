@@ -1021,6 +1021,11 @@ impl Tag {
         self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
     }
 
+    /// The package.json is read from the project rather than extracted into the cache.
+    pub(crate) fn is_local_package(self) -> bool {
+        self == Tag::Root || self == Tag::Workspace || self == Tag::Folder
+    }
+
     pub(crate) fn can_enqueue_install_task(self) -> bool {
         self == Tag::Npm
             || self == Tag::LocalTarball

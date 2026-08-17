@@ -1529,6 +1529,19 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         dependency::version::Tag::Tarball => {
             let tarball = version.tarball();
+            if matches!(tarball.uri, dependency::tarball::Uri::Local(_))
+                && !version_was_replaced
+                && let Some(declarer) = this.lockfile.get_parent_pkg_of_dependency(id)
+                && !this.lockfile.packages.items_resolution()[declarer as usize]
+                    .tag
+                    .is_local_package()
+                && !this.lockfile.has_equal_root_dependency(dependency)
+            {
+                if dependency.behavior.is_required() {
+                    reject_local_tarball_of_remote_package(this, declarer, dependency);
+                }
+                return Ok(());
+            }
             let res: Resolution = match &tarball.uri {
                 dependency::tarball::Uri::Local(path) => {
                     Resolution::init(ResolutionTagged::LocalTarball(*path))
@@ -1669,6 +1682,36 @@ fn warn_unmet_peer_dependency(
         "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
         bstr::BStr::new(this.lockfile.str(&version.literal)),
         bstr::BStr::new(this.lockfile.str(&name)),
+    );
+}
+
+/// `enqueue_local_tarball` would read the path relative to the project, not to the declarer.
+#[cold]
+#[inline(never)]
+fn reject_local_tarball_of_remote_package(
+    this: &PackageManager,
+    declarer: PackageID,
+    dependency: &Dependency,
+) {
+    let buf = this.lockfile.buffers.string_bytes.as_slice();
+    let packages = this.lockfile.packages.slice();
+    let name = bstr::BStr::new(dependency.name.slice(buf));
+    let literal = bstr::BStr::new(dependency.version.literal.slice(buf));
+    let declarer_name = bstr::BStr::new(packages.items_name()[declarer as usize].slice(buf));
+    this.log_mut().add_range_error_fmt_with_notes(
+        None,
+        bun_ast::Range::NONE,
+        Box::new([bun_ast::range_data(
+            None,
+            bun_ast::Range::NONE,
+            bun_ast::alloc_print(format_args!(
+                "add \"{name}\": \"{literal}\" to the root package.json to install that tarball for {declarer_name} as well",
+            )),
+        )]),
+        format_args!(
+            "refusing to resolve \"{name}@{literal}\" declared by {declarer_name}@{}: local tarball dependencies are only allowed in the package.json files of this project",
+            packages.items_resolution()[declarer as usize].fmt(buf, bun_fmt::PathSep::Posix),
+        ),
     );
 }
 

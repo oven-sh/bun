@@ -1677,4 +1677,169 @@ export default async function IndexPage() {
       expect(existsSync(path.join(dir, "dist"))).toBe(false);
     });
   });
+
+  // The <script> that hydrates a prerendered route. Routes without client components don't get one.
+  const clientEntryScript = /<script type="module" src="\/_bun\/[^"]+\.js"/;
+  // The row of the inlined RSC payload that refers to the `Client` export as a client reference.
+  const clientReferenceRow = /:I\["[^"]+",\[\],"Client"\]/;
+
+  const clientComponentFiles = {
+    "src/index.tsx": `export default { app: { framework: "react" } };`,
+    "components/Client.tsx": `"use client";
+
+export function Client() {
+  return <b>client</b>;
+}
+
+export const value = 1;`,
+    "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
+  };
+
+  async function buildApp(dir: string) {
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).not.toContain("error");
+    expect(exitCode).toBe(0);
+    return (route: string) => Bun.file(path.join(dir, "dist", route, "index.html")).text();
+  }
+
+  test("import() of a client component from the server", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-dynamic-import-client", {
+      ...clientComponentFiles,
+      // The server-side proxy of a "use client" module must expose every export of Client.tsx.
+      "pages/index.tsx": `export default async function IndexPage() {
+  const mod = await import("../components/Client");
+  return (
+    <div>
+      <span>{Object.keys(mod).sort().join(",")}</span>
+      <mod.Client />
+    </div>
+  );
+}`,
+      // Statically imported elsewhere too, so import() must not resolve to the shared chunk with minified export names.
+      "pages/static-import.tsx": `import { Client } from "../components/Client";
+
+export default function StaticImportPage() {
+  return <div><Client /></div>;
+}`,
+    });
+
+    const html = await buildApp(dir);
+
+    const index = await html("");
+    expect(index).toContain("<span>Client,value</span><b>client</b>");
+    expect(index).toMatch(clientReferenceRow);
+    expect(index).toMatch(clientEntryScript);
+
+    const staticImport = await html("static-import");
+    expect(staticImport).toContain("<div><b>client</b></div>");
+    expect(staticImport).toMatch(clientEntryScript);
+  });
+
+  test("a route that only reaches a client component through import() is not fully static", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-dynamic-import-static-route", {
+      ...clientComponentFiles,
+      "components/render-client.tsx": `import { Client } from "./Client";
+
+export function renderClient() {
+  return <Client />;
+}`,
+      "components/plain.ts": `export const text = "no client components here";`,
+      "pages/index.tsx": `export default async function IndexPage() {
+  const { renderClient } = await import("../components/render-client");
+  return <div>{renderClient()}</div>;
+}`,
+      "pages/plain.tsx": `export default async function PlainPage() {
+  const { text } = await import("../components/plain");
+  return <div>{text}</div>;
+}`,
+    });
+
+    const html = await buildApp(dir);
+
+    const index = await html("");
+    expect(index).toContain("<div><b>client</b></div>");
+    expect(index).toMatch(clientReferenceRow);
+    expect(index).toMatch(clientEntryScript);
+
+    // import() of a module without client components keeps the route fully static.
+    const plain = await html("plain");
+    expect(plain).toContain("<div>no client components here</div>");
+    expect(plain).not.toMatch(clientEntryScript);
+  });
+
+  test(
+    "route reaching a client component through an import cycle is not fully static",
+    async () => {
+      // Card and Panel reach the client component only through a barrel that imports them back (an import cycle).
+      const dir = await tempDirWithBakeDeps("bake-production-use-client-import-cycle", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "components/Client.tsx": `"use client";
+export default function Client() {
+  return <button>client</button>;
+}`,
+        "components/index.ts": `export { default as Card } from "./Card";
+export { default as Panel } from "./Panel";
+export { default as Client } from "./Client";`,
+        "components/Card.tsx": `import { Client } from "./index";
+export default function Card() {
+  return <div>card <Client /></div>;
+}`,
+        "components/Panel.tsx": `import { Client } from "./index";
+export default function Panel() {
+  return <div>panel <Client /></div>;
+}`,
+        "pages/card.tsx": `import Card from "../components/Card";
+export default function CardPage() {
+  return <Card />;
+}`,
+        "pages/panel.tsx": `import Panel from "../components/Panel";
+export default function PanelPage() {
+  return <Panel />;
+}`,
+        // Control: a cycle without a client component in it stays fully static.
+        "lib/a.ts": `import { bName } from "./b";
+export const aName = "a";
+export function ab() { return aName + bName; }`,
+        "lib/b.ts": `import { aName } from "./a";
+export const bName = "b";
+export function ba() { return bName + aName; }`,
+        "pages/plain.tsx": `import { ab } from "../lib/a";
+export default function PlainPage() {
+  return <p>{ab()}</p>;
+}`,
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      expect(exitCode, stderr.toString()).toBe(0);
+
+      const read = (route: string) => Bun.file(path.join(dir, "dist", route, "index.html")).text();
+      const [card, panel, plain] = await Promise.all([read("card"), read("panel"), read("plain")]);
+
+      expect(card).toContain("<button>client</button>");
+      expect(panel).toContain("<button>client</button>");
+      expect(plain).toContain("<p>ab</p>");
+
+      const hasClientScript = (html: string) => html.includes('<script type="module"');
+      expect({
+        card: hasClientScript(card),
+        panel: hasClientScript(panel),
+        plain: hasClientScript(plain),
+      }).toStrictEqual({ card: true, panel: true, plain: false });
+    },
+    30_000 * WAIT_MULTIPLIER,
+  );
 });

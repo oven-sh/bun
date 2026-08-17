@@ -676,23 +676,6 @@ impl<'a> LinkerGraph<'a> {
                 *source_index = source.index.0;
             }
 
-            for &id in dynamic_import_entry_points {
-                debug_assert!(self.code_splitting); // this should never be a thing without code splitting
-
-                if entry_point_kinds[id as usize] != entry_point::Kind::None {
-                    // You could dynamic import a file that is already an entry point
-                    continue;
-                }
-
-                let source = &sources[id as usize];
-                entry_point_kinds[id as usize] = entry_point::Kind::DynamicImport;
-
-                self.entry_points.append_assume_capacity(EntryPoint {
-                    source_index: id,
-                    output_path: RawSlice::new(source.path.text),
-                });
-            }
-
             let import_records_len = self.ast.items_import_records().len();
             self.meta.set_capacity(import_records_len)?;
             // Fill each slot with `Default`.
@@ -733,8 +716,37 @@ impl<'a> LinkerGraph<'a> {
                             .get_reference_source_index(imported.get())
                             .expect("is_boundary was built from the same boundary list");
                         import_record.source_index = Index::init(reference);
+                        // A server `import()` of the boundary now loads the proxy, so it needs its own chunk.
+                        if self.code_splitting
+                            && import_record.kind == ImportKind::Dynamic
+                            && entry_point_kinds[reference as usize] == entry_point::Kind::None
+                        {
+                            entry_point_kinds[reference as usize] =
+                                entry_point::Kind::DynamicImport;
+                            self.entry_points.append_assume_capacity(EntryPoint {
+                                source_index: reference,
+                                output_path: RawSlice::new(sources[reference as usize].path.text),
+                            });
+                        }
                     }
                 }
+            }
+
+            for &id in dynamic_import_entry_points {
+                debug_assert!(self.code_splitting); // this should never be a thing without code splitting
+
+                if entry_point_kinds[id as usize] != entry_point::Kind::None {
+                    // You could dynamic import a file that is already an entry point
+                    continue;
+                }
+
+                let source = &sources[id as usize];
+                entry_point_kinds[id as usize] = entry_point::Kind::DynamicImport;
+
+                self.entry_points.append_assume_capacity(EntryPoint {
+                    source_index: id,
+                    output_path: RawSlice::new(source.path.text),
+                });
             }
         }
 

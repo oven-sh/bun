@@ -17,6 +17,7 @@ use crate::external_slice::ExternalSlice;
 use crate::integrity::Integrity;
 use crate::lockfile::{self, LoadResult, LoadResultOk, Lockfile};
 use crate::npm::{self};
+use crate::package_manager_real::update_package_json_and_install::print_package_json_into_cache_entry;
 use crate::repository::Repository;
 use crate::resolution::{self, Resolution, TaggedValue};
 use crate::{DependencyID, INVALID_PACKAGE_ID, PackageID, PackageManager};
@@ -2364,140 +2365,28 @@ fn update_package_json_after_migration(
         return Ok(());
     }
 
-    let mut needs_update = false;
-    let mut moved_overrides = false;
-    let mut moved_patched_deps = false;
-    let mut moved: Vec<&'static str> = Vec::new();
+    let mut copied: Vec<&'static str> = Vec::new();
 
-    if let Some(mut pnpm_prop) = json.as_property(b"pnpm") {
+    // Copied, not moved: pnpm keeps reading this block, bun only reads the root-level fields.
+    if let Some(pnpm_prop) = json.as_property(b"pnpm") {
         if pnpm_prop.expr.is_object() {
-            let pnpm_obj = e_object_mut(&mut pnpm_prop.expr);
+            let pnpm_obj = e_object(&pnpm_prop.expr);
 
-            if let Some(overrides_field) = pnpm_obj.get(b"overrides") {
-                if is_non_empty_object(&overrides_field) {
-                    if let Some(mut existing_prop) = json.as_property(b"overrides") {
-                        if existing_prop.expr.is_object() {
-                            let existing_overrides = e_object_mut(&mut existing_prop.expr);
-                            for prop in e_object(&overrides_field).properties.slice() {
-                                let Some(key) =
-                                    as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                                else {
-                                    continue;
-                                };
-                                existing_overrides.put(
-                                    &bump,
-                                    key,
-                                    prop.value.expect("infallible: prop has value"),
-                                )?;
-                            }
-                        }
-                    } else {
-                        e_object_mut(&mut json).put(&bump, b"overrides", overrides_field)?;
-                    }
-                    moved_overrides = true;
-                    needs_update = true;
-                    moved.push("pnpm.overrides to overrides");
+            if let Some(overrides) = pnpm_obj.get(b"overrides").filter(is_non_empty_object) {
+                if copy_into_root(&mut json, &bump, b"overrides", copy_object(&overrides))? {
+                    copied.push("pnpm.overrides to overrides");
                 }
             }
 
-            if let Some(mut patched_field) = pnpm_obj.get(b"patchedDependencies") {
-                if is_non_empty_object(&patched_field) {
-                    rewrite_bare_patch_keys(&mut patched_field, patches)?;
-                    if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
-                        if existing_prop.expr.is_object() {
-                            let existing_patches = e_object_mut(&mut existing_prop.expr);
-                            for prop in e_object(&patched_field).properties.slice() {
-                                let Some(key) =
-                                    as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                                else {
-                                    continue;
-                                };
-                                existing_patches.put(
-                                    &bump,
-                                    key,
-                                    prop.value.expect("infallible: prop has value"),
-                                )?;
-                            }
-                        }
-                    } else {
-                        e_object_mut(&mut json).put(
-                            &bump,
-                            b"patchedDependencies",
-                            patched_field,
-                        )?;
-                    }
-                    moved_patched_deps = true;
-                    needs_update = true;
-                    moved.push("pnpm.patchedDependencies to patchedDependencies");
+            if let Some(patched) = pnpm_obj
+                .get(b"patchedDependencies")
+                .filter(is_non_empty_object)
+            {
+                let mut patched = copy_object(&patched);
+                rewrite_bare_patch_keys(&mut patched, patches)?;
+                if copy_into_root(&mut json, &bump, b"patchedDependencies", patched)? {
+                    copied.push("pnpm.patchedDependencies to patchedDependencies");
                 }
-            }
-
-            if moved_overrides || moved_patched_deps {
-                let mut remaining_count: usize = 0;
-                for prop in pnpm_obj.properties.slice() {
-                    let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                    else {
-                        remaining_count += 1;
-                        continue;
-                    };
-                    if moved_overrides && key == b"overrides" {
-                        continue;
-                    }
-                    if moved_patched_deps && key == b"patchedDependencies" {
-                        continue;
-                    }
-                    remaining_count += 1;
-                }
-
-                if remaining_count == 0 {
-                    let mut new_root_count: usize = 0;
-                    for prop in e_object(&json).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            new_root_count += 1;
-                            continue;
-                        };
-                        if key != b"pnpm" {
-                            new_root_count += 1;
-                        }
-                    }
-
-                    let mut new_root_props = G::PropertyList::init_capacity(new_root_count);
-                    for prop in e_object(&json).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
-                            continue;
-                        };
-                        if key != b"pnpm" {
-                            VecExt::append(&mut new_root_props, shallow_clone_prop(prop));
-                        }
-                    }
-
-                    e_object_mut(&mut json).properties = new_root_props;
-                } else {
-                    let mut new_pnpm_props = G::PropertyList::init_capacity(remaining_count);
-                    for prop in pnpm_obj.properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
-                            continue;
-                        };
-                        if moved_overrides && key == b"overrides" {
-                            continue;
-                        }
-                        if moved_patched_deps && key == b"patchedDependencies" {
-                            continue;
-                        }
-                        VecExt::append(&mut new_pnpm_props, shallow_clone_prop(prop));
-                    }
-
-                    pnpm_obj.properties = new_pnpm_props;
-                }
-                needs_update = true;
             }
         }
     }
@@ -2522,11 +2411,11 @@ fn update_package_json_after_migration(
             // `Expr::data_store_reset`).
             let contents: &'static [u8] = js_ast::data_store_dupe_str(&contents);
             let yaml_source = bun_ast::Source::init_path_string(b"pnpm-workspace.yaml", contents);
-            let arena = bun_alloc::Arena::new();
+            // Quoted scalars are copied into the arena; `bump` lives until the print below.
             let Ok(ws_root) = bun_parsers::yaml::YAML::parse(
                 &yaml_source,
                 log,
-                &arena,
+                &bump,
                 bun_parsers::yaml::CyclicAliases::Reject,
             ) else {
                 break 'read_pnpm_workspace_yaml;
@@ -2655,108 +2544,42 @@ fn update_package_json_after_migration(
         }
     }
     if wrote_workspaces {
-        needs_update = true;
-        moved.push("pnpm-workspace.yaml to workspaces");
+        copied.push("pnpm-workspace.yaml to workspaces");
     }
 
-    // Handle overrides from pnpm-workspace.yaml
-    if let Some(ws_overrides) = &workspace_overrides_obj {
-        if ws_overrides.is_object() {
-            if let Some(mut existing_prop) = json.as_property(b"overrides") {
-                if existing_prop.expr.is_object() {
-                    let existing_overrides = e_object_mut(&mut existing_prop.expr);
-                    for prop in e_object(ws_overrides).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            continue;
-                        };
-                        existing_overrides.put(
-                            &bump,
-                            key,
-                            prop.value.expect("infallible: prop has value"),
-                        )?;
-                    }
-                }
-            } else {
-                e_object_mut(&mut json).put(&bump, b"overrides", *ws_overrides)?;
-            }
-            needs_update = true;
-            moved.push("pnpm-workspace.yaml overrides to overrides");
+    if let Some(ws_overrides) = workspace_overrides_obj {
+        if copy_into_root(&mut json, &bump, b"overrides", ws_overrides)? {
+            copied.push("pnpm-workspace.yaml overrides to overrides");
         }
     }
 
-    // Handle patchedDependencies from pnpm-workspace.yaml
-    if let Some(ws_patched) = &mut workspace_patched_deps_obj {
-        if ws_patched.is_object() {
-            rewrite_bare_patch_keys(ws_patched, patches)?;
-            if let Some(mut existing_prop) = json.as_property(b"patchedDependencies") {
-                if existing_prop.expr.is_object() {
-                    let existing_patches = e_object_mut(&mut existing_prop.expr);
-                    for prop in e_object(ws_patched).properties.slice() {
-                        let Some(key) =
-                            as_string(prop.key.as_ref().expect("infallible: prop has key"))
-                        else {
-                            continue;
-                        };
-                        existing_patches.put(
-                            &bump,
-                            key,
-                            prop.value.expect("infallible: prop has value"),
-                        )?;
-                    }
-                }
-            } else {
-                e_object_mut(&mut json).put(&bump, b"patchedDependencies", *ws_patched)?;
-            }
-            needs_update = true;
-            moved.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
+    if let Some(mut ws_patched) = workspace_patched_deps_obj {
+        rewrite_bare_patch_keys(&mut ws_patched, patches)?;
+        if copy_into_root(&mut json, &bump, b"patchedDependencies", ws_patched)? {
+            copied.push("pnpm-workspace.yaml patchedDependencies to patchedDependencies");
         }
     }
 
-    if needs_update {
-        let mut buffer_writer = bun_js_printer::BufferWriter::init();
-        buffer_writer.append_newline = !root_pkg_json.source.contents().is_empty()
-            && root_pkg_json.source.contents()[root_pkg_json.source.contents().len() - 1] == b'\n';
-        let mut package_json_writer = bun_js_printer::BufferPrinter::init(buffer_writer);
-
-        if bun_js_printer::print_json(
-            &mut package_json_writer,
-            json,
-            &root_pkg_json.source,
-            bun_js_printer::PrintJsonOptions {
-                indent: root_pkg_json.indentation,
-                mangled_props: None,
-                ..Default::default()
-            },
-        )
-        .is_err()
-        {
-            return Ok(());
+    if !copied.is_empty() {
+        print_package_json_into_cache_entry(root_pkg_json, json);
+        // The printed tree borrows from the replaced contents; `bun update` edits this entry next.
+        if let Err(err) = root_pkg_json.reparse_root(log) {
+            bun_core::pretty_errorln!("package.json failed to parse due to error {}", err.name());
+            bun_core::Global::crash();
         }
 
-        if package_json_writer.flush().is_err() {
-            return Err(AllocError);
-        }
-
-        root_pkg_json.source.contents = std::borrow::Cow::Owned(
-            package_json_writer
-                .ctx
-                .written_without_trailing_zero()
-                .to_vec(),
-        );
-
-        // Write the updated package.json
         if sys::File::write_file(
             dir,
             bun_core::zstr!("package.json"),
             root_pkg_json.source.contents(),
         )
         .is_ok()
-            && !moved.is_empty()
             && !silent
         {
-            bun_core::pretty_errorln!("<d>moved {} in <r><green>package.json<r>", moved.join(", "));
+            bun_core::pretty_errorln!(
+                "<d>copied {} in <r><green>package.json<r>",
+                copied.join(", ")
+            );
         }
     }
 
@@ -2765,6 +2588,46 @@ fn update_package_json_after_migration(
 
 fn is_non_empty_object(expr: &Expr) -> bool {
     matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
+}
+
+/// The root-level copy gets edited further; an `Expr` from `get` would alias the `pnpm` block.
+fn copy_object(src: &Expr) -> Expr {
+    let src_props = e_object(src).properties.slice();
+    let mut properties = G::PropertyList::init_capacity(src_props.len());
+    for prop in src_props {
+        VecExt::append(&mut properties, shallow_clone_prop(prop));
+    }
+    Expr::init(
+        E::Object {
+            properties,
+            ..Default::default()
+        },
+        bun_ast::Loc::EMPTY,
+    )
+}
+
+/// Merges `src` into the root-level `field` (created when absent); `false` if it is not an object.
+fn copy_into_root(
+    json: &mut Expr,
+    bump: &bun_alloc::Arena,
+    field: &[u8],
+    src: Expr,
+) -> Result<bool, AllocError> {
+    let Some(mut existing) = json.as_property(field) else {
+        e_object_mut(json).put(bump, field, src)?;
+        return Ok(true);
+    };
+    if !existing.expr.is_object() {
+        return Ok(false);
+    }
+    let existing_obj = e_object_mut(&mut existing.expr);
+    for prop in e_object(&src).properties.slice() {
+        let Some(key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
+            continue;
+        };
+        existing_obj.put(bump, key, prop.value.expect("infallible: prop has value"))?;
+    }
+    Ok(true)
 }
 
 fn paths_array(paths: &[&'static [u8]]) -> Expr {

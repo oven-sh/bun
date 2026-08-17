@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, tmpdirSync } from "harness";
+import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import tls from "node:tls";
 
@@ -387,6 +388,33 @@ describe.concurrent("fetch-tls", () => {
           }
         }),
       );
+    });
+  });
+
+  it("applies CA name constraints to the subject CN of a certificate without a DNS subjectAltName", async () => {
+    // Fixture layout is described in test/js/node/tls/node-tls-connect-hostname-verification.test.ts.
+    const fixture = (name: string) =>
+      readFileSync(
+        join(import.meta.dir, "..", "..", "node", "tls", "fixtures", `name-constraints-${name}.pem`),
+        "utf8",
+      );
+    const ca = fixture("ca-cert");
+    const intermediate = fixture("intermediate-cert");
+    const key = fixture("leaf-key");
+    // The Host header also selects the name used for certificate verification.
+    const run = (leaf: string, host: string) =>
+      createServer({ key, cert: fixture(`${leaf}-cert`) + intermediate }, port =>
+        fetch(`https://127.0.0.1:${port}/`, { headers: { Host: host }, tls: { ca }, keepalive: false }).then(res =>
+          res.text(),
+        ),
+      );
+
+    await run("inside", "host.allowed.test");
+    await run("nosan", "legacy.allowed.test");
+    await expect(run("outside", "outside.example.test")).rejects.toMatchObject({ code: "PERMITTED_VIOLATION" });
+    await expect(run("wildcard", "www.example.test")).rejects.toMatchObject({ code: "PERMITTED_VIOLATION" });
+    await expect(run("partial-wildcard", "www.example.test")).rejects.toMatchObject({
+      code: "PERMITTED_VIOLATION",
     });
   });
 

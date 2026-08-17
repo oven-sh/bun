@@ -15,8 +15,11 @@ const serverKey = fs.readFileSync(path.join(fixturesDir, "agent1-key.pem"));
 const serverCert = fs.readFileSync(path.join(fixturesDir, "agent1-cert.pem"));
 const ca = fs.readFileSync(path.join(fixturesDir, "ca1-cert.pem"));
 
-async function withServer<T>(fn: (port: number) => Promise<T>): Promise<T> {
-  const server = tls.createServer({ key: serverKey, cert: serverCert }, c => c.end());
+async function withServer<T>(
+  fn: (port: number) => Promise<T>,
+  options: tls.TlsOptions = { key: serverKey, cert: serverCert },
+): Promise<T> {
+  const server = tls.createServer(options, c => c.end());
   server.listen(0);
   await once(server, "listening");
   try {
@@ -372,5 +375,83 @@ describe("Bun.connect TLS hostname verification", () => {
     } finally {
       listener.stop(true);
     }
+  });
+});
+
+// name-constraints-ca-cert.pem -> name-constraints-intermediate-cert.pem (nameConstraints
+// permitted;DNS:.allowed.test) -> name-constraints-<leaf>-cert.pem, all leaves sharing name-constraints-leaf-key.pem:
+//   inside:           CN=host.allowed.test,     subjectAltName=email:admin@allowed.test
+//   outside:          CN=outside.example.test,  subjectAltName=email:admin@allowed.test
+//   wildcard:         CN=*.example.test,        subjectAltName=email:admin@allowed.test
+//   partial-wildcard: CN=w*.example.test,       subjectAltName=email:admin@allowed.test
+//   nosan:            CN=legacy.allowed.test,   no subjectAltName extension
+const nameConstraintsCa = fs.readFileSync(path.join(fixturesDir, "name-constraints-ca-cert.pem"));
+const nameConstraintsIntermediate = fs.readFileSync(
+  path.join(fixturesDir, "name-constraints-intermediate-cert.pem"),
+  "utf8",
+);
+const nameConstraintsLeafKey = fs.readFileSync(path.join(fixturesDir, "name-constraints-leaf-key.pem"));
+
+function connectWithNameConstraints(leaf: string, servername: string, rejectUnauthorized = true) {
+  type Result = { error: NodeJS.ErrnoException | null; authorized: boolean; authorizationError: unknown };
+  return withServer(
+    port => {
+      const { promise, resolve } = Promise.withResolvers<Result>();
+      const socket = tls.connect(
+        { host: "127.0.0.1", port, servername, ca: nameConstraintsCa, rejectUnauthorized },
+        () => {
+          resolve({ error: null, authorized: socket.authorized, authorizationError: socket.authorizationError });
+          socket.destroy();
+        },
+      );
+      socket.on("error", err => {
+        resolve({ error: err as NodeJS.ErrnoException, authorized: false, authorizationError: undefined });
+        socket.destroy();
+      });
+      return promise;
+    },
+    {
+      key: nameConstraintsLeafKey,
+      cert:
+        fs.readFileSync(path.join(fixturesDir, `name-constraints-${leaf}-cert.pem`), "utf8") +
+        nameConstraintsIntermediate,
+    },
+  );
+}
+
+describe("tls.connect applies CA name constraints to the subject CN of a certificate without a DNS subjectAltName", () => {
+  test("a CN outside the permitted subtree fails certificate verification", async () => {
+    const result = await connectWithNameConstraints("outside", "outside.example.test");
+    assert.ok(result.error, "expected the connection to be rejected");
+    assert.match(result.error.message, /permitted subtree violation/);
+  });
+
+  test("a CN outside the permitted subtree is reported through authorizationError with rejectUnauthorized: false", async () => {
+    const result = await connectWithNameConstraints("outside", "outside.example.test", false);
+    assert.strictEqual(result.error, null);
+    assert.strictEqual(result.authorized, false);
+    assert.strictEqual(result.authorizationError, "UNSPECIFIED");
+  });
+
+  // Node.js (OpenSSL cn2dnsid) does not treat a wildcard CN as a DNS name here and accepts these
+  // chains; Bun holds every CN pattern its host name matching honours to the issuer's constraints.
+  for (const leaf of ["wildcard", "partial-wildcard"]) {
+    test(`a ${leaf} CN outside the permitted subtree fails certificate verification`, async () => {
+      const result = await connectWithNameConstraints(leaf, "www.example.test");
+      assert.ok(result.error, "expected the connection to be rejected");
+      assert.match(result.error.message, /permitted subtree violation/);
+    });
+  }
+
+  test("a CN inside the permitted subtree is accepted", async () => {
+    const result = await connectWithNameConstraints("inside", "host.allowed.test");
+    assert.strictEqual(result.error, null);
+    assert.strictEqual(result.authorized, true);
+  });
+
+  test("a CN inside the permitted subtree is accepted when the certificate has no subjectAltName at all", async () => {
+    const result = await connectWithNameConstraints("nosan", "legacy.allowed.test");
+    assert.strictEqual(result.error, null);
+    assert.strictEqual(result.authorized, true);
   });
 });

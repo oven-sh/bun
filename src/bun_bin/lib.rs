@@ -160,6 +160,13 @@ pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) ->
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
 
+    // Before anything can reach ICU: its allocator hook does not tolerate
+    // blocks allocated before the switch.
+    unsafe extern "C" {
+        safe fn Bun__useMimallocForICU();
+    }
+    Bun__useMimallocForICU();
+
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
     // valid disposition; called once on the main thread before any other

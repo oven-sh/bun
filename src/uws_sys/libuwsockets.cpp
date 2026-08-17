@@ -1407,15 +1407,22 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      /* Once write()/flushHeaders() (HTTP_WRITE_CALLED) or an earlier end
+       * (HTTP_END_CALLED) terminated the header section, header bytes written
+       * here would land inside the body (node:http res.destroy() mid-response
+       * ends up here). Setting HTTP_CONNECTION_CLOSE is what makes the close
+       * gates tear the connection down; the header itself is only advisory,
+       * same as in internalEnd(). */
+      bool headers_open = !(data->state & (uWS::HttpResponseData<true>::HTTP_WRITE_CALLED | uWS::HttpResponseData<true>::HTTP_END_CALLED));
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        if (headers_open && !(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
         {
           uwsRes->writeHeader("Connection", "close");
         }
         data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
       }
-      if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
+      if (headers_open)
       {
         uwsRes->AsyncSocket<true>::write("\r\n", 2);
       }
@@ -1433,15 +1440,17 @@ extern "C"
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      /* See the SSL arm above. */
+      bool headers_open = !(data->state & (uWS::HttpResponseData<false>::HTTP_WRITE_CALLED | uWS::HttpResponseData<false>::HTTP_END_CALLED));
       if (close_connection)
       {
-        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        if (headers_open && !(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
         {
           uwsRes->writeHeader("Connection", "close");
         }
         data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
       }
-      if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
+      if (headers_open)
       {
         // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
         // If not, they may throw a ConnectionError.

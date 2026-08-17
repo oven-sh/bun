@@ -1190,6 +1190,7 @@ class InspectorCDPAdapter {
         });
         if (url) this.#scriptIdsByUrl.set(url, params.scriptId);
         if (cdpUrl) this.#scriptIdsByUrl.set(cdpUrl, params.scriptId);
+        const { scriptType } = params;
         this.#emitToClient("Debugger.scriptParsed", {
           scriptId: params.scriptId,
           url: cdpUrl,
@@ -1199,10 +1200,10 @@ class InspectorCDPAdapter {
           endColumn,
           executionContextId: EXECUTION_CONTEXT_ID,
           hash: "",
-          isModule: !!params.module,
+          isModule: scriptType === "module",
           sourceMapURL,
           embedderName: cdpUrl,
-          scriptLanguage: "JavaScript",
+          scriptLanguage: scriptType === "webassembly" ? "WebAssembly" : "JavaScript",
         });
         this.#retranslatePreParseBreakpoints(url, cdpUrl, params.scriptId);
         return;

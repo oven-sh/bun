@@ -1066,11 +1066,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         let lowered = p.lower_class(js_ast::StmtOrExpr::Stmt(*stmt));
 
         if !mark_as_dead || was_export_inside_namespace {
-            // When bundling, rewrite a top-level `class X {}` statement into
-            // `var X = class {}`. This lets the binding merge with adjacent
-            // `var` declarations, matching esbuild. Only applies when class
-            // lowering left the class as a single plain statement (no field or
-            // decorator lowering rewrote it into other statements).
+            // When bundling, rewrite a top-level `class X {}` into
+            // `var X = class {}` so the binding merges with adjacent `var`
+            // declarations (matches esbuild).
             if (p.options.bundle || p.will_wrap_module_in_try_catch_for_using)
                 && p.current_scope().parent.is_none()
                 && lowered.len() == 1
@@ -1081,11 +1079,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     .class
                     .class_name
                     .expect("infallible: class statement has a name");
-                // Drop the class expression name when the class body never
-                // refers to it. Keep it under `--keep-names` or when the scope
-                // contains a direct `eval` (which may reference the name
-                // dynamically), matching the class-expression path in
-                // `visit_expr`.
+                // Same name-drop gating as the class-expression path in
+                // `visit_expr`: keep the name if the body references it,
+                // under `--keep-names`, or with direct `eval` in scope.
                 let drop_name = shadow_ref.is_empty()
                     && !p.options.features.minify_keep_names
                     && !p.current_scope().contains_direct_eval;

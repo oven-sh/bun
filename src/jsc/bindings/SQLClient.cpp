@@ -38,12 +38,10 @@ typedef struct ExternColumnIdentifier {
     bool isNamedColumn() const { return tag == 2; }
     bool isDuplicateColumn() const { return tag == 0; }
 
-    // A column named "" arrives as the empty BunString, which plain toWTFString()
-    // converts to a null WTF::String, and Identifier::fromString dereferences
-    // the null impl. NonNull maps it to the empty string instead.
     Identifier propertyName(VM& vm) const
     {
         ASSERT(isNamedColumn());
+        // NonNull: a column named "" is the empty BunString, and Identifier::fromString cannot take a null String.
         return Identifier::fromString(vm, name.toWTFString(BunString::NonNull));
     }
 } ExternColumnIdentifier;

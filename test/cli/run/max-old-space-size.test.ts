@@ -104,6 +104,12 @@ test.concurrent("v8.getHeapStatistics().heap_size_limit reports the configured l
   expect(exitCode).toBe(0);
 });
 
+test("process.allowedNodeEnvironmentFlags includes --max-old-space-size", () => {
+  // has() normalizes _ to -, so one canonical entry covers both spellings.
+  expect(process.allowedNodeEnvironmentFlags.has("--max-old-space-size")).toBe(true);
+  expect(process.allowedNodeEnvironmentFlags.has("--max_old_space_size")).toBe(true);
+});
+
 test.concurrent("--max-old-space-size rejects a non-numeric value", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--max-old-space-size=abc", "-e", "console.log('ran')"],

@@ -8,7 +8,7 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { join } from "node:path";
 
 // shm_unlink for encoding:"shmem" test cleanup. macOS has no /dev/shm
@@ -151,16 +151,17 @@ const chromePath = findChrome();
 // exists but can't run. Gate on CI + macOS < 15 rather than probing — a real
 // probe needs an async navigate, which adds startup cost on every platform.
 const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
-// Edge refuses to run under a Windows service account: as LocalSystem every
-// msedge.exe invocation, even --version, exits with code 234 after ~15ms
-// without printing anything, so spawn-mode ends in "Chrome process closed the
-// pipe". The buildkite agent on the Windows CI images runs as LocalSystem,
-// and a machine account's user name is "<host>$". Run as a normal user (or
-// with BUN_CHROME_PATH pointing at a Chromium) to exercise the Windows
+// Edge refuses to run as LocalSystem: every msedge.exe invocation, even
+// --version, exits with code 234 after ~15ms without printing anything, so
+// spawn-mode ends in "Chrome process closed the pipe". The buildkite agent on
+// the Windows CI images runs as LocalSystem. Detected through the account's
+// profile directory; the user name is no use here because the test runner
+// overrides USERNAME, which is what userInfo() reports on Windows. Run as a
+// normal user (or point BUN_CHROME_PATH at a Chromium) to exercise the Windows
 // transport.
-const edgeRefusesServiceAccount =
-  process.platform === "win32" && /msedge\.exe$/i.test(chromePath ?? "") && userInfo().username.endsWith("$");
-const it = chromePath && !chromeBroken && !edgeRefusesServiceAccount ? test : test.todo;
+const edgeAsLocalSystem =
+  process.platform === "win32" && /msedge\.exe$/i.test(chromePath ?? "") && /\\config\\systemprofile$/i.test(homedir());
+const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
 // which would connect to the dev's running Chrome, pop the "Allow remote

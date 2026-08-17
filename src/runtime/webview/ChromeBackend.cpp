@@ -79,20 +79,16 @@ namespace CDP {
 
 using namespace JSC;
 
-// Implemented in ChromeProcess.rs. Spawns Chrome; -1 on failure. On POSIX
-// the return value is the parent's socketpair fd (bidirectional), adopted
-// into usockets below. On Windows it is 0: the pipes stay on the Rust side
-// and this file talks to them through Bun__Chrome__writePipe (out) and
-// Bun__Chrome__onPipeData / Bun__Chrome__onPipeClosed (in, defined at the
-// bottom of this file). path overrides auto-detection; extraArgv (count
-// entries, each NUL-terminated) appends after core flags. All pointers
-// nullable.
+// Implemented in ChromeProcess.rs. Spawns Chrome; -1 on failure. POSIX returns
+// our socketpair fd (adopted below); Windows returns 0 and keeps the pipes,
+// reached through Bun__Chrome__writePipe and the two entry points at the end
+// of this file. path overrides auto-detection; extraArgv (count entries, each
+// NUL-terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
 #if OS(WINDOWS)
-// Copies the bytes and queues them on the command pipe; 0 on success, -1 if
-// Chrome is gone.
+// Copies and queues one chunk; -1 once Chrome is gone.
 extern "C" int32_t Bun__Chrome__writePipe(const char* data, size_t len);
 #endif
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
@@ -318,9 +314,7 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     m_global = zig;
 
 #if OS(WINDOWS)
-    // The Rust side owns both pipe ends and pushes Chrome's bytes into
-    // onData via Bun__Chrome__onPipeData; writeRaw hands bytes back to it.
-    // m_readSock stays null for the life of the transport.
+    // Nothing to adopt: the Rust side owns the pipes (m_readSock stays null).
     return true;
 #else
     // Socketpair — same fd for read + write. Chrome's end is dup'd to its
@@ -510,14 +504,9 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
 void Transport::writeRaw(const char* data, size_t len)
 {
 #if OS(WINDOWS)
-    // libuv owns the partial-write bookkeeping (one queued uv_write per
-    // chunk, delivered in order), so m_txQueue/onWritable are unused here.
-    // A synchronous failure means Chrome is already gone; the caller has
-    // just registered a Pending entry for this command, so settle it now
-    // rather than leave it waiting on an exit notification that may have
-    // been delivered already. Callers that write more than once per command
-    // (finishAndWrite's body + NUL, the wsOnClose replay) are fine:
-    // rejectAllAndMarkDead sets m_dead, so the follow-up chunks return here.
+    // libuv queues the chunks in order (m_txQueue/onWritable are unused). A
+    // failure means Chrome is already gone, so settle the Pending entry the
+    // caller just added; its remaining chunks then stop at the m_dead check.
     if (m_dead) return;
     if (Bun__Chrome__writePipe(data, len) < 0)
         rejectAllAndMarkDead("Chrome process closed the pipe"_s);
@@ -1291,9 +1280,7 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // is still polling — close it. us_socket_close fires cdpOnClose
     // synchronously; the m_dead guard above short-circuits that reentrant
     // call so the caller's `reason` survives.
-    // On Windows m_readSock is always null: the pipes belong to the Rust
-    // side, which closes them when the process exits (or on teardown), and
-    // m_dead alone is what stops writeRaw.
+    // (Always null on Windows; m_dead alone stops writeRaw there.)
     if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(s, 0, nullptr);
     // WebSocket mode: drop our ref. The WS's native onClose calls us
     // (wsOnClose → rejectAllAndMarkDead); that path nulls m_ws after
@@ -1775,11 +1762,9 @@ extern "C" void Bun__Chrome__died(int32_t signo)
 }
 
 #if OS(WINDOWS)
-// The Windows counterparts of cdpOnData / cdpOnEnd. ChromeProcess.rs reads
-// the reply pipe with libuv and delivers what it read through event-loop
-// tasks, one call each, in the order it arrived (PipeEvent over there). The
-// buffer belongs to the task and is only valid during the call; onData
-// copies it into m_rx before dispatching.
+// The cdpOnData / cdpOnEnd counterparts, called in arrival order from the
+// event-loop tasks ChromeProcess.rs posts (PipeEvent). The buffer is only
+// valid during the call; onData copies it into m_rx.
 extern "C" void Bun__Chrome__onPipeData(const char* data, size_t len)
 {
     CDP::transport().onData(data, static_cast<int>(len));

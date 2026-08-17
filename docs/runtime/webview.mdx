@@ -111,6 +111,12 @@ When Bun needs to spawn Chrome, it searches in this order:
 
 If Bun finds none, the constructor throws.
 
+<Note>
+  Microsoft Edge refuses to start under the Windows `LocalSystem` account: it exits immediately and the first operation
+  rejects with "Chrome process closed the pipe". A service or CI agent that only has Edge available needs to run Bun as
+  a regular user account.
+</Note>
+
 #### Connecting to an already-running Chrome {#existing-chrome}
 
 By default, before spawning, Bun reads the `DevToolsActivePort` file from standard profile directories to check whether a Chrome-family browser is **already running** with remote debugging enabled. If found, Bun connects to that browser over WebSocket instead of spawning a new one — your views open as tabs in your existing browser.

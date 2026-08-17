@@ -124,7 +124,7 @@ CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore::AbortSignal* ar
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__create(JSC::JSGlobalObject* arg0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__fromJS(JSC::EncodedJSValue JSValue0);
 CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__ref(WebCore::AbortSignal* arg0);
-CPP_DECL WebCore::AbortSignal* WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject*,  uint8_t abortReason);
+CPP_DECL void WebCore__AbortSignal__signal(WebCore::AbortSignal* arg0, JSC::JSGlobalObject*, uint8_t abortReason);
 CPP_DECL JSC::EncodedJSValue WebCore__AbortSignal__toJS(WebCore::AbortSignal* arg0, JSC::JSGlobalObject* arg1);
 CPP_DECL void WebCore__AbortSignal__unref(WebCore::AbortSignal* arg0);
 
@@ -167,6 +167,7 @@ CPP_DECL void JSC__JSFunction__optimizeSoon(JSC::EncodedJSValue JSValue0);
 
 CPP_DECL JSC::EncodedJSValue Bun__REPL__evaluate(JSC::JSGlobalObject* globalObject, const unsigned char* sourcePtr, size_t sourceLen, const unsigned char* filenamePtr, size_t filenameLen, JSC::EncodedJSValue* exception);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__getCompletions(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue targetValue, const unsigned char* prefixPtr, size_t prefixLen);
+CPP_DECL JSC::EncodedJSValue Bun__REPL__getProperty(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue baseValue, const unsigned char* namePtr, size_t nameLen);
 CPP_DECL JSC::EncodedJSValue Bun__REPL__formatValue(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue valueEncoded, int32_t depth, bool colors);
 
 #pragma mark - JSC::JSGlobalObject
@@ -296,7 +297,6 @@ CPP_DECL void JSC__JSValue__toZigString(JSC::EncodedJSValue JSValue0, ZigString*
 #pragma mark - JSC::VM
 
 CPP_DECL size_t JSC__VM__blockBytesAllocated(JSC::VM* arg0);
-CPP_DECL void JSC__VM__clearExecutionTimeLimit(JSC::VM* arg0);
 CPP_DECL void JSC__VM__collectAsync(JSC::VM* arg0);
 CPP_DECL JSC::VM* JSC__VM__create(unsigned char HeapType0);
 CPP_DECL void JSC__VM__deleteAllCode(JSC::VM* arg0, JSC::JSGlobalObject* arg1);
@@ -310,12 +310,9 @@ CPP_DECL bool JSC__VM__isJITEnabled();
 CPP_DECL void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__notifyNeedTermination(JSC::VM* arg0);
-CPP_DECL void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0);
 CPP_DECL void JSC__VM__releaseWeakRefs(JSC::VM* arg0);
 CPP_DECL size_t JSC__VM__runGC(JSC::VM* arg0, bool arg1);
 CPP_DECL void JSC__VM__enableControlFlowProfiler(JSC::VM* arg0);
-CPP_DECL void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1);
-CPP_DECL void JSC__VM__setExecutionTimeLimit(JSC::VM* arg0, double arg1);
 CPP_DECL void JSC__VM__shrinkFootprint(JSC::VM* arg0);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);
 CPP_DECL void JSC__VM__throwError(JSC::VM* arg0, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue JSValue2);

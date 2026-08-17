@@ -8,7 +8,7 @@ use crate::Error as BunError;
 use bun_alloc::AllocError;
 use bun_collections::{
     ArrayHashMap, ArrayIdentityContext, ArrayIdentityContextU64, DynamicBitSet,
-    HashMap as BunHashMap, IdentityContext, LinearFifo, linear_fifo::DynamicBuffer,
+    HashMap as BunHashMap, IdentityContext, LinearFifo, index_sort, linear_fifo::DynamicBuffer,
 };
 use bun_core::fmt::PathSep;
 use bun_core::{Global, Output};
@@ -321,6 +321,17 @@ pub enum LoadStep {
     ReadFile,
     ParseFile,
     Migrating,
+}
+
+impl LoadStep {
+    pub(crate) fn verb(self) -> &'static str {
+        match self {
+            LoadStep::OpenFile => "open",
+            LoadStep::ReadFile => "read",
+            LoadStep::ParseFile => "parse",
+            LoadStep::Migrating => "migrate",
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -958,9 +969,11 @@ impl Lockfile {
 
         let mut package_id_mapping = vec![invalid_package_id; old.packages.len()];
         let clone_queue_ = PendingResolutions::new();
+        // A frozen install never saves, so dropping peer-held targets could only fail its check.
+        let keep_optional_peer_targets =
+            manager.options.enable.frozen_lockfile() || !manager.summary.changes_resolutions();
         // Explicit `&mut *` reborrows so `old`/`manager`/`new` are
         // released back to this scope once `cloner` is dropped.
-        let keep_optional_peer_targets = !manager.summary.changes_resolutions();
         let mut cloner = Cloner {
             old: &mut *old,
             lockfile: &mut *new,
@@ -1365,6 +1378,8 @@ impl Lockfile {
         {
             return Ok(());
         }
+        // Otherwise the command loading this lockfile would dedupe its own fetch of a manifest this pass failed to get.
+        manager.network_dedupe_map.clear();
 
         let cache_ctx = manager.manifest_disk_cache_ctx();
         // `manifests` is a field of `manager`, and a `string_builder` is
@@ -2554,6 +2569,15 @@ pub mod package_index {
         Ids(PackageIDList),
     }
 
+    impl Entry {
+        pub(crate) fn as_slice(&self) -> &[PackageID] {
+            match self {
+                Entry::Id(id) => core::slice::from_ref(id),
+                Entry::Ids(ids) => ids.as_slice(),
+            }
+        }
+    }
+
     impl Default for Entry {
         /// `HashMap::get_or_put` needs a `Default` to fill the value slot before
         /// the caller writes the real `Entry::Id(..)` / `Entry::Ids(..)`.
@@ -2644,8 +2668,12 @@ impl<'a> EqlSorter<'a> {
 }
 
 impl Lockfile {
-    /// `cut_off_pkg_id` should be removed when we stop appending packages to lockfile during install step
-    pub(crate) fn eql(&self, r: &Lockfile, cut_off_pkg_id: usize) -> Result<bool, AllocError> {
+    /// A placement of `r` bound past `r_loaded_package_count` was rebound after loading: a change.
+    pub(crate) fn eql(
+        &self,
+        r: &Lockfile,
+        r_loaded_package_count: usize,
+    ) -> Result<bool, AllocError> {
         let l: &Lockfile = self;
         let l_hoisted_deps = l.buffers.hoisted_dependencies.as_slice();
         let r_hoisted_deps = r.buffers.hoisted_dependencies.as_slice();
@@ -2684,7 +2712,7 @@ impl Lockfile {
                     continue;
                 }
                 let l_pkg_id = l.buffers.resolutions[l_dep_id as usize];
-                if l_pkg_id == invalid_package_id || l_pkg_id as usize >= cut_off_pkg_id {
+                if l_pkg_id == invalid_package_id {
                     continue;
                 }
                 sort_buf.push(PathToId {
@@ -2712,8 +2740,11 @@ impl Lockfile {
                     continue;
                 }
                 let r_pkg_id = r.buffers.resolutions[r_dep_id as usize];
-                if r_pkg_id == invalid_package_id || r_pkg_id as usize >= cut_off_pkg_id {
+                if r_pkg_id == invalid_package_id {
                     continue;
+                }
+                if r_pkg_id as usize >= r_loaded_package_count {
+                    return Ok(false);
                 }
                 sort_buf.push(PathToId {
                     pkg_id: r_pkg_id,
@@ -2746,7 +2777,7 @@ impl Lockfile {
                 string_buf: l_string_buf,
                 pkg_resolutions: l_pkg_resolutions,
             };
-            l_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+            index_sort::sort_slice_unstable_by(l_buf, |a, b| sorter.order(*a, *b));
         }
 
         {
@@ -2755,7 +2786,7 @@ impl Lockfile {
                 string_buf: r_string_buf,
                 pkg_resolutions: r_pkg_resolutions,
             };
-            r_buf.sort_unstable_by(|a, b| sorter.order(*a, *b));
+            index_sort::sort_slice_unstable_by(r_buf, |a, b| sorter.order(*a, *b));
         }
 
         let l_extern_strings = l.buffers.extern_strings.as_slice();
@@ -2894,7 +2925,9 @@ impl Lockfile {
                 buf: bytes.into(),
                 resolutions: resolutions.into(),
             };
-            alphabetized_names.sort_unstable_by(|a, b| alphabetizer.order(*a, *b));
+            index_sort::sort_indices_unstable(&mut alphabetized_names, &mut |a, b| {
+                alphabetizer.order(a, b)
+            });
         }
 
         string_builder.allocate().expect("unreachable");
@@ -3014,7 +3047,7 @@ pub static DEFAULT_TRUSTED_DEPENDENCIES_LIST: std::sync::LazyLock<Vec<&'static [
     std::sync::LazyLock::new(|| {
         const DATA: &[u8] = include_bytes!("default-trusted-dependencies.txt");
         let mut names: Vec<&'static [u8]> = strings::tokenize_any(DATA, b" \r\n\t").collect();
-        names.sort_unstable();
+        index_sort::sort_slice_unstable_by(&mut names, |a, b| a.cmp(b));
         debug_assert!(
             names.len() <= MAX_DEFAULT_TRUSTED_DEPENDENCIES,
             "default-trusted-dependencies.txt is too large, please increase \

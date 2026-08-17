@@ -6,7 +6,7 @@ use core::fmt;
 use bun_alloc::Arena as Bump;
 
 use bun_alloc::AllocError;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use bun_core::strings;
 
 use crate::{Expr, ExprNodeIndex, ExprNodeList, G, OptionalChain, Ref, StoreRef};
@@ -124,7 +124,7 @@ impl Array {
                 debug_assert!(matches!(item.data, crate::expr::Data::EString(_)));
             }
         }
-        self.items.slice_mut().sort_by(array_sorter_is_less_than);
+        index_sort::sort_slice_by(self.items.slice_mut(), array_sorter_is_less_than);
     }
 }
 
@@ -1527,15 +1527,11 @@ impl Object {
                 ));
             }
         }
-        self.properties
-            .slice_mut()
-            .sort_by(object_sorter_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), object_sorter_is_less_than);
     }
 
     pub fn package_json_sort(&mut self) {
-        self.properties
-            .slice_mut()
-            .sort_by(package_json_sort_is_less_than);
+        index_sort::sort_slice_by(self.properties.slice_mut(), package_json_sort_is_less_than);
     }
 }
 
@@ -2391,17 +2387,24 @@ pub struct If {
     pub no: ExprNodeIndex,
 }
 
+pub enum UnwrappedRequireMarker {}
+/// Index into the parser's `imports_to_convert_from_require`.
+pub type UnwrappedRequireIndex = bun_core::GenericIndex<u32, UnwrappedRequireMarker>;
+pub type UnwrappedRequireIndexOptional =
+    bun_core::GenericIndexOptional<u32, UnwrappedRequireMarker>;
+
 #[derive(Clone, Copy)]
 pub struct RequireString {
     pub import_record_index: u32,
 
-    pub unwrapped_id: u32,
+    /// Set when `unwrap_commonjs_to_esm` turned this `require()` into an import.
+    pub unwrapped_id: UnwrappedRequireIndexOptional,
 }
 impl Default for RequireString {
     fn default() -> Self {
         Self {
             import_record_index: 0,
-            unwrapped_id: u32::MAX,
+            unwrapped_id: UnwrappedRequireIndexOptional::NONE,
         }
     }
 }

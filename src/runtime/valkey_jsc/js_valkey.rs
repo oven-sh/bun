@@ -1406,6 +1406,11 @@ impl JSValkeyClient {
             return Ok(());
         };
         this_jsvalue.ensure_still_alive();
+        if global_object.has_exception() {
+            // Already unwinding an exception (a caller's, or the worker's termination): it keeps
+            // propagating; `onclose` cannot be entered on top of it.
+            return Err(bun_jsc::JsError::Thrown);
+        }
 
         // Create an error value
         let error_value = protocol_jsc::valkey_error_to_js(

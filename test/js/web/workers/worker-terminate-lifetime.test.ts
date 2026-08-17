@@ -975,3 +975,150 @@ test(
   },
   timeout,
 );
+
+// A worker's Bun.serve() rendering a body whose microtask checkpoint meets the worker's termination
+// (a promise/stream body that spins in a microtask when terminate() lands): the render used to go on
+// and attach its continuation with the TerminationException pending (JSC assertNoException in the
+// promise `then`). The context's checkpoint now lands the termination and the render stands down.
+test(
+  "terminate() while the worker's Bun.serve() renders a promise/stream body stuck in a microtask",
+  async () => {
+    const workers = slow ? 6 : 12;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const s = Bun.serve({ port: 0, fetch(req) {" +
+          "  if (new URL(req.url).pathname === '/stream') return new Response(new ReadableStream({ async pull(c) { await 1; c.enqueue(new TextEncoder().encode('x')); await 1; for (;;) {} } }));" +
+          "  return (async () => { await 1; for (;;) {} })();" +
+          "}});" +
+          "parentPort.postMessage(s.url.href);";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            const url = await new Promise(r => w.once("message", r));
+            fetch(url + (i % 2 ? "stream" : "promise")).then(r => r.text()).catch(() => {});
+            await Bun.sleep(30);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker terminated while HTMLRewriter transforms with async element handlers are in flight: a
+// handler's promise reaction resumes the rewrite (more handlers, sink writes, stream delivery) beneath a
+// microtask, and the reaction returned a value with the termination it met still pending ("host fn
+// return/exception state mismatch"). It now reports the pending exception instead.
+test(
+  "terminate() while HTMLRewriter async element handlers resume beneath a microtask",
+  async () => {
+    const workers = slow ? 10 : 40;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const T = f => { try { const x = f(); if (x && x.then) x.then(()=>{},()=>{}); } catch {} };" +
+          "const once = () => T(() => new HTMLRewriter().on('*', { async element(e) { await Bun.sleep(Math.random() * 3); T(() => e.setAttribute('y', '1')); } })" +
+          "  .transform(new Response('<p><a>x</a></p>'.repeat(50))).text().then(() => {}, () => {}));" +
+          "setInterval(() => { for (let i = 0; i < 4; i++) once(); }, 1);" +
+          "parentPort.postMessage('go');";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            await new Promise(r => w.once("message", r));
+            await Bun.sleep(8 + (i % 8) * 3);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);
+
+// A worker terminated while async-iterable bodies are being driven (a `Bun.serve` handler returning
+// `new Response(asyncGenerator())`, a `fetch()` with an async-iterable request body): the pump met the
+// termination as the abrupt completion of `iterator.next()` and went on to notify the iterator —
+// `iterator.throw(undefined)` and error-code lookups with the TerminationException pending — walking
+// objects mid-teardown (JSC "object->structure() == this" assert). It now stands down instead.
+test(
+  "terminate() while async-iterable Response/request bodies are being pumped",
+  async () => {
+    const workers = slow ? 10 : 30;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { Worker } = require("node:worker_threads");
+        const src =
+          "const { parentPort } = require('worker_threads');" +
+          "const T = f => { try { const x = f(); if (x && x.then) x.then(()=>{},()=>{}); } catch {} };" +
+          "async function* gen() { for (;;) { await Bun.sleep(Math.random() * 2); yield new TextEncoder().encode('chunk'); } }" +
+          "const s = Bun.serve({ port: 0, fetch: () => new Response(gen()) });" +
+          "setInterval(() => { T(() => fetch(s.url).then(r => r.body.getReader().read())); T(() => fetch(s.url, { method: 'POST', body: gen(), duplex: 'half' }).then(r => r.text())); }, 1);" +
+          "parentPort.postMessage('go');";
+        (async () => {
+          for (let i = 0; i < ${workers}; i++) {
+            const w = new Worker(src, { eval: true });
+            await new Promise(r => w.once("message", r));
+            await Bun.sleep(10 + (i % 6) * 5);
+            await w.terminate();
+          }
+          console.log("PASS");
+          process.exit(0);
+        })();
+      `,
+      ],
+      // Every fetch here is deliberately still in flight when its worker is terminated, and an
+      // in-flight fetch's tasklet is not reclaimed at worker teardown (pre-existing; not what this
+      // test is about), so leak checking is off for this child — the test guards the pump's
+      // termination handling, which aborts the child (no PASS) when it regresses.
+      env: { ...bunEnv, ASAN_OPTIONS: "detect_leaks=0:allow_user_segv_handler=1:disable_coredump=0" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    // A worker terminated mid-fetch of its own streaming response can report one rejection with an
+    // empty reason natively (its handlers can no longer run) — a bare "error" line, seen on main as
+    // well and unrelated to what this test guards; anything else on stderr fails the test.
+    expect(stderr.split("\n").filter(l => l.trim() !== "" && l.trim() !== "error")).toEqual([]);
+    expect(stdout).toBe("PASS\n");
+    expect(exitCode).toBe(0);
+  },
+  timeout,
+);

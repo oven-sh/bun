@@ -125,6 +125,12 @@ describe("css tests", () => {
     // Same trimming applies inside function arguments.
     minify_test(":root{--a:f(x y z)}", ":root{--a:f(x y z)}");
     minify_test(":root{--a:f( x y z )}", ":root{--a:f(x y z)}");
+
+    // An rgb() whose alpha is only known at runtime is parsed into its channels
+    // and printed back from them, in order; the legacy comma form is not a color
+    // here and is left as written.
+    minify_test(":root{--a: rgb(4.7% 13.3% 22% / var(--alpha))}", ":root{--a:rgb(12 34 56/var(--alpha))}");
+    minify_test(":root{--a: rgb(12, 34, 56, var(--alpha))}", ":root{--a:rgb(12,34,56,var(--alpha))}");
   });
 
   describe("pseudo-class edge case", () => {
@@ -7808,6 +7814,135 @@ describe("css tests", () => {
         {
           safari: 14 << 16,
         },
+      );
+    });
+
+    // rgb()/hsl() whose alpha is only known at runtime (var(), calc(var()), ...)
+    // are downleveled to the legacy comma syntax for targets without
+    // space-separated color notation. Every component, including the alpha,
+    // has to be comma separated there or the declaration is invalid.
+    describe("unresolved alpha downleveled to rgba()/hsla()", () => {
+      const legacyOnly = { chrome: 60 << 16 };
+      const modern = { chrome: 90 << 16 };
+
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha, 50%)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, var(--alpha, 50%));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / calc(var(--alpha) * 2)); }",
+        indoc`
+          .foo {
+            color: rgba(12, 34, 56, calc(var(--alpha) * 2));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(5% 50% 100% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgba(13, 128, 255, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { box-shadow: 0 0 4px rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            box-shadow: 0 0 4px rgba(12, 34, 56, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: rgb(from light-dark(yellow, red) r g b / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(255, 255, 0, var(--alpha))) var(--buncss-dark, rgba(255, 0, 0, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: light-dark(rgb(12 34 56 / var(--alpha)), hsl(200 30% 40% / var(--alpha))); }",
+        indoc`
+          .foo {
+            color: var(--buncss-light, rgba(12, 34, 56, var(--alpha))) var(--buncss-dark, hsla(200, 30%, 40%, var(--alpha)));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+      prefix_test(
+        ".foo { --x: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: hsla(200, 30%, 40%, var(--alpha));
+          }
+        `,
+        legacyOnly,
+      );
+
+      // Targets that support the modern syntax keep it as written.
+      prefix_test(
+        ".foo { color: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { --x: rgb(12 34 56 / var(--alpha)); }",
+        indoc`
+          .foo {
+            --x: rgb(12 34 56 / var(--alpha));
+          }
+        `,
+        modern,
+      );
+      prefix_test(
+        ".foo { color: hsl(200 30% 40% / var(--alpha)); }",
+        indoc`
+          .foo {
+            color: hsl(200 30% 40% / var(--alpha));
+          }
+        `,
+        modern,
       );
     });
 

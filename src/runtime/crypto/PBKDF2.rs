@@ -6,7 +6,7 @@ use bun_jsc::{
     JsThread,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -14,7 +14,7 @@ pub(crate) struct PBKDF2 {
     pub password: StringOrBuffer,
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
-    pub length: i32,
+    pub length: usize,
     algorithm: Algorithm,
 }
 
@@ -27,7 +27,7 @@ impl PBKDF2 {
         let length = self.length;
 
         output.fill(0);
-        debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
+        debug_assert!(self.length <= output.len());
         // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
         if length == 0 {
             return false;
@@ -47,7 +47,7 @@ impl PBKDF2 {
                 salt.len(),
                 iteration_count as c_uint,
                 algorithm.md().unwrap(),
-                usize::try_from(length).expect("int cast"),
+                length,
                 output.as_mut_ptr(),
             )
         };
@@ -68,7 +68,7 @@ impl PBKDF2 {
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
-        is_async: bool,
+        flavor: Flavor,
     ) -> JsResult<PBKDF2> {
         let [arg0, arg1, arg2, arg3, arg4, arg5] = call_frame.arguments_as_array::<6>();
 
@@ -101,7 +101,8 @@ impl PBKDF2 {
             ));
         }
 
-        let keylen: i32 = keylen_num as i32;
+        // 0..=i32::MAX was checked above.
+        let keylen = keylen_num as usize;
 
         if !arg2.is_number() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -180,17 +181,16 @@ impl PBKDF2 {
         };
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && is_async {
+            if global_this.has_exception() && flavor == Flavor::Async {
                 bun_jsc::Unprotect::unprotect(out);
             }
         });
 
-        let allow_string_object = true;
         guard.salt = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg1,
-            is_async,
-            allow_string_object,
+            flavor,
+            StringObjects::Allow,
         )? {
             Some(v) => v,
             None => {
@@ -209,8 +209,8 @@ impl PBKDF2 {
         guard.password = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg0,
-            is_async,
-            allow_string_object,
+            flavor,
+            StringObjects::Allow,
         )? {
             Some(v) => v,
             None => {
@@ -226,13 +226,13 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
-        if !is_async {
+        if flavor == Flavor::Sync {
             if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
                 buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
             }
         }
 
-        if is_async {
+        if flavor == Flavor::Async {
             if !arg5.is_function() {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"callback",
@@ -259,7 +259,7 @@ impl bun_jsc::Unprotect for PBKDF2 {
 
 /// `crypto.pbkdf2` off the JS thread.
 pub(crate) struct Pbkdf2Job {
-    /// `from_js(.., is_async=true)` protected the input buffers; the
+    /// `from_js(.., Flavor::Async)` protected the input buffers; the
     /// [`bun_jsc::ThreadSafe`] releases that with the job.
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
@@ -271,7 +271,7 @@ impl JobContext for Pbkdf2Job {
     type Js = JSPromiseStrong;
 
     fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
-        let len = usize::try_from(this.pbkdf2.length).expect("int cast");
+        let len = this.pbkdf2.length;
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
@@ -299,7 +299,7 @@ impl JobContext for Pbkdf2Job {
         }
 
         let output_slice = core::mem::take(&mut this.output);
-        debug_assert!(output_slice.len() == usize::try_from(this.pbkdf2.length).expect("int cast"));
+        debug_assert!(output_slice.len() == this.pbkdf2.length);
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
         promise.settle(global_this, buffer_value)?;
@@ -315,7 +315,7 @@ pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> JSValue 
     Job::<Pbkdf2Job>::schedule(
         &cx,
         Pbkdf2Job {
-            // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
+            // `from_js(.., Flavor::Async)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
             err: false,

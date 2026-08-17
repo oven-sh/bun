@@ -10,7 +10,7 @@ use bun_jsc::{
     JsThread, Protected, Strong,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -735,7 +735,8 @@ pub mod random {
 pub(crate) struct Scrypt {
     // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., true)`, adopted into a `ThreadSafe` by the job).
+    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadSafe`
+    // by the job).
     password: StringOrBuffer,
     salt: StringOrBuffer,
     n: u32,
@@ -768,6 +769,11 @@ mod _impl {
             ] = call_frame.arguments_as_array::<5>();
             let mut maybe_options_value: Option<JSValue> = Some(options_arg);
             let mut callback = callback_arg;
+            let flavor = if IS_ASYNC {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
 
             if IS_ASYNC {
                 if callback.is_undefined() {
@@ -776,8 +782,12 @@ mod _impl {
                 }
             }
 
-            let Some(password) =
-                StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
+            let Some(password) = StringOrBuffer::from_js_maybe_async(
+                global,
+                password_value,
+                flavor,
+                StringObjects::Allow,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"password",
@@ -795,8 +805,12 @@ mod _impl {
                 }
             });
 
-            let Some(salt) =
-                StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
+            let Some(salt) = StringOrBuffer::from_js_maybe_async(
+                global,
+                salt_value,
+                flavor,
+                StringObjects::Allow,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"salt",
@@ -1028,8 +1042,8 @@ mod _impl {
     }
 
     impl bun_jsc::Unprotect for Scrypt {
-        /// Release the `protect()` taken by `from_js_maybe_async(.., true)` on the
-        /// async path (via the job's `ThreadSafe`). The sync path never calls this.
+        /// Release the `protect()` taken by `from_js_maybe_async(.., Flavor::Async, ..)`
+        /// on the async path (via the job's `ThreadSafe`). The sync path never calls this.
         #[inline]
         fn unprotect(&mut self) {
             bun_jsc::Unprotect::unprotect(&mut self.password);
@@ -1109,14 +1123,14 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, true)?;
+        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
 
         Ok(pbkdf2::create_job(global_this, data))
     }
 
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, false)?;
+        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Sync)?;
         // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
         // just goes out of scope.
         let mut data = data;
@@ -1124,8 +1138,7 @@ mod _impl {
         // with `JSBufferSubclassStructure` (a Node.js `Buffer`, not a plain Uint8Array/ArrayBuffer).
         // `pbkdf2Sync()` MUST return a Buffer — `Buffer.isBuffer(result)` and Buffer-only methods
         // (`.toString('hex')`, `.readUInt32BE`, …) depend on it.
-        let out_arraybuffer =
-            JSValue::create_buffer_from_length(global_this, data.length as usize)?;
+        let out_arraybuffer = JSValue::create_buffer_from_length(global_this, data.length)?;
         let Some(mut output) = out_arraybuffer.as_array_buffer(global_this) else {
             return Err(global_this.throw_out_of_memory());
         };

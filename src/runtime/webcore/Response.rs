@@ -6,7 +6,6 @@ use core::ptr::NonNull;
 use bun_jsc::JsCell;
 use bun_jsc::{AbortSignal, AbortSignalRef, GlobalRef};
 
-use crate::webcore::BlobExt as _;
 use crate::webcore::jsc::{
     BuiltinName, CallFrame, HTTPHeaderName, JSGlobalObject, JSType, JSValue, JsError, JsRef,
     JsResult, StringJsc as _,
@@ -143,9 +142,9 @@ impl BodyAbortListener {
             // destructor already freed. `Locked.readable` is a real `JSC::Weak`
             // on the stream and reads `None` exactly when the box is gone.
             if let BodyValue::Locked(locked) = response.get_body_value() {
-                if let Some(readable) = locked.readable.get(&global) {
+                if let Some(readable) = locked.readable.get() {
                     readable.value.ensure_still_alive();
-                    readable.error(&global, reason);
+                    crate::dispatch::fold(readable.error(&global, reason));
                 }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));
@@ -499,11 +498,8 @@ impl Response {
     }
 
     #[inline]
-    pub(crate) fn get_body_readable_stream(
-        &self,
-        global_object: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        <Self as BodyMixin>::get_body_readable_stream(self, global_object)
+    pub(crate) fn get_body_readable_stream(&self) -> Option<ReadableStream> {
+        <Self as BodyMixin>::get_body_readable_stream(self)
     }
 
     #[inline]
@@ -540,7 +536,7 @@ impl Response {
     pub(crate) fn set_size_hint(&self, size_hint: super::blob::SizeType) {
         if let BodyValue::Locked(locked) = self.body.get().value_mut() {
             locked.size_hint = size_hint;
-            if let Some(readable) = locked.readable.get(locked.global()) {
+            if let Some(readable) = locked.readable.get() {
                 // BACKREF: see `Source::bytes()` — back-pointer owned by the
                 // ReadableStream; `size_hint` is `Cell<_>` so shared deref + `.set()`.
                 if let Some(bytes) = readable.ptr.bytes() {
@@ -550,84 +546,6 @@ impl Response {
         }
     }
 }
-
-mod _jsc_host_fns {
-    use super::*;
-
-    #[unsafe(export_name = "jsFunctionRequestOrResponseHasBodyValue")]
-    #[bun_jsc::host_call]
-    fn js_function_request_or_response_has_body_value(
-        _global: *mut JSGlobalObject,
-        callframe: &CallFrame,
-    ) -> JSValue {
-        let [this_value] = callframe.arguments_as_array::<1>();
-        if this_value.is_empty_or_undefined_or_null() {
-            return JSValue::FALSE;
-        }
-
-        if let Some(response) = this_value.as_class_ref::<Response>() {
-            return JSValue::from(!response.body.get().value.get().is_definitely_empty());
-        } else if let Some(request) = this_value.as_class_ref::<Request>() {
-            return JSValue::from(!request.get_body_value().is_definitely_empty());
-        }
-
-        JSValue::FALSE
-    }
-
-    #[unsafe(export_name = "jsFunctionGetCompleteRequestOrResponseBodyValueAsArrayBuffer")]
-    #[bun_jsc::host_call]
-    fn js_function_get_complete_request_or_response_body_value_as_array_buffer(
-        global_object: *mut JSGlobalObject,
-        callframe: *mut CallFrame,
-    ) -> JSValue {
-        // S008: `JSGlobalObject`/`CallFrame` are `opaque_ffi!` ZST handles —
-        // safe `*mut → &` via `opaque_deref` (JSC guarantees non-null/live).
-        let (global_object, callframe) = (
-            bun_opaque::opaque_deref(global_object),
-            bun_opaque::opaque_deref(callframe),
-        );
-        let [this_value] = callframe.arguments_as_array::<1>();
-        if this_value.is_empty_or_undefined_or_null() {
-            return JSValue::UNDEFINED;
-        }
-
-        let body: &mut BodyValue = 'brk: {
-            if let Some(response) = this_value.as_class_ref::<Response>() {
-                // R-2: `get_body_value` projects `&mut` via `JsCell`.
-                break 'brk response.get_body_value();
-            } else if let Some(request) = this_value.as_class_ref::<Request>() {
-                break 'brk request.get_body_value();
-            }
-
-            return JSValue::UNDEFINED;
-        };
-
-        // Get the body if it's available synchronously.
-        match body {
-            BodyValue::Used | BodyValue::Empty | BodyValue::Null => JSValue::UNDEFINED,
-            BodyValue::Blob(blob) => {
-                if blob.is_bun_file() {
-                    return JSValue::UNDEFINED;
-                }
-                let result =
-                    match blob.to_array_buffer(global_object, crate::webcore::Lifetime::Transfer) {
-                        Ok(v) => v,
-                        Err(_) => JSValue::ZERO,
-                    };
-                *body = BodyValue::Used;
-                result
-            }
-            BodyValue::WTFStringImpl(_) | BodyValue::InternalBlob(_) => {
-                let mut any_blob = body.use_as_any_blob();
-                match any_blob.to_array_buffer_transfer(global_object) {
-                    Ok(v) => v,
-                    Err(_) => JSValue::ZERO,
-                }
-            }
-            BodyValue::Error(_) | BodyValue::Locked(_) => JSValue::UNDEFINED,
-        }
-    }
-} // mod _jsc_host_fns
 
 impl Response {
     pub(crate) fn get_fetch_headers(&self) -> Option<&FetchHeaders> {

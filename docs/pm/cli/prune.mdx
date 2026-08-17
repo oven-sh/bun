@@ -3,9 +3,9 @@ title: "bun prune"
 description: "Remove packages that are not in bun.lock from node_modules"
 ---
 
-`bun prune` deletes everything in `node_modules` that the current `bun.lock` would not install — packages left behind after switching branches, removing a dependency, or installing with another package manager. With the isolated linker, this includes stale entries in `node_modules/.bun`.
+`bun prune` deletes everything in `node_modules` that the current `bun.lock` would not install: packages left behind after switching branches, removing a dependency, or installing with another package manager. With the isolated linker, this includes stale entries in `node_modules/.bun`.
 
-It never contacts the registry, never runs lifecycle scripts, and never modifies `bun.lock` or `package.json`.
+`bun prune` never contacts the registry, never runs lifecycle scripts, and never modifies `bun.lock` or `package.json`.
 
 ```bash terminal icon="terminal"
 bun prune
@@ -53,7 +53,7 @@ bun prune v1.4.0 (abc12345)
 
 ### `--filter`
 
-Prune only the selected workspaces' `node_modules` folders (same patterns as [`bun install --filter`](/pm/filter)). Shared locations — the root `node_modules`, or `node_modules/.bun` with the isolated linker — are cleaned too, but anything an unselected workspace still needs is kept.
+Prune only the selected workspaces' `node_modules` folders (same patterns as [`bun install --filter`](/pm/filter)). Bun also cleans shared locations: the root `node_modules`, or `node_modules/.bun` with the isolated linker. In those locations, Bun keeps anything an unselected workspace still needs.
 
 ```bash terminal icon="terminal"
 bun prune --production --filter app
@@ -63,11 +63,11 @@ bun prune --production --filter app
 
 - Always runs from the workspace root and covers every workspace's `node_modules`, even when invoked inside a workspace package.
 - Requires `bun.lock` to match `package.json`. If you edited dependencies since the last install, run `bun install` first.
-- Uses the same linker as `bun install` would. If `node_modules` was created with the other linker, `bun prune` refuses to run — pass the matching `--linker`, or run `bun install`.
-- Packages are matched by name. A package at the wrong version is left for `bun install` to replace. A nested copy (`node_modules/a/node_modules/b`) is only removed once the correct version is installed above it; otherwise Bun keeps it and prints a warning.
+- Uses the same linker as `bun install` would. If `node_modules` was created with the other linker, `bun prune` refuses to run. Pass the matching `--linker`, or run `bun install`.
+- Matches packages by name. If a package is at the wrong version, Bun leaves it for `bun install` to replace. Bun only removes a nested copy (`node_modules/a/node_modules/b`) once the correct version is installed above it; otherwise Bun keeps it and prints a warning.
 - Never removes workspace folders, `.bin` entries still in use, dot-directories like `.cache`, plain files, or anything outside `node_modules`.
-- Packages disabled for the current `os`/`cpu` are removed. Pass `--os`/`--cpu` to prune for another platform.
+- Removes packages disabled for the current `os`/`cpu`. Pass `--os`/`--cpu` to prune for another platform.
 - Works on a pruned monorepo checkout (e.g. `turbo prune` output) the same way `bun install --frozen-lockfile` does.
-- If any entry fails to delete, the rest are still removed and the command exits `1`.
+- If any entry fails to delete, the command still removes the rest and exits `1`.
 - `--global` is not supported.
 - To clean the global cache instead, use [`bun pm cache rm`](/pm/cli/pm#cache).

@@ -28,6 +28,6 @@
     "tailwindcss": "^4.1.11"
   },
   "peerDependencies": {
-    "typescript": "^6"
+    "typescript": "^7"
   }
 }

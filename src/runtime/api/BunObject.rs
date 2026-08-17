@@ -98,6 +98,7 @@ use crate::crypto as Crypto;
 use crate::node;
 use crate::test_runner::jest::Jest;
 use crate::valkey_jsc::js_valkey::SubscriptionCtx;
+use bun_collections::index_sort;
 use bun_core::zig_string::Slice as ZigStringSlice;
 use bun_jsc::ZigStringJsc as _; // to_error_instance / to_type_error_instance
 use bun_jsc::call_frame::ArgumentsSlice;
@@ -1461,7 +1462,8 @@ fn serve(global_object: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSVa
             crate::server::server_config::FromJSOptions {
                 allow_bake_config: bun_core::FeatureFlags::bake(),
                 is_fetch_required: true,
-                has_user_routes: false,
+                previous_fetch: false,
+                previous_routes: false,
             },
         )?;
 
@@ -1969,10 +1971,10 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     }
 
     let array = JSValue::create_empty_array(global_this, sort_indices.len())?;
-    sort_indices.sort_by(|a, b| {
-        if GraphFile::less_than_by_index(unsorted_files, *a, *b) {
+    index_sort::sort_indices(&mut sort_indices, &mut |a, b| {
+        if GraphFile::less_than_by_index(unsorted_files, a, b) {
             core::cmp::Ordering::Less
-        } else if GraphFile::less_than_by_index(unsorted_files, *b, *a) {
+        } else if GraphFile::less_than_by_index(unsorted_files, b, a) {
             core::cmp::Ordering::Greater
         } else {
             core::cmp::Ordering::Equal
@@ -2725,12 +2727,11 @@ pub mod JSZstd {
 
         let level = get_level(global_this, options_val)?;
 
-        let allow_string_object = true;
         if let Some(buffer) = node::StringOrBuffer::from_js_maybe_async(
             global_this,
             buffer_value,
-            true,
-            allow_string_object,
+            node::Flavor::Async,
+            node::StringObjects::Allow,
         )? {
             return Ok((buffer, options_val, level));
         }
@@ -2806,7 +2807,7 @@ pub mod JSZstd {
 
     /// `Bun.zstdCompress` / `Bun.zstdDecompress` off the JS thread.
     pub(crate) struct ZstdJob {
-        /// Created with `is_async=true` (JS-backed buffer protected); the
+        /// Created with `Flavor::Async` (JS-backed buffer protected); the
         /// [`bun_jsc::ThreadSafe`] releases that with the job.
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,

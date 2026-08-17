@@ -50,7 +50,7 @@ pub use bun_jsc::IntegerRange;
 pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgresError {
     use bun_sql::postgres::AnyPostgresError as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
     }
 }
@@ -58,7 +58,7 @@ pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgres
 pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_error::Error {
     use bun_sql::mysql::protocol::any_mysql_error::Error as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
     }
 }

@@ -45,8 +45,6 @@ import { existsSync, readFileSync } from "fs";
 import path from "path";
 import { readdirRecursive, writeIfNotChanged } from "./helpers";
 
-if (process.env.BUN_SILENT === "1") console.log = () => {};
-
 const argv = process.argv.slice(2);
 const outBase = argv.pop();
 if (!outBase) {

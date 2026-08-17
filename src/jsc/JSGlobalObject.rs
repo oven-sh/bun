@@ -1118,7 +1118,14 @@ impl JSGlobalObject {
         VirtualMachine::get()
     }
 
+    /// The unhandled-rejection checkpoint: report every promise of this global
+    /// that rejected and still has no handler. A no-op while a host function is
+    /// blocking its JS caller in [`VirtualMachine::wait_for_promise_blocking_js`];
+    /// the checkpoint after that caller returns reports them.
     pub fn handle_rejected_promises(&self) {
+        if self.bun_vm().promise_waits_blocking_js.get() != 0 {
+            return;
+        }
         // JSC__JSGlobalObject__handleRejectedPromises catches and reports its
         // own exceptions; the only thing that escapes is a TerminationException
         // (worker terminate() or process.exit()), and the request flag may

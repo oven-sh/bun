@@ -489,12 +489,10 @@ impl Expect {
                     let vm = global_this.vm();
                     promise.set_handled(vm);
 
-                    // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
-            global_this
-                .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
-                .map_err(|stopped| stopped.throw(global_this))?;
+                    global_this
+                        .bun_vm()
+                        .wait_for_promise_blocking_js(promise)
+                        .map_err(|stopped| stopped.throw(global_this))?;
 
                     let new_value = promise.result(vm);
                     match promise.status() {
@@ -877,9 +875,12 @@ impl Expect {
 
         let mut return_value: JSValue = JSValue::ZERO;
 
-        // Drain existing unhandled rejections
-        vm.global().handle_rejected_promises();
-
+        // An error the call reports as uncaught instead of throwing (a native
+        // EventEmitter's listener throwing, say) is what the function threw.
+        // The capture covers the call only: a rejection is not reportable before
+        // the test yields, so whatever rejects during the call or the wait below
+        // is left for the checkpoint after the test gets control back, like any
+        // other rejection in the test body.
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
         vm.unhandled_pending_rejection_to_capture = Some(&raw mut return_value);
@@ -889,17 +890,18 @@ impl Expect {
             Err(err) => global_this.take_exception(err),
         };
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
-
-        vm.global().handle_rejected_promises();
+        scope.apply(vm);
 
         if return_value.is_empty() {
             return_value = return_value_from_function;
         }
 
         if let Some(promise) = return_value.as_any_promise() {
-            let waited = vm.wait_for_promise(promise);
-            scope.apply(vm);
-            waited.map_err(|stopped| stopped.throw(global_this))?;
+            // As in `process_promise`: the matcher consumes this promise's
+            // outcome, so its rejection alone is marked handled.
+            promise.set_handled(global_this.vm());
+            vm.wait_for_promise_blocking_js(promise)
+                .map_err(|stopped| stopped.throw(global_this))?;
             match promise.unwrap(global_this.vm(), js_promise::UnwrapMode::MarkHandled) {
                 js_promise::Unwrapped::Fulfilled(_) => {
                     return Ok((None, return_value_from_function));
@@ -917,8 +919,6 @@ impl Expect {
                 existing.set_handled(global_this.vm());
             }
         }
-
-        scope.apply(vm);
 
         Ok((
             return_value.to_error().or_else(|| return_value_from_function.to_error()),
@@ -1491,11 +1491,9 @@ impl Expect {
             let vm = global_this.vm();
             promise.set_handled(vm);
 
-            // SAFETY: bun_vm() returns the live thread-local VirtualMachine.
             global_this
                 .bun_vm()
-                .as_mut()
-                .wait_for_promise(promise)
+                .wait_for_promise_blocking_js(promise)
                 .map_err(|stopped| stopped.throw(global_this))?;
 
             result = promise.result(vm);

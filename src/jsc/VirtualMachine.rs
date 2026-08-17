@@ -305,6 +305,11 @@ pub struct VirtualMachine {
     pub on_unhandled_rejection_ctx: Option<*mut c_void>,
     pub on_unhandled_rejection_exception_list: Option<NonNull<ExceptionList>>,
     pub unhandled_error_counter: usize,
+    /// Host functions currently blocking the JS that called them in
+    /// [`Self::wait_for_promise_blocking_js`]. While non-zero,
+    /// [`JSGlobalObject::handle_rejected_promises`] reports nothing. `Cell` for
+    /// the same reason as [`Self::is_inside_deferred_task_queue`]; zero-valid.
+    pub(crate) promise_waits_blocking_js: core::cell::Cell<u32>,
     /// When set, `print_error_instance_body` calls this with the remapped
     /// `ZigException` (same lifecycle as the GitHub Actions annotation hook),
     /// so observers can read name/message/stack without re-running the
@@ -2636,6 +2641,40 @@ impl VirtualMachine {
     #[inline]
     pub fn wait_for_promise(&mut self, promise: jsc::AnyPromise) -> Result<(), jsc::Stopped> {
         self.event_loop_mut().wait_for_promise(promise)
+    }
+
+    /// [`Self::wait_for_promise`] for a host function called from JS (a
+    /// bun:test matcher waiting on a promise): the JS that called it is still
+    /// on the stack while the loop runs here. Script may handle a rejection
+    /// until the job it happened in ends, and for everything that rejects
+    /// during this wait that job is the blocked caller, which gets to attach
+    /// its handlers when it resumes (`expect(a).rejects...` followed by
+    /// `expect(b).rejects...` when `a` and `b` reject together). So while such
+    /// a wait is on the stack [`JSGlobalObject::handle_rejected_promises`]
+    /// reports nothing; what is still unhandled is reported by the first
+    /// checkpoint after the caller returns: the end of the tick or callback it
+    /// runs in, or the test runner's drain after a test body.
+    ///
+    /// Waits with no JS below them (the entry point, preloads, the REPL) keep
+    /// using `wait_for_promise`: nothing is left to handle those rejections,
+    /// and such a wait may never end (a top-level `await` that holds the
+    /// process open), so they report as they go.
+    ///
+    /// `&self`, not `&mut self`: a `&mut` receiver is `noalias`, and the
+    /// checkpoint reads the counter through the thread-local VM pointer from
+    /// inside the wait, which `noalias` rules out, so release builds folded
+    /// the two stores away and reported during the wait after all. A shared
+    /// reference to this (interior-mutable) struct makes no such promise. Same
+    /// hazard as the R-2 note on [`EventLoop::run_callback`].
+    pub fn wait_for_promise_blocking_js(
+        &self,
+        promise: jsc::AnyPromise,
+    ) -> Result<(), jsc::Stopped> {
+        let waits = &self.promise_waits_blocking_js;
+        waits.set(waits.get() + 1);
+        let result = self.event_loop_mut().wait_for_promise(promise);
+        waits.set(waits.get() - 1);
+        result
     }
 
     /// `eventLoop().autoTick()` — dispatched through the runtime hook

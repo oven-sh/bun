@@ -11,7 +11,7 @@ pub use resolver_hooks::{
     NegatableEnum, NegatableExt, NpmInfo, OperatingSystem, PackageID, PackageJsonView,
     PackageNameHash, PreinstallState, Repository, Resolution, ResolutionSlice, ResolutionTag,
     ResolutionValue, TagInfo, TarballInfo, TaskCallbackContext, TruncatedPackageNameHash, URI,
-    VersionSlice, VersionedURL, VersionedURLType, WakeHandler,
+    VersionSlice, VersionedURL, VersionedURLType, WakeHandler, WakeTarget,
 };
 
 // The canonical ExternalString / SlicedString / SemverString definitions live

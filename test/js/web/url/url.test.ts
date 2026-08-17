@@ -175,6 +175,32 @@ describe("url", () => {
     expect(new URL("https://\u{1F4A9}.com/xn--a/%41").pathname).toBe("/xn--a/%41");
   });
 
+  it("judges literal punycode labels like Node (fast path and ICU path)", () => {
+    // [input, canParse] — expectations match Node 26 / ICU UTS #46 (CheckBidi, CheckJoiners, non-transitional).
+    const cases: [string, boolean][] = [
+      ["https://xn--ls8h.com/", true], // valid emoji label
+      ["https://XN--LS8H.com/", true], // case-insensitive prefix and digits
+      ["https://foo.xn--nxasmq6b/", true], // Greek
+      ["https://xn--mgbh0fb.xn--kgbechtv/", true], // RTL labels (BiDi rule, ICU path)
+      ["https://ab--cd.com/", true], // hyphens at 3-4 in a non-ACE label are allowed
+      ["https://xn--53h.example/", true], // single non-ASCII code point
+      ["https://xn--a.com/", false], // decodes to U+0080 (disallowed)
+      ["https://xn--/", false], // empty ACE label
+      ["https://xn---.com/", false], // fails Punycode decoding
+      ["https://xn--ascii-.com/", false], // alternate encoding of an ASCII label
+      ["https://xn--1ug.com/", false], // ZWJ alone (CONTEXTJ)
+      ["https://xn--u-ccb.com/", false], // leading combining mark
+      ["https://xn--0.com/", false], // truncated delta
+      ["https://xn--9999999999999999999999999b/", false], // overflow
+      ["https://xn--a-b.com/", false], // "a" + U+0080-ish: disallowed after decoding
+    ];
+    for (const [input, ok] of cases) {
+      expect([input, URL.canParse(input)]).toEqual([input, ok]);
+      if (ok) expect(new URL(input).href).toBe(input.toLowerCase());
+      else expect(() => new URL(input)).toThrow(TypeError);
+    }
+  });
+
   it("resolves against repeated, alternating and invalid string bases consistently", () => {
     // The last successfully parsed base string is cached; make sure hits, misses and failures all behave.
     const a = "https://a.example/dir/page";

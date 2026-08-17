@@ -28,7 +28,6 @@
 
 #include "NodeURLHelpers.h"
 #include "URLSearchParams.h"
-#include <optional>
 #include <wtf/text/StringCommon.h>
 
 namespace WebCore {
@@ -109,31 +108,24 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base, cons
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-// new URL(input, base) is very often called with the same base string over and over (a configured origin, the
-// current request's URL), so remember the last base that parsed and validated. A null URL means the base was invalid.
-static URL parseBase(const String& base)
+// A null URL means the base did not parse or has an invalid host.
+static URL parseBase(const String& base, DOMURL::BaseURLCache* cache)
 {
-    struct LastBase {
-        String input;
-        URL url;
-    };
-    static thread_local std::optional<LastBase> lastBase;
-    if (lastBase && lastBase->input == base) [[likely]]
-        return lastBase->url;
+    if (cache && cache->input == base) [[likely]]
+        return cache->url;
     URL baseURL { base };
     if (!baseURL.isValid() || !hasValidParsedHost(baseURL, base))
         return { };
-    // Keep copies that are safe to destroy at thread exit, whatever kind of string the caller passed.
-    if (!lastBase)
-        lastBase.emplace();
-    lastBase->input = base.isolatedCopy();
-    lastBase->url = baseURL.string().impl() == base.impl() ? URL { lastBase->input } : baseURL.isolatedCopy();
+    if (cache) {
+        cache->input = base;
+        cache->url = baseURL;
+    }
     return baseURL;
 }
 
-ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
+ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base, BaseURLCache* cache)
 {
-    URL baseURL = base.isNull() ? URL { } : parseBase(base);
+    URL baseURL = base.isNull() ? URL { } : parseBase(base, cache);
     if (!base.isNull() && !baseURL.isValid())
         return Exception { InvalidURLError, url, base };
     return create(url, baseURL, base);
@@ -141,9 +133,9 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 
 DOMURL::~DOMURL() = default;
 
-static URL parseInternal(const String& url, const String& base)
+static URL parseInternal(const String& url, const String& base, DOMURL::BaseURLCache* cache)
 {
-    URL baseURL = base.isNull() ? URL { } : parseBase(base);
+    URL baseURL = base.isNull() ? URL { } : parseBase(base, cache);
     if (!base.isNull() && !baseURL.isValid())
         return {};
     URL result { baseURL, url };
@@ -152,17 +144,17 @@ static URL parseInternal(const String& url, const String& base)
     return result;
 }
 
-RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base)
+RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base, BaseURLCache* cache)
 {
-    auto completeURL = parseInternal(url, base);
+    auto completeURL = parseInternal(url, base, cache);
     if (!completeURL.isValid())
         return {};
     return adoptRef(*new DOMURL(WTF::move(completeURL)));
 }
 
-bool DOMURL::canParse(const String& url, const String& base)
+bool DOMURL::canParse(const String& url, const String& base, BaseURLCache* cache)
 {
-    return parseInternal(url, base).isValid();
+    return parseInternal(url, base, cache).isValid();
 }
 
 ExceptionOr<void> DOMURL::setHref(const String& url)

@@ -959,7 +959,15 @@ impl FetchTasklet {
 
         if self.is_waiting_request_stream_start && self.result.can_stream {
             // start streaming
-            self.start_request_stream()?;
+            if let Err(err) = self.start_request_stream() {
+                // The VM is being stopped: leave like the `!script_allowed()` gate above does.
+                self.mutex.unlock();
+                if is_done {
+                    // SAFETY: `self` is the live heap tasklet; we hold a ref.
+                    FetchTasklet::deref(std::ptr::from_mut(self));
+                }
+                return Err(err);
+            }
             // Makes wpt-h2 number-chunk test deterministic.
             // `assign_to_stream` kicks off `await reader.read()`; an invalid
             // chunk type (e.g. a JS number) throws inside `sink.write` and lands in

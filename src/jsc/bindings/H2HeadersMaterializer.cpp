@@ -2,9 +2,7 @@
 // native pass: the flat raw-headers array ([name1, value1, name2, value2, ...]),
 // the node-shaped headers object (toHeaderObject semantics from node:http2),
 // and the sensitive-names array. Replaces per-field JSArray::push round trips
-// from the Rust engine sink with one call per block, and takes header names
-// from the per-VM HTTPHeaderIdentifiers cache so pseudo-headers and the names
-// in HTTPHeaderNames.in allocate nothing.
+// from the Rust engine sink with one call per block.
 
 #include "root.h"
 #include "ZigGlobalObject.h"
@@ -101,9 +99,6 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
         // Wire names are validated lowercase ASCII before they reach this point.
         WTF::StringView nameView(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nameBytes), nameLen));
 
-        // Recognized names share the VM's cached JSString and Identifier. Any
-        // other name is atomized straight from the wire bytes and its
-        // rawHeaders entry wraps that atom, so the name is copied at most once.
         JSString* nameStr;
         Identifier ident;
         bool isStatus = false;
@@ -121,6 +116,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
             isCookie = headerName == WebCore::HTTPHeaderName::Cookie;
             isSetCookie = headerName == WebCore::HTTPHeaderName::SetCookie;
         } else {
+            // Atomize first so the rawHeaders string shares the atom instead of a second copy.
             ident = Identifier::fromString(vm, nameView.span8());
             nameStr = jsString(vm, ident.string());
         }

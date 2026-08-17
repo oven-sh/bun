@@ -101,9 +101,7 @@ namespace WebCore {
     macro("x-temp-tablet", XTempTablet)                                                    \
     macro("x-xss-protection", XXSSProtection)
 
-// HTTP/2 pseudo-header fields (RFC 9113 section 8.3). They are not header
-// fields, so HTTPHeaderNames.in does not list them, but every HTTP/2 request
-// block carries four of them and every response block carries :status.
+// RFC 9113 pseudo-headers; not header fields, so HTTPHeaderName has no entries for them.
 #define HTTP2_PSEUDO_HEADERS_EACH_NAME(macro) \
     macro(":authority", Authority)            \
     macro(":method", Method)                  \
@@ -130,9 +128,7 @@ bool findHTTP2PseudoHeaderName(WTF::StringView, HTTP2PseudoHeaderName&);
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_##name##String; \
     JSC::Identifier m_##name##Identifier;
 
-// Per-VM cache of one atomized Identifier and one JSString per header name, so
-// materializing inbound headers (NodeHTTP.cpp, H2HeadersMaterializer.cpp)
-// allocates nothing for the names it recognizes.
+// Per-VM cache: one Identifier and one JSString per header name, for the lifetime of the VM.
 class HTTPHeaderIdentifiers {
 public:
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DECLARATIONS)

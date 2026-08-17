@@ -47,8 +47,7 @@ using StringGetter = JSC::JSString* (HTTPHeaderIdentifiers::*)(JSC::JSGlobalObje
 #define HTTP_HEADERS_STRING_ARRAY_ENTRIES(literal, name) \
     &HTTPHeaderIdentifiers::name##String,
 
-// Indexed by HTTPHeaderName: HTTP_HEADERS_EACH_NAME lists the names in the
-// same order as HTTPHeaderNames.in.
+// Indexed by HTTPHeaderName; HTTP_HEADERS_EACH_NAME follows HTTPHeaderNames.in's order.
 static const IdentifierGetter headerIdentifierFields[] = {
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES)
 };
@@ -58,7 +57,7 @@ static const StringGetter headerStringFields[] = {
 static_assert(std::size(headerIdentifierFields) == numHTTPHeaderNames);
 static_assert(std::size(headerStringFields) == numHTTPHeaderNames);
 
-// Indexed by HTTP2PseudoHeaderName, which is generated from the same list.
+// Indexed by HTTP2PseudoHeaderName, generated from the same list.
 static const IdentifierGetter pseudoHeaderIdentifierFields[] = {
     HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP_HEADERS_IDENTIFIER_ARRAY_ENTRIES)
 };

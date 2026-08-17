@@ -8,10 +8,10 @@ use std::fmt::Write as _;
 use bun_alloc::{AllocError as OOM, Arena}; // bumpalo::Bump re-export
 use bun_collections::VecExt;
 
-use bun_ast::{Loc, Log, Source};
+use bun_ast::{Index, Loc, Log, Source};
+use bun_paths::fs::Path as FsPath;
 use bun_threading::thread_pool::Task as ThreadPoolTask;
 
-use bun_ast::ast_result::NamedExports;
 use bun_ast::{B, Binding, E, G, S, Stmt, symbol};
 use bun_ast::{ExprNodeList, LocRef, StmtOrExpr, UseDirective};
 use bun_ast::{ImportKind, ImportRecordFlags};
@@ -24,6 +24,7 @@ use crate::cache::ExternalFreeFunction;
 use crate::options::{Loader, Target};
 use crate::parse_task::{self, ResultValue, Success, WatcherData, on_complete};
 
+/// One box per generated file; [`task_callback_wrap`] takes it back and frees it.
 pub(crate) struct ServerComponentParseTask {
     pub task: ThreadPoolTask,
     pub data: Data,
@@ -31,12 +32,10 @@ pub(crate) struct ServerComponentParseTask {
     // `ParentRef` (write-provenance via `NonNull::from(&mut self)` at construction)
     // so deref sites are safe; `None` only for the FRU `Default` placeholder.
     pub ctx: Option<bun_ptr::ParentRef<BundleV2<'static>, bun_ptr::Mut>>,
+    /// The generated file's own source record; moved into the result.
     pub source: Source,
 }
 
-// `ServerComponentParseTask` is bump-arena-allocated; boxing the large arm
-// would leak. The size diff is acceptable.
-#[allow(clippy::large_enum_variant)]
 pub enum Data {
     /// Generate server-side code for a "use client" module. Given the
     /// client ast, a "reference proxy" is created with identical exports.
@@ -46,18 +45,18 @@ pub enum Data {
 }
 
 pub struct ReferenceProxy {
-    pub(crate) other_source: Source,
-    pub(crate) named_exports: NamedExports,
+    /// The "use client" module the proxy stands in for.
+    pub(crate) client_path: FsPath<'static>,
+    pub(crate) client_source_index: Index,
+    /// In export order; bundle-arena copies (`BundleV2::copy_export_names_for_reference_proxy`).
+    pub(crate) export_names: &'static [&'static [u8]],
 }
 
 pub struct ClientEntryWrapper {
-    // Owned copy.
-    pub(crate) path: Box<[u8]>,
+    /// Bundle-arena or `'static` bytes; stored as-is in the `ImportRecord`.
+    pub(crate) path: &'static [u8],
 }
 
-/// Raw thread-pool callback. Recovers `&mut ServerComponentParseTask` from the
-/// intrusive `task` field and dispatches the parse, then posts the result back
-/// to the owning event loop.
 // CONCURRENCY: thread-pool callback — runs on worker threads, one task per
 // `ServerComponentParseTask` (heap-allocated, scheduled exactly once). Writes:
 // own fields + `Log` (local) + result is posted via
@@ -66,10 +65,13 @@ pub struct ClientEntryWrapper {
 // backref to a `Send` type and `Source`/`Data` payloads are bundle-arena
 // slices.
 fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
-    // SAFETY: `thread_pool_task` points to the `task` field of a heap-allocated
-    // `ServerComponentParseTask` enqueued by BundleV2; offset_of recovers the parent.
-    let task: &mut ServerComponentParseTask = unsafe {
-        &mut *(bun_core::from_field_ptr!(ServerComponentParseTask, task, thread_pool_task))
+    // SAFETY: `thread_pool_task` is the `task` field of the box `enqueue_server_component_generated_file` leaked; the pool runs it exactly once.
+    let mut task: Box<ServerComponentParseTask> = unsafe {
+        bun_core::heap::take(bun_core::from_field_ptr!(
+            ServerComponentParseTask,
+            task,
+            thread_pool_task
+        ))
     };
 
     // `ctx` is a `ParentRef` BACKREF to the owning BundleV2 (set at enqueue).
@@ -84,11 +86,13 @@ fn task_callback_wrap(thread_pool_task: *mut ThreadPoolTask) {
     // worker-owned bump arena; lives for the worker's lifetime.
     let arena: &Arena = worker.arena();
 
-    let value = match task_callback(task, &mut log, arena) {
+    let value = match task_callback(&mut task, &mut log, arena) {
         Ok(success) => ResultValue::Success(success),
         // Only possible error is OOM; abort like `bun.outOfMemory()`.
         Err(_oom) => bun_core::out_of_memory(),
     };
+    // Nothing in `value` refers to the task, so it is freed before the result is posted.
+    drop(task);
 
     let result = Box::new(parse_task::Result {
         // `ctx` already a `ParentRef<BundleV2>` with write provenance
@@ -215,9 +219,7 @@ impl Default for ServerComponentParseTask {
                 node: Default::default(),
                 callback: task_callback_wrap,
             },
-            data: Data::ClientEntryWrapper(ClientEntryWrapper {
-                path: Box::default(),
-            }),
+            data: Data::ClientEntryWrapper(ClientEntryWrapper { path: b"" }),
             ctx: None,
             source: Source::default(),
         }
@@ -225,11 +227,7 @@ impl Default for ServerComponentParseTask {
 }
 
 fn generate_client_entry_wrapper(data: &ClientEntryWrapper, b: &mut AstBuilder) -> Result<(), OOM> {
-    // `add_import_record` stores the slice raw in the `ImportRecord`; `data.path`
-    // outlives the bundle pass (owned by the heap-allocated task). Route through
-    // `StoreStr` so the lifetime erasure goes through one audited unsafe.
-    let path = bun_ast::StoreStr::new(&data.path[..]);
-    let record = b.add_import_record(path.slice(), ImportKind::Stmt)?;
+    let record = b.add_import_record(data.path, ImportKind::Stmt)?;
     let namespace_ref = b.new_symbol(symbol::Kind::Other, b"main")?;
     b.append_stmt(S::Import {
         namespace_ref,
@@ -257,8 +255,6 @@ fn generate_client_reference_proxy(
         // config must be non-null to enter this function
         .unwrap_or_else(|| unreachable!());
 
-    let client_named_exports = &data.named_exports;
-
     // `add_import_stmt` stores the slices raw in `ImportRecord`/`ClauseItem`s;
     // the framework config outlives the bundle pass. Route through `StoreStr`
     // so the lifetime erasure goes through one audited unsafe.
@@ -275,7 +271,7 @@ fn generate_client_reference_proxy(
         // that information is not yet available since chunks are not
         // computed. The unique_key replacement system is used here.
         if ctx.transpiler().options.has_dev_server() {
-            b.bump.alloc_slice_copy(data.other_source.path.pretty)
+            b.bump.alloc_slice_copy(data.client_path.pretty)
         } else {
             let mut buf = bun_alloc::ArenaString::new_in(b.bump);
             write!(
@@ -284,7 +280,7 @@ fn generate_client_reference_proxy(
                 crate::chunk::UniqueKey {
                     prefix: ctx.unique_key,
                     kind: crate::chunk::QueryKind::Scb,
-                    index: data.other_source.index.0,
+                    index: data.client_source_index.0,
                 },
             )
             .map_err(|_| OOM)?;
@@ -292,8 +288,7 @@ fn generate_client_reference_proxy(
         },
     ));
 
-    for key in client_named_exports.keys() {
-        let key: &[u8] = key.as_ref();
+    for &key in data.export_names {
         let is_default = key == b"default";
 
         // This error message is taken from
@@ -309,7 +304,7 @@ fn generate_client_reference_proxy(
                         "client function from the server, it can only be rendered as a ",
                         "Component or passed to props of a Client Component.",
                     ),
-                    module_path = bstr::BStr::new(data.other_source.path.pretty),
+                    module_path = bstr::BStr::new(data.client_path.pretty),
                 )
             } else {
                 write!(
@@ -359,7 +354,7 @@ fn generate_client_reference_proxy(
                     ..Default::default()
                 }),
                 module_path,
-                b.new_expr(E::String::init(b.bump.alloc_slice_copy(key))),
+                b.new_expr(E::String::init(key)),
             ]),
             ..Default::default()
         });

@@ -911,16 +911,6 @@ impl Lockfile {
         None
     }
 
-    /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
-    pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
-        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
-            if dependencies.contains(id) {
-                return Some(PackageID::try_from(pkg_id).expect("int cast"));
-            }
-        }
-        None
-    }
-
     /// Does the root package.json declare the same dependency (name and specifier) itself?
     pub(crate) fn has_equal_root_dependency(&self, dependency: &Dependency) -> bool {
         let buf = self.buffers.string_bytes.as_slice();
@@ -928,16 +918,6 @@ impl Lockfile {
             .get(self.buffers.dependencies.as_slice())
             .iter()
             .any(|root_dependency| root_dependency.eql(dependency, buf, buf))
-    }
-
-    /// `None` for the edges `enqueue_dependency_to_root` appends outside of any package.
-    pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> Option<PackageID> {
-        for (pkg_id, dependencies) in self.packages.items_dependencies().iter().enumerate() {
-            if dependencies.contains(id) {
-                return Some(PackageID::try_from(pkg_id).expect("int cast"));
-            }
-        }
-        None
     }
 
     pub(crate) fn get_workspace_pkg_if_workspace_dep(&self, id: DependencyID) -> PackageID {
@@ -960,29 +940,17 @@ impl Lockfile {
         invalid_package_id
     }
 
-    /// The package whose dependency list contains `id`, or `invalid_package_id` when
-    /// no package declares it.
-    pub(crate) fn get_parent_pkg_of_dependency(&self, id: DependencyID) -> PackageID {
-        self.packages
-            .items_dependencies()
-            .iter()
-            .position(|dependencies| dependencies.contains(id))
-            .map_or(invalid_package_id, |pkg_id| {
-                PackageID::try_from(pkg_id).expect("int cast")
-            })
-    }
-
     /// Is this a direct dependency of a local package (`resolution::Tag::is_local_package`)?
     ///
     /// A folder package declared by a registry package gets no dependency list (see the
     /// Folder arm of `get_or_put_resolved_package`), so every folder package that
     /// declares anything is reached from the root through local packages only.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
-        let parent_id = self.get_parent_pkg_of_dependency(id);
-        parent_id != invalid_package_id
-            && self.packages.items_resolution()[parent_id as usize]
+        self.get_parent_pkg_of_dependency(id).is_some_and(|parent_id| {
+            self.packages.items_resolution()[parent_id as usize]
                 .tag
                 .is_local_package()
+        })
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?

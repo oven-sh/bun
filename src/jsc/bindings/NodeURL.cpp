@@ -112,8 +112,12 @@ bool hasValidPunycodeHost(WTF::StringView host)
 // Mirrors Node's url.domainToASCII/domainToUnicode, which run the input
 // through a WHATWG URL host parse (ada's url.set_hostname on a "ws://x"
 // base). Returns a null String when host parsing fails.
-static String parseDomainAsHost(const String& domain)
+static String parseDomainAsHost(const String& input)
 {
+    // The basic URL parser strips ASCII tab and newline before anything else.
+    // WTF::URL does that too, but the bracket and ':' checks below run first.
+    String domain = input.removeCharacters([](char16_t c) { return c == '\t' || c == '\n' || c == '\r'; });
+
     // The hostname setter's basic-URL parse stops at the first path, query,
     // fragment, or backslash (special scheme) terminator.
     StringView view { domain };

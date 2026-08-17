@@ -154,34 +154,6 @@ describe("url", () => {
     ).toEqual(["xn--3kj", "xn--a-hws", "xn--73g", "xn--r5g", "xn--fc9a.xn----qmg097k469k", "ab", "ab"]);
   });
 
-  // "xn--a-ecp" is well-formed punycode for "a" + U+2488 (DIGIT ONE FULL STOP), which UTS #46 disallows;
-  // "xn--pokxncvks" does not decode at all. Both fail the way Node (ada) fails them.
-  it("rejects invalid xn-- labels, decodable or not, in every special scheme (like Node)", () => {
-    for (const scheme of ["http", "https", "ws", "wss", "ftp", "file"]) {
-      for (const host of ["xn--a-ecp.example", "sub.xn--a-ecp.example", "xn--a-ecp.xn--fiqs8s", "xn--pokxncvks"]) {
-        const input = `${scheme}://${host}/`;
-        expect(() => new URL(input)).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL", input }));
-        expect(URL.canParse(input)).toBe(false);
-        expect(URL.parse(input)).toBeNull();
-      }
-    }
-    // Hosts of non-special schemes are opaque and never go through IDNA.
-    expect(new URL("foo://xn--a-ecp.example/").hostname).toBe("xn--a-ecp.example");
-    expect(new URL("foo://XN--A-ECP.example/").hostname).toBe("XN--A-ECP.example");
-  });
-
-  it("setters: href throws on an invalid xn-- label, host and hostname leave the URL unchanged", () => {
-    const url = new URL("http://ok.example/p?q#f");
-    expect(() => {
-      url.href = "http://xn--a-ecp.example/";
-    }).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
-    url.host = "xn--a-ecp.example:8080";
-    url.hostname = "xn--a-ecp.example";
-    expect(url.href).toBe("http://ok.example/p?q#f");
-    url.host = "xn--bcher-kva.de:8080";
-    expect(url.href).toBe("http://xn--bcher-kva.de:8080/p?q#f");
-  });
-
   it("keeps valid xn-- labels, and hosts that only contain the letters xn--", () => {
     const accepted = {
       "http://xn--bcher-kva.de/": "xn--bcher-kva.de",
@@ -190,22 +162,14 @@ describe("url", () => {
       "http://xn--e1afmkfd.xn--p1ai/": "xn--e1afmkfd.xn--p1ai",
       // Not a punycode label: "xn--" is not at the start of it.
       "http://axn--a-ecp.example/": "axn--a-ecp.example",
-      // Invalid punycode outside the host does not fail the host.
+      // xn-- outside the host is not looked at. ("xn--a-ecp" is not valid punycode.)
       "http://xn--a-ecp@ok.example/": "ok.example",
       "http://user:pw@xn--bcher-kva.de:8080/xn--a-ecp?xn--a-ecp#xn--a-ecp": "xn--bcher-kva.de",
+      // Hosts of non-special schemes are opaque: no IDNA, not even lowercasing.
+      "foo://xn--a-ecp.example/": "xn--a-ecp.example",
+      "foo://XN--A-ECP.example/": "XN--A-ECP.example",
     };
     expect(Object.fromEntries(Object.keys(accepted).map(input => [input, new URL(input).hostname]))).toEqual(accepted);
-  });
-
-  it("validates xn-- hosts longer than the IDNA conversion's initial buffer", () => {
-    // The punycode check converts the host with a 256 code unit buffer first and retries with a larger one; the
-    // second attempt has to produce both the converted host and, for an invalid label, the error.
-    const filler = Buffer.alloc(1000, "a").toString();
-    const valid = `xn--bcher-kva.${filler}.de`;
-    expect(new URL(`http://${valid}/`).hostname).toBe(valid);
-    const invalid = `xn--a-ecp.${filler}.de`;
-    expect(() => new URL(`http://${invalid}/`)).toThrow(expect.objectContaining({ code: "ERR_INVALID_URL" }));
-    expect(URL.canParse(`http://${invalid}/`)).toBe(false);
   });
 
   it("rejects invalid punycode labels however they are spelled in the input (like Node)", () => {

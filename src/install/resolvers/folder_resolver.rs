@@ -83,32 +83,22 @@ impl<'a> fmt::Display for PackageWorkspaceSearchPathFormatter<'a> {
     }
 }
 
-/// What a directory's `package.json` is read as. Each kind parses it with
-/// different `Features` and produces a different `Resolution`, so one
-/// directory is cached separately per kind: a `link:` and a `file:` pointing
-/// at the same directory are two packages, and whichever resolves first must
-/// not be handed out for the other.
+/// One directory resolves to a different package (`Features`, `Resolution`) per kind, so
+/// the folder-resolution map is keyed by both.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) enum Kind {
-    /// A `file:` dependency or a workspace member (`Features::FOLDER` /
-    /// `Features::WORKSPACE`, dependencies installed). These share an entry
-    /// so a `file:` pointing at a workspace member, or at the root package
-    /// seeded by `PackageManager::init`, resolves to that existing package.
+    /// `file:` dependencies and workspace members (and the root seeded by `PackageManager::init`).
     Folder,
-    /// A `link:` target (`Features::LINK`: its dependencies are not
-    /// installed, `Resolution::Symlink`).
+    /// `link:` targets (`Resolution::Symlink`, dependencies not installed).
     Link,
-    /// An npm package already extracted into the cache (`Features::NPM`,
-    /// `Resolution::Npm`).
+    /// npm packages already extracted into the cache (`Resolution::Npm`).
     CacheFolder,
 }
 
-/// Key of the folder-resolution map.
 #[derive(Copy, Clone, PartialEq, Eq, Hash)]
 pub(crate) struct Key {
     kind: Kind,
-    /// Hash of the normalized absolute `package.json` path; `Entry::abs_path`
-    /// holds the bytes it was computed from.
+    /// Of the normalized absolute `package.json` path kept in `Entry::abs_path`.
     abs_hash: u64,
 }
 
@@ -415,20 +405,6 @@ pub enum GlobalOrRelative<'a> {
     CacheFolder(&'a [u8]),
 }
 
-impl GlobalOrRelative<'_> {
-    /// Must agree with the resolver `get_or_put` picks for each variant.
-    fn kind(self) -> Kind {
-        match self {
-            GlobalOrRelative::Global(_) => Kind::Link,
-            GlobalOrRelative::Relative(
-                dependency::version::Tag::Folder | dependency::version::Tag::Workspace,
-            ) => Kind::Folder,
-            GlobalOrRelative::Relative(_) => unreachable!(),
-            GlobalOrRelative::CacheFolder(_) => Kind::CacheFolder,
-        }
-    }
-}
-
 pub(crate) fn get_or_put(
     global_or_relative: GlobalOrRelative<'_>,
     version: &dependency::Version,
@@ -456,7 +432,7 @@ pub(crate) fn get_or_put(
         // `(&[u8]).as_ptr().cast_mut()` would be UB under Stacked/Tree
         // Borrows: those pointers carry read-only provenance, and the
         // optimizer may assume `abs`'s bytes are unchanged when computing
-        // the `Key` below.
+        // `hash(abs.as_bytes())` below.
         //
         // Instead: capture lengths, let the shared borrows of `joined` die,
         // then take a fresh `&mut joined[..abs_len]` (write provenance) and
@@ -477,7 +453,13 @@ pub(crate) fn get_or_put(
             &rel_buf[..rel_len],
         )
     };
-    let key = Key::new(global_or_relative.kind(), abs.as_bytes());
+    // Must agree with the resolver picked for each variant below.
+    let kind = match global_or_relative {
+        GlobalOrRelative::Global(_) => Kind::Link,
+        GlobalOrRelative::Relative(_) => Kind::Folder,
+        GlobalOrRelative::CacheFolder(_) => Kind::CacheFolder,
+    };
+    let key = Key::new(kind, abs.as_bytes());
 
     // Check first, compute, then insert, because read_package_json_from_disk
     // needs &mut manager. Compare the stored path, not just its hash: a

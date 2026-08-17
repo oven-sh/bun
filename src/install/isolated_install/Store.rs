@@ -7,7 +7,6 @@ use bstr::BStr;
 use bun_alloc::AllocError;
 use bun_collections::{ArrayHashMap, MultiArrayList};
 use bun_semver::String as SemverString;
-use bun_wyhash::Wyhash;
 
 use crate::lockfile::{Lockfile, package};
 use crate::{Dependency, DependencyID, INVALID_DEPENDENCY_ID, PackageID, Resolution};
@@ -358,58 +357,30 @@ pub mod entry {
         }
     }
 
-    /// Max bytes of resolution (the text after `name@`; a folder path or git/tarball
-    /// URL otherwise makes it arbitrarily long) in an entry name. The package directory
-    /// under the entry is the cwd of its lifecycle scripts, which Windows' `CreateProcess`
-    /// rejects past MAX_PATH (ENOENT) although bun's own file I/O accepts such paths.
-    /// 80 keeps versions and `github+owner+repo+<sha>` verbatim.
-    const MAX_RESOLUTION_LEN: usize = 80;
-    /// Longer resolutions become `<leading bytes>+<16 hex wyhash of the whole text>`,
-    /// `MAX_RESOLUTION_LEN` bytes at most.
-    const CUT_RESOLUTION_LEN: usize = MAX_RESOLUTION_LEN - "+".len() - 16;
-
-    /// The first `MAX_RESOLUTION_LEN` bytes written, plus the length and hash of all of them.
-    struct ResolutionSink {
-        buf: [u8; MAX_RESOLUTION_LEN],
-        len: usize,
-        hasher: Wyhash,
-    }
-
-    impl fmt::Write for ResolutionSink {
-        fn write_str(&mut self, s: &str) -> fmt::Result {
-            let bytes = s.as_bytes();
-            if let Some(room) = self.buf.get_mut(self.len..) {
-                let n = bytes.len().min(room.len());
-                room[..n].copy_from_slice(&bytes[..n]);
-            }
-            self.len += bytes.len();
-            self.hasher.update(bytes);
-            Ok(())
-        }
-    }
-
+    /// The text after `name@` in an entry name, capped at 80 bytes because the package directory
+    /// below is the cwd of lifecycle scripts and Windows' `CreateProcess` rejects one past
+    /// MAX_PATH. Versions and `github+owner+repo+<sha>` fit; a longer folder path or URL
+    /// becomes `<leading bytes>+<16 hex wyhash of the whole text>`.
     fn write_resolution(f: &mut fmt::Formatter<'_>, resolution: fmt::Arguments<'_>) -> fmt::Result {
-        let mut sink = ResolutionSink {
-            buf: [0; MAX_RESOLUTION_LEN],
-            len: 0,
-            hasher: Wyhash::init(0),
-        };
-        fmt::write(&mut sink, resolution)?;
-
-        if sink.len <= MAX_RESOLUTION_LEN {
-            return f.write_str(bun_core::str_utf8(&sink.buf[..sink.len]).ok_or(fmt::Error)?);
+        const MAX_RESOLUTION_LEN: usize = 80;
+        let mut buf = [0u8; MAX_RESOLUTION_LEN];
+        if let Ok(text) = bun_core::fmt::buf_print(&mut buf, resolution) {
+            return f.write_str(bun_core::str_utf8(text).ok_or(fmt::Error)?);
         }
-
-        let mut cut = CUT_RESOLUTION_LEN;
-        while !bun_core::strings::is_on_char_boundary(&sink.buf, cut) {
+        let text = resolution.to_string();
+        let mut cut = MAX_RESOLUTION_LEN - "+".len() - 16;
+        while !text.is_char_boundary(cut) {
             cut -= 1;
         }
-        f.write_str(bun_core::str_utf8(&sink.buf[..cut]).ok_or(fmt::Error)?)?;
-        write!(f, "+{:016x}", sink.hasher.final_())
+        write!(
+            f,
+            "{}+{:016x}",
+            &text[..cut],
+            bun_wyhash::hash(text.as_bytes())
+        )
     }
 
     /// `name@version` (or `name@file+path` / `name@root`) without the `+peerhash` suffix.
-    /// The resolution part is bounded by [`MAX_RESOLUTION_LEN`].
     pub struct StoreKeyFormatter<'a> {
         name: SemverString,
         resolution: &'a Resolution,

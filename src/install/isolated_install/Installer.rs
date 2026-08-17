@@ -1293,24 +1293,7 @@ impl Task {
                             }
                         };
                         if is_stale_link {
-                            let remove_err: Option<sys::Error> = {
-                                #[cfg(windows)]
-                                {
-                                    'win: {
-                                        if let Some(_e) = sys::rmdir(local.slice_z()).err() {
-                                            if let Some(e) = sys::unlink(local.slice_z()).err() {
-                                                break 'win Some(e);
-                                            }
-                                        }
-                                        break 'win None;
-                                    }
-                                }
-                                #[cfg(not(windows))]
-                                {
-                                    sys::unlink(local.slice_z()).err()
-                                }
-                            };
-                            if let Some(e) = remove_err {
+                            if let Err(e) = remove_link(local.slice_z()) {
                                 if e.get_errno() != sys::Errno::ENOENT {
                                     // Do NOT proceed: the backend below would
                                     // write *through* the still-live symlink
@@ -2546,13 +2529,13 @@ impl<'a> Installer<'a> {
                 let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
                 dest.set_length(base_len);
                 append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
-                remove_link(dest.slice_z());
+                let _ = remove_link(dest.slice_z());
             }
         }
 
         for &entry_id in &self.failed_optional_entries {
             if entry_hoisted[entry_id.get() as usize] {
-                remove_link(self.hidden_node_modules_link_path(entry_id).slice_z());
+                let _ = remove_link(self.hidden_node_modules_link_path(entry_id).slice_z());
             }
         }
     }
@@ -2895,16 +2878,7 @@ impl<'a> Installer<'a> {
                     };
 
                     if is_symlink {
-                        #[cfg(windows)]
-                        {
-                            if sys::rmdir(dest.slice_z()).err().is_some() {
-                                let _ = sys::unlink(dest.slice_z());
-                            }
-                        }
-                        #[cfg(not(windows))]
-                        {
-                            let _ = sys::unlink(dest.slice_z());
-                        }
+                        let _ = remove_link(dest.slice_z());
                     } else {
                         let _ = Fd::cwd().delete_tree(dest.slice());
                     }
@@ -3195,15 +3169,15 @@ fn append_dependency_link_name(
     }
 }
 
-fn remove_link(path: &ZStr) {
+/// Removes a symlink; on Windows also a directory symlink or junction (dangling or not).
+pub(crate) fn remove_link(path: &ZStr) -> sys::Result<()> {
     #[cfg(windows)]
     {
-        // directory symlinks and junctions (dangling or not) go through rmdir
         if sys::rmdir(path).is_ok() {
-            return;
+            return Ok(());
         }
     }
-    let _ = sys::unlink(path);
+    sys::unlink(path)
 }
 
 fn is_rename_collision(err: &sys::Error) -> bool {

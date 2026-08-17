@@ -81,10 +81,8 @@ impl PackageManager {
                     self.set_preinstall_state(pkg.meta.id, PreinstallState::Done);
                     return PreinstallState::Done;
                 }
-                // Nor the other libc's variant of a native package. Unlike os/cpu this only
-                // holds for the dependency at hand (`Libc::for_dependency`): a regular
-                // dependency on the same package resolved later still installs it, and the
-                // installer downloads it at that point because the state is left untouched.
+                // Nor another libc's variant; only for this dependency (`Libc::for_dependency`),
+                // so the state stays untouched and a later regular dependency still installs it.
                 if !pkg
                     .meta
                     .libc
@@ -509,16 +507,12 @@ fn put_npm_package_config_env(
         return Ok(());
     };
 
-    config.try_for_each_property(|key, _key_loc, value| {
-        let Some(value) = value.as_utf8_string_literal() else {
-            return Ok(());
-        };
-        if key.is_empty() || value.is_empty() {
-            return Ok(());
+    config.try_for_each_property(|key, _, value| match value.as_utf8_string_literal() {
+        Some(value) if !key.is_empty() && !value.is_empty() => {
+            script_env.put(&strings::concat(&[b"npm_package_config_", key]), value)
         }
-        script_env.put(&strings::concat(&[b"npm_package_config_", key]), value)
+        _ => Ok(()),
     })?;
-
     Ok(())
 }
 

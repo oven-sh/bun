@@ -2582,7 +2582,24 @@ fn get_or_put_resolved_package(
         dependency::version::Tag::Folder => {
             let folder = *version.folder();
             let res: FolderResolutionValue = 'res: {
-                if this.lockfile.is_workspace_dependency(dependency_id) {
+                if !this.lockfile.is_workspace_dependency(dependency_id)
+                    && crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder))
+                {
+                    // overrides/resolutions are only ever parsed from the root
+                    // package.json, so a folder path that reached here via an
+                    // override was written by the user and is trusted the same
+                    // as a direct dependency of the root.
+                    let buf = this.lockfile.buffers.string_bytes.as_slice();
+                    if !this.lockfile.overrides.contains_name(
+                        dependency.name_hash,
+                        dependency.name.slice(buf),
+                        buf,
+                    ) {
+                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
+                    }
+                }
+
+                if this.lockfile.is_dependency_of_local_package(dependency_id) {
                     // relative to cwd
                     // reshaped for borrowck — `folder_path` borrows
                     // `string_bytes`; detach the slice lifetime so the
@@ -2616,22 +2633,8 @@ fn get_or_put_resolved_package(
                     );
                 }
 
-                // transitive folder dependencies do not have their dependencies resolved
-                if crate::bin::bin_target_escapes_package_dir(this.lockfile.str(&folder)) {
-                    // overrides/resolutions are only ever parsed from the root
-                    // package.json, so a folder path that reached here via an
-                    // override was written by the user and is trusted the same
-                    // as a direct dependency of the root.
-                    let buf = this.lockfile.buffers.string_bytes.as_slice();
-                    if !this.lockfile.overrides.contains_name(
-                        dependency.name_hash,
-                        dependency.name.slice(buf),
-                        buf,
-                    ) {
-                        break 'res FolderResolutionValue::Err(crate::Error::MissingPackageJSON);
-                    }
-                }
-
+                // Declared by a registry package: `Package::from_npm` keeps the path
+                // relative to that package, which is not on disk until it is installed.
                 let mut package = Package::default();
 
                 {

@@ -5748,7 +5748,8 @@ impl VirtualMachine {
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
-                    return;
+                    // Source is gone; the frames still get remapped below.
+                    break 'code bun_core::ZigStringSlice::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
                 // Note: the transpile path `clone_utf8`s the source for
@@ -5822,7 +5823,8 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                // `remapped`: frames parsed back out of a formatted `error.stack`.
+                if i == top || frames[i].remapped || frames[i].position.is_invalid() {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();

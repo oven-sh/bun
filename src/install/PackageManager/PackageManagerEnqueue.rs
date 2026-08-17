@@ -2132,6 +2132,12 @@ fn get_or_put_resolved_package_with_find_result(
     // siblings exist at this point depends on response arrival order, so the
     // range match waits for the `install_peer` pass, when all of them exist.
     let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
+    // Which peer rows have landed on a version by any given moment depends on
+    // what has arrived (they bind on sight or in the peer pass), so only
+    // regular rows' pins are recorded (`AppendedFor::pinned`).
+    let pins = !behavior.is_peer()
+        && version.tag == dependency::version::Tag::Npm
+        && version.npm().version.is_exact();
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {
@@ -2144,6 +2150,9 @@ fn get_or_put_resolved_package_with_find_result(
             url: find_result.package.tarball_url.value,
         })),
     ) {
+        if pins {
+            this.lockfile.mark_pinned_by_reuse(id);
+        }
         success_fn(this, dependency_id, id);
         return Ok(Some(ResolvedPackageResult {
             package: *this.lockfile.packages.get(id as usize),
@@ -2171,15 +2180,9 @@ fn get_or_put_resolved_package_with_find_result(
     )?)?;
 
     debug_assert!(package.meta.id != invalid_package_id);
-    // Record exact-version pins so `Lockfile::get_package_id`'s
-    // order-independence guard can tell them apart from range-resolved
-    // entries (which it treats as network-order artefacts).
-    if version.tag == dependency::version::Tag::Npm && version.npm().version.is_exact() {
-        // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here;
-        // `lockfile.exact_pinned` is disjoint from `package` (returned
-        // by-value above).
-        unsafe { &mut *(*this_ptr).lockfile }.mark_exact_pin(package.meta.id);
-    }
+    // SAFETY: `this_ptr` is the sole live `&mut PackageManager` here; `package`
+    // was returned by value above.
+    unsafe { &mut *(*this_ptr).lockfile }.mark_appended_for(package.meta.id, dependency_id, pins);
     // Use scopeguard so success_fn runs on every
     // return below (including the `?` paths). The guard owns the raw pointer so the
     // `this` reborrow below doesn't conflict with the closure capture.

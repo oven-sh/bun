@@ -125,7 +125,7 @@ impl JsRef {
     pub fn try_get(&self) -> Option<JSValue> {
         match self {
             JsRef::Weak(weak) => {
-                if weak.is_empty_or_undefined_or_null() {
+                if weak.is_empty_or_undefined_or_null() || !weak.is_live_cell() {
                     None
                 } else {
                     Some(*weak)
@@ -173,6 +173,9 @@ impl JsRef {
             JsRef::Weak(weak) => {
                 debug_assert!(!weak.is_empty_or_undefined_or_null());
                 let weak = *weak;
+                if !weak.is_live_cell() {
+                    return;
+                }
                 *self = JsRef::Strong(Strong::create(weak, global));
             }
             JsRef::Strong(_) => {}

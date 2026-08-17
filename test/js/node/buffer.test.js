@@ -4461,6 +4461,103 @@ describe("raw <enc>Slice / <enc>Write bindings match Node", () => {
         exitCode: 0,
       });
     });
+
+    // Node treats a detached buffer as empty: every writer returns 0, and offset/length
+    // are range-checked against its byteLength of 0 like for any other buffer.
+    describe("on a detached buffer", () => {
+      const detached = () => {
+        const ab = new ArrayBuffer(9);
+        const buf = Buffer.from(ab);
+        structuredClone(ab, { transfer: [ab] });
+        return buf;
+      };
+      // Latin-1 and UTF-16 strings go through different native encoders, so cover both.
+      const inputs = method => [source[method], source[method] + "\u00e9\u4e2d"];
+
+      it.each(strict)("%s returns 0", method => {
+        for (const str of inputs(method)) {
+          expect([
+            detached()[method](str),
+            detached()[method](str, 0),
+            detached()[method](str, 0, 0),
+            detached()[method](str, NaN),
+            detached()[method](str, 0, NaN),
+          ]).toEqual([0, 0, 0, 0, 0]);
+        }
+      });
+
+      it.each(strict)("%s reports an offset or length past the end as ERR_BUFFER_OUT_OF_BOUNDS", method => {
+        for (const str of inputs(method)) {
+          expect(() => detached()[method](str, 1)).toThrow(OUT_OF_BOUNDS);
+          expect(() => detached()[method](str, -1)).toThrow(OUT_OF_BOUNDS);
+          expect(() => detached()[method](str, 0, 1)).toThrow(OUT_OF_BOUNDS);
+        }
+      });
+
+      it.each(clamping)("%s returns 0 and still rejects an offset past the end", method => {
+        for (const str of inputs(method)) {
+          expect([detached()[method](str), detached()[method](str, 0, 1)]).toEqual([0, 0]);
+          expect(() => detached()[method](str, 1)).toThrow(OUT_OF_BOUNDS);
+        }
+      });
+
+      // Detaching from inside the offset/length coercion ends up in the same place: the
+      // byteLength read after coercion is 0, so the arguments are checked against that.
+      it.each(strict)("%s detached by an offset or length valueOf is checked against the empty buffer", method => {
+        const write = argsFor => {
+          const ab = new ArrayBuffer(9);
+          const buf = Buffer.from(ab);
+          const detaching = value => ({
+            valueOf() {
+              if (!ab.detached) structuredClone(ab, { transfer: [ab] });
+              return value;
+            },
+          });
+          return buf[method](source[method], ...argsFor(detaching));
+        };
+        expect(() => write(detaching => [detaching(5)])).toThrow(OUT_OF_BOUNDS);
+        expect(() => write(detaching => [0, detaching(5)])).toThrow(OUT_OF_BOUNDS);
+        expect(write(detaching => [detaching(0), 0])).toBe(0);
+        expect(write(detaching => [0, detaching(0)])).toBe(0);
+      });
+
+      // A detached view hands the native encoder a null destination pointer with length 0.
+      // Run the 16-bit string cases in a child process so a native abort in the encoder
+      // shows up as a non-zero exit code instead of taking down the test run.
+      it("write() and <enc>Write of a 16-bit string exit cleanly", async () => {
+        await using proc = Bun.spawn({
+          cmd: [
+            bunExe(),
+            "-e",
+            `const detached = () => {
+               const ab = new ArrayBuffer(9);
+               const buf = Buffer.from(ab);
+               structuredClone(ab, { transfer: [ab] });
+               return buf;
+             };
+             const str = "h\\u00e9llo \\u4e2d";
+             console.log(JSON.stringify([
+               detached().write(str),
+               detached().write(str, 0),
+               detached().write(str, 0, 0),
+               detached().utf8Write(str),
+               detached().latin1Write(str),
+               detached().asciiWrite(str),
+               detached().utf8Write(str, NaN),
+               detached().write("hello"),
+             ]));`,
+          ],
+          env: bunEnv,
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+          stdout: "[0,0,0,0,0,0,0,0]",
+          stderr: expect.any(String),
+          exitCode: 0,
+        });
+      });
+    });
   });
 });
 

@@ -569,8 +569,8 @@ describe("a test that completes after its timeout has passed is reported as time
       stderr: "pipe",
       env: bunEnv,
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
-    return { stderr: normalizeBunSnapshot(stderr), exitCode };
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: normalizeBunSnapshot(stdout), stderr: normalizeBunSnapshot(stderr), exitCode };
   }
 
   test.concurrent("sequential test, Bun.sleepSync after an await", async () => {
@@ -600,6 +600,7 @@ describe("a test that completes after its timeout has passed is reported as time
        1 fail
       Ran 2 tests across 1 file."
       ,
+        "stdout": "bun test <version> (<revision>)",
       }
     `);
   });
@@ -632,6 +633,7 @@ describe("a test that completes after its timeout has passed is reported as time
        1 fail
       Ran 2 tests across 1 file."
       ,
+        "stdout": "bun test <version> (<revision>)",
       }
     `);
   });
@@ -666,6 +668,7 @@ describe("a test that completes after its timeout has passed is reported as time
        1 fail
       Ran 2 tests across 1 file."
       ,
+        "stdout": "bun test <version> (<revision>)",
       }
     `);
   });
@@ -702,6 +705,7 @@ describe("a test that completes after its timeout has passed is reported as time
        2 fail
       Ran 2 tests across 1 file."
       ,
+        "stdout": "bun test <version> (<revision>)",
       }
     `);
   });

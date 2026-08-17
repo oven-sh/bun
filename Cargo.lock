@@ -449,6 +449,7 @@ dependencies = [
  "bstr",
  "bun_clap_macros",
  "bun_core",
+ "bun_highway",
  "const_format",
  "enum-map",
  "enumset",

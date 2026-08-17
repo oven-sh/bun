@@ -6,6 +6,14 @@ edition.workspace = true
 [lib]
 path = "lib.rs"
 
+[features]
+# Take the scalar paths the search wrappers use under Miri at every length, so
+# nothing references the highway_* C++ kernels, which only exist in the full bun
+# link. For a crate whose standalone `cargo test` binary reaches a search
+# wrapper: enable this from that crate's [dev-dependencies]. Never enabled in
+# the bun build itself.
+scalar = []
+
 [lints]
 workspace = true
 

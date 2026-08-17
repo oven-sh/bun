@@ -3723,19 +3723,13 @@ mod windows_impl {
     /// `Ok(false)` when `nonblocking` and the lock is held elsewhere. Unlike `flock(2)`,
     /// `LockFileEx` cannot convert a lock the handle already holds.
     pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
-        let mut flags: w::DWORD = 0;
-        if mode == FileLockMode::Exclusive {
-            flags |= w::kernel32::LOCKFILE_EXCLUSIVE_LOCK;
-        }
-        if nonblocking {
-            flags |= w::kernel32::LOCKFILE_FAIL_IMMEDIATELY;
-        }
+        use w::kernel32::{LOCKFILE_EXCLUSIVE_LOCK, LOCKFILE_FAIL_IMMEDIATELY};
+        let flags = (LOCKFILE_EXCLUSIVE_LOCK * u32::from(mode == FileLockMode::Exclusive))
+            | (LOCKFILE_FAIL_IMMEDIATELY * u32::from(nonblocking));
         let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
-        // SAFETY: FFI; `fd.native()` is a valid HANDLE and `overlapped` is a
-        // valid out-param selecting range start 0.
-        let rc = unsafe {
-            w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, &mut overlapped)
-        };
+        let ol = &raw mut overlapped;
+        // SAFETY: FFI; `fd.native()` is a valid HANDLE, `ol` a valid out-param at range start 0.
+        let rc = unsafe { w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, ol) };
         if rc != 0 {
             return Ok(true);
         }
@@ -9625,23 +9619,17 @@ mod owned_handle_tests {
             ..Default::default()
         };
 
+        let kind = |p: &'static [u8]| exists_at_type(root, ZStr::from_static(p)).ok();
         // Destination taken: it is kept as-is and the source goes away.
         renameat_concurrently_a(root, b"from/sub", to_dir, b"sub", opts).expect("rename");
-        assert!(matches!(
-            exists_at_type(root, ZStr::from_static(b"to/sub/winner\0")),
-            Ok(ExistsAtType::File)
-        ));
-        assert!(exists_at_type(root, ZStr::from_static(b"to/sub/loser\0")).is_err());
-        assert!(exists_at_type(root, ZStr::from_static(b"from/sub\0")).is_err());
+        assert!(matches!(kind(b"to/sub/winner\0"), Some(ExistsAtType::File)));
+        assert!(kind(b"to/sub/loser\0").is_none() && kind(b"from/sub\0").is_none());
 
         // Destination free: a plain rename.
         let _ = mkdir_recursive_at(root, b"from/other");
         renameat_concurrently_a(root, b"from/other", to_dir, b"other", opts).expect("rename");
-        assert!(matches!(
-            exists_at_type(root, ZStr::from_static(b"to/other\0")),
-            Ok(ExistsAtType::Directory)
-        ));
-        assert!(exists_at_type(root, ZStr::from_static(b"from/other\0")).is_err());
+        assert!(matches!(kind(b"to/other\0"), Some(ExistsAtType::Directory)));
+        assert!(kind(b"from/other\0").is_none());
 
         let _ = close(to_dir);
         let _ = close(root);

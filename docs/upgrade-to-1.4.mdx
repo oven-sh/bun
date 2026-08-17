@@ -130,10 +130,7 @@ When the same install setting (the default registry, a scoped registry, `exact`,
 
 **What to do:** if a setting appears in both files, keep the one you want and delete the other.
 
-Two related changes to where registry settings and credentials are read from:
-
-- `~/.npmrc` is now read when `XDG_CONFIG_HOME` is set but `$XDG_CONFIG_HOME/.npmrc` does not exist. Bun 1.3 only looked in `$XDG_CONFIG_HOME` when the variable was set (GitHub Actions' Ubuntu runners set it), so a `~/.npmrc` that was silently ignored there, for example one written by `npm login`, takes effect after upgrading.
-- Credentials embedded in a registry URL (`https://user:pass@registry.example.com/`) passed as `--registry`, through `BUN_CONFIG_REGISTRY` / `NPM_CONFIG_REGISTRY`, or in the `registry = { url = "..." }` object form in `bunfig.toml` are now sent; Bun 1.3 silently dropped them. They replace an `.npmrc` token for the same registry, and `BUN_CONFIG_TOKEN` / `NPM_CONFIG_TOKEN` now still apply when `--registry` is also passed.
+Relatedly, `~/.npmrc` is now read when `XDG_CONFIG_HOME` is set but `$XDG_CONFIG_HOME/.npmrc` does not exist. Bun 1.3 only looked in `$XDG_CONFIG_HOME` when the variable was set (GitHub Actions' Ubuntu runners set it), so a `~/.npmrc` that was silently ignored there, for example one written by `npm login`, takes effect after upgrading.
 
 ### `trustedDependencies` matches the resolved package name
 
@@ -378,9 +375,6 @@ As in Node, `dns.setServers()` does not affect `dns.lookup()`. If you relied on 
 - `new URL("not a url")` throws with the message `Invalid URL` and `code: "ERR_INVALID_URL"` (plus `input` / `base` properties), matching Node. 1.3's message was `"..." cannot be parsed as a URL`. Tests matching the old message need updating.
 - Module-not-found errors carry Node's wording in `error.message` (and `.stack`). In 1.3 both `require()` and `import` produced `Cannot find package 'x' from '/path/to/file.js'`. `require()` and `require.resolve()` now produce `Cannot find module 'x'` followed by a `Require stack:` list (plus a `requireStack` property); `import` and `import()` now produce `Cannot find package 'x' imported from /path/to/file.js` (`Cannot find module './x' imported from ...` for a relative specifier). The `code` values are unchanged (`MODULE_NOT_FOUND` for `require()`, `ERR_MODULE_NOT_FOUND` for `import`), as is the line Bun prints for an unhandled resolution error; tests that match `error.message` need updating.
 - The `AbortError` produced by Node APIs that take a `signal` (`timers/promises`, `fs`, `events.once()`, streams, `child_process`, `net`, and `Bun.spawn`) now has the message `The operation was aborted`, without the trailing period Bun 1.3 added. The `DOMException` thrown by `fetch()` and used as `signal.reason` keeps the period.
-- `crypto.createCipheriv()` / `createDecipheriv()` in GCM mode reject initialization vectors longer than 128 bytes with `ERR_CRYPTO_INVALID_IV`, as Node does; 1.3 accepted any length.
-- `fs.mkdtemp("")` / `fs.mkdtempSync("")` throw `EINVAL` instead of creating a randomly named directory in the current directory.
-- `node:vm` functions reject arrays and functions passed as the `options` argument (`ERR_INVALID_ARG_TYPE`).
 - `assert.deepStrictEqual()` and `util.isDeepStrictEqual()` now compare prototypes and own enumerable properties the way Node does. Comparisons that 1.3 incorrectly passed (an `Array` subclass against a plain array, a `Buffer` against a `Uint8Array`, a `Date` carrying extra own properties) now fail. `Bun.deepEquals()` and `bun:test` matchers are unchanged.
 - An exception thrown inside a `node:fs`, `node:dns`, or `crypto.pbkdf2()` callback is reported as `uncaughtException`, not `unhandledRejection`.
 - `node:http`: after an explicit `res.writeHead()`, `res.end(chunk)` sends the body chunked instead of computing a `Content-Length`, as Node does. `http.Server` now enforces `maxConnections` and emits `"drop"`.
@@ -507,7 +501,6 @@ These are mostly correctness fixes that tighten validation or align with a speci
 - The client `WebSocket` fires `close` as a queued task, per the WHATWG spec: immediately after `ws.close()` the `readyState` is `CLOSING` and `onclose` runs on a later turn. In 1.3, `onclose` ran synchronously inside `close()`.
 - Requests with a malformed `Transfer-Encoding` (`gzip, chunked`, `chunked, chunked`, or the header split across fields) are rejected with a 400 instead of being served with an undecoded body.
 - `requestCert` / `rejectUnauthorized` set inside a per-hostname `tls` entry (`serverName`) are now enforced; 1.3 only honored them on the top-level `tls` object.
-- `server.reload({ routes: {} })` on a server whose only handler was its routes now throws instead of leaving a server that answers 404 to everything. `reload({ error })` / `reload({ websocket })` on a `fetch`-only server now work (1.3 threw).
 
 **JavaScript engine**
 
@@ -550,7 +543,6 @@ These are mostly correctness fixes that tighten validation or align with a speci
 - `bun outdated` (and `bun update --interactive`) exit with code 1 when the manifest of a required dependency cannot be fetched, including a package that does not exist on the configured registry; 1.3 printed an empty table and exited 0.
 - `bun dedupe` and `bun up` (an alias of `bun update`) are new built-in commands, so `package.json` scripts with those names now need `bun run dedupe` / `bun run up`. `bun feedback` was removed.
 - A `workspace:` range inside a package downloaded from a registry (a publishing mistake in that package) is now an unresolvable dependency; 1.3 resolved it against your own workspace.
-- With `--linker isolated`, the `node_modules/.bun/` entry names of tarball and git dependencies whose URL carries credentials or a query string (including `git+ssh://git@...` URLs) no longer contain that part of the URL. The next `bun install` links such packages under the new name (`bun prune` removes the old directories); `bun.lock` is unchanged.
 - `bun init` templates declare `"typescript": "^7"` in `peerDependencies` (1.3 declared `^5`; the React templates declared no TypeScript dependency).
 - A non-interactive `bun update` now also updates `catalog:` entries within their ranges; 1.3 only did this in `bun update -i`.
 - `bun add` and `bun remove` accept `--filter` / `-F`, and `bun install <pkg> --filter` honors it. 1.3 ignored the flag on these commands, so `bun add y --filter x` added both `y` and a package named `x` to the current `package.json`; 1.4 edits the matching workspaces instead. For these two commands `--filter '*'` does not include the root package; name it explicitly to include it.

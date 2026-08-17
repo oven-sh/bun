@@ -6,6 +6,7 @@ const { SafeSet } = require("internal/primordials");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
+const kHttp1Draining = Symbol("http1Draining");
 
 function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout) {
   const { _checkInvalidHeaderChar: checkInvalidHeaderChar } = require("node:_http_common");
@@ -146,6 +147,21 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     return length;
   }
 
+  // A TLS socket completes a write on the next tick, so of the pieces above only the first would be on
+  // the transport when end() returns; cork across a tick's pieces like Node's write_()/end() do.
+  let corkedThisTick = false;
+  function corkThisTick() {
+    if (corkedThisTick) return;
+    corkedThisTick = true;
+    socket.cork();
+    process.nextTick(uncorkThisTick);
+  }
+  function uncorkThisTick() {
+    if (!corkedThisTick) return;
+    corkedThisTick = false;
+    socket.uncork();
+  }
+
   const handle = {
     flags: 0,
     ended: false,
@@ -196,6 +212,7 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
     },
     write(chunk, encoding, _callback, _strictContentLength) {
       const buf = toBuffer(chunk, encoding);
+      corkThisTick();
       writeHeadToSocket(null);
       return writeBody(buf);
     },
@@ -203,12 +220,20 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       if (this.ended) return 0;
       const buf = toBuffer(chunk, encoding);
       const length = buf ? (buf.byteLength ?? buf.length) : 0;
-      writeHeadToSocket(length);
-      writeBody(buf);
-      // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
-      // response never writes the terminating chunk, even when the user set
-      // Transfer-Encoding: chunked themselves.
-      if (chunked && !noBody) socket.write("0\r\n\r\n");
+      socket.cork();
+      try {
+        writeHeadToSocket(length);
+        writeBody(buf);
+        // Like Node's `_hasBody && chunkedEncoding` gate: a bodiless (HEAD)
+        // response never writes the terminating chunk, even when the user set
+        // Transfer-Encoding: chunked themselves.
+        if (chunked && !noBody) socket.write("0\r\n\r\n");
+      } finally {
+        uncorkThisTick();
+        socket.uncork();
+        // Node's end() releases the user's corks too, so the response is on its way regardless.
+        while (socket.writableCorked) socket.uncork();
+      }
       this.ended = true;
       this.finished = true;
       const onfinished = this.onfinished;
@@ -453,11 +478,27 @@ function connectionListenerHTTP1(server, socket, options) {
 function closeIdleHttp1Connections(server) {
   const connections = server[kHttp1Connections];
   if (!connections) return;
+  // A response still queued on the socket (a write still completing, a Duplex without _writev, a peer
+  // that stopped reading) gets keepAliveTimeout to flush; then the connection is cut as it used to be.
+  const flushTimeout = server.keepAliveTimeout > 0 ? server.keepAliveTimeout : 5000;
   for (const socket of connections) {
-    if (!socket[kHttp1ActiveRequests] && !socket.destroyed) {
+    if (socket[kHttp1ActiveRequests] || socket.destroyed || socket[kHttp1Draining]) continue;
+    if (!socket.writableLength) {
       socket.destroy();
+      continue;
     }
+    socket[kHttp1Draining] = true;
+    destroyAfterFlush(socket, flushTimeout);
   }
+}
+
+// net.Socket#destroySoon() with a deadline; a Duplex fed in via emit("connection") need not have it.
+function destroyAfterFlush(socket, timeout) {
+  if (socket.writable) socket.end();
+  socket.once("finish", socket.destroy);
+  const timer = setTimeout(() => socket.destroy(), timeout);
+  timer.unref();
+  socket.once("close", () => clearTimeout(timer));
 }
 
 function closeAllHttp1Connections(server) {

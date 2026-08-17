@@ -28,7 +28,7 @@ import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
 import { duplexPair, PassThrough, Writable } from "node:stream";
-import { connect as tlsConnect } from "node:tls";
+import { createServer as createTlsServer, connect as tlsConnect } from "node:tls";
 import tunnel from "tunnel";
 import { run as runHTTPProxyTest } from "./node-http-proxy.js";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock, test } = createTest(import.meta.path);
@@ -4137,5 +4137,92 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     await closed;
     expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
+  }
+});
+
+it("closing the server right after res.end() still delivers the body on an emit('connection') socket", async () => {
+  // On a socket served through server.emit("connection", ...) the response is written piecewise,
+  // and a duplexPair side (like a TLS socket) completes each write asynchronously, so when the
+  // handler sweeps idle connections in the same tick the body is still queued in the socket's
+  // Writable. The sweep has to flush it rather than drop it, whether the connection is keep-alive
+  // (the sweep ends the socket) or Connection: close (the response already ended it). Shutdown code
+  // commonly calls closeIdleConnections() repeatedly; a connection still flushing must not pick up
+  // another 'finish' listener (and a MaxListenersExceededWarning) on every call.
+  const warnings: string[] = [];
+  const onWarning = (warning: Error) => {
+    if (warning.name === "MaxListenersExceededWarning") warnings.push(warning.message);
+  };
+  process.on("warning", onWarning);
+  try {
+    for (const [closeServer, connection] of [
+      [
+        (server: Server) => {
+          for (let i = 0; i < 12; i++) server.closeIdleConnections();
+        },
+        "keep-alive",
+      ],
+      [(server: Server) => server.close(), "close"],
+    ] as const) {
+      const server = createServer((req, res) => {
+        res.end("BODY");
+        closeServer(server);
+      });
+      const [clientSide, serverSide] = duplexPair();
+      try {
+        server.emit("connection", serverSide);
+        const body = await new Promise<string>((resolve, reject) => {
+          const req = request({ createConnection: () => clientSide as any, headers: { connection } }, res => {
+            let data = "";
+            res.setEncoding("utf8");
+            res.on("data", chunk => (data += chunk));
+            // A connection destroyed with the body still queued aborts the response after the head:
+            // report whatever body did arrive so the assertion below shows the truncation.
+            res.on("error", () => resolve(data));
+            res.on("end", () => resolve(data));
+          });
+          req.on("error", reject);
+          req.end();
+        });
+        expect({ connection, body, warnings }).toEqual({ connection, body: "BODY", warnings: [] });
+      } finally {
+        clientSide.destroy();
+        serverSide.destroy();
+      }
+    }
+  } finally {
+    process.off("warning", onWarning);
+  }
+});
+
+it("closeAllConnections() right after res.end() still delivers the body on an emit('connection') TLS socket", async () => {
+  // closeAllConnections() destroys outright, so this only works if res.end() has handed the whole
+  // response (not just its first piece) to the TLS socket by the time it returns, as Node's
+  // OutgoingMessage does. Feeding a tls.Server's sockets to an http.Server is how a hand-rolled
+  // https server ends up on this path.
+  const httpServer = createServer((req, res) => {
+    res.write("BO");
+    res.end("DY");
+    httpServer.closeAllConnections();
+  });
+  const tlsServer = createTlsServer(tlsCert, socket => httpServer.emit("connection", socket));
+  await new Promise<void>(resolve => tlsServer.listen(0, resolve));
+  // Connection: close so the flow also completes where closeAllConnections() has nothing to do
+  // (Node only tracks connections once the http.Server itself is listening).
+  const client = tlsConnect(
+    { host: "localhost", port: (tlsServer.address() as AddressInfo).port, ca: tlsCert.cert },
+    () => client.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"),
+  );
+  try {
+    const chunks: Buffer[] = [];
+    client.on("data", chunk => chunks.push(chunk));
+    // The destroy may arrive as EOF or as a reset; either way everything written before it arrives first.
+    client.on("error", () => {});
+    await new Promise(resolve => client.on("close", resolve));
+    const raw = Buffer.concat(chunks).toString();
+    expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(raw.slice(raw.indexOf("\r\n\r\n") + 4)).toBe("2\r\nBO\r\n2\r\nDY\r\n0\r\n\r\n");
+  } finally {
+    client.destroy();
+    tlsServer.close();
   }
 });

@@ -1680,6 +1680,10 @@ where
         let compress_js = compress_value.unwrap_or(JSValue::TRUE);
         let compress = compress_js.to_boolean();
 
+        if message_value.is_empty_or_undefined_or_null() {
+            return Err(global.throw(format_args!("publish requires a non-empty message")));
+        }
+
         if let Some(buffer) = message_value.as_array_buffer(global) {
             let status = AnyWebSocket::publish_with_options(
                 SSL,

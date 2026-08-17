@@ -371,16 +371,8 @@ impl Execution {
                     _ => unreachable!(),
                 };
 
-                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive. This
-                // `&mut` is dead before `this` is touched again.
-                let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
-                debug_assert!(sequence.active_entry.is_some());
-                if let Some(completed_entry) = sequence.active_entry {
-                    // A callback that blocked past its deadline completes before the timeout timer can
-                    // fire, so check the deadline here like the synchronous-return path in step_sequence_one.
-                    // SAFETY: arena-owned entry, alive for lifetime of BunTest
-                    let _ = unsafe { completed_entry.as_ref() }.evaluate_timeout(sequence, &now, true);
-                }
+                // SAFETY: sequence_ptr points into this.sequences; valid while BunTest is alive.
+                debug_assert!(unsafe { sequence_ptr.as_ref() }.active_entry.is_some());
                 Execution::advance_sequence(buntest_ptr, sequence_ptr, group_ptr);
 
                 let sequence_result =
@@ -772,6 +764,30 @@ impl Execution {
         if let Some(runner) = super::jest::Jest::runner() {
             runner.snapshots.reset_counts();
         }
+    }
+
+    /// A callback that blocked past its deadline finishes before the timer can fire, so it is judged as its
+    /// completion arrives; by the time `step` processes the queued completion, other callbacks may have blocked.
+    pub(crate) fn handle_callback_completed(&mut self, user_data: &RefDataValue) {
+        let _g = group_begin!();
+
+        let Some((sequence_ptr, _group_ptr)) =
+            self.get_current_and_valid_execution_sequence(user_data)
+        else {
+            return;
+        };
+        // SAFETY: sequence_ptr points into self.sequences; `self` is not accessed for the
+        // remainder of this function, so this is the unique live `&mut` to that element.
+        let sequence = unsafe { &mut *sequence_ptr.as_ptr() };
+        let Some(entry) = sequence.active_entry else {
+            return;
+        };
+        // SAFETY: arena-owned entry, alive for lifetime of BunTest
+        let _ = unsafe { entry.as_ref() }.evaluate_timeout(
+            sequence,
+            &Timespec::now_force_real_time(),
+            true,
+        );
     }
 
     pub(crate) fn handle_uncaught_exception(

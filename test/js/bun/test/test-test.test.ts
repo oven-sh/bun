@@ -709,6 +709,42 @@ describe("a test that completes after its timeout has passed is reported as time
       }
     `);
   });
+
+  test.concurrent("a test that finished in time is not blamed for a sibling blocking afterwards", async () => {
+    // The first test's completion is queued as soon as it returns, but the runner only processes the queue
+    // once the sibling, resumed by the microtask the first test queues on its way out, has finished
+    // blocking. The verdict has to be based on when the completion arrived, not on when it was processed.
+    const result = await runFixture(
+      "sibling-blocks-after-completion",
+      /*js*/ `
+        import { test } from "bun:test";
+        const { promise: firstReturned, resolve: markFirstReturned } = Promise.withResolvers();
+        test.concurrent("finishes within its timeout", async () => {
+          await Bun.sleep(1);
+          queueMicrotask(markFirstReturned);
+        }, 100);
+        test.concurrent("blocks once the first test has returned", async () => {
+          await firstReturned;
+          Bun.sleepSync(300);
+        }, 30_000);
+      `,
+    );
+    expect(result).toMatchInlineSnapshot(`
+      {
+        "exitCode": 0,
+        "stderr": 
+      "blocks.test.js:
+      (pass) finishes within its timeout
+      (pass) blocks once the first test has returned
+
+       2 pass
+       0 fail
+      Ran 2 tests across 1 file."
+      ,
+        "stdout": "bun test <version> (<revision>)",
+      }
+    `);
+  });
 });
 
 test("jest.setTimeout will change default timeout", () => {

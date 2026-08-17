@@ -460,6 +460,11 @@ describe.concurrent("native binlink altpath", () => {
       targetFile: "altpath-cmd.exe",
       description: "<pkg>/<bin_name>.exe (@esbuild/win32 shape)",
     },
+    {
+      version: "4.0.0",
+      targetFile: "altpath-cmd",
+      description: "<pkg>/<bin_name> when the bin value does not fit the path buffer",
+    },
   ] as const;
 
   for (const linker of ["hoisted", "isolated"]) {

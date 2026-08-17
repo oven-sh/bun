@@ -13,6 +13,9 @@
  *          probe 4's `<bin_name>.exe` misses; isolates probe 3)
  *   3.0.0  parent bin `bin/altpath-cmd`, target ships `altpath-cmd.exe` at root
  *          → probe 4, `<pkg>/<bin_name>.exe` (@esbuild/win32-* shape)
+ *   4.0.0  parent bin is an 8 KiB value that does not fit the path buffer on
+ *          Linux or macOS (so probe 1 cannot even be built, and no stub is
+ *          packed for it), target ships `altpath-cmd` at root → probe 2
  */
 
 import { mkdir, writeFile } from "fs/promises";
@@ -55,10 +58,13 @@ console.log("SUCCESS: Using platform-specific bin at package root");
 process.exit(0);
 `;
 
+const longBinValue = "bin/" + Buffer.alloc(8192, "b").toString();
+
 const shapes = [
   { version: "1.0.0", parentBinValue: "bin/altpath-cmd.exe", targetFile: "altpath-cmd" },
   { version: "2.0.0", parentBinValue: "bin/launcher.exe", targetFile: "launcher.exe" },
   { version: "3.0.0", parentBinValue: "bin/altpath-cmd", targetFile: "altpath-cmd.exe" },
+  { version: "4.0.0", parentBinValue: longBinValue, targetFile: "altpath-cmd" },
 ] as const;
 
 const parentVersions: Record<string, { tarball: string; pkgJson: object }> = {};
@@ -74,9 +80,12 @@ for (const { version, parentBinValue, targetFile } of shapes) {
   };
   parentVersions[version] = {
     pkgJson: parentJson,
-    tarball: await packTarball("test-native-binlink-altpath", version, parentJson, {
-      [parentBinValue]: stub,
-    }),
+    tarball: await packTarball(
+      "test-native-binlink-altpath",
+      version,
+      parentJson,
+      parentBinValue === longBinValue ? {} : { [parentBinValue]: stub },
+    ),
   };
 
   const targetJson = {

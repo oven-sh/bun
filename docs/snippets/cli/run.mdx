@@ -73,6 +73,12 @@ bun run <file or script>
   Use less memory, but run garbage collection more often
 </ParamField>
 
+<ParamField path="--max-old-space-size" type="number">
+  Set the maximum JavaScript heap size in megabytes, for Node.js compatibility. The process aborts with Node's
+  "JavaScript heap out of memory" fatal error when a full GC cannot keep the heap under the limit.
+  <code>--max_old_space_size</code> is accepted as an alias. 0 means no limit
+</ParamField>
+
 <ParamField path="--expose-gc" type="boolean">
   Expose <code>gc()</code> on the global object. Has no effect on <code>Bun.gc()</code>
 </ParamField>
@@ -259,12 +265,6 @@ bun run <file or script>
 
 <ParamField path="--max-http-header-size" type="number" default="16384">
   Set the maximum size of HTTP headers in bytes. Default is 16KiB
-</ParamField>
-
-<ParamField path="--max-old-space-size" type="number">
-  Set the maximum JavaScript heap size in megabytes, for Node.js compatibility. The process aborts with Node's
-  "JavaScript heap out of memory" fatal error when a full GC cannot keep the heap under the limit.
-  <code>--max_old_space_size</code> is accepted as an alias. 0 means no limit
 </ParamField>
 
 <ParamField path="--dns-result-order" type="string" default="verbatim">

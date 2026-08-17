@@ -57,10 +57,16 @@ public:
 
     ~ResolvedSourceCodeHolder()
     {
-        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
-            res->result.value.needsDeref = false;
-            res->result.value.source_code.impl.wtf->deref();
+        if (!res->success)
+            return;
+        ResolvedSource& value = res->result.value;
+        if (value.source_code.tag == BunStringTag::WTFStringImpl && value.needsDeref) {
+            value.needsDeref = false;
+            value.source_code.impl.wtf->deref();
         }
+        // Still owned when the fetch never created a SourceProvider, e.g. import()
+        // of a CommonJS module that require() already evaluated.
+        Zig::releaseBytecodeCache(value);
     }
 
     ErrorableResolvedSource* res;

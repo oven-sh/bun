@@ -130,6 +130,11 @@ typedef struct ResolvedSource {
     // -- Bytecode cache fields --
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
+    // Owns the bytes behind bytecode_cache (a mapped .jsc sidecar; see
+    // ResolvedSource.rs). Whoever discards the bytes last passes it to
+    // Bun__MappedFile__destroy. Null when the bytes are borrowed for the life of
+    // the process (standalone executable, Node compile cache).
+    void* bytecode_cache_file;
     void* module_info;
     // File path used as source origin for bytecode cache validation.
     // Converted to file:// URL. If empty, origin is derived from source_url.

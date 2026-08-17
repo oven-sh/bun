@@ -7,6 +7,7 @@ import {
   bunRun,
   isASAN,
   isDebug,
+  isLinux,
   isWindows,
   tempDir,
   tempDirWithFiles,
@@ -69,6 +70,165 @@ describe("Bun.build", () => {
     expect(build.outputs[0].kind).toBe("entry-point");
     expect(build.outputs[1].kind).toBe("bytecode");
     expect(await bunRun(build.outputs[0].path)).toSpawn("world");
+  });
+
+  // Loading a `// @bun @bytecode` module maps its .jsc sidecar and its source
+  // text from disk instead of reading them into the heap, and unmaps them as
+  // soon as the load turns out not to need them. Every module below is built
+  // once and loaded through a different path:
+  //   entry     require(): transpiled on the JS thread
+  //   dep       import(): transpiled on the RuntimeTranspilerStore thread pool
+  //   lazy      require(), then import() of the same file: the second load reads
+  //             both files again and then reuses the module from require.cache,
+  //             so that second pair must be released right away (exactly one
+  //             mapping of each file stays, owned by the evaluated module)
+  //   compiled  require() with module._compile overridden: the override only
+  //             gets the source text, so nothing may stay mapped at all
+  // /proc/self/maps is how a process can observe its own mappings, so the
+  // mapping counts are checked on Linux; the rest of the output is checked
+  // everywhere (Windows has no mmap and keeps reading the sidecar into memory).
+  test("bytecode output is mapped from disk while it is in use", async () => {
+    const moduleNames = ["entry", "dep", "lazy", "compiled"];
+    const files: Record<string, string> = {
+      "main.js": `
+        const { readFileSync, realpathSync } = require("fs");
+        const { join } = require("path");
+        const out = realpathSync(join(__dirname, "out"));
+        const Module = require("module");
+
+        async function main() {
+          const results = {};
+          results.entry = require(join(out, "entry.js")).value();
+          results.dep = (await import(join(out, "dep.js"))).default.value();
+          results.lazy = require(join(out, "lazy.js")).value();
+          results.lazyAgain = (await import(join(out, "lazy.js"))).default.value();
+
+          const loadJS = Module._extensions[".js"];
+          Module._extensions[".js"] = function (module, filename) {
+            module._compile = function () {
+              this.exports = { value: () => "compiled by the override" };
+            };
+            return loadJS(module, filename);
+          };
+          results.compiled = require(join(out, "compiled.js")).value();
+
+          if (process.platform === "linux") {
+            const maps = readFileSync("/proc/self/maps", "utf8").split("\\n");
+            results.mappings = {};
+            for (const name of ${JSON.stringify(moduleNames)}) {
+              for (const file of [name + ".js", name + ".js.jsc"]) {
+                results.mappings[file] = maps.filter(line => line.endsWith(" " + join(out, file))).length;
+              }
+            }
+          }
+          console.log(JSON.stringify(results));
+        }
+        main();
+      `,
+    };
+    for (const name of moduleNames) {
+      files[`${name}.js`] = `module.exports = { value: () => ${JSON.stringify(name)} };`;
+    }
+    const dir = tempDirWithFiles("bun-build-api-bytecode-mmap", files);
+
+    const build = await Bun.build({
+      entrypoints: moduleNames.map(name => join(dir, `${name}.js`)),
+      outdir: join(dir, "out"),
+      target: "bun",
+      bytecode: true,
+    });
+    expect(build.outputs.filter(output => output.kind === "bytecode")).toHaveLength(moduleNames.length);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), join(dir, "main.js")],
+      env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const diskCacheLines = stderr.split(/\r?\n/).filter(Boolean);
+    expect(diskCacheLines.filter(line => !line.startsWith("[Disk Cache] Cache "))).toEqual([]);
+    expect(JSON.parse(stdout)).toEqual({
+      entry: "entry",
+      dep: "dep",
+      lazy: "lazy",
+      lazyAgain: "lazy",
+      compiled: "compiled by the override",
+      ...(isLinux
+        ? {
+            mappings: {
+              "entry.js": 1,
+              "entry.js.jsc": 1,
+              "dep.js": 1,
+              "dep.js.jsc": 1,
+              "lazy.js": 1,
+              "lazy.js.jsc": 1,
+              "compiled.js": 0,
+              "compiled.js.jsc": 0,
+            },
+          }
+        : {}),
+    });
+    // One hit per module that was actually evaluated from its sidecar: entry,
+    // dep, and the require() of lazy. The misses are main.js and builtins.
+    expect(diskCacheLines.filter(line => line === "[Disk Cache] Cache hit for sourceCode")).toHaveLength(3);
+    expect(exitCode).toBe(0);
+  });
+
+  // The evaluated module's SourceProvider owns the two mappings; once the
+  // module is dropped from require.cache and collected, both must be gone.
+  test.skipIf(!isLinux)("bytecode output is unmapped once the module is collected", async () => {
+    const RELOADS = 10;
+    const dir = tempDirWithFiles("bun-build-api-bytecode-munmap", {
+      "index.js": `module.exports = { value: () => "index" };`,
+      "main.js": `
+        const { readFileSync, realpathSync } = require("fs");
+        const { join } = require("path");
+        const file = join(realpathSync(join(__dirname, "out")), "index.js");
+        const mappings = () => {
+          const maps = readFileSync("/proc/self/maps", "utf8").split("\\n");
+          return {
+            js: maps.filter(line => line.endsWith(" " + file)).length,
+            jsc: maps.filter(line => line.endsWith(" " + file + ".jsc")).length,
+          };
+        };
+        function release() {
+          delete require.cache[file];
+          module.children.length = 0;
+        }
+        function reload(times) {
+          for (let i = 0; i < times; i++) {
+            require(file);
+            release();
+          }
+        }
+
+        const value = require(file).value();
+        const loaded = mappings();
+        release();
+        reload(${RELOADS} - 1);
+        Bun.gc(true);
+        console.log(JSON.stringify({ value, loaded, released: mappings() }));
+      `,
+    });
+
+    const build = await Bun.build({
+      entrypoints: [join(dir, "index.js")],
+      outdir: join(dir, "out"),
+      target: "bun",
+      bytecode: true,
+    });
+    expect(build.outputs.map(output => output.kind)).toEqual(["entry-point", "bytecode"]);
+
+    const result = await bunRun(join(dir, "main.js"));
+    expect(result).toSpawn();
+    const { value, loaded, released } = JSON.parse(result.stdout);
+    expect({ value, loaded }).toEqual({ value: "index", loaded: { js: 1, jsc: 1 } });
+    // Each leaked load would leave one more mapping of each file, so a leak
+    // reads as RELOADS. A conservative stack scan may still see the last load.
+    expect(released.js).toBeLessThanOrEqual(1);
+    expect(released.jsc).toBeLessThanOrEqual(1);
   });
 
   test("passing undefined doesnt segfault", () => {

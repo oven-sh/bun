@@ -1,7 +1,7 @@
 use bun_collections::VecExt;
 use core::mem;
 
-use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet};
+use bun_collections::{ArrayHashMap, ArrayIdentityContext, MultiArrayList, StringSet, index_sort};
 use bun_core::strings;
 use bun_core::{Global, Output};
 use bun_paths::{self as path, AutoAbsPath, MAX_PATH_BYTES, PathBuffer, resolve_path};
@@ -2998,7 +2998,7 @@ impl Package<u64> {
         );
         {
             let buf = string_builder.string_bytes.as_slice();
-            package_dependencies.sort_by(|a, b| dep_sort_cmp(buf, a, b));
+            index_sort::sort_slice_by(&mut package_dependencies, |a, b| dep_sort_cmp(buf, a, b));
         }
 
         self.dependencies.off = off as u32;

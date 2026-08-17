@@ -3,7 +3,7 @@ use bun_alloc::ArenaVecExt as _;
 use core::sync::atomic::AtomicUsize;
 
 use bun_alloc::Arena; // bumpalo::Bump re-export
-use bun_collections::{ArrayHashMap, AutoBitSet, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, VecExt, index_sort};
 use bun_core::strings;
 use bun_paths::{PathBuffer, resolve_path};
 use bun_sourcemap::SourceMapPieces;
@@ -421,7 +421,7 @@ pub(crate) fn compute_chunks(
         }
 
         let ctx = ChunkSortContext { chunks: &js_chunks };
-        sorted_keys.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut sorted_keys, |a, b| {
             if ctx.less_than(a, b) {
                 core::cmp::Ordering::Less
             } else if ctx.less_than(b, a) {
@@ -457,7 +457,7 @@ pub(crate) fn compute_chunks(
 
         if css_chunks.count() > 0 {
             let sorted_css_keys: &mut [u64] = temp.alloc_slice_copy(css_chunks.keys());
-            sorted_css_keys.sort_unstable();
+            index_sort::sort_slice_unstable_by(sorted_css_keys, |a, b| a.cmp(b));
 
             // A map from the index in `css_chunks` to it's final index in `sorted_chunks`
             let remapped_css_indexes: &mut [u32] =

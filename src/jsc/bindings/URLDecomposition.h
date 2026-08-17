@@ -51,10 +51,10 @@ public:
     void setPassword(StringView);
 
     WEBCORE_EXPORT String host() const;
-    void setHost(StringView);
+    void setHost(const String&);
 
     WEBCORE_EXPORT String hostname() const;
-    void setHostname(StringView);
+    void setHostname(const String&);
 
     WEBCORE_EXPORT String port() const;
     void setPort(StringView);

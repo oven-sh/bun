@@ -38,6 +38,14 @@ static bool hasAcceptableHost(const WTF::URL& url)
     return Bun::hasValidPunycodeHost(url.host()) || !url.hasSpecialScheme();
 }
 
+// The basic URL parser removes these before any state runs. The host, hostname
+// and pathname setters look at the value (empty check, port digits, leading "/")
+// before WTF::URL reparses it, so they have to remove them up front too.
+static String removeTabAndNewline(const String& value)
+{
+    return value.removeCharacters([](char16_t c) { return c == '\t' || c == '\n' || c == '\r'; });
+}
+
 String URLDecomposition::origin() const
 {
     auto fullURL = this->fullURL();
@@ -113,9 +121,11 @@ static unsigned countASCIIDigits(StringView string)
     return length;
 }
 
-void URLDecomposition::setHost(StringView value)
+void URLDecomposition::setHost(const String& input)
 {
     auto fullURL = this->fullURL();
+    String strippedInput = removeTabAndNewline(input);
+    StringView value = strippedInput;
     if (value.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
 
@@ -154,9 +164,10 @@ String URLDecomposition::hostname() const
     return fullURL().host().toString();
 }
 
-void URLDecomposition::setHostname(StringView host)
+void URLDecomposition::setHostname(const String& input)
 {
     auto fullURL = this->fullURL();
+    String host = removeTabAndNewline(input);
     if (host.isEmpty() && !fullURL.protocolIsFile() && fullURL.hasSpecialScheme())
         return;
     if (fullURL.hasOpaquePath())
@@ -218,13 +229,12 @@ String URLDecomposition::pathname() const
     return fullURL().path().toString();
 }
 
-void URLDecomposition::setPathname(const String& value)
+void URLDecomposition::setPathname(const String& input)
 {
     auto fullURL = this->fullURL();
     if (fullURL.hasOpaquePath())
         return;
-    // URL::setPath picks the leading "/" before its reparse strips tab and newline.
-    String path = value.removeCharacters([](char16_t c) { return c == '\t' || c == '\n' || c == '\r'; });
+    String path = removeTabAndNewline(input);
     fullURL.setPath(path);
     setFullURL(fullURL);
 }

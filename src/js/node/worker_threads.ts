@@ -101,6 +101,11 @@ type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
 // after their Worker exits
 let urlRevokeRegistry: FinalizationRegistry<string> | undefined = undefined;
 
+// The native `messageerror` MessageEvent carries no error object; node hands listeners an Error.
+function deserializeError() {
+  return new TypeError("Unable to deserialize data.");
+}
+
 function injectFakeEmitter(Class) {
   // Per-instance registry mapping each event to (user listener -> wrapper), so
   // listenerCount/eventNames/removeAllListeners work over EventTarget's opaque
@@ -124,6 +129,10 @@ function injectFakeEmitter(Class) {
     return event.error;
   }
 
+  function messageErrorEventHandler(event: ErrorEvent | MessageEvent) {
+    return event instanceof MessageEvent ? deserializeError() : event.error;
+  }
+
   function customEventHandler(event) {
     return event.detail;
   }
@@ -136,9 +145,12 @@ function injectFakeEmitter(Class) {
 
   function functionForEventType(event, listener) {
     switch (event) {
-      case "error":
-      case "messageerror": {
+      case "error": {
         return wrapped(errorEventHandler, listener);
+      }
+
+      case "messageerror": {
+        return wrapped(messageErrorEventHandler, listener);
       }
 
       case "message": {
@@ -1394,8 +1406,7 @@ class Worker extends EventEmitter {
   }
 
   #onMessageError(event: MessageEvent) {
-    // TODO: is this right?
-    this.emit("messageerror", (event as any).error ?? event.data ?? event);
+    this.emit("messageerror", (event as any).error ?? deserializeError());
   }
 
   #onOpen() {

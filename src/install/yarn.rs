@@ -816,6 +816,16 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 
     let mut package_id_to_yarn_idx: Vec<usize> = vec![usize::MAX; next_package_id as usize];
 
+    // The ids handed out above count every distinct name@version, but an entry
+    // whose resolution cannot be built is not appended below, and a package's id
+    // has to be its index in `this.packages`. Maps the ids above to the appended
+    // ones; a skipped entry stays `INVALID_PACKAGE_ID`, which gives its dependents
+    // the same unresolved edge as a spec with no yarn.lock entry at all.
+    let mut appended_package_ids: Vec<PackageID> =
+        vec![install::INVALID_PACKAGE_ID; next_package_id as usize];
+    let silent = manager.options.log_level.is_silent();
+
+
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let is_direct_url_dep = entry.has_direct_url_spec();
         let base_name: &[u8] = entry.name;
@@ -954,7 +964,34 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             }
         };
 
-        debug_assert_eq!(this.packages.len(), package_id as usize);
+        if resolution.tag == ResolutionTag::Uninitialized {
+            if !silent {
+                let specs = bstr::join(", ", &entry.specs);
+                let specs = bstr::BStr::new(&specs);
+                if entry.version.is_empty() {
+                    bun_core::warn!(
+                        "skipped \"{}\" from yarn.lock: missing \"version\" field",
+                        specs
+                    );
+                } else if !Semver::Version::parse_utf8(entry.version).valid {
+                    bun_core::warn!(
+                        "skipped \"{}\" from yarn.lock: invalid version \"{}\"",
+                        specs,
+                        bstr::BStr::new(entry.version)
+                    );
+                } else {
+                    bun_core::warn!(
+                        "skipped \"{}\" from yarn.lock: missing \"resolved\" field",
+                        specs
+                    );
+                }
+            }
+            continue;
+        }
+
+        let appended_id = PackageID::try_from(this.packages.len()).expect("int cast");
+        appended_package_ids[package_id as usize] = appended_id;
+
         this.packages.append(LockfilePackage {
             name: pkg_name,
             name_hash,
@@ -962,7 +999,7 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             dependencies: Default::default(),
             resolutions: Default::default(),
             meta: PackageMeta {
-                id: package_id,
+                id: appended_id,
                 origin: Origin::Npm,
                 arch: if let Some(cpu_list) = &entry.cpu {
                     let mut arch = npm::Architecture::NONE.negatable();
@@ -994,7 +1031,11 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             bin: Bin::init(),
             scripts: Default::default(),
         })?;
-        this.get_or_put_id(package_id, name_hash)?;
+        this.get_or_put_id(appended_id, name_hash)?;
+    }
+
+    for package_id in yarn_entry_to_package_id.iter_mut() {
+        *package_id = appended_package_ids[*package_id as usize];
     }
 
     let mut spec_to_package_id: StringHashMap<PackageID> = StringHashMap::new();

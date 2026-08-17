@@ -252,6 +252,74 @@ describe("Zstandard compression", async () => {
   }
 });
 
+// zstdDecompressSync sizes its output from the frame header when the content size is
+// present and at most 16 MiB. Anything else is decoded in a stream into a buffer that
+// starts at a guess (the input size, or the 16 MiB limit) and grows as needed.
+describe("decompressing frames whose size is not known up front", () => {
+  const MiB = 1024 * 1024;
+
+  // CompressionStream does not know the total size when it writes the frame header.
+  async function compressWithoutContentSize(data: Uint8Array): Promise<Uint8Array> {
+    const frame = await new Response(new Response(data).body!.pipeThrough(new CompressionStream("zstd"))).bytes();
+    // RFC 8878 3.1.1.1.1: with the Frame_Content_Size_flag (bits 7-6) and the
+    // Single_Segment_flag (bit 5) both clear, the header carries no content size.
+    expect(frame[4] & 0xe0).toBe(0);
+    return frame;
+  }
+
+  function patternBytes(length: number): Buffer {
+    // Incompressible, but deterministic: xorshift32.
+    const bytes = Buffer.alloc(length);
+    let x = 0x9e3779b9;
+    for (let i = 0; i < length; i += 4) {
+      x ^= x << 13;
+      x ^= x >>> 17;
+      x ^= x << 5;
+      bytes.writeUInt32LE(x >>> 0, i);
+    }
+    return bytes;
+  }
+
+  it.concurrent("output larger than the input (the buffer has to grow)", async () => {
+    const original = Buffer.from(JSON.stringify(Array.from({ length: 20_000 }, (_, i) => ({ id: i, ok: true }))));
+    const frame = await compressWithoutContentSize(original);
+    expect(frame.length).toBeLessThan(original.length / 4);
+
+    expect(zstdDecompressSync(frame)).toEqual(original);
+    expect(await zstdDecompress(frame)).toEqual(original);
+  });
+
+  it.concurrent("output smaller than the input (the initial buffer is enough)", async () => {
+    const original = patternBytes(256 * 1024);
+    const frame = await compressWithoutContentSize(original);
+    expect(frame.length).toBeGreaterThan(original.length);
+
+    expect(zstdDecompressSync(frame)).toEqual(original);
+    expect(await zstdDecompress(frame)).toEqual(original);
+  });
+
+  it.concurrent("several frames in one input", async () => {
+    const parts = [patternBytes(64 * 1024), Buffer.alloc(300 * 1024, "abc"), Buffer.from("tail")];
+    const frames = await Promise.all(parts.map(compressWithoutContentSize));
+    const original = Buffer.concat(parts);
+
+    expect(zstdDecompressSync(Buffer.concat(frames))).toEqual(original);
+    expect(await zstdDecompress(Buffer.concat(frames))).toEqual(original);
+  });
+
+  it.concurrent("content size in the header just over the 16 MiB limit", async () => {
+    // The streaming decoder starts with exactly 16 MiB of room, so this frame fills it
+    // completely and still has one byte to go.
+    const original = Buffer.alloc(16 * MiB + 1, 0x5a);
+    const frame = zstdCompressSync(original);
+
+    const fromSync = zstdDecompressSync(frame);
+    expect([fromSync.length, fromSync.equals(original)]).toEqual([original.length, true]);
+    const fromAsync = await zstdDecompress(frame);
+    expect([fromAsync.length, fromAsync.equals(original)]).toEqual([original.length, true]);
+  });
+});
+
 describe("sync compression argument handling", () => {
   it("zstdCompressSync evaluates the options object before capturing the input", () => {
     const input = new Uint8Array(64).fill(97);

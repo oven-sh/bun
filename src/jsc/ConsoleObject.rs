@@ -2275,6 +2275,21 @@ pub mod formatter {
             }
 
             use jsc::JSType as T;
+
+            // String/Number/Boolean.prototype share a JSType with their boxed
+            // instances (JSC implements them as wrapper objects around ""/0/false)
+            // but should print as plain `{}` like Node does, not as a boxed value.
+            if matches!(
+                js_type,
+                T::NumberObject | T::BooleanObject | T::StringObject | T::DerivedStringObject
+            ) && value.is_builtin_prototype_for_formatting(global_this)
+            {
+                return Ok(TagResult {
+                    tag: TagPayload::Object,
+                    cell: T::Object,
+                });
+            }
+
             let tag = match js_type {
                 T::ErrorInstance => TagPayload::Error,
                 T::NumberObject => TagPayload::Double,
@@ -3237,12 +3252,16 @@ pub mod formatter {
     ) -> JsResult<Option<ZigString>> {
         let mut name_str = ZigString::init(b"");
         value.get_class_name(global_this, &mut name_str)?;
-        if !name_str.eql_comptime(b"Object") {
-            return Ok(Some(name_str));
-        } else if value.get_prototype(global_this).eql_value(JSValue::NULL) {
-            return Ok(Some(ZigString::static_("[Object: null prototype]")));
+        if name_str.eql_comptime(b"Object") {
+            if value.get_prototype(global_this).eql_value(JSValue::NULL) {
+                return Ok(Some(ZigString::static_("[Object: null prototype]")));
+            }
+            return Ok(None);
         }
-        Ok(None)
+        if value.is_builtin_prototype_for_formatting(global_this) {
+            return Ok(None);
+        }
+        Ok(Some(name_str))
     }
 
     // `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle; remaining

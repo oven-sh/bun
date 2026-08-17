@@ -1527,3 +1527,32 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
 });
+
+// The watchdog's TerminationException can land while an ERR_* error is being built for the
+// sandboxed code; building it must not dereference a half-made (null) error object.
+test("timeout landing while node validation errors are being constructed does not crash", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const vm = require("node:vm"), tls = require("node:tls");
+       const ctx = vm.createContext({ tls, Buffer });
+       for (const code of [
+         "for(;;){ try { tls.checkServerIdentity('a.com', {subject:{CN:'b.com'}, subjectaltname:'DNS:c.com'}) } catch (e) {} }",
+         "for(;;){ try { Buffer.alloc(-1) } catch (e) {} }",
+       ]) {
+         for (let i = 0; i < 60; i++) {
+           try { vm.runInContext(code, ctx, { timeout: 1 + (i % 6) }); }
+           catch (e) { if (e.code !== "ERR_SCRIPT_EXECUTION_TIMEOUT") throw e; }
+         }
+       }
+       console.log("survived");`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("survived\n");
+  expect(exitCode).toBe(0);
+});

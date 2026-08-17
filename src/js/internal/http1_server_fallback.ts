@@ -234,7 +234,14 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
 // 'request' with http.IncomingMessage/ServerResponse, like Node's httpConnectionListener routing.
 function connectionListenerHTTP1(server, socket, options) {
   const http = require("node:http");
-  const { HTTPParser, prepareError, calculateLenientFlags, continueExpression } = require("node:_http_common");
+  const {
+    HTTPParser,
+    prepareError,
+    calculateLenientFlags,
+    continueExpression,
+    parserOnHeaders,
+    MAX_HEADER_PAIRS,
+  } = require("node:_http_common");
   const { kHandle: kHttp1ResponseHandle } = require("internal/http");
   const { allMethods } = process.binding("http_parser");
 
@@ -251,6 +258,7 @@ function connectionListenerHTTP1(server, socket, options) {
   connections.add(socket);
   socket[kHttp1ActiveRequests] = 0;
 
+  const kOnHeaders = HTTPParser.kOnHeaders | 0;
   const kOnHeadersComplete = HTTPParser.kOnHeadersComplete | 0;
   const kOnBody = HTTPParser.kOnBody | 0;
   const kOnMessageComplete = HTTPParser.kOnMessageComplete | 0;
@@ -262,10 +270,12 @@ function connectionListenerHTTP1(server, socket, options) {
   parser.initialize(HTTPParser.REQUEST, {}, server.maxHeaderSize || 0, lenientFlags);
   parser.socket = socket;
   socket.parser = parser;
+  // Blocks past the parser's 32-field buffer, and trailers, arrive via kOnHeaders (as in _http_common).
+  parser._headers = [];
+  parser._url = "";
   const { maxHeadersCount } = server;
-  if (typeof maxHeadersCount === "number") {
-    parser.maxHeaderPairs = maxHeadersCount << 1;
-  }
+  parser.maxHeaderPairs = typeof maxHeadersCount === "number" ? maxHeadersCount << 1 : MAX_HEADER_PAIRS;
+  parser[kOnHeaders] = parserOnHeaders;
 
   let req = null;
   let pendingUpgrade = null;
@@ -281,6 +291,19 @@ function connectionListenerHTTP1(server, socket, options) {
     upgrade,
     shouldKeepAlive,
   ) {
+    // Both are undefined once anything went through kOnHeaders (_http_common's parserOnHeadersComplete).
+    if (rawHeaders === undefined) {
+      rawHeaders = parser._headers;
+      parser._headers = [];
+    }
+    if (url === undefined) {
+      url = parser._url;
+      parser._url = "";
+    }
+    let headersLength = rawHeaders.length;
+    const { maxHeaderPairs } = parser;
+    if (maxHeaderPairs > 0) headersLength = Math.min(headersLength, maxHeaderPairs);
+
     socket[kHttp1ActiveRequests]++;
 
     req = new IncomingMessageClass(socket);
@@ -291,7 +314,7 @@ function connectionListenerHTTP1(server, socket, options) {
     req.url = url;
     req.method = typeof methodNum === "number" ? allMethods[methodNum] : methodNum;
     req.upgrade = upgrade;
-    req._addHeaderLines(rawHeaders, rawHeaders.length);
+    req._addHeaderLines(rawHeaders, headersLength);
 
     // Node's parserOnIncoming: upgrade only sticks for CONNECT or when an 'upgrade' listener
     // exists; otherwise fall through to normal dispatch. Returning 2 makes llhttp stop after
@@ -318,6 +341,10 @@ function connectionListenerHTTP1(server, socket, options) {
     // path must carry them too or keep-alive responses lose their timeout line.
     res._keepAliveTimeout = keepAliveTimeout;
     res._maxRequestsPerSocket = server.maxRequestsPerSocket;
+    // Node's parserOnIncoming (RFC 9112 §3.2): answered with a 400 below and the connection closed.
+    const missingHostHeader =
+      versionMajor === 1 && versionMinor === 1 && server.requireHostHeader && req.headers.host === undefined;
+    if (missingHostHeader) shouldKeepAlive = false;
     const handle = createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTimeout);
     handle.onfinished = function () {
       socket[kHttp1ActiveRequests] = Math.max(0, (socket[kHttp1ActiveRequests] || 1) - 1);
@@ -333,6 +360,12 @@ function connectionListenerHTTP1(server, socket, options) {
     res.on("finish", function onFallbackResponseFinish() {
       this.detachSocket(socket);
     });
+
+    if (missingHostHeader) {
+      res.writeHead(400, { Connection: "close" });
+      res.end();
+      return 0;
+    }
 
     // Node's parserOnIncoming Expect routing (the native dispatcher applies the
     // same at _http_server.ts's DISPATCH_HAS_EXPECT branch).
@@ -360,8 +393,14 @@ function connectionListenerHTTP1(server, socket, options) {
     if (req && !req._dumped) req.push(chunk);
   };
   parser[kOnMessageComplete] = function onHttp1MessageComplete() {
+    // Collected after the header block, so these are trailers (_http_common's parserOnMessageComplete).
+    const trailers = parser._headers;
+    const trailersLength = trailers.length;
+    if (trailersLength !== 0) parser._headers = [];
+    parser._url = "";
     if (req) {
       req.complete = true;
+      if (trailersLength !== 0) req._addHeaderLines(trailers, trailersLength);
       req.push(null);
     }
   };

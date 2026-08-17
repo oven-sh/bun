@@ -4439,6 +4439,151 @@ it("http2 allowHTTP1 fallback omits the Connection header on a close-delimited r
   }
 });
 
+// Sends one raw request over an http/1.1 ALPN connection. `head` settles once the first response
+// head arrived, `ended` once the server ended the connection (with everything received); both
+// reject if the connection errors or closes without the server ending it.
+function rawHttp1RequestOverAlpn(server, rawRequest) {
+  let received = "";
+  const { promise: head, resolve: resolveHead, reject: rejectHead } = Promise.withResolvers();
+  const { promise: ended, resolve: resolveEnded, reject: rejectEnded } = Promise.withResolvers();
+  // A test awaits whichever of the two it needs; the other one's rejection must not surface as a
+  // separate unhandled error.
+  head.catch(() => {});
+  ended.catch(() => {});
+  const fail = err => {
+    rejectHead(err);
+    rejectEnded(err);
+  };
+  const socket = tls.connect(
+    { host: "localhost", port: server.address().port, ca: TLS_CERT.cert, ALPNProtocols: ["http/1.1"] },
+    () => socket.write(rawRequest),
+  );
+  socket.on("data", chunk => {
+    received += chunk.toString("latin1");
+    if (received.includes("\r\n\r\n")) resolveHead(received);
+  });
+  socket.on("end", () => resolveEnded(received));
+  socket.on("error", fail);
+  socket.on("close", () => fail(new Error(`connection closed before the server ended it; received: ${received}`)));
+  return { head, ended, socket };
+}
+
+// Node answers from parserOnIncoming with res.writeHead(400, ["Connection", "close"]); res.end().
+const nodeMissingHostReply =
+  "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+function normalizeDate(raw) {
+  return raw.replace(/^Date: .*$/m, "Date: <date>");
+}
+
+it("http2 allowHTTP1 fallback answers an HTTP/1.1 request without a Host header with 400 and closes the connection", async () => {
+  let requests = 0;
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    requests++;
+    res.end("served");
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const client = rawHttp1RequestOverAlpn(server, "GET / HTTP/1.1\r\n\r\n");
+    try {
+      expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+      expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+      expect(requests).toBe(0);
+      // Stored like Node's storeHTTPOptions does for allowHTTP1 servers.
+      expect(server.requireHostHeader).toBe(true);
+    } finally {
+      client.socket.destroy();
+    }
+  } finally {
+    server.close();
+  }
+});
+
+// The native parser hands header blocks to JS 32 fields at a time; 40 fields puts Host in a block
+// the fallback has to assemble before it can look for it.
+function fortyHeaderRequest() {
+  const lines = ["Host: example.test"];
+  while (lines.length < 39) lines.push(`X-H${lines.length}: v${lines.length}`);
+  lines.push("Connection: close");
+  return `GET / HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
+}
+
+it("http2 allowHTTP1 fallback still dispatches Host-less HTTP/1.0 requests and Host-carrying HTTP/1.1 requests", async () => {
+  const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true }, (req, res) => {
+    res.end(`served:${req.httpVersion}:${req.headers.host}:${req.rawHeaders.length / 2}`);
+  });
+  await new Promise(resolve => server.listen(0, resolve));
+  try {
+    const bodies = [];
+    for (const rawRequest of [
+      "GET / HTTP/1.0\r\n\r\n",
+      "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+      fortyHeaderRequest(),
+    ]) {
+      const client = rawHttp1RequestOverAlpn(server, rawRequest);
+      try {
+        const raw = await client.ended;
+        expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+        bodies.push(raw.slice(raw.indexOf("served:")));
+      } finally {
+        client.socket.destroy();
+      }
+    }
+    expect(bodies).toEqual(["served:1.0:undefined:0", "served:1.1:example.test:2", "served:1.1:example.test:40"]);
+  } finally {
+    server.close();
+  }
+});
+
+for (const [description, options] of [
+  ["requireHostHeader: false", { requireHostHeader: false }],
+  ["http1Options: { requireHostHeader: false }", { http1Options: { requireHostHeader: false } }],
+]) {
+  it(`http2 allowHTTP1 fallback dispatches a Host-less HTTP/1.1 request when created with ${description}`, async () => {
+    const server = http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options }, (req, res) => {
+      res.end(`served:${req.headers.host}`);
+    });
+    await new Promise(resolve => server.listen(0, resolve));
+    try {
+      const client = rawHttp1RequestOverAlpn(server, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
+      try {
+        const raw = await client.ended;
+        expect(raw).toStartWith("HTTP/1.1 200 OK\r\n");
+        expect(raw).toEndWith("served:undefined");
+        expect(server.requireHostHeader).toBe(false);
+      } finally {
+        client.socket.destroy();
+      }
+    } finally {
+      server.close();
+    }
+  });
+}
+
+it("http2.createSecureServer validates requireHostHeader like Node's storeHTTPOptions, only when allowHTTP1 is set", () => {
+  const codes = [];
+  for (const options of [
+    { requireHostHeader: "yes" },
+    { requireHostHeader: 0 },
+    { http1Options: { requireHostHeader: 1 } },
+    { requireHostHeader: true, http1Options: { requireHostHeader: "no" } },
+  ]) {
+    try {
+      http2.createSecureServer({ ...TLS_CERT, allowHTTP1: true, ...options });
+      codes.push("no error");
+    } catch (err) {
+      codes.push(`${err.code}: ${err.message}`);
+    }
+  }
+  expect(codes).toEqual([
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type string ('yes')`,
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type number (0)`,
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type number (1)`,
+    `ERR_INVALID_ARG_TYPE: The "options.requireHostHeader" property must be of type boolean. Received type string ('no')`,
+  ]);
+  // Without allowHTTP1 there is no HTTP/1 path: Node neither validates nor stores the option.
+  expect(http2.createSecureServer({ ...TLS_CERT, requireHostHeader: "yes" }).requireHostHeader).toBeUndefined();
+});
+
 // close() must not depend on the peer sending a SETTINGS ACK — Node's kMaybeDestroy
 // waits on nghttp2_session_want_write()/want_read(), which does not track outstanding
 // ACKs. A server that never ACKs a client-sent SETTINGS must not stall close().

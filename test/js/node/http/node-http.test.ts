@@ -4139,3 +4139,287 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+// A GET with exactly `totalHeaders` header fields: Host first, X-* fillers, and optionally
+// Connection: close last.
+function manyHeaderRequest(path: string, totalHeaders: number, { close = false } = {}) {
+  const lines = ["Host: example.test"];
+  while (lines.length < (close ? totalHeaders - 1 : totalHeaders)) lines.push(`X-H${lines.length}: v${lines.length}`);
+  if (close) lines.push("Connection: close");
+  return `GET ${path} HTTP/1.1\r\n${lines.join("\r\n")}\r\n\r\n`;
+}
+
+describe("connectionListener requireHostHeader", () => {
+  // Drives one raw request through server.emit("connection", ...) (the JS fallback parser).
+  // `head` settles once the first response head arrived, `ended` once the server ended the
+  // connection (with everything received); both reject if the connection errors or the server
+  // destroys it instead.
+  function rawRequestOverEmittedConnection(server: Server, rawRequest: string) {
+    const [clientSide, serverSide] = duplexPair();
+    let received = "";
+    const { promise: head, resolve: resolveHead, reject: rejectHead } = Promise.withResolvers<string>();
+    const { promise: ended, resolve: resolveEnded, reject: rejectEnded } = Promise.withResolvers<string>();
+    // A test awaits whichever of the two it needs; the other one's rejection must not surface as a
+    // separate unhandled error.
+    head.catch(() => {});
+    ended.catch(() => {});
+    const fail = (err: Error) => {
+      rejectHead(err);
+      rejectEnded(err);
+    };
+    clientSide.on("data", (chunk: Buffer) => {
+      received += chunk.toString("latin1");
+      if (received.includes("\r\n\r\n")) resolveHead(received);
+    });
+    clientSide.on("end", () => resolveEnded(received));
+    clientSide.on("error", fail);
+    serverSide.on("error", fail);
+    serverSide.on("close", () => fail(new Error(`server destroyed the connection; received: ${received}`)));
+    server.emit("connection", serverSide);
+    clientSide.write(rawRequest);
+    return {
+      head,
+      ended,
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    };
+  }
+
+  // Node answers from parserOnIncoming with res.writeHead(400, ["Connection", "close"]); res.end().
+  function normalizeDate(raw: string) {
+    return raw.replace(/^Date: .*$/m, "Date: <date>");
+  }
+  const nodeMissingHostReply =
+    "HTTP/1.1 400 Bad Request\r\nConnection: close\r\nDate: <date>\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n";
+
+  it("answers an HTTP/1.1 request without a Host header with 400 and closes the connection", async () => {
+    const onRequest = mock((req, res) => res.end("served"));
+    const server = createServer(onRequest);
+    using client = rawRequestOverEmittedConnection(server, "GET / HTTP/1.1\r\n\r\n");
+    expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+    expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
+  it("rejects a Host-less HTTP/1.1 request before its Expect header is looked at", async () => {
+    const onRequest = mock((req, res) => res.end("served"));
+    const onCheckContinue = mock((req, res) => {
+      res.writeContinue();
+      res.end("served");
+    });
+    const server = createServer(onRequest);
+    server.on("checkContinue", onCheckContinue);
+    using client = rawRequestOverEmittedConnection(
+      server,
+      "POST / HTTP/1.1\r\nExpect: 100-continue\r\nContent-Length: 0\r\n\r\n",
+    );
+    expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+    expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+    expect(onCheckContinue).not.toHaveBeenCalled();
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+
+  it("dispatches an HTTP/1.0 request without a Host header", async () => {
+    const onRequest = mock((req, res) => res.end("served:" + req.httpVersion));
+    const server = createServer(onRequest);
+    using client = rawRequestOverEmittedConnection(server, "GET / HTTP/1.0\r\n\r\n");
+    expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(await client.ended).toEndWith("served:1.0");
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches a Host-less HTTP/1.1 request when the server was created with requireHostHeader: false", async () => {
+    const onRequest = mock((req, res) => res.end("served:" + req.headers.host));
+    const server = createServer({ requireHostHeader: false }, onRequest);
+    using client = rawRequestOverEmittedConnection(server, "GET / HTTP/1.1\r\nConnection: close\r\n\r\n");
+    expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(await client.ended).toEndWith("served:undefined");
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  it("dispatches an HTTP/1.1 request that carries a Host header", async () => {
+    const onRequest = mock((req, res) => res.end("served:" + req.headers.host));
+    const server = createServer(onRequest);
+    using client = rawRequestOverEmittedConnection(
+      server,
+      "GET / HTTP/1.1\r\nHost: example.test\r\nConnection: close\r\n\r\n",
+    );
+    expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+    expect(await client.ended).toEndWith("served:example.test");
+    expect(onRequest).toHaveBeenCalledTimes(1);
+  });
+
+  // The native parser hands header blocks to JS 32 fields at a time, so a Host header that is
+  // followed by enough other headers only reaches the request if every block is assembled.
+  for (const totalHeaders of [32, 64]) {
+    it(`dispatches an HTTP/1.1 request whose Host header is one of ${totalHeaders} header fields`, async () => {
+      const onRequest = mock((req, res) => res.end(`served:${req.headers.host}:${req.rawHeaders.length / 2}`));
+      const server = createServer(onRequest);
+      using client = rawRequestOverEmittedConnection(server, manyHeaderRequest("/", totalHeaders, { close: true }));
+      expect(await client.ended).toStartWith("HTTP/1.1 200 OK\r\n");
+      expect(await client.ended).toEndWith(`served:example.test:${totalHeaders}`);
+      expect(onRequest).toHaveBeenCalledTimes(1);
+    });
+  }
+
+  it("rejects a Host-less HTTP/1.1 request only after the Upgrade/CONNECT hand-off declined it", async () => {
+    {
+      // An Upgrade with a listener is handed off, Host or not (Node's parserOnIncoming order).
+      const onRequest = mock(() => {});
+      const onUpgrade = mock((req, socket) =>
+        socket.end(`HTTP/1.1 101 Switching Protocols\r\nX-Host: ${req.headers.host}\r\n\r\n`),
+      );
+      const server = createServer(onRequest);
+      server.on("upgrade", onUpgrade);
+      using client = rawRequestOverEmittedConnection(
+        server,
+        "GET /ws HTTP/1.1\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n",
+      );
+      expect(await client.ended).toBe("HTTP/1.1 101 Switching Protocols\r\nX-Host: undefined\r\n\r\n");
+      expect(onUpgrade).toHaveBeenCalledTimes(1);
+      expect(onRequest).not.toHaveBeenCalled();
+    }
+    {
+      const onRequest = mock(() => {});
+      const onConnect = mock((req, socket) =>
+        socket.end(`HTTP/1.1 200 Connection Established\r\nX-Target: ${req.url}\r\n\r\n`),
+      );
+      const server = createServer(onRequest);
+      server.on("connect", onConnect);
+      using client = rawRequestOverEmittedConnection(server, "CONNECT example.test:443 HTTP/1.1\r\n\r\n");
+      expect(await client.ended).toBe("HTTP/1.1 200 Connection Established\r\nX-Target: example.test:443\r\n\r\n");
+      expect(onConnect).toHaveBeenCalledTimes(1);
+      expect(onRequest).not.toHaveBeenCalled();
+    }
+    {
+      // Without an 'upgrade' listener the request falls through to normal dispatch, where the
+      // Host check applies.
+      const onRequest = mock((req, res) => res.end("served"));
+      const server = createServer(onRequest);
+      using client = rawRequestOverEmittedConnection(
+        server,
+        "GET /ws HTTP/1.1\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n",
+      );
+      expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+      expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+      expect(onRequest).not.toHaveBeenCalled();
+    }
+  });
+
+  it("treats a Host header cut off by maxHeadersCount as missing, like Node", async () => {
+    const onRequest = mock((req, res) => res.end("served"));
+    const server = createServer(onRequest);
+    server.maxHeadersCount = 3;
+    using client = rawRequestOverEmittedConnection(
+      server,
+      "GET / HTTP/1.1\r\nX-A: 1\r\nX-B: 2\r\nX-C: 3\r\nHost: example.test\r\n\r\n",
+    );
+    expect(await client.head).toStartWith("HTTP/1.1 400 Bad Request\r\n");
+    expect(normalizeDate(await client.ended)).toBe(nodeMissingHostReply);
+    expect(onRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("connectionListener header assembly", () => {
+  // One connection served through server.emit("connection", ...) that the server is expected to
+  // keep alive: `failed` rejects (with everything received so far) if it errors or ends instead.
+  function keepAliveConnection(server: Server) {
+    const [clientSide, serverSide] = duplexPair();
+    let received = "";
+    const { promise: failed, reject } = Promise.withResolvers<never>();
+    failed.catch(() => {});
+    const fail = (what: string) => reject(new Error(`${what}; received: ${JSON.stringify(received)}`));
+    clientSide.on("data", (chunk: Buffer) => (received += chunk.toString("latin1")));
+    clientSide.on("end", () => fail("server ended the connection"));
+    clientSide.on("error", err => reject(err));
+    serverSide.on("error", err => reject(err));
+    serverSide.on("close", () => fail("server destroyed the connection"));
+    server.emit("connection", serverSide);
+    return {
+      failed,
+      write(rawRequest: string) {
+        clientSide.write(rawRequest);
+      },
+      get received() {
+        return received;
+      },
+      [Symbol.dispose]() {
+        clientSide.destroy();
+        serverSide.destroy();
+      },
+    };
+  }
+
+  // `served` collects summarize(req) for every request; serve() writes one request and returns
+  // once its response has closed, i.e. once the connection is free for the next one.
+  function recordingServer(summarize: (req: IncomingMessage) => unknown) {
+    const served: unknown[] = [];
+    let responseClosed = Promise.withResolvers<void>();
+    const server = createServer((req, res) => {
+      req.resume();
+      req.on("end", () => {
+        served.push(summarize(req));
+        res.on("close", responseClosed.resolve);
+        res.end("ok");
+      });
+    });
+    return {
+      server,
+      served,
+      async serve(connection: ReturnType<typeof keepAliveConnection>, rawRequest: string) {
+        responseClosed = Promise.withResolvers<void>();
+        connection.write(rawRequest);
+        await Promise.race([responseClosed.promise, connection.failed]);
+      },
+    };
+  }
+
+  it("delivers every header of requests larger than the parser's 32-field block, across a kept-alive connection", async () => {
+    const { server, served, serve } = recordingServer(req => [req.url, req.headers.host, req.rawHeaders.length / 2]);
+    using connection = keepAliveConnection(server);
+    await serve(connection, manyHeaderRequest("/first", 40));
+    // Once the parser has delivered a request in blocks it keeps doing so on that connection, so
+    // a small request after a large one goes through the assembled path as well.
+    await serve(connection, manyHeaderRequest("/second", 2));
+    await serve(connection, manyHeaderRequest("/third", 70));
+    expect(served).toEqual([
+      ["/first", "example.test", 40],
+      ["/second", "example.test", 2],
+      ["/third", "example.test", 70],
+    ]);
+    expect(connection.received.match(/HTTP\/1\.1 200 OK/g)).toHaveLength(3);
+  });
+
+  it("files a chunked body's trailers on its own request only", async () => {
+    const { server, served, serve } = recordingServer(req => [req.url, req.trailers, req.rawHeaders.length / 2]);
+    using connection = keepAliveConnection(server);
+    await serve(
+      connection,
+      "POST /with-trailer HTTP/1.1\r\nHost: a\r\nTransfer-Encoding: chunked\r\nTrailer: X-Checksum\r\n\r\n" +
+        "3\r\nabc\r\n0\r\nX-Checksum: 123\r\n\r\n",
+    );
+    await serve(connection, "GET /after HTTP/1.1\r\nHost: a\r\n\r\n");
+    expect(served).toEqual([
+      ["/with-trailer", { "x-checksum": "123" }, 3],
+      ["/after", {}, 1],
+    ]);
+  });
+
+  it("applies server.maxHeadersCount to both the single-block and the assembled header paths", async () => {
+    const { server, served, serve } = recordingServer(req => [
+      req.url,
+      req.headers.host,
+      Object.keys(req.headers).length,
+    ]);
+    server.maxHeadersCount = 3;
+    using connection = keepAliveConnection(server);
+    await serve(connection, manyHeaderRequest("/five", 5));
+    await serve(connection, manyHeaderRequest("/forty", 40));
+    expect(served).toEqual([
+      ["/five", "example.test", 3],
+      ["/forty", "example.test", 3],
+    ]);
+  });
+});

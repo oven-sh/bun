@@ -2740,6 +2740,84 @@ pub mod JSZstd {
             .throw_invalid_arguments(format_args!("Expected buffer to be a string or buffer")))
     }
 
+    /// Why a `Bun.zstd*` call produced no output. Shared by the sync functions
+    /// (thrown) and [`ZstdJob`] (rejected), so both report the same errors.
+    pub(crate) enum Failure {
+        /// The output buffer could not be allocated. Its size is derived from
+        /// the input (the compression bound, or whatever the frames claim to
+        /// decompress to), so this is an error for the caller, not a crash.
+        OutOfMemory,
+        /// Compression was refused or failed; an `ERR_ZSTD` with this message.
+        Compression(&'static [u8]),
+        /// Decompression failed; an `ERR_ZSTD` naming the error.
+        Decompression(bun_zstd::ZstdError),
+    }
+
+    impl Failure {
+        fn throw(self, global_this: &JSGlobalObject) -> jsc::JsError {
+            match self {
+                Failure::OutOfMemory => global_this.throw_out_of_memory(),
+                failure => global_this.throw_value(failure.to_js(global_this)),
+            }
+        }
+
+        fn to_js(self, global_this: &JSGlobalObject) -> JSValue {
+            match self {
+                Failure::OutOfMemory => global_this.create_out_of_memory_error(),
+                Failure::Compression(message) => global_this
+                    .err(
+                        jsc::ErrCode::ZSTD,
+                        format_args!("{}", bstr::BStr::new(message)),
+                    )
+                    .to_js(),
+                Failure::Decompression(err) => global_this
+                    .err(
+                        jsc::ErrCode::ZSTD,
+                        format_args!("Decompression failed: {}", err),
+                    )
+                    .to_js(),
+            }
+        }
+    }
+
+    impl From<bun_zstd::ZstdError> for Failure {
+        fn from(err: bun_zstd::ZstdError) -> Self {
+            match err {
+                bun_zstd::ZstdError::OutOfMemory => Failure::OutOfMemory,
+                err => Failure::Decompression(err),
+            }
+        }
+    }
+
+    /// Compress `input` into a buffer sized to the compression bound, shrunk
+    /// to the compressed size afterwards.
+    fn compress_to_vec(input: &[u8], level: i32) -> Result<Vec<u8>, Failure> {
+        let max_size = bun_zstd::compress_bound(input.len());
+        // `ZSTD_compressBound` returns an error code instead of a size once the
+        // input exceeds `ZSTD_MAX_INPUT_SIZE`.
+        if bun_zstd::is_error(max_size) {
+            return Err(Failure::Compression(b"Input is too large to compress"));
+        }
+
+        // The bound is only reserved, not zero-filled: zstd initializes exactly
+        // the bytes it reports, and filling the buffer first would be a second
+        // pass over the whole thing.
+        let mut output: Vec<u8> = Vec::new();
+        output
+            .try_reserve_exact(max_size)
+            .map_err(|_| Failure::OutOfMemory)?;
+
+        if let bun_zstd::Result::Err(err) =
+            bun_zstd::compress_append(&mut output, input, Some(level))
+        {
+            return Err(Failure::Compression(err.as_bytes()));
+        }
+
+        // Release the slack between the compressed size and the bound.
+        output.shrink_to_fit();
+        Ok(output)
+    }
+
     #[bun_jsc::host_fn]
     pub(crate) fn compress_sync(
         global_this: &JSGlobalObject,
@@ -2750,23 +2828,9 @@ pub mod JSZstd {
         let level = get_level(global_this, options_val)?;
 
         let buffer = coerce_compress_buffer(global_this, buffer_value)?;
-        let input = buffer.slice();
 
-        // zstd only initializes the bytes it reports, so the bound is reserved
-        // rather than zero-filled (a second pass over the whole buffer).
-        let mut output: Vec<u8> = Vec::with_capacity(bun_zstd::compress_bound(input.len()));
-
-        if let bun_zstd::Result::Err(err) =
-            bun_zstd::compress_append(&mut output, input, Some(level))
-        {
-            drop(output);
-            return Err(global_this
-                .err(jsc::ErrCode::ZSTD, format_args!("{}", bstr::BStr::new(err)))
-                .throw());
-        }
-
-        // Release the slack between the compressed size and the bound.
-        output.shrink_to_fit();
+        let output =
+            compress_to_vec(buffer.slice(), level).map_err(|failure| failure.throw(global_this))?;
 
         JSValue::create_buffer(global_this, output.leak())
     }
@@ -2778,19 +2842,8 @@ pub mod JSZstd {
     ) -> JsResult<JSValue> {
         let (buffer, _) = parse_compress_buffer_and_options(global_this, callframe)?;
 
-        let input = buffer.slice();
-
-        let output = match bun_zstd::decompress_alloc(input) {
-            Ok(v) => v,
-            Err(err) => {
-                return Err(global_this
-                    .err(
-                        jsc::ErrCode::ZSTD,
-                        format_args!("Decompression failed: {}", err),
-                    )
-                    .throw());
-            }
-        };
+        let output = bun_zstd::decompress_alloc(buffer.slice())
+            .map_err(|err| Failure::from(err).throw(global_this))?;
 
         JSValue::create_buffer(global_this, output.leak())
     }
@@ -2804,8 +2857,8 @@ pub mod JSZstd {
         pub buffer: bun_jsc::ThreadSafe<node::StringOrBuffer>,
         pub is_compress: bool,
         pub level: i32,
-        pub output: Vec<u8>,
-        pub error_message: Option<&'static [u8]>,
+        /// Filled in by `run`.
+        pub result: Result<Vec<u8>, Failure>,
     }
 
     impl jsc::JobContext for ZstdJob {
@@ -2818,62 +2871,31 @@ pub mod JSZstd {
         ) -> Option<bun_jsc::Completion<Self>> {
             let input = this.buffer.slice();
 
-            if this.is_compress {
-                let max_size = bun_zstd::compress_bound(input.len());
-                // Surface OOM as a rejected promise instead of aborting. As in
-                // `compress_sync`, the bound is only reserved, not zero-filled.
-                if this.output.try_reserve_exact(max_size).is_err() {
-                    this.error_message = Some(b"Out of memory");
-                    return Some(done);
-                }
-
-                if let bun_zstd::Result::Err(err) =
-                    bun_zstd::compress_append(&mut this.output, input, Some(this.level))
-                {
-                    this.output = Vec::new();
-                    this.error_message = Some(err);
-                    return Some(done);
-                }
-
-                // Release the slack between the compressed size and the bound.
-                this.output.shrink_to_fit();
+            this.result = if this.is_compress {
+                compress_to_vec(input, this.level)
             } else {
-                this.output = match bun_zstd::decompress_alloc(input) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        this.error_message = Some(b"Decompression failed");
-                        return Some(done);
-                    }
-                };
-            }
+                bun_zstd::decompress_alloc(input).map_err(Failure::from)
+            };
             Some(done)
         }
 
         fn then(
-            mut this: Self,
+            this: Self,
             mut promise: jsc::JSPromiseStrong,
             cx: &jsc::JsThread<'_>,
         ) -> JsResult<()> {
             let global_this = cx.global();
             let promise = promise.swap();
 
-            if let Some(err_msg) = this.error_message {
-                promise.reject_with_async_stack(
+            match this.result {
+                Ok(output) => promise.settle(
                     global_this,
-                    Ok(global_this
-                        .err(
-                            jsc::ErrCode::ZSTD,
-                            format_args!("{}", bstr::BStr::new(err_msg)),
-                        )
-                        .to_js()),
-                )?;
-                return Ok(());
+                    JSValue::create_buffer(global_this, output.leak()),
+                ),
+                Err(failure) => {
+                    promise.reject_with_async_stack(global_this, Ok(failure.to_js(global_this)))
+                }
             }
-
-            let output_slice = core::mem::take(&mut this.output);
-            let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-            promise.settle(global_this, buffer_value)?;
-            Ok(())
         }
     }
 
@@ -2892,8 +2914,7 @@ pub mod JSZstd {
                 buffer: bun_jsc::ThreadSafe::adopt(buffer),
                 is_compress,
                 level,
-                output: Vec::new(),
-                error_message: None,
+                result: Ok(Vec::new()),
             },
             promise,
         );

@@ -9,7 +9,7 @@ import {
   zstdDecompressSync,
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, rss } from "harness";
+import { bunEnv, bunExe, isASAN, rss } from "harness";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -317,6 +317,90 @@ describe("decompressing frames whose size is not known up front", () => {
     expect([fromSync.length, fromSync.equals(original)]).toEqual([original.length, true]);
     const fromAsync = await zstdDecompress(frame);
     expect([fromAsync.length, fromAsync.equals(original)]).toEqual([original.length, true]);
+  });
+});
+
+// The output buffers are sized by the input: the compression bound of the caller's data, or
+// whatever the (possibly hostile) frames say they decompress to. When that allocation fails
+// the call has to throw or reject, not take the process down. ASAN's allocation cap makes the
+// failure deterministic: native allocations above CAP_MIB fail, while the JS Buffers the
+// script itself creates are backed by JSC's own allocator and are not affected.
+describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", () => {
+  const MiB = 1024 * 1024;
+  const CAP_MIB = 8;
+
+  it("compress and decompress, sync and async", async () => {
+    // All three decompress to more than the cap and each reaches the allocation differently:
+    // a header size under the 16 MiB limit is allocated up front; one above it starts the
+    // streaming decoder at 16 MiB; no header size starts small and fails while growing.
+    const frames = {
+      headerSize: zstdCompressSync(Buffer.alloc(12 * MiB)),
+      headerSizeAboveLimit: zstdCompressSync(Buffer.alloc(32 * MiB)),
+      noHeaderSize: await new Response(
+        new Response(Buffer.alloc(12 * MiB)).body!.pipeThrough(new CompressionStream("zstd")),
+      ).bytes(),
+    };
+    expect(frames.noHeaderSize[4] & 0xe0).toBe(0);
+    const framesBase64 = Object.fromEntries(
+      Object.entries(frames).map(([name, frame]) => [name, Buffer.from(frame).toString("base64")]),
+    );
+
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        /* js */ `
+          const frames = Object.fromEntries(
+            Object.entries(${JSON.stringify(framesBase64)}).map(([name, b64]) => [name, Buffer.from(b64, "base64")]),
+          );
+          const describeError = e => ({ name: e.name, message: e.message });
+          const results = {};
+          // The compression bound of this is a little over the cap.
+          const input = Buffer.alloc(${2 * CAP_MIB} * 1024 * 1024);
+          try { results.compressSync = Bun.zstdCompressSync(input).length; } catch (e) { results.compressSync = describeError(e); }
+          results.compress = await Bun.zstdCompress(input).then(out => out.length, describeError);
+          for (const [name, frame] of Object.entries(frames)) {
+            try { results["decompressSync " + name] = Bun.zstdDecompressSync(frame).length; } catch (e) { results["decompressSync " + name] = describeError(e); }
+            results["decompress " + name] = await Bun.zstdDecompress(frame).then(out => out.length, describeError);
+          }
+          results.afterwards = Bun.zstdDecompressSync(Bun.zstdCompressSync("still works")).toString();
+          results.afterwardsAsync = (await Bun.zstdDecompress(await Bun.zstdCompress("still works"))).toString();
+          console.log(JSON.stringify(results));
+        `,
+      ],
+      env: {
+        ...bunEnv,
+        // detect_leaks=0: LeakSanitizer cannot see through JSC cells to the natives they own.
+        ASAN_OPTIONS: [
+          bunEnv.ASAN_OPTIONS,
+          "allocator_may_return_null=1",
+          `max_allocation_size_mb=${CAP_MIB}`,
+          "detect_leaks=0",
+        ]
+          .filter(Boolean)
+          .join(":"),
+      },
+      stdout: "pipe",
+      // ASAN logs a warning for every refused allocation; not asserted on.
+      stderr: "pipe",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+
+    const outOfMemory = { name: "RangeError", message: "Out of memory" };
+    expect(stdout, `the child printed nothing and exited with ${exitCode}`).not.toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      compressSync: outOfMemory,
+      compress: outOfMemory,
+      "decompressSync headerSize": outOfMemory,
+      "decompress headerSize": outOfMemory,
+      "decompressSync headerSizeAboveLimit": outOfMemory,
+      "decompress headerSizeAboveLimit": outOfMemory,
+      "decompressSync noHeaderSize": outOfMemory,
+      "decompress noHeaderSize": outOfMemory,
+      afterwards: "still works",
+      afterwardsAsync: "still works",
+    });
+    expect(exitCode).toBe(0);
   });
 });
 

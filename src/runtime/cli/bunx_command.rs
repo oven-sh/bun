@@ -46,8 +46,10 @@ pub struct Options {
     pub(crate) package_name: &'static [u8],
     /// The binary name to run (when using --package)
     pub(crate) binary_name: Option<&'static [u8]>,
-    /// The package to install (when using --package)
-    pub(crate) specified_package: Option<&'static [u8]>,
+    /// The packages to install (when using --package). `--package`/`-p` may
+    /// be repeated to install several packages into the same temporary
+    /// execution environment; empty when `--package` was not passed.
+    pub(crate) specified_packages: Vec<&'static [u8]>,
     // `--silent` and `--verbose` are not mutually exclusive. Both the
     // global CLI parser and `bun add` parser use them for different
     // purposes.
@@ -64,7 +66,7 @@ impl Default for Options {
             passthrough_list: Vec::new(),
             package_name: b"",
             binary_name: None,
-            specified_package: None,
+            specified_packages: Vec::new(),
             verbose_install: false,
             silent_install: false,
             no_install: false,
@@ -129,7 +131,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(argv[i].as_bytes());
+                    opts.specified_packages.push(argv[i].as_bytes());
                 } else if positional.starts_with(b"--package=") {
                     let package_value = &positional[b"--package=".len()..];
                     if package_value.is_empty() {
@@ -139,7 +141,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(package_value);
+                    opts.specified_packages.push(package_value);
                 } else if positional.starts_with(b"-p=") {
                     let package_value = &positional[b"-p=".len()..];
                     if package_value.is_empty() {
@@ -149,7 +151,7 @@ impl Options {
                         );
                         Global::exit(1);
                     }
-                    opts.specified_package = Some(package_value);
+                    opts.specified_packages.push(package_value);
                 }
             } else {
                 if !found_subcommand_name {
@@ -163,7 +165,7 @@ impl Options {
         }
 
         // Handle --package flag case differently
-        if let Some(specified_package) = opts.specified_package {
+        if !opts.specified_packages.is_empty() {
             if let Some(package_name) = maybe_package_name {
                 if package_name.is_empty() {
                     Output::err_generic(
@@ -186,7 +188,12 @@ impl Options {
                 Global::exit(1);
             }
             opts.binary_name = maybe_package_name;
-            opts.package_name = specified_package;
+            // `package_name` keeps its historical meaning of "the first
+            // requested package" — used by single-package-oriented code
+            // below when exactly one `--package` was given.
+            // `specified_packages` is the source of truth for the install
+            // and cache-key logic in every case.
+            opts.package_name = opts.specified_packages[0];
         } else {
             // Normal case: package_name is the first non-flag argument
             if maybe_package_name.is_none() || maybe_package_name.unwrap().is_empty() {
@@ -698,7 +705,7 @@ impl BunxCommand {
         // 1. Install TypeScript
         // 2. Run tsc
         // BUT: Skip this transformation if --package was explicitly specified
-        if opts.specified_package.is_none() {
+        if opts.specified_packages.is_empty() {
             if update_request.name == b"tsc" {
                 update_request.name = b"typescript".as_slice();
             } else if update_request.name == b"claude" {
@@ -1569,7 +1576,7 @@ impl BunxCommand {
             }
         }
 
-        if let (Some(_), Some(binary_name)) = (opts.specified_package, opts.binary_name) {
+        if let (false, Some(binary_name)) = (opts.specified_packages.is_empty(), opts.binary_name) {
             Output::err_generic(
                 "Package <b>{}<r> does not provide a binary named <b>{}<r>",
                 (BStr::new(&update_request.name), BStr::new(binary_name)),

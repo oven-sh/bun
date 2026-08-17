@@ -170,9 +170,9 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
     expect(v).toBe(JSON.stringify(obj));
   });
 
-  // Guard: sql.array nested inside an UPDATE helper reaches native as its
-  // pre-serialized string, not the SQLArrayParameter wrapper object, so the
-  // JSON path above never applies to it.
+  // Guards: helpers and sql.unsafe hand the sql.array() wrapper itself to
+  // native (unlike the tagged template), so it must bind as text, not be
+  // caught by the object-to-JSON path above.
   test("sql.array inside an UPDATE helper still binds as an array literal", async () => {
     await container.ready;
     await using db = new SQL(options());
@@ -185,8 +185,6 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
     expect(roles).toEqual(["c", "d"]);
   });
 
-  // Same guard for sql.unsafe, which skips query normalization entirely and
-  // must not mutate the caller's args array while unwrapping.
   test("sql.array passed to sql.unsafe still binds as an array literal", async () => {
     await container.ready;
     await using db = new SQL(options());

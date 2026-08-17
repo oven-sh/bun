@@ -1,6 +1,7 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const PublicString = globalThis.String;
 const {
   Query,
   SQLQueryFlags,
@@ -63,10 +64,12 @@ type ArrayType =
   | "PG_DATABASE"
   | (string & {});
 export type { ArrayType, SQLArrayParameter, SQLResultArray };
-class SQLArrayParameter {
+// Extends String so native binds it as text on the paths that skip adapter.bindParam (helpers, sql.unsafe).
+class SQLArrayParameter extends PublicString {
   serializedValues: string;
   arrayType: ArrayType;
   constructor(serializedValues: string, arrayType: ArrayType) {
+    super(serializedValues);
     this.serializedValues = serializedValues;
     this.arrayType = arrayType;
   }
@@ -383,22 +386,6 @@ function pushBindParam(
   return adapter.placeholder(index) + " ";
 }
 
-// Never mutates `values`: on the sql.unsafe path it is the caller's own array.
-function unwrapArrayParams(values: unknown[]): unknown[] {
-  let out: unknown[] | undefined;
-  for (let i = 0; i < values.length; i++) {
-    const v = values[i];
-    if (v instanceof SQLArrayParameter) {
-      if (out === undefined) {
-        out = $newArrayWithSize(values.length);
-        for (let j = 0; j < values.length; j++) out[j] = values[j];
-      }
-      out[i] = v.serializedValues;
-    }
-  }
-  return out ?? values;
-}
-
 // This function handles array values in single fields:
 // - JSON/JSONB are the only field types that can be arrays themselves, so we serialize them
 // - SQL array field types (e.g., INTEGER[], TEXT[]) require the sql.array() helper
@@ -411,7 +398,7 @@ function normalizeQuery(
 ): [string, unknown[]] {
   if (typeof strings === "string") {
     // identifier or unsafe query
-    return [strings, unwrapArrayParams(values || [])];
+    return [strings, values || []];
   }
 
   if (!$isArray(strings)) {
@@ -591,7 +578,7 @@ function normalizeQuery(
     }
   }
 
-  return [query, unwrapArrayParams(binding_values)];
+  return [query, binding_values];
 }
 
 const enum PooledConnectionState {

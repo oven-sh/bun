@@ -1696,8 +1696,6 @@ impl Task {
                         {
                             self.blocked_scripts = self.count_blocked_scripts(
                                 installer,
-                                manager_ref.get(),
-                                lockfile,
                                 pkg_script_lists[pkg_id as usize],
                                 dep.name.slice(string_buf),
                                 &pkg_res,
@@ -2024,12 +2022,11 @@ impl Task {
     fn count_blocked_scripts(
         &self,
         installer: &Installer<'_>,
-        manager: &PackageManager,
-        lockfile: &Lockfile,
         mut pkg_scripts: package::scripts::Scripts,
         dep_name: &[u8],
         pkg_res: &Resolution,
     ) -> u8 {
+        let (manager, lockfile) = (installer.manager(), installer.lockfile());
         // A global-store entry stays in its staging dir until `Step::Binaries` renames it; a
         // project-local one was renamed into place by `Step::LinkPackage`.
         let mut pkg_dir = AutoAbsPath::init_top_level_dir();
@@ -2489,52 +2486,35 @@ impl<'a> Installer<'a> {
         let pkg_names = lockfile.packages.items_name();
         let pkg_resolutions = lockfile.packages.items_resolution();
 
-        let entries = &self.store.entries;
-        let entry_node_ids = entries.items_node_id();
-        let entry_hoisted = entries.items_hoisted();
-
+        let entry_node_ids = self.store.entries.items_node_id();
         let nodes = &self.store.nodes;
-        let node_pkg_ids = nodes.items_pkg_id();
-        let node_dep_ids = nodes.items_dep_id();
 
         // Not `parents`: public hoisting adds root dependencies without recording a parent.
-        for (entry_index, entry_deps) in entries.items_dependencies().iter().enumerate() {
-            if !entry_deps
-                .slice()
-                .iter()
-                .any(|dep| self.failed_optional_entries.contains(&dep.entry_id))
-            {
-                continue;
-            }
-
-            let entry_id = StoreEntryId::from(u32::try_from(entry_index).expect("int cast"));
-            let node_id = entry_node_ids[entry_index];
-            let pkg_id = node_pkg_ids[node_id.get() as usize];
-            let dep_id = node_dep_ids[node_id.get() as usize];
-            let entry_node_modules_name = self.entry_store_node_modules_package_name(
-                dep_id,
-                pkg_id,
-                &pkg_resolutions[pkg_id as usize],
-                pkg_names,
-            );
-
-            let mut dest = AutoPath::init_top_level_dir();
-            self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Final);
-            let base_len = dest.len();
-
+        for (entry_index, entry_deps) in self.store.entries.items_dependencies().iter().enumerate()
+        {
             for dep in entry_deps.slice() {
                 if !self.failed_optional_entries.contains(&dep.entry_id) {
                     continue;
                 }
+                let entry_id = StoreEntryId::from(u32::try_from(entry_index).expect("int cast"));
+                let node_id = entry_node_ids[entry_index].get() as usize;
+                let pkg_id = nodes.items_pkg_id()[node_id];
+                let entry_node_modules_name = self.entry_store_node_modules_package_name(
+                    nodes.items_dep_id()[node_id],
+                    pkg_id,
+                    &pkg_resolutions[pkg_id as usize],
+                    pkg_names,
+                );
+                let mut dest = AutoPath::init_top_level_dir();
+                self.append_real_store_node_modules_path(&mut dest, entry_id, Which::Final);
                 let dep_name = dependencies[dep.dep_id as usize].name.slice(string_buf);
-                dest.set_length(base_len);
                 append_dependency_link_name(&mut dest, dep_name, entry_node_modules_name);
                 let _ = remove_link(dest.slice_z());
             }
         }
 
         for &entry_id in &self.failed_optional_entries {
-            if entry_hoisted[entry_id.get() as usize] {
+            if self.store.entries.items_hoisted()[entry_id.get() as usize] {
                 let _ = remove_link(self.hidden_node_modules_link_path(entry_id).slice_z());
             }
         }

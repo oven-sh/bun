@@ -234,11 +234,7 @@ fn dependency_is_contained_folder(
     declarer: &Resolution,
     dep: &install::Dependency,
 ) -> bool {
-    if matches!(
-        declarer.tag,
-        ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Folder
-    ) || dep.version.tag != VersionTag::Folder
-    {
+    if declarer.tag.is_local_package() || dep.version.tag != VersionTag::Folder {
         return false;
     }
     let string_buf = lockfile.buffers.string_bytes.as_slice();

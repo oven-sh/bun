@@ -15,9 +15,8 @@ const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
 
-// node:http is only needed for the server API and a couple of rarely-hit
-// client paths, and loading it eagerly is almost the entire cost of
-// require("ws"). Load it on first use instead.
+// Loaded on first use: node:http is almost the entire cost of require("ws"),
+// and the client API never touches it.
 let http;
 function lazyHttp() {
   return (http ??= require("node:http"));

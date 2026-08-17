@@ -947,11 +947,31 @@ describe.concurrent("exceptions thrown while walking properties", () => {
     // properties were visited, so they were dropped from the output (and debug
     // builds asserted when the next initializer ran).
     const { stdout, stderr, exitCode } = await run(`
+      // Formatting a value with a custom inspect function (process.env on Windows)
+      // loads node:util's inspect helpers, which read process.env. Load them
+      // before breaking process.env so only the Bun.$ initializer throws.
+      Bun.inspect({ [Bun.inspect.custom]() { return ""; } });
       Object.defineProperty(process, "env", { get() { throw new Error("boom"); } });
       const s = Bun.inspect(Bun);
       console.log(/^  \\$:/m.test(s), /^  Archive:/m.test(s), /^  version:/m.test(s));
     `);
     expect({ stdout, stderr, exitCode }).toEqual({ stdout: "false true true\n", stderr: "", exitCode: 0 });
+  });
+
+  it("a get trap that throws for one inherited property only hides that property", async () => {
+    // Same leak through a Proxy: the pending exception made the remaining
+    // properties look missing and then the prototype step dereferenced the
+    // empty value returned by the proxy's getPrototype.
+    const { stdout, stderr, exitCode } = await run(`
+      const proto = new Proxy({ a: 1, b: 2, c: 3 }, {
+        get(target, key, receiver) {
+          if (key === "a") throw new Error("trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      console.log(Bun.inspect(Object.create(proto)));
+    `);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "{\n  b: 2,\n  c: 3,\n}\n", stderr: "", exitCode: 0 });
   });
 
   it("a throwing getPrototypeOf trap in the prototype chain stops the walk", async () => {

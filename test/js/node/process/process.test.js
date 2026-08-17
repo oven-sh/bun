@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { familySync } from "detect-libc";
-import { bunEnv, bunExe, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isMacOS, isWindows, tempDir, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = resolve(import.meta.dir, "process-sleep.js");
@@ -2750,22 +2750,19 @@ describe.concurrent("lazy process properties whose builder throws", () => {
   // it or inspecting it at the stack limit still aborts the process (initializers of JSC
   // LazyPropertys, which cannot fail), so Bun.inspect(process) cannot be run there.
   it.skipIf(isWindows)("inspecting process while out of stack leaves every property buildable", async () => {
-    // Bun.inspect(process) reads every property, so it runs all of the builders in one go. Done
-    // while unwinding, the deepest inspections fail every builder that calls into JS. Whatever
-    // failed must be missing from that inspection only.
+    // Bun.inspect(process) reads every property, so it runs all of the builders in one go, and at
+    // the stack limit every one of them that calls into JS fails. They must only be missing from
+    // that one inspection.
     const listUndefinedProperties = `
       const undefinedProperties = Object.getOwnPropertyNames(process).filter(name => process[name] === undefined);
       process.nextTick(() => process.stdout.write(JSON.stringify(undefinedProperties) + "\\n"));
     `;
     const [outOfStack, baseline] = await Promise.all([
       run(`
-        let inspections = 0;
         function recurse() {
           try {
             recurse();
-          } catch {}
-          if (inspections < 50) {
-            inspections++;
+          } catch {
             try {
               Bun.inspect(process, { depth: 0 });
             } catch {}
@@ -2842,6 +2839,102 @@ describe.concurrent("lazy process properties whose builder throws", () => {
         finalization: "function",
       }) + "\n",
     );
+    expect(exitCode).toBe(0);
+  });
+
+  it("a failed builder only hides its own property from Bun.inspect", async () => {
+    // A failed lookup leaves its exception pending. Bun.inspect's property walk has to clear it
+    // before looking up the next property, or the lazy properties declared after the failed one
+    // (loadEnvFile, finalization, arch, ... up to the first non-lazy one) are reported as missing
+    // too. As above, allowedNodeEnvironmentFlags is made the one builder that fails. process.env
+    // is replaced because on Windows it has a custom inspect function, whose machinery needs
+    // modules that do not load without Set either.
+    const { stdout, stderr, exitCode } = await run(`
+      process.stdout; process.stderr; process.stdin; process.nextTick;
+      Object.defineProperty(process, "env", { value: {}, writable: true, configurable: true, enumerable: true });
+      const keysOf = inspected => [...inspected.matchAll(/^  ([A-Za-z_$][\\w$]*):/gm)].map(match => match[1]);
+      const RealSet = Set;
+      globalThis.Set = undefined;
+      const whileBroken = keysOf(Bun.inspect(process, { depth: 0 }));
+      globalThis.Set = RealSet;
+      const intact = keysOf(Bun.inspect(process, { depth: 0 }));
+      console.log(JSON.stringify({
+        hiddenWhileBroken: intact.filter(key => !whileBroken.includes(key)),
+        extraWhileBroken: whileBroken.filter(key => !intact.includes(key)),
+      }));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ hiddenWhileBroken: ["allowedNodeEnvironmentFlags"], extraWhileBroken: [] });
+    expect(exitCode).toBe(0);
+  });
+
+  it("internal nextTick users see the builder failure and work once it can be built", async () => {
+    // process.emitWarning queues through the native Process::queueNextTick, which reads
+    // process.nextTick and so runs its builder on the first use. It used to fail for good after
+    // one failed build ("Failed to call nextTick" from every later warning, Worker, ...).
+    const { stdout, stderr, exitCode } = await run(`
+      process.removeAllListeners("warning");
+      let atLimit;
+      process.on("warning", warning => {
+        console.log(JSON.stringify({ atLimit, warning: warning.message, nextTick: typeof process.nextTick }));
+      });
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          try {
+            process.emitWarning("at the stack limit");
+            atLimit = "returned";
+          } catch (e) {
+            atLimit = "threw " + e.constructor.name;
+          }
+        }
+      }
+      recurse();
+      process.emitWarning("after unwinding");
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({ atLimit: "threw RangeError", warning: "after unwinding", nextTick: "function" }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  // Reading the property again every few frames while unwinding: the first reads fail, and the
+  // one that has enough stack builds it. The stdio builders load the stream modules, which read
+  // process.nextTick and so add a property to process before the build can still run out of stack;
+  // JSC's getPropertySlot then continues with the structure it read before the build, which is an
+  // assertion failure on builds with assertions (harmless otherwise: the prototype is the same).
+  // Until the engine reloads the structure there, those three only run on release builds.
+  const rebuiltWhileUnwinding = [
+    ["nextTick", "function"],
+    ["allowedNodeEnvironmentFlags", "object"],
+  ];
+  if (!isDebug && !isASAN) rebuiltWhileUnwinding.push(["stdout", "object"], ["stderr", "object"], ["stdin", "object"]);
+  it.each(rebuiltWhileUnwinding)("process.%s is built by a later read while unwinding", async (name, type) => {
+    // process.env is built first: on Windows its builder calls into JS as well.
+    const { stdout, stderr, exitCode } = await run(`
+      process.env;
+      let unwound = 0;
+      let failed = 0;
+      let built;
+      function recurse() {
+        try {
+          recurse();
+        } catch {}
+        if (built !== undefined || unwound++ % 64 !== 0) return;
+        try {
+          built = typeof process[${JSON.stringify(name)}];
+        } catch (e) {
+          if (!(e instanceof RangeError)) throw e;
+          failed++;
+        }
+      }
+      recurse();
+      console.log(JSON.stringify({ built, failedFirst: failed > 0, stillBuilt: typeof process[${JSON.stringify(name)}] }));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({ built: type, failedFirst: true, stillBuilt: type });
     expect(exitCode).toBe(0);
   });
 });

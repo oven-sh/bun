@@ -311,36 +311,27 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(missing.error.code).toBe("ERR_AWS_CREDENTIALS");
     expect(missing.error.message).toContain('profile "nope" was not found');
     expect(missing.error.message).not.toContain("could not read");
-    // a config file that exists but cannot be read is called out (here: a directory)
-    using unreadable = tempDir("aws-unreadable", { config: { "not-a-file": "" } });
-    const blocked = await creds(
-      { HOME: dir, USERPROFILE: dir, AWS_CONFIG_FILE: join(unreadable, "config") },
-      `{ profile: "nope" }`,
-    );
-    expect(blocked.error.message).toContain('profile "nope" was not found');
-    expect(blocked.error.message).toMatch(/could not read .*config \(E[A-Z]+\)/);
-    const ambient = await creds({
-      HOME: dir,
-      USERPROFILE: dir,
-      AWS_CONFIG_FILE: join(unreadable, "config"),
-      AWS_PROFILE: "nope",
+  });
+
+  test("a shared config file that exists but cannot be read is called out", async () => {
+    using dir = tempDir("aws-home-unreadable", {
+      ".aws": {
+        // a fully-keyed [default] must not be fallen back to when the named profile is missing
+        credentials: `[default]\naws_access_key_id = AKIADEFAULT\naws_secret_access_key = x\n[lonely]\nregion = us-east-1\n[dev]\nsso_session = corp\nsso_account_id = 1\nsso_role_name = r\n`,
+      },
     });
+    using unreadable = tempDir("aws-unreadable", { config: { "not-a-file": "" } }); // a directory
+    const env = { HOME: dir, USERPROFILE: dir, AWS_CONFIG_FILE: join(unreadable, "config") };
+    const [blocked, ambient, lonely, dev] = await Promise.all([
+      creds(env, `{ profile: "nope" }`),
+      creds({ ...env, AWS_PROFILE: "nope" }),
+      creds(env, `{ profile: "lonely" }`),
+      creds(env, `{ profile: "dev" }`),
+    ]);
+    expect(blocked.error.message).toMatch(/profile "nope" was not found.*; could not read .*config \(E[A-Z]+\)/);
     expect(ambient.error.code).toBe("ERR_AWS_MISSING_CREDENTIALS");
     expect(ambient.error.message).toMatch(/config \(could not be read: E[A-Z]+\); profile "nope" \(not found in/);
-    // …and when the profile *is* found (in the readable file) but has nothing usable
-    using half = tempDir("aws-half", { ".aws": { credentials: `[lonely]\nregion = us-east-1\n` } });
-    const lonely = await creds(
-      { HOME: half, USERPROFILE: half, AWS_CONFIG_FILE: join(unreadable, "config") },
-      `{ profile: "lonely" }`,
-    );
     expect(lonely.error.message).toMatch(/does not contain credentials.*; could not read .*config \(E[A-Z]+\)/);
-    using ssoish = tempDir("aws-ssoish", {
-      ".aws": { credentials: `[dev]\nsso_session = corp\nsso_account_id = 1\nsso_role_name = r\n` },
-    });
-    const dev = await creds(
-      { HOME: ssoish, USERPROFILE: ssoish, AWS_CONFIG_FILE: join(unreadable, "config") },
-      `{ profile: "dev" }`,
-    );
     expect(dev.error.message).toMatch(/sso-session corp.*; could not read .*config \(E[A-Z]+\)/);
   });
 
@@ -562,6 +553,28 @@ describe.concurrent("Bun.aws.credentials", () => {
     expect(disabled.error.code).toBe("ERR_AWS_MISSING_CREDENTIALS");
   });
 
+  test("a metadata request that times out while still queued behind other requests settles (as a timeout)", async () => {
+    using hang = Bun.serve({ port: 0, fetch: () => new Promise<Response>(() => {}) });
+    // One HTTP slot, held by a request that never answers: the IMDS deadline
+    // fires before the metadata request ever connects.
+    const { stdout, exitCode } = await run(
+      `
+        fetch(${JSON.stringify(hang.url.href)}).catch(() => {});
+        try { await Bun.aws.credentials(); console.log("resolved?!"); }
+        catch (e) { console.log(e.code); }
+        process.exit(0);
+      `,
+      {
+        BUN_CONFIG_MAX_HTTP_REQUESTS: "1",
+        AWS_EC2_METADATA_DISABLED: undefined,
+        AWS_EC2_METADATA_SERVICE_ENDPOINT: hang.url.href,
+        AWS_METADATA_SERVICE_TIMEOUT: "0.2",
+      },
+    );
+    expect(stdout.trim()).toBe("ERR_AWS_MISSING_CREDENTIALS");
+    expect(exitCode).toBe(0);
+  });
+
   test("workers with their own env resolve their own credentials", async () => {
     const { stdout, exitCode } = await run(
       `
@@ -777,6 +790,20 @@ describe.concurrent("Bun.aws.credentials", () => {
     const result = await creds({ ...files.env, AWS_PROFILE: "dev" });
     expect(result.error.code).toBe("ERR_AWS_CREDENTIALS");
     expect(result.error.message).toContain("aws sso login --sso-session corp");
+  });
+
+  test("SSO profile whose cached token exists but cannot be read says so", async () => {
+    const files = writeAwsFiles("aws-sso2", {
+      config: `[profile dev]\nsso_session = corp\nsso_account_id = 123456789012\nsso_role_name = Developer\nregion = us-east-1\n[sso-session corp]\nsso_start_url = https://corp.awsapps.com/start\nsso_region = us-east-1\n`,
+    });
+    using _ = files.dir;
+    const key = new Bun.CryptoHasher("sha1").update("corp").digest("hex") + ".json";
+    using home = tempDir("aws-sso-home", { ".aws": { sso: { cache: { [key]: { x: "" } } } } }); // a directory
+    const unreadable = await creds({ ...files.env, AWS_PROFILE: "dev", HOME: home, USERPROFILE: home });
+    expect(unreadable.error.message).toContain(
+      `could not read the cached SSO token at ${join(home, ".aws", "sso", "cache", key)} (E`,
+    );
+    expect(unreadable.error.message).not.toContain("aws sso login");
   });
 
   test("argument validation", () => {

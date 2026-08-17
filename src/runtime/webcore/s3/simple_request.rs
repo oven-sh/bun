@@ -431,7 +431,7 @@ impl S3HttpSimpleTask {
             Completion::Raw(on_done) => {
                 let on_done = on_done.take().expect("raw completion runs once");
                 let result = match (this.result.fail, this.result.metadata.take()) {
-                    (Some(bun_http::Error::Aborted), _) if this.deadline_hit => {
+                    (Some(_), _) if this.deadline_hit && this.result.is_abort() => {
                         Err(Some(bun_http::Error::Timeout))
                     }
                     (Some(err), _) => Err(Some(err)),

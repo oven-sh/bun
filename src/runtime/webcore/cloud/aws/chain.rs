@@ -280,7 +280,7 @@ impl Resolver {
         match File::read_from(Fd::cwd(), &path) {
             Ok(bytes) => IniFile::parse(&bytes, is_config),
             Err(e) => {
-                if !matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR) {
+                if !crate::webcore::cloud::not_found(&e) {
                     if !self.unreadable_files.is_empty() {
                         self.unreadable_files.extend_from_slice(b", ");
                     }
@@ -986,13 +986,21 @@ impl Resolver {
                 None => format!("run `aws sso login --profile {}`", BStr::new(profile)),
             }
         };
-        let cache = File::read_from(Fd::cwd(), &path).map_err(|_| {
-            fail!(
-                "profile \"{}\": no cached SSO token at {}; {}",
-                BStr::new(profile),
-                BStr::new(&path),
-                login_hint()
-            )
+        let cache = File::read_from(Fd::cwd(), &path).map_err(|e| {
+            let why = if crate::webcore::cloud::not_found(&e) {
+                format!(
+                    "no cached SSO token at {}; {}",
+                    BStr::new(&path),
+                    login_hint()
+                )
+            } else {
+                format!(
+                    "could not read the cached SSO token at {} ({})",
+                    BStr::new(&path),
+                    BStr::new(e.name())
+                )
+            };
+            fail!("profile \"{}\": {why}", BStr::new(profile))
         })?;
         struct Token {
             access_token: Option<Box<[u8]>>,

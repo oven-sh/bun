@@ -309,10 +309,21 @@ impl Resolver {
                     }
                     return Ok(t);
                 }
-                Err(_) => self.note(format_args!(
-                    "application default credentials ({} not found; `gcloud auth application-default login` creates it)",
-                    BStr::new(&path)
-                )),
+                Err(e) if crate::webcore::cloud::not_found(&e) || !bun_sys::exists(&path) => {
+                    // (…or a parent directory that cannot be searched: like
+                    // google-auth-library's existsSync probe, that is "absent".)
+                    self.note(format_args!(
+                        "application default credentials ({} not found; `gcloud auth application-default login` creates it)",
+                        BStr::new(&path)
+                    ))
+                }
+                Err(e) => {
+                    return Err(fail!(
+                        "application default credentials: could not read {} ({})",
+                        BStr::new(&path),
+                        BStr::new(e.name())
+                    ));
+                }
             },
             None => self.note(format_args!(
                 "application default credentials ({} is not set)",

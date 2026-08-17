@@ -209,6 +209,17 @@ describe.concurrent("Bun.gcp", () => {
     expect(r.error.message).toContain("NO_GCE_CHECK");
   });
 
+  test("a well-known ADC file that exists but cannot be read is an error (like google-auth-library)", async () => {
+    using cfgdir = tempDir("gcp-unreadable", { "application_default_credentials.json": { x: "" } }); // a directory
+    const blocked = await token({
+      CLOUDSDK_CONFIG: String(cfgdir),
+      NO_GCE_CHECK: undefined,
+      GCE_METADATA_HOST: `127.0.0.1:${metadata.port}`,
+    });
+    expect(blocked.error.code).toBe("ERR_GCP_CREDENTIALS");
+    expect(blocked.error.message).toMatch(/could not read .*application_default_credentials\.json \(E[A-Z]+\)/);
+  });
+
   test("service account key file → RS256-signed JWT exchanged for an access token", async () => {
     using dir = tempDir("gcp-sa", { "sa.json": serviceAccountFile() });
     const before = hits.token.length;

@@ -135,7 +135,15 @@ impl ChainConfig {
         let mut p = Vec::with_capacity(home.len() + 1 + rel.len());
         p.extend_from_slice(strings::trim_right(home, b"/\\"));
         p.push(bun_paths::SEP);
+        let start = p.len();
         p.extend_from_slice(rel);
+        if cfg!(windows) {
+            for b in &mut p[start..] {
+                if *b == b'/' {
+                    *b = bun_paths::SEP;
+                }
+            }
+        }
         Some(p)
     }
 

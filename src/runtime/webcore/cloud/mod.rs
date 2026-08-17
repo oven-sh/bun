@@ -11,6 +11,12 @@ pub mod gcp;
 pub mod io;
 pub mod json;
 
+/// A read that failed because nothing is at the path (as opposed to
+/// something being there that cannot be read).
+pub(crate) fn not_found(e: &bun_sys::Error) -> bool {
+    matches!(e.get_errno(), bun_sys::E::ENOENT | bun_sys::E::ENOTDIR)
+}
+
 /// `application/x-www-form-urlencoded` body from key/value pairs.
 pub(crate) fn form_encode(out: &mut Vec<u8>, pairs: &[(&[u8], &[u8])]) {
     for (i, (k, v)) in pairs.iter().enumerate() {

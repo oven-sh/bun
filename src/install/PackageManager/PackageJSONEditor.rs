@@ -1075,7 +1075,9 @@ pub(crate) fn edit(
                                                 else {
                                                     break 'add_packages_to_update;
                                                 };
-                                                let tag = dependency::Tag::infer(dependency::trim_literal(version_literal));
+                                                let tag = dependency::Tag::infer(
+                                                    dependency::trim_literal(version_literal),
+                                                );
 
                                                 if tag != dependency::Tag::Npm
                                                     && tag != dependency::Tag::DistTag
@@ -1513,10 +1515,12 @@ pub(crate) fn edit(
                 // A range that linked a workspace member has nothing to move to; `workspace:*` is what `bun add` writes.
                 resolution::Tag::Workspace if manager.subcommand == Subcommand::Update => continue,
                 // Not the bound row: an unchanged resolution keeps the old lockfile row and its previous literal.
-                resolution::Tag::Workspace => match dependency::Tag::infer(dependency::trim_literal(e_string.data.slice())) {
-                    dependency::Tag::Workspace => e_string.data.slice(),
-                    _ => b"workspace:*",
-                },
+                resolution::Tag::Workspace => {
+                    match dependency::Tag::infer(dependency::trim_literal(e_string.data.slice())) {
+                        dependency::Tag::Workspace => e_string.data.slice(),
+                        _ => b"workspace:*",
+                    }
+                }
                 _ => arena_dup(arena, request.version.literal.slice(request.version_buf())),
             };
             if e_string.data.slice() != new_literal {

@@ -549,12 +549,18 @@ fn print_package_with_type(prefix: &[u8], package: &DependentInfo) {
     } else {
         bun_core::pretty!("{}", escape_control_chars(&package.name));
         if !package.version.is_empty() {
-            bun_core::pretty!("<d>@{}<r>", bun_core::fmt::EscapeControlChars(redacted(BStr::new(&package.version))));
+            bun_core::pretty!(
+                "<d>@{}<r>",
+                bun_core::fmt::EscapeControlChars(redacted(BStr::new(&package.version)))
+            );
         }
     }
 
     if !package.spec.is_empty() {
-        bun_core::prettyln!(" <d>(requires {})<r>", bun_core::fmt::EscapeControlChars(redacted(BStr::new(&package.spec))));
+        bun_core::prettyln!(
+            " <d>(requires {})<r>",
+            bun_core::fmt::EscapeControlChars(redacted(BStr::new(&package.spec)))
+        );
     } else {
         bun_core::prettyln!("");
     }

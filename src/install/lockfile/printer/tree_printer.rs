@@ -799,7 +799,9 @@ where
                 ENABLE_ANSI_COLORS,
                 " <r><b>{s}<r><d>@<b>{f}<r>\n",
                 bun_core::fmt::escape_control_chars(package_name),
-                bun_core::fmt::EscapeControlChars(redacted(resolved[package_id as usize].fmt(string_buf, PathSep::Auto))),
+                bun_core::fmt::EscapeControlChars(redacted(
+                    resolved[package_id as usize].fmt(string_buf, PathSep::Auto)
+                )),
             )?;
         }
     }

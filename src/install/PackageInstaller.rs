@@ -2123,7 +2123,9 @@ impl<'a> PackageInstaller<'a> {
                                             "Blocked {} scripts for: {}@{}\n",
                                             count,
                                             bstr::BStr::new(alias.slice(string_buf!())),
-                                            bun_core::fmt::EscapeControlChars(redacted(resolution.fmt(string_buf!(), PathSep::Posix))),
+                                            bun_core::fmt::EscapeControlChars(redacted(
+                                                resolution.fmt(string_buf!(), PathSep::Posix)
+                                            )),
                                         );
                                     }
                                     let entry = self

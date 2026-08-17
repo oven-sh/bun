@@ -14,7 +14,9 @@ use bun_http as http;
 use bun_install::{self as install, Npm, PackageManager, Subcommand};
 use bun_libarchive::lib::{Archive, ArchiveIterator, IteratorResult as ArchiveIterResult};
 use bun_parsers::json as json_mod;
-use bun_paths::resolve_path::{join_abs_string_buf_checked, normalize_buf_spill, normalize_buf_z_spill};
+use bun_paths::resolve_path::{
+    join_abs_string_buf_checked, normalize_buf_spill, normalize_buf_z_spill,
+};
 use bun_paths::{self as path, PathBuffer};
 use bun_sha_hmac as sha;
 use bun_simdutf_sys::simdutf;
@@ -1565,7 +1567,9 @@ impl PublishCommand {
             match &bin_query.expr.data {
                 ExprData::EString(bin_str) => {
                     let mut bin_props: Vec<G::Property> = Vec::new();
-                    if let Some(value) = Self::bin_target(bin_str.string(bump)?, &mut *path_buf, &mut path_spill) {
+                    if let Some(value) =
+                        Self::bin_target(bin_str.string(bump)?, &mut *path_buf, &mut path_spill)
+                    {
                         if !bun_sys::exists_at(workspace_root, value) {
                             bun_core::warn!(
                                 "bin '{}' does not exist",
@@ -1632,7 +1636,8 @@ impl PublishCommand {
                         else {
                             continue;
                         };
-                        let Some(value) = Self::bin_target(value.string(bump)?, &mut *path_buf, &mut path_spill)
+                        let Some(value) =
+                            Self::bin_target(value.string(bump)?, &mut *path_buf, &mut path_spill)
                         else {
                             continue;
                         };
@@ -1678,9 +1683,12 @@ impl PublishCommand {
                     return Ok(());
                 };
                 let mut bin_props: Vec<G::Property> = Vec::new();
-                let Some(bin_dir_subpath) =
-                    pack::bin_subpath(bin_dir_str, pack::BinType::Dir, &mut *path_buf, &mut path_spill)
-                else {
+                let Some(bin_dir_subpath) = pack::bin_subpath(
+                    bin_dir_str,
+                    pack::BinType::Dir,
+                    &mut *path_buf,
+                    &mut path_spill,
+                ) else {
                     return Ok(());
                 };
                 let normalized_bin_dir = bun_core::ZBox::from_bytes(bin_dir_subpath);

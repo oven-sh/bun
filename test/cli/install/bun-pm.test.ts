@@ -1,7 +1,18 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { chmod, exists, mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunEnv as env, bunExe, isLinux, isWindows, readdirSorted, tempDir, tls, tmpdirSync, unprivilegedSpawnOptions } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  bunEnv as env,
+  isLinux,
+  isWindows,
+  readdirSorted,
+  tempDir,
+  tls,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {

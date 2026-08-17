@@ -2,7 +2,17 @@ import { file, spawn, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, lstatSync, readFileSync, readlinkSync, statSync } from "fs";
 import { mkdir, readlink, rm, symlink } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe, githubTarball, isLinux, isWindows, readdirSorted, runBunInstall, tempDir } from "harness";
+import {
+  VerdaccioRegistry,
+  bunEnv,
+  bunExe,
+  githubTarball,
+  isLinux,
+  isWindows,
+  readdirSorted,
+  runBunInstall,
+  tempDir,
+} from "harness";
 import { createRequire } from "module";
 import { basename, dirname, join } from "path";
 import { pathToFileURL } from "url";

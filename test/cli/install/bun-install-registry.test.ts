@@ -1,6 +1,6 @@
 import { file, spawn, write } from "bun";
 import { install_test_helpers, npm_manifest_test_helpers } from "bun:internal-for-testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
@@ -8,7 +8,6 @@ import {
   bunEnv,
   bunExe,
   isFlaky,
-  isLinux,
   isLinux,
   isWindows,
   mergeWindowEnvs,

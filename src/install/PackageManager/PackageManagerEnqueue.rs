@@ -832,16 +832,14 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                     if dependency.behavior.is_peer() {
                                         warn_unmet_peer_dependency(this, name, &version, err);
                                     } else {
-                                        this.log_mut()
-                    .add_error_fmt(
-                                                None,
-                                                bun_ast::Loc::EMPTY,
-                                                format_args!(
-                                                    "Package \"{}\" with tag \"{}\" not found, but package exists",
-                                                    bun_fmt::escape_control_chars(this.lockfile.str(&name)),
-                                                    bun_fmt::escape_control_chars(
-                                                        this.lockfile.str(&version.dist_tag().tag)
-                                                    ),
+                                        this.log_mut().add_error_fmt(
+                                            None,
+                                            bun_ast::Loc::EMPTY,
+                                            format_args!(
+                                                "Package \"{}\" with tag \"{}\" not found, but package exists",
+                                                bun_fmt::escape_control_chars(this.lockfile.str(&name)),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&version.dist_tag().tag)
                                                 ),
                                             ),
                                         );
@@ -896,7 +894,9 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                                 bun_fmt::escape_control_chars(
                                                     this.lockfile.str(&version.literal)
                                                 ),
-                                                bun_fmt::escape_control_chars(this.lockfile.str(&name)),
+                                                bun_fmt::escape_control_chars(
+                                                    this.lockfile.str(&name)
+                                                ),
                                                 age_gate_ms / MS_PER_S,
                                             );
                                         }

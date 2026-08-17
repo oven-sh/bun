@@ -1420,7 +1420,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
 
     if let Some(bin) = json.as_property(b"bin") {
         if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-            if let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill) {
+            if let Some(subpath) =
+                bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
+            {
                 bins.push(BinInfo {
                     path: ZBox::from_bytes(subpath),
                     ty: BinType::File,
@@ -1437,7 +1439,8 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
             for bin_prop in bin_obj.properties.slice() {
                 if let Some(bin_prop_value) = &bin_prop.value {
                     if let Some(bin_str) = bin_prop_value.as_string(pack_bump()) {
-                        let Some(subpath) = bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
+                        let Some(subpath) =
+                            bin_subpath(bin_str, BinType::File, &mut path_buf, &mut path_spill)
                         else {
                             continue;
                         };
@@ -1462,7 +1465,9 @@ fn get_package_bins(json: &Expr) -> Result<Vec<BinInfo>, AllocError> {
         if let ExprData::EObject(directories_obj) = &directories.expr.data {
             if let Some(bin) = directories_obj.as_property(b"bin") {
                 if let Some(bin_str) = bin.expr.as_string(pack_bump()) {
-                    if let Some(subpath) = bin_subpath(bin_str, BinType::Dir, &mut path_buf, &mut path_spill) {
+                    if let Some(subpath) =
+                        bin_subpath(bin_str, BinType::Dir, &mut path_buf, &mut path_spill)
+                    {
                         bins.push(BinInfo {
                             path: ZBox::from_bytes(subpath),
                             ty: BinType::Dir,

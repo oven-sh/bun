@@ -2,7 +2,18 @@ import { file, gunzipSync, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { chmod, exists, lstat, mkdir, rm, symlink } from "fs/promises";
-import { MAX_PATH_BYTES, bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
+import {
+  MAX_PATH_BYTES,
+  bunEnv,
+  bunExe,
+  isLinux,
+  isWindows,
+  pack,
+  runBunInstall,
+  tempDir,
+  tmpdirSync,
+  unprivilegedSpawnOptions,
+} from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 

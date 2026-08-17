@@ -977,11 +977,12 @@ impl Lockfile {
     /// Folder arm of `get_or_put_resolved_package`), so every folder package that
     /// declares anything is reached from the root through local packages only.
     pub(crate) fn is_dependency_of_local_package(&self, id: DependencyID) -> bool {
-        self.get_parent_pkg_of_dependency(id).is_some_and(|parent_id| {
-            self.packages.items_resolution()[parent_id as usize]
-                .tag
-                .is_local_package()
-        })
+        self.get_parent_pkg_of_dependency(id)
+            .is_some_and(|parent_id| {
+                self.packages.items_resolution()[parent_id as usize]
+                    .tag
+                    .is_local_package()
+            })
     }
 
     /// Does this tree id belong to a workspace (including workspace root)?

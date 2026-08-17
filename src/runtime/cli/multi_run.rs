@@ -9,8 +9,8 @@ use bun_core::strings;
 use bun_core::{self as bun, Global, Output, UnwrapOrOom, ZStr};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
-use bun_install::package_manager::workspace_selection;
 use bun_install::lifecycle_script_runner::ScriptArgv;
+use bun_install::package_manager::workspace_selection;
 use bun_io::BufferedReader;
 use bun_paths as path;
 

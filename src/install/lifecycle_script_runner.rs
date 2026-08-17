@@ -737,13 +737,19 @@ impl<'a> LifecycleScriptSubprocess<'a> {
                 (*this).prepare_dependencies = PrepareDependencies::Installing(
                     NestedInstallCleanup::begin(cwd, &(*this).package_name),
                 );
-                (ScriptArgv::install_dependencies()?, INSTALL_DEPENDENCIES_COMMAND_LINE)
+                (
+                    ScriptArgv::install_dependencies()?,
+                    INSTALL_DEPENDENCIES_COMMAND_LINE,
+                )
             } else {
                 copy_script.reserve_exact(original_script.len() + 1);
                 replace_package_manager_run(&mut copy_script, original_script)?;
                 copy_script.push(0);
                 let combined_script: &ZStr = ZStr::from_slice_with_nul(&copy_script);
-                (ScriptArgv::new((*this).shell_bin, combined_script)?, combined_script.as_bytes())
+                (
+                    ScriptArgv::new((*this).shell_bin, combined_script)?,
+                    combined_script.as_bytes(),
+                )
             };
 
             if (*this).foreground && (*manager).options.log_level != crate::LogLevel::Silent {
@@ -851,11 +857,7 @@ impl<'a> LifecycleScriptSubprocess<'a> {
             (*manager)
                 .active_lifecycle_scripts
                 .insert(this.cast::<LifecycleScriptSubprocess<'static>>());
-            let spawned = match bun_spawn::spawn_process(
-                &spawn_options,
-                argv.as_ptr(),
-                envp,
-            ) {
+            let spawned = match bun_spawn::spawn_process(&spawn_options, argv.as_ptr(), envp) {
                 Ok(Ok(s)) => s,
                 res => {
                     #[cfg(windows)]

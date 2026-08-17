@@ -466,21 +466,14 @@ impl core::fmt::Display for RegistryPath<'_> {
     }
 
     /// Replaces the registry used by packages that have no registry for their scope.
-    fn set_default_registry(
-        &mut self,
-        url: &[u8],
-    ) -> Result<(), AllocError> {
+    fn set_default_registry(&mut self, url: &[u8]) -> Result<(), AllocError> {
         self.scope = self.scope_for_registry_url(b"", &self.scope, url)?;
         self.did_override_default_scope = self.scope.url_hash != *Npm::registry::DEFAULT_URL_HASH;
         Ok(())
     }
 
     /// Replaces the registry used by the packages of `scope_name` (without the `@`).
-    fn set_scope_registry(
-        &mut self,
-        scope_name: &[u8],
-        url: &[u8],
-    ) -> Result<(), AllocError> {
+    fn set_scope_registry(&mut self, scope_name: &[u8], url: &[u8]) -> Result<(), AllocError> {
         let key = Npm::registry::Scope::hash(scope_name);
         let current = match self.registries.get(&key) {
             Some(scope) if *scope.name == *scope_name => scope,

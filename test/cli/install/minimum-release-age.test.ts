@@ -2,8 +2,8 @@ import type { Server } from "bun";
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { rmSync } from "node:fs";
-import { join } from "node:path";
 import { readdir, rm } from "node:fs/promises";
+import { join } from "node:path";
 
 // These tests drive real `bun install` runs against a mock registry, which is
 // slow under the debug/ASAN build — give them the same generous timeout the

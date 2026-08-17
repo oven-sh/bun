@@ -67,7 +67,10 @@ fn take_migrated_root(manager: &mut PackageManager) -> Option<WorkspaceTarget> {
     }
     let moved = core::mem::take(&mut manager.migrated_package_json_moves);
     if !manager.options.log_level.is_silent() {
-        bun_core::pretty_errorln!("<d>copied {} in <r><green>package.json<r>", moved.join(", "));
+        bun_core::pretty_errorln!(
+            "<d>copied {} in <r><green>package.json<r>",
+            moved.join(", ")
+        );
     }
     Some(root_target())
 }

@@ -1091,8 +1091,9 @@ fn print_trusted_dependencies_flat(
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];
         let name = dependencies[dep_id as usize].name.slice(string_bytes);
-        let resolution =
-            bun_core::fmt::EscapeControlChars(bun_fmt::redacted(resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto)));
+        let resolution = bun_core::fmt::EscapeControlChars(bun_fmt::redacted(
+            resolutions[package_id as usize].fmt(string_bytes, PathSep::Auto),
+        ));
         if index + 1 < trusted.len() {
             bun_core::prettyln!("<d>├──<r> {}<r><d>@{}<r>\n", name, resolution);
         } else {

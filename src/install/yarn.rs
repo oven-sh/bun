@@ -825,7 +825,6 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         vec![install::INVALID_PACKAGE_ID; next_package_id as usize];
     let silent = manager.options.log_level.is_silent();
 
-
     for (yarn_idx, entry) in yarn_lock.entries.iter().enumerate() {
         let is_direct_url_dep = entry.has_direct_url_spec();
         let base_name: &[u8] = entry.name;

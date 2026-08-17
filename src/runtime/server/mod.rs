@@ -1624,10 +1624,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         self.listener.is_some() || (Self::HAS_H3 && self.h3_listener.is_some())
     }
 
-    pub(crate) fn set_idle_timeout(&mut self, seconds: core::ffi::c_uint) {
-        self.config.idle_timeout = seconds.min(255) as u8;
-    }
-
     pub(crate) fn set_flags(
         &mut self,
         require_host_header: bool,

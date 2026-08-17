@@ -45,7 +45,6 @@
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
-"unchecked_construction:src/runtime/server/mod.rs" = 1
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
 [bun_sql_jsc]

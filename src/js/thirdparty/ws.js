@@ -9,12 +9,19 @@ const ReadyState_CLOSING = 2;
 const ReadyState_CLOSED = 3;
 
 const EventEmitter = require("node:events");
-const http = require("node:http");
 const onceObject = { once: true };
 const kBunInternals = Symbol.for("::bunternal::");
 const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
+
+// node:http is only needed for the server API and a couple of rarely-hit
+// client paths, and loading it eagerly is almost the entire cost of
+// require("ws"). Load it on first use instead.
+let http;
+function lazyHttp() {
+  return (http ??= require("node:http"));
+}
 
 // npm ws's sendAfterClose: a ping/pong/send on a CLOSING/CLOSED socket delivers
 // a "not open" Error to the callback on the next tick and never throws.
@@ -96,7 +103,7 @@ const eventIds = {
 function noopBridgeListener() {}
 
 function makeHandshakeResponse(statusCode, statusMessage, rawHeaders, body) {
-  const res = new http.IncomingMessage(null);
+  const res = new (lazyHttp().IncomingMessage)(null);
   res._addHeaderLines(rawHeaders, rawHeaders.length);
   res.statusCode = statusCode;
   res.statusMessage = statusMessage;
@@ -928,7 +935,7 @@ function wsEmitClose(server) {
 }
 
 function abortHandshake(response, code, message, headers = {}) {
-  message = message || http.STATUS_CODES[code];
+  message = message || lazyHttp().STATUS_CODES[code];
   headers = {
     Connection: "close",
     "Content-Type": "text/html",
@@ -1347,6 +1354,7 @@ class WebSocketServer extends EventEmitter {
     }
 
     if (port != null) {
+      const http = lazyHttp();
       this._server = http.createServer((req, res) => {
         const body = http.STATUS_CODES[426];
 

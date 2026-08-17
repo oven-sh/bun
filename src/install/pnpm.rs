@@ -203,7 +203,7 @@ fn root_package_json<'a>(
     let cache = &mut manager.workspace_package_json_cache;
     cache
         .get_with_path(log, pkg_json_path.slice(), options)
-        .unwrap()
+        .entry()
         .ok()
 }
 
@@ -2454,7 +2454,7 @@ fn update_package_json_after_migration(
     let mut workspace_only_built_deps = false;
 
     // Copied, not moved: pnpm keeps reading this block, bun only reads the root-level fields.
-    if let Some(pnpm_obj) = json.get(b"pnpm").filter(|pnpm| pnpm.is_object()) {
+    if let Some(pnpm_obj) = json.get_object(b"pnpm") {
         if let Some(overrides) = pnpm_obj.get(b"overrides").filter(is_non_empty_object) {
             if copy_into_root(&mut json, &bump, b"overrides", &overrides, None)? {
                 copied.push("pnpm.overrides to overrides");
@@ -2541,10 +2541,9 @@ fn update_package_json_after_migration(
         }
     } else {
         // An existing `workspaces` array is replaced by the object form.
-        let existing = json
-            .get(b"workspaces")
-            .filter(|workspaces| workspaces.is_object());
-        let mut workspaces = existing.unwrap_or_else(empty_object);
+        let existing = json.get_object(b"workspaces");
+        let mut workspaces =
+            existing.unwrap_or_else(|| Expr::init(E::Object::default(), bun_ast::Loc::EMPTY));
         let workspaces_obj = e_object_mut(&mut workspaces);
         if let Some(paths) = workspace_paths.as_ref().filter(|paths| !paths.is_empty()) {
             workspaces_obj.put(&bump, b"packages", paths_array(paths))?;
@@ -2613,10 +2612,6 @@ fn is_non_empty_object(expr: &Expr) -> bool {
     matches!(&expr.data, ExprData::EObject(o) if !o.properties.is_empty())
 }
 
-fn empty_object() -> Expr {
-    Expr::init(E::Object::default(), bun_ast::Loc::EMPTY)
-}
-
 /// Merges `src`'s entries into the root-level object `field`, created when absent (merged rather than aliased:
 /// the `pnpm` block stays as it is); `false` if `field` is not an object. With `patches`, a bare `name` key pnpm
 /// allows becomes bun.lock's `name@version`.
@@ -2627,13 +2622,15 @@ fn copy_into_root(
     src: &Expr,
     patches: Option<&StringArrayHashMap<Box<[u8]>>>,
 ) -> Result<bool, AllocError> {
-    if json.get(field).is_none() {
-        e_object_mut(json).put(bump, field, empty_object())?;
-    }
-    let mut dest = json.get(field).expect("put above");
-    if !dest.is_object() {
-        return Ok(false);
-    }
+    let mut dest = match json.get(field) {
+        Some(dest) if !dest.is_object() => return Ok(false),
+        Some(dest) => dest,
+        None => {
+            let dest = Expr::init(E::Object::default(), bun_ast::Loc::EMPTY);
+            e_object_mut(json).put(bump, field, dest)?;
+            dest
+        }
+    };
     for prop in e_object(src).properties.slice() {
         let Some(mut key) = as_string(prop.key.as_ref().expect("infallible: prop has key")) else {
             continue;

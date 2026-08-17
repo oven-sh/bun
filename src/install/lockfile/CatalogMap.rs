@@ -206,13 +206,19 @@ impl CatalogMap {
         if catalog_name.is_empty() {
             return Ok(&mut self.default);
         }
+        Self::get_or_put_named_group(&mut self.groups, buf, catalog_name)
+    }
 
-        let entry = self.groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
+    fn get_or_put_named_group<'a>(
+        groups: &'a mut ArrayHashMap<String, Map>,
+        buf: &[u8],
+        catalog_name: String,
+    ) -> Result<&'a mut Map, AllocError> {
+        let entry = groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
         if !entry.found_existing {
             *entry.key_ptr = catalog_name;
             *entry.value_ptr = Map::default();
         }
-
         Ok(entry.value_ptr)
     }
 
@@ -408,17 +414,14 @@ impl CatalogMap {
         let Some(declared_groups) = catalogs_obj else {
             return Ok(());
         };
+        let CatalogMap { default, groups } = self;
         declared_groups.try_for_each_property(|group_name_str, _, declared| {
-            // package.json's `catalogs.default` is a named group; its recorded entries move there.
-            let mut recorded =
-                (group_name_str == b"default").then(|| core::mem::take(&mut self.default));
             let group_name = string_buf.append(group_name_str)?;
-            let group = self.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
-            put_declared_entries(group, recorded.as_mut(), &declared, string_buf)?;
-            if let Some(rest) = recorded {
-                self.default = rest;
-            }
-            Ok(())
+            let group =
+                Self::get_or_put_named_group(groups, string_buf.bytes.as_slice(), group_name)?;
+            // package.json's `catalogs.default` is a named group; the entries recorded in `default` move there.
+            let recorded = (group_name_str == b"default").then_some(&mut *default);
+            put_declared_entries(group, recorded, &declared, string_buf)
         })
     }
 

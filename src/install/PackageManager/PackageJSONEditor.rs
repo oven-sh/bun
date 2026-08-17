@@ -770,13 +770,13 @@ pub(crate) fn record_catalog_originals(
 
     let dependencies = lockfile.buffers.dependencies.iter();
     for (dep, &package_id) in dependencies.zip(lockfile.buffers.resolutions.iter()) {
+        if dep.version.tag != dependency::Tag::Catalog {
+            continue;
+        }
         let resolution = package_resolutions.get(package_id as usize);
         let Some(resolution) = resolution.filter(|r| r.tag == resolution::Tag::Npm) else {
             continue;
         };
-        if dep.version.tag != dependency::Tag::Catalog {
-            continue;
-        }
         let dep_name = dep.name.slice(string_buf);
         let catalog_name = dep.version.catalog().slice(string_buf);
         let Some(info) = by_name

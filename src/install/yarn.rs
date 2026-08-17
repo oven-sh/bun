@@ -17,7 +17,7 @@ use crate::lockfile_real::package::{
     Meta as PackageMeta, Package as LockfilePackage, PackageColumns as _,
 };
 use crate::lockfile_real::{self as lockfile, LoadResult, Lockfile};
-use bun_install::npm::{self, NegatableExt as _};
+use bun_install::npm;
 // `Package.resolution` is the file-backed `resolution_real::ResolutionType<u64>`
 // (tag + zero-padded `Value` union), constructed via `init(TaggedValue::*)`; the
 // `bun_install::resolution` stub keeps `Value` as a struct-of-fields and has no `init`.
@@ -51,8 +51,8 @@ pub struct Entry<'a> {
     pub(crate) commit: Option<&'a [u8]>,
     pub(crate) workspace: bool,
     pub(crate) file: Option<&'a [u8]>,
-    pub(crate) os: Option<Vec<&'a [u8]>>,
-    pub(crate) cpu: Option<Vec<&'a [u8]>>,
+    pub(crate) os: npm::Negatable<npm::OperatingSystem>,
+    pub(crate) cpu: npm::Negatable<npm::Architecture>,
     // Owned heap allocation (unlike the borrowed fields above); created in parse()
     pub(crate) git_repo_name: Option<Box<[u8]>>,
 }
@@ -254,7 +254,6 @@ impl<'a> YarnLock<'a> {
         let mut current_entry: Option<Entry<'a>> = None;
         let mut current_specs: Vec<&'a [u8]> = Vec::new();
 
-        let mut current_deps: [Option<StringHashMap<&'a [u8]>>; 4] = Default::default();
         let mut current_dep_type: Option<usize> = None;
 
         while let Some(line_) = lines.next() {
@@ -274,8 +273,7 @@ impl<'a> YarnLock<'a> {
             }
 
             if indent == 0 && trimmed.ends_with(b":") {
-                if let Some(mut entry) = current_entry.take() {
-                    entry.dependencies = core::mem::take(&mut current_deps);
+                if let Some(entry) = current_entry.take() {
                     self.consolidate_and_append_entry(entry)?;
                 }
 
@@ -305,7 +303,6 @@ impl<'a> YarnLock<'a> {
                 }
 
                 current_entry = Some(new_entry);
-                current_deps = Default::default();
                 current_dep_type = None;
                 continue;
             }
@@ -317,7 +314,7 @@ impl<'a> YarnLock<'a> {
             if indent > 0 {
                 if let Some(i) = DEPENDENCY_SECTIONS.iter().position(|s| s.0 == trimmed) {
                     current_dep_type = Some(i);
-                    current_deps[i] = Some(StringHashMap::new());
+                    entry.dependencies[i] = Some(StringHashMap::new());
                     continue;
                 }
 
@@ -325,7 +322,7 @@ impl<'a> YarnLock<'a> {
                     if let Some(space_idx) = strings::index_of(trimmed, b" ") {
                         let key = strings::trim(&trimmed[0..space_idx], b" \"");
                         let value = strings::trim(&trimmed[space_idx + 1..], b" \"");
-                        let map = current_deps[dep_type].as_mut().expect("set with the type");
+                        let map = entry.dependencies[dep_type].get_or_insert_default();
                         map.put(key, value)?;
                     }
                     continue;
@@ -360,21 +357,20 @@ impl<'a> YarnLock<'a> {
                         && value.starts_with(b"[")
                         && value.ends_with(b"]")
                     {
-                        let list = strings::split(&value[1..value.len() - 1], b",")
-                            .map(|item| strings::trim(item, b" \""))
-                            .collect();
-                        *(if key == b"os" {
-                            &mut entry.os
-                        } else {
-                            &mut entry.cpu
-                        }) = Some(list);
+                        for item in strings::split(&value[1..value.len() - 1], b",") {
+                            let item = strings::trim(item, b" \"");
+                            if key == b"os" {
+                                entry.os.apply(item);
+                            } else {
+                                entry.cpu.apply(item);
+                            }
+                        }
                     }
                 }
             }
         }
 
-        if let Some(mut entry) = current_entry.take() {
-            entry.dependencies = current_deps;
+        if let Some(entry) = current_entry.take() {
             self.consolidate_and_append_entry(entry)?;
         }
 
@@ -759,8 +755,8 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
             meta: PackageMeta {
                 id: appended_id,
                 origin: Origin::Npm,
-                arch: platform_list(&entry.cpu),
-                os: platform_list(&entry.os),
+                arch: entry.cpu.combine(),
+                os: entry.os.combine(),
                 man_dir: SemverString::default(),
                 has_install_script: HasInstallScript::False,
                 integrity: entry
@@ -876,16 +872,4 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
 #[inline]
 fn string_hash(s: &[u8]) -> u64 {
     Semver::string::Builder::string_hash(s)
-}
-
-/// yarn.lock's `os`/`cpu` lists; an entry without one installs everywhere.
-fn platform_list<T: npm::NegatableEnum>(list: &Option<Vec<&[u8]>>) -> T {
-    let Some(list) = list else {
-        return T::ALL;
-    };
-    let mut negatable = T::NONE.negatable();
-    for item in list {
-        negatable.apply(item);
-    }
-    negatable.combine()
 }

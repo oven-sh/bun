@@ -1384,6 +1384,49 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("relisten code: EADDRINUSE syscall: bind");
 });
 
+test("a worker http server closed before the primary replies ignores the reply", async () => {
+  using dir = tempDir("cluster-stale-probe", {
+    "main.ts": `
+const cluster = require("node:cluster");
+if (cluster.isPrimary) {
+  const net = require("node:net");
+  // Keep the port busy so both probes below come back with EADDRINUSE.
+  const blocker = net.createServer();
+  blocker.listen(0, "127.0.0.1", () => {
+    const worker = cluster.fork({ TEST_PORT: String(blocker.address().port) });
+    worker.on("message", m => {
+      console.log(JSON.stringify(m));
+      worker.kill();
+      process.exit(0);
+    });
+  });
+} else {
+  const http = require("node:http");
+  const port = Number(process.env.TEST_PORT);
+  const events = [];
+  const closed = http.createServer();
+  closed.on("error", e => events.push("error:" + e.code));
+  closed.on("listening", () => events.push("listening"));
+  closed.listen(port, "127.0.0.1");
+  closed.close();
+  // The primary answers probes in order, so by the time this server's reply
+  // arrives the closed server's reply has already been delivered.
+  const witness = http.createServer();
+  const report = () => process.send({ closedServerEvents: events, closedServerListening: closed.listening });
+  witness.on("error", report);
+  witness.on("listening", report);
+  witness.listen(port, "127.0.0.1");
+}
+`,
+  });
+  const { stdout, stderr, exitCode } = await bunRun(joinP(String(dir), "main.ts"), bunEnv);
+  expect({ report: JSON.parse(stdout), stderr, exitCode }).toEqual({
+    report: { closedServerEvents: [], closedServerListening: false },
+    stderr: expect.any(String),
+    exitCode: 0,
+  });
+}, 30_000);
+
 test("externally-framed cluster acks settle the primary's parked reply callbacks", async () => {
   using dir = tempDir("cluster-external-ack", {
     "main.ts": `

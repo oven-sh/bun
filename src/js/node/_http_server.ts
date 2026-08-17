@@ -286,6 +286,8 @@ function Server(options, callback): void {
 
   this.listening = false;
   this._unref = false;
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L1876
+  this._listeningId = 1;
   this.timeout = 0;
   this.maxRequestsPerSocket = 0;
   this.maxHeadersCount = null;
@@ -485,6 +487,8 @@ Server.prototype.closeIdleConnections = function () {
 
 Server.prototype.close = function (optionalCallback?) {
   const server = this[serverSymbol];
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2423
+  this._listeningId++;
   // Node.js's httpServerPreClose clears the connections-checking interval
   // even when the server was never listening.
   clearInterval(this[kConnectionsCheckingInterval]);
@@ -593,16 +597,13 @@ Server.prototype.listen = function () {
     port = 0;
   }
 
-  if (typeof port === "string") {
-    const portNumber = parseInt(port);
-    if (!Number.isNaN(portNumber)) {
-      port = portNumber;
-    }
-  }
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2130
+  this._listeningId++;
 
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2159 (validatePort before listenInCluster)
-  if (typeof port === "number" && !socketPath) {
-    validatePort(port);
+  if (typeof port === "number" || typeof port === "string") {
+    validatePort(port, "options.port");
+    port = port | 0;
   }
 
   const lastArg = arguments[argc - 1];
@@ -636,6 +637,9 @@ Server.prototype.listen = function () {
       cluster._sendInternal(message);
     };
     server.once("listening", notifyListening);
+    // A close() or another listen() before the primary replies makes the reply stale.
+    // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2078-L2085
+    const listeningId = this._listeningId;
 
     try {
       // listen({fd}) in a worker: share the primary-inherited fd over SCM_RIGHTS.
@@ -648,7 +652,7 @@ Server.prototype.listen = function () {
         }
         cluster._sendInternal(
           { act: "shareListenFd", fd, addressType: 4 },
-          onShareListenFdReply.bind(null, server, notifyListening, tls, port, host, socketPath, onListen),
+          onShareListenFdReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath, onListen),
         );
         return this;
       }
@@ -657,7 +661,7 @@ Server.prototype.listen = function () {
       if (askPrimary) {
         cluster._sendInternal(
           { act: "probePort", address: host ?? null, port, addressType: 4 },
-          onProbePortReply.bind(null, server, notifyListening, tls, port, host, socketPath, onListen),
+          onProbePortReply.bind(null, server, notifyListening, listeningId, tls, port, host, socketPath, onListen),
         );
       } else {
         server[kRealListen](tls, port, host, socketPath, true, onListen, fd);
@@ -684,8 +688,24 @@ function emitListenErrorNT(server, err) {
   server.emit("error", err);
 }
 
-function onShareListenFdReply(server, notifyListening, tls, port, host, socketPath, onListen, reply, receivedFd) {
+function onShareListenFdReply(
+  server,
+  notifyListening,
+  listeningId,
+  tls,
+  port,
+  host,
+  socketPath,
+  onListen,
+  reply,
+  receivedFd,
+) {
   const sharedFd = typeof receivedFd === "number" && receivedFd >= 0 ? receivedFd : undefined;
+  if (listeningId !== server._listeningId) {
+    server.removeListener("listening", notifyListening);
+    if (sharedFd !== undefined) closeSharedFd(sharedFd);
+    return;
+  }
   const replyErrno = reply.errno;
   if (replyErrno || sharedFd === undefined) {
     server.removeListener("listening", notifyListening);
@@ -702,8 +722,14 @@ function onShareListenFdReply(server, notifyListening, tls, port, host, socketPa
   }
 }
 
-function onProbePortReply(server, notifyListening, tls, port, host, socketPath, onListen, reply) {
+function onProbePortReply(server, notifyListening, listeningId, tls, port, host, socketPath, onListen, reply) {
   const replyErrno = reply.errno;
+  if (listeningId !== server._listeningId) {
+    server.removeListener("listening", notifyListening);
+    // The primary recorded this worker under reply.key when the probe succeeded.
+    if (!replyErrno) cluster._sendInternal({ act: "close", key: reply.key });
+    return;
+  }
   if (replyErrno) {
     server.removeListener("listening", notifyListening);
     server.emit("error", new ExceptionWithHostPort(replyErrno, "bind", host ?? null, port));

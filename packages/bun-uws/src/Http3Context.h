@@ -18,15 +18,6 @@ struct Http3Context {
         if (!ctx) return nullptr;
         new (us_quic_socket_context_ext(ctx)) Http3ContextData();
 
-        us_quic_socket_context_on_open(ctx, [](us_quic_socket_t *qs) {
-            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_socket_context(qs));
-            for (auto &f : cd->filterHandlers) f(qs, 2);
-        });
-        us_quic_socket_context_on_close(ctx, [](us_quic_socket_t *qs) {
-            Http3ContextData *cd = (Http3ContextData *) us_quic_socket_context_ext(us_quic_socket_context(qs));
-            for (auto &f : cd->filterHandlers) f(qs, -2);
-        });
-
         us_quic_socket_context_on_stream_open(ctx, [](us_quic_stream_t *s, int) {
             new (us_quic_stream_ext(s)) Http3ResponseData();
         });
@@ -79,10 +70,6 @@ struct Http3Context {
     }
 
     void free() {
-        /* Freeing the context destroys the engine, which closes every connection it still holds; those
-         * closes must not reach the (destructed) filter handlers or re-enter the app's owner mid-teardown. */
-        us_quic_socket_context_on_open((us_quic_socket_context_t *) this, nullptr);
-        us_quic_socket_context_on_close((us_quic_socket_context_t *) this, nullptr);
         getContextData()->~Http3ContextData();
         us_quic_socket_context_free((us_quic_socket_context_t *) this);
     }
@@ -111,10 +98,6 @@ struct Http3Context {
     }
 
     void shutdown() { us_quic_socket_context_shutdown((us_quic_socket_context_t *) this); }
-
-    void filter(MoveOnlyFunction<void(us_quic_socket_t *, int)> &&filterHandler) {
-        ((Http3ContextData *) us_quic_socket_context_ext((us_quic_socket_context_t *) this))->filterHandlers.emplace_back(std::move(filterHandler));
-    }
 
     bool addServerName(const char *hostname, us_bun_socket_context_options_t options) {
         return us_quic_socket_context_add_server_name((us_quic_socket_context_t *) this, hostname, options) == 0;

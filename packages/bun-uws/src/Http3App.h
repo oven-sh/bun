@@ -62,7 +62,6 @@ struct H3App {
     }
     /* GOAWAY + drain. The engine itself is torn down in the destructor. */
     void close() { http3Context->shutdown(); }
-    void filter(MoveOnlyFunction<void(us_quic_socket_t *, int)> &&f) { http3Context->filter(std::move(f)); }
     bool addServerNameWithOptions(const char *hostname, SocketContextOptions options) {
         us_bun_socket_context_options_t raw;
         memcpy(&raw, &options, sizeof(raw));

@@ -238,9 +238,6 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
     // Never set when !SSL.
     pub(crate) h3_app: Option<*mut uws_sys::h3::App>,
     pub(crate) h3_listener: Option<*mut uws_sys::h3::ListenSocket>,
-    /// The H3 listen socket after a graceful stop: no longer "listening" (GOAWAY sent, `is_closed()` may
-    /// proceed) but kept so a later abrupt stop can still abort the draining connections and close the fd.
-    pub(crate) h3_draining_listener: Option<*mut uws_sys::h3::ListenSocket>,
     /// Cached `h3=":<port>"; ma=86400` for Alt-Svc on H1 responses; formatted
     /// once in onH3Listen so renderMetadata doesn't reformat per-request.
     pub(crate) h3_alt_svc: Box<[u8]>,
@@ -537,14 +534,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
     }
 
-    extern "C" fn on_h3_connection_filter(
-        _quic_socket: *mut c_void,
-        opened: i32,
-        user_data: *mut c_void,
-    ) {
-        Self::on_connection_filter(core::ptr::null_mut(), opened, user_data)
-    }
-
     /// Build the server's base URL string (`http(s)://host:port/`, or a
     /// `unix://`/abstract-socket URL) from the configured listen address.
     /// Errors only on allocation failure.
@@ -607,9 +596,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
 
     /// Returns the wrapper while it is alive (`Strong` or `Weak`) and its VM may still run script,
     /// else `None`. It stays `Strong` — the WriteBarrier root of the handler shadows — until the
-    /// server is drained (no listener, request, connection or websocket left; connections count from
-    /// accept), so nothing dispatches through a wrapper the GC may have collected. A VM whose script
-    /// gate has closed (a worker that called `process.exit()` or was asked to terminate, still
+    /// server is drained (no listener, request, HTTP/1 connection or websocket left; connections count
+    /// from accept), so nothing dispatches through a wrapper the GC may have collected. A VM whose
+    /// script gate has closed (a worker that called `process.exit()` or was asked to terminate, still
     /// draining the current loop tick before its stop phase closes the listener) must not have a
     /// request built for it either; uWS requires every dispatched request to be answered or
     /// adopted, so dispatch trampolines answer 503+close on `None`.
@@ -617,8 +606,9 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !self.vm().script_allowed() {
             return None;
         }
+        // HTTP/3 connections are not counted yet, so a stream on one can still arrive after the drain.
         debug_assert!(
-            self.js_value.is_strong() || self.js_value.try_get().is_none(),
+            self.h3_app.is_some() || self.js_value.is_strong() || self.js_value.try_get().is_none(),
             "a socket outlived the server's connection accounting"
         );
         self.js_value.try_get()
@@ -1690,28 +1680,19 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         }
 
         if Self::HAS_H3 {
-            if !abrupt {
-                // Graceful: GOAWAY + drain via the still-open UDP socket; the engine rejects new conns
-                // and the timer keeps in-flight streams progressing until deinit.
-                if let Some(h3l) = self.h3_listener.take() {
-                    self.h3_draining_listener = Some(h3l);
+            if let Some(h3l) = self.h3_listener.take() {
+                // Graceful: GOAWAY + drain via the still-open UDP socket; the
+                // engine rejects new conns and the timer keeps in-flight streams
+                // progressing until deinit. Abrupt: close the fd now.
+                if !abrupt {
                     if let Some(h3a) = self.h3_app {
                         // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
                         bun_opaque::opaque_deref_mut(h3a).close();
                     }
+                } else {
+                    // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
+                    bun_opaque::opaque_deref_mut(h3l).close();
                 }
-            } else if let Some(h3l) = self
-                .h3_listener
-                .take()
-                .or_else(|| self.h3_draining_listener.take())
-            {
-                // Abrupt (also after a graceful stop): abort the live connections and close the fd now.
-                // Their `-2`s reach `on_connection_filter` from in here; `deinit_running` keeps it from
-                // re-entering `deinit_if_we_can` under this `&mut self` (as around the app closes below).
-                self.deinit_running.set(true);
-                // S008: `h3::ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-                bun_opaque::opaque_deref_mut(h3l).close();
-                self.deinit_running.set(false);
             }
         }
 
@@ -2193,7 +2174,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             listener: None,
             h3_app: None,
             h3_listener: None,
-            h3_draining_listener: None,
             h3_alt_svc: Box::<[u8]>::default(),
             js_value: jsc::JsRef::empty(),
             pending_requests: core::cell::Cell::new(0),
@@ -2852,11 +2832,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     // Lazily materialize the ~816 KB H3 request pool now that
                     // we know an H3 listener will actually exist.
                     (*this).h3_request_pool = <Self as ServerPools<SSL, DEBUG>>::h3_request_pool();
-                }
-                if let Some(h3a) = h3 {
-                    // QUIC connections count as connections too (`is_drained` / the wrapper's root).
-                    bun_opaque::opaque_deref_mut(h3a)
-                        .filter(Self::on_h3_connection_filter, this.cast::<c_void>());
                 }
             }
 

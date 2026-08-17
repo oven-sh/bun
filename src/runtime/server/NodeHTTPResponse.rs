@@ -1910,41 +1910,8 @@ impl NodeHTTPResponse {
         arguments: &[JSValue],
         this_value: JSValue,
     ) -> JsResult<JSValue> {
-        if self.is_requested_completed_or_ended() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
-                "Stream already ended",
-            );
-        }
-
-        // Loosely mimicking this code:
-        //      function _writeRaw(data, encoding, callback, size) {
-        //        const conn = this[kSocket];
-        //        if (conn?.destroyed) {
-        //          // The socket was destroyed. If we're still trying to write to it,
-        //          // then we haven't gotten the 'close' event yet.
-        //          return false;
-        //        }
-        if self.flags.get().contains(Flags::SOCKET_CLOSED) || self.raw_response.get().is_none() {
-            return Ok(if IS_END {
-                JSValue::UNDEFINED
-            } else {
-                JSValue::js_number_from_int32(0)
-            });
-        }
-
-        // Re-read raw_response at each use site (R-2: methods that
-        // re-enter may clear it).
-        let state = self.raw_response.get().unwrap().state();
-        if !state.is_response_pending() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
-                "Stream already ended",
-            );
-        }
-
+        // Arguments are converted before any response state is read: ToString on
+        // `input` / `encoding` can run user JS that destroys or ends the response.
         let input_value: JSValue = if arguments.len() > 0 {
             arguments[0]
         } else {
@@ -2027,8 +1994,22 @@ impl NodeHTTPResponse {
             return Err(jsc::JsError::Thrown);
         }
 
-        // Converting `encoding` / `input` can run user JS (toString,
-        // Symbol.toPrimitive) that destroys or ends the response.
+        if self.is_requested_completed_or_ended() {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_WRITE_AFTER_END,
+                "Stream already ended",
+            );
+        }
+
+        // Loosely mimicking this code:
+        //      function _writeRaw(data, encoding, callback, size) {
+        //        const conn = this[kSocket];
+        //        if (conn?.destroyed) {
+        //          // The socket was destroyed. If we're still trying to write to it,
+        //          // then we haven't gotten the 'close' event yet.
+        //          return false;
+        //        }
         if self.flags.get().contains(Flags::SOCKET_CLOSED) || self.raw_response.get().is_none() {
             return Ok(if IS_END {
                 JSValue::UNDEFINED
@@ -2036,8 +2017,9 @@ impl NodeHTTPResponse {
                 JSValue::js_number_from_int32(0)
             });
         }
+
         let state = self.raw_response.get().unwrap().state();
-        if self.is_requested_completed_or_ended() || !state.is_response_pending() {
+        if !state.is_response_pending() {
             return err_throw(
                 global_object,
                 ErrorCode::ERR_STREAM_WRITE_AFTER_END,

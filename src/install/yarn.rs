@@ -606,7 +606,13 @@ impl Binder<'_> {
                 |_| true,
             )
             // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
-            .or_else(|| this.package_index.get(&name_hash)?.as_slice().first().copied());
+            .or_else(|| {
+                this.package_index
+                    .get(&name_hash)?
+                    .as_slice()
+                    .first()
+                    .copied()
+            });
         }
         self.spec.clear();
         self.spec.extend_from_slice(dep.name.slice(string_bytes));

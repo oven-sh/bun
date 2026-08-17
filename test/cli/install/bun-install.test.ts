@@ -1598,7 +1598,9 @@ describe.concurrent("bun-install", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toContain("ENAMETOOLONG: failed moving copied files into node_modules/package dir for package pkg");
+      expect(stderr).toContain(
+        "ENAMETOOLONG: failed moving copied files into node_modules/package dir for package pkg",
+      );
       expect(stdout).toContain("Failed to install 1 package");
       expect(exitCode).toBe(1);
     }

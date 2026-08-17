@@ -39,6 +39,10 @@ use crate::ZStr;
 // ──────────────────────────────────────────────────────────────────────────────
 
 new!(pub AGENT: string, "AGENT", {});
+// Set by Android init for every process; read by bun_sys's runtime Android
+// detection (`is_android_kernel`).
+new!(pub ANDROID_DATA: string, "ANDROID_DATA", {});
+new!(pub ANDROID_ROOT: string, "ANDROID_ROOT", {});
 new!(pub BUN_AGENT_RULE_DISABLED: boolean, "BUN_AGENT_RULE_DISABLED", { default: false });
 new!(pub BUN_COMPILE_TARGET_TARBALL_URL: string, "BUN_COMPILE_TARGET_TARBALL_URL", {});
 new!(pub BUN_CONFIG_DISABLE_COPY_FILE_RANGE: boolean, "BUN_CONFIG_DISABLE_COPY_FILE_RANGE", { default: false });

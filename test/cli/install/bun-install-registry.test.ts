@@ -8,7 +8,6 @@ import {
   bunExe,
   bunEnv as env,
   isFlaky,
-  isMacOS,
   isWindows,
   mergeWindowEnvs,
   normalizeBunSnapshot,
@@ -4207,6 +4206,11 @@ describe("hoisting", async () => {
     expect(lockfile).toMatchNodeModulesAt(packageDir);
   });
 
+  // Compare the exact version: `toContain("1.0.1")` also matches "1.0.10".
+  async function hoistedADepVersion(): Promise<string> {
+    return (await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version;
+  }
+
   var tests: any = [
     {
       situation: "1.0.0 - 1.0.10 is in order",
@@ -4316,7 +4320,7 @@ describe("hoisting", async () => {
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+      expect(await hoistedADepVersion()).toBe(expected);
 
       await rm(join(packageDir, "bun.lockb"));
 
@@ -4425,7 +4429,9 @@ describe("hoisting", async () => {
           "uses-a-dep-10": "1.0.0",
           "peer-a-dep-star": "1.0.0",
         },
-        expected: "1.0.1",
+        // `*` is satisfied by every a-dep in the tree, so the peer takes the
+        // highest one, regardless of which manifest the registry returned first.
+        expected: "1.0.10",
       },
       {
         situation: "peer * and peer 1.0.2",
@@ -4447,88 +4453,191 @@ describe("hoisting", async () => {
       },
     ];
     for (const { dependencies, expected, situation } of peerTests) {
-      test.todoIf(isFlaky && isMacOS && situation === "peer ^1.0.2")(
-        `it should hoist ${expected} when ${situation}`,
-        async () => {
-          await writeFile(
-            packageJson,
-            JSON.stringify({
-              name: "foo",
-              dependencies,
-            }),
-          );
+      test(`it should hoist ${expected} when ${situation}`, async () => {
+        await writeFile(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            dependencies,
+          }),
+        );
 
-          var { stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          });
+        var { stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
 
-          var err = await stderr.text();
-          var out = await stdout.text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          for (const dep of Object.keys(dependencies)) {
-            expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
-          }
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        var err = await stderr.text();
+        var out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        for (const dep of Object.keys(dependencies)) {
+          expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
+        }
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+        expect(await hoistedADepVersion()).toBe(expected);
 
-          await rm(join(packageDir, "bun.lockb"));
+        await rm(join(packageDir, "bun.lockb"));
 
-          ({ stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          }));
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
 
-          err = await stderr.text();
-          out = await stdout.text();
-          expect(err).toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          if (out.includes("installed")) {
-            console.log("stdout:", out);
-          }
-          expect(out).not.toContain("package installed");
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        err = await stderr.text();
+        out = await stdout.text();
+        expect(err).toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
+        expect(await hoistedADepVersion()).toBe(expected);
 
-          await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
-          ({ stdout, stderr, exited } = spawn({
-            cmd: [bunExe(), "install"],
-            cwd: packageDir,
-            stdout: "pipe",
-            stdin: "pipe",
-            stderr: "pipe",
-            env,
-          }));
+        ({ stdout, stderr, exited } = spawn({
+          cmd: [bunExe(), "install"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        }));
 
-          err = await stderr.text();
-          out = await stdout.text();
-          expect(err).not.toContain("Saved lockfile");
-          expect(err).not.toContain("not found");
-          expect(err).not.toContain("error:");
-          expect(out).not.toContain("package installed");
-          expect(await exited).toBe(0);
-          assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+        err = await stderr.text();
+        out = await stdout.text();
+        expect(err).not.toContain("Saved lockfile");
+        expect(err).not.toContain("not found");
+        expect(err).not.toContain("error:");
+        expect(out).not.toContain("package installed");
+        expect(await exited).toBe(0);
+        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-          expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).text()).toContain(expected);
-        },
-      );
+        expect(await hoistedADepVersion()).toBe(expected);
+      });
     }
+
+    test("peer * hoists the same version no matter which manifest the registry answers first", async () => {
+      // Proxy in front of verdaccio that forces the arrival order seen on slow
+      // CI machines: the a-dep manifest gets processed (so a-dep@1.0.1..1.0.9
+      // exist in the lockfile) before peer-a-dep-star's manifest arrives, and
+      // uses-a-dep-10's manifest (the one pinning a-dep@1.0.10) arrives after
+      // peer-a-dep-star has been processed. Each held response is released by
+      // a request bun only makes once the earlier step has happened, so no
+      // timers are involved.
+      const upstream = registryUrl().replace(/\/$/, "");
+      const aDepTarballRequested = Promise.withResolvers<void>();
+      const peerTarballRequested = Promise.withResolvers<void>();
+      using proxy = Bun.serve({
+        port: 0,
+        // The held responses stay open for as long as bun takes to reach the next step.
+        idleTimeout: 0,
+        async fetch(req) {
+          const { pathname } = new URL(req.url);
+          const isTarball = pathname.includes("/-/");
+          if (pathname.startsWith("/a-dep/-/")) aDepTarballRequested.resolve();
+          if (pathname.startsWith("/peer-a-dep-star/-/")) peerTarballRequested.resolve();
+          if (pathname === "/peer-a-dep-star") await aDepTarballRequested.promise;
+          if (pathname === "/uses-a-dep-10") await peerTarballRequested.promise;
+
+          const res = await fetch(upstream + pathname, { headers: { accept: req.headers.get("accept") ?? "*/*" } });
+          if (isTarball) return new Response(await res.arrayBuffer(), { status: res.status });
+          // Tarball urls inside the manifests point at verdaccio; keep every request on the proxy.
+          return new Response((await res.text()).replaceAll(upstream, proxy.url.origin), {
+            status: res.status,
+            headers: { "content-type": "application/json" },
+          });
+        },
+      });
+
+      const dependencies: Record<string, string> = { "peer-a-dep-star": "1.0.0" };
+      for (let i = 1; i <= 10; i++) dependencies[`uses-a-dep-${i}`] = "1.0.0";
+      await writeFile(packageJson, JSON.stringify({ name: "foo", dependencies }));
+
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--registry", proxy.url.href],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+      expect(err).toContain("Saved lockfile");
+      expect(err).not.toContain("error:");
+      expect(out).toContain("21 packages installed");
+      expect(exitCode).toBe(0);
+
+      expect(await hoistedADepVersion()).toBe("1.0.10");
+    });
+
+    test("peer * binds to the same version when bun.lock is loaded as when it was resolved", async () => {
+      // Nothing above `peer-a-dep-star` provides a-dep, so the isolated linker
+      // installs the peer from the version the edge resolved to and keys the
+      // store entry by it. The root of the printed tree holds a-dep@1.0.1 (from
+      // uses-a-dep-1), while the resolver picks the highest a-dep, 1.0.5. The
+      // second install loads bun.lock and has to arrive at the same 1.0.5, or it
+      // creates a second store entry for peer-a-dep-star.
+      await Promise.all([
+        write(
+          packageJson,
+          JSON.stringify({
+            name: "foo",
+            workspaces: ["packages/*"],
+            dependencies: { "uses-a-dep-1": "1.0.0", "uses-a-dep-5": "1.0.0" },
+          }),
+        ),
+        write(
+          join(packageDir, "packages", "pkg", "package.json"),
+          JSON.stringify({ name: "pkg", dependencies: { "peer-a-dep-star": "1.0.0" } }),
+        ),
+      ]);
+      const store = join(packageDir, "node_modules", ".bun");
+
+      async function install() {
+        await using proc = spawn({
+          cmd: [bunExe(), "install", "--save-text-lockfile", "--linker", "isolated"],
+          cwd: packageDir,
+          stdout: "pipe",
+          stdin: "pipe",
+          stderr: "pipe",
+          env,
+        });
+        const [err, out, exitCode] = await Promise.all([proc.stderr.text(), proc.stdout.text(), proc.exited]);
+        expect(err).not.toContain("error:");
+        expect(exitCode).toBe(0);
+        return {
+          err,
+          out,
+          entries: (await readdirSorted(store)).filter(entry => entry.startsWith("peer-a-dep-star@")),
+        };
+      }
+
+      const first = await install();
+      expect(first.err).toContain("Saved lockfile");
+      expect(first.entries).toHaveLength(1);
+      expect(await file(join(store, first.entries[0], "node_modules", "a-dep", "package.json")).json()).toMatchObject({
+        version: "1.0.5",
+      });
+
+      const second = await install();
+      expect(second.err).not.toContain("Saved lockfile");
+      expect(second.out).toContain("(no changes)");
+      expect(second.entries).toEqual(first.entries);
+    });
   });
 
   test("hoisting/using incorrect peer dep after install", async () => {

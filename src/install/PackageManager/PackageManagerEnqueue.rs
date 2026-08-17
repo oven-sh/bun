@@ -2128,23 +2128,10 @@ fn get_or_put_resolved_package_with_find_result(
 
     // Was this package already allocated? Let's reuse the existing one.
     //
-    // Determinism: passing `version` here unconditionally lets a
-    // peer like `>= 1.0.2` collapse onto whichever sibling-appended entry
-    // (e.g. `1.0.9`) happens to be highest in the index *at this instant* — a
-    // network-order artefact that the `^1.0.2` peer-hoisting test already
-    // todoIf's on macOS. The floor guard in `get_package_id` was
-    // meant to close that, but its exact-pinned/same-major exemptions reopen
-    // it when *every* candidate is an exact-pinned same-major sibling
-    // (`uses-a-dep-1..10`). For deferred peers, suppress the satisfies-
-    // fallback so only an exact `eql(find_result)` can bind here; everything
-    // else falls through to the `is_peer && !install_peer` defer below and is
-    // resolved deterministically by phase 2's descending-index scan in
-    // `get_or_put_resolved_package`. `*` is left alone — it expresses no
-    // version preference, and the "peer *" hoisting test depends on it
-    // deduping to whatever sibling pin exists rather than the manifest floor.
-    let suppress_peer_satisfies = behavior.is_peer()
-        && !install_peer
-        && !(version.tag == dependency::version::Tag::Npm && version.npm().version.is_star());
+    // A peer that is still deferred may only reuse an exact match: which
+    // siblings exist at this point depends on response arrival order, so the
+    // range match waits for the `install_peer` pass, when all of them exist.
+    let suppress_peer_satisfies = behavior.is_peer() && !install_peer;
     if let Some(id) = this.lockfile.get_package_id(
         name_hash,
         if should_update || suppress_peer_satisfies {

@@ -261,6 +261,25 @@ public:
     {
     }
 
+    // The "(" opening the location of "name (location)"; notFound for a bare "location", which is how frames without a function name are printed.
+    static size_t locationOpeningParenthesis(StringView line)
+    {
+        if (!line.endsWith(')'))
+            return WTF::notFound;
+
+        // Balance the final ")" so that a "(group)" inside the location is skipped.
+        unsigned depth = 0;
+        for (unsigned i = line.length(); i-- > 0;) {
+            if (line[i] == ')')
+                depth++;
+            else if (line[i] == '(' && --depth == 0)
+                return i;
+        }
+
+        // More ")" than "(".
+        return line.find('(');
+    }
+
     bool parseFrame(StackFrame& frame)
     {
 
@@ -286,31 +305,22 @@ public:
             return false;
         }
 
-        StringView line = stack.substring(start, end - start);
+        StringView line = stack.substring(start, end - start).trim(isASCIIWhitespace<char16_t>);
         offset = end;
 
-        // the proper singular spelling is parenthesis
-        auto openingParentheses = line.reverseFind('(');
-        auto closingParentheses = line.reverseFind(')');
-
-        if (openingParentheses > closingParentheses)
-            openingParentheses = WTF::notFound;
-
-        if (openingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
-            // Special case: "unknown" frames don't have parentheses but are valid
-            // These appear in stack traces from certain error paths
-            if (line == "unknown"_s) {
-                frame.sourceURL = line;
-                frame.functionName = StringView();
-                return true;
-            }
-
-            // For any other frame without parentheses, terminate parsing as before
-            offset = stack.length();
-            return false;
+        StringView functionName;
+        StringView lineInner = line;
+        auto openingParentheses = locationOpeningParenthesis(line);
+        if (openingParentheses != WTF::notFound) {
+            lineInner = StringView_slice(line, openingParentheses + 1, line.length() - 1);
+            functionName = line.substring(0, openingParentheses);
+            if (functionName.endsWith(' '))
+                functionName = functionName.substring(0, functionName.length() - 1);
+        } else if (line.startsWith("async "_s)) {
+            // V8 prints async module code as "at async file:///path/to/module.mjs:1:2"
+            frame.isAsync = true;
+            lineInner = line.substring(6);
         }
-
-        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -382,8 +392,6 @@ public:
             }
         }
     done_block:
-
-        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "global code"_s) {
             functionName = StringView();

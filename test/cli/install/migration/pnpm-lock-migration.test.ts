@@ -467,6 +467,7 @@ overrides:
   };
   const catalogFixtureMoved =
     "copied pnpm.overrides to overrides, pnpm-workspace.yaml to workspaces, pnpm-workspace.yaml overrides to overrides in package.json";
+  // The `pnpm` block stays: pnpm itself keeps reading it.
   const catalogFixtureImported = {
     ...rootPackageJson,
     workspaces: {
@@ -475,6 +476,7 @@ overrides:
       catalogs: { build: { "@scope/quoted": "~2.0.0" } },
     },
     overrides: { "from-package-json": "1.0.0", "@scope/quoted": "2.0.1", plain: "3.0.0" },
+    pnpm: { overrides: { "from-package-json": "1.0.0" } },
   };
 
   test("by bun install when there is no lockfile at all", async () => {

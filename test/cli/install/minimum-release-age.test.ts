@@ -2342,7 +2342,7 @@ describe("minimum-release-age", () => {
         { ...bunEnv, BUN_MANIFEST_CACHE: "1" },
       );
       expect(second.stderr).toMatchInlineSnapshot(`
-        "error: Version "nightly-package@1.0.0-nightly.20240102" was published within minimum release age of 432000 seconds
+        "error: No version matching "1.0.0-nightly.20240102" found for specifier "nightly-package" (blocked by minimum-release-age: 432000 seconds)
         error: nightly-package@1.0.0-nightly.20240102 failed to resolve
         "
       `);

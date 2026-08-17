@@ -596,14 +596,17 @@ impl Binder<'_> {
             }
             // Overrides are not consulted: yarn applied them to the entries the candidates come from.
             let range = this.catalogs.resolve_range(string_bytes, dep);
+            let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
             return lockfile::bun_lock::resolve_peer_dep_by_range(
                 range,
-                lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes),
+                name_hash,
                 &this.package_index,
                 this.packages.items_resolution(),
                 string_bytes,
                 |_| true,
-            );
+            )
+            // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
+            .or_else(|| this.package_index.get(&name_hash)?.as_slice().first().copied());
         }
         self.spec.clear();
         self.spec.extend_from_slice(dep.name.slice(string_bytes));
@@ -931,11 +934,15 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                 let result =
                     Semver::Version::parse(version.sliced(this.buffers.string_bytes.as_slice()));
                 if !result.valid {
-                    // Yarn v1 lockfiles legitimately contain entries without an integrity field
-                    // (workspace deps, file:, codeload tarballs), so migration intentionally
-                    // accepts off-registry tarball URLs without integrity instead of failing.
+                    // Not a registry version: an off-registry tarball (codeload and the like)
+                    // is installed from its URL; a registry entry with a version that is not
+                    // semver is skipped below with a warning.
                     if let Some(resolved) = resolved_url
-                        && (Entry::is_remote_tarball(resolved) || resolved.ends_with(b".tgz"))
+                        && Entry::is_remote_tarball(resolved)
+                        && Entry::get_package_name_from_default_registry_url(resolved).is_none()
+                        && !resolved.starts_with(strings::without_trailing_slash(
+                            manager.options.scope.url.href(),
+                        ))
                     {
                         break 'blk Resolution::init(ResolutionValue::RemoteTarball(
                             sbuf!().append(resolved)?,

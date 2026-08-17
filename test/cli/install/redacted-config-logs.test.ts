@@ -177,14 +177,14 @@ describe.concurrent("bun install masks the configured registry URL in the messag
       title: "manifest URL outside the registry directory (dependency)",
       registry: `http://127.0.0.1:1/${token}/`,
       files: { "package.json": packageJson({ dependencies: { innocent: "npm:..@1.0.0" } }) },
-      expected: `error: Invalid package name "..": manifest URL "http://127.0.0.1:1/" is not on registry "http://127.0.0.1:1/***/"\n`,
+      expected: `error: Invalid dependency name ".."\n`,
       exitCode: 1,
     },
     {
       title: "manifest URL outside the registry directory (optional dependency)",
       registry: `http://127.0.0.1:1/${token}/`,
       files: { "package.json": packageJson({ optionalDependencies: { innocent: "npm:..@1.0.0" } }) },
-      expected: `warn: Invalid package name "..": manifest URL "http://127.0.0.1:1/" is not on registry "http://127.0.0.1:1/***/"\n`,
+      expected: `warn: Invalid dependency name ".."\n`,
       exitCode: 0,
     },
     {
@@ -404,6 +404,8 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
   }
 
   const masked = (server: Registry) => `http://carol:******@${server.hostname}:${server.port}`;
+  // A tarball request sends the URL's userinfo as an Authorization header, so its URL is echoed without it.
+  const tarballHost = (server: Registry) => `http://${server.hostname}:${server.port}`;
 
   test("manifest request redirected to a URL with secrets (required dependency)", async () => {
     await using server = startRegistry();
@@ -428,7 +430,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
     const { err, exitCode } = await install(server, [], {
       "package.json": JSON.stringify({ name: "app", dependencies: { "tarball-pkg": "1.0.0" } }),
     });
-    expect(err).toContain(`error: GET ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
+    expect(err).toContain(`error: GET ${tarballHost(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
     expect(exitCode).toBe(1);
   });
 
@@ -437,7 +439,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
     const { err, exitCode } = await install(server, [], {
       "package.json": JSON.stringify({ name: "app", optionalDependencies: { "tarball-pkg": "1.0.0" } }),
     });
-    expect(err).toContain(`warn: GET ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
+    expect(err).toContain(`warn: GET ${tarballHost(server)}/cdn/tarball-pkg-1.0.0.tgz?token=*** - 404`);
     expect(exitCode).toBe(0);
   });
 
@@ -455,7 +457,7 @@ describe.concurrent("bun install masks secrets in the registry-supplied URL it p
       }),
     });
     expect(err).toContain(
-      `error: failed to download tarball-pkg@1.0.0: 404 Not Found\n  ${masked(server)}/cdn/tarball-pkg-1.0.0.tgz?token=***`,
+      `error: failed to download tarball-pkg@1.0.0: 404 Not Found\n  ${tarballHost(server)}/cdn/tarball-pkg-1.0.0.tgz?token=***`,
     );
     expect(exitCode).toBe(1);
   });
@@ -621,6 +623,8 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
       "package.json": packageJson(spec(server)),
       "bun.lock": bunLock(spec(server)),
     });
+    // `bun pm ls` lists what is installed.
+    expect((await run(String(dir), server, ["install", "--frozen-lockfile"])).exitCode).toBe(0);
 
     const ls = await run(String(dir), server, ["pm", "ls"]);
     expect(ls.out).toContain(`└── direct@${url}\n`);
@@ -649,7 +653,7 @@ describe.concurrent("tarball and git URLs declared in package.json are masked wh
       }),
     });
 
-    const { out, err, exitCode } = await run(String(dir), server, ["pm", "ls"]);
+    const { out, err, exitCode } = await run(String(dir), server, ["why", "*"]);
     expect(out).toContain(`direct@${masked(server)}\n`);
     expect(out).toContain(`stamped@${stamped}\n`);
     expectNoSecrets(out, err);

@@ -1531,9 +1531,10 @@ describe("peer dependencies", () => {
   });
 
   // When the catalog changes, every row declared through it is re-resolved. The root's rows from bun.lock have
-  // been replaced by then and belong to no package; re-resolving them too bound the peer a second time and
-  // repeated its warning.
-  describe("a root peer whose catalog range stops matching the installed version is checked once", () => {
+  // been replaced by then and belong to no package; re-resolving them too bound the peer a second time (once to
+  // the stale copy, with an "incorrect peer dependency" warning). The peer moves to a version its new range
+  // accepts, once, without a warning.
+  describe("a root peer whose catalog range stops matching the installed version is re-resolved once", () => {
     const peerWarning = 'warn: incorrect peer dependency "no-deps@1.0.0"';
     const peerWarnings = (err: string) => err.split(peerWarning).length - 1;
 
@@ -1554,11 +1555,13 @@ describe("peer dependencies", () => {
       return packageDir;
     }
 
+    /** The version the peer moved to; no warning may be printed on the way. */
     async function reinstall(dir: string, packageJson: string) {
       await Bun.write(join(dir, "package.json"), packageJson);
       const { err } = await install(dir, "hoisted");
       expect(err).toContain("Saved lockfile");
-      return peerWarnings(err);
+      expect(peerWarnings(err)).toBe(0);
+      return (await Bun.file(join(dir, "node_modules", "no-deps", "package.json")).json()).version;
     }
 
     // The inline row is the baseline: it changes itself and is only re-enqueued by the add/update pass.
@@ -1570,14 +1573,14 @@ describe("peer dependencies", () => {
       ["inline", (range: string) => rootWithPeer(range)],
     ])("declared %s", async (_, packageJson) => {
       const dir = await installedAlone(packageJson("1.0.0"));
-      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe("1.1.0");
     });
 
     test.concurrent("overridden to catalog:", async () => {
       const packageJson = (range: string) =>
         rootWithPeer("1.0.0", { overrides: { "no-deps": "catalog:" }, workspaces: { catalog: { "no-deps": range } } });
       const dir = await installedAlone(packageJson("1.0.0"));
-      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe("1.1.0");
     });
 
     // Selected both as an overridden name and as a catalog: row; one pass handles both.
@@ -1585,7 +1588,7 @@ describe("peer dependencies", () => {
       const packageJson = (range: string) =>
         rootWithPeer("catalog:", { overrides: { "no-deps": range }, workspaces: { catalog: { "no-deps": range } } });
       const dir = await installedAlone(packageJson("1.0.0"));
-      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe("1.1.0");
     });
   });
 

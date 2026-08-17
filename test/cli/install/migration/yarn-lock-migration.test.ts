@@ -2598,16 +2598,16 @@ tagged@next:
     });
   });
 
-  test("bun pm migrate does not turn link:, path, tarball URL or alias entries into registry packages", async () => {
+  test("bun pm migrate does not turn link:, path or tarball URL entries into registry packages", async () => {
     using registry = localRegistry();
     const keptIntegrity = "sha512-" + Buffer.alloc(64, 5).toString("base64");
     const aliasIntegrity = "sha512-" + Buffer.alloc(64, 6).toString("base64");
 
     // The `bare` and `linked` entries are what yarn 1.22 writes for a path and a `link:`
     // dependency: a `version` line (the target's, or 0.0.0) and no `resolved`. Nothing in these
-    // entries is a registry package, and which package `lodash-alias` is only follows from its
-    // tarball URL, so none of them may be migrated as `<name>@<version>` from the registry.
-    // (They are still not migrated at all; `kept` shows the registry entries next to them are.)
+    // entries is a registry package, so none of them may be migrated as `<name>@<version>` from the
+    // registry. (They are still not migrated at all; `kept` shows the registry entries next to them
+    // are, and so is `lodash-alias`, whose real name is in its `npm:` spec.)
     await using dir = tempDir("yarn-migration-no-resolved-non-registry", {
       "package.json": JSON.stringify({
         name: "no-resolved-non-registry",
@@ -2650,6 +2650,7 @@ lodash-alias@npm:lodash@4.17.21:
 
     expect(await lockPackages(String(dir))).toStrictEqual({
       kept: ["kept@1.0.0", "", {}, keptIntegrity],
+      "lodash-alias": ["lodash@4.17.21", "", {}, aliasIntegrity],
     });
   });
 
@@ -2787,12 +2788,6 @@ describe.concurrent("yarn.lock entries the migration cannot build a resolution f
       "^1.0.0",
       `broken@^1.0.0:\n  resolved "${registryTarball("broken", "1.0.0")}"\n`,
       'skipped "broken@^1.0.0" from yarn.lock: missing "version" field',
-    ],
-    [
-      "npm: alias without a resolved field",
-      "npm:actual@^1.0.0",
-      '"broken@npm:actual@^1.0.0":\n  version "1.0.0"\n',
-      'skipped "broken@npm:actual@^1.0.0" from yarn.lock: missing "resolved" field',
     ],
     [
       "tarball URL spec without a resolved field",

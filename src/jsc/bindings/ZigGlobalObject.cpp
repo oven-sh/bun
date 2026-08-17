@@ -947,6 +947,22 @@ namespace Zig {
 
 using namespace WebCore;
 
+static void promiseRejectionTrackerForShadowRealm(JSGlobalObject*, JSC::JSPromise* promise, JSC::JSPromiseRejectionOperation operation)
+{
+    // handleRejectedPromises() only drains the thread-default global's queue.
+    Zig::GlobalObject::promiseRejectionTracker(defaultGlobalObject(), promise, operation);
+}
+
+static const JSC::GlobalObjectMethodTable& shadowRealmGlobalObjectMethodTable()
+{
+    static const JSC::GlobalObjectMethodTable table = [] {
+        JSC::GlobalObjectMethodTable t = GlobalObject::globalObjectMethodTable();
+        t.promiseRejectionTracker = &promiseRejectionTrackerForShadowRealm;
+        return t;
+    }();
+    return table;
+}
+
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
@@ -957,7 +973,8 @@ static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObjec
     Zig::GlobalObject* shadow = Zig::GlobalObject::create(
         vm,
         Zig::GlobalObject::createStructure(vm),
-        ScriptExecutionContext::generateIdentifier());
+        ScriptExecutionContext::generateIdentifier(),
+        &shadowRealmGlobalObjectMethodTable());
     shadow->setConsole(shadow);
 
     return shadow;

@@ -794,6 +794,79 @@ export default function Counter() {
     expect(foundCounterBundle).toBe(true);
   });
 
+  test("client component importing another client component gets its client code", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-client-imports-client", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { Outer } from "../components/Outer";
+
+export default function IndexPage() {
+  return <div><Outer /></div>;
+}`,
+      "components/Outer.tsx": `"use client";
+import { Inner, innerLater } from "./Inner";
+
+export { Inner, innerLater };
+
+export const loadInner = () => import("./Inner").then(mod => mod.Inner);
+
+export function Outer() {
+  return <i>outer:<Inner /></i>;
+}`,
+      "components/Inner.tsx": `"use client";
+export { innerLater } from "./inner-later";
+
+export function Inner() {
+  return <b>inner</b>;
+}`,
+      // Resolved only after Inner.tsx has already become a client component boundary.
+      "components/inner-later.ts": `import { Inner } from "./Inner";
+
+export const innerLater = () => Inner;`,
+      // Loads the client chunk the RSC payload points at for Outer and renders it with react-dom.
+      "render-client-chunk.mjs": `import { readFileSync } from "node:fs";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+
+const rsc = readFileSync("dist/index.rsc", "utf8");
+const [, outerChunk] = rsc.match(/I\\["\\.\\/([^"]+)",\\[\\],"Outer"\\]/);
+const mod = await import("./dist/_bun/" + outerChunk);
+const loaded = await mod.loadInner();
+console.log(
+  JSON.stringify({
+    outer: renderToStaticMarkup(createElement(mod.Outer)),
+    loaded: typeof loaded === "function" ? renderToStaticMarkup(createElement(loaded)) : typeof loaded,
+    laterImportIsSameModule: mod.innerLater() === mod.Inner,
+    dynamicImportIsSameModule: loaded === mod.Inner,
+  }),
+);`,
+      "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
+    });
+
+    const build = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+    expect(build.stderr.toString()).not.toContain("error");
+    expect(build.exitCode).toBe(0);
+
+    // Prerendering goes through the SSR copies of the components, not through the client chunks.
+    expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("<i>outer:<b>inner</b></i>");
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "render-client-chunk.mjs"],
+      cwd: dir,
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toStrictEqual({
+      outer: "<i>outer:<b>inner</b></i>",
+      loaded: "<b>inner</b>",
+      laterImportIsSameModule: true,
+      dynamicImportIsSameModule: true,
+    });
+    expect(exitCode).toBe(0);
+  }, 60_000 * WAIT_MULTIPLIER);
+
   test("inline flight data is escaped as a single unit across stream chunks", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-flight-escaping", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

@@ -210,8 +210,6 @@ pub struct LinkerGraph<'a> {
     /// Index from `.parse_graph.input_files` to index in `.files`
     pub(crate) stable_source_indices: Vec<u32>,
 
-    pub(crate) is_scb_bitset: BitSet,
-
     /// This is for cross-module inlining of detected inlinable constants
     // const_values: bun_ast::Ast::ConstValuesMap,
     /// This is for cross-module inlining of TypeScript enum constants
@@ -225,9 +223,9 @@ pub struct LinkerGraph<'a> {
 // - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
-// - `files_live` / `parts_live` / `is_scb_bitset` / `reachable_files` /
-//   `stable_source_indices` / `code_splitting` / `ts_enums` are populated
-//   before fan-out and only read by workers.
+// - `files_live` / `parts_live` / `reachable_files` / `stable_source_indices` /
+//   `code_splitting` / `ts_enums` are populated before fan-out and only read
+//   by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
 //   `compute_cross_chunk_dependencies`); workers never reach those columns
@@ -274,7 +272,6 @@ impl Default for LinkerGraph<'_> {
             meta: MultiArrayList::default(),
             reachable_files: Vec::new(),
             stable_source_indices: Vec::new(),
-            is_scb_bitset: BitSet::default(),
             ts_enums: bun_ast::ast_result::TsEnumsMap::default(),
         }
     }
@@ -706,64 +703,38 @@ impl<'a> LinkerGraph<'a> {
             }
 
             if scb.list.len() > 0 {
-                self.is_scb_bitset = BitSet::init_empty(self.files.len()).expect("unreachable");
-
-                // Index all SCBs into the bitset. This is needed so chunking
-                // can track the chunks that SCBs belong to.
-                debug_assert_eq!(
-                    scb.list.items_use_directive().len(),
-                    scb.list.items_source_index().len()
-                );
-                debug_assert_eq!(
-                    scb.list.items_use_directive().len(),
-                    scb.list.items_reference_source_index().len()
-                );
-                for ((use_, original_id), ref_id) in scb
+                if scb
                     .list
                     .items_use_directive()
-                    .iter()
-                    .zip(scb.list.items_source_index().iter())
-                    .zip(scb.list.items_reference_source_index().iter())
+                    .contains(&UseDirective::Server)
                 {
-                    match use_ {
-                        UseDirective::None => {}
-                        UseDirective::Client => {
-                            self.is_scb_bitset.set(*original_id as usize);
-                            self.is_scb_bitset.set(*ref_id as usize);
-                        }
-                        UseDirective::Server => {
-                            bun_core::todo_panic!("um");
-                        }
-                    }
+                    bun_core::todo_panic!("um");
                 }
+                let is_boundary: BitSet = scb.bit_set(self.files.len())?;
 
-                // For client components, the import record index currently points to the original source index, instead of the reference source index.
-                let import_records_list: &mut [import_record::List<'_>] =
-                    self.ast.items_import_records_mut();
+                // Only importers built for a target other than the boundary's get the reference.
+                let ast_cols = self.ast.split_mut();
+                let import_records_list: &mut [import_record::List<'_>] = ast_cols.import_records;
+                let targets: &[bun_ast::Target] = ast_cols.target;
                 for source_id in self.reachable_files.slice() {
+                    let importer_target = targets[source_id.get() as usize];
                     for import_record in import_records_list[source_id.get() as usize]
                         .as_mut_slice()
                         .iter_mut()
                     {
-                        if import_record.source_index.is_valid()
-                            && self
-                                .is_scb_bitset
-                                .is_set(import_record.source_index.get() as usize)
+                        let imported = import_record.source_index;
+                        if !imported.is_valid()
+                            || !is_boundary.is_set(imported.get() as usize)
+                            || targets[imported.get() as usize] == importer_target
                         {
-                            // Only rewrite if this is an original SCB file, not a reference file
-                            if let Some(ref_index) =
-                                scb.get_reference_source_index(import_record.source_index.get())
-                            {
-                                import_record.source_index = Index::init(ref_index);
-                                debug_assert!(import_record.source_index.is_valid());
-                                // did not generate
-                            }
-                            // If it's already a reference file, leave it as-is
+                            continue;
                         }
+                        let reference = scb
+                            .get_reference_source_index(imported.get())
+                            .expect("is_boundary was built from the same boundary list");
+                        import_record.source_index = Index::init(reference);
                     }
                 }
-            } else {
-                self.is_scb_bitset = BitSet::default();
             }
         }
 
@@ -983,10 +954,6 @@ pub struct File {
 
     /// If "entry_point_kind" is not ".none", this is the index of the
     /// corresponding entry point chunk.
-    ///
-    /// This is also initialized for files that are a SCB's generated
-    /// reference, pointing to its destination. This forms a lookup map from
-    /// a Source.Index to its output path inb reakOutputIntoPieces
     pub entry_point_chunk_index: u32,
 
     pub line_offset_table: bun_sourcemap::line_offset_table::List<bun_alloc::AstAlloc>,

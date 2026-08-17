@@ -20,7 +20,7 @@ pub(crate) fn find_all_imported_parts_in_js_order(
     // PERF: these scratch lists could become
     // `bun_alloc::ArenaVec<'bump, PartRange>` with a threaded `&'bump Bump`
     // (introduces lifetimes on this fn + visitor). Profile if hot.
-    for (index, chunk) in chunks.iter_mut().enumerate() {
+    for chunk in chunks.iter_mut() {
         match &chunk.content {
             chunk::Content::Javascript(_) => {
                 find_imported_parts_in_js_order(
@@ -28,7 +28,6 @@ pub(crate) fn find_all_imported_parts_in_js_order(
                     chunk,
                     &mut part_ranges_shared,
                     &mut parts_prefix_shared,
-                    u32::try_from(index).expect("int cast"),
                 )?;
             }
             chunk::Content::Css(_) => {} // handled in `find_imported_css_files_in_js_order`
@@ -43,7 +42,6 @@ pub(crate) fn find_imported_parts_in_js_order(
     chunk: &mut Chunk,
     part_ranges_shared: &mut Vec<PartRange>,
     parts_prefix_shared: &mut Vec<PartRange>,
-    chunk_index: u32,
 ) -> Result<(), crate::Error> {
     let mut chunk_order_array: Vec<Order> =
         Vec::with_capacity(chunk.files_with_parts_in_chunk.count());
@@ -64,19 +62,7 @@ pub(crate) fn find_imported_parts_in_js_order(
     part_ranges_shared.clear();
     parts_prefix_shared.clear();
 
-    // Capture before constructing the visitor (borrowck).
     let with_code_splitting = this.graph.code_splitting;
-    let with_scb = this.graph.is_scb_bitset.bit_length > 0;
-
-    // The visitor holds a LinkerContext alongside SoA column slices
-    // borrowed from it, and mutates one column (`entry_point_chunk_index`).
-    // Borrowck forbids the latter through a shared `&LinkerContext`, so cache that
-    // single mutable column as a raw `*mut [u32]` (provenance via the
-    // `MultiArrayList.bytes: *mut u8` raw-pointer field — see
-    // `scanImportsAndExports.rs` for the same pattern). All other `c.*` accesses
-    // are read-only.
-    let entry_point_chunk_indices: *mut [u32] =
-        this.graph.files.slice().split_raw().entry_point_chunk_index;
 
     let (files_in_chunk_order, parts_in_chunk_order) = {
         let mut visitor = FindImportedPartsVisitor {
@@ -89,16 +75,13 @@ pub(crate) fn find_imported_parts_in_js_order(
             import_records: this.graph.ast.items_import_records(),
             entry_bits: chunk.entry_bits(),
             c: &*this,
-            chunk_index,
-            entry_point_chunk_indices,
             stack: Vec::new(),
         };
 
-        match (with_code_splitting, with_scb) {
-            (true, true) => run_visits::<true, true>(&mut visitor, &chunk_order_array),
-            (true, false) => run_visits::<true, false>(&mut visitor, &chunk_order_array),
-            (false, true) => run_visits::<false, true>(&mut visitor, &chunk_order_array),
-            (false, false) => run_visits::<false, false>(&mut visitor, &chunk_order_array),
+        if with_code_splitting {
+            run_visits::<true>(&mut visitor, &chunk_order_array);
+        } else {
+            run_visits::<false>(&mut visitor, &chunk_order_array);
         }
 
         let mut parts_in_chunk_order: Vec<PartRange> =
@@ -128,13 +111,13 @@ pub(crate) fn find_imported_parts_in_js_order(
 }
 
 #[inline]
-fn run_visits<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
+fn run_visits<const WITH_CODE_SPLITTING: bool>(
     visitor: &mut FindImportedPartsVisitor<'_, '_>,
     chunk_order_array: &[Order],
 ) {
-    visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(Index::RUNTIME.value());
+    visitor.visit::<WITH_CODE_SPLITTING>(Index::RUNTIME.value());
     for order in chunk_order_array {
-        visitor.visit::<WITH_CODE_SPLITTING, WITH_SCB>(order.source_index);
+        visitor.visit::<WITH_CODE_SPLITTING>(order.source_index);
     }
 }
 
@@ -148,10 +131,6 @@ pub(crate) struct FindImportedPartsVisitor<'a, 'ctx> {
     pub(crate) visited: HashMap<IndexInt, ()>,
     pub(crate) parts_prefix: Vec<PartRange>,
     pub(crate) c: &'a LinkerContext<'ctx>,
-    pub(crate) chunk_index: u32,
-    /// Raw column pointer into `c.graph.files` for the single mutable write in
-    /// `visit` (see the raw-pointer note above).
-    entry_point_chunk_indices: *mut [u32],
     stack: Vec<PartsFrame>,
 }
 
@@ -201,10 +180,7 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
     // queuing its imports interleaved with per-part `Part` markers and a
     // trailing `File` marker, then reverses the tail so LIFO pop reproduces
     // the original recursion order exactly.
-    pub(crate) fn visit<const WITH_CODE_SPLITTING: bool, const WITH_SCB: bool>(
-        &mut self,
-        source_index: IndexInt,
-    ) {
+    pub(crate) fn visit<const WITH_CODE_SPLITTING: bool>(&mut self, source_index: IndexInt) {
         debug_assert!(self.stack.is_empty());
         self.stack.push(PartsFrame::Enter(source_index));
 
@@ -235,18 +211,6 @@ impl<'a, 'ctx> FindImportedPartsVisitor<'a, 'ctx> {
                     can_be_split,
                 } => {
                     if is_file_in_chunk {
-                        if WITH_SCB && self.c.graph.is_scb_bitset.is_set(source_index as usize) {
-                            // SAFETY: `entry_point_chunk_indices` is the raw column pointer
-                            // for `entry_point_chunk_index` (distinct from every
-                            // column read through `self.c` / `self.flags` / `self.parts`),
-                            // valid for `graph.files.len()` writes for the duration of the
-                            // link step. No `&` to this column is live here.
-                            unsafe {
-                                (*self.entry_point_chunk_indices)[source_index as usize] =
-                                    self.chunk_index;
-                            }
-                        }
-
                         self.files.push(source_index);
 
                         // CommonJS files are all-or-nothing so all parts must be contiguous

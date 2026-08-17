@@ -7215,11 +7215,7 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
-                        this.graph
-                            .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
-                            .expect("oom");
-
+                        // Not put in the path maps: `LinkerGraph::load` redirects cross-target import records instead.
                         this.graph
                             .server_component_boundaries
                             .put(

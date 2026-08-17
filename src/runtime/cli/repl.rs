@@ -2732,11 +2732,15 @@ static SIGINT_VM: core::sync::atomic::AtomicPtr<jsc::VM> =
     core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
 /// A SIGINT arrived while the REPL was waiting on a promise: stop waiting (the signal itself interrupts the
 /// loop's poll). Not a VM stop — the VM stays usable.
-static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+static SIGINT_DURING_WAIT: core::sync::atomic::AtomicBool =
+    core::sync::atomic::AtomicBool::new(false);
 
 #[cfg(unix)]
 extern "C" fn sigint_handler(_: c_int) {
-    if !SIGINT_VM.load(core::sync::atomic::Ordering::Acquire).is_null() {
+    if !SIGINT_VM
+        .load(core::sync::atomic::Ordering::Acquire)
+        .is_null()
+    {
         SIGINT_DURING_WAIT.store(true, core::sync::atomic::Ordering::Release);
     }
 }

@@ -399,13 +399,11 @@ impl<'a> Installer<'a> {
                     (&pkg_name, &pkg_res_fmt),
                 );
             }
-            TaskError::LinkPathTooLong(link_pkg_id) => {
+            TaskError::LinkPathTooLong => {
                 Output::err(
                     "ENAMETOOLONG",
                     "link path for package <b>{}<r> is too long",
-                    (bstr::BStr::new(
-                        pkg_names[*link_pkg_id as usize].slice(string_buf),
-                    ),),
+                    (&pkg_name,),
                 );
             }
             TaskError::Patching(patch_log) => {
@@ -754,7 +752,7 @@ pub enum TaskError {
     LinkPackage(sys::Error),
     SymlinkDependencies(sys::Error),
     /// See `Installer::append_dependency_path`.
-    LinkPathTooLong(PackageID),
+    LinkPathTooLong,
     RunScripts(crate::Error),
     Binaries(crate::Error),
     /// (dependency entry, error)
@@ -768,7 +766,7 @@ impl TaskError {
         match self {
             TaskError::LinkPackage(err) => TaskError::LinkPackage(err.clone()),
             TaskError::SymlinkDependencies(err) => TaskError::SymlinkDependencies(err.clone()),
-            TaskError::LinkPathTooLong(pkg_id) => TaskError::LinkPathTooLong(*pkg_id),
+            TaskError::LinkPathTooLong => TaskError::LinkPathTooLong,
             TaskError::Binaries(err) => TaskError::Binaries(*err),
             TaskError::DependencyBinaries(errs) => TaskError::DependencyBinaries(errs.clone()),
             TaskError::RunScripts(err) => TaskError::RunScripts(*err),
@@ -2957,7 +2955,7 @@ impl<'a> Installer<'a> {
             &mut join_buf[..],
             &[link_target],
         ) else {
-            return Err(TaskError::LinkPathTooLong(pkg_id));
+            return Err(TaskError::LinkPathTooLong);
         };
 
         paths::PathLike::clear(buf);

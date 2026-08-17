@@ -571,6 +571,11 @@ export const linearFifoOrderedRemoveProbe = $newRustFunction(
   "TestingAPIs.orderedRemoveProbe",
   1,
 ) as (scenario: number) => number[];
+export const applyPermutationInPlaceProbe = $newRustFunction(
+  "runtime/index_sort_testing.rs",
+  "applyPermutationInPlaceProbe",
+  1,
+) as (order: number[]) => { items: number[]; order: number[] };
 export const hasNonReifiedStatic = $newCppFunction("InternalForTesting.cpp", "jsFunction_hasReifiedStatic", 1);
 
 interface setSocketOptionsFn {

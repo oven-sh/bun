@@ -39,6 +39,7 @@ pub mod shell;
 pub mod api;
 pub mod dispatch;
 pub mod hw_exports;
+pub mod index_sort_testing;
 pub mod ipc;
 pub mod ipc_host;
 pub mod jsc_hooks;

@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, setDefaultTimeout } from "bun:test";
 import { mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunExe, isWindows, readdirSorted, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, normalizeBunSnapshot, readdirSorted, tmpdirSync } from "harness";
 import { chmodSync, copyFileSync, readdirSync, symlinkSync } from "node:fs";
 import { tmpdir } from "os";
 import { delimiter, join, resolve } from "path";
@@ -11,6 +11,7 @@ setDefaultTimeout(1000 * 60 * 5);
 
 let x_dir: string;
 let env: Record<string, string> = { ...bunEnv };
+const hasPerl = Bun.which("perl") != null;
 
 // Each test that hits the network gets its own isolated tmpdir + install cache
 // so the network-heavy tests can run concurrently without sharing bunx cache state.
@@ -482,6 +483,82 @@ describe("bunx --no-install", () => {
       expect(out).not.toBeEmpty();
       expect(code).toBe(0);
     }
+  });
+
+  // What `bun install` leaves behind for a dependency with a `bin`. The shebang
+  // in `script` decides whether exec'ing it succeeds, so these are POSIX-only.
+  async function installLocalBin(x_dir: string, name: string, script: string) {
+    const packageDir = join(x_dir, "node_modules", name);
+    const binDir = join(x_dir, "node_modules", ".bin");
+    await mkdir(packageDir, { recursive: true });
+    await mkdir(binDir, { recursive: true });
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({ name, version: "1.0.0", bin: { [name]: "cli" } }),
+    );
+    await writeFile(join(packageDir, "cli"), script, { mode: 0o755 });
+    symlinkSync(join("..", name, "cli"), join(binDir, name));
+  }
+
+  it.concurrent.skipIf(isWindows)("reports a bin that fails to exec instead of exiting silently", async () => {
+    const ctx = setup();
+    const name = "bunx-unexecutable-bin-fixture";
+    // execve() of a script whose interpreter does not exist fails with ENOENT.
+    await installLocalBin(ctx.x_dir, name, `#!${join(ctx.x_dir, "missing-interpreter")}\n`);
+
+    const [err, out, exited] = await run(ctx, "--no-install", name);
+
+    expect(normalizeBunSnapshot(err, ctx.x_dir)).toMatchInlineSnapshot(`
+      "error: Failed to run "bunx-unexecutable-bin-fixture" due to:
+      ENOENT: <dir>/node_modules/.bin/bunx-unexecutable-bin-fixture: No such file or directory (posix_spawn())"
+    `);
+    expect(out).toBe("");
+    expect(exited).toBe(1);
+  });
+
+  it.concurrent.skipIf(isWindows)("passes through a bin's exit code without reporting it", async () => {
+    const ctx = setup();
+    const name = "bunx-failing-bin-fixture";
+    await installLocalBin(ctx.x_dir, name, "#!/bin/sh\necho ran; exit 3\n");
+
+    const [err, out, exited] = await run(ctx, "--no-install", name);
+
+    expect(err).toBe("");
+    expect(out).toBe("ran\n");
+    expect(exited).toBe(3);
+  });
+
+  // Same report when the bin ran but its exit status could not be collected:
+  // with SIGCHLD ignored (inherited from the launcher; bun's own spawn resets
+  // it in children, hence perl) the kernel reaps the bin and waitpid() fails
+  // with ECHILD. bunx exits 1 either way; the point is that it says why.
+  // Linux only: on macOS bunx execs the bin in place and never waits for it.
+  it.concurrent.skipIf(!isLinux || !hasPerl)("reports a bin whose exit status could not be collected", async () => {
+    const { x_dir, env } = setup();
+    const name = "bunx-unwaitable-bin-fixture";
+    await installLocalBin(x_dir, name, "#!/bin/sh\necho ran\n");
+
+    const subprocess = spawn({
+      cmd: ["perl", "-e", '$SIG{CHLD} = "IGNORE"; exec @ARGV or die $!', "--", bunExe(), "x", "--no-install", name],
+      cwd: x_dir,
+      // The ASAN CI lanes set this; the no-orphans wait loop never notices a
+      // child the kernel already reaped and hangs (tracked separately).
+      env: { ...env, BUN_FEATURE_FLAG_NO_ORPHANS: undefined },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [err, out, exited] = await Promise.all([
+      subprocess.stderr.text(),
+      subprocess.stdout.text(),
+      subprocess.exited,
+    ]);
+
+    expect(normalizeBunSnapshot(err, x_dir)).toMatchInlineSnapshot(`
+      "error: Failed to run "bunx-unwaitable-bin-fixture" due to:
+      ECHILD: <dir>/node_modules/.bin/bunx-unwaitable-bin-fixture: No child processes (waitpid())"
+    `);
+    expect(out).toBe("ran\n");
+    expect(exited).toBe(1);
   });
 });
 

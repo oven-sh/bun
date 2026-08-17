@@ -1,7 +1,7 @@
 import { $ } from "bun";
 import { describe, expect, it } from "bun:test";
-import { chmodSync } from "fs";
-import { bunEnv as bunEnv_, bunExe, isWindows, tempDir, tempDirWithFiles } from "harness";
+import { chmodSync, mkdirSync, writeFileSync } from "fs";
+import { bunEnv as bunEnv_, bunExe, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 const bunEnv = {
@@ -125,6 +125,40 @@ describe.concurrent("bun run", () => {
 
           expect(stderr).toEndWith(`error: "${exe}" exited with code 1\n`);
           expect(exitCode).toBe(1);
+        });
+
+        // Unlike the exit code message above, a bin that could not be exec'd is
+        // reported even with --silent (which bunx forces on): nothing else says why it did not run.
+        describe.each(["--silent", "not silent"])("%s", silentOption => {
+          const silent = silentOption === "--silent";
+          it.skipIf(isWindows)("reports a bin in node_modules/.bin that fails to exec", async () => {
+            using dir = tempDir("bun-run-unexecutable-bin", {
+              "package.json": JSON.stringify({ name: "test", version: "0.0.0" }),
+            });
+            const binDir = join(String(dir), "node_modules", ".bin");
+            mkdirSync(binDir, { recursive: true });
+            // execve() of a script whose interpreter does not exist fails with ENOENT.
+            writeFileSync(join(binDir, "unexecutable-bin-fixture"), `#!${join(String(dir), "missing-interpreter")}\n`, {
+              mode: 0o755,
+            });
+
+            await using proc = Bun.spawn({
+              cmd: [bunExe(), ...(silent ? ["--silent"] : []), ...(withRun ? ["run"] : []), "unexecutable-bin-fixture"],
+              cwd: String(dir),
+              env: bunEnv,
+              stdout: "pipe",
+              stderr: "pipe",
+            });
+
+            const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+            expect(normalizeBunSnapshot(stderr, String(dir))).toMatchInlineSnapshot(`
+              "error: Failed to run "unexecutable-bin-fixture" due to:
+              ENOENT: <dir>/node_modules/.bin/unexecutable-bin-fixture: No such file or directory (posix_spawn())"
+            `);
+            expect(stdout).toBe("");
+            expect(exitCode).toBe(1);
+          });
         });
 
         it.skipIf(isWindows)("exit code message works above 128", async () => {

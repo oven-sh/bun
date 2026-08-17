@@ -686,19 +686,58 @@ impl BunxCommand {
         // `UpdateRequest::parse` immediately below; it is not held across any
         // call that may itself reborrow the same `Log`.
         let ctx_log = unsafe { ctx.log_mut() };
-        let update_requests = UpdateRequest::parse(
-            None,
-            ctx_log,
-            &[opts.package_name],
-            &mut requests_buf,
-            bun_install::Subcommand::Add,
-        );
+        // With one or more `--package` values, every one of them needs its
+        // own install request; otherwise `package_name` (the bare positional)
+        // is the sole request, exactly as before.
+        let update_requests = if opts.specified_packages.is_empty() {
+            UpdateRequest::parse(
+                None,
+                ctx_log,
+                &[opts.package_name],
+                &mut requests_buf,
+                bun_install::Subcommand::Add,
+            )
+        } else {
+            UpdateRequest::parse(
+                None,
+                ctx_log,
+                &opts.specified_packages,
+                &mut requests_buf,
+                bun_install::Subcommand::Add,
+            )
+        };
 
         if update_requests.is_empty() {
             Self::exit_with_usage();
         }
 
-        debug_assert!(update_requests.len() == 1); // One positional cannot parse to multiple requests
+        debug_assert!(
+            // One positional cannot parse to multiple requests; N `--package`
+            // values parse to N requests.
+            update_requests.len()
+                == core::cmp::max(1, opts.specified_packages.len())
+        );
+        // The rest of this function is written against a single "primary"
+        // request — the historical, single-package behavior, still exactly
+        // correct when zero or one `--package` was given. The values that
+        // must reflect *every* requested package when more than one
+        // `--package` was given — the cache key and the install argv — are
+        // computed separately, below, from `update_requests` as a whole.
+        //
+        // Cache freshness also has to look at every request: if any
+        // requested package floats on a dist-tag (e.g. `@latest`), a
+        // previously-cached multi-package install can't be trusted blindly,
+        // so bust the cache and skip straight to a fresh install. Computed
+        // here, before `update_requests[0]` is borrowed mutably below, since
+        // that borrow stays live for the rest of the function. For N <= 1
+        // this reduces to exactly the single-package check it replaces.
+        let mut do_cache_bust = update_requests
+            .iter()
+            .any(|r| r.version.tag == VersionTag::DistTag);
+        let look_for_existing_bin = update_requests
+            .iter()
+            .all(|r| r.version.literal.is_empty() || r.version.tag != VersionTag::DistTag);
+
         let update_request = &mut update_requests[0];
 
         // if you type "tsc" and TypeScript is not installed:
@@ -1011,10 +1050,6 @@ impl BunxCommand {
         }
 
         let passthrough: &[Box<[u8]>] = opts.passthrough_list.as_slice();
-
-        let mut do_cache_bust = update_request.version.tag == VersionTag::DistTag;
-        let look_for_existing_bin = update_request.version.literal.is_empty()
-            || update_request.version.tag != VersionTag::DistTag;
 
         bun_output::scoped_log!(bunx, "try run existing? {}", look_for_existing_bin);
         if look_for_existing_bin {

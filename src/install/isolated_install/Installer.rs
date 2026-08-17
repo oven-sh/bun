@@ -74,9 +74,8 @@ pub struct Installer<'a> {
     /// pool and each task derefs this field; a `&'a mut` would assert
     /// exclusivity every concurrent task violates. Mutated only for
     /// `lockfile.trusted_dependencies` (under `trusted_dependencies_mutex`,
-    /// narrowed via `addr_of_mut!`) and, on the main thread, a not-yet-started
-    /// package's `meta.integrity` (`record_extracted_integrity`, one row via
-    /// the raw column pointer). Never null. Read via `lockfile()`.
+    /// narrowed via `addr_of_mut!`) and in `record_extracted_integrity` (main
+    /// thread, one row). Never null. Read via `lockfile()`.
     pub lockfile: *mut Lockfile,
 
     pub(crate) summary: InstallSummary,
@@ -248,22 +247,14 @@ impl<'a> Installer<'a> {
         }
     }
 
-    /// Main thread, before the package's tasks start. The counterpart of the
-    /// integrity write-back in `PackageInstaller::install_enqueued_packages_after_extraction`:
-    /// a lockfile written before tarball integrity was recorded has none for the
-    /// package, so the extraction computed it. A local tarball's cache entry is
-    /// named after it (`cached_local_tarball_folder_name`), so the tasks need it
-    /// in place, and the lockfile is re-saved with it.
+    /// Main thread, before the package's tasks start (they name a local tarball's cache
+    /// entry after it). Same write-back as `install_enqueued_packages_after_extraction`.
     fn record_extracted_integrity(&mut self, pkg_id: PackageID, integrity: &install::Integrity) {
         let pkgs = self.lockfile().packages.slice();
         assert!((pkg_id as usize) < pkgs.len());
-        // SAFETY: `items_raw` carries the column's root provenance, so this
-        // field access needs no `&mut Lockfile`. Only a package's own tasks
-        // read its `integrity` (to name the cache entry), and none of this
-        // package's tasks have started: every entry of it waited on the
-        // extraction being reported. Tasks of other packages running on the
-        // pool hold `&[Meta]` over the column but only touch other bytes.
-        // `pkg_id` is in bounds per the assert above.
+        // SAFETY: in bounds; raw column pointer, so no `&mut Lockfile` is formed. Only this
+        // package's tasks read its `integrity` and none has started; other tasks' `&[Meta]`
+        // borrows never touch these bytes.
         let recorded = unsafe {
             core::ptr::addr_of_mut!(
                 (*pkgs
@@ -387,32 +378,26 @@ impl<'a> Installer<'a> {
         let node_id = entry_node_ids[entry_id.get() as usize];
         let pkg_id = node_pkg_ids[node_id.get() as usize];
 
-        let pkg_name = pkg_names[pkg_id as usize];
         let pkg_res = pkg_resolutions[pkg_id as usize];
+        let pkg_name =
+            bun_core::fmt::escape_control_chars(pkg_names[pkg_id as usize].slice(string_buf));
+        let pkg_res_fmt = EscapeControlChars(redacted(
+            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+        ));
 
         match err {
             TaskError::LinkPackage(link_err) => {
                 Output::err(
                     link_err.clone(),
                     "failed to link package: {}@{}",
-                    (
-                        bun_core::fmt::escape_control_chars(pkg_name.slice(string_buf)),
-                        bun_core::fmt::EscapeControlChars(redacted(
-                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                        )),
-                    ),
+                    (&pkg_name, &pkg_res_fmt),
                 );
             }
             TaskError::SymlinkDependencies(symlink_err) => {
                 Output::err(
                     symlink_err.clone(),
                     "failed to symlink dependencies for package: {}@{}",
-                    (
-                        bun_core::fmt::escape_control_chars(pkg_name.slice(string_buf)),
-                        bun_core::fmt::EscapeControlChars(redacted(
-                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                        )),
-                    ),
+                    (&pkg_name, &pkg_res_fmt),
                 );
             }
             TaskError::LinkPathTooLong(link_pkg_id) => {
@@ -425,27 +410,14 @@ impl<'a> Installer<'a> {
                 );
             }
             TaskError::Patching(patch_log) => {
-                Output::err_generic(
-                    "failed to patch package: {}@{}",
-                    (
-                        bun_core::fmt::escape_control_chars(pkg_name.slice(string_buf)),
-                        bun_core::fmt::EscapeControlChars(redacted(
-                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                        )),
-                    ),
-                );
+                Output::err_generic("failed to patch package: {}@{}", (&pkg_name, &pkg_res_fmt));
                 let _ = patch_log.print(std::ptr::from_mut(Output::error_writer()));
             }
             TaskError::Binaries(bin_err) => {
                 Output::err(
                     *bin_err,
                     "failed to link binaries for package: {}@{}",
-                    (
-                        bun_core::fmt::escape_control_chars(pkg_name.slice(string_buf)),
-                        bun_core::fmt::EscapeControlChars(redacted(
-                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                        )),
-                    ),
+                    (&pkg_name, &pkg_res_fmt),
                 );
             }
             TaskError::DependencyBinaries(dep_errs) => {
@@ -459,8 +431,8 @@ impl<'a> Installer<'a> {
                             bstr::BStr::new(pkg_names[dep_pkg_id as usize].slice(string_buf)),
                             pkg_resolutions[dep_pkg_id as usize]
                                 .fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                            bstr::BStr::new(pkg_name.slice(string_buf)),
-                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
+                            &pkg_name,
+                            &pkg_res_fmt,
                         ),
                     );
                 }
@@ -469,10 +441,8 @@ impl<'a> Installer<'a> {
                 Output::err_generic(
                     "failed to download <b>{}@{}<r>: {}\n  <d>{}<r>",
                     (
-                        bun_core::fmt::escape_control_chars(pkg_name.slice(string_buf)),
-                        bun_core::fmt::EscapeControlChars(redacted(
-                            pkg_res.fmt(string_buf, bun_core::fmt::PathSep::Auto),
-                        )),
+                        &pkg_name,
+                        &pkg_res_fmt,
                         bstr::BStr::new(download_error_reason(dl.err)),
                         EscapeControlChars(bun_core::fmt::redacted_npm_url(&dl.url)),
                     ),
@@ -1754,13 +1724,10 @@ impl Task {
                         continue;
                     }
 
-                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS) {
-                        step = self.next_step(current_step);
-                        continue;
-                    }
-
                     // Trusted entries are never global-store eligible; never run in the shared dir.
-                    if installer.entry_uses_global_store(self.entry_id) {
+                    if !manager_ref.options.do_.contains(Do::RUN_SCRIPTS)
+                        || installer.entry_uses_global_store(self.entry_id)
+                    {
                         step = self.next_step(current_step);
                         continue;
                     }
@@ -3022,45 +2989,12 @@ impl<'a> Installer<'a> {
             buf.append(pkg_name.slice(string_buf));
             return;
         }
-        match which {
-            Which::Final => self.append_store_path(buf, entry_id),
-            Which::Staging => self.append_store_package_path(buf, entry_id, which),
-        }
+        self.append_store_path_at(buf, entry_id, which);
     }
 
-    /// `node_modules/.bun/<storepath>/node_modules/<pkg>`, or with
-    /// `Which::Staging` the `StagingPath` next to it.
-    fn append_store_package_path(
-        &self,
-        buf: &mut impl paths::PathLike,
-        entry_id: StoreEntryId,
-        which: Which,
-    ) {
-        let string_buf = self.lockfile().buffers.string_bytes.as_slice();
-        let node_id = self.store.entries.items_node_id()[entry_id.get() as usize];
-        let pkg_id = self.store.nodes.items_pkg_id()[node_id.get() as usize];
-        let pkg_name = self.lockfile().packages.items_name()[pkg_id as usize].slice(string_buf);
-
-        buf.append(NODE_MODULES_BUN.as_bytes());
-        buf.append_fmt(format_args!(
-            "{}",
-            store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
-        ));
-        buf.append(b"node_modules");
-        match which {
-            Which::Final => buf.append(pkg_name),
-            Which::Staging => buf.append_fmt(format_args!("{}", StagingPath(pkg_name))),
-        }
-    }
-
-    /// `append_store_path` for the entry a dependency symlink points at. This
-    /// is the one place a `link:` package's path is needed: it is never
-    /// installed (`install_isolated_packages` marks its entry done up front),
-    /// its dependents link straight to `<global link dir>/<link: target>`.
-    ///
-    /// The `link:` target is stored as written in package.json or bun.lock, so
-    /// unlike every other input of these path builders it is not bounded by a
-    /// path buffer. A target that does not fit fails the dependent instead.
+    /// `append_store_path` for the entry a dependency symlink points at, the one place a
+    /// `link:` package's path (`<global link dir>/<target as written>`) is needed. A target
+    /// that does not fit a path buffer fails with `LinkPathTooLong`.
     pub(crate) fn append_dependency_path(
         &self,
         buf: &mut AutoAbsPath,
@@ -3075,15 +3009,10 @@ impl<'a> Installer<'a> {
             return Ok(());
         }
 
-        // Lazily ensuring the global link dir would mutate `*PackageManager`,
-        // but this runs on worker threads, so the lazy init is hoisted to the
-        // main thread (`install_isolated_packages`, before any `start_task`).
-        // Reading the cached field here is then equivalent.
+        // Ensured on the main thread (`install_isolated_packages`) before any task starts;
+        // this runs on worker threads and cannot lazily init it.
         let link_dir_path: &[u8] = &self.manager().global_link_dir_path;
-        debug_assert!(
-            !link_dir_path.is_empty(),
-            "global_link_dir_path must be ensured before tasks start",
-        );
+        debug_assert!(!link_dir_path.is_empty());
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
         let link_target = pkg_res.symlink().slice(string_buf);
 
@@ -3097,13 +3026,21 @@ impl<'a> Installer<'a> {
         };
 
         paths::PathLike::clear(buf);
-        // `join_abs_string_buf_checked` bounded `target` by the same buffer size.
-        buf.append(target).assume_ok();
+        buf.append(target).assume_ok(); // bounded by the same buffer size
         Ok(())
     }
 
     /// `entry_id` must not be a `link:` package; see `append_dependency_path`.
     pub(crate) fn append_store_path(&self, buf: &mut impl paths::PathLike, entry_id: StoreEntryId) {
+        self.append_store_path_at(buf, entry_id, Which::Final);
+    }
+
+    fn append_store_path_at(
+        &self,
+        buf: &mut impl paths::PathLike,
+        entry_id: StoreEntryId,
+        which: Which,
+    ) {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
 
         let entries = &self.store.entries;
@@ -3151,7 +3088,21 @@ impl<'a> Installer<'a> {
             ResolutionTag::Symlink => {
                 unreachable!("link: packages have no store path; see append_dependency_path")
             }
-            _ => self.append_store_package_path(buf, entry_id, Which::Final),
+            _ => {
+                let pkg_name = pkg_names[pkg_id as usize];
+                buf.append(NODE_MODULES_BUN.as_bytes());
+                buf.append_fmt(format_args!(
+                    "{}",
+                    store::entry::fmt_store_path(entry_id, self.store, self.lockfile()),
+                ));
+                buf.append(b"node_modules");
+                match which {
+                    Which::Final => buf.append(pkg_name.slice(string_buf)),
+                    Which::Staging => {
+                        buf.append_fmt(format_args!("{}", StagingPath(pkg_name.slice(string_buf))))
+                    }
+                }
+            }
         }
     }
 

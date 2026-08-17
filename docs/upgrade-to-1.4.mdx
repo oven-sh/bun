@@ -455,7 +455,7 @@ These are correctness fixes that tighten validation or align with a specificatio
 
 **CLI and package manager**
 
-- `bun init` templates pin `"typescript": "^6"`.
+- `bun init` templates declare `"typescript": "^7"` in `peerDependencies` (1.3 declared `^5`; the React templates declared no TypeScript dependency).
 - `bun update --recursive` / `--filter` are now applied (they were previously ignored), and a plain `bun update` from a workspace root also re-resolves `catalog:` entries.
 
 See [oven-sh/bun#28792](https://github.com/oven-sh/bun/issues/28792) for the tracking list, including narrow protocol and bounds checks not repeated here.

@@ -163,7 +163,7 @@ where
         let this = *ext;
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
+        fold(us_socket_t::opaque_mut(s).close(CloseCode::failure));
         if let Some(t) = this {
             fold(T::on_connect_error(t, wrap::<SSL>(s), code));
         }
@@ -193,16 +193,13 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
     const HAS_ON_OPEN: bool = true;
 
     fn on_open(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_open(this, s);
-        Ok(())
+        Self::handle_open(this, s)
     }
     fn on_data(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
-        Self::handle_data(this, s, data);
-        Ok(())
+        Self::handle_data(this, s, data)
     }
     fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_writable(this, s);
-        Ok(())
+        Self::handle_writable(this, s)
     }
     fn on_close(
         this: ThisPtr<Self>,
@@ -210,24 +207,19 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
         code: i32,
         reason: *mut c_void,
     ) -> JsResult<()> {
-        Self::handle_close(this, s, code, reason);
-        Ok(())
+        Self::handle_close(this, s, code, reason)
     }
     fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_timeout(this, s);
-        Ok(())
+        Self::handle_timeout(this, s)
     }
     fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_timeout(this, s);
-        Ok(())
+        Self::handle_timeout(this, s)
     }
     fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
-        Self::handle_end(this, s);
-        Ok(())
+        Self::handle_end(this, s)
     }
     fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) -> JsResult<()> {
-        Self::handle_connect_error(this, s, code);
-        Ok(())
+        Self::handle_connect_error(this, s, code)
     }
     fn on_handshake(
         this: ThisPtr<Self>,
@@ -235,8 +227,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_upgrade_client::NewHttp
         ok: i32,
         err: bun_uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
-        Self::handle_handshake(this, s, ok, err);
-        Ok(())
+        Self::handle_handshake(this, s, ok, err)
     }
 }
 
@@ -244,13 +235,11 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
     // No `on_open` override — adoption of an already-connected socket.
 
     fn on_data(this: ThisPtr<Self>, _s: NewSocketHandler<SSL>, data: &[u8]) -> JsResult<()> {
-        Self::handle_data(this, data);
-        Ok(())
+        Self::handle_data(this, data)
     }
     fn on_writable(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_writable(s);
-        Ok(())
+        this.handle_writable(s)
     }
     fn on_close(
         this: ThisPtr<Self>,
@@ -259,28 +248,23 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         reason: *mut c_void,
     ) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_close(s, code, reason);
-        Ok(())
+        this.handle_close(s, code, reason)
     }
     fn on_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_timeout(s);
-        Ok(())
+        this.handle_timeout(s)
     }
     fn on_long_timeout(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_timeout(s);
-        Ok(())
+        this.handle_timeout(s)
     }
     fn on_end(this: ThisPtr<Self>, s: NewSocketHandler<SSL>) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_end(s);
-        Ok(())
+        this.handle_end(s)
     }
     fn on_connect_error(this: ThisPtr<Self>, s: NewSocketHandler<SSL>, code: i32) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_connect_error(s, code);
-        Ok(())
+        this.handle_connect_error(s, code)
     }
     fn on_handshake(
         this: ThisPtr<Self>,
@@ -289,8 +273,7 @@ impl<const SSL: bool> RawSocketEvents<SSL> for websocket_client::WebSocket<SSL> 
         err: bun_uws::us_bun_verify_error_t,
     ) -> JsResult<()> {
         let _guard = this.ref_guard();
-        this.handle_handshake(s, ok, err);
-        Ok(())
+        this.handle_handshake(s, ok, err)
     }
 }
 
@@ -601,7 +584,7 @@ where
         let this = ext.get();
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
+        fold(us_socket_t::opaque_mut(s).close(CloseCode::failure));
         // SAFETY: snapshot of the ext slot taken before close; unique heap
         // owner, single-threaded dispatch (same contract as `ExtSlot::owner_mut`).
         if let Some(t) = unsafe { thunk::ext_owner(&this) } {
@@ -697,7 +680,7 @@ impl<const SSL: bool> VHandler for HTTPClient<SSL> {
         let owner = *ext;
         // `us_socket_t` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
         // deref (`s` is a live socket passed by the trampoline).
-        us_socket_t::opaque_mut(s).close(CloseCode::failure);
+        bun_http::no_js(us_socket_t::opaque_mut(s).close(CloseCode::failure));
         let Some(owner) = owner else { return };
         HttpH::<SSL>::on_connect_error(owner.as_ptr(), wrap::<SSL>(s), code);
     }

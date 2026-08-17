@@ -336,14 +336,17 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
 
     // ── lifecycle ───────────────────────────────────────────────────────────
 
-    pub fn close(&self, code: CloseCode) {
-        on_socket!(self.socket;
-            connected s => s.close(code),
-            connecting c => c.close(),
-            detached => {},
-            duplex d => d.close(),
-            pipe p => p.close(),
-        )
+    /// Closes the socket; its close / connect-error handler runs from in here, and the caller gets what it left.
+    pub fn close(&self, code: CloseCode) -> crate::js::JsResult<()> {
+        crate::js::checked(|| {
+            on_socket!(self.socket;
+                connected s => { let _ = s.close(code); },
+                connecting c => c.close(),
+                detached => {},
+                duplex d => d.close(),
+                pipe p => p.close(),
+            )
+        })
     }
 
     /// The JS wrapper that owns this socket is being finalized: whatever the
@@ -953,7 +956,7 @@ impl AnySocket {
         fn is_closed(&self) -> bool;
         fn is_shutdown(&self) -> bool;
         fn is_established(&self) -> bool;
-        fn close(&self, code: CloseCode);
+        fn close(&self, code: CloseCode) -> crate::js::JsResult<()>;
         fn write(&self, data: &[u8]) -> i32;
         fn set_timeout(&self, seconds: c_uint);
         fn shutdown(&self);

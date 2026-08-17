@@ -336,7 +336,8 @@ impl<const SSL: bool> Drop for CloseTeardown<SSL> {
     fn drop(&mut self) {
         let this = self.socket;
         if this.handlers_are(&self.entered) {
-            this.mark_inactive();
+            // A guard's Drop has no caller to hand it to.
+            crate::dispatch::fold(this.mark_inactive());
         } else if this.flags.get().contains(Flags::IS_ACTIVE) {
             // Reconnected: `connect_finish` re-armed `this_value`/`poll_ref`, so
             // skip the idle teardown and only release what we took.
@@ -390,7 +391,8 @@ impl<const SSL: bool> Drop for ConnectErrorTeardown<SSL> {
             this.get().deref();
         }
         if this.handlers_are(&self.entered) {
-            this.mark_inactive();
+            // A guard's Drop has no caller to hand it to.
+            crate::dispatch::fold(this.mark_inactive());
         }
     }
 }
@@ -902,7 +904,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // response teardown into an RST. Until that detection is verified on
         // Windows, keep the legacy contract there (the close path still fails
         // the pending write callback when the socket is torn down).
-        let fatal_send_errno = this.internal_flush();
+        let fatal_send_errno = this.internal_flush()?;
         // On POSIX the fatal signal is trustworthy: us_socket_write_check_error
         // only reports an errno that is either known peer-gone or persisted
         // across its bounded unclassified-errno retry window. internal_flush
@@ -929,7 +931,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // still-attached socket. Close without detaching so on_close runs
             // and JS observes 'close' (mirrors h2's dead-transport close).
             if !this.socket.get().is_detached() {
-                this.socket.get().close(uws::CloseCode::Normal);
+                this.socket.get().close(uws::CloseCode::Normal)?;
             }
             return Ok(());
         }
@@ -1273,7 +1275,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         }
     }
 
-    pub(crate) fn close_and_detach(&self, code: uws::CloseCode) {
+    /// Detaches and closes the native socket; its close handler (script) runs from in here.
+    pub(crate) fn close_and_detach(&self, code: uws::CloseCode) -> JsResult<()> {
         let socket = self.socket.get();
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
@@ -1281,7 +1284,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.set(SocketHandler::<SSL>::DETACHED);
         self.detach_native_callback();
 
-        socket.close(code);
+        socket.close(code)
     }
 
     /// Discard a still-live native socket so this wrapper can be reused for a
@@ -1296,10 +1299,10 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// handles Connected/Connecting; Pipe/UpgradedDuplex back-pointers do
     /// not live in the ext slot so those are left for the caller's existing
     /// `debug_assert!` to catch.
-    pub(crate) fn detach_for_reconnect(&self) {
+    pub(crate) fn detach_for_reconnect(&self) -> JsResult<()> {
         let old = self.socket.get();
         let Some(ext) = old.ext::<*mut c_void>() else {
-            return;
+            return Ok(());
         };
         // SAFETY: ext slot is sized for `*mut c_void`; single-threaded.
         unsafe { *ext = core::ptr::null_mut() };
@@ -1307,7 +1310,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.buffered_data_for_node_net
             .with_mut(|b| b.clear_and_free());
         self.detach_native_callback();
-        old.close(uws::CloseCode::Failure);
+        let closed = old.close(uws::CloseCode::Failure);
         self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
@@ -1318,17 +1321,19 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
         }
         self.deref();
+        closed
     }
 
-    pub(crate) fn mark_inactive(&self) {
+    /// Winds the socket down once idle. If the native socket is still open this closes it (its close handler
+    /// runs from in here) and `on_close` finishes the job.
+    pub(crate) fn mark_inactive(&self) -> JsResult<()> {
         if self.flags.get().contains(Flags::IS_ACTIVE) {
             // we have to close the socket before the socket context is closed
             // otherwise we will get a segfault
             // uSockets will defer freeing the TCP socket until the next tick
             if !self.socket.get().is_closed() {
-                self.close_and_detach(uws::CloseCode::Normal);
                 // on_close will call mark_inactive again
-                return;
+                return self.close_and_detach(uws::CloseCode::Normal);
             }
 
             self.update_flags(|f| f.remove(Flags::IS_ACTIVE));
@@ -1349,6 +1354,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             self.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
         }
+        Ok(())
     }
 
     pub(crate) fn is_server(&self) -> bool {
@@ -1550,7 +1556,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // A socket whose `open` threw is closed whatever delivering that
             // error left pending (`on_close` runs nested; it does not enter JS
             // over a pending termination).
-            this.mark_inactive();
+            this.mark_inactive()?;
             delivered?;
         }
         if !SSL
@@ -1569,7 +1575,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // pending JS write the same way on_writable's tail does, otherwise
             // the do_socket_write backpressure arms the normal writable
             // subscription.
-            let _ = this.internal_flush();
+            let _ = this.internal_flush()?;
             if this.buffered_data_for_node_net.get().len() == 0 {
                 let drain_callback = handlers.on_writable();
                 if !drain_callback.is_empty() {
@@ -1653,7 +1659,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             this.poll_ref.with_mut(|p| p.unref(js_loop_ctx()));
 
             // If you don't handle TCP fin, we assume you're done.
-            this.mark_inactive();
+            this.mark_inactive()?;
             return Ok(());
         }
 
@@ -1800,7 +1806,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // `on_close` is single-JS-entry, so the native close it routes
             // through here just takes the trap and returns.
             if reject_unauthorized {
-                this.reject_unauthorized_connection();
+                this.reject_unauthorized_connection()?;
             }
             return Ok(());
         }
@@ -1810,7 +1816,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             callback = handlers.on_open();
             if callback.is_empty() {
                 if reject_unauthorized {
-                    this.reject_unauthorized_connection();
+                    this.reject_unauthorized_connection()?;
                 }
                 return Ok(());
             }
@@ -1875,7 +1881,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // Fail closed: an unauthorized connection is rejected whatever happened
         // in the handlers.
         if reject_unauthorized {
-            this.reject_unauthorized_connection();
+            this.reject_unauthorized_connection()?;
         }
         handled
     }
@@ -1897,12 +1903,12 @@ impl<const SSL: bool> NewSocket<SSL> {
 
     /// Callers hold `on_handshake`'s ref guard, which outlives the
     /// synchronous `on_close` dispatch of this close.
-    fn reject_unauthorized_connection(&self) {
+    fn reject_unauthorized_connection(&self) -> JsResult<()> {
         let socket = self.socket.get();
         if socket.is_detached() || socket.is_closed() {
-            return;
+            return Ok(());
         }
-        self.close_and_detach(uws::CloseCode::FastShutdown);
+        self.close_and_detach(uws::CloseCode::FastShutdown)
     }
 
     /// The JS `Buffer` for an `on_session`/`on_keylog` payload. The
@@ -2569,7 +2575,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
-                    let _ = this.internal_flush();
+                    let _ = this.internal_flush()?;
                 }
 
                 JSValue::from(usize::try_from(wrote.max(0)).expect("int cast") == total)
@@ -2979,12 +2985,12 @@ impl<const SSL: bool> NewSocket<SSL> {
     /// (the drain callback is dispatched regardless) - skipping the drain on
     /// fatal made Windows servers reset FIN-terminated responses (see
     /// a5e7ba5905) - until the Windows fatal-write detection is verified.
-    fn internal_flush(&self) -> i32 {
+    fn internal_flush(&self) -> JsResult<i32> {
         // A TLS socket whose handshake was rejected has no usable transport:
         // never push the buffered tail at it, and report no error (the
         // rejection is surfaced by the handshake path, not by the flush).
         if SSL && self.flags.get().contains(Flags::REJECTED) {
-            return 0;
+            return Ok(0);
         }
         // R-2: every mutated field is `Cell`/`JsCell`, so `&self` carries no
         // `noalias` for them and the previous `black_box` launder (which
@@ -3014,7 +3020,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                     // already acknowledged to JS, so only an 'error' can).
                     self.buffered_data_for_node_net
                         .with_mut(|b| b.clear_and_free());
-                    return fatal_errno;
+                    return Ok(fatal_errno);
                 }
                 res
             };
@@ -3039,9 +3045,9 @@ impl<const SSL: bool> NewSocket<SSL> {
         self.socket.get().flush();
 
         if self.can_end_after_flush() {
-            self.mark_inactive();
+            self.mark_inactive()?;
         }
-        0
+        Ok(0)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -3058,7 +3064,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         if this.socket.get().is_detached() {
             return Ok(JSValue::UNDEFINED);
         }
-        let _ = this.internal_flush();
+        let _ = this.internal_flush()?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3077,7 +3083,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // exactly as close() does. Without it those refs leak (LSan-caught).
         let socket = this.socket.get();
         let is_semi_connect = socket.socket.get().is_some() && !socket.is_established();
-        this.close_and_detach(uws::CloseCode::Failure);
+        let closed = this.close_and_detach(uws::CloseCode::Failure);
         if is_semi_connect {
             this.poll_ref.with_mut(|p| {
                 p.unref(bun_io::posix_event_loop::get_vm_ctx(
@@ -3089,6 +3095,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             }
             this.deref();
         }
+        closed?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3141,7 +3148,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         // buffer, which `destroy()` after `write()` must not do. The SSL layer may
         // briefly defer this close behind its own ciphertext write spill
         // (`ssl_close_after_spill`); that waits only on our fd, not the peer.
-        socket.close(uws::CloseCode::FastShutdown);
+        let closed = socket.close(uws::CloseCode::FastShutdown);
         this.socket.set(SocketHandler::<SSL>::DETACHED);
         let _ = global;
         this.poll_ref.with_mut(|p| {
@@ -3158,6 +3165,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             // stays ≥ 1 across this call.
             this.deref();
         }
+        closed?;
         Ok(JSValue::UNDEFINED)
     }
 
@@ -3183,7 +3191,7 @@ impl<const SSL: bool> NewSocket<SSL> {
             WriteResult::Fail => JSValue::ZERO,
             WriteResult::Success { wrote, total } => {
                 if wrote >= 0 && usize::try_from(wrote).expect("int cast") == total {
-                    let _ = this.internal_flush();
+                    let _ = this.internal_flush()?;
                 }
                 JSValue::js_number(wrote as f64)
             }
@@ -3241,7 +3249,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // would be a resurrection bug.
         // SAFETY: per fn contract — sole owner, live until the `heap::take` below.
         let this_ref: &Self = unsafe { &*this };
-        this_ref.mark_inactive();
+        // The last reference is gone; nobody above a `deref()` can take this.
+        crate::dispatch::fold(this_ref.mark_inactive());
         this_ref.detach_native_callback();
         // Reset to empty (Strong drops on assign).
         this_ref.this_value.set(JsRef::empty());
@@ -3283,7 +3292,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         this_ref.this_value.with_mut(|r| r.finalize());
         if !this_ref.socket.get().is_closed() {
             this_ref.socket.get().prepare_for_finalize();
-            this_ref.close_and_detach(uws::CloseCode::Failure);
+            // A finalizer has no caller to hand it to.
+            crate::dispatch::fold(this_ref.close_and_detach(uws::CloseCode::Failure));
         } else {
             this_ref.detach_native_callback();
         }

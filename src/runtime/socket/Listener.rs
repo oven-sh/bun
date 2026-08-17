@@ -1549,7 +1549,7 @@ fn connect_finish<const IS_SSL: bool>(
         // still-connecting socket. Close the previous native socket before
         // reusing this wrapper so `do_connect` does not alias two native
         // sockets onto one ext slot.
-        prev.detach_for_reconnect();
+        prev.detach_for_reconnect()?;
         // Dropping the previous `Rc` here is safe even mid-callback: a `Scope`
         // from a `data`/`close` handler that synchronously re-entered `connect`
         // still holds its own reference.

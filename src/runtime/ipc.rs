@@ -1112,7 +1112,10 @@ impl SendQueue {
                 }
                 #[cfg(not(windows))]
                 {
-                    s.close(match reason {
+                    // The IPC close handler enters no script (it only schedules the deferred task, see
+                    // `NewSocketIPCHandler::on_close`), so this close raises nothing of its own; anything
+                    // the check reports was already pending and stays with the frame that owns it.
+                    let _raised_nothing = s.close(match reason {
                         CloseReason::Normal => bun_uws::CloseCode::Normal,
                         CloseReason::Failure => bun_uws::CloseCode::Failure,
                     });

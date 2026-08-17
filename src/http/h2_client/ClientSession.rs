@@ -971,7 +971,7 @@ impl ClientSession {
         }
         NewHTTPContext::<true>::mark_socket_as_dead(sock);
         self.fail_streams(err);
-        sock.close(bun_uws::CloseKind::Failure);
+        crate::no_js(sock.close(bun_uws::CloseKind::Failure));
     }
 
     /// RST_STREAMs (or unparks and fails) the one aborted request; siblings

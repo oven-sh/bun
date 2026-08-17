@@ -1049,29 +1049,25 @@ pub(crate) unsafe fn __bun_fire_timer(
             // construction; `t` is the connection's `timer` field.
             let container = unsafe { PostgresSQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
-            Ok(())
+            unsafe { (*container).on_connection_timeout() }
         }
         EventLoopTimerTag::PostgresSQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { PostgresSQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
-            Ok(())
+            unsafe { (*container).on_max_lifetime_timeout() }
         }
         EventLoopTimerTag::MySQLConnectionTimeout => {
             // SAFETY: §Dispatch — `t` is the connection's `timer` field.
             let container = unsafe { MySQLConnection::from_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_connection_timeout() };
-            Ok(())
+            unsafe { (*container).on_connection_timeout() }
         }
         EventLoopTimerTag::MySQLConnectionMaxLifetime => {
             // SAFETY: §Dispatch — `t` is the connection's `max_lifetime_timer`.
             let container = unsafe { MySQLConnection::from_max_lifetime_timer_ptr(t) };
             // SAFETY: per fn contract.
-            unsafe { (*container).on_max_lifetime_timeout() };
-            Ok(())
+            unsafe { (*container).on_max_lifetime_timeout() }
         }
         EventLoopTimerTag::ValkeyConnectionTimeout => {
             let container = owner!(Valkey, timer);

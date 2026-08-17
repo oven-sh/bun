@@ -2,6 +2,16 @@
 
 #![warn(unused_must_use)]
 pub mod error;
+
+/// The HTTP client thread runs no JavaScript: a socket close made there dispatches only this crate's own
+/// handlers, so the `JsResult` uSockets' close returns can only be `Ok`.
+#[track_caller]
+#[inline]
+pub fn no_js(closed: bun_uws::js::JsResult<()>) {
+    if closed.is_err() {
+        unreachable!("a socket close on the HTTP client thread left a JavaScript exception");
+    }
+}
 pub use error::{CertError, Error, Result};
 #[path = "AsyncHTTP.rs"]
 pub mod async_http;

@@ -513,7 +513,7 @@ impl<Owner: ChannelOwner> Channel<Owner> {
         }
         #[cfg(not(windows))]
         {
-            self.backend.socket.get().close(uws::CloseCode::Normal);
+            no_js(self.backend.socket.get().close(uws::CloseCode::Normal));
         }
         self.mark_done();
     }
@@ -593,7 +593,7 @@ impl<Owner> Drop for Channel<Owner> {
         {
             let sock = self.backend.socket.replace(Socket::DETACHED);
             if !sock.is_detached() {
-                sock.close(uws::CloseCode::Normal);
+                no_js(sock.close(uws::CloseCode::Normal));
             }
         }
         // `in` / `out` Vec drop automatically.
@@ -609,6 +609,18 @@ impl<Owner> Drop for Channel<Owner> {
 /// the exact shape `vtable::make` would have produced.
 #[cfg(not(windows))]
 struct PosixHandlers<Owner: ChannelOwner>(PhantomData<Owner>);
+
+/// The channel's socket handlers (`PosixHandlers`) are native test-runner plumbing and enter no script, so a
+/// close through them has nothing to raise.
+#[cfg(not(windows))]
+#[inline]
+fn no_js(closed: bun_jsc::JsResult<()>) {
+    debug_assert!(
+        closed.is_ok(),
+        "test-runner channel handlers run no JavaScript"
+    );
+    let _ = closed;
+}
 
 /// Ext slot type for the usockets vtable: the slot holds a `*mut Channel<Owner>`.
 // Inherent associated types are unstable in Rust, so this lives as a free alias.
@@ -678,7 +690,7 @@ impl<Owner: ChannelOwner> PosixHandlers<Owner> {
 
     unsafe extern "C" fn raw_on_end(s: *mut uws::us_socket_t) -> *mut uws::us_socket_t {
         // SAFETY: `s` is a live us_socket_t passed by usockets.
-        unsafe { (*s).close(bun_uws_sys::CloseCode::normal) };
+        no_js(unsafe { (*s).close(bun_uws_sys::CloseCode::normal) });
         s
     }
 }

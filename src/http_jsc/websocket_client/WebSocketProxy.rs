@@ -69,7 +69,11 @@ impl Drop for WebSocketProxy {
             // SAFETY: tunnel is a live intrusive-refcounted pointer; we hold one ref
             // until deref() below releases it.
             unsafe {
-                WebSocketProxyTunnel::shutdown(tunnel.as_ptr());
+                if let Err(err) = WebSocketProxyTunnel::shutdown(tunnel.as_ptr()) {
+                    // A Drop has no caller to hand it to.
+                    let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
+                    let _ = bun_jsc::task::report_error_or_terminate(global, err);
+                }
                 WebSocketProxyTunnel::deref(tunnel.as_ptr());
             }
         }

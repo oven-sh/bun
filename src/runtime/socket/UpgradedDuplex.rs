@@ -145,18 +145,20 @@ impl UpgradedDuplex {
         self.wrapper.get().as_ref()
     }
 
-    fn on_open(this: *mut Self) {
+    fn on_open(this: *mut Self) -> bun_uws::js::JsResult<()> {
         bun_output::scoped_log!(UpgradedDuplex, "onOpen");
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
         (this.handlers.on_open)(this.handlers.ctx);
+        Ok(())
     }
 
-    fn on_data(this: *mut Self, decoded_data: &[u8]) {
+    fn on_data(this: *mut Self, decoded_data: &[u8]) -> bun_uws::js::JsResult<()> {
         bun_output::scoped_log!(UpgradedDuplex, "onData ({})", decoded_data.len());
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
         (this.handlers.on_data)(this.handlers.ctx, decoded_data);
+        Ok(())
     }
 
     fn on_session(this: *mut Self, session: &[u8]) {
@@ -173,7 +175,11 @@ impl UpgradedDuplex {
         (this.handlers.on_keylog)(this.handlers.ctx, line);
     }
 
-    fn on_handshake(this: *mut Self, handshake_success: bool, ssl_error: us_bun_verify_error_t) {
+    fn on_handshake(
+        this: *mut Self,
+        handshake_success: bool,
+        ssl_error: us_bun_verify_error_t,
+    ) -> bun_uws::js::JsResult<()> {
         bun_output::scoped_log!(UpgradedDuplex, "onHandshake");
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
@@ -189,9 +195,10 @@ impl UpgradedDuplex {
                 .map(Into::into),
         });
         (this.handlers.on_handshake)(this.handlers.ctx, handshake_success, ssl_error);
+        Ok(())
     }
 
-    fn on_close(this: *mut Self) {
+    fn on_close(this: *mut Self) -> bun_uws::js::JsResult<()> {
         bun_output::scoped_log!(UpgradedDuplex, "onClose");
         // SAFETY: see handler note above.
         let this = unsafe { &*this };
@@ -209,6 +216,18 @@ impl UpgradedDuplex {
         // Early teardown (struct itself is dropped later by parent).
         this.teardown();
         js_wrapper.ensure_still_alive();
+        Ok(())
+    }
+
+    /// Every callback this duplex hands the TLS engine forwards to `DuplexUpgradeContext`, which folds what the
+    /// script it ran left (see socket_body.rs), so an engine entry point driven from here has nothing to return.
+    #[inline]
+    fn folded(r: bun_uws::js::JsResult<()>) {
+        debug_assert!(
+            r.is_ok(),
+            "UpgradedDuplex engine callbacks fold at DuplexUpgradeContext"
+        );
+        let _ = r;
     }
 
     fn call_write_or_end(&self, data: Option<&[u8]>, msg_more: bool) {
@@ -261,9 +280,10 @@ impl UpgradedDuplex {
         }
     }
 
-    fn internal_write(this: *mut Self, encoded_data: &[u8]) {
+    fn internal_write(this: *mut Self, encoded_data: &[u8]) -> bun_uws::js::JsResult<()> {
         // SAFETY: see handler note above.
         unsafe { &*this }.write_encrypted(encoded_data);
+        Ok(())
     }
 
     fn write_encrypted(&self, encoded_data: &[u8]) {
@@ -280,14 +300,14 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__flush")]
     pub(crate) fn flush(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.flush();
+            Self::folded(w.flush().map(|_| ()));
         }
     }
 
     fn on_internal_receive_data(&self, data: &[u8]) {
         if let Some(w) = self.wrapper_ref() {
             self.reset_timeout();
-            w.receive_data(data);
+            Self::folded(w.receive_data(data));
             return;
         }
         // Engine not up yet - `start_tls` is still queued. Stage the bytes;
@@ -324,7 +344,7 @@ impl UpgradedDuplex {
         // signal is the SSL handle, not the Option.
         for chunk in staged.chunks(64 * 1024) {
             match self.wrapper_ref() {
-                Some(w) if w.ssl.get().is_some() => w.receive_data(chunk),
+                Some(w) if w.ssl.get().is_some() => Self::folded(w.receive_data(chunk)),
                 _ => break,
             }
         }
@@ -471,7 +491,7 @@ impl UpgradedDuplex {
         self.wrapper.set(Some(wrapper));
         let w = self.wrapper_ref().unwrap();
         w.set_server_verify(verify.request_cert, verify.reject_unauthorized);
-        w.start();
+        Self::folded(w.start());
     }
 
     pub(crate) fn start_tls(
@@ -513,7 +533,12 @@ impl UpgradedDuplex {
     pub(crate) fn encode_and_write(&self, data: &[u8]) -> i32 {
         bun_output::scoped_log!(UpgradedDuplex, "encodeAndWrite (len: {})", data.len());
         if let Some(w) = self.wrapper_ref() {
-            let written = w.write_data(data).unwrap_or(0);
+            let written = w.write_data(data).unwrap_or_else(|e| {
+                if let bun_uws::ssl_wrapper::WriteDataError::Js(err) = e {
+                    Self::folded(Err(err));
+                }
+                0
+            });
             return i32::try_from(written).expect("int cast");
         }
         0
@@ -537,14 +562,14 @@ impl UpgradedDuplex {
     #[uws_callback(export = "UpgradedDuplex__close")]
     pub(crate) fn close(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(true);
+            Self::folded(w.shutdown(true).map(|_| ()));
         }
     }
 
     #[uws_callback(export = "UpgradedDuplex__shutdown")]
     pub(crate) fn shutdown(&self) {
         if let Some(w) = self.wrapper_ref() {
-            let _ = w.shutdown(false);
+            Self::folded(w.shutdown(false).map(|_| ()));
         }
     }
 

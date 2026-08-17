@@ -3385,24 +3385,26 @@ impl H2FrameParser {
     /// alone entirely - the connect-error path owns their failure delivery, and closing
     /// a semi-connected socket runs no terminal callback (stranding its refs, see the
     /// close host_fn in socket_body).
-    fn close_transport_after_fatal_write(&self) {
+    fn close_transport_after_fatal_write(&self) -> JsResult<()> {
         match self.native_socket.get() {
             BunSocket::Tls(socket) | BunSocket::TlsWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<true>(socket.get());
+                Self::close_socket_for_dead_transport::<true>(socket.get())
             }
             BunSocket::Tcp(socket) | BunSocket::TcpWriteonly(socket) => {
-                Self::close_socket_for_dead_transport::<false>(socket.get());
+                Self::close_socket_for_dead_transport::<false>(socket.get())
             }
-            BunSocket::None => {}
+            BunSocket::None => Ok(()),
         }
     }
 
-    fn close_socket_for_dead_transport<const SSL: bool>(socket: &crate::socket::NewSocket<SSL>) {
+    fn close_socket_for_dead_transport<const SSL: bool>(
+        socket: &crate::socket::NewSocket<SSL>,
+    ) -> JsResult<()> {
         let handler = socket.socket.get();
         if !handler.is_established() {
-            return;
+            return Ok(());
         }
-        handler.close(bun_uws::CloseCode::Normal);
+        handler.close(bun_uws::CloseCode::Normal)
     }
 
     pub(crate) fn on_auto_flush(&self) -> bool {
@@ -3420,7 +3422,8 @@ impl H2FrameParser {
             // cycle already drained the bytes the failing send left behind (racy
             // one-off errnos, e.g. macOS EPROTOTYPE) - the transport recovered.
             if self.has_backpressure() {
-                self.close_transport_after_fatal_write();
+                // A deferred-task hook (`fn(*anyopaque) -> bool`) has no caller to hand it to.
+                crate::dispatch::fold(self.close_transport_after_fatal_write());
             } else {
                 self.transport_write_fatal.set(false);
             }

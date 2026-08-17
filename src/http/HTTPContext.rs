@@ -311,7 +311,7 @@ impl<const SSL: bool> HTTPContext<SSL> {
 
     pub(crate) fn terminate_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
-        socket.close(uws::CloseKind::Failure);
+        crate::no_js(socket.close(uws::CloseKind::Failure));
     }
 
     /// macOS `close_and_fail` for a request with a body: FIN, not RST. With
@@ -323,12 +323,12 @@ impl<const SSL: bool> HTTPContext<SSL> {
     /// abort churn), so those platforms keep `terminate_socket`.
     pub(crate) fn fail_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
-        socket.close(uws::CloseKind::FastShutdown);
+        crate::no_js(socket.close(uws::CloseKind::FastShutdown));
     }
 
     pub(crate) fn close_socket(socket: HTTPSocket<SSL>) {
         Self::mark_socket_as_dead(socket);
-        socket.close(uws::CloseKind::Normal);
+        crate::no_js(socket.close(uws::CloseKind::Normal));
     }
 
     /// `ptr` is the *value* stored in the socket ext (the packed
@@ -1097,7 +1097,7 @@ impl<const SSL: bool> Drop for HTTPContext<SSL> {
                 // below force-closes the TCP without triggering the
                 // callback, same as addMemoryBackToPool().
                 pooled.release_parked_refs();
-                pooled.http_socket.close(uws::CloseKind::Failure);
+                crate::no_js(pooled.http_socket.close(uws::CloseKind::Failure));
             }
         }
 
@@ -1384,9 +1384,9 @@ impl<const SSL: bool> Handler<SSL> {
         // closing and it would leak.
         if let Some(client) = tagged.client_mut() {
             if client.has_unsent_request_body() {
-                socket.close(uws::CloseKind::Failure);
+                crate::no_js(socket.close(uws::CloseKind::Failure));
             } else {
-                socket.close(uws::CloseKind::Normal);
+                crate::no_js(socket.close(uws::CloseKind::Normal));
             }
             client.on_close::<SSL>(socket);
             return;
@@ -1395,11 +1395,11 @@ impl<const SSL: bool> Handler<SSL> {
             // An HTTP/2 session's streams may still be uploading; the same
             // undeliverable-bytes reasoning applies, and this matches the
             // pre-existing behaviour for this branch.
-            socket.close(uws::CloseKind::Failure);
+            crate::no_js(socket.close(uws::CloseKind::Failure));
             h2::ClientSession::on_close(session, crate::Error::ConnectionClosed);
             return;
         }
-        socket.close(uws::CloseKind::Normal);
+        crate::no_js(socket.close(uws::CloseKind::Normal));
     }
 }
 

@@ -497,7 +497,9 @@ impl FileResponseStream {
             self.insert_state(State::RESPONSE_DONE | State::ERRORED);
             self.detach_resp();
             let resp = self.resp.get();
-            resp.force_close();
+            // Detached first, so the close dispatches into no script (see RequestContext::force_close).
+            let raised_nothing = resp.force_close();
+            debug_assert!(raised_nothing.is_ok());
             (self.on_error.get())(self.ctx.get(), resp, err);
         }
         self.finish();

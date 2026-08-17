@@ -1540,16 +1540,19 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        // Owning slice: converting `message_value` below can run user JS / GC,
-        // which must not free the topic bytes.
-        let topic = topic_value.to_slice(global)?;
+        // Converting `message_value` can run user JS / GC; the JSString keeps the
+        // topic bytes alive across it.
+        let topic_string = topic_value.to_js_string(global)?;
+        let topic = topic_string.view(global).to_slice();
         // jsc.JSValue
         let message_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let compress_value = iter.next_eat();
-        self.publish(global, topic.slice(), message_value, compress_value)
+        let result = self.publish(global, topic.slice(), message_value, compress_value);
+        topic_string.ensure_still_alive();
+        result
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`

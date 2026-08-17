@@ -73,6 +73,9 @@ pub(crate) fn parse_postgres_timestamptz(text: &[u8]) -> Option<(DateTimeText, i
         }
         _ => return None,
     };
+    if minutes > 59 || seconds > 59 {
+        return None;
+    }
     let offset_seconds = i32::try_from(hours * 3600 + minutes * 60 + seconds).ok()?;
     Some((dt, sign * offset_seconds))
 }

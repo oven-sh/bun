@@ -39,6 +39,7 @@ use bun_install_types::NodeLinker::NodeLinker;
 
 // Free-function "methods" on `PackageManager` hosted in sibling modules
 // to avoid one giant `impl PackageManager` block.
+use crate::package_manager_real::enqueue::add_dependency_error;
 use crate::package_manager_real::remove_stale_workspace_links::remove_stale_workspace_links;
 use crate::package_manager_real::run_tasks::{RunTasksCallbacks, run_tasks};
 use crate::package_manager_real::{
@@ -92,8 +93,7 @@ pub fn install_with_manager(
 
     // Snapshot the loaded-from-lockfile package count so
     // `Lockfile::get_package_id` can tell loaded pins apart from packages
-    // appended by manifest fetches in this resolve session, and which loaded
-    // packages a non-peer dependency holds, for `clean_with_logger`.
+    // appended by manifest fetches in this resolve session.
     manager.lockfile.mark_loaded_packages()?;
 
     let (config_version, changed_config_version) = load_result.choose_config_version();
@@ -1437,44 +1437,6 @@ pub(crate) fn loaded_lockfile_name(load_result: &lockfile::LoadResult) -> &'stat
     }
 }
 
-/// Adds a contextual error for a dependency resolution failure.
-/// This provides better error messages than just propagating the raw error.
-/// The error is logged to manager.log, and the install will fail later when
-/// manager.log.hasErrors() is checked.
-#[cold]
-#[inline(never)]
-fn add_dependency_error(manager: &mut PackageManager, dependency: &Dependency, err: crate::Error) {
-    // reshaped for borrowck — capture the realname slice before
-    // taking `&mut` on `manager.log`.
-    let realname = dependency.realname();
-    let path = manager.lockfile.str(&realname).to_vec();
-    let path_fmt = bun_core::fmt::EscapeControlChars(bun_core::fmt::fmt_path(
-        &path,
-        bun_core::fmt::PathFormatOptions {
-            path_sep: match dependency.version.tag {
-                DependencyVersionTag::Folder => bun_core::fmt::PathSep::Auto,
-                _ => bun_core::fmt::PathSep::Any,
-            },
-            ..Default::default()
-        },
-    ));
-
-    let log = manager.log_mut();
-    if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-        log.add_warning_with_note(
-            None,
-            Default::default(),
-            err.name().as_bytes(),
-            format_args!("error occurred while resolving {}", path_fmt),
-        );
-    } else {
-        log.add_zig_error_with_note(
-            err.name(),
-            format_args!("error occurred while resolving {}", path_fmt),
-        );
-    }
-}
-
 // ─── cold install branches ────────────────────────────────────────────────
 // These are the rarely-taken arms of `install_with_manager` (lockfile load
 // error reporting, building a brand-new lockfile, the network resolve loop,
@@ -1534,11 +1496,8 @@ fn enqueue_transitive(
     transitive.enqueue_tracked(manager)
 }
 
-/// Re-resolves the rows `selects`, walking each package's current dependency list in package order. The root's
-/// list (just rebuilt by the differ) goes first because a later row dedupes onto what an earlier one appended
-/// (`Lockfile::get_package_id`); the root's loaded rows, now in no list, would resolve as nobody's and are not
-/// walked, nor are `pinned_rows`, which the update plan just resolved. A workspace the add/update pass is about
-/// to re-read still holds its loaded list here and is walked like any other package.
+/// Re-resolves the rows `selects` in package order (root first, so later rows dedupe onto what its rows append),
+/// skipping rows in no list (the root's loaded rows the differ replaced) and `pinned_rows` (the update plan's).
 fn reresolve_owned_rows(
     manager: &mut PackageManager,
     pinned_rows: &DynamicBitSet,
@@ -1622,10 +1581,8 @@ fn enqueue_named_updates(
         rows.push((dependency_i as DependencyID, package_id));
     }
 
-    // Rows declared by the root or a workspace resolve first, so the rows regular
-    // packages own can land on the copy they move to (see
-    // `get_or_put_resolved_package_with_find_result`), and edges following a
-    // vacated package through `redirect_moved_edges` follow the direct entry.
+    // Direct rows resolve first, so rows regular packages own can land on the copy they move to
+    // (`get_or_put_resolved_package_with_find_result`) and redirected edges follow the direct entry.
     let (direct_rows, transitive_rows): (Vec<_>, Vec<_>) = rows
         .into_iter()
         .partition(|&(dependency_i, _)| manager.lockfile.is_workspace_dependency(dependency_i));
@@ -2191,10 +2148,8 @@ fn run_security_scanner(
     }
 }
 
-// The documented bun.lockb -> bun.lock recipe (`--save-text-lockfile --frozen-lockfile --lockfile-only`) is the one
-// write that happens while `Do::SAVE_LOCKFILE` is off (--frozen-lockfile, --dry-run, --no-save). A migrated
-// package-lock.json / yarn.lock / pnpm-lock.yaml is saved through `FORCE_SAVE_LOCKFILE` like any other change, so
-// those flags keep it in memory. (A migrated load can report `Format::Binary` too, hence the `migrated` check.)
+// bun.lockb -> bun.lock (`--save-text-lockfile --frozen-lockfile --lockfile-only`) is the one write while
+// `Do::SAVE_LOCKFILE` is off; migrations (which may report `Format::Binary` too) save via `FORCE_SAVE_LOCKFILE`.
 fn converts_binary_lockfile_to_text(
     load_result: &lockfile::LoadResult,
     save_format: lockfile::Format,

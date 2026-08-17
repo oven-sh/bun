@@ -98,42 +98,48 @@ pub fn enqueue_dependency_list(
         let dependency = this.lockfile.buffers.dependencies[i as usize].clone();
         let resolution = this.lockfile.buffers.resolutions[i as usize];
         if let Err(err) = enqueue_dependency_with_main(this, i, &dependency, resolution, false) {
-            let path_sep = match dependency.version.tag {
-                dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
-                _ => bun_fmt::PathSep::Any,
-            };
-            // `format_args!` borrows temporaries — bind the
-            // formatter first so it outlives the macro expansion.
-            let realname = dependency.realname();
-            let path_fmt = bun_fmt::EscapeControlChars(bun_fmt::fmt_path_u8(
-                this.lockfile.str(&realname),
-                bun_fmt::PathFormatOptions {
-                    path_sep,
-                    escape_backslashes: false,
-                },
-            ));
-            let log = this.log_mut();
-            if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
-                log.add_warning_with_note(
-                    None,
-                    bun_ast::Loc::default(),
-                    err.name().as_bytes(),
-                    format_args!("error occurred while resolving {}", path_fmt),
-                );
-            } else {
-                log.add_zig_error_with_note(
-                    err.name(),
-                    format_args!("error occurred while resolving {}", path_fmt),
-                );
-            }
-
-            i += 1;
-            continue;
+            add_dependency_error(this, &dependency, err);
         }
         i += 1;
     }
 
     this.drain_dependency_list();
+}
+
+/// Logged to `this.log`; the install fails later when `has_errors()` is checked.
+#[cold]
+#[inline(never)]
+pub(crate) fn add_dependency_error(
+    this: &mut PackageManager,
+    dependency: &Dependency,
+    err: crate::Error,
+) {
+    let path_sep = match dependency.version.tag {
+        dependency::version::Tag::Folder => bun_fmt::PathSep::Auto,
+        _ => bun_fmt::PathSep::Any,
+    };
+    let realname = dependency.realname();
+    let path_fmt = bun_fmt::EscapeControlChars(bun_fmt::fmt_path_u8(
+        this.lockfile.str(&realname),
+        bun_fmt::PathFormatOptions {
+            path_sep,
+            escape_backslashes: false,
+        },
+    ));
+    let log = this.log_mut();
+    if dependency.behavior.is_optional() || dependency.behavior.is_peer() {
+        log.add_warning_with_note(
+            None,
+            bun_ast::Loc::default(),
+            err.name().as_bytes(),
+            format_args!("error occurred while resolving {}", path_fmt),
+        );
+    } else {
+        log.add_zig_error_with_note(
+            err.name(),
+            format_args!("error occurred while resolving {}", path_fmt),
+        );
+    }
 }
 
 pub fn enqueue_tarball_for_download(

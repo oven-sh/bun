@@ -190,10 +190,10 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
   test("sql.array passed to sql.unsafe still binds as an array literal", async () => {
     await container.ready;
     await using db = new SQL(options());
-    const args = [db.array(["a", "b"], "TEXT")];
+    const param = db.array(["a", "b"], "TEXT");
+    const args = [param];
     const [{ v }] = await db.unsafe("SELECT $1::TEXT[] AS v", args);
     expect(v).toEqual(["a", "b"]);
-    // The caller's array must still hold the wrapper, not the unwrapped string.
-    expect(typeof args[0]).toBe("object");
+    expect(args[0]).toBe(param);
   });
 });

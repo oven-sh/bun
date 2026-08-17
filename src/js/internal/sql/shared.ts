@@ -390,7 +390,7 @@ function unwrapArrayParams(values: unknown[]): unknown[] {
     const v = values[i];
     if (v instanceof SQLArrayParameter) {
       if (out === undefined) {
-        out = new Array(values.length);
+        out = $newArrayWithSize(values.length);
         for (let j = 0; j < values.length; j++) out[j] = values[j];
       }
       out[i] = v.serializedValues;

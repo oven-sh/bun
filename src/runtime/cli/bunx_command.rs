@@ -410,14 +410,10 @@ impl BunxCommand {
                 if let Some(dir_name) = bin_prop.expr.as_utf8_string_literal().filter(|dir| {
                     !dir.is_empty() && !bun_install::bin::bin_target_escapes_package_dir(dir)
                 }) {
+                    use bun_paths::{platform::Auto, resolve_path::dirname, resolve_path::join_z};
                     // `directories.bin` is relative to the package, not to `dir_fd`.
-                    use bun_paths::platform::Auto;
-                    let package_dir =
-                        bun_paths::resolve_path::dirname::<Auto>(subpath_z.as_bytes());
-                    let bin_dir_path =
-                        bun_paths::resolve_path::join_z::<Auto>(&[package_dir, dir_name]);
-                    let bin_dir =
-                        bun_sys::openat(dir_fd, bin_dir_path, O::RDONLY | O::DIRECTORY, 0)?;
+                    let path = join_z::<Auto>(&[dirname::<Auto>(subpath_z.as_bytes()), dir_name]);
+                    let bin_dir = bun_sys::openat(dir_fd, path, O::RDONLY | O::DIRECTORY, 0)?;
                     // Fd is non-owning Copy; guard it.
                     let _close_bin_dir = bun_sys::CloseOnDrop::new(bin_dir);
                     let mut iterator = bun_sys::dir_iterator::iterate(bin_dir);

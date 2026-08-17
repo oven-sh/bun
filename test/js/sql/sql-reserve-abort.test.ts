@@ -35,6 +35,25 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     await sql.end();
   });
 
+  test("a user abort listener calling stopImmediatePropagation() cannot starve the cancellation", async () => {
+    await container.ready;
+    await using sql = connect();
+    const reserved = await sql.reserve();
+
+    const controller = new AbortController();
+    const reason = new Error("gave up waiting");
+    // registered before reserve(), so it runs first on dispatch
+    controller.signal.addEventListener("abort", e => e.stopImmediatePropagation());
+    const pending = sql.reserve({ signal: controller.signal });
+    controller.abort(reason);
+    try {
+      await expect(pending).rejects.toBe(reason);
+    } finally {
+      reserved.release();
+    }
+    await sql.end();
+  });
+
   test("end() resolves when an aborted reserve was the only pending work", async () => {
     await container.ready;
     await using sql = connect();

@@ -919,6 +919,12 @@ const SQL: typeof Bun.SQL = function SQL(
     // stopImmediatePropagation() must not starve the cancellation.
     signal.addEventListener("abort", state.onAbort, resistStopPropagation({ __proto__: null, once: true }));
     pool.connect(state.onConnected, true);
+    // connect() can run user code synchronously (e.g. a function-valued
+    // password) before queueing the callback; an abort from inside that window
+    // finds nothing to cancel, so re-check. onReserveAbort is idempotent.
+    if (signal.aborted) {
+      onReserveAbort.$call(state);
+    }
     return promiseWithResolvers.promise;
   };
 

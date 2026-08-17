@@ -3,8 +3,8 @@ import { bunEnv, bunExe, isCI, isMacOS, isMacOSVersionAtLeast, tempDir } from "h
 
 // Chrome backend works on any platform with Chrome/Chromium installed.
 // Mark tests todo if no Chrome found (CI may not have it). Mirrors
-// ChromeProcess.rs's find_chrome() — $PATH names, then hardcoded absolute
-// paths, then Playwright cache — so the test detects Chrome whenever the
+// ChromeProcess.rs's find_chrome() ($PATH names, then hardcoded absolute
+// paths, then the Playwright cache) so the test detects Chrome whenever the
 // runtime would. On Windows that is usually the preinstalled Edge.
 import { dlopen, FFIType, ptr } from "bun:ffi";
 import { accessSync, constants as fsConstants, readdirSync, rmSync } from "node:fs";
@@ -587,6 +587,88 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("rejected");
+  expect(exitCode).toBe(0);
+});
+
+it("chrome: a navigate still waiting for the load event rejects when Chrome dies", async () => {
+  // Subprocess-isolated like the closeAll() test above. Once the navigation
+  // has committed (Page.navigate replied, onNavigated fired) the navigate
+  // promise has no pending CDP id left; only the load event would settle it,
+  // and the response body below never ends, so it never fires.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const server = Bun.serve({
+          port: 0,
+          hostname: "127.0.0.1",
+          fetch() {
+            const body = new ReadableStream({ start(c) { c.enqueue("<body>loading</body>"); } });
+            return new Response(body, { headers: { "content-type": "text/html" } });
+          },
+        });
+        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
+        const committed = Promise.withResolvers();
+        view.onNavigated = url => { if (url.startsWith(server.url.href)) committed.resolve(); };
+        const nav = view.navigate(server.url.href);
+        await committed.promise;
+        Bun.WebView.closeAll();
+        await nav.then(
+          () => { throw new Error("should have rejected"); },
+          e => console.log("rejected: " + e.message),
+        );
+        let closed = false;
+        try { view.evaluate("1").catch(() => {}); } catch (e) { closed = /closed/.test(e.message); }
+        console.log("closed: " + closed);
+        server.stop(true);
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toMatch(/^rejected: Chrome (process closed the pipe|killed by signal \d+|exited)\nclosed: true\n$/);
+  expect(exitCode).toBe(0);
+});
+
+it("chrome: a new WebView respawns Chrome after the previous one died", async () => {
+  // Subprocess-isolated like the closeAll() test above. The dead Chrome's
+  // remaining close/exit notifications drain after the respawn and must not
+  // be taken for the new one. Construction fails until the old process has
+  // been reaped (see the comment on the closeAll() test), hence the retry.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const backend = {type:"chrome", url:false};
+        const first = new Bun.WebView({ backend, width: 200, height: 200 });
+        await first.navigate("data:text/html,<body>first</body>");
+        const pending = first.evaluate("new Promise(() => {})");
+        Bun.WebView.closeAll();
+        await pending.catch(() => {});
+        let second;
+        for (;;) {
+          try {
+            second = new Bun.WebView({ backend, width: 200, height: 200 });
+            break;
+          } catch (e) {
+            if (!/Failed to spawn Chrome/.test(e.message)) throw e;
+            await Bun.sleep(1);
+          }
+        }
+        await second.navigate("data:text/html,<body>second</body>");
+        console.log(await second.evaluate("document.body.textContent"));
+        second.close();
+      `,
+    ],
+    env: bunEnv,
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("second\n");
+  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 

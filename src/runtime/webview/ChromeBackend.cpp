@@ -79,11 +79,10 @@ namespace CDP {
 
 using namespace JSC;
 
-// Implemented in ChromeProcess.rs. Spawns Chrome; -1 on failure. POSIX returns
-// our socketpair fd (adopted below); Windows returns 0 and keeps the pipes,
-// reached through Bun__Chrome__writePipe and the two entry points at the end
-// of this file. path overrides auto-detection; extraArgv (count entries, each
-// NUL-terminated) appends after core flags. All pointers nullable.
+// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd on POSIX,
+// 0 on Windows (the pipes stay on the Rust side), -1 on failure. path overrides
+// auto-detection; extraArgv (count entries, each NUL-terminated) appends after
+// core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
@@ -504,9 +503,7 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
 void Transport::writeRaw(const char* data, size_t len)
 {
 #if OS(WINDOWS)
-    // libuv queues the chunks in order (m_txQueue/onWritable are unused). A
-    // failure means Chrome is already gone, so settle the Pending entry the
-    // caller just added; its remaining chunks then stop at the m_dead check.
+    // libuv queues the chunks in order; m_txQueue/onWritable are unused.
     if (m_dead) return;
     if (Bun__Chrome__writePipe(data, len) < 0)
         rejectAllAndMarkDead("Chrome process closed the pipe"_s);
@@ -1280,7 +1277,6 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     // is still polling — close it. us_socket_close fires cdpOnClose
     // synchronously; the m_dead guard above short-circuits that reentrant
     // call so the caller's `reason` survives.
-    // (Always null on Windows; m_dead alone stops writeRaw there.)
     if (auto* s = std::exchange(m_readSock, nullptr)) us_socket_close(s, 0, nullptr);
     // WebSocket mode: drop our ref. The WS's native onClose calls us
     // (wsOnClose → rejectAllAndMarkDead); that path nulls m_ws after
@@ -1298,13 +1294,16 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Reject each view's slots via settle(). Multiple pending ids may point
-    // at the same view (different slots); settle() is idempotent on an
-    // already-cleared slot — the first settle for a slot rejects, the rest
-    // find barrier.get() == null and no-op.
-    for (auto& [id, entry] : m_pending) {
-        if (JSWebView* v = viewFor(entry.viewId))
-            settle(g, v, entry.slot, false, err);
+    // Every slot of every live view, not just those with a reply outstanding:
+    // a navigate waiting on Page.loadEventFired has no m_pending entry, and
+    // the attach/click chains send between entries (a failed write on Windows
+    // lands here from inside such a send). settle() no-ops on empty slots.
+    for (auto& [viewId, weak] : m_views) {
+        JSWebView* v = weak.get();
+        if (!v) continue;
+        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
+            settle(g, v, s, false, err);
+        v->m_closed = true;
     }
     m_pending.clear();
     m_sessions.clear();
@@ -1762,9 +1761,7 @@ extern "C" void Bun__Chrome__died(int32_t signo)
 }
 
 #if OS(WINDOWS)
-// The cdpOnData / cdpOnEnd counterparts, called in arrival order from the
-// event-loop tasks ChromeProcess.rs posts (PipeEvent). The buffer is only
-// valid during the call; onData copies it into m_rx.
+// cdpOnData / cdpOnEnd counterparts, called from the tasks ChromeProcess.rs posts.
 extern "C" void Bun__Chrome__onPipeData(const char* data, size_t len)
 {
     CDP::transport().onData(data, static_cast<int>(len));

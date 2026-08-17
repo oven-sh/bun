@@ -315,13 +315,10 @@ for (;;) {
 
 // --- Transport singleton ---------------------------------------------------
 // Mirror of HostClient but NUL-framed JSON instead of binary. POSIX: one
-// socketpair, the child's end dup'd to both fd 3 (Chrome reads) and fd 4
-// (Chrome writes), ours adopted into usockets for onData and written with
-// us_socket_write (see writeRaw). A socketpair rather than pipes because
-// usockets' bsd_recv needs a real socket (ENOTSOCK was misread as EOF).
-// Windows: two pipes driven by libuv in ChromeProcess.rs, arriving through
-// Bun__Chrome__onPipeData and leaving through Bun__Chrome__writePipe.
-// Everything from onData on is shared.
+// socketpair (usockets' bsd_recv needs a real socket), the child's end dup'd
+// to fd 3 and fd 4, ours adopted into usockets. Windows: two pipes driven by
+// libuv in ChromeProcess.rs, reaching us through Bun__Chrome__onPipeData /
+// Bun__Chrome__writePipe. Everything from onData on is shared.
 //
 // pending maps CDP id → {methodTag, slot selector, weak view}. Promises
 // live in the WriteBarrier slots on JSWebView (visitChildren marks them);
@@ -420,8 +417,7 @@ public:
 
     Zig::GlobalObject* m_global = nullptr;
     TransportMode m_mode = TransportMode::None;
-    // POSIX pipe mode: the usockets-adopted socketpair fd. Always null on
-    // Windows, where m_dead is the liveness flag.
+    // POSIX pipe mode: the usockets-adopted socketpair fd. Null on Windows.
     us_socket_t* m_readSock = nullptr;
     // WebSocket mode: RefPtr keeps the WebCore::WebSocket alive across
     // the singleton's lifetime. The WebSocket's native callbacks point

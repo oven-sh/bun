@@ -8,7 +8,7 @@ compiles WTF's Cocoa helpers: some headers are missing from the prebuilt
 
 The WebGPU sources imported from WebKit use those helpers, so this directory
 carries copies of the header-only ones. It is placed on the include path
-*before* the WebKit include directory, only for the sources under `webgpu/`,
+_before_ the WebKit include directory, only for the sources under `webgpu/`,
 so `#include <wtf/BlockPtr.h>` in them resolves here. Each copy is the
 upstream header with the `PLATFORM(COCOA)` guard replaced by `OS(DARWIN)`;
 nothing else is changed, so a diff against `vendor/WebKit/Source/WTF/wtf/`

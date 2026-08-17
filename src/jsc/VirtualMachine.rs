@@ -1520,7 +1520,9 @@ impl VirtualMachine {
         err: JSValue,
         is_rejection: bool,
     ) -> bool {
-        if self.is_shutting_down() {
+        // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
+        // to be an error may be its termination.
+        if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
             return true;
         }
 

@@ -3602,6 +3602,13 @@ where
         if resp.has_responded() {
             return;
         }
+        // The VM has stopped (the handler "threw" its termination): no error handler, no error page;
+        // the stop closes the server's connections.
+        if let Some(server) = self.server.get()
+            && !server.vm().script_allowed()
+        {
+            return;
+        }
 
         self.run_error_handler_with_status_code_dont_check_responded(value, status);
     }

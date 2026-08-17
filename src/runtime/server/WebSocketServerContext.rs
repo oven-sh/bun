@@ -91,6 +91,10 @@ impl Handler {
         if global_object.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
+        // The VM has stopped: what the callback "threw" is its termination, and no handler runs.
+        if !global_object.bun_vm().script_allowed() {
+            return Err(bun_jsc::JsError::Terminated);
+        }
         if !on_error.is_empty_or_undefined_or_null() {
             // A top-level call of its own: what `error` throws is reported here.
             global_object.bun_vm().event_loop_mut().run_callback(

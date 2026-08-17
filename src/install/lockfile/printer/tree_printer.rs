@@ -391,7 +391,7 @@ where
     Ok(())
 }
 
-/// A bare `bun update` moves the root's catalog entries for every importer at once, but the summary's one section only walks the rows of `update_owners` (above, hence the shared `update_dedupe`), so the entries consumed elsewhere are reported through whichever `catalog:` row names them. The verbose summary prints a section per importer, each reporting its own `catalog:` rows, and skips this. Like a direct dependency's row, a row prints whether or not its new version had to be installed.
+/// A bare `bun update` moves the root's catalog entries for every importer, but the one-section summary only walks `update_owners`' rows (hence the shared `update_dedupe`); entries consumed elsewhere print through whichever `catalog:` row names them. The verbose summary has a section per importer and skips this.
 fn print_catalog_entry_updates<W, const ENABLE_ANSI_COLORS: bool>(
     this: &Printer,
     manager: &mut PackageManager,
@@ -403,27 +403,17 @@ fn print_catalog_entry_updates<W, const ENABLE_ANSI_COLORS: bool>(
 where
     W: Write,
 {
-    if !manager
-        .updating_packages
-        .values()
-        .iter()
-        .any(|info| info.catalog_entry)
-    {
-        return Ok(false);
-    }
     let string_buf = this.lockfile.buffers.string_bytes.as_slice();
     let dependencies = this.lockfile.buffers.dependencies.as_slice();
     let mut printed = false;
     for (dep_id, dep) in dependencies.iter().enumerate() {
         if dep.version.tag != DependencyVersionTag::Catalog
-            || !manager
-                .updating_packages
-                .get(dep.name.slice(string_buf))
+            || !(manager.updating_packages.get(dep.name.slice(string_buf)))
                 .is_some_and(|info| info.catalog_entry)
         {
             continue;
         }
-        let dep_id = DependencyID::try_from(dep_id).expect("int cast");
+        let dep_id = dep_id as DependencyID;
         let ShouldPrintPackageInstallResult::Update(update_info) =
             should_print_package_install(this, manager, dep_id, installed, None, pkg_metas)
         else {

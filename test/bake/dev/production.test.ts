@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { existsSync, symlinkSync } from "fs";
+import { bunEnv, bunExe, isASAN, isWindows, tempDir } from "harness";
 import path from "path";
-import { tempDirWithBakeDeps } from "../bake-harness";
+import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -394,6 +394,85 @@ export default function Docs() {
     }
   });
 
+  // A reported failure exits through the build VM (the config's 'exit' handler runs) or, before the VM exists, exits 1 without an internal-error line.
+  describe.concurrent("failures reported by the build", () => {
+    const config = `
+      process.on("exit", code => console.log("exit event: " + code));
+      export default { app: { framework: "react" } };
+    `;
+    const app = {
+      "src/index.tsx": config,
+      "pages/index.tsx": `export default function IndexPage() { return <p>index</p>; }`,
+    };
+
+    async function build(dir: string, ...entryPoints: string[]) {
+      const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ${entryPoints}`
+        .cwd(dir)
+        .env({ ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" })
+        .quiet()
+        .throws(false);
+      return { exitCode, stdout: stdout.toString(), stderr: stderr.toString() };
+    }
+
+    // The dist cases bundle a react app; this is the budget bake-harness gives its production builds.
+    const timeout = 30_000 * WAIT_MULTIPLIER;
+
+    test(
+      "a file at dist",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-file", {
+          ...app,
+          "dist": "a file in the way of the output directory",
+        });
+
+        const { exitCode, stdout, stderr } = await build(dir, "./src/index.tsx");
+        expect(stderr).toContain(
+          `ENOTDIR: Not a directory: could not open output directory "${path.join(dir, "dist")}"`,
+        );
+        expect(stderr).not.toContain("An internal error occurred");
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test.skipIf(isWindows)(
+      "a dangling symlink at dist",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-dist-is-a-dangling-symlink", app);
+        symlinkSync("does-not-exist", path.join(dir, "dist"));
+
+        const { exitCode, stdout, stderr } = await build(dir, "./src/index.tsx");
+        expect(stderr).toContain(
+          `ENOENT: No such file or directory: could not open output directory "${path.join(dir, "dist")}"`,
+        );
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    test("framework imports that do not resolve", async () => {
+      // No react packages are installed here.
+      using dir = tempDir("bake-production-framework-unresolved", { "app.ts": config });
+
+      const { exitCode, stdout, stderr } = await build(String(dir), "./app.ts");
+      expect(stderr).toContain("error: Failed to resolve all imports required by the framework");
+      expect(stdout).toBe("exit event: 1\n");
+      expect(exitCode).toBe(1);
+    });
+
+    test("more than one entry point", async () => {
+      using dir = tempDir("bake-production-two-entry-points", { "app.ts": config, "other.ts": config });
+
+      const { exitCode, stdout, stderr } = await build(String(dir), "./app.ts", "./other.ts");
+      expect(stderr).toContain("error: bun build --app only accepts one entrypoint");
+      expect(stderr).not.toContain("BakeBuildFailed");
+      expect(stdout).toBe("");
+      expect(exitCode).toBe(1);
+    });
+  });
+
   test("client-side component with default import should work", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-client-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,
@@ -658,5 +737,106 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  // A successful build leaves through `on_exit` + `global_exit`: 'exit' handlers, process.exitCode, and VM teardown under BUN_DESTRUCT_VM_ON_EXIT.
+  describe.concurrent("exits through the build VM", () => {
+    const env = { ...bunEnv, BUN_DESTRUCT_VM_ON_EXIT: "1" };
+
+    const onExitConfig = `
+      process.on("exit", code => console.log("exit event: " + code));
+      export default { app: { framework: "react" } };
+    `;
+
+    const timeout = 30_000 * WAIT_MULTIPLIER;
+
+    test(
+      "a rendered build runs 'exit' handlers and exits with process.exitCode",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-rendered", {
+          "app.ts": onExitConfig,
+          "pages/index.tsx": `
+            process.exitCode = 3;
+            export default function IndexPage() {
+              return <div>Hello World</div>;
+            }
+          `,
+        });
+
+        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env(env)
+          .quiet()
+          .throws(false);
+
+        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+        expect(stdout.toString()).toBe("done\nexit event: 3\n");
+        expect(exitCode).toBe(3);
+      },
+      timeout,
+    );
+
+    test(
+      "a build with nothing to render runs 'exit' handlers",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-no-routes", {
+          "app.ts": onExitConfig,
+        });
+
+        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env(env)
+          .quiet()
+          .throws(false);
+
+        expect(stdout.toString()).toBe("done\nexit event: 0\n");
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
+
+    // These natives are freed by wrapper finalizers, so a build that exits without destroying its VM leaves them for LeakSanitizer.
+    test.skipIf(!isASAN)(
+      "a rendered build frees the natives its JS objects own",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-teardown", {
+          "app.ts": `export default { app: { framework: "react" } };`,
+          "pages/index.tsx": `
+            export default function IndexPage() {
+              globalThis.keepUntilExit = [
+                new TextDecoder(),
+                new Blob(["prerender"]),
+                setImmediate(() => {}),
+                new Bun.CryptoHasher("sha256"),
+              ];
+              return <div>Hello World</div>;
+            }
+          `,
+        });
+
+        const { stdout, stderr } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env({
+            ...env,
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+            LSAN_OPTIONS: [
+              bunEnv.LSAN_OPTIONS,
+              `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../leaksan.supp")}`,
+            ]
+              .filter(Boolean)
+              .join(":"),
+          })
+          .quiet()
+          .throws(false);
+
+        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+        expect(stdout.toString()).toBe("done\n");
+        const leaked = ["TextDecoder", "Blob", "ImmediateObject", "CryptoHasher"].filter(type =>
+          stderr.toString().includes(type),
+        );
+        expect(leaked).toEqual([]);
+      },
+      timeout,
+    );
   });
 });

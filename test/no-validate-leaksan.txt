@@ -337,6 +337,7 @@ test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 # LSAN per-spawn adds no coverage and slows the file significantly.
 test/napi/uv_stub.test.ts
 
+# "use client" components still leak a ServerComponentParseTask (#38004); remove once it lands.
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts

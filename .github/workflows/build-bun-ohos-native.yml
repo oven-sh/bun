@@ -207,7 +207,11 @@ jobs:
             git clone --depth 1 https://gh-proxy.com/https://github.com/oven-sh/WebKit.git "$WEBKIT_SRC"
             git -C "$WEBKIT_SRC" checkout "$WEBKIT_COMMIT"
           fi
-          perl_path=$(command -v perl 2>/dev/null || echo "$HOMEBREW_PREFIX/bin/perl")
+          # Pin the harmonybrew perl: `command -v perl` can resolve to
+          # /usr/local/bin/perl in the CI PATH, which is fragile. The
+          # inspector codegen (preprocess.pl) must use the same perl the
+          # local build verified against.
+          perl_path="$HOMEBREW_PREFIX/bin/perl"
           sed -i "s|\"perl\"|\"${perl_path}\"|g" \
             "$WEBKIT_SRC/Source/JavaScriptCore/inspector/scripts/generate-inspector-protocol-bindings.py" 2>/dev/null || true
           echo "WebKit ready: $WEBKIT_SRC @ $WEBKIT_COMMIT"

@@ -4058,6 +4058,138 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+it("http2 server push stream ids are independent of the client's stream ids", async () => {
+  // node keeps the server's next stream id as its own counter (nghttp2 next_stream_id): however
+  // many client streams have arrived, pushes go out on 2, 4, ..., and setNextStreamID() moves that
+  // counter without touching lastProcStreamID. Every expected value below is what node v26.3.0
+  // reports for this exact sequence.
+  const { promise: failure, reject } = Promise.withResolvers();
+  const serverSide = { arrivals: [] };
+  const server = http2.createServer();
+  server.on("error", reject);
+  server.on("sessionError", reject);
+  server.on("stream", (stream, headers) => {
+    const { session } = stream;
+    const push = path =>
+      new Promise((resolve, rejectPush) => {
+        stream.pushStream({ ":path": path }, (err, pushed) => {
+          if (err) return rejectPush(err);
+          pushed.respond({ ":status": 200 });
+          pushed.end();
+          resolve(pushed.id);
+        });
+      });
+    const respond = () => {
+      stream.respond({ ":status": 200 });
+      stream.end();
+    };
+    switch (headers[":path"]) {
+      case "/push": {
+        const before = session.state.nextStreamID;
+        const pushed = push("/pushed");
+        const after = session.state.nextStreamID;
+        pushed.then(pushedId => {
+          serverSide.push = { parent: stream.id, before, pushedId, after };
+          respond();
+        }, reject);
+        return;
+      }
+      case "/set-then-push": {
+        // ServerHttp2Session does not expose setNextStreamID yet; call the native setter it wraps.
+        session[Symbol.for("::bunhttp2native::")].setNextStreamID(6);
+        const { nextStreamID, lastProcStreamID } = session.state;
+        const pushed = push("/pushed-after-set");
+        const after = session.state.nextStreamID;
+        pushed.then(pushedId => {
+          serverSide.setThenPush = { parent: stream.id, afterSet: { nextStreamID, lastProcStreamID }, pushedId, after };
+          respond();
+        }, reject);
+        return;
+      }
+      default:
+        serverSide.arrivals.push({ clientStream: stream.id, nextStreamID: session.state.nextStreamID });
+        respond();
+    }
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    client.on("error", reject);
+    const pushesSeen = [];
+    client.on("stream", (pushed, pushHeaders) => {
+      pushed.on("error", reject);
+      pushed.resume();
+      pushesSeen.push({ id: pushed.id, path: pushHeaders[":path"] });
+    });
+    const request = path =>
+      new Promise(resolve => {
+        const req = client.request({ ":path": path });
+        req.on("error", reject);
+        req.on("close", () => resolve(req.id));
+        req.resume();
+      });
+    const requestIds = [];
+    for (const path of ["/a", "/b", "/c", "/push", "/set-then-push"]) {
+      requestIds.push(await Promise.race([failure, request(path)]));
+    }
+
+    // A PUSH_PROMISE precedes its parent's response on the wire, so both pushes have been seen.
+    expect({ requestIds, clientNextStreamID: client.state.nextStreamID, pushesSeen, serverSide }).toEqual({
+      requestIds: [1, 3, 5, 7, 9],
+      clientNextStreamID: 11,
+      pushesSeen: [
+        { id: 2, path: "/pushed" },
+        { id: 6, path: "/pushed-after-set" },
+      ],
+      serverSide: {
+        arrivals: [
+          { clientStream: 1, nextStreamID: 2 },
+          { clientStream: 3, nextStreamID: 2 },
+          { clientStream: 5, nextStreamID: 2 },
+        ],
+        push: { parent: 7, before: 2, pushedId: 2, after: 4 },
+        setThenPush: { parent: 9, afterSet: { nextStreamID: 6, lastProcStreamID: 9 }, pushedId: 6, after: 8 },
+      },
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
+it("http2 setNextStreamID ignores a fractional id below 1 instead of reusing stream ids", async () => {
+  // 0.5 passes setNextStreamID's range check and reaches the native setter as 0, which nghttp2
+  // rejects. On a fresh session ("at the edges of the id space" above) ignoring it and resetting
+  // to the first id read the same; after a stream has been used, only ignoring it keeps the next
+  // request off an id this side already used. Values are node v26.3.0's.
+  const server = http2.createServer((req, res) => res.end());
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+  try {
+    const first = client.request();
+    first.resume();
+    await new Promise((resolve, reject) => {
+      client.on("error", reject);
+      first.on("error", reject);
+      first.on("close", resolve);
+    });
+    const before = client.state.nextStreamID;
+    client.setNextStreamID(0.5);
+    const after = client.state.nextStreamID;
+    const second = client.request();
+    expect({ firstId: first.id, before, after, secondId: second.id }).toEqual({
+      firstId: 1,
+      before: 3,
+      after: 3,
+      secondId: 3,
+    });
+  } finally {
+    client.destroy();
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

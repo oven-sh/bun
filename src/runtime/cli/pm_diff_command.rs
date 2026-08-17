@@ -1082,7 +1082,7 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             relayout: true,
         };
         // Readable JS is compared on the aggressive key and shown as written; minified JS is shown re-printed,
-        // so it gets the gentler display print. One parse+print per side either way.
+        // so it gets the gentler display print.
         let readable_js = matches!(normalize::kind_for(path), Some(normalize::Kind::Js(_)))
             && !flags.unminify
             && !old.is_some_and(normalize::looks_minified)

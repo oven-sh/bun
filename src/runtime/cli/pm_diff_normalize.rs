@@ -359,7 +359,9 @@ impl<'s> Namer<'s> {
     ) -> Namer<'s> {
         let mut taken = Vec::new();
         for sym in old.iter().chain(new.iter()) {
-            if sym.kind == bun_ast::symbol::Kind::Unbound && sym.original_name.len() <= 3 {
+            if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed
+                && sym.original_name.len() <= 3
+            {
                 taken.push(sym.original_name.slice().to_vec());
             }
         }
@@ -387,7 +389,8 @@ impl<'s> Namer<'s> {
         self.taken.clear();
         for side in 0..2 {
             for sym in self.symbols[side].iter() {
-                if sym.kind == bun_ast::symbol::Kind::Unbound {
+                // Everything that keeps its name — globals and locals the parser pinned (direct eval, `with`) — is taken.
+                if sym.slot_namespace() == bun_ast::symbol::SlotNamespace::MustNotBeRenamed {
                     self.taken.push(sym.original_name.slice().to_vec());
                 }
             }

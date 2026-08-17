@@ -1006,6 +1006,17 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     }
   });
 
+  test("locals pinned by direct eval keep their names; the edit next to them still shows", async () => {
+    // Nothing in an eval scope may be renamed; positional names elsewhere must not collide with pinned ones.
+    const va = "export function f() { var b1 = read(); var q = other(); eval('b1'); return b1 + q; }\n";
+    const vb = "export function f() { var b1 = read(); var q = other(); eval('b1'); return b1 + b1; }\n";
+    for (const args of [[], ["--unminify"]]) {
+      const { text, exitCode } = await pretty({ "a/m.js": va, "b/m.js": vb }, args);
+      expect(text).toMatch(/\nm\.js ─+ (unminified )?\+1 -1\n/);
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("a scope too big for the LCS table takes the windowed path and still folds a consistent rename", async () => {
     // 2100 × 2100 candidate cells > the 4M-cell table cap.
     const n = 2100;

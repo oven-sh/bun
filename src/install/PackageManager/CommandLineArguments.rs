@@ -1775,7 +1775,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.diff_args = args.options(b"--diff").to_vec();
             cli.diff_name_only = args.flag(b"--name-only");
             cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
-            cli.no_project_ok = cli.positionals.get(1).is_some_and(|p| *p == b"diff");
+            cli.no_project_ok = cli.positionals.first().is_some_and(|p| *p == b"pm")
+                && cli.positionals.get(1).is_some_and(|p| *p == b"diff");
             cli.diff_unminify = args.flag(b"--unminify");
             cli.diff_minify = args.flag(b"--minify");
             cli.diff_ignore_space = args.flag(b"--ignore-space");

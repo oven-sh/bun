@@ -4022,13 +4022,14 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> crate::Result<Vec<u8>> {
-    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
-        return Err(crate::Error::TooSmall);
-    }
-    let mut slice = vec![0u8; len];
-    reader
-        .read_exact(&mut slice)
-        .map_err(|_| crate::Error::TooSmall)?;
+    let buffer = reader.buffer.as_ref();
+    let end = reader
+        .pos
+        .checked_add(len)
+        .filter(|&end| end <= buffer.len())
+        .ok_or(crate::Error::TooSmall)?;
+    let slice = buffer[reader.pos..end].to_vec();
+    reader.pos = end;
     Ok(slice)
 }
 

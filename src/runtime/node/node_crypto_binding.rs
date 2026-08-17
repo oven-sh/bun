@@ -208,8 +208,7 @@ pub mod random {
         /// which keeps its VM alive).
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
-        /// `scratch` arrives empty with `size` bytes reserved, is filled
-        /// off-thread and copied in at `offset` on the JS thread.
+        /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
         Scratch {
             scratch: Vec<u8>,
             size: usize,

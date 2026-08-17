@@ -479,8 +479,7 @@ type DynAlloc = ();
 
 /// Until `DynAlloc` is a real trait object, route
 /// through the global arena; mimalloc handles large allocations via mmap
-/// already. Returns an empty `Vec` with exactly `n` bytes of capacity for the
-/// caller to fill and commit.
+/// already. Returns an empty `Vec` with `n` bytes of capacity for the caller to fill and commit.
 #[inline]
 fn alloc_buf(_arena: DynAlloc, n: usize) -> Result<Vec<u8>, AllocError> {
     let mut v: Vec<u8> = Vec::new();

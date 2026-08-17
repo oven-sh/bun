@@ -97,10 +97,7 @@ struct Dict {
 unsafe impl bun_core::Zeroable for Dict {}
 
 impl Dict {
-    /// Walk the prefix chain into `scratch` (reversed), then append the string
-    /// to `out`, truncated so `out` never exceeds `npix` entries. Returns the
-    /// FIRST byte of the string (needed for the K-ω-K case where the new code
-    /// refers to itself).
+    /// Appends `code_`'s string to `out` (never past `npix` entries) and returns its FIRST byte, which the K-ω-K case needs.
     fn emit(
         &self,
         code_: u16,
@@ -372,8 +369,8 @@ fn decode_frame(
     })
 }
 
-/// One row of palette indices → RGBA pixel slots. Scalar 4-byte copy per
-/// pixel — see file comment for why this isn't a Highway kernel.
+/// One row of palette indices → RGBA slots. Scalar 4-byte copy per pixel — see file
+/// comment for why this isn't a Highway kernel.
 #[inline]
 fn expand_row(idx: &[u8], out: &mut [[MaybeUninit<u8>; 4]], pal: &[[u8; 4]; 256]) {
     for (x, &c) in idx.iter().enumerate() {

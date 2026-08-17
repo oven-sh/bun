@@ -193,8 +193,7 @@ impl HttpThread {
     }
 }
 
-/// Initial capacity of the `Vec` that `send_initial_request_payload` assembles
-/// the request head (plus as much of the body as fits) into.
+/// Initial capacity of the `Vec` the request head (plus as much body as fits) is assembled into.
 pub(crate) fn request_body_send_buffer_capacity(estimated_size: usize) -> usize {
     const SMALL: usize = 32 * 1024;
     const LARGE: usize = 512 * 1024;

@@ -198,8 +198,7 @@ pub mod ssl_wrapper {
     /// writes we loop until we have no more data to write/backpressure.
     const BUFFER_SIZE: usize = 65536;
 
-    /// Stack scratch for `SSL_read` / `BIO_read` / the pending-event pops; left
-    /// uninitialized, only the producer-reported prefix is ever read back.
+    /// Uninitialized stack scratch for `SSL_read` / `BIO_read` / the pending-event pops; only the prefix they report is read back.
     struct IoBuffer(core::mem::MaybeUninit<[u8; BUFFER_SIZE]>);
 
     impl IoBuffer {
@@ -213,10 +212,7 @@ pub mod ssl_wrapper {
             self.0.as_mut_ptr().cast()
         }
 
-        /// View `[0..len]` as `&[u8]`.
-        ///
-        /// # Safety
-        /// A producer must have written every byte in `[0..len]`.
+        /// `[0..len]` as `&[u8]`; unsafe because the caller asserts a producer wrote every one of those bytes.
         #[inline(always)]
         unsafe fn filled(&self, len: usize) -> &[u8] {
             debug_assert!(len <= BUFFER_SIZE);

@@ -2192,8 +2192,7 @@ impl<'a> HTTPClient<'a> {
     ///
     /// For large files, we want to avoid extra network send overhead
     /// So we do two things:
-    /// 1. Use a 32 KB buffer for small files
-    /// 2. Use a 512 KB buffer for large files
+    /// 1. Use a 32 KB buffer for small files, 2. a 512 KB buffer for large files.
     /// This only has an impact on http://
     ///
     /// On https://, we are limited to a 16 KB TLS record size.

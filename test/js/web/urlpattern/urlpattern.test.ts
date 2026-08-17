@@ -161,6 +161,81 @@ describe("URLPattern", () => {
     });
   });
 
+  // For a non-special scheme, the pathname is canonicalized by parsing it as the path of a host-less dummy URL and
+  // reading the pathname back, so a first segment starting with "." must survive that round trip (see the URL tests
+  // for the "/." guard that a host-less URL serializes in front of a path starting with "//").
+  describe("non-special scheme with a pathname whose first segment starts with a dot", () => {
+    test("constructor string with a host", () => {
+      const pattern = new URLPattern("myapp://host/.well-known/:file");
+      expect(pattern.pathname).toBe("/.well-known/:file");
+      expect(pattern.test("myapp://host/.well-known/assetlinks.json")).toBe(true);
+      expect(pattern.exec("myapp://host/.well-known/assetlinks.json")!.pathname).toEqual({
+        input: "/.well-known/assetlinks.json",
+        groups: { file: "assetlinks.json" },
+      });
+      expect(pattern.test("myapp://host/well-known/assetlinks.json")).toBe(false);
+    });
+
+    test("wildcard after the dotted segment", () => {
+      const pattern = new URLPattern("git://h/.git/:rest*");
+      expect(pattern.pathname).toBe("/.git/:rest*");
+      expect(pattern.test("git://h/.git/config")).toBe(true);
+      expect(pattern.exec("git://h/.git/refs/heads/main")!.pathname.groups).toEqual({ rest: "refs/heads/main" });
+    });
+
+    test("URLPatternInit", () => {
+      expect({
+        wellKnown: new URLPattern({ protocol: "myapp", pathname: "/.well-known/*" }).pathname,
+        doubleDot: new URLPattern({ protocol: "myapp", pathname: "/..a" }).pathname,
+        dotSlashSlash: new URLPattern({ protocol: "myapp", pathname: "/.//a" }).pathname,
+        laterSegment: new URLPattern({ protocol: "myapp", pathname: "/x/.a" }).pathname,
+      }).toEqual({
+        wellKnown: "/.well-known/*",
+        doubleDot: "/..a",
+        dotSlashSlash: "//a",
+        laterSegment: "/x/.a",
+      });
+      const pattern = new URLPattern({ protocol: "foo", pathname: "/.a" });
+      expect(pattern.test("foo:/.a")).toBe(true);
+      expect(pattern.test("foo://h/.a")).toBe(true);
+      expect(pattern.test({ protocol: "foo", pathname: "/.a" })).toBe(true);
+      expect(pattern.test("foo:/a")).toBe(false);
+    });
+
+    test("baseURL", () => {
+      expect({
+        relativeString: new URLPattern("./c", "foo://h/.a/b").pathname,
+        relativeInit: new URLPattern({ pathname: "c", baseURL: "foo:/.a/b" }).pathname,
+        inheritedFromBase: new URLPattern({ baseURL: "foo:/.a/b" }).pathname,
+      }).toEqual({
+        relativeString: "/.a/c",
+        relativeInit: "/.a/c",
+        inheritedFromBase: "/.a/b",
+      });
+    });
+
+    test("the matched input reports the full pathname", () => {
+      expect(new URLPattern({ protocol: "foo" }).exec("foo:/.a/b")!.pathname).toEqual({
+        input: "/.a/b",
+        groups: { "0": "/.a/b" },
+      });
+    });
+
+    test("unaffected patterns", () => {
+      expect({
+        special: new URLPattern("https://h/.well-known/:file").pathname,
+        noProtocol: new URLPattern({ pathname: "/.well-known/*" }).pathname,
+        hostAndLaterSegment: new URLPattern("foo://h/x/.b").pathname,
+      }).toEqual({
+        special: "/.well-known/:file",
+        noProtocol: "/.well-known/*",
+        hostAndLaterSegment: "/x/.b",
+      });
+      expect(new URLPattern("https://h/.well-known/:file").test("https://h/.well-known/x")).toBe(true);
+      expect(new URLPattern("foo://h/x/.b").test("foo://h/x/.b")).toBe(true);
+    });
+  });
+
   describe("hasRegExpGroups", () => {
     test("match-everything pattern", () => {
       expect(new URLPattern({}).hasRegExpGroups).toBe(false);

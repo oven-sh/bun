@@ -94,3 +94,40 @@ devTest("dev.write() reports a client that exits while its error overlay is bein
     expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe('Client exited: "Runtime error"');
   },
 });
+
+devTest("disposing a client reports an exit code the client produces while it is being disposed", {
+  files,
+  async test(dev) {
+    const c = await dev.client("/");
+    await c.expectMessage("loaded");
+
+    // The fixture is left expecting a reload, so dispose's exit(0) becomes exitCodeMap.reloadNotCalled.
+    expect(await rejectionMessage(c.expectReload(() => Promise.reject(new Error("abort before reloading"))))).toBe(
+      "abort before reloading",
+    );
+
+    expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe('Client exited: "Reload not called"');
+  },
+});
+
+devTest("disposing a client reports an exit code the client produced earlier", {
+  files,
+  async test(dev) {
+    const c = await dev.client("/");
+    await c.expectMessage("loaded");
+
+    // index.ts self-accepts, so the new module's console.error kills the client before dispose starts.
+    expect(
+      await rejectionMessage(
+        dev.write(
+          "index.ts",
+          `
+            console.error("boom");
+          `,
+        ),
+      ),
+    ).toBe("Client exited while applying hot update: Runtime error");
+
+    expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe('Client exited: "Runtime error"');
+  },
+});

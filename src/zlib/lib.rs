@@ -335,11 +335,16 @@ impl<'a> ZlibReaderArrayList<'a> {
                         self.state = ZlibReaderArrayListState::Error;
                         return Err(ZlibError::ZlibError);
                     }
+                    if self
+                        .list_ptr
+                        .try_reserve(remaining_budget.min(4096))
+                        .is_err()
+                    {
+                        self.state = ZlibReaderArrayListState::Error;
+                        return Err(ZlibError::OutOfMemory);
+                    }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe {
-                        self.list_ptr
-                            .reserve_expand_tail(remaining_budget.min(4096))
-                    };
+                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
                     self.zlib.next_out = next_out;
                     // Clamp so a single inflate call cannot write past `max_output_size`.
                     self.zlib.avail_out = avail_out.min(remaining_budget) as uInt;
@@ -780,9 +785,11 @@ impl<'a> ZlibCompressorArrayList<'a> {
                         uLong::try_from(input.len()).expect("int cast"),
                     )
                 };
-                // ensureTotalCapacityPrecise → reserve_exact
                 let need = (bound as usize).saturating_sub(zlib_reader.list_ptr.len());
-                zlib_reader.list_ptr.reserve_exact(need);
+                if zlib_reader.list_ptr.try_reserve_exact(need).is_err() {
+                    drop(zlib_reader);
+                    return Err(ZlibError::OutOfMemory);
+                }
                 zlib_reader.zlib.avail_out = zlib_reader.list_ptr.capacity() as uInt;
                 zlib_reader.zlib.next_out = zlib_reader.list_ptr.as_mut_ptr();
 
@@ -846,8 +853,13 @@ impl<'a> ZlibCompressorArrayList<'a> {
                 //   flush parameter).
 
                 if self.zlib.avail_out == 0 {
+                    if self.list_ptr.try_reserve(4096).is_err() {
+                        self.end();
+                        self.state = ZlibCompressorArrayListState::Error;
+                        return Err(ZlibError::OutOfMemory);
+                    }
                     // SAFETY: zlib writes the tail; len is truncated to `total_out` before any read.
-                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(4096) };
+                    let (next_out, avail_out) = unsafe { self.list_ptr.reserve_expand_tail(0) };
                     self.zlib.next_out = next_out;
                     self.zlib.avail_out = avail_out as uInt;
                 }
@@ -964,7 +976,8 @@ impl DeflateEncoder {
     /// Reserves at least `reserve` spare bytes in `out`, points
     /// `next_in`/`avail_in` at `input` and `next_out`/`avail_out` at the
     /// spare, calls `deflate(flush)`, and advances `out.len()` by the bytes
-    /// produced. Returns `(bytes_consumed_from_input, return_code)`. Inputs
+    /// produced. Returns `(bytes_consumed_from_input, return_code)`, with
+    /// `MemError` and nothing consumed when `out` cannot be grown. Inputs
     /// larger than `u32::MAX` are clamped; callers loop and advance `input`
     /// by `consumed`.
     pub fn step(
@@ -1180,11 +1193,14 @@ fn step(
     flush: FlushValue,
     op: unsafe extern "C" fn(*mut zStream_struct, FlushValue) -> ReturnCode,
 ) -> (usize, ReturnCode) {
+    if out.try_reserve(reserve).is_err() {
+        return (0, ReturnCode::MemError);
+    }
+
     let in_len = input.len().min(u32::MAX as usize);
     strm.next_in = input.as_ptr();
     strm.avail_in = in_len as uInt;
 
-    out.reserve(reserve);
     let spare = out.spare_capacity_mut();
     let out_len = spare.len().min(u32::MAX as usize);
     strm.next_out = spare.as_mut_ptr().cast::<u8>();

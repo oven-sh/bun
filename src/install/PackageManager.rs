@@ -605,11 +605,10 @@ pub struct PackageUpdateInfo {
 impl PackageUpdateInfo {
     /// `version`'s tag strings live in `buf` (a lockfile string buffer that cleaning rebuilds), so the original keeps its own copy of them.
     pub(crate) fn set_original_version(&mut self, version: Semver::Version, buf: &[u8]) {
-        let mut tag_buf =
-            vec![0u8; version.tag.pre.len() + version.tag.build.len()].into_boxed_slice();
-        let mut cursor: &mut [u8] = &mut tag_buf;
-        self.original_version = Some(version.clone_into(buf, &mut cursor));
-        self.original_version_string_buf = tag_buf;
+        // clone because the lockfile buffer may reallocate
+        let mut tag_buf = Vec::new();
+        self.original_version = Some(version.clone_into(buf, &mut tag_buf));
+        self.original_version_string_buf = tag_buf.into_boxed_slice();
     }
 }
 

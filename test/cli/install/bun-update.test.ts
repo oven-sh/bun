@@ -1401,6 +1401,26 @@ it("should print UTF-8 arrows correctly with colors enabled", async () => {
   expect(await exited2).toBe(0);
 });
 
+// The previous version in the "^ name old -> new" line is copied out of the old
+// lockfile before it is rebuilt. Tags longer than 8 bytes are stored as offsets
+// into that copy, so use a prerelease tag and a build tag that are both longer.
+it("should print the previous prerelease and build tags in the update summary", async () => {
+  const urls: string[] = [];
+  const oldVersion = "1.0.0-canary.20240101+build.20240101";
+  const newVersion = "1.0.0-canary.20240102+build.20240102";
+  // `as` serves the existing baz tarballs for these versions.
+  setHandler(dummyRegistry(urls, { [oldVersion]: { as: "0.0.3" }, latest: oldVersion }));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({ name: "foo", dependencies: { baz: "^1.0.0-canary.20240101" } }),
+  );
+  expect(await runInPackageDir("install", "--linker=hoisted")).toContain(`+ baz@${oldVersion}`);
+
+  setHandler(dummyRegistry(urls, { [oldVersion]: { as: "0.0.3" }, [newVersion]: { as: "0.0.5" }, latest: newVersion }));
+  const out = await runInPackageDir("update", "--linker=hoisted");
+  expect(out).toContain(`^ baz ${oldVersion} -> ${newVersion}`);
+});
+
 type PerNameManifests = Record<
   string,
   { versions: Record<string, { dependencies?: Record<string, string> }>; latest: string }

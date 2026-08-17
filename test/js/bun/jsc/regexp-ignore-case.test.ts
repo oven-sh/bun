@@ -80,12 +80,13 @@ describe.each(["i", "iu"])("/%s still folds the pairs next to the new entries", 
 });
 
 test("/i class ranges pick up the new partners", () => {
+  // Each tested character lies outside the range and can only match through its partner.
   expect([
-    /[\ua7cc-\ua7db]/i.test("\ua7cd"),
-    /[\u0190-\u01a0]/i.test("\ua7dc"), // the range holds U+019B
-    /[\ua7c0-\ua7ff]/i.test("\u019b"), // the range holds U+A7DC
-    /[\ua7c0-\ua7ff]/i.test("\u0264"), // the range holds U+A7CB
-    /[\u1c80-\u1c8f]/i.test("\u1c8a"),
+    /[\ua7cc-\ua7da]/i.test("\ua7db"), // through U+A7DA, the last character of the range
+    /[\u0190-\u01a0]/i.test("\ua7dc"), // through U+019B
+    /[\ua7c0-\ua7ff]/i.test("\u019b"), // through U+A7DC
+    /[\ua7c0-\ua7ff]/i.test("\u0264"), // through U+A7CB
+    /[\u1c80-\u1c89]/i.test("\u1c8a"), // through U+1C89, the last character of the range
   ]).toEqual([true, true, true, true, true]);
 });
 

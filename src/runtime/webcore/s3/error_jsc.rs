@@ -215,3 +215,47 @@ impl S3ErrorJsc for S3Error<'_> {
         ))
     }
 }
+
+/// For synchronous entry points (`presign`): if the credentials come from
+/// the ambient chain and nothing is cached, take what the chain yields
+/// without waiting (environment / static profile keys); if it needs network
+/// I/O, that now runs in the background and this throws, naming the way out.
+pub(crate) fn resolve_ambient_credentials_or_throw(
+    credentials: &bun_s3_signing::S3Credentials,
+    global: &JSGlobalObject,
+    path: Option<&[u8]>,
+) -> bun_jsc::JsResult<()> {
+    if !credentials.needs_credentials_resolution() {
+        return Ok(());
+    }
+    let Some(provider) = &credentials.provider else {
+        return Ok(());
+    };
+    let Some(default) = crate::webcore::aws::provider::as_default(provider) else {
+        return Ok(());
+    };
+    use crate::webcore::cloud::flight::{Now, resolve_now_or_start};
+    let (code, message): (&[u8], Vec<u8>) = match resolve_now_or_start(global, &default) {
+        Now::Ready(Ok(_)) => return Ok(()),
+        Now::Ready(Err(err)) => (err.s3_code().as_bytes(), err.message.to_vec()),
+        Now::Pending { previous: None } => {
+            (b"ERR_S3_MISSING_CREDENTIALS", default.pending_message())
+        }
+        Now::Pending {
+            previous: Some(err),
+        } => {
+            let mut message = default.pending_message();
+            message.extend_from_slice(b". The previous attempt failed: ");
+            message.extend_from_slice(&err.message);
+            (err.s3_code().as_bytes(), message)
+        }
+    };
+    Err(global.throw_value(s3_error_to_js(
+        &S3Error {
+            code,
+            message: &message,
+        },
+        global,
+        path,
+    )))
+}

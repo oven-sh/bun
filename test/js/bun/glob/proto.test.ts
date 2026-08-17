@@ -44,3 +44,11 @@ test("Object prototype followSymlinks", async () => {
   });
   expect([...third].map(a => a.replaceAll("\\", "/"))).toEqual(["def/file.txt"]);
 });
+
+test("builtin-implemented methods carry the same property attributes as native ones", () => {
+  // `scan`/`scanSync` are JS builtins on a `configurable: false` class; they
+  // used to be emitted without DontDelete while `match` (native) had it.
+  for (const name of ["scan", "scanSync", "match"]) {
+    expect(Object.getOwnPropertyDescriptor(Bun.Glob.prototype, name)?.configurable).toBe(false);
+  }
+});

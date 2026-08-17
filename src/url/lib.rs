@@ -366,6 +366,23 @@ impl<'a> URL<'a> {
         }
     }
 
+    /// The query string including its leading `?` (empty if none).
+    #[inline]
+    pub fn search(&self) -> &'a [u8] {
+        self.search
+    }
+
+    /// The path exactly as it appears in `href` (percent-encoding untouched),
+    /// without query or fragment; `/` when empty. Unlike `path`, short paths
+    /// such as `/a` are preserved.
+    pub fn raw_pathname(&self) -> &'a [u8] {
+        let p = self
+            .pathname
+            .strip_suffix(self.search)
+            .unwrap_or(self.pathname);
+        if p.is_empty() { b"/" } else { p }
+    }
+
     pub fn s3_path(&self) -> &'a [u8] {
         if !self.protocol.is_empty() && self.href.len() > self.protocol.len() + 2 {
             &self.href[self.protocol.len() + 2..]

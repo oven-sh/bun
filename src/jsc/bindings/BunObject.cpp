@@ -923,6 +923,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
 /* Source for BunObject.lut.h
 @begin bunObjectTable
     $                                              constructBunShell                                                   DontDelete|PropertyCallback
+    AWSClient                                      BunObject_lazyPropCb_wrap_AWSClient                                 DontDelete|PropertyCallback
     Archive                                        BunObject_lazyPropCb_wrap_Archive                                   DontDelete|PropertyCallback
     ArrayBufferSink                                BunObject_lazyPropCb_wrap_ArrayBufferSink                           DontDelete|PropertyCallback
     Cookie                                         constructCookieObject                                               DontDelete|ReadOnly|PropertyCallback
@@ -930,6 +931,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     CryptoHasher                                   BunObject_lazyPropCb_wrap_CryptoHasher                              DontDelete|PropertyCallback
     FFI                                            BunObject_lazyPropCb_wrap_FFI                                       DontDelete|PropertyCallback
     FileSystemRouter                               BunObject_lazyPropCb_wrap_FileSystemRouter                          DontDelete|PropertyCallback
+    GCPClient                                      BunObject_lazyPropCb_wrap_GCPClient                                 DontDelete|PropertyCallback
     Glob                                           BunObject_lazyPropCb_wrap_Glob                                      DontDelete|PropertyCallback
     Image                                          BunObject_lazyPropCb_wrap_Image                                     DontDelete|PropertyCallback
     MD4                                            BunObject_lazyPropCb_wrap_MD4                                       DontDelete|PropertyCallback
@@ -957,6 +959,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     build                                          BunObject_callback_build                                            DontDelete|Function 1
     concatArrayBuffers                             functionConcatTypedArrays                                           DontDelete|Function 3
     connect                                        BunObject_callback_connect                                          DontDelete|Function 1
+    aws                                            BunObject_lazyPropCb_wrap_aws                                       DontDelete|PropertyCallback
     cron                                           BunObject_lazyPropCb_wrap_cron                                      DontDelete|PropertyCallback
     cwd                                            BunObject_lazyPropCb_wrap_cwd                                       DontEnum|DontDelete|PropertyCallback
     color                                          BunObject_callback_color                                            DontDelete|Function 2
@@ -971,6 +974,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     file                                           BunObject_callback_file                                             DontDelete|Function 1
     fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
     gc                                             Generated::BunObject::jsGc                                          DontDelete|Function 1
+    gcp                                            BunObject_lazyPropCb_wrap_gcp                                       DontDelete|PropertyCallback
     generateHeapSnapshot                           functionGenerateHeapSnapshot                                        DontDelete|Function 2
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1
     gzipSync                                       BunObject_callback_gzipSync                                         DontDelete|Function 1

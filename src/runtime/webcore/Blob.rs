@@ -3577,14 +3577,7 @@ impl BlobExt for Blob {
         if check_s3 {
             if let PathOrFileDescriptor::Path(p) = &*path_or_fd {
                 if p.slice().starts_with(b"s3://") {
-                    // SAFETY: bun_vm() is live for the duration of a host call.
-                    let vm = global_this.bun_vm().as_mut();
-                    // `bun_dotenv::Loader` (T2) returns its local POD mirror by
-                    // reference; lift it into the refcounted
-                    // `bun_s3_signing::S3Credentials` here at the T6 call site
-                    // (dotenv cannot name the s3_signing type — upward dep).
-                    let env_creds = vm.transpiler.env_mut().get_s3_credentials();
-                    let credentials = crate::webcore::fetch::s3_credentials_from_env(env_creds);
+                    let credentials = crate::webcore::fetch::s3_credentials_from_env(global_this);
                     let copy = core::mem::replace(
                         path_or_fd,
                         PathOrFileDescriptor::Path(crate::webcore::node_types::PathLike::String(

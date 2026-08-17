@@ -1282,6 +1282,13 @@ pub unsafe fn secure_zero(p: *mut u8, len: usize) {
     core::sync::atomic::compiler_fence(core::sync::atomic::Ordering::SeqCst);
 }
 
+/// [`secure_zero`] over a byte slice.
+#[inline]
+pub fn secure_zero_slice(s: &mut [u8]) {
+    // SAFETY: `s` is exclusively borrowed and valid for `s.len()` writes.
+    unsafe { secure_zero(s.as_mut_ptr(), s.len()) };
+}
+
 /// Memory is typically not decommitted immediately when freed. Sensitive
 /// information kept in memory can be read until the OS decommits it or the
 /// allocator reuses it. Zero it before dropping.

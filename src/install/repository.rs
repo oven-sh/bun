@@ -376,6 +376,7 @@ fn exec(env: &bun_dotenv::Map, argv: &[&[u8]]) -> Result<Vec<u8>, Error> {
     let result = bun_spawn::run(bun_spawn::RunOptions {
         argv,
         env_map: std_map.get(),
+        windows_verbatim_arguments: false,
     })?;
 
     match result.term {

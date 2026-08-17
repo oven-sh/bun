@@ -87,7 +87,44 @@ export const bunEnv: NodeJS.Dict<string> = {
   BUN_DEBUG_linkerctx: "0",
   WANTS_LOUD: "0",
   AGENT: "false",
+  // Keep the AWS default credential chain from picking up the CI agent's
+  // instance role or a developer's ~/.aws; tests that want it opt back in.
+  AWS_EC2_METADATA_DISABLED: "true",
+  AWS_CONFIG_FILE: process.env.BUN_TEST_AWS_CONFIG_FILE || "/dev/null/aws-config",
+  AWS_SHARED_CREDENTIALS_FILE: process.env.BUN_TEST_AWS_SHARED_CREDENTIALS_FILE || "/dev/null/aws-credentials",
 };
+
+/**
+ * Make *this* process (not just spawned ones, which get `bunEnv`) blind to the
+ * ambient AWS credential chain: a developer's `~/.aws`, a CI agent's instance
+ * role, container / web-identity endpoints. For in-process `Bun.s3` /
+ * `S3Client` tests that assert on the no-credentials path.
+ *
+ * Static `AWS_ACCESS_KEY_ID` / `S3_*` keys are read once at startup, so deleting
+ * them here only affects child processes; a shell that exports them should run
+ * such tests through `bunEnv` subprocesses instead.
+ */
+export function isolateAwsCredentialChain(env: Record<string, string | undefined> = process.env) {
+  env.AWS_EC2_METADATA_DISABLED = "true";
+  env.AWS_CONFIG_FILE = bunEnv.AWS_CONFIG_FILE;
+  env.AWS_SHARED_CREDENTIALS_FILE = bunEnv.AWS_SHARED_CREDENTIALS_FILE;
+  for (const key of [
+    "AWS_PROFILE",
+    "AWS_ACCESS_KEY_ID",
+    "AWS_SECRET_ACCESS_KEY",
+    "AWS_SESSION_TOKEN",
+    "S3_ACCESS_KEY_ID",
+    "S3_SECRET_ACCESS_KEY",
+    "S3_SESSION_TOKEN",
+    "AWS_CONTAINER_CREDENTIALS_RELATIVE_URI",
+    "AWS_CONTAINER_CREDENTIALS_FULL_URI",
+    "AWS_CONTAINER_AUTHORIZATION_TOKEN",
+    "AWS_WEB_IDENTITY_TOKEN_FILE",
+    "AWS_ROLE_ARN",
+  ]) {
+    delete env[key];
+  }
+}
 
 const ciEnv = { ...bunEnv };
 

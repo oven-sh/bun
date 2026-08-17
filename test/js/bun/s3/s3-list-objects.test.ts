@@ -1,6 +1,8 @@
 import { randomUUIDv7, S3Client, S3Options } from "bun";
 import { afterAll, describe, expect, it } from "bun:test";
-import { getSecret } from "harness";
+import { getSecret, isolateAwsCredentialChain } from "harness";
+
+isolateAwsCredentialChain();
 
 const options: S3Options = {
   accessKeyId: "test",

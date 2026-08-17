@@ -102,18 +102,44 @@ fn ssl_config_intern_for_http(config: SSLConfig) -> http::ssl_config::SharedPtr 
 /// `bun_dotenv::S3Credentials` POD mirror. The dotenv crate (T2) cannot name
 /// `bun_s3_signing` types (would be an upward dep), so the conversion lives at
 /// the call site here in T6.
-pub(crate) fn s3_credentials_from_env(
-    env: &bun_dotenv::S3Credentials,
-) -> bun_s3_signing::S3Credentials {
-    bun_s3_signing::S3Credentials::new_value(
-        env.access_key_id.clone(),
-        env.secret_access_key.clone(),
+pub(crate) fn s3_credentials_from_env(global: &JSGlobalObject) -> bun_s3_signing::S3Credentials {
+    // As in the AWS SDKs, `AWS_PROFILE` selects a profile even when
+    // `AWS_ACCESS_KEY_ID`-style variables are also exported; Bun's own
+    // `S3_*` variables stay explicit configuration and always apply.
+    let profile_in_env = crate::webcore::cloud::env::Env::new(global)
+        .get(b"AWS_PROFILE")
+        .is_some_and(|p| !p.is_empty());
+    let loader = global.bun_vm().as_mut().transpiler.env_mut();
+    let profile_selected =
+        profile_in_env && loader.get(b"S3_ACCESS_KEY_ID").is_none_or(<[u8]>::is_empty);
+    let env = loader.get_s3_credentials();
+    let mut credentials = bun_s3_signing::S3Credentials::new_value(
+        if profile_selected {
+            Box::default()
+        } else {
+            env.access_key_id.clone()
+        },
+        if profile_selected {
+            Box::default()
+        } else {
+            env.secret_access_key.clone()
+        },
         env.region.clone(),
         env.endpoint.clone(),
         env.bucket.clone(),
-        env.session_token.clone(),
+        if profile_selected {
+            Box::default()
+        } else {
+            env.session_token.clone()
+        },
         env.insecure_http,
-    )
+    );
+    if !credentials.has_static_credentials() {
+        // No keys in the environment: fall back to the AWS default chain
+        // (shared config/SSO/process/web identity → container → IMDS).
+        credentials.provider = Some(crate::webcore::aws::default_provider(None));
+    }
+    credentials
 }
 
 /// RAII guard for the `+1` `AbortSignal` ref taken in `extract_signal`,
@@ -338,7 +364,10 @@ impl StringOrURL {
 /// Public entry point for `Bun.fetch` - validates body on GET/HEAD
 #[bun_jsc::host_fn(export = "Bun__fetch")]
 fn bun_fetch(ctx: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
-    reject_on_exception(ctx, fetch_impl::<false>(ctx, callframe))
+    reject_on_exception(
+        ctx,
+        fetch_impl::<false>(ctx, callframe.arguments(), false, FetchAuth::None),
+    )
 }
 
 /// WHATWG fetch step 3: an exception thrown while processing `input`/`init`
@@ -388,10 +417,79 @@ enum URLType {
 // fetchImpl — shared implementation
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Shared implementation of fetch
-fn fetch_impl<const ALLOW_GET_BODY: bool>(
+/// Resolve `provider` (I/O on the HTTP thread), then run the same `fetch`
+/// call again (its arguments GC-protected meanwhile) and settle the returned
+/// promise with the second call's result.
+fn defer_until_credentials<
+    const ALLOW_GET_BODY: bool,
+    P: crate::webcore::cloud::flight::Provider,
+>(
+    global_this: &JSGlobalObject,
+    arguments: &[JSValue],
+    provider: &std::sync::Arc<P>,
+    is_s3: bool,
+    auth: FetchAuth,
+) -> JsResult<JSValue> {
+    let protected: Vec<jsc::job::Protected> = arguments
+        .iter()
+        .map(|v| jsc::job::Protected::new(*v))
+        .collect();
+    crate::webcore::cloud::flight::promise(
+        global_this,
+        provider,
+        if is_s3 {
+            |global, err| {
+                s3::s3_error_to_js(
+                    &s3::Error::S3Error {
+                        code: err.s3_code().as_bytes(),
+                        message: &err.message,
+                    },
+                    global,
+                    None,
+                )
+            }
+        } else {
+            crate::webcore::aws::fetch_signing::provider_error_to_js
+        },
+        move |global, _credentials| {
+            let argv: Vec<JSValue> = protected.iter().map(|p| p.value()).collect();
+            reject_on_exception(
+                global,
+                fetch_impl::<ALLOW_GET_BODY>(global, &argv, true, auth),
+            )
+        },
+    )
+}
+
+/// Which ambient-credential flavour of fetch this is, with the client
+/// instance's defaults.
+#[derive(Clone)]
+pub(crate) enum FetchAuth {
+    /// `fetch()`
+    None,
+    /// `awsClient.fetch()`: SigV4-sign the request.
+    Aws(std::sync::Arc<crate::webcore::aws::AwsSignOptions>),
+    /// `gcpClient.fetch()`: attach a Google bearer token.
+    Gcp(std::sync::Arc<crate::webcore::cloud::gcp::ClientOptions>),
+}
+
+/// `Bun.aws.fetch` / `Bun.gcp.fetch` entry point.
+pub(crate) fn fetch_with_auth(
     ctx: &JSGlobalObject,
     callframe: &CallFrame,
+    auth: FetchAuth,
+) -> JsResult<JSValue> {
+    reject_on_exception(
+        ctx,
+        fetch_impl::<false>(ctx, callframe.arguments(), false, auth),
+    )
+}
+
+fn fetch_impl<const ALLOW_GET_BODY: bool>(
+    ctx: &JSGlobalObject,
+    arguments: &[JSValue],
+    credentials_ready: bool,
+    auth: FetchAuth,
 ) -> JsResult<JSValue> {
     jsc::mark_binding();
     let global_this = ctx;
@@ -403,7 +501,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let mut upgraded_connection = false;
     let mut forced_protocol: Option<http::Protocol> = None;
 
-    if callframe.arguments_count() == 0 {
+    if arguments.is_empty() {
         let err = ctx.to_type_error(
             jsc::ErrorCode::MISSING_ARGS,
             format_args!("{FETCH_ERROR_NO_ARGS}"),
@@ -422,7 +520,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // immutable borrow of `vm` for the rest of the function.
     let vm_verbose_fetch = vm.get_verbose_fetch();
 
-    let mut args = jsc::ArgumentsSlice::init(vm, callframe.arguments());
+    let mut args = jsc::ArgumentsSlice::init(vm, arguments);
 
     let first_arg = args.next_eat().unwrap();
 
@@ -509,7 +607,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
     // If it's NOT a Request or a subclass of Request, treat the first argument as a URL.
     let url_str_optional = if first_arg.as_::<Request>().is_none() {
-        StringOrURL::from_js(first_arg, global_this)?
+        StringOrURL::from_js(first_arg, global_this)?.map(bun_core::OwnedString::new)
     } else {
         None
     };
@@ -527,6 +625,68 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'brk None;
     };
 
+    // `Bun.aws.fetch` / `Bun.gcp.fetch`: signing / token options sit at the
+    // top level of the init dict(s), later ones winning like every other
+    // field (a credentials pair/triple counts as one field).
+    let inits = [request_init_object, options_object].map(|v| v.unwrap_or(JSValue::UNDEFINED));
+    let aws_sign: Option<crate::webcore::aws::AwsSignOptions> = match &auth {
+        FetchAuth::Aws(base) => Some(base.with_overrides(global_this, &inits)?),
+        _ => None,
+    };
+    let gcp_auth: Option<crate::webcore::cloud::gcp::GcpFetchOptions> = match &auth {
+        FetchAuth::Gcp(base) => Some(
+            crate::webcore::cloud::gcp::GcpFetchOptions::from_js_with_base(
+                global_this,
+                &inits,
+                base,
+            )?,
+        ),
+        _ => None,
+    };
+
+    // What the caller's `signal` already says, without taking a ref: used to
+    // decide whether waiting for credentials may precede the real
+    // `extract_signal` (same precedence: `init.signal`, even null, wins).
+    enum SignalNow {
+        Live,
+        Aborted(JSValue),
+        Invalid,
+    }
+    macro_rules! signal_now {
+        () => {
+            'now: {
+                for obj in [
+                    options_object.unwrap_or_default(),
+                    request_init_object.unwrap_or_default(),
+                ] {
+                    if !obj.is_empty()
+                        && let Some(sig) = obj.get(global_this, "signal")?
+                    {
+                        break 'now match AbortSignal::from_js(sig) {
+                            Some(s) => {
+                                let s = bun_opaque::opaque_deref(s);
+                                if s.aborted() {
+                                    SignalNow::Aborted(s.js_reason(global_this))
+                                } else {
+                                    SignalNow::Live
+                                }
+                            }
+                            None if sig.is_null() => SignalNow::Live,
+                            None => SignalNow::Invalid,
+                        };
+                    }
+                }
+                if let Some(req) = request_mut!()
+                    && let Some(sig) = req.abort_signal()
+                    && sig.aborted()
+                {
+                    break 'now SignalNow::Aborted(sig.js_reason(global_this));
+                }
+                SignalNow::Live
+            }
+        };
+    }
+
     // Every arm carries a +1 (`from_js`/`dupe_ref`/`StringOrURL::from_js`).
     // `bun_core::String` is `Copy`
     // with NO `Drop`, so wrap in `OwnedString` for the scope-exit deref —
@@ -534,26 +694,29 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // is a substring sharing an `ExternalStringImpl` (e.g. a slice of a
     // `TextDecoder.decode()` result), that leaked +1 transitively pins the
     // external buffer past `~VM`.
-    let url_str: bun_core::OwnedString = bun_core::OwnedString::new('extract_url: {
+    let url_str: bun_core::OwnedString = 'extract_url: {
         if let Some(str) = url_str_optional {
             break 'extract_url str;
         }
 
         if let Some(req) = request_mut!() {
             let _ = req.ensure_url(); // bun.handleOom — aborts on OOM
-            break 'extract_url req.url.get().dupe_ref();
+            break 'extract_url bun_core::OwnedString::new(req.url.get().dupe_ref());
         }
 
         if let Some(request_init) = request_init_object {
             if let Some(url_) = request_init.fast_get(global_this, jsc::BuiltinName::Url)? {
                 if !url_.is_undefined() {
-                    break 'extract_url BunString::from_js(url_, global_this)?;
+                    break 'extract_url bun_core::OwnedString::new(BunString::from_js(
+                        url_,
+                        global_this,
+                    )?);
                 }
             }
         }
 
-        break 'extract_url BunString::empty();
-    });
+        break 'extract_url bun_core::OwnedString::new(BunString::empty());
+    };
 
     if global_this.has_exception() {
         return Ok(JSValue::ZERO);
@@ -594,6 +757,65 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         data_url.url = url_str.get();
         return Ok(data_url_response(data_url, global_this));
     }
+
+    // `Bun.aws.fetch("/path?query", { service })`: the standard endpoint for
+    // that service in the resolved region.
+    let url_str = if let Some(aws) = aws_sign
+        .as_ref()
+        .filter(|_| url_str.has_prefix_comptime(b"/"))
+    {
+        let path = url_str.to_utf8_without_ref();
+        match aws.default_endpoint(global_this) {
+            Ok(origin) => bun_core::OwnedString::new(BunString::create_format(format_args!(
+                "{}{}",
+                bstr::BStr::new(&origin),
+                bstr::BStr::new(path.slice())
+            ))),
+            Err(crate::webcore::aws::sign_options::EndpointError::RegionPending(provider))
+                if !credentials_ready =>
+            {
+                // The region may come from the profile: resolve credentials
+                // first, then run this call again — unless the signal has
+                // already decided the outcome.
+                let early = match signal_now!() {
+                    SignalNow::Live => {
+                        return defer_until_credentials::<ALLOW_GET_BODY, _>(
+                            global_this,
+                            arguments,
+                            &provider,
+                            false,
+                            auth,
+                        );
+                    }
+                    SignalNow::Aborted(reason) => reason,
+                    SignalNow::Invalid => ctx.to_type_error(
+                        jsc::ErrorCode::INVALID_ARG_TYPE,
+                        format_args!("signal is not of type AbortSignal."),
+                    ),
+                };
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        early,
+                    ),
+                );
+            }
+            Err(err) => {
+                let err = ctx.to_type_error(
+                    jsc::ErrorCode::INVALID_URL,
+                    format_args!("Bun.aws.fetch() {err}"),
+                );
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err,
+                    ),
+                );
+            }
+        }
+    } else {
+        url_str
+    };
 
     // `ZigURL::from_string` returns `OwnedURL` (owns href buffer); we
     // immediately move that buffer into `url_proxy_buffer` and re-parse `url` to
@@ -644,6 +866,116 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         break 'extract_method None;
     }
     .unwrap_or(Method::GET);
+
+    let client_name = match &auth {
+        FetchAuth::None => None,
+        FetchAuth::Aws(_) => Some("AWSClient"),
+        FetchAuth::Gcp(_) => Some("GCPClient"),
+    };
+    if let Some(client_name) = client_name
+        && url.is_s3()
+    {
+        let err = global_this.to_type_error(
+            jsc::ErrorCode::INVALID_ARG_VALUE,
+            format_args!(
+                "{client_name}.fetch() takes an https:// URL; for s3:// URLs use fetch() with the s3 option or Bun.s3"
+            ),
+        );
+        return Ok(
+            JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                global_this,
+                err,
+            ),
+        );
+    }
+
+    // Credentials for `s3://` URLs: env, then the `s3` option bag.
+    let mut s3_credentials: Option<s3::S3CredentialsWithOptions> = if url.is_s3() {
+        let env_creds = s3_credentials_from_env(global_this);
+        let mut credentials_with_options = s3::S3CredentialsWithOptions {
+            credentials: env_creds,
+            options: Default::default(),
+            acl: None,
+            storage_class: None,
+            ..Default::default()
+        };
+        if let Some(options) = options_object {
+            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
+                let s3_options: JSValue = s3_options;
+                if s3_options.is_object() {
+                    s3_options.ensure_still_alive();
+                    use crate::webcore::s3_client::S3CredentialsExt as _;
+                    credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
+                        &credentials_with_options.credentials,
+                        Default::default(),
+                        Some(s3_options),
+                        None,
+                        None,
+                        false,
+                        global_this,
+                    )?;
+                }
+            }
+        }
+        Some(credentials_with_options)
+    } else {
+        None
+    };
+
+    // Ambient credentials (profile / SSO / container / metadata) resolve
+    // asynchronously; once they are cached, run this same call again. A
+    // signal that is already aborted skips this so the rejection stays
+    // synchronous.
+    if !credentials_ready {
+        let gcp_pending = gcp_auth
+            .as_ref()
+            .filter(|g| g.needs_resolution())
+            .map(|g| std::sync::Arc::clone(&g.provider));
+        let aws_pending = aws_sign
+            .as_ref()
+            .and_then(|a| {
+                a.needs_credentials_resolution()
+                    .then(|| a.provider().cloned())
+                    .flatten()
+            })
+            .or_else(|| {
+                s3_credentials.as_ref().and_then(|c| {
+                    c.credentials
+                        .needs_credentials_resolution()
+                        .then(|| {
+                            c.credentials
+                                .provider
+                                .as_ref()
+                                .and_then(crate::webcore::aws::provider::as_default)
+                        })
+                        .flatten()
+                })
+            });
+        if gcp_pending.is_some() || aws_pending.is_some() {
+            let already_settled = !matches!(signal_now!(), SignalNow::Live);
+            if !already_settled {
+                drop(s3_credentials.take());
+                if let Some(provider) = gcp_pending {
+                    return defer_until_credentials::<ALLOW_GET_BODY, _>(
+                        global_this,
+                        arguments,
+                        &provider,
+                        false,
+                        auth,
+                    );
+                }
+                if let Some(provider) = aws_pending {
+                    return defer_until_credentials::<ALLOW_GET_BODY, _>(
+                        global_this,
+                        arguments,
+                        &provider,
+                        url.is_s3(),
+                        auth,
+                    );
+                }
+            }
+        }
+    }
 
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
@@ -926,6 +1258,12 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
         }
 
+        // A signature is bound to the host and path it was computed for, so a
+        // signed request cannot meaningfully follow a redirect (the SDKs never
+        // do). Surface the 3xx unless the caller asked for something else.
+        if aws_sign.is_some() {
+            break 'extract_redirect_type FetchRedirect::Manual;
+        }
         break 'extract_redirect_type redirect_type;
     };
 
@@ -1728,7 +2066,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             // An explicit `compress` request always wins over the sendfile
             // heuristic — otherwise the same `Bun.file()` body would compress
             // over https/proxy/<32 KiB/Windows but silently not over plain http.
-            if proxy.is_none() && compress.is_none() && http::SendFile::is_eligible(&url) {
+            if proxy.is_none()
+                && compress.is_none()
+                && aws_sign.is_none()
+                && http::SendFile::is_eligible(&url)
+            {
                 'use_sendfile: {
                     let stat: bun_sys::Stat = match bun_sys::fstat(opened_fd) {
                         Ok(result) => result,
@@ -1843,6 +2185,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(compress_opt) = &compress
         && let HTTPRequestBody::AnyBlob(_) = &body
         && !url.is_s3()
+        && aws_sign.is_none()
     {
         let already_has_encoding = headers
             .as_ref()
@@ -1859,45 +2202,98 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         compress = None;
     }
 
-    if url.is_s3() {
-        // get ENV config — `Transpiler::env_mut` is the safe accessor for the
-        // process-singleton dotenv loader (set during init).
-        let env_creds = s3_credentials_from_env(
-            global_this
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get_s3_credentials(),
-        );
-        let mut credentials_with_options = s3::S3CredentialsWithOptions {
-            credentials: env_creds,
-            options: Default::default(),
-            acl: None,
-            storage_class: None,
-            ..Default::default()
+    if let Some(gcp) = &gcp_auth {
+        let token = match gcp.provider.usable_kept_warm(global_this) {
+            Some(t) => Ok(t),
+            // The first pass resolves before re-entering, so this only
+            // happens if the token expired in between.
+            None => Err(std::sync::Arc::new(bun_s3_signing::ProviderError::new(
+                "ERR_GCP_CREDENTIALS",
+                b"Google Cloud token expired while the request was being prepared; retry".to_vec(),
+            ))),
         };
-        // `defer credentialsWithOptions.deinit()` → Drop.
-
-        if let Some(options) = options_object {
-            if let Some(s3_options) = options.get_truthy(global_this, "s3")? {
-                let s3_options: JSValue = s3_options;
-                if s3_options.is_object() {
-                    s3_options.ensure_still_alive();
-                    use crate::webcore::s3_client::S3CredentialsExt as _;
-                    credentials_with_options = <s3::S3Credentials>::get_credentials_with_options(
-                        &credentials_with_options.credentials,
-                        Default::default(),
-                        Some(s3_options),
-                        None,
-                        None,
-                        false,
-                        global_this,
-                    )?;
+        match token {
+            Ok(t) => {
+                if headers
+                    .as_ref()
+                    .and_then(|h| h.get(b"authorization"))
+                    .is_some()
+                {
+                    let err = global_this.to_type_error(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!("Bun.gcp.fetch() sets the \"Authorization\" header itself; remove it from headers"),
+                    );
+                    body.detach();
+                    return Ok(
+                        JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                            global_this,
+                            err,
+                        ),
+                    );
+                }
+                let h = headers.get_or_insert_with(Headers::default);
+                let mut value = Vec::with_capacity(7 + t.token.len());
+                value.extend_from_slice(b"Bearer ");
+                value.extend_from_slice(&t.token);
+                h.append(b"Authorization", &value);
+                if let Some(q) = &t.quota_project_id {
+                    if h.get(b"x-goog-user-project").is_none() {
+                        h.append(b"x-goog-user-project", q);
+                    }
                 }
             }
+            Err(err) => {
+                body.detach();
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        crate::webcore::aws::fetch_signing::provider_error_to_js(global_this, &err),
+                    ),
+                );
+            }
         }
+    }
 
+    if let Some(aws) = aws_sign.as_ref().filter(|_| !url.is_s3()) {
+        use crate::webcore::aws::fetch_signing::{Body as SignBody, Signed, sign_fetch_request};
+        let sign_body = match &body {
+            HTTPRequestBody::AnyBlob(_) => SignBody::Bytes(body.slice()),
+            _ => SignBody::Streaming,
+        };
+        match sign_fetch_request(global_this, aws, method, &url, &mut headers, sign_body) {
+            Ok(Signed::Headers) => {}
+            Ok(Signed::Url(new_url)) => {
+                let old_buffer = core::mem::take(&mut url_proxy_buffer);
+                if let Some(proxy_) = &proxy {
+                    let mut buffer = Vec::with_capacity(new_url.len() + proxy_.href.len());
+                    buffer.extend_from_slice(&new_url);
+                    buffer.extend_from_slice(proxy_.href);
+                    url_proxy_buffer = buffer;
+                    url = parse_url_detached!(&url_proxy_buffer[0..new_url.len()]);
+                    proxy = Some(parse_url_detached!(&url_proxy_buffer[new_url.len()..]));
+                } else {
+                    url_proxy_buffer = new_url.into_vec();
+                    url = parse_url_detached!(&url_proxy_buffer[..]);
+                }
+                drop(old_buffer);
+            }
+            Err(message) => {
+                let err = global_this.to_type_error(
+                    jsc::ErrorCode::INVALID_ARG_VALUE,
+                    format_args!("Bun.aws.fetch() could not sign the request: {message}"),
+                );
+                body.detach();
+                return Ok(
+                    JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
+                        global_this,
+                        err,
+                    ),
+                );
+            }
+        }
+    }
+
+    if let Some(credentials_with_options) = s3_credentials.take() {
         if let HTTPRequestBody::ReadableStream(ref readable_stream) = body {
             // we cannot direct stream to s3 we need to use multi part upload
             // `defer body.ReadableStream.deinit()` → Drop on `body` scope exit.

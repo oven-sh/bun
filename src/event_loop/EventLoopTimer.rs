@@ -209,6 +209,8 @@ pub enum Tag {
     CronJob,
     GcRepeating,
     QuicEndpoint,
+    /// `bun_runtime::timer::CallbackTimer`.
+    CallbackTimer,
 }
 
 impl Tag {

@@ -3,13 +3,25 @@ import { S3Client, s3 as defaultS3, file, randomUUIDv7 } from "bun";
 import { describe, expect, it } from "bun:test";
 import child_process from "child_process";
 import { createHash, createHmac, randomUUID } from "crypto";
-import { bunEnv, bunExe, dockerExe, getSecret, isCI, isDockerEnabled, tempDir, tempDirWithFiles } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  dockerExe,
+  getSecret,
+  isCI,
+  isDockerEnabled,
+  isolateAwsCredentialChain,
+  tempDir,
+  tempDirWithFiles,
+} from "harness";
 import path from "path";
 const s3 = (...args) => defaultS3.file(...args);
 const S3 = (...args) => new S3Client(...args);
 
 // Import docker-compose helper
 import * as dockerCompose from "../../../docker/index.ts";
+
+isolateAwsCredentialChain();
 
 const dockerCLI = dockerExe() as string;
 type S3Credentials = S3Options & {

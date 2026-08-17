@@ -347,10 +347,10 @@ impl S3HttpDownloadStreamingTask {
     /// # Safety
     /// `this` is live (registered ⇒ not yet freed by `on_response`); JS thread.
     pub(crate) unsafe fn stop_for_vm_teardown(this: *mut Self) {
-        // SAFETY: fn contract; `http` is initialised before the task is registered.
+        // SAFETY: fn contract. By id: the HTTP thread rewrites `http` on progress.
         unsafe {
             (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+            bun_http::http_thread().schedule_shutdown_by_id((*this).async_http_id);
         }
     }
 

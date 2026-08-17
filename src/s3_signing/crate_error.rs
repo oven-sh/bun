@@ -45,7 +45,8 @@ impl From<crate::credentials::SignError> for Error {
             SignError::InvalidSessionToken => Self::InvalidSessionToken,
             SignError::InvalidHeaderValue
             | SignError::FailedToGenerateSignature
-            | SignError::NoSpaceLeft => Self::SignError,
+            | SignError::NoSpaceLeft
+            | SignError::InvalidExpires => Self::SignError,
         }
     }
 }

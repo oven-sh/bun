@@ -92,6 +92,15 @@ pub(crate) fn get_credentials_with_options(
 
     if let Some(opts) = options {
         if opts.is_object() {
+            if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"profile", true)? {
+                // An explicit profile is more specific than ambient env keys.
+                new_credentials.credentials.access_key_id = Box::default();
+                new_credentials.credentials.secret_access_key = Box::default();
+                new_credentials.credentials.session_token = Box::default();
+                new_credentials.credentials.provider =
+                    Some(crate::webcore::aws::default_provider(Some(utf8.slice())));
+                new_credentials.changed_credentials = true;
+            }
             if let Some(utf8) = get_truthy_string_utf8(opts, global_object, b"accessKeyId", true)? {
                 new_credentials.credentials.access_key_id = Box::<[u8]>::from(utf8.slice());
                 new_credentials._access_key_id_slice = Some(utf8);
@@ -290,6 +299,6 @@ pub(crate) fn get_credentials_with_options(
     Ok(new_credentials)
 }
 
-fn contains_newline_or_cr(value: &[u8]) -> bool {
+pub(crate) fn contains_newline_or_cr(value: &[u8]) -> bool {
     strings::index_of_any(value, b"\r\n").is_some()
 }

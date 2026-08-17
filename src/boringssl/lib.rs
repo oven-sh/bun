@@ -778,3 +778,95 @@ mod tests {
         assert_eq!(fmt(b"a\\b"), r#""a\\b""#);
     }
 }
+
+// ──────────────────────────────────────────────────────────────────────────
+// sign_pem_rs256 — one-shot RSASSA-PKCS1-v1_5/SHA-256 with a PEM private key
+// ──────────────────────────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SignPemError {
+    /// Not a PEM `PRIVATE KEY` / `RSA PRIVATE KEY` block BoringSSL can parse.
+    InvalidKey,
+    /// Parsed, but not an RSA key.
+    NotRsa,
+    /// `EVP_DigestSign*` failed.
+    SignFailed,
+}
+
+impl core::fmt::Display for SignPemError {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(match self {
+            SignPemError::InvalidKey => "private_key is not a valid PEM private key",
+            SignPemError::NotRsa => "private_key must be an RSA key for RS256",
+            SignPemError::SignFailed => "RS256 signing failed",
+        })
+    }
+}
+
+/// RS256 (`RSASSA-PKCS1-v1_5` over SHA-256) signature of `message` using the
+/// PEM-encoded (PKCS#8 or PKCS#1) RSA private key `pem` — what a JWT bearer
+/// assertion for a Google service account needs.
+pub fn sign_pem_rs256(pem: &[u8], message: &[u8]) -> Result<Vec<u8>, SignPemError> {
+    /// `NID_rsaEncryption` / `EVP_PKEY_RSA`.
+    const NID_RSA_ENCRYPTION: c_int = 6;
+    load();
+    // SAFETY: straight-line FFI over live locals; every object created is
+    // freed on every path before returning.
+    unsafe {
+        let bio = boring::BIO_new_mem_buf(pem.as_ptr().cast(), pem.len() as isize);
+        if bio.is_null() {
+            return Err(SignPemError::InvalidKey);
+        }
+        let pkey = boring::PEM_read_bio_PrivateKey(bio, ptr::null_mut(), None, ptr::null_mut());
+        boring::BIO_free(bio);
+        if pkey.is_null() {
+            boring::ERR_clear_error();
+            return Err(SignPemError::InvalidKey);
+        }
+        let result = (|| {
+            if boring::EVP_PKEY_id(pkey) != NID_RSA_ENCRYPTION {
+                return Err(SignPemError::NotRsa);
+            }
+            let mut ctx: boring::EVP_MD_CTX = bun_core::ffi::zeroed();
+            boring::EVP_MD_CTX_init(&mut ctx);
+            let mut sig_len: usize = 0;
+            let ok = boring::EVP_DigestSignInit(
+                &raw mut ctx,
+                ptr::null_mut(),
+                boring::EVP_sha256(),
+                ptr::null_mut(),
+                pkey,
+            ) == 1
+                && boring::EVP_DigestSign(
+                    &raw mut ctx,
+                    ptr::null_mut(),
+                    &raw mut sig_len,
+                    message.as_ptr(),
+                    message.len(),
+                ) == 1;
+            if !ok {
+                boring::EVP_MD_CTX_cleanup(&raw mut ctx);
+                return Err(SignPemError::SignFailed);
+            }
+            let mut sig = vec![0u8; sig_len];
+            let ok = boring::EVP_DigestSign(
+                &raw mut ctx,
+                sig.as_mut_ptr(),
+                &raw mut sig_len,
+                message.as_ptr(),
+                message.len(),
+            ) == 1;
+            boring::EVP_MD_CTX_cleanup(&raw mut ctx);
+            if !ok {
+                return Err(SignPemError::SignFailed);
+            }
+            sig.truncate(sig_len);
+            Ok(sig)
+        })();
+        boring::EVP_PKEY_free(pkey);
+        if result.is_err() {
+            boring::ERR_clear_error();
+        }
+        result
+    }
+}

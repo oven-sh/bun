@@ -502,7 +502,7 @@ impl<'a> HTTPClientResult<'a> {
         matches!(self.fail, Some(crate::Error::Timeout))
     }
 
-    pub(crate) fn is_abort(&self) -> bool {
+    pub fn is_abort(&self) -> bool {
         matches!(
             self.fail,
             Some(crate::Error::Aborted | crate::Error::AbortedBeforeConnecting)
@@ -732,7 +732,7 @@ impl ProxySettings {
 /// Returns true if the given hostname/host should bypass the proxy according
 /// to the supplied `no_proxy` list. Runs on the HTTP thread from a captured
 /// copy of the env value; see https://about.gitlab.com/blog/2021/01/27/we-need-to-talk-no-proxy/.
-fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
+pub fn no_proxy_matches(no_proxy_text: &[u8], hostname: &[u8], host: &[u8]) -> bool {
     if hostname.is_empty() {
         return false;
     }
@@ -1082,6 +1082,7 @@ bun_core::comptime_string_map! {
         b"proxy-authorization" => (),
         b"cookie" => (),
         b"host" => (),
+        b"x-amz-security-token" => (),
     };
 }
 
@@ -1446,6 +1447,7 @@ pub(crate) fn print_request(
         let name = header.name();
         if strings::eql_case_insensitive_ascii(name, b"authorization", true)
             || strings::eql_case_insensitive_ascii(name, b"proxy-authorization", true)
+            || strings::eql_case_insensitive_ascii(name, b"x-amz-security-token", true)
         {
             let value = header.value();
             let scheme_len = strings::index_of_char_usize(value, b' ').map_or(0, |i| i + 1);

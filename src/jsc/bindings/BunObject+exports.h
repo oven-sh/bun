@@ -3,11 +3,13 @@
 
 // --- Getters ---
 #define FOR_EACH_GETTER(macro) \
+    macro(AWSClient) \
     macro(Archive) \
     macro(CSRF) \
     macro(CryptoHasher) \
     macro(FFI) \
     macro(FileSystemRouter) \
+    macro(GCPClient) \
     macro(Glob) \
     macro(Image) \
     macro(JSON5) \
@@ -30,10 +32,12 @@
     macro(ValkeyClient) \
     macro(argv) \
     macro(assetPrefix) \
+    macro(aws) \
     macro(cron) \
     macro(cwd) \
     macro(embeddedFiles) \
     macro(enableANSIColors) \
+    macro(gcp) \
     macro(hash) \
     macro(inspect) \
     macro(isStandaloneExecutable) \

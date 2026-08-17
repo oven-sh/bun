@@ -279,6 +279,10 @@ pub struct RareData {
     // practice). Hosting it in the consumer crate removes the upward
     // `s3_signing → jsc` hook.
     pub s3_default_client: Strong,
+    /// `bun_runtime::webcore::cloud::PerVm` — cached AWS/GCP credentials and the
+    /// resolutions in flight for this VM. Type-erased (higher tier); dropped
+    /// with the VM.
+    pub cloud_credentials: Option<Box<dyn core::any::Any>>,
     /// Per-VM, like Node's quic `BindingData` (node/src/quic/bindingdata.h).
     pub node_quic_callbacks: Strong,
     pub(crate) default_csrf_secret: Box<[u8]>,
@@ -333,6 +337,7 @@ impl Default for RareData {
             pipe_read_scratch: Box::new(bun_event_loop::PipeReadScratch::new()),
             h2_padded_frame_buffer: None,
             compression_scratch: None,
+            cloud_credentials: None,
             s3_default_client: Strong::empty(),
             node_quic_callbacks: Strong::empty(),
             default_csrf_secret: Box::default(),
@@ -1078,7 +1083,7 @@ impl Drop for RareData {
     fn drop(&mut self) {
         // pipe_read_scratch / h2_padded_frame_buffer / spawn_sync_event_loop_ /
         // s3_default_client / default_csrf_secret / cleanup_hooks / cron_jobs /
-        // path_buf / tls_default_ciphers:
+        // path_buf / tls_default_ciphers / cloud_credentials (disarms its timers):
         // all dropped automatically via field Drop.
 
         if let Some(engine) = self.boring_ssl_engine.take() {

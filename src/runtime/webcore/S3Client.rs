@@ -189,6 +189,32 @@ where
             writer.write_str("\n")?;
         }
 
+        if !credentials.has_static_credentials()
+            && let Some(provider) = &credentials.provider
+        {
+            // Ambient credentials: show which chain/profile and, once resolved, the source.
+            formatter.write_indent(writer)?;
+            writer.write_str(pfmt!("<r>credentials<d>:<r> \"", ENABLE_ANSI_COLORS))?;
+            match provider.cached() {
+                Some(resolved) => bun_core::write_pretty!(
+                    writer,
+                    ENABLE_ANSI_COLORS,
+                    "<r><b>{}<r> <d>(profile: {}, accessKeyId: {}…)<r>\"",
+                    resolved.source.as_str(),
+                    BStr::new(provider.label()),
+                    BStr::new(&resolved.access_key_id[..resolved.access_key_id.len().min(4)]),
+                )?,
+                None => bun_core::write_pretty!(
+                    writer,
+                    ENABLE_ANSI_COLORS,
+                    "<r><b>auto<r> <d>(profile: {}, not yet resolved)<r>\"",
+                    BStr::new(provider.label()),
+                )?,
+            }
+            formatter.print_comma::<W, ENABLE_ANSI_COLORS>(writer)?;
+            writer.write_str("\n")?;
+        }
+
         if let Some(acl_value) = acl {
             formatter.write_indent(writer)?;
             writer.write_str(pfmt!("<r>acl<d>:<r> \"", ENABLE_ANSI_COLORS))?;
@@ -276,17 +302,7 @@ impl S3Client {
         // SAFETY: `bun_vm()` returns the live VM pointer for `global`.
         let vm = global.bun_vm();
         let mut args = bun_jsc::call_frame::ArgumentsSlice::init(vm, callframe.arguments());
-        // `Transpiler::env_mut` is the safe accessor for the process-singleton
-        // dotenv loader (set during init). `get_s3_credentials` takes `&mut self`
-        // only to lazily memoize — single-threaded JS event-loop discipline applies.
-        let env_creds = crate::webcore::fetch::s3_credentials_from_env(
-            global
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get_s3_credentials(),
-        );
+        let env_creds = crate::webcore::fetch::s3_credentials_from_env(global);
         let aws_options = <S3Credentials as S3CredentialsExt>::get_credentials_with_options(
             &env_creds,
             MultiPartUploadOptions::default(),
@@ -646,16 +662,7 @@ impl S3Client {
         let object_keys = args[0];
         let options = opt_js(args[1]);
 
-        // get credentials from env — `Transpiler::env_mut` is the safe accessor
-        // for the process-singleton dotenv loader (set during init).
-        let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(
-            global
-                .bun_vm()
-                .as_mut()
-                .transpiler
-                .env_mut()
-                .get_s3_credentials(),
-        );
+        let existing_credentials = crate::webcore::fetch::s3_credentials_from_env(global);
 
         // `defer blob.detach()` — handled by Drop of `Option<StoreRef>` field.
         let blob = S3File::construct_s3_file_with_s3_credentials(

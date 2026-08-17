@@ -250,11 +250,14 @@
       "WriteFile"
     ]
   },
+  "src/runtime/webcore/cloud/io.rs": {
+    "thread spawn": 1
+  },
   "src/runtime/webcore/fetch/FetchTasklet.rs": {
     "HTTPThread::schedule": 1
   },
   "src/runtime/webcore/s3/client.rs": {
-    "HTTPThread::schedule": 2
+    "HTTPThread::schedule": 1
   },
   "src/runtime/webcore/s3/simple_request.rs": {
     "HTTPThread::schedule": 1

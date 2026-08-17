@@ -347,6 +347,10 @@ pub mod bun_object {
         BunObject_lazyPropCb_YAML => super::get_yaml_object,
         BunObject_lazyPropCb_Transpiler => super::get_transpiler_constructor,
         BunObject_lazyPropCb_argv => super::get_argv,
+        BunObject_lazyPropCb_aws => super::get_aws_object,
+        BunObject_lazyPropCb_AWSClient => super::get_aws_client_constructor,
+        BunObject_lazyPropCb_gcp => super::get_gcp_object,
+        BunObject_lazyPropCb_GCPClient => super::get_gcp_client_constructor,
         BunObject_lazyPropCb_cron => super::get_cron_object,
         BunObject_lazyPropCb_cwd => super::get_cwd,
         BunObject_lazyPropCb_embeddedFiles => super::get_embedded_files,
@@ -1850,20 +1854,10 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     use bun_jsc::StrongOptional;
     // SAFETY: bun_vm() returns the live thread-local VM for a Bun-owned global.
     let vm = global_this.bun_vm().as_mut();
-    // NOTE: reshaped for borrowck — capture the raw env loader pointer
-    // before `rare_data()` takes the long-lived `&mut` of `vm`.
-    let env_ptr = vm.transpiler.env;
-    let rare = vm.rare_data();
-    if let Some(v) = rare.s3_default_client.get() {
+    if let Some(v) = vm.rare_data().s3_default_client.get() {
         return Ok(v);
     }
-    // NOTE (layering): `bun_dotenv::Loader::get_s3_credentials` returns the
-    // T2 POD mirror; lift it into the refcounted `bun_s3_signing::S3Credentials`
-    // here at the high-tier call site (dotenv ≤T2 may not name s3_signing T5).
-    // SAFETY: `transpiler.env` is the process-lifetime dotenv loader; disjoint
-    // from `rare_data` storage.
-    let env_creds =
-        crate::webcore::fetch::s3_credentials_from_env(unsafe { (*env_ptr).get_s3_credentials() });
+    let env_creds = crate::webcore::fetch::s3_credentials_from_env(global_this);
     let aws_options = match crate::webcore::s3::credentials_jsc::get_credentials_with_options(
         &env_creds,
         Default::default(),
@@ -1887,7 +1881,7 @@ fn get_s3_default_client(global_this: &JSGlobalObject, _: &JSObject) -> JsResult
     };
     let js_client = <S3Client as bun_jsc::JsClass>::to_js(client, global_this);
     js_client.ensure_still_alive();
-    rare.s3_default_client = StrongOptional::create(js_client, global_this);
+    vm.rare_data().s3_default_client = StrongOptional::create(js_client, global_this);
     Ok(js_client)
 }
 
@@ -1995,6 +1989,26 @@ fn get_embedded_files(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JS
     }
 
     Ok(array)
+}
+
+fn get_aws_object(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+    use crate::webcore::cloud::aws::AWSClient;
+    let client = AWSClient::default(global_this)?;
+    Ok(<AWSClient as bun_jsc::JsClass>::to_js(*client, global_this))
+}
+
+fn get_aws_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::cloud::aws::AWSClient>(global_this)
+}
+
+fn get_gcp_object(global_this: &JSGlobalObject, _: &JSObject) -> JsResult<JSValue> {
+    use crate::webcore::cloud::gcp::GCPClient;
+    let client = GCPClient::default(global_this)?;
+    Ok(<GCPClient as bun_jsc::JsClass>::to_js(*client, global_this))
+}
+
+fn get_gcp_client_constructor(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {
+    jsc::codegen::js::get_constructor::<crate::webcore::cloud::gcp::GCPClient>(global_this)
 }
 
 fn get_semver(global_this: &JSGlobalObject, _: &JSObject) -> JSValue {

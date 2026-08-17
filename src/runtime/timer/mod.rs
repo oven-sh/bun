@@ -376,6 +376,59 @@ pub(crate) use crate::test_runner::timers::fake_timers::FakeTimers;
 // need `VirtualMachine.timer: All` (currently `()` in bun_jsc). Struct shape
 // is real so `All` embeds them by value with the correct layout.
 
+/// A one-shot timer that calls a plain Rust function on the JS thread. Boxed
+/// so the intrusive node keeps its address; does not keep the process alive.
+pub struct CallbackTimer {
+    pub(crate) event_loop_timer: EventLoopTimer,
+    on_fire: fn(usize),
+    data: usize,
+}
+
+bun_event_loop::impl_timer_owner!(CallbackTimer; from_timer_ptr => event_loop_timer);
+
+impl CallbackTimer {
+    pub fn new(on_fire: fn(usize), data: usize) -> Box<Self> {
+        Box::new(Self {
+            event_loop_timer: EventLoopTimer::init_paused(EventLoopTimerTag::CallbackTimer),
+            on_fire,
+            data,
+        })
+    }
+
+    /// (Re)arm to fire once, `ms` from now.
+    pub fn schedule(&mut self, ms: u64) {
+        let next = Timespec::ms_from_now(
+            TimespecMockMode::ForceRealTime,
+            i64::try_from(ms).unwrap_or(i64::MAX),
+        );
+        crate::jsc_hooks::timer_all_mut().update(&raw mut self.event_loop_timer, &next);
+    }
+
+    pub fn cancel(&mut self) {
+        if self.event_loop_timer.state == EventLoopTimerState::ACTIVE {
+            crate::jsc_hooks::timer_all_mut().remove(&raw mut self.event_loop_timer);
+        }
+    }
+
+    /// # Safety
+    /// `this` is live (its owner cancels it on drop).
+    pub(crate) unsafe fn fire(this: *mut Self) {
+        // SAFETY: fn contract. Copy the callback out so nothing borrows
+        // `*this` while it runs (it may re-`schedule` or drop this timer).
+        let (on_fire, data) = unsafe {
+            (*this).event_loop_timer.state = EventLoopTimerState::FIRED;
+            ((*this).on_fire, (*this).data)
+        };
+        on_fire(data);
+    }
+}
+
+impl Drop for CallbackTimer {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 pub struct DateHeaderTimer {
     pub(crate) event_loop_timer: EventLoopTimer,
 }

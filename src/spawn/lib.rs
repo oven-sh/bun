@@ -250,6 +250,11 @@ pub enum Term {
 pub struct RunOptions<'a> {
     pub argv: &'a [&'a [u8]],
     pub env_map: &'a bun_sys::EnvMap,
+    /// Windows: append `argv[1..]` to the command line verbatim instead of
+    /// quoting each one (needed for `cmd.exe /C <command line>`), so quotes,
+    /// `&`, `|` … in them reach cmd.exe as written — only for arguments the
+    /// caller fully controls. Ignored elsewhere.
+    pub windows_verbatim_arguments: bool,
 }
 
 /// Result of [`run`].
@@ -298,7 +303,12 @@ pub fn run(opts: RunOptions<'_>) -> crate::Result<RunResult> {
         // `Command::new` does PATH/PATHEXT lookup on Windows.
         let mut cmd = std::process::Command::new(to_os(argv0));
         for arg in iter {
-            cmd.arg(to_os(arg));
+            if opts.windows_verbatim_arguments {
+                use std::os::windows::process::CommandExt as _;
+                cmd.raw_arg(to_os(arg));
+            } else {
+                cmd.arg(to_os(arg));
+            }
         }
         cmd.env_clear();
         for (k, v) in opts.env_map {

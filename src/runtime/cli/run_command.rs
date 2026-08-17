@@ -1466,13 +1466,8 @@ impl Run<'_> {
 
         // Initial synchronous evaluation of the entrypoint is done (TLA may
         // still be pending and will resolve in the loop below); the embedded
-        // module pages are off the hot path now. Skip under --watch/--hot
-        // since those re-read source on every reload.
-        if !vm.is_watcher_enabled() {
-            if let Some(graph) = vm.standalone_module_graph {
-                graph.release_module_pages();
-            }
-        }
+        // module pages are off the hot path now.
+        vm.release_standalone_module_pages();
 
         // ── core run-loop ──────────────────────────────────────────────────
         if vm.is_watcher_enabled() {

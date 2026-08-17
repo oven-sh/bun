@@ -37,8 +37,8 @@ pub struct StandaloneModuleGraph {
     /// raw fat pointer — NOT `&'static [u8]` — because `byte_count` covers the
     /// bytecode/module_info subranges handed to JSC as a mutable span via
     /// `File.bytecode`. Holding a `&'static [u8]` over those bytes would freeze
-    /// them under Stacked/Tree Borrows and make a foreign write UB. (In practice
-    /// nothing writes: `release_module_pages` relies on the pages staying clean.)
+    /// them under Stacked/Tree Borrows and make a foreign write UB. Nothing
+    /// actually writes today, which `release_module_pages` relies on.
     pub bytes: *const [u8],
     pub files: StringArrayHashMap<File>,
     /// Directory prefixes derived from `files` keys (no trailing `/`, always posix-separated).
@@ -373,12 +373,13 @@ mod macho {
     // the symbol's only consumer.
     unsafe extern "C" {
         pub(super) fn Bun__getStandaloneModuleGraphMachoLength() -> *mut u64; // possibly unaligned
-        /// `ranges` is `count` pairs of `(start, len)`; returns the bytes remapped.
+        /// `ranges` is `count` pairs of `(start, len)`; returns the bytes
+        /// remapped, or -1 if the executable no longer matches the mapping.
         pub(super) fn Bun__StandaloneModuleGraph__remapRanges(
             exe_fd: bun_core::FdNative,
             ranges: *const usize,
             count: usize,
-        ) -> usize;
+        ) -> isize;
     }
 
     /// Returns `(base, len)` for the embedded `__BUN` section data. Kept as a
@@ -483,8 +484,7 @@ pub struct File {
     pub cached_blob: Option<NonNull<Blob>>,
     pub encoding: Encoding,
     pub wtf_string: BunString,
-    // BACKREF into the embedded section; handed to JSC as a mutable span, but
-    // only ever read (`release_module_pages` remaps it out from under JSC).
+    // BACKREF into the embedded section; handed to JSC as a mutable span (see `bytes`).
     pub bytecode: *mut [u8],
     pub module_info: *mut [u8],
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
@@ -2248,11 +2248,12 @@ impl StandaloneModuleGraph {
     }
 
     /// Drops the resident pages of the embedded section, except those holding
-    /// files that are exposed as plain files (assets, client-side chunks): those
-    /// may be read repeatedly, whereas JSC copies what it decodes out of a
-    /// module's source/bytecode, so once a module has been evaluated its pages
-    /// are dead weight until a lazily-called function is decoded (or a stack
-    /// trace reads the source), and those fault back in from the executable.
+    /// files that are exposed as plain files (assets, client-side chunks), which
+    /// may be read repeatedly. Everything else is read by JSC only once per
+    /// module (source hashing, top-level bytecode decode) plus once per lazily
+    /// decoded function or stack-trace source lookup, so after startup most of
+    /// those pages are never touched again; the ones that are fault back in
+    /// from the executable with identical bytes, which is what keeps this safe.
     ///
     /// Called after the entrypoint has been evaluated and again from the idle
     /// GC timer, since each newly decoded function drags its whole page back in.
@@ -2267,21 +2268,8 @@ impl StandaloneModuleGraph {
             {
                 return;
             }
-            #[cfg(target_os = "macos")]
-            let Some((base, len)) = macho::get_data() else {
-                return;
-            };
-            #[cfg(not(target_os = "macos"))]
-            let Some((base, len)) = elf::get_data() else {
-                return;
-            };
-
-            let page: usize = bun_alloc::page_size();
-            let round_up = |addr: usize| (addr + page - 1) & !(page - 1);
-            let round_down = |addr: usize| addr & !(page - 1);
-
-            // Byte ranges that must stay mapped as-is; everything between them
-            // is released in maximal page-aligned runs.
+            let base = self.bytes.cast::<u8>() as usize;
+            let len = self.bytes.len();
             let mut keep: Vec<(usize, usize)> = self
                 .files
                 .values()
@@ -2293,63 +2281,136 @@ impl StandaloneModuleGraph {
                 })
                 .collect();
             keep.sort_unstable();
-            let mut runs: Vec<[usize; 2]> = Vec::with_capacity(keep.len() + 1);
-            let section_end = base as usize + len;
-            let mut cursor = round_up(base as usize);
-            for (start, end) in keep.into_iter().chain([(section_end, section_end)]) {
-                let run_end = round_down(start);
-                if run_end > cursor {
-                    runs.push([cursor, run_end - cursor]);
-                }
-                cursor = cursor.max(round_up(end));
-            }
+            let runs = page_runs(base, len, bun_alloc::page_size(), &keep);
+
             #[cfg(target_os = "macos")]
-            let released = if runs.is_empty() {
-                0
-            } else {
-                // On XNU, madvise(DONTNEED/FREE/FREE_REUSABLE) and msync are only
-                // paging hints for file-backed memory; the pages stay resident.
-                // Re-mapping the same bytes of the executable over the range is
-                // the one thing that actually drops them.
-                let Ok(path) = bun_core::self_exe_path() else {
-                    return;
-                };
-                let Ok(exe) =
-                    bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0)
-                else {
-                    return;
-                };
+            // On XNU, madvise(DONTNEED/FREE/FREE_REUSABLE) and msync are only
+            // paging hints for file-backed memory; the pages stay resident.
+            // Re-mapping the same bytes of the executable over the range is
+            // the one thing that actually drops them.
+            let released = match bun_core::self_exe_path().ok().and_then(|path| {
+                bun_sys::File::open(path, bun_sys::O::RDONLY | bun_sys::O::CLOEXEC, 0).ok()
+            }) {
                 // SAFETY: every run lies inside the mapped `__BUN` segment.
-                unsafe {
+                Some(exe) if !runs.is_empty() => match unsafe {
                     macho::Bun__StandaloneModuleGraph__remapRanges(
                         exe.handle().native(),
                         runs.as_ptr().cast(),
                         runs.len(),
                     )
+                } {
+                    -1 => {
+                        bun_core::scoped_log!(
+                            StandaloneModuleGraph,
+                            "releaseModulePages: executable no longer matches the mapping, skipping"
+                        );
+                        return;
+                    }
+                    n => n as usize,
+                },
+                Some(_) => 0,
+                None => {
+                    bun_core::scoped_log!(
+                        StandaloneModuleGraph,
+                        "releaseModulePages: cannot open executable errno={}",
+                        bun_sys::last_errno()
+                    );
+                    return;
                 }
             };
             #[cfg(not(target_os = "macos"))]
-            let released = {
-                let mut released = 0usize;
-                for &[start, run_len] in &runs {
+            let released = runs
+                .iter()
+                .filter(|&&[start, run_len]| {
                     // SAFETY: every run lies inside the mapped `.bun` segment.
-                    let rc = unsafe {
+                    unsafe {
                         libc::madvise(start as *mut core::ffi::c_void, run_len, libc::MADV_DONTNEED)
-                    };
-                    if rc == 0 {
-                        released += run_len;
+                            == 0
                     }
-                }
-                released
-            };
-            bun_core::scoped_log!(
-                StandaloneModuleGraph,
-                "releaseModulePages: released {} of {} bytes in {} ranges",
-                released,
-                len,
-                runs.len()
-            );
+                })
+                .map(|&[_, run_len]| run_len)
+                .sum::<usize>();
+            let requested: usize = runs.iter().map(|&[_, run_len]| run_len).sum();
+            if released < requested {
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
+                    "releaseModulePages: released {} of {} requested bytes, last errno={}",
+                    released,
+                    requested,
+                    bun_sys::last_errno()
+                );
+            } else {
+                bun_core::scoped_log!(
+                    StandaloneModuleGraph,
+                    "releaseModulePages: released {} of {} bytes in {} ranges",
+                    released,
+                    len,
+                    runs.len()
+                );
+            }
         }
+    }
+}
+
+/// Page-aligned `[start, len]` runs of `[base, base + len)` that avoid the
+/// sorted `keep` byte ranges: each run is rounded inwards so a page shared with
+/// a kept range stays mapped. Keep ranges outside the section are ignored.
+#[cfg(any(target_os = "macos", target_os = "linux", target_os = "android", test))]
+fn page_runs(base: usize, len: usize, page: usize, keep: &[(usize, usize)]) -> Vec<[usize; 2]> {
+    let section_end = base + len;
+    let mut runs = Vec::with_capacity(keep.len() + 1);
+    let mut cursor = base.next_multiple_of(page);
+    let mut cut = |runs: &mut Vec<[usize; 2]>, start: usize, end: usize| {
+        let run_end = start & !(page - 1);
+        if run_end > cursor {
+            runs.push([cursor, run_end - cursor]);
+        }
+        cursor = cursor.max(end.next_multiple_of(page));
+    };
+    for &(start, end) in keep {
+        if end > base && start < section_end {
+            cut(&mut runs, start.max(base), end.min(section_end));
+        }
+    }
+    cut(&mut runs, section_end, section_end);
+    runs
+}
+
+#[cfg(test)]
+mod page_runs_tests {
+    use super::page_runs;
+
+    const P: usize = 4096;
+
+    #[test]
+    fn whole_section_when_nothing_kept() {
+        // Section covers [P+8, 11P+8): only the full pages 2..11 are released.
+        assert_eq!(page_runs(P + 8, 10 * P, P, &[]), vec![[2 * P, 9 * P]]);
+    }
+
+    #[test]
+    fn kept_range_splits_and_rounds_inwards() {
+        // Keep bytes [3.5P, 5.5P): pages 3 and 5 are shared, so runs stop at 3P and resume at 6P.
+        let base = 0;
+        let keep = [(3 * P + P / 2, 5 * P + P / 2)];
+        assert_eq!(page_runs(base, 10 * P, P, &keep), vec![[0, 3 * P], [6 * P, 4 * P]]);
+    }
+
+    #[test]
+    fn overlapping_and_adjacent_keeps_merge() {
+        let keep = [(P, 2 * P), (2 * P - 10, 3 * P), (2 * P + 5, 2 * P + 6)];
+        assert_eq!(page_runs(0, 10 * P, P, &keep), vec![[0, P], [3 * P, 7 * P]]);
+    }
+
+    #[test]
+    fn keeps_outside_the_section_are_ignored() {
+        let keep = [(0, 16), (100 * P, 101 * P)];
+        assert_eq!(page_runs(10 * P, 4 * P, P, &keep), vec![[10 * P, 4 * P]]);
+    }
+
+    #[test]
+    fn keep_covering_everything_yields_no_runs() {
+        assert!(page_runs(P, 4 * P, P, &[(0, 10 * P)]).is_empty());
     }
 }
 

@@ -1488,6 +1488,18 @@ impl VirtualMachine {
         !self.bun_watcher.is_null()
     }
 
+    /// Drop the resident pages of a compiled binary's embedded modules (see
+    /// `bun_standalone_graph::Graph::release_module_pages`). Main-thread only,
+    /// and skipped under `--hot`/`--watch`, which re-read the source on reload.
+    pub fn release_standalone_module_pages(&self) {
+        if !self.is_main_thread || self.is_watcher_enabled() {
+            return;
+        }
+        if let Some(graph) = self.standalone_module_graph {
+            graph.release_module_pages();
+        }
+    }
+
     /// Thin setter so callers don't need `.with` plumbing on the thread-local.
     #[inline]
     pub fn set_is_main_thread_vm(value: bool) {

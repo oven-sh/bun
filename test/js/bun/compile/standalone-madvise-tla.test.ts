@@ -5,7 +5,6 @@
 // runtime, disables both.
 import { expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
-import { statSync } from "node:fs";
 import path from "node:path";
 
 // Debug ASAN builds embed an @executable_path rpath for asan-dyld-shim.dylib;
@@ -18,9 +17,9 @@ async function compile(dir: string, entry: string, ...flags: string[]): Promise<
     cmd: [bunExe(), "build", "--compile", ...flags, path.join(dir, entry), "--outfile", out],
     env: bunEnv,
     stderr: "pipe",
-    stdout: "pipe",
+    stdout: "ignore",
   });
-  const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited, build.stdout.text()]);
+  const [stderr, exitCode] = await Promise.all([build.stderr.text(), build.exited]);
   expect(stderr).not.toContain("error:");
   expect(exitCode).toBe(0);
   return out;
@@ -123,12 +122,12 @@ test.concurrent.skipIf(isWindows)(
   `;
     using dir = tempDir("standalone-release-pages", { "entry.js": source });
     const out = await compile(String(dir), "entry.js", "--bytecode");
-    const section = statSync(out).size - statSync(bunExe()).size;
-    expect(section).toBeGreaterThan(1024 * 1024);
-    // Without the release both drops come out around zero. With it they are
-    // roughly the section size (startup) and the bytecode size (timer), less
-    // whatever the heap grows by between samples, which ASAN inflates.
-    const expected = Math.floor(section * (isASAN ? 0.2 : 0.4));
+    // The embedded bytecode is several times the source; the startup release
+    // drops source + bytecode and the timer release re-drops the bytecode
+    // pages that calling every function faulted back in. Compare against the
+    // flag-off run so heap movement between samples cancels out, and keep the
+    // bar at a couple of source lengths since debug/ASAN heaps move more.
+    const expected = source.length * (isASAN || isDebug ? 1.5 : 2);
 
     async function run(env: Record<string, string | undefined>) {
       await using proc = Bun.spawn({
@@ -145,10 +144,10 @@ test.concurrent.skipIf(isWindows)(
 
     const [released, disabled] = await Promise.all([
       run({ CHECK_TIMER: String(expected) }),
-      run({ BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" }),
+      run({ CHECK_TIMER: String(expected), BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE: "1" }),
     ]);
     expect(released.startupDrop - disabled.startupDrop).toBeGreaterThanOrEqual(expected);
-    expect(released.timerDrop).toBeGreaterThanOrEqual(expected);
+    expect(released.timerDrop - disabled.timerDrop).toBeGreaterThanOrEqual(expected);
   },
   60_000,
 );

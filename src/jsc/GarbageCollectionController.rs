@@ -145,13 +145,6 @@ impl GarbageCollectionController {
         }
         let prev_heap_size = this.gc_last_heap_size.get();
         this.perform_gc();
-        // SAFETY: per fn contract.
-        let vm_ref = unsafe { &*vm };
-        if vm_ref.is_main_thread && !vm_ref.is_watcher_enabled() {
-            if let Some(graph) = vm_ref.standalone_module_graph {
-                graph.release_module_pages();
-            }
-        }
         if prev_heap_size == this.gc_last_heap_size.get() {
             let ticks = this
                 .heap_size_didnt_change_for_repeating_timer_ticks_count
@@ -166,6 +159,11 @@ impl GarbageCollectionController {
             this.heap_size_didnt_change_for_repeating_timer_ticks_count
                 .set(0);
             this.gc_repeating_timer_fast.set(true);
+            // Decoding a lazily-called function allocates, so a heap that
+            // moved is the cheap signal that embedded pages may have been
+            // faulted back in.
+            // SAFETY: per fn contract.
+            unsafe { &*vm }.release_standalone_module_pages();
         }
         let interval = this.repeat_interval();
         Self::arm(

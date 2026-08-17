@@ -1106,12 +1106,6 @@ extern "C" uint64_t* Bun__getStandaloneModuleGraphMachoLength()
     return &BUN_COMPILED.size;
 }
 
-// Replaces page-aligned ranges of the __BUN segment with fresh private
-// mappings of the same bytes of the executable, which is the only way to drop
-// the resident pages on XNU (madvise/msync only reprioritize file-backed
-// pages). Refuses unless the segment is currently backed by the file open on
-// `exeFd`, so a binary that was replaced on disk after exec is never mapped in.
-// `ranges` is `count` pairs of (start, len); returns the bytes remapped.
 static const segment_command_64* findBunSegment()
 {
     const uint8_t* command = reinterpret_cast<const uint8_t*>(&_mh_execute_header) + sizeof(mach_header_64);
@@ -1127,35 +1121,58 @@ static const segment_command_64* findBunSegment()
     return nullptr;
 }
 
-extern "C" size_t Bun__StandaloneModuleGraph__remapRanges(int exeFd, const size_t* ranges, size_t count)
+// Replaces page-aligned ranges of the __BUN segment with fresh private
+// mappings of the same bytes of the executable, which is the only way to drop
+// the resident pages on XNU (madvise/msync only reprioritize file-backed
+// pages). The file offset comes from the kernel's own record of the segment
+// mapping (`pri_offset`), so it is right even for a slice of a fat binary.
+// Refuses (returns -1) unless the segment is backed by the file open on
+// `exeFd` and that file still looks like it did the first time: a binary
+// replaced or rewritten on disk after exec is never mapped in.
+// `ranges` is `count` pairs of (start, len); returns the bytes remapped.
+extern "C" ssize_t Bun__StandaloneModuleGraph__remapRanges(int exeFd, const size_t* ranges, size_t count)
 {
     const segment_command_64* segment = findBunSegment();
-    if (!segment || count == 0)
-        return 0;
+    if (!segment)
+        return -1;
     uintptr_t segmentStart = segment->vmaddr + _dyld_get_image_vmaddr_slide(0);
 
+    // The first page of the segment holds the blob header and is never
+    // remapped, so this is always the loader's original mapping.
     struct proc_regionwithpathinfo region;
     if (proc_pidinfo(getpid(), PROC_PIDREGIONPATHINFO, segmentStart, &region, sizeof(region)) != sizeof(region))
-        return 0;
+        return -1;
+    const auto& info = region.prp_prinfo;
+    if (info.pri_address > segmentStart)
+        return -1;
     struct stat st;
     if (fstat(exeFd, &st) != 0)
-        return 0;
+        return -1;
     const auto& backing = region.prp_vip.vip_vi.vi_stat;
     if (backing.vst_ino == 0 || backing.vst_ino != st.st_ino || backing.vst_dev != static_cast<uint32_t>(st.st_dev))
-        return 0;
+        return -1;
+    static struct stat firstSeen;
+    static bool firstSeenSet = false;
+    if (!firstSeenSet) {
+        firstSeen = st;
+        firstSeenSet = true;
+    } else if (st.st_size != firstSeen.st_size || st.st_mtimespec.tv_sec != firstSeen.st_mtimespec.tv_sec || st.st_mtimespec.tv_nsec != firstSeen.st_mtimespec.tv_nsec) {
+        return -1;
+    }
 
+    off_t segmentFileOffset = info.pri_offset + (segmentStart - info.pri_address);
     size_t remapped = 0;
     for (size_t i = 0; i < count; i++) {
         uintptr_t start = ranges[2 * i];
         size_t len = ranges[2 * i + 1];
         if (start < segmentStart || len > segment->filesize || start - segmentStart > segment->filesize - len)
             continue;
-        off_t fileOffset = segment->fileoff + (start - segmentStart);
+        off_t fileOffset = segmentFileOffset + (start - segmentStart);
         void* addr = reinterpret_cast<void*>(start);
         if (mmap(addr, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_FIXED, exeFd, fileOffset) == addr)
             remapped += len;
     }
-    return remapped;
+    return static_cast<ssize_t>(remapped);
 }
 
 #else // __linux__ / __FreeBSD__ — both ELF, same .bun section approach

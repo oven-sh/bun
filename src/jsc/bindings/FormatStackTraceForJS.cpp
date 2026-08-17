@@ -21,6 +21,7 @@
 
 #include "BunClientData.h"
 #include "CallSite.h"
+#include "ErrorStackFrame.h"
 #include "ErrorStackTrace.h"
 #include "headers-handwritten.h"
 
@@ -264,7 +265,7 @@ WTF::String formatStackTrace(
 
         if (!frame.hasLineAndColumnInfo()) continue;
 
-        originalLineColumns[i] = frame.computeLineAndColumn();
+        originalLineColumns[i] = Bun::computeLineAndColumn(frame);
 
         JSC::JSGlobalObject* globalObjectForFrame = lexicalGlobalObject;
         if (auto* callee = frame.callee()) {

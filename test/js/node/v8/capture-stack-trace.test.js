@@ -2,6 +2,7 @@ import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { noInline } from "bun:jsc";
 import { afterEach, expect, mock, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
+import { readFileSync } from "node:fs";
 const origPrepareStackTrace = Error.prepareStackTrace;
 afterEach(() => {
   Error.prepareStackTrace = origPrepareStackTrace;
@@ -533,6 +534,65 @@ test("CallFrame.p.isConstructor", () => {
   };
   new C();
   Error.prepareStackTrace = prevPrepareStackTrace;
+});
+
+test("CallSites of a class without a constructor point at the class definition", () => {
+  Error.prepareStackTrace = (err, callSites) => callSites;
+
+  let fromBase;
+  class Base {
+    constructor() {
+      fromBase = new Error();
+    }
+  }
+  // JSC compiles the constructor of a class that declares none from an internal one-line source, and
+  // its frames used to report that source: no file, line 1. V8 reports the line of the `class`
+  // keyword, which is also where each `marked(Base)` below is called from.
+  const markers = [];
+  function marked(Super) {
+    markers.push(new Error());
+    return Super;
+  }
+  class Derived extends marked(Base) {}
+  function makeInner() {
+    class Inner extends marked(Base) {}
+    new Inner();
+  }
+
+  new Derived();
+  const derivedError = fromBase;
+  makeInner();
+  const innerError = fromBase;
+  // In the markers, [0] is `marked` and [1] the `extends` clause; in the errors from Base, [0] is
+  // `new Base` and [1] the synthesized constructor of the subclass.
+  const [derivedClassSite, innerClassSite] = markers.map(marker => marker.stack[1]);
+  const derivedSite = derivedError.stack[1];
+  const innerSite = innerError.stack[1];
+  Error.prepareStackTrace = origPrepareStackTrace;
+
+  const describeSite = site => ({
+    functionName: site.getFunctionName(),
+    isConstructor: site.isConstructor(),
+    fileName: site.getFileName(),
+    lineNumber: site.getLineNumber(),
+    columnNumber: site.getColumnNumber(),
+    scriptId: site.getScriptId(),
+  });
+  const sourceLines = readFileSync(import.meta.path, "utf8").split("\n");
+  const expectedAt = (classSite, functionName) => ({
+    functionName,
+    isConstructor: true,
+    fileName: classSite.getFileName(),
+    lineNumber: classSite.getLineNumber(),
+    // getColumnNumber() is zero-based; this is the column of the `class` keyword on that line.
+    columnNumber: sourceLines[classSite.getLineNumber() - 1].indexOf(`class ${functionName} `),
+    scriptId: classSite.getScriptId(),
+  });
+
+  expect(derivedClassSite.getFileName()).toBe(import.meta.path);
+  expect(innerClassSite.getLineNumber()).not.toBe(derivedClassSite.getLineNumber());
+  expect(describeSite(derivedSite)).toEqual(expectedAt(derivedClassSite, "Derived"));
+  expect(describeSite(innerSite)).toEqual(expectedAt(innerClassSite, "Inner"));
 });
 
 test("CallFrame.p.isNative", () => {

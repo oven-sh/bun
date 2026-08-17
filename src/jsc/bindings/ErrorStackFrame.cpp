@@ -1,12 +1,70 @@
 #include "root.h"
+#include "ErrorStackFrame.h"
 #include "JavaScriptCore/CodeBlock.h"
-#include "headers-handwritten.h"
-#include "JavaScriptCore/BytecodeIndex.h"
+#include "JavaScriptCore/FunctionExecutable.h"
+#include "JavaScriptCore/SourceProvider.h"
+#include "JavaScriptCore/StackFrame.h"
+#include "JavaScriptCore/UnlinkedFunctionExecutable.h"
 #include "wtf/Assertions.h"
 #include "wtf/text/OrdinalNumber.h"
 
 namespace Bun {
 using namespace JSC;
+
+SourceCode defaultClassConstructorClassSource(ScriptExecutable* executable)
+{
+    auto* function = dynamicDowncast<FunctionExecutable>(executable);
+    if (!function || !function->unlinkedExecutable()->isBuiltinDefaultClassConstructor())
+        return {};
+    return function->classSource();
+}
+
+static bool isLineTerminator(char16_t c)
+{
+    return c == '\n' || c == '\r' || c == 0x2028 || c == 0x2029;
+}
+
+ZigStackFramePosition classSourceStartPosition(const SourceCode& classSource)
+{
+    auto* provider = classSource.provider();
+    int start = classSource.startOffset();
+    WTF::StringView source = provider->source();
+    // node:vm lineOffset/columnOffset: JSC applies them (the column to the first line only) but clamps negative ones away; V8 does not.
+    TextPosition providerStart = provider->startPosition();
+
+    int line = classSource.firstLine().zeroBasedInt() + std::min(providerStart.m_line.zeroBasedInt(), 0);
+
+    // startColumn() is only a fallback: on the first line of a lazily parsed function it counts from the function.
+    int column = classSource.startColumn().zeroBasedInt();
+    if (static_cast<unsigned>(start) <= source.length()) {
+        int lineStart = start;
+        while (lineStart > 0 && !isLineTerminator(source[lineStart - 1]))
+            lineStart--;
+        column = start - lineStart;
+        if (lineStart == 0)
+            column += providerStart.m_column.zeroBasedInt();
+    }
+
+    return ZigStackFramePosition {
+        .line_zero_based = line,
+        .column_zero_based = column,
+        .byte_position = start,
+    };
+}
+
+LineColumn computeLineAndColumn(const StackFrame& frame)
+{
+    auto* codeBlock = frame.codeBlock();
+    auto classSource = codeBlock ? defaultClassConstructorClassSource(codeBlock->ownerExecutable()) : SourceCode();
+    if (!classSource.isNull()) {
+        auto position = classSourceStartPosition(classSource);
+        return LineColumn {
+            .line = static_cast<unsigned>(position.line().oneBasedInt()),
+            .column = static_cast<unsigned>(position.column().oneBasedInt()),
+        };
+    }
+    return frame.computeLineAndColumn();
+}
 
 /// Adjust a `ZigStackFramePosition` by a number of bytes. This accounts for when the adjustment
 /// crosses line boundaries, and thus requires the source code in order to properly compute
@@ -64,6 +122,10 @@ void adjustPositionBackwards(ZigStackFramePosition& pos, int amount, CodeBlock* 
 
 ZigStackFramePosition getAdjustedPositionForBytecode(JSC::CodeBlock* code, JSC::BytecodeIndex bc)
 {
+    auto classSource = defaultClassConstructorClassSource(code->ownerExecutable());
+    if (!classSource.isNull())
+        return classSourceStartPosition(classSource);
+
     auto expr = code->expressionInfoForBytecodeIndex(bc);
 
     ZigStackFramePosition pos {

@@ -135,7 +135,9 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
     if (!code)
         return;
 
-    auto* provider = code->source().provider();
+    // Same source getAdjustedPositionForBytecode() positions the frame in.
+    auto classSource = Bun::defaultClassConstructorClassSource(code->ownerExecutable());
+    auto* provider = classSource.isNull() ? code->source().provider() : classSource.provider();
     if (!provider) [[unlikely]]
         return;
     // Make sure the range is valid:
@@ -146,7 +148,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 
     if (!stackFrame.hasBytecodeIndex()) {
         if (stackFrame.hasLineAndColumnInfo()) {
-            auto lineColumn = stackFrame.computeLineAndColumn();
+            auto lineColumn = Bun::computeLineAndColumn(stackFrame);
             position.line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
             position.column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
         }

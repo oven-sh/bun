@@ -166,4 +166,43 @@ console.log(JSON.stringify({ success: result.success, logs: result.logs.map(log 
     const result = await bundleInChild("@supports (c:d){".repeat(600) + "a{c:d}" + "}".repeat(600));
     expect(result).toEqual({ success: false, logs: [NESTING_LIMIT_ERROR] });
   });
+
+  // The depths above are far past the point where the stack check starts
+  // firing. The check also has to leave room for everything parsed below the
+  // last block it lets through (a whole declaration), so the fixture finds the
+  // depth at which this build starts rejecting and then tries every single
+  // depth around it.
+  test.concurrent("every depth around the point where the stack runs out parses or is rejected", async () => {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), path.join(import.meta.dir, "nesting-depth-stack-fixture.ts")],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toMatchObject({
+      stdout: expect.stringMatching(/^\{/),
+      exitCode: 0,
+    });
+    const { firstRejectedDepth, parsedDepths, rejectedDepths } = JSON.parse(stdout) as {
+      firstRejectedDepth: number | null;
+      parsedDepths: number[];
+      rejectedDepths: number[];
+    };
+    if (firstRejectedDepth === null) {
+      // Every depth up to the nesting limit fit on this build's stack
+      // (release-sized frames), so there was no edge to probe.
+      expect({ parsedDepths, rejectedDepths }).toEqual({ parsedDepths: [], rejectedDepths: [] });
+      return;
+    }
+    // Once the stack has run out at some depth it stays run out: the probed
+    // depths split into the shallow ones that parsed and the deep ones that
+    // were rejected.
+    const probed = [...parsedDepths, ...rejectedDepths].sort((a, b) => a - b);
+    expect(rejectedDepths).not.toBeEmpty();
+    expect({ parsedDepths, rejectedDepths }).toEqual({
+      parsedDepths: probed.slice(0, parsedDepths.length),
+      rejectedDepths: probed.slice(parsedDepths.length),
+    });
+  });
 });

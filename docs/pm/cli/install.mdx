@@ -602,6 +602,7 @@ Bun copies the following pnpm configuration into the root `package.json`:
 - **Workspace Overrides**: Copied from `overrides` and `patchedDependencies` in `pnpm-workspace.yaml` to the same root-level fields
 
 Bun leaves the `pnpm` field of `package.json` as it is. pnpm reads its configuration from that field and ignores the root-level fields, so `pnpm install --frozen-lockfile` keeps working for teammates who still use pnpm. Bun reads the root-level fields and ignores the `pnpm` field.
+- **Allowed build scripts**: `onlyBuiltDependencies` (from `pnpm-workspace.yaml` or `pnpm.onlyBuiltDependencies` in `package.json`) is added to [`trustedDependencies`](/pm/lifecycle) in `package.json`, so the same packages keep running their lifecycle scripts
 
 ### Requirements and limitations
 

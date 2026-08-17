@@ -442,6 +442,265 @@ describe("url", () => {
     });
   });
 
+  // URL Standard, file host state step 1.1 and path state step 1.3.1: in a file: URL a first path segment of the form
+  // "C|" or "C:" (followed by a slash, "?", "#" or the end) is a Windows drive letter, its "|" becomes ":", and a path
+  // consisting of the drive letter alone is never shortened. The quirk applies whenever the path is empty at that
+  // point, with or without a host. Expected values match Node and the whatwg-url reference implementation.
+  describe("file: Windows drive letter quirk", () => {
+    const parse = (inputs: string[]) =>
+      Object.fromEntries(
+        inputs.map(input => {
+          const url = new URL(input);
+          return [input, { href: url.href, host: url.host, pathname: url.pathname }];
+        }),
+      );
+    const hrefs = (inputs: string[]) => Object.fromEntries(inputs.map(input => [input, new URL(input).href]));
+
+    it("is the whole path when ? or # follows it in the host position", () => {
+      expect(
+        parse(["file://C|?q", "file://C:#f", "file://C|?q#f", "file:\\\\C|?q", "file://C|?", "file://C|"]),
+      ).toEqual({
+        "file://C|?q": { href: "file:///C:?q", host: "", pathname: "/C:" },
+        "file://C:#f": { href: "file:///C:#f", host: "", pathname: "/C:" },
+        "file://C|?q#f": { href: "file:///C:?q#f", host: "", pathname: "/C:" },
+        "file:\\\\C|?q": { href: "file:///C:?q", host: "", pathname: "/C:" },
+        "file://C|?": { href: "file:///C:?", host: "", pathname: "/C:" },
+        "file://C|": { href: "file:///C:", host: "", pathname: "/C:" },
+      });
+      // An explicit slash after the drive letter is a separator as before.
+      expect(
+        hrefs(["file://C|/", "file://C|/?q", "file://C|/x#f", "file://C|\\x", "file://C|/..", "file://C|/D|/x"]),
+      ).toEqual({
+        "file://C|/": "file:///C:/",
+        "file://C|/?q": "file:///C:/?q",
+        "file://C|/x#f": "file:///C:/x#f",
+        "file://C|\\x": "file:///C:/x",
+        "file://C|/..": "file:///C:/",
+        "file://C|/D|/x": "file:///C:/D|/x",
+      });
+    });
+
+    it("is normalized under a host too", () => {
+      expect(
+        parse([
+          "file://host/C|/x",
+          "file://host/C|",
+          "file://host/c|?q",
+          "file://HOST/C|#f",
+          "file://host\\C|\\x",
+          "file://1.2.3.4/C|/x",
+          "file://[::1]/C|/x",
+          "file://host/C|/..",
+          "file://host/C|/x/../..",
+        ]),
+      ).toEqual({
+        "file://host/C|/x": { href: "file://host/C:/x", host: "host", pathname: "/C:/x" },
+        "file://host/C|": { href: "file://host/C:", host: "host", pathname: "/C:" },
+        "file://host/c|?q": { href: "file://host/c:?q", host: "host", pathname: "/c:" },
+        "file://HOST/C|#f": { href: "file://host/C:#f", host: "host", pathname: "/C:" },
+        "file://host\\C|\\x": { href: "file://host/C:/x", host: "host", pathname: "/C:/x" },
+        "file://1.2.3.4/C|/x": { href: "file://1.2.3.4/C:/x", host: "1.2.3.4", pathname: "/C:/x" },
+        "file://[::1]/C|/x": { href: "file://[::1]/C:/x", host: "[::1]", pathname: "/C:/x" },
+        "file://host/C|/..": { href: "file://host/C:/", host: "host", pathname: "/C:/" },
+        "file://host/C|/x/../..": { href: "file://host/C:/", host: "host", pathname: "/C:/" },
+      });
+      // Only an exact drive letter in the first segment of a file: URL.
+      expect(
+        hrefs([
+          "file://host/C:/x",
+          "file://host/C|x",
+          "file://host/C||/x",
+          "file://host/C%7C/x",
+          "file://host/1|/x",
+          "file://host/C|/D|/x",
+          "file://host//C|/x",
+          "file://host/x/C|/y",
+          "file://host?q",
+          "file://host#f",
+          "http://host/C|/x",
+        ]),
+      ).toEqual({
+        "file://host/C:/x": "file://host/C:/x",
+        "file://host/C|x": "file://host/C|x",
+        "file://host/C||/x": "file://host/C||/x",
+        "file://host/C%7C/x": "file://host/C%7C/x",
+        "file://host/1|/x": "file://host/1|/x",
+        "file://host/C|/D|/x": "file://host/C:/D|/x",
+        "file://host//C|/x": "file://host//C|/x",
+        "file://host/x/C|/y": "file://host/x/C|/y",
+        "file://host?q": "file://host/?q",
+        "file://host#f": "file://host/#f",
+        "http://host/C|/x": "http://host/C|/x",
+      });
+    });
+
+    it("serializes the same with a dropped localhost as without a host", () => {
+      expect(
+        parse([
+          "file://localhost/C|/x",
+          "file://localhost/C|",
+          "file://LOCALHOST/C|?q",
+          "file://localhost/C|/..",
+          "file://localhost/C|x",
+          "file://localhost//C|/x",
+        ]),
+      ).toEqual({
+        "file://localhost/C|/x": { href: "file:///C:/x", host: "", pathname: "/C:/x" },
+        "file://localhost/C|": { href: "file:///C:", host: "", pathname: "/C:" },
+        "file://LOCALHOST/C|?q": { href: "file:///C:?q", host: "", pathname: "/C:" },
+        "file://localhost/C|/..": { href: "file:///C:/", host: "", pathname: "/C:/" },
+        "file://localhost/C|x": { href: "file:///C|x", host: "", pathname: "/C|x" },
+        "file://localhost//C|/x": { href: "file:////C|/x", host: "", pathname: "//C|/x" },
+      });
+    });
+
+    it("still applies after dot segments that leave the path empty", () => {
+      expect(
+        hrefs([
+          "file:///./C|",
+          "file:///../C|/x",
+          "file:///a/../C|",
+          "file:///a/b/../../C|?q",
+          "file:///%2e/C|#f",
+          "file:./C|",
+          "file://host/./C|/..",
+          "file://localhost/../C|",
+          "file:///./C|x",
+          "file:///a/./C|",
+          "file:////./C|",
+          "http://host/./C|",
+        ]),
+      ).toEqual({
+        "file:///./C|": "file:///C:",
+        "file:///../C|/x": "file:///C:/x",
+        "file:///a/../C|": "file:///C:",
+        "file:///a/b/../../C|?q": "file:///C:?q",
+        "file:///%2e/C|#f": "file:///C:#f",
+        "file:./C|": "file:///C:",
+        "file://host/./C|/..": "file://host/C:/",
+        "file://localhost/../C|": "file:///C:",
+        "file:///./C|x": "file:///C|x",
+        "file:///a/./C|": "file:///a/C|",
+        "file:////./C|": "file:////C|",
+        "http://host/./C|": "http://host/C|",
+      });
+    });
+
+    it("every serialization above parses back to itself", () => {
+      const inputs = [
+        "file://C|?q",
+        "file://C:#f",
+        "file://C|",
+        "file://C|/..",
+        "file://host/C|/x",
+        "file://host/C|",
+        "file://host/C|?q",
+        "file://host/C|/..",
+        "file://[::1]/C|",
+        "file://localhost/C|/x",
+        "file://localhost/C|",
+        "file://LOCALHOST/C|?q",
+        "file://localhost/C|x",
+        "file://localhost//C|/x",
+        "file:///./C|",
+        "file:///a/../C|/x",
+        "file://host/./C|",
+      ];
+      const roundTrips = inputs.map(input => {
+        const href = new URL(input).href;
+        return [input, href, new URL(href).href];
+      });
+      expect(roundTrips.filter(([, href, reparsed]) => href !== reparsed)).toEqual([]);
+    });
+
+    it("is kept when resolving a relative path against a URL whose path is a drive letter alone", () => {
+      const resolve = (pairs: [string, string][]) =>
+        Object.fromEntries(pairs.map(([input, base]) => [`${input} against ${base}`, new URL(input, base).href]));
+      expect(
+        resolve([
+          ["x", "file:///C:"],
+          ["x", "file://C|"],
+          ["x", "file:///C:?q#f"],
+          ["x/y", "file://host/C|"],
+          ["file:x", "file:///C:"],
+          ["..", "file:///C:"],
+          [".", "file:///C:"],
+          ["../../y", "file://host/C|/a/b"],
+          ["../../C|", "file:///a/b"],
+          ["./C|", "file:///tmp/mock/path"],
+          ["?q", "file:///C:"],
+          ["D|", "file:///C:"],
+          ["D|/z", "file:///C:"],
+          ["/x", "file:///C:"],
+          ["//C|#f", "file://host/dir/file"],
+        ]),
+      ).toEqual({
+        "x against file:///C:": "file:///C:/x",
+        "x against file://C|": "file:///C:/x",
+        "x against file:///C:?q#f": "file:///C:/x",
+        "x/y against file://host/C|": "file://host/C:/x/y",
+        "file:x against file:///C:": "file:///C:/x",
+        ".. against file:///C:": "file:///C:/",
+        ". against file:///C:": "file:///C:/",
+        "../../y against file://host/C|/a/b": "file://host/C:/y",
+        "../../C| against file:///a/b": "file:///C:",
+        "./C| against file:///tmp/mock/path": "file:///tmp/mock/C|",
+        "?q against file:///C:": "file:///C:?q",
+        "D| against file:///C:": "file:///D:",
+        "D|/z against file:///C:": "file:///D:/z",
+        "/x against file:///C:": "file:///C:/x",
+        "//C|#f against file://host/dir/file": "file:///C:#f",
+      });
+      // Any other lone segment is dropped by the relative path, as before.
+      expect(
+        resolve([
+          ["x", "file:///ab:"],
+          ["x", "file:///1:"],
+          ["x", "file:///C"],
+          ["x", "file:///"],
+          ["x", "file://host/a"],
+          ["x", "file:///C:/"],
+          ["x", "file:///C:/a"],
+        ]),
+      ).toEqual({
+        "x against file:///ab:": "file:///x",
+        "x against file:///1:": "file:///x",
+        "x against file:///C": "file:///x",
+        "x against file:///": "file:///x",
+        "x against file://host/a": "file://host/x",
+        "x against file:///C:/": "file:///C:/x",
+        "x against file:///C:/a": "file:///C:/x",
+      });
+    });
+
+    it("applies through the setters, which re-parse the URL", () => {
+      const set = (input: string, property: "pathname" | "host" | "hostname" | "search" | "href", value: string) => {
+        const url = new URL(input);
+        url[property] = value;
+        return url.href;
+      };
+      expect({
+        "file://host/x pathname=/C|/y": set("file://host/x", "pathname", "/C|/y"),
+        "file://host/x pathname=C|": set("file://host/x", "pathname", "C|"),
+        "file:///x pathname=/C|/y": set("file:///x", "pathname", "/C|/y"),
+        "file:///C:/y host=h": set("file:///C:/y", "host", "h"),
+        "file://h/C|/y host=": set("file://h/C|/y", "host", ""),
+        "file://h/C|/y hostname=localhost": set("file://h/C|/y", "hostname", "localhost"),
+        "file://C|?q search=": set("file://C|?q", "search", ""),
+        "http://x href=file://host/C|?q": set("http://x", "href", "file://host/C|?q"),
+      }).toEqual({
+        "file://host/x pathname=/C|/y": "file://host/C:/y",
+        "file://host/x pathname=C|": "file://host/C:",
+        "file:///x pathname=/C|/y": "file:///C:/y",
+        "file:///C:/y host=h": "file://h/C:/y",
+        "file://h/C|/y host=": "file:///C:/y",
+        "file://h/C|/y hostname=localhost": "file:///C:/y",
+        "file://C|?q search=": "file:///C:",
+        "http://x href=file://host/C|?q": "file://host/C:?q",
+      });
+    });
+  });
+
   // Web IDL record conversion interleaves Get with value conversion: mutations made by a
   // value's toString() are observed by the keys that follow it. Node agrees.
   it("URLSearchParams constructed from an object interleaves Get with value conversion", () => {

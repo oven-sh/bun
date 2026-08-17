@@ -27,7 +27,6 @@ using namespace JSC;
 using namespace WebCore;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__drainMicrotasksFromJS);
-extern "C" void Server__setIdleTimeout(EncodedJSValue, EncodedJSValue, JSC::JSGlobalObject*);
 extern "C" EncodedJSValue Server__setAppFlags(JSC::JSGlobalObject*, EncodedJSValue, bool require_host_header, bool use_strict_method_validation, uint8_t lenient_http_flags, bool http_allow_half_open);
 extern "C" EncodedJSValue Server__setOnClientError(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
 extern "C" EncodedJSValue Server__setOnConnection(JSC::JSGlobalObject*, EncodedJSValue, EncodedJSValue);
@@ -801,22 +800,6 @@ extern "C" EncodedJSValue NodeHTTPServer__onRequest_https(
         nodeHttpResponsePtr);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsHTTPSetServerIdleTimeout, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    // This is an internal binding.
-    JSValue serverValue = callFrame->uncheckedArgument(0);
-    JSValue seconds = callFrame->uncheckedArgument(1);
-
-    ASSERT(callFrame->argumentCount() == 2);
-
-    Server__setIdleTimeout(JSValue::encode(serverValue), JSValue::encode(seconds), globalObject);
-
-    return JSValue::encode(jsUndefined());
-}
-
 JSC_DEFINE_HOST_FUNCTION(jsHTTPSetCustomOptions, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = JSC::getVM(globalObject);
@@ -882,10 +865,6 @@ JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
 {
     auto* obj = constructEmptyObject(globalObject);
     VM& vm = globalObject->vm();
-    obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerIdleTimeout"_s)),
-        JSC::JSFunction::create(vm, globalObject, 2, "setServerIdleTimeout"_s, jsHTTPSetServerIdleTimeout, ImplementationVisibility::Public), 0);
-
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setServerCustomOptions"_s)),
         JSC::JSFunction::create(vm, globalObject, 2, "setServerCustomOptions"_s, jsHTTPSetCustomOptions, ImplementationVisibility::Public), 0);

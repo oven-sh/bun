@@ -1180,7 +1180,7 @@ impl BunTest {
             }
 
             let prev_unhandled_count = vm.unhandled_error_counter;
-            global_this.handle_rejected_promises();
+            let _ = global_this.handle_rejected_promises();
             if vm.unhandled_error_counter == prev_unhandled_count {
                 break;
             }

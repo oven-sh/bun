@@ -347,11 +347,8 @@ mod shim {
     use super::*;
 
     #[inline]
-    pub(super) fn response_body_stream(
-        r: &mut Response,
-        g: &JSGlobalObject,
-    ) -> Option<ReadableStream> {
-        r.get_body_readable_stream(g)
+    pub(super) fn response_body_stream(r: &mut Response) -> Option<ReadableStream> {
+        r.get_body_readable_stream()
     }
     #[inline]
     pub(super) fn response_detach_stream(r: &mut Response, g: &JSGlobalObject) {
@@ -635,13 +632,16 @@ where
         }
     }
 
-    fn drain_microtasks(&self) {
+    /// The microtask checkpoint after a synchronously dispatched handler. `Err`: the VM has stopped; the
+    /// caller leaves the request where it is and the stop closes the server's connections.
+    fn drain_microtasks(&self) -> Result<(), bun_jsc::Stopped> {
+        let Some(server) = self.server.get() else {
+            return Ok(());
+        };
         if self.is_async() {
-            return;
+            return Ok(());
         }
-        if let Some(server) = self.server.get() {
-            server.vm().as_mut().drain_microtasks();
-        }
+        server.vm().as_mut().event_loop_mut().drain_microtasks()
     }
 
     pub(crate) fn set_abort_handler(&self) {
@@ -1404,10 +1404,10 @@ where
             }
 
             if let Some(response) = this.response_mut() {
-                if let Some(stream) = shim::response_body_stream(response, global_this) {
+                if let Some(stream) = shim::response_body_stream(response) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
-                    stream.abort(global_this);
+                    crate::dispatch::fold(stream.abort(global_this));
                     any_js_calls.set(true);
                 }
             }
@@ -1442,7 +1442,7 @@ where
         }
         self.response_weakref.with_mut(|w| w.deref());
 
-        self.detach_request_body_producer(global_this);
+        self.detach_request_body_producer();
         self.request_body_readable_stream_ref
             .with_mut(|s| s.deinit());
 
@@ -1923,7 +1923,7 @@ where
         let global_this = this.server().global_this();
 
         if this.is_aborted_or_ended() {
-            stream.cancel(global_this);
+            crate::dispatch::fold(stream.cancel(global_this));
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
             return;
@@ -2021,7 +2021,9 @@ where
             // it returns a Promise when it goes through ReadableStreamDefaultReader
             if let Some(promise) = effective_result.as_any_promise() {
                 stream_log!("returned a promise");
-                this.drain_microtasks();
+                if this.drain_microtasks().is_err() {
+                    return;
+                }
 
                 // `MarkHandled` matters for the Rejected arm: the promise
                 // settled before any reaction was attached, so without the
@@ -2093,7 +2095,7 @@ where
                             .response_body_readable_stream_ref
                             .replace(readable_stream::Strong::default());
                         this.handle_reject_stream(global_this, err);
-                        stream.cancel(global_this);
+                        crate::dispatch::fold(stream.cancel(global_this));
                         readable_ref.deinit();
                     }
                 }
@@ -2116,7 +2118,7 @@ where
                 &mut response_stream.sink.source,
                 global_this,
             );
-            stream.cancel(global_this);
+            crate::dispatch::fold(stream.cancel(global_this));
             let mut readable_ref = this
                 .response_body_readable_stream_ref
                 .replace(readable_stream::Strong::default());
@@ -2138,10 +2140,7 @@ where
             || !(response_stream.sink.wrote == 0 && response_stream.sink.buffer.len() == 0);
 
         if !stream.is_locked(global_this) && !is_in_progress {
-            // TODO: properly propagate exception upwards
-            if let Ok(Some(comparator)) =
-                WebCore::ReadableStream::from_js(stream.value, global_this)
-            {
+            if let Some(comparator) = WebCore::ReadableStream::from_js_direct(stream.value) {
                 if core::mem::discriminant(&comparator.ptr) == core::mem::discriminant(&stream.ptr)
                 {
                     stream_log!("is not locked");
@@ -2169,7 +2168,7 @@ where
             &mut response_stream.sink.source,
             global_this,
         );
-        stream.cancel(global_this);
+        crate::dispatch::fold(stream.cancel(global_this));
         response_stream.sink.mark_done();
         response_stream.sink.finalize();
         this.sink.set(None);
@@ -2263,7 +2262,7 @@ where
             let strong = self
                 .request_body_readable_stream_ref
                 .replace(readable_stream::Strong::default());
-            if let Some(readable) = strong.get(global_this) {
+            if let Some(readable) = strong.get() {
                 readable.value.ensure_still_alive();
                 if let Some(bytes) = readable.ptr.bytes() {
                     let mut err =
@@ -2514,11 +2513,13 @@ where
                 // source's cancel() runs and its resources are released.
                 // SAFETY: sole `&mut Response`; render_metadata's reborrow ended.
                 let response = unsafe { &mut *response_ptr };
-                if let Some(stream) = response.get_body_readable_stream(global_this) {
+                if let Some(stream) = response.get_body_readable_stream() {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     response.detach_readable_stream(global_this);
                     // Unread stream has no reader; `cancel()` would no-op.
-                    stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+                    crate::dispatch::fold(
+                        stream.cancel_with_reason(global_this, JSValue::UNDEFINED),
+                    );
                 }
                 *response.get_body_value() = Body::Value::Used;
                 this.end_without_body(this.should_close_connection());
@@ -2551,9 +2552,7 @@ where
         let ctx = self;
         request_value.ensure_still_alive();
         response_value.ensure_still_alive();
-        ctx.drain_microtasks();
-
-        if ctx.is_aborted_or_ended() {
+        if ctx.drain_microtasks().is_err() || ctx.is_aborted_or_ended() {
             return;
         }
         // if you return a Response object or a Promise<Response>
@@ -2732,7 +2731,7 @@ where
                 // before `detach()` below re-enters JS so any drain callback /
                 // `on_start_buffering` reached from there early-returns.
                 self.flags.set_request_body_paused(false);
-                self.detach_request_body_producer(self.server().global_this());
+                self.detach_request_body_producer();
             }
 
             wrapper.sink.finalize();
@@ -2752,7 +2751,7 @@ where
         // from `&self`.
         let global_this = self.server().global_this();
         if let Some(resp) = self.response_mut() {
-            if let Some(stream) = resp.get_body_readable_stream(global_this) {
+            if let Some(stream) = resp.get_body_readable_stream() {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
 
@@ -2827,7 +2826,7 @@ where
             if ended_response {
                 // `resp` may be freed; the sink already resumed it. Clear before JS below.
                 self.flags.set_request_body_paused(false);
-                self.detach_request_body_producer(global_this);
+                self.detach_request_body_producer();
             }
             if let Some(prom) = wrapper.sink.pending_flush.take() {
                 // The promise value was protected when pending_flush was
@@ -2855,7 +2854,7 @@ where
         if let Some(resp) = self.response_mut() {
             // NOTE: the body value is read after the stream calls (the check
             // observes the post-detach state).
-            if let Some(stream) = resp.get_body_readable_stream(global_this) {
+            if let Some(stream) = resp.get_body_readable_stream() {
                 stream.value.ensure_still_alive();
                 resp.detach_readable_stream(global_this);
                 stream.done(global_this);
@@ -2954,7 +2953,9 @@ where
         // SAFETY: `value` is the live body slot of the response being rendered.
         let value = unsafe { &mut *value };
         let this = self;
-        this.drain_microtasks();
+        if this.drain_microtasks().is_err() {
+            return;
+        }
 
         // If a ReadableStream can trivially be converted to a Blob, do so.
         // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
@@ -2999,7 +3000,7 @@ where
                     return;
                 }
                 let readable_stream: Option<WebCore::ReadableStream> = 'brk: {
-                    if let Some(stream) = lock.readable.get(global_this) {
+                    if let Some(stream) = lock.readable.get() {
                         // we hold the stream alive until we're done with it
                         // NOTE: `Strong` is move-only — take() transfers ownership.
                         this.response_body_readable_stream_ref
@@ -3364,10 +3365,9 @@ where
         if self.is_aborted_or_ended() {
             return;
         }
-        let global_this = self.server().global_this();
         let (value, owned_readable) = {
             let response: &mut Response = self.response_mut().unwrap();
-            let owned_readable = response.get_body_readable_stream(global_this);
+            let owned_readable = response.get_body_readable_stream();
             (
                 std::ptr::from_mut(response.get_body_value()),
                 owned_readable,
@@ -3599,6 +3599,13 @@ where
         jsc::mark_binding!();
         let Some(resp) = self.resp.get() else { return };
         if resp.has_responded() {
+            return;
+        }
+        // The VM has stopped (the handler "threw" its termination): no error handler, no error page;
+        // the stop closes the server's connections.
+        if let Some(server) = self.server.get()
+            && !server.vm().script_allowed()
+        {
             return;
         }
 
@@ -3903,7 +3910,7 @@ where
         // After the user does request.body,
         // if they then do .text(), .arrayBuffer(), etc
         // we can no longer hold the strong reference from the body value ref.
-        let readable = this.request_body_readable_stream_ref.get().get(global_this);
+        let readable = this.request_body_readable_stream_ref.get().get();
         if let Some(readable) = readable {
             debug_assert!(this.request_body_buf.get().is_empty());
 
@@ -4146,8 +4153,8 @@ where
     }
 
     /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
-    fn detach_request_body_producer(&self, global_this: &JSGlobalObject) {
-        let Some(readable) = self.request_body_readable_stream_ref.get().get(global_this) else {
+    fn detach_request_body_producer(&self) {
+        let Some(readable) = self.request_body_readable_stream_ref.get().get() else {
             return;
         };
         if let Some(bytes) = readable.ptr.bytes() {

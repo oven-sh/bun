@@ -29,23 +29,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
-// stream's controller slot in their finally step, so a tee reaction queued before that
-// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
-static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
-{
-    if (branch->m_controllerKind != ControllerKind::Default)
-        return nullptr;
-    return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
-}
-
-static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
-{
-    if (branch->m_controllerKind != ControllerKind::Byte)
-        return nullptr;
-    return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
-}
-
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
 static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)

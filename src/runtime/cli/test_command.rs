@@ -3366,7 +3366,7 @@ impl TestCommand {
                     vm.event_loop_ref().tick();
 
                     while prev_unhandled_count < vm.unhandled_error_counter {
-                        vm.global().handle_rejected_promises();
+                        let _ = vm.global().handle_rejected_promises();
                         prev_unhandled_count = vm.unhandled_error_counter;
                     }
                 }
@@ -3385,7 +3385,7 @@ impl TestCommand {
                 drop(buntest_strong);
             }
 
-            vm.global().handle_rejected_promises();
+            let _ = vm.global().handle_rejected_promises();
 
             if Output::is_github_action() && reporter.worker_ipc_file_idx.is_none() {
                 pretty_errorln!("<r>\n::endgroup::\n");

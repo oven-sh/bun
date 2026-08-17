@@ -1717,3 +1717,22 @@ test("a module whose evaluation times out is errored", async () => {
   );
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// A vm timeout that lands while a host function beneath the timed script is spinning a nested event-loop
+// wait (expect().resolves ticks the loop until its promise settles) must unwind to the run and surface as
+// ERR_SCRIPT_EXECUTION_TIMEOUT; the nested wait used to keep ticking over the pending termination (a hang).
+test("timeout during a nested event-loop wait beneath the script", () => {
+  const never = new Promise(() => {});
+  const iv = setInterval(() => {}, 1);
+  const t0 = Date.now();
+  let code: string | undefined;
+  try {
+    runInNewContext(`expect(never).resolves.toBe(1)`, { expect, never }, { timeout: 100 });
+  } catch (e: any) {
+    code = e?.code ?? String(e);
+  } finally {
+    clearInterval(iv);
+  }
+  expect(code).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT");
+  expect(Date.now() - t0).toBeLessThan(5000);
+});

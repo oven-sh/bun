@@ -81,11 +81,11 @@ pub(crate) fn record_migrated_root(manager: &mut PackageManager) {
 
 /// `bun pm migrate` and `bun pm trust` save the lockfile without consulting `--dry-run` / `--no-save`, so the
 /// package.json that belongs with it is written the same way instead of through `flush`, which those flags disable.
+/// The lockfile is already on disk at this point, so a package.json that cannot be written (a read-only checkout)
+/// is reported and left as it was rather than failing the command.
 pub fn write_migrated_root(manager: &mut PackageManager) {
     if let Some(root) = take_migrated_root(manager) {
-        if !write_target(manager, &root) {
-            Global::exit(1);
-        }
+        let _ = write_target(manager, &root);
     }
 }
 

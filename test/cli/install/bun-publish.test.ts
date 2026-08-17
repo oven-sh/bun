@@ -13,6 +13,7 @@ import {
   tempDir,
   tls,
   tmpdirSync,
+  unprivilegedSpawnOptions,
 } from "harness";
 import { delimiter, join } from "path";
 
@@ -1151,6 +1152,31 @@ describe("--dry-run", async () => {
     expect(out).not.toContain("someuser");
     expect(out).not.toContain("hunter2");
     expect(err).not.toContain("hunter2");
+    expect(exitCode).toBe(0);
+  });
+  // publish only reads package.json, so a file that is readable but not writable (a
+  // read-only checkout, a file owned by another user) must not stop it.
+  test.skipIf(isWindows)("read-only package.json", async () => {
+    using dir = tempDir("publish-read-only", {
+      "package.json": JSON.stringify({ name: "dry-run-read-only", version: "4.4.4" }),
+      "index.js": "",
+    });
+    chmodSync(join(String(dir), "package.json"), 0o444);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+    await using proc = spawn({
+      cmd: [bunExe(), "publish", "--dry-run"],
+      cwd: String(dir),
+      // Credentials in the URL satisfy the auth check; --dry-run stops before any request.
+      env: { ...env, npm_config_registry: "http://someuser:hunter2@127.0.0.1:1/" },
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(err).toBe("");
+    expect(out).toContain(" + dry-run-read-only@4.4.4 (dry-run)");
     expect(exitCode).toBe(0);
   });
 });

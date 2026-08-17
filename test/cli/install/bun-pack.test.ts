@@ -2,7 +2,7 @@ import { file, gunzipSync, spawn, write } from "bun";
 import { readTarball } from "bun:internal-for-testing";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { chmod, exists, lstat, mkdir, rm, symlink } from "fs/promises";
-import { MAX_PATH_BYTES, bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync } from "harness";
+import { MAX_PATH_BYTES, bunEnv, bunExe, isLinux, isWindows, pack, runBunInstall, tempDir, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import fs from "node:fs/promises";
 import { join } from "path";
 
@@ -65,6 +65,35 @@ test("the archive is not padded to a full tar record", async () => {
   const tar = gunzipSync(await file(join(packageDir, "pack-unpadded-1.0.0.tgz")).bytes());
   // header + data for each of the two entries, then the two end-of-archive blocks
   expect(tar.byteLength).toBe(6 * 512);
+});
+
+// pack only reads package.json, so a file that is readable but not writable (a read-only
+// checkout, a file owned by another user) must not stop it.
+test.skipIf(isWindows)("read-only package.json", async () => {
+  using dir = tempDir("pack-read-only", {
+    "package.json": JSON.stringify({ name: "pack-read-only", version: "1.2.3" }),
+    "index.js": "console.log('hello ./index.js')",
+  });
+  await fs.chmod(join(String(dir), "package.json"), 0o444);
+  using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+  await using proc = spawn({
+    cmd: [bunExe(), "pm", "pack"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    ...unprivileged,
+  });
+  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(err).toBe("");
+  expect(out).toContain("pack-read-only-1.2.3.tgz");
+  expect(exitCode).toBe(0);
+
+  const tarball = readTarball(join(String(dir), "pack-read-only-1.2.3.tgz"));
+  expect(tarball.entries).toMatchObject([{ "pathname": "package/package.json" }, { "pathname": "package/index.js" }]);
 });
 
 test("in subdirectory", async () => {

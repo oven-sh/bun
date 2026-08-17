@@ -440,6 +440,31 @@ impl TrustCommand {
             Global::crash();
         }
 
+        // Opened before any script runs: package.json is rewritten at the end, and a script
+        // whose trust cannot be recorded must not run.
+        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
+        // (single-threaded startup) and immutable thereafter.
+        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
+        let root_file = match bun_sys::File::openat(
+            bun_sys::Fd::cwd(),
+            root_package_json_path.as_bytes(),
+            bun_sys::O::RDWR | bun_sys::O::CLOEXEC,
+            0,
+        ) {
+            Ok(file) => file,
+            Err(err) => {
+                Output::err(
+                    &err,
+                    "could not open \"{s}\" for writing",
+                    (bstr::BStr::new(root_package_json_path.as_bytes()),),
+                );
+                bun_core::note!(
+                    "bun pm trust adds the packages to trustedDependencies in package.json"
+                );
+                Global::crash();
+            }
+        };
+
         let mut scripts_node: Progress::Node;
         // SAFETY: `pm_raw` singleton; `progress` is owned inline.
         let show_progress = unsafe { (*pm_raw).options.log_level.show_progress() };
@@ -540,20 +565,10 @@ impl TrustCommand {
         // does not touch.
         unsafe { package_json_write_back::write_migrated_root(&mut *pm_raw) };
 
-        // SAFETY: `pm_raw` singleton; this scope takes over the descriptor
-        // (the original `pm.root_package_json_file` is replaced with INVALID so
-        // its eventual drop is a no-op).
-        let root_file = unsafe {
-            let fd = (*pm_raw).root_package_json_file.handle;
-            (*pm_raw).root_package_json_file.handle = bun_core::Fd::INVALID;
-            bun_sys::File::from_fd(fd)
-        };
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
 
-        // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
-        // (single-threaded startup) and immutable thereafter.
         let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+            root_package_json_path.as_bytes(),
             package_json_contents.as_slice(),
         );
 

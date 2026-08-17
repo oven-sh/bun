@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
-import { exists, mkdir, rm, writeFile } from "fs/promises";
-import { bunEnv, bunEnv as env, bunExe, isLinux, isWindows, readdirSorted, tempDir, tls, tmpdirSync } from "harness";
+import { chmod, exists, mkdir, rm, writeFile } from "fs/promises";
+import { bunEnv, bunEnv as env, bunExe, isLinux, isWindows, readdirSorted, tempDir, tls, tmpdirSync, unprivilegedSpawnOptions } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -1491,6 +1491,170 @@ describe.concurrent.skipIf(isWindows)("global directories longer than the path b
 
     expect(stderr).toBe("");
     expect(stdout).toBe(join(dir, "bin") + "\n");
+    expect(exitCode).toBe(0);
+  });
+});
+
+// A package.json that is readable but not writable (a read-only checkout, a file owned by
+// another user) must only stop the commands that actually rewrite it.
+describe.skipIf(isWindows)("read-only package.json", () => {
+  // Nothing here may reach a registry.
+  const offlineEnv = { ...env, npm_config_registry: "http://127.0.0.1:1/" };
+
+  function run(cwd: string, unprivileged: ReturnType<typeof unprivilegedSpawnOptions>, ...args: string[]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), ...args],
+      cwd,
+      env: offlineEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...unprivileged,
+    });
+    return Promise.all([stdout.text(), stderr.text(), exited]);
+  }
+
+  // An installed project whose package.json was made read-only afterwards. `dep` is a
+  // local dependency whose postinstall was blocked, so there is something to trust; `other`
+  // is a local package that is not a dependency yet, so there is something to add.
+  async function installedProject() {
+    const dir = tempDir("pm-read-only-package-json", {
+      "package.json": JSON.stringify({ name: "read-only", version: "1.0.0", dependencies: { dep: "file:./dep" } }),
+      "dep/package.json": JSON.stringify({
+        name: "dep",
+        version: "1.0.0",
+        scripts: { postinstall: "echo ran > ran.txt" },
+      }),
+      "other/package.json": JSON.stringify({ name: "other", version: "1.0.0" }),
+    });
+    const unprivileged = unprivilegedSpawnOptions(String(dir));
+    const project = {
+      dir: String(dir),
+      run: (...args: string[]) => run(String(dir), unprivileged, ...args),
+      [Symbol.dispose]() {
+        unprivileged[Symbol.dispose]();
+        dir[Symbol.dispose]();
+      },
+    };
+    try {
+      const [, err, exitCode] = await project.run("install");
+      expect(err).toContain("Saved lockfile");
+      expect(exitCode).toBe(0);
+      await chmod(join(project.dir, "package.json"), 0o444);
+    } catch (e) {
+      project[Symbol.dispose]();
+      throw e;
+    }
+    return project;
+  }
+
+  test("commands that only read package.json work", async () => {
+    using project = await installedProject();
+
+    const results: { args: string[]; out: string; err: string; exitCode: number }[] = [];
+    for (const args of [["pm", "bin"], ["pm", "ls"], ["pm", "pkg", "get", "name"], ["why", "dep"], ["outdated"]]) {
+      const [out, err, exitCode] = await project.run(...args);
+      results.push({ args, out, err, exitCode });
+    }
+
+    expect(results).toEqual([
+      { args: ["pm", "bin"], out: join(project.dir, "node_modules", ".bin") + "\n", err: "", exitCode: 0 },
+      { args: ["pm", "ls"], out: expect.stringContaining("dep@dep"), err: "", exitCode: 0 },
+      { args: ["pm", "pkg", "get", "name"], out: '"read-only"\n', err: "", exitCode: 0 },
+      { args: ["why", "dep"], out: expect.stringContaining("dep@dep"), err: "", exitCode: 0 },
+      { args: ["outdated"], out: expect.stringMatching(/^bun outdated v/), err: "", exitCode: 0 },
+    ]);
+  });
+
+  test("bun pm trust refuses before running any script", async () => {
+    using project = await installedProject();
+    const packageJson = join(project.dir, "package.json");
+    const lockfile = join(project.dir, "bun.lock");
+    const ranMarker = join(project.dir, "node_modules", "dep", "ran.txt");
+    const lockfileBefore = await Bun.file(lockfile).text();
+
+    {
+      const [out, err, exitCode] = await project.run("pm", "trust", "dep");
+      expect(err).toContain(`EACCES: Permission denied: could not open "${packageJson}" for writing`);
+      expect(out).toBe("");
+      expect(exitCode).toBe(1);
+      expect(await exists(ranMarker)).toBeFalse();
+      expect(await Bun.file(lockfile).text()).toBe(lockfileBefore);
+    }
+
+    // Once package.json is writable again the same command runs the script and records the trust.
+    await chmod(packageJson, 0o644);
+    {
+      const [out, err, exitCode] = await project.run("pm", "trust", "dep");
+      expect(err).not.toContain("error");
+      expect(out).toContain("1 script ran across 1 package");
+      expect(exitCode).toBe(0);
+      expect(await exists(ranMarker)).toBeTrue();
+      expect(await Bun.file(packageJson).json()).toMatchObject({ trustedDependencies: ["dep"] });
+      expect(await Bun.file(lockfile).text()).toContain("trustedDependencies");
+    }
+  });
+
+  test("commands that rewrite package.json still refuse up front", async () => {
+    using project = await installedProject();
+
+    const results: { args: string[]; out: string; err: string; exitCode: number }[] = [];
+    for (const args of [["add", "./other"], ["remove", "dep"], ["update"]]) {
+      const [out, err, exitCode] = await project.run(...args);
+      results.push({ args, out, err, exitCode });
+    }
+
+    const refused = {
+      out: "",
+      err: expect.stringContaining(
+        `EACCES: Permission denied while opening "${join(project.dir, "package.json")}"\nnote: package.json must be writable`,
+      ),
+      exitCode: 1,
+    };
+    expect(results).toEqual([
+      { args: ["add", "./other"], ...refused },
+      { args: ["remove", "dep"], ...refused },
+      { args: ["update"], ...refused },
+    ]);
+  });
+
+  // --dry-run and --no-save turn the same commands into readers of package.json.
+  test("--dry-run and --no-save do not need a writable package.json", async () => {
+    using project = await installedProject();
+    const packageJson = join(project.dir, "package.json");
+    const packageJsonBefore = await Bun.file(packageJson).text();
+
+    const results: { args: string[]; err: string; exitCode: number }[] = [];
+    for (const args of [
+      ["add", "./other", "--dry-run"],
+      ["remove", "dep", "--dry-run"],
+      ["update", "--dry-run"],
+      ["add", "./other", "--no-save"],
+    ]) {
+      const [, err, exitCode] = await project.run(...args);
+      results.push({ args, err, exitCode });
+    }
+
+    expect(results).toEqual([
+      { args: ["add", "./other", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["remove", "dep", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["update", "--dry-run"], err: "", exitCode: 0 },
+      { args: ["add", "./other", "--no-save"], err: "", exitCode: 0 },
+    ]);
+    expect(await Bun.file(packageJson).text()).toBe(packageJsonBefore);
+  });
+
+  test("a read-only root package.json is still found from a workspace member", async () => {
+    using dir = tempDir("pm-read-only-workspace-root", {
+      "package.json": JSON.stringify({ name: "root", workspaces: ["packages/*"] }),
+      "packages/member/package.json": JSON.stringify({ name: "member", version: "1.0.0" }),
+    });
+    await chmod(join(String(dir), "package.json"), 0o444);
+    using unprivileged = unprivilegedSpawnOptions(String(dir));
+
+    const [out, err, exitCode] = await run(join(String(dir), "packages", "member"), unprivileged, "pm", "bin");
+
+    expect(err).toBe("");
+    expect(out).toBe(join(String(dir), "node_modules", ".bin") + "\n");
     expect(exitCode).toBe(0);
   });
 });

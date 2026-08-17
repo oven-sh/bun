@@ -139,20 +139,17 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
         tarball_path: &[u8],
     ) -> Result<Context<'a, DIRECTORY_PUBLISH>, FromTarballError> {
         let mut abs_buf = PathBuffer::uninit();
-        let Some(abs_tarball_path) = join_abs_string_buf_checked::<path::platform::Auto>(
+        let abs_tarball_path = join_abs_string_buf_checked::<path::platform::Auto>(
             original_cwd,
             &mut abs_buf,
             &[tarball_path],
-        ) else {
-            Output::err(
-                bun_sys::Error::from_code(bun_sys::E::ENAMETOOLONG, bun_sys::Tag::open),
-                "failed to read tarball: '{}'",
-                (bstr::BStr::new(tarball_path),),
-            );
-            Global::crash();
-        };
+        )
+        .ok_or(bun_sys::Error::from_code(
+            bun_sys::E::ENAMETOOLONG,
+            bun_sys::Tag::open,
+        ));
 
-        let tarball_bytes = match File::read_from(Fd::cwd(), abs_tarball_path) {
+        let tarball_bytes = match abs_tarball_path.and_then(|p| File::read_from(Fd::cwd(), p)) {
             Ok(b) => b,
             Err(e) => {
                 Output::err(

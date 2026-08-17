@@ -13,9 +13,6 @@
 "defaulted_failure:src/install/npm.rs" = 1
 "interchangeable_aliases:src/install/lockfile/Tree.rs" = 1
 
-[bun_js_parser]
-"same_match_twice:src/js_parser/p.rs" = 3
-
 [bun_js_printer]
 "parallel_vecs:src/js_printer/lib.rs" = 1
 
@@ -45,7 +42,6 @@
 "unchecked_construction:src/runtime/api/js_bundle_completion_task.rs" = 1
 "unchecked_construction:src/runtime/cli/pack_command.rs" = 2
 "unchecked_construction:src/runtime/server/HTMLBundle.rs" = 2
-"unchecked_construction:src/runtime/server/mod.rs" = 1
 "unchecked_construction:src/runtime/server/server_body.rs" = 5
 
 [bun_sql_jsc]

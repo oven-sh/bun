@@ -1065,7 +1065,11 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
   test("hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side", async () => {
     const deep = "export const f = " + "() => ".repeat(300) + "1;\n";
     const chain =
-      "var s = " + Array.from({ length: 20000 }, (_, i) => `a${i}`).join(" + ") + ";\nf()" + Buffer.alloc(20000 * 4, ",g()").toString() + ";\n";
+      "var s = " +
+      Array.from({ length: 20000 }, (_, i) => `a${i}`).join(" + ") +
+      ";\nf()" +
+      Buffer.alloc(20000 * 4, ",g()").toString() +
+      ";\n";
     const { text, exitCode } = await pretty({
       "a/deep.js": deep,
       "b/deep.js": deep.replace("1;", "2;"),
@@ -1104,9 +1108,9 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(notes).toStrictEqual([
       "  ▲ main changed: index.js → dist/index.js",
       "  ▲ types removed",
-      "  ▲ bin added: { \"p\": \"cli.js\" }",
-      "  ▲ exports added: { \".\": \"./dist/index.js\" }",
-      "  ▲ engines changed: { \"node\": \">=14\" } → { \"node\": \">=18\" }",
+      '  ▲ bin added: { "p": "cli.js" }',
+      '  ▲ exports added: { ".": "./dist/index.js" }',
+      '  ▲ engines changed: { "node": ">=14" } → { "node": ">=18" }',
       "  ▲ license changed: MIT → SSPL-1.0",
     ]);
     expect(exitCode).toBe(0);

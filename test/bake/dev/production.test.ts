@@ -590,6 +590,84 @@ export default function Client() {
     expect(htmlContent).toContain("Hello World");
   });
 
+  test("namespace import, export * as and require() of a client component", async () => {
+    // Namespace/require() forms need the generated proxy module's exports_ref and wrapper_ref.
+    const dir = await tempDirWithBakeDeps("bake-production-client-namespace", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "components/Client.tsx": `"use client";
+
+export function Client() {
+  return <b>client</b>;
+}
+
+export const value = 1;`,
+      "lib/reexport.ts": `export * as ns from "../components/Client";`,
+      "pages/index.tsx": `import * as C from "../components/Client";
+
+export default function NamespacePage() {
+  return (
+    <div>
+      <C.Client />
+      <i>{Object.keys(C).sort().join(",")}</i>
+    </div>
+  );
+}`,
+      "pages/reexport.tsx": `import { ns } from "../lib/reexport";
+
+export default function ReexportPage() {
+  return <i>{Object.keys(ns).sort().join(",")}</i>;
+}`,
+      "pages/require.tsx": `export default function RequirePage() {
+  const C = require("../components/Client");
+  return <i>{Object.keys(C).sort().join(",") + " " + typeof C.Client}</i>;
+}`,
+      "pages/manifest.tsx": `import * as bake from "bun:bake/server";
+
+export default function ManifestPage() {
+  return <i>{Object.keys(bake).sort().join(",")}</i>;
+}`,
+      "pages/manifest-require.tsx": `export default function ManifestRequirePage() {
+  const bake = require("bun:bake/server");
+  return <i>{Object.keys(bake).sort().join(",") + " " + typeof bake.serverManifest}</i>;
+}`,
+      "package.json": JSON.stringify({
+        "name": "test-app",
+        "version": "1.0.0",
+        "devDependencies": {
+          "react": "^18.0.0",
+          "react-dom": "^18.0.0",
+        },
+      }),
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(exitCode, stderr.toString()).toBe(0);
+
+    const namespaceHtml = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    expect(namespaceHtml).toContain("<b>client</b>");
+
+    const rendered = async (page: string) => {
+      const html = await Bun.file(path.join(dir, "dist", page, "index.html")).text();
+      return html.match(/<i>(.*?)<\/i>/)?.[1];
+    };
+    expect({
+      namespace: await rendered("."),
+      reexport: await rendered("reexport"),
+      require: await rendered("require"),
+      manifest: await rendered("manifest"),
+      manifestRequire: await rendered("manifest-require"),
+    }).toStrictEqual({
+      namespace: "Client,value",
+      reexport: "Client,value",
+      require: "Client,value function",
+      manifest: "serverManifest,ssrManifest",
+      manifestRequire: "serverManifest,ssrManifest object",
+    });
+  });
+
   test("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

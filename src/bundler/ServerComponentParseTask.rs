@@ -187,11 +187,7 @@ fn task_callback(
         // Client-side,
         Data::ClientEntryWrapper(_) => Target::Browser,
     };
-    let hmr_api_ref = ab.hmr_api_ref;
-    let mut bundled_ast: JSAst = ab.to_bundled_ast(target)?;
-
-    // `wrapper_ref` is used to hold the HMR api ref.
-    bundled_ast.wrapper_ref = hmr_api_ref;
+    let bundled_ast: JSAst = ab.to_bundled_ast(target)?;
 
     Ok(Success {
         ast: bundled_ast,

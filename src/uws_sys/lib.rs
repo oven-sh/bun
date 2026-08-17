@@ -379,26 +379,22 @@ impl WindowsNamedPipe {
 pub mod error;
 
 /// uSockets calls that dispatch a socket's callbacks synchronously (`close` → `on_close` / `on_connect_error`)
-/// enter script whenever a JS VM drives this thread's loop, so they return [`js::JsResult`]. The exception check
-/// is bun_jsc's; it reaches this lower tier through the same §Dispatch hooks-table mechanism as
-/// `__BUN_RUNTIME_HOOKS` (a `#[no_mangle]` static the higher tier defines, link-time resolved).
+/// enter script whenever a JS VM drives this thread's loop, so they return [`js::JsResult`]. The check itself
+/// lives in bun_jsc (this crate cannot depend on it) and is reached by link-time dispatch, like the
+/// `UpgradedDuplex__*` shims above.
 pub mod js {
     pub use bun_core::JsError;
     pub type JsResult<T> = core::result::Result<T, JsError>;
 
-    pub struct JsHooks {
-        /// Runs `f` under an exception scope on this thread's VM and returns what it left pending; on a thread
-        /// with no VM just runs it. Defined by `bun_jsc::host_fn::__BUN_UWS_JS_HOOKS`.
-        pub run_checked: fn(f: &mut dyn FnMut()) -> JsResult<()>,
-    }
-
     unsafe extern "Rust" {
-        safe static __BUN_UWS_JS_HOOKS: JsHooks;
+        /// Defined in `bun_jsc::host_fn`: runs `f` under an exception scope on this thread's VM and returns
+        /// what it left; on a thread with no VM just runs it.
+        safe fn Bun__uws__runChecked(f: &mut dyn FnMut()) -> JsResult<()>;
     }
 
     #[inline]
     pub fn checked(mut f: impl FnMut()) -> JsResult<()> {
-        (__BUN_UWS_JS_HOOKS.run_checked)(&mut f)
+        Bun__uws__runChecked(&mut f)
     }
 }
 pub use error::{Error, Result};

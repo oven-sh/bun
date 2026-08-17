@@ -14,6 +14,7 @@ import {
   runBunInstall,
   tempDir,
   textLockfile,
+  tls,
   toBeValidBin,
   toBeWorkspaceLink,
   toHaveBins,
@@ -853,6 +854,127 @@ describe.concurrent("bun-install", () => {
     });
     expect(stdout).toContain("2 packages installed");
     expect(exitCode).toBe(0);
+  });
+
+  // Registries such as Nexus and Artifactory answer manifest and tarball
+  // requests with a redirect to the same host on another scheme or port
+  // (https://github.com/oven-sh/bun/issues/15516). Like npm, bun keeps the
+  // token across such a redirect; it drops it once the redirect leaves the
+  // registry's hostname, and (unlike npm) when it downgrades https to http.
+  describe("registry token across redirects", () => {
+    const token = "secret-registry-token";
+    const tgz = join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz");
+    const integrity = "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==";
+    const manifestPath = "/no-deps";
+    const tarballPath = "/no-deps/-/no-deps-1.0.0.tgz";
+
+    // The registry lives on `registry`://127.0.0.1; `target` is the scheme and
+    // hostname it redirects to (the port always differs). https servers use
+    // the harness certificate, which the install trusts via --cafile.
+    it.each([
+      {
+        name: "keeps the token when only the port changes",
+        registry: "http",
+        target: "http://127.0.0.1",
+        authorization: `Bearer ${token}`,
+      },
+      {
+        name: "keeps the token when only the port changes (https registry)",
+        registry: "https",
+        target: "https://127.0.0.1",
+        authorization: `Bearer ${token}`,
+      },
+      {
+        name: "keeps the token when the redirect upgrades http to https",
+        registry: "http",
+        target: "https://127.0.0.1",
+        authorization: `Bearer ${token}`,
+      },
+      {
+        name: "drops the token when the redirect downgrades https to http",
+        registry: "https",
+        target: "http://127.0.0.1",
+        authorization: null,
+      },
+      {
+        // The same machine, but a different hostname than the registry's.
+        name: "drops the token when the hostname changes",
+        registry: "http",
+        target: "http://localhost",
+        authorization: null,
+      },
+    ])("$name", async ({ registry: registryScheme, target, authorization }) => {
+      // `target` serves the manifest and the tarball unconditionally and
+      // records the Authorization header each hop arrived with.
+      const received: { pathname: string; authorization: string | null }[] = [];
+      await using targetServer = Bun.serve({
+        port: 0,
+        ...(target.startsWith("https:") ? tls : {}),
+        fetch(req) {
+          const { pathname } = new URL(req.url);
+          received.push({ pathname, authorization: req.headers.get("authorization") });
+          if (pathname === manifestPath) {
+            // `dist.tarball` points at the registry origin so the tarball
+            // request carries the token in the first place (see the test
+            // above); the registry then redirects it as well.
+            return Response.json({
+              name: "no-deps",
+              "dist-tags": { latest: "1.0.0" },
+              versions: {
+                "1.0.0": {
+                  name: "no-deps",
+                  version: "1.0.0",
+                  dist: { integrity, tarball: `${registryScheme}://127.0.0.1:${registry.port}${tarballPath}` },
+                },
+              },
+            });
+          }
+          if (pathname === tarballPath) return new Response(file(tgz));
+          return new Response("not found", { status: 404 });
+        },
+      });
+      // The registry requires the token and answers every request with a
+      // redirect to the same path on `target`.
+      await using registry = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        ...(registryScheme === "https" ? tls : {}),
+        fetch(req) {
+          if (req.headers.get("authorization") !== `Bearer ${token}`) {
+            return new Response("unauthorized", { status: 401 });
+          }
+          return Response.redirect(`${target}:${targetServer.port}${new URL(req.url).pathname}`, 302);
+        },
+      });
+
+      using dir = tempDir("token-across-redirects", {
+        "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "no-deps": "1.0.0" } }),
+        ".npmrc": [
+          `registry=${registryScheme}://127.0.0.1:${registry.port}/`,
+          `//127.0.0.1:${registry.port}/:_authToken=${token}`,
+          ``,
+        ].join("\n"),
+        "cafile": tls.cert,
+      });
+      await using proc = spawn({
+        cmd: [bunExe(), "install", "--cafile", "cafile"],
+        cwd: String(dir),
+        env: { ...env, BUN_INSTALL_CACHE_DIR: join(String(dir), ".cache") },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+      expect({ stderr, received }).toEqual({
+        stderr: expect.stringContaining("Saved lockfile"),
+        received: [
+          { pathname: manifestPath, authorization },
+          { pathname: tarballPath, authorization },
+        ],
+      });
+      expect(stdout).toContain("1 package installed");
+      expect(exitCode).toBe(0);
+    });
   });
 
   it("--silent suppresses verbose output even when RUNNER_DEBUG is set", async () => {

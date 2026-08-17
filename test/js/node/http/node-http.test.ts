@@ -4155,34 +4155,39 @@ test("https 'clientError' for a connection whose handshake completes after close
   await once(server.listen(0, "127.0.0.1"), "listening");
   const { port } = server.address() as AddressInfo;
   const raw = connect(port, "127.0.0.1");
-  await once(raw, "connect");
-  // Client→server bytes flow; server→client bytes are held, so the server has answered the ClientHello and
-  // is waiting mid-handshake when close() runs.
-  let hold = true;
-  const held: Buffer[] = [];
-  const wire = new Duplex({
-    read() {},
-    write(chunk, enc, cb) {
-      raw.write(chunk, cb);
-    },
-  });
-  raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
-  raw.on("close", () => wire.push(null));
-  const client = tlsConnect({ socket: wire, rejectUnauthorized: false });
-  client.on("error", () => {});
-  for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
-  expect(held.length).toBeGreaterThan(0);
+  let client: ReturnType<typeof tlsConnect> | undefined;
+  try {
+    await once(raw, "connect");
+    // Client→server bytes flow; server→client bytes are held, so the server has answered the ClientHello and
+    // is waiting mid-handshake when close() runs.
+    let hold = true;
+    const held: Buffer[] = [];
+    const wire = new Duplex({
+      read() {},
+      write(chunk, enc, cb) {
+        raw.write(chunk, cb);
+      },
+    });
+    raw.on("data", d => (hold ? held.push(d) : wire.push(d)));
+    raw.on("close", () => wire.push(null));
+    const c = (client = tlsConnect({ socket: wire, rejectUnauthorized: false }));
+    c.on("error", () => {});
+    for (const t = Date.now(); held.length === 0 && Date.now() - t < 10_000; ) await Bun.sleep(5);
+    expect(held.length).toBeGreaterThan(0);
 
-  const closed = new Promise<void>(r => server!.close(() => r()));
-  server = null;
-  Bun.gc(true);
+    const closed = new Promise<void>(r => server!.close(() => r()));
+    server = null;
+    Bun.gc(true);
 
-  hold = false;
-  for (const d of held) wire.push(d);
-  client.write("NOT A VALID REQUEST LINE\r\n\r\n");
-  await new Promise<void>(
-    res => (client.on("data", () => {}), client.on("end", () => res()), client.on("close", () => res())),
-  );
-  expect(events).toEqual([expect.stringMatching(/^clientError HPE_INVALID/)]);
-  await closed;
+    hold = false;
+    for (const d of held) wire.push(d);
+    c.write("NOT A VALID REQUEST LINE\r\n\r\n");
+    await new Promise<void>(res => (c.on("data", () => {}), c.on("end", () => res()), c.on("close", () => res())));
+    expect(events).toEqual([expect.stringMatching(/^clientError HPE_INVALID/)]);
+    await closed;
+  } finally {
+    server?.close();
+    client?.destroy();
+    raw.destroy();
+  }
 });

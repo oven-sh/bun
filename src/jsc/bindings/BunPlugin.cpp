@@ -590,6 +590,27 @@ static JSC::JSValue unwrapESModuleDefaultForCJS(JSC::JSGlobalObject* globalObjec
     return value;
 }
 
+// Unwrap a chain of synchronously-settled promises: throws the rejection
+// reason, returns the fulfillment value, or returns a still-pending promise
+// as-is so the caller can surface it for the user to await.
+static JSC::JSValue unwrapSynchronouslySettledPromise(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, JSC::JSValue value)
+{
+    while (auto* promise = dynamicDowncast<JSC::JSPromise>(value)) {
+        switch (promise->status()) {
+        case JSC::JSPromise::Status::Rejected:
+            scope.throwException(globalObject, promise->result());
+            return {};
+        case JSC::JSPromise::Status::Fulfilled:
+            value = promise->result();
+            continue;
+        case JSC::JSPromise::Status::Pending:
+            break;
+        }
+        break;
+    }
+    return value;
+}
+
 BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
 extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attribute__((minsize)), (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
@@ -797,22 +818,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
         RETURN_IF_EXCEPTION(scope, {});
 
         if (result && result.isObject()) {
-            while (JSC::JSPromise* promise = dynamicDowncast<JSC::JSPromise>(result)) {
-                switch (promise->status()) {
-                case JSC::JSPromise::Status::Rejected:
-                    result = promise->result();
-                    scope.throwException(globalObject, result);
-                    return {};
-                case JSC::JSPromise::Status::Fulfilled:
-                    result = promise->result();
-                    continue;
-                case JSC::JSPromise::Status::Pending:
-                    // Can't block synchronously here; surface the pending
-                    // promise as-is so the caller can await.
-                    break;
-                }
-                break;
-            }
+            result = unwrapSynchronouslySettledPromise(globalObject, scope, result);
+            RETURN_IF_EXCEPTION(scope, {});
         }
 
         return result;
@@ -967,24 +974,8 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsRequireMock, (JSC::JSGlobalObject 
                 JSObject* result = moduleMock->executeOnce(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
                 if (result) {
-                    // Unwrap any synchronously-settled promise the factory
-                    // returned, matching JSMock__jsModuleMock's handling.
-                    JSValue resultValue = JSValue(result);
-                    while (auto* promise = dynamicDowncast<JSC::JSPromise>(resultValue)) {
-                        switch (promise->status()) {
-                        case JSC::JSPromise::Status::Rejected:
-                            scope.throwException(globalObject, promise->result());
-                            return {};
-                        case JSC::JSPromise::Status::Fulfilled:
-                            resultValue = promise->result();
-                            continue;
-                        case JSC::JSPromise::Status::Pending:
-                            // Can't block synchronously here; surface the
-                            // pending promise as-is so the caller can await.
-                            break;
-                        }
-                        break;
-                    }
+                    JSValue resultValue = unwrapSynchronouslySettledPromise(globalObject, scope, JSValue(result));
+                    RETURN_IF_EXCEPTION(scope, {});
                     // Match what `require()` returns for this mock, so the
                     // shape doesn't depend on which call came first.
                     if (!moduleMock->suppressESModuleInterop) {

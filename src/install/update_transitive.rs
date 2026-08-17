@@ -44,12 +44,16 @@ impl DirectDependencies {
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
+        let name_hashes = lockfile.packages.items_name_hash();
         let mut out = DirectDependencies::default();
         for owner in 0..pkg_res.len() {
-            if !matches!(
-                pkg_res[owner].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            ) {
+            let direct = match pkg_res[owner].tag {
+                ResolutionTag::Root => true,
+                // A member just dropped from `workspaces` keeps its tag until the clean; its rows are gone with it.
+                ResolutionTag::Workspace => lockfile.workspace_paths.contains(&name_hashes[owner]),
+                _ => false,
+            };
+            if !direct {
                 continue;
             }
             let start = out.rows.len();

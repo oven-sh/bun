@@ -2875,14 +2875,16 @@ describe("dependencies on a workspace load from bun.lock the way package.json pa
         write(join(packageDir, "packages", "pkg2", "package.json"), JSON.stringify(pkg2)),
       ]);
 
-      await runBunInstall(env, packageDir);
+      // A peer range the workspace does not satisfy is bound to it anyway, with a warning.
+      const allowWarnings = label.includes("unsatisfied range in peerDependencies");
+      await runBunInstall(env, packageDir, { allowWarnings });
       // parseLockfile loads with this test process's settings (linking on); for the linking-off rows the
       // install below, which reads the fixture's bunfig.toml, is what exercises that setting.
       expect(loadedDependencies(packageDir, "pkg1", declaredAs)).toEqual(loaded);
 
       // nothing changed, so the second install must not report pkg1 as changed
       // ("Workspace package "packages/pkg1" has added 0 dependencies, removed 0 dependencies, and updated 1 dependencies")
-      const { err } = await runBunInstall(env, packageDir, { savesLockfile: false, verbose: true });
+      const { err } = await runBunInstall(env, packageDir, { savesLockfile: false, verbose: true, allowWarnings });
       expect(err).not.toContain('Workspace package "packages/pkg1"');
     });
   }

@@ -1723,18 +1723,18 @@ impl JSValkeyClient {
 
     // Bitmap commands
     cmd_strings_varargs!(bitop, b"bitop", "BITOP", NotSubscriber);
-    cmd_key_varargs!(bitpos, b"bitpos", "BITPOS", "key", NotSubscriber);
-    cmd_key_varargs!(bitfield, b"bitfield", "BITFIELD", "key", NotSubscriber);
+    cmd_strings_varargs!(bitpos, b"bitpos", "BITPOS", NotSubscriber);
+    cmd_strings_varargs!(bitfield, b"bitfield", "BITFIELD", NotSubscriber);
 
     // HyperLogLog commands
-    cmd_key_varargs!(pfcount, b"pfcount", "PFCOUNT", "key", NotSubscriber);
-    cmd_key_varargs!(pfmerge, b"pfmerge", "PFMERGE", "destkey", NotSubscriber);
+    cmd_strings_varargs!(pfcount, b"pfcount", "PFCOUNT", NotSubscriber);
+    cmd_strings_varargs!(pfmerge, b"pfmerge", "PFMERGE", NotSubscriber);
 
     // Geo commands
     cmd_strings_varargs!(geoadd, b"geoadd", "GEOADD", NotSubscriber);
     cmd_strings_varargs!(geodist, b"geodist", "GEODIST", NotSubscriber);
-    cmd_key_varargs!(geohash, b"geohash", "GEOHASH", "key", NotSubscriber);
-    cmd_key_varargs!(geopos, b"geopos", "GEOPOS", "key", NotSubscriber);
+    cmd_strings_varargs!(geohash, b"geohash", "GEOHASH", NotSubscriber);
+    cmd_strings_varargs!(geopos, b"geopos", "GEOPOS", NotSubscriber);
     cmd_strings_varargs!(geosearch, b"geosearch", "GEOSEARCH", NotSubscriber);
     cmd_strings_varargs!(
         geosearchstore,
@@ -1764,7 +1764,7 @@ impl JSValkeyClient {
 
     // Generic key commands
     cmd_strings_varargs!(object, b"object", "OBJECT", NotSubscriber);
-    cmd_key_varargs!(sort, b"sort", "SORT", "key", NotSubscriber);
+    cmd_strings_varargs!(sort, b"sort", "SORT", NotSubscriber);
     cmd_key_value!(
         wait,
         b"wait",
@@ -1782,7 +1782,7 @@ impl JSValkeyClient {
     cmd_strings_varargs!(xrevrange, b"xrevrange", "XREVRANGE", NotSubscriber);
     cmd_strings_varargs!(xread, b"xread", "XREAD", NotSubscriber);
     cmd_strings_varargs!(xreadgroup, b"xreadgroup", "XREADGROUP", NotSubscriber);
-    cmd_key_varargs!(xdel, b"xdel", "XDEL", "key", NotSubscriber);
+    cmd_strings_varargs!(xdel, b"xdel", "XDEL", NotSubscriber);
     cmd_strings_varargs!(xtrim, b"xtrim", "XTRIM", NotSubscriber);
     cmd_strings_varargs!(xack, b"xack", "XACK", NotSubscriber);
     cmd_strings_varargs!(xclaim, b"xclaim", "XCLAIM", NotSubscriber);

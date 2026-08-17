@@ -6386,7 +6386,9 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         const src = "undefined-arg:src:" + randomUUIDv7();
         const dst = "undefined-arg:dst:" + randomUUIDv7();
         const other = "undefined-arg:other:" + randomUUIDv7();
+        const stream = "undefined-arg:stream:" + randomUUIDv7();
         await redis.set(src, "x");
+        const id = (await redis.xadd(stream, "*", "f", "v"))!;
 
         // An interior undefined must not shift the later arguments into its place.
         expect(() => redis.mset(other, undefined as any, "b")).toThrow("string or buffer");
@@ -6394,9 +6396,11 @@ for (const connectionType of [ConnectionType.TLS, ConnectionType.TCP]) {
         // The new commands follow the same rule, optional argument or not.
         expect(() => redis.flushdb(undefined as any)).toThrow("string or buffer");
         expect(() => redis.bitop("AND", dst, undefined as any, src)).toThrow("string or buffer");
+        expect(() => redis.xdel(stream, undefined as any, id)).toThrow("string or buffer");
 
         expect(await redis.mget(other, dst)).toEqual([null, null]);
         expect(await redis.get(src)).toBe("x");
+        expect(await redis.xlen(stream)).toBe(1);
       });
 
       test("FLUSHALL clears all databases", async () => {
@@ -7499,6 +7503,11 @@ describe("RedisClient argument validation", () => {
         () => client.copy("src", undefined as any, "dst"),
         () => client.flushdb(undefined as any),
         () => client.bitop("AND", "dest", undefined as any, "src"),
+        // Commands taking a key followed by more arguments must not skip a hole after the key either.
+        () => client.bitpos("k", undefined as any, 5),
+        () => client.xdel("stream", undefined as any, "0-1"),
+        () => client.pfcount("hll", null as any),
+        () => client.sort("list", null as any, "DESC"),
         () => client.punsubscribe(undefined as any),
         () => client.punsubscribe("news.*", undefined as any),
         () => client.psubscribe(undefined as any),

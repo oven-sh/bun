@@ -779,6 +779,8 @@ enum Semantic {
     FormattingOnly,
     /// Hunks were computed on the canonical re-print (gutter shows original lines when known).
     Normalized,
+    /// JSON / CSS shown as their canonical print (no source map to project through).
+    Reprinted,
     /// `-w`: the bytes differ but not once runs of whitespace are collapsed.
     WhitespaceOnly,
     /// CRLF ↔ LF and nothing else.
@@ -1155,6 +1157,12 @@ fn print_diff(left: &Tree, right: &Tree, flags: DiffFlags) {
             (Some(_), Some(_), Some(_), Some(_)) if style.pretty && reprint_equal => {
                 // JSON / CSS: no source map to project through; an identical re-print is formatting.
                 change.semantic = Semantic::FormattingOnly;
+            }
+            (Some(_), Some(_), Some(no), Some(nn)) if style.pretty => {
+                // JSON / CSS with a real change: the canonical prints are what is compared and shown, so a
+                // reformat around one edit is one edit.
+                change.semantic = Semantic::Reprinted;
+                unified_hunks(&no.text, &nn.text, flags.context, style, &mut change);
             }
             (None, Some(n), _, _) => change.added = count_lines(n),
             (Some(o), None, _, _) => change.removed = count_lines(o),
@@ -2204,6 +2212,7 @@ impl Style {
             Semantic::ModeOnly => "",
             Semantic::Projected => "",
             Semantic::Normalized => "\x1b[35munminified\x1b[0m ",
+            Semantic::Reprinted => "\x1b[2mnormalized\x1b[0m ",
         };
         let mut badge = match (c.old, c.new, c.binary) {
             _ if matches!(

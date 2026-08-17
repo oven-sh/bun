@@ -945,3 +945,255 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
     expect(mixed.exitCode).toBe(0);
   });
 });
+
+// The pieces underneath the terminal view — name-free symbol matching, the alignment fallbacks, key→display map
+// composition, per-language fallbacks, size limits, callouts — each driven through the CLI on synthetic packages.
+describe.concurrent("bun pm diff (engine invariants)", () => {
+  async function pretty(files: Record<string, any>, args: string[] = [], env: Record<string, string> = {}) {
+    using dir = tempDir("pm-diff-eng", files);
+    await using p = Bun.spawn({
+      cmd: [bunExe(), "pm", "diff", "./a", "./b", ...args],
+      cwd: String(dir),
+      env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "120", ...env },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [raw, stderr, exitCode] = await Promise.all([p.stdout.text(), p.stderr.text(), p.exited]);
+    return { raw, text: raw.replace(/\x1b\[[0-9;]*[mK]/g, ""), stderr, exitCode };
+  }
+  const changed = (text: string) =>
+    text
+      .split("\n")
+      .filter(l => /^ +[\d:]+ │[-+~] /.test(l))
+      .map(l => l.replace(/^ +[\d:]+ │/, ""));
+
+  test("locals are matched by how they are used, not by what they are called", async () => {
+    // The two names swap: name-based matching would pair reader↔reader and light up every use; use profiles pair
+    // them correctly, so nothing changed.
+    const a = [
+      "const reader = { read() { return 1; } };",
+      "const writer = { write(x) { return x; } };",
+      "export function run(v) { return writer.write(reader.read() + v); }",
+      "",
+    ].join("\n");
+    const b = [
+      "const writer = { read() { return 1; } };",
+      "const reader = { write(x) { return x; } };",
+      "export function run(v) { return reader.write(writer.read() + v); }",
+      "",
+    ].join("\n");
+    const same = await pretty({ "a/m.js": a, "b/m.js": b });
+    expect(same.text).toMatch(/\nm\.js ─+ formatting only\n/);
+    // A wrong pairing may only add noise, never hide a change: the real edit is always shown.
+    const edited = await pretty({ "a/m.js": a, "b/m.js": b.replace("writer.read() + v", "writer.read() - v") });
+    expect(changed(edited.text).some(l => l.startsWith("+") && l.includes("writer.read() - v"))).toBe(true);
+    expect(changed(edited.text).some(l => l.startsWith("-") && l.includes("reader.read() + v"))).toBe(true);
+    expect(edited.exitCode).toBe(0);
+  });
+
+  test("a scope too big for the LCS table takes the windowed path and still folds a consistent rename", async () => {
+    // 2100 × 2100 candidate cells > the 4M-cell table cap.
+    const n = 2100;
+    const mk = (prefix: string) =>
+      Array.from({ length: n }, (_, i) => `function ${prefix}${i}(x) { return x + ${i}; }`).join("\n") +
+      `\nmodule.exports = [${Array.from({ length: n }, (_, i) => `${prefix}${i}`).join(", ")}];\n`;
+    const same = await pretty({ "a/big.js": mk("f"), "b/big.js": mk("g") });
+    expect(same.text).toMatch(/\nbig\.js ─+ formatting only\n/);
+    // …and one edit in the middle of it is found.
+    const b = mk("g").replace("return x + 1000;", "return x * 1000;");
+    const edited = await pretty({ "a/big.js": mk("f"), "b/big.js": b });
+    expect(changed(edited.text)).toStrictEqual([
+      "- function f1000(x) { return x + 1000; }",
+      "+ function g1000(x) { return x * 1000; }",
+    ]);
+  });
+
+  test("minified: banner, renamed locals and spelling all compose onto the un-minified display", async () => {
+    // Different banner, different mangled names, `!0` vs `true`, plus exactly one real edit.
+    const body = (a: string, b: string, t: string, edit: string) =>
+      `function ${a}(${b}){return ${b}?${t}:${edit}}function ${b}2(${a}){for(var i=0;i<${a}.length;i++)${a}[i]=${a}[i]+1;return ${a}}module.exports={f:${a},g:${b}2};`;
+    const pad = "/*" + Buffer.alloc(300, "x").toString() + "*/";
+    const va = "/*! lib v1 */\n" + pad + body("a", "b", "!0", "null");
+    const vb = "/*! lib v2 */\n" + pad + body("q", "r", "true", "void 0");
+    const { text, exitCode } = await pretty({ "a/x.min.js": va, "b/x.min.js": vb });
+    // `!0`/`true` folds but each side keeps its own spelling; `null` → `void 0` is the one real change.
+    expect(changed(text)).toStrictEqual([
+      "- /*! lib v1 */",
+      "+ /*! lib v2 */",
+      "-   return a1 ? !0 : null;",
+      "+   return a1 ? true : void 0;",
+    ]);
+    // Every shown line is addressed to the original: line 2 (the code line) for code, line 1 for the banner.
+    expect(text).toMatch(/\n +1:1 │- \/\*! lib v1 \*\/\n/);
+    expect(text).toMatch(/\n +2:\d+ │-   return a1 \? !0 : null;\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("CSS and JSON: a real change shows, unparsable input falls back to text with a 'not parsed' badge", async () => {
+    const { text, exitCode } = await pretty({
+      "a/s.css": ".a{color:red}\n.b{margin:0}\n",
+      "b/s.css": ".a { color: blue }\n.b { margin: 0 }\n",
+      "a/bad.css": ".a{color:red}\n",
+      "b/bad.css": ".a{color:red\n.b{{{\n",
+      "a/d.json": '{"a":1,"b":[1,2]}\n',
+      "b/d.json": '{\n  "a": 2,\n  "b": [1, 2]\n}\n',
+      "a/bad.json": '{"a":1}\n',
+      "b/bad.json": '{"a":1,,}\n',
+    });
+    // Formatting is not a change; the values are — shown on the canonical print, since CSS/JSON have no source map.
+    expect(text).toMatch(/\ns\.css ─+ normalized \+1 -1\n/);
+    expect(text).toContain("│-   color: red;");
+    expect(text).toContain("│+   color: #00f;");
+    expect(text).not.toContain("margin");
+    expect(text).toMatch(/\nd\.json ─+ normalized \+1 -1\n/);
+    expect(text).toContain('│+   "a": 2,');
+    expect(text).not.toMatch(/│[-+].*"b"/);
+    expect(text).toMatch(/\nbad\.css ─+ not parsed \+2 -1\n/);
+    expect(text).toMatch(/\nbad\.json ─+ not parsed \+1 -1\n/);
+    expect(exitCode).toBe(0);
+  });
+
+  test("a file over the normalization size limit is diffed as text and says so", async () => {
+    const line = "export const v = 1;\n";
+    const big = Buffer.alloc(8 * 1024 * 1024 + 4096, line).toString();
+    const { text, exitCode } = await pretty({ "a/big.js": big, "b/big.js": big.replace("v = 1", "v = 2") });
+    expect(text).toMatch(/\nbig\.js ─+ too large to normalize \+1 -1\n/);
+    expect(text).toContain("│- export const v = 1;");
+    expect(exitCode).toBe(0);
+  });
+
+  test("hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side", async () => {
+    const deep = "export const f = " + "() => ".repeat(300) + "1;\n";
+    const chain =
+      "var s = " + Array.from({ length: 20000 }, (_, i) => `a${i}`).join(" + ") + ";\nf()" + Buffer.alloc(20000 * 4, ",g()").toString() + ";\n";
+    const { text, exitCode } = await pretty({
+      "a/deep.js": deep,
+      "b/deep.js": deep.replace("1;", "2;"),
+      "a/chain.min.js": chain,
+      "b/chain.min.js": chain.replace(",g();", ",g(),h();"),
+      "a/empty.js": "",
+      "b/empty.js": "",
+    });
+    expect(text).toMatch(/\ndeep\.js ─+ unminified \+1 -1\n/);
+    expect(text).toContain("│+ h();");
+    expect(text).not.toContain("empty.js");
+    expect(exitCode).toBe(0);
+  }, 30_000);
+
+  test("package.json callouts: main, bin, exports, engines, license, types — changed, added, removed", async () => {
+    const { text, exitCode } = await pretty({
+      "a/package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.0",
+        main: "index.js",
+        types: "index.d.ts",
+        license: "MIT",
+        engines: { node: ">=14" },
+      }),
+      "b/package.json": JSON.stringify({
+        name: "p",
+        version: "1.0.1",
+        main: "dist/index.js",
+        bin: { p: "cli.js" },
+        exports: { ".": "./dist/index.js" },
+        license: "SSPL-1.0",
+        engines: { node: ">=18" },
+      }),
+    });
+    const notes = text.split("\n").filter(l => /^ {2}[▲!] /.test(l));
+    expect(notes).toStrictEqual([
+      "  ▲ main changed: index.js → dist/index.js",
+      "  ▲ types removed",
+      "  ▲ bin added: { \"p\": \"cli.js\" }",
+      "  ▲ exports added: { \".\": \"./dist/index.js\" }",
+      "  ▲ engines changed: { \"node\": \">=14\" } → { \"node\": \">=18\" }",
+      "  ▲ license changed: MIT → SSPL-1.0",
+    ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("--json is one stable document", async () => {
+    const { raw, exitCode } = await pretty(
+      {
+        "a/package.json": '{"name":"p","version":"1.0.0"}',
+        "b/package.json": '{\n  "name": "p",\n  "version": "1.0.0"\n}\n',
+        "a/index.js": "module.exports = 1;\n",
+        "b/index.js": "module.exports = 2;\n",
+        "b/new.txt": "hi\n",
+      },
+      ["--json"],
+    );
+    expect(JSON.parse(raw)).toMatchInlineSnapshot(`
+      {
+        "files": [
+          {
+            "binary": false,
+            "bytesAfter": 20,
+            "bytesBefore": 20,
+            "formattingOnly": false,
+            "linesAdded": 1,
+            "linesRemoved": 1,
+            "patch": 
+      "@@ -1,1 +1,1 @@
+      -module.exports = 1;
+      +module.exports = 2;
+      "
+      ,
+            "path": "index.js",
+            "sourceMap": false,
+            "status": "modified",
+          },
+          {
+            "binary": false,
+            "bytesAfter": 3,
+            "bytesBefore": 0,
+            "formattingOnly": false,
+            "linesAdded": 1,
+            "linesRemoved": 0,
+            "patch": 
+      "@@ -0,0 +1,1 @@
+      +hi
+      "
+      ,
+            "path": "new.txt",
+            "sourceMap": false,
+            "status": "added",
+          },
+          {
+            "binary": false,
+            "bytesAfter": 40,
+            "bytesBefore": 30,
+            "formattingOnly": true,
+            "linesAdded": 4,
+            "linesRemoved": 1,
+            "patch": 
+      "@@ -1,1 +1,4 @@
+      -{"name":"p","version":"1.0.0"}
+      \\ No newline at end of file
+      +{
+      +  "name": "p",
+      +  "version": "1.0.0"
+      +}
+      "
+      ,
+            "path": "package.json",
+            "sourceMap": false,
+            "status": "modified",
+          },
+        ],
+        "from": "./a",
+        "notes": [],
+        "to": "./b",
+        "totals": {
+          "added": 1,
+          "deleted": 0,
+          "files": 3,
+          "formattingOnly": 1,
+          "linesAdded": 6,
+          "linesRemoved": 2,
+        },
+      }
+    `);
+    expect(exitCode).toBe(0);
+  });
+});

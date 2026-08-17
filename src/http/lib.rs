@@ -947,25 +947,20 @@ impl Drop for HTTPClient<'_> {
 // every process.
 //
 // `ThreadCell` (not `RacyCell`) to encode "HTTP-thread-only after init" in the
-// type. `claim()` is invoked from `HTTPThread::on_start`. JS-side callers that
-// only touch the lock-free `queued_tasks` + `wakeup` (e.g. `schedule()`) go
-// through [`http_thread_shared`] / `get_unchecked` until those fields are
-// hoisted out of the thread-confined struct.
+// type. `claim()` is invoked from `HTTPThread::on_start`; other threads use `SHARED` (HTTPThread.rs).
 pub(crate) static HTTP_THREAD: bun_core::ThreadCell<core::mem::MaybeUninit<HTTPThread>> =
     bun_core::ThreadCell::new(core::mem::MaybeUninit::uninit());
 static HTTP_THREAD_INIT: core::sync::atomic::AtomicBool =
     core::sync::atomic::AtomicBool::new(false);
 
+/// HTTP-thread-only; other threads use the associated `HTTPThread::schedule*` fns.
 #[inline]
-pub fn http_thread() -> &'static mut HTTPThread {
+pub(crate) fn http_thread() -> &'static mut HTTPThread {
     // Release-mode guard, not `debug_assert!`: `HTTPThread` contains
     // niche-bearing fields (`Box`, `Vec`, `NonNull`, `Option<Arc>` …), so
     // `assume_init_mut()` on the uninitialized static is *immediate* UB — a
     // `debug_assert!` leaves release builds unguarded. The `Acquire` load
-    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`,
-    // establishing happens-before for cross-thread callers that did not
-    // themselves go through `Once::call_once` (e.g. `schedule_*` paths from
-    // the JS thread). Cost is a single relaxed-on-x86 atomic load.
+    // pairs with `init_once`'s `Release` store on `HTTP_THREAD_INIT`.
     assert!(
         HTTP_THREAD_INIT.load(core::sync::atomic::Ordering::Acquire),
         "http_thread() called before HTTPThread::init()"

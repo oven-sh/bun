@@ -1,12 +1,12 @@
 use core::ffi::c_void;
 use core::ptr::NonNull;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicPtr, Ordering};
 use std::time::Instant;
 
 use bun_collections::ArrayHashMap;
 use bun_core::{self, Output};
 
-use bun_threading::{Mutex, UnboundedQueue};
+use bun_threading::{Guarded, UnboundedQueue};
 use bun_uws as uws;
 
 use crate::async_http::{ACTIVE_REQUESTS_COUNT, MAX_SIMULTANEOUS_REQUESTS};
@@ -83,6 +83,27 @@ fn custom_ssl_context_map() -> &'static mut ArrayHashMap<*const SSLConfig, SslCo
 use bun_event_loop::MiniEventLoop as mini_event_loop;
 use bun_event_loop::MiniEventLoop::MiniEventLoop;
 
+/// Touched by other threads, so it lives outside the `&'static mut HttpThread` the HTTP thread holds.
+struct Shared {
+    queued_tasks: Queue,
+    queued_shutdowns: Guarded<Vec<ShutdownMessage>>,
+    queued_writes: Guarded<Vec<WriteMessage>>,
+    queued_receive_resumes: Guarded<Vec<u32>>,
+    queued_cert_check_resumes: Guarded<Vec<CertCheckResumeMessage>>,
+    /// Published by `on_start` right before `process_events`; `wakeup` is a no-op while it is null.
+    uws_loop: AtomicPtr<uws::Loop>,
+}
+
+static SHARED: Shared = Shared {
+    queued_tasks: Queue::new(),
+    queued_shutdowns: Guarded::new(Vec::new()),
+    queued_writes: Guarded::new(Vec::new()),
+    queued_receive_resumes: Guarded::new(Vec::new()),
+    queued_cert_check_resumes: Guarded::new(Vec::new()),
+    uws_loop: AtomicPtr::new(core::ptr::null_mut()),
+};
+
+/// HTTP-thread-only (`HTTP_THREAD` is claimed in `on_start`); other threads only touch `Shared`.
 pub struct HttpThread {
     /// Per-thread `MiniEventLoop` singleton — published by
     /// `MiniEventLoop::init_global()` in [`on_start`]; outlives the thread.
@@ -106,8 +127,7 @@ pub struct HttpThread {
     /// reentrant).
     lazy_https_init: Option<InitOpts>,
 
-    pub(crate) queued_tasks: Queue,
-    /// Tasks popped from `queued_tasks` that couldn't start because
+    /// Tasks popped from `SHARED.queued_tasks` that couldn't start because
     /// `active_requests_count >= max_simultaneous_requests`. Kept in FIFO order
     /// and processed before `queued_tasks` on the next `drainEvents`. Owned by
     /// the HTTP thread; never accessed concurrently.
@@ -120,19 +140,8 @@ pub struct HttpThread {
     /// path stays O(1). Owned by the HTTP thread.
     pub(crate) has_pending_queued_abort: bool,
 
-    pub(crate) queued_shutdowns: Vec<ShutdownMessage>,
-    pub(crate) queued_writes: Vec<WriteMessage>,
-    pub(crate) queued_receive_resumes: Vec<u32>,
-    pub(crate) queued_cert_check_resumes: Vec<CertCheckResumeMessage>,
-
-    pub(crate) queued_shutdowns_lock: Mutex,
-    pub(crate) queued_writes_lock: Mutex,
-    pub(crate) queued_receive_resumes_lock: Mutex,
-    pub(crate) queued_cert_check_resumes_lock: Mutex,
-
     pub(crate) queued_threadlocal_proxy_derefs: Vec<*mut ProxyTunnel>,
 
-    pub(crate) has_awoken: AtomicBool,
     pub(crate) timer: Instant,
     pub(crate) lazy_libdeflater: Option<Box<LibdeflateState>>,
     pub(crate) lazy_request_body_buffer: Option<Box<HeapRequestBodyBuffer>>,
@@ -174,19 +183,9 @@ impl HttpThread {
                 session_cache: crate::session_cache::SessionCache::new(),
             },
             lazy_https_init: None,
-            queued_tasks: Queue::new(),
             deferred_tasks: Vec::new(),
             has_pending_queued_abort: false,
-            queued_shutdowns: Vec::new(),
-            queued_writes: Vec::new(),
-            queued_receive_resumes: Vec::new(),
-            queued_cert_check_resumes: Vec::new(),
-            queued_shutdowns_lock: Mutex::new(),
-            queued_writes_lock: Mutex::new(),
-            queued_receive_resumes_lock: Mutex::new(),
-            queued_cert_check_resumes_lock: Mutex::new(),
             queued_threadlocal_proxy_derefs: Vec::new(),
-            has_awoken: AtomicBool::new(false),
             timer: Instant::now(),
             lazy_libdeflater: None,
             lazy_request_body_buffer: None,
@@ -389,8 +388,7 @@ impl HttpThread {
 
     /// Mutable access to the live uSockets event loop.
     ///
-    /// INVARIANT: `uws_loop` is set once in [`on_start`] (published via the
-    /// `has_awoken` Release store) and outlives the HTTP thread. The loop is a
+    /// INVARIANT: `uws_loop` is set once in [`on_start`] and outlives the HTTP thread. The loop is a
     /// separate C heap allocation disjoint from `self`. HTTP-thread-only at
     /// every caller — `wakeup()` is the sole cross-thread entry and uses the
     /// raw FFI call instead. Centralises the raw `&mut *self.uws_loop`
@@ -638,10 +636,7 @@ impl HttpThread {
         loop {
             // socket.close() can potentially be slow
             // Let's not block other threads while this runs.
-            let queued_shutdowns = {
-                let _guard = self.queued_shutdowns_lock.lock_guard();
-                core::mem::take(&mut self.queued_shutdowns)
-            };
+            let queued_shutdowns = core::mem::take(&mut *SHARED.queued_shutdowns.lock());
 
             for http in &queued_shutdowns {
                 let tracker = abort_tracker();
@@ -709,10 +704,7 @@ impl HttpThread {
 
     fn drain_queued_writes(&mut self) {
         loop {
-            let queued_writes = {
-                let _guard = self.queued_writes_lock.lock_guard();
-                core::mem::take(&mut self.queued_writes)
-            };
+            let queued_writes = core::mem::take(&mut *SHARED.queued_writes.lock());
             for write in &queued_writes {
                 let message = write.kind;
                 let ended = message == WriteMessageType::End;
@@ -777,10 +769,8 @@ impl HttpThread {
 
     fn drain_queued_cert_check_resumes(&mut self) {
         loop {
-            let queued_cert_check_resumes = {
-                let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_cert_check_resumes)
-            };
+            let queued_cert_check_resumes =
+                core::mem::take(&mut *SHARED.queued_cert_check_resumes.lock());
             for resume in &queued_cert_check_resumes {
                 // Both arms are required: an HTTPS target behind a plaintext
                 // proxy parks behind a SocketTcp tracker entry.
@@ -822,10 +812,7 @@ impl HttpThread {
 
     fn drain_queued_receive_resumes(&mut self) {
         loop {
-            let queued = {
-                let _guard = self.queued_receive_resumes_lock.lock_guard();
-                core::mem::take(&mut self.queued_receive_resumes)
-            };
+            let queued = core::mem::take(&mut *SHARED.queued_receive_resumes.lock());
             if queued.is_empty() {
                 return;
             }
@@ -943,7 +930,7 @@ impl HttpThread {
         }
 
         loop {
-            let Some(http) = NonNull::new(self.queued_tasks.pop()) else {
+            let Some(http) = NonNull::new(SHARED.queued_tasks.pop()) else {
                 break;
             };
             // AsyncHttp is heap-owned by the caller and alive until its
@@ -972,57 +959,54 @@ impl HttpThread {
         }
     }
 
-    pub fn schedule_receive_resume(&mut self, async_http_id: u32) {
+    // Associated fns (no `self`) are callable from any thread; they only touch `SHARED`.
+    pub fn schedule_receive_resume(async_http_id: u32) {
         {
-            let _guard = self.queued_receive_resumes_lock.lock_guard();
-            if self.queued_receive_resumes.last() == Some(&async_http_id) {
+            let mut queued = SHARED.queued_receive_resumes.lock();
+            if queued.last() == Some(&async_http_id) {
                 return;
             }
-            self.queued_receive_resumes.push(async_http_id);
+            queued.push(async_http_id);
         }
-        self.wakeup();
+        Self::wakeup();
     }
 
-    pub fn schedule_shutdown(&mut self, http: &AsyncHttp) {
-        self.schedule_shutdown_by_id(http.async_http_id);
+    pub fn schedule_shutdown(http: &AsyncHttp) {
+        Self::schedule_shutdown_by_id(http.async_http_id);
     }
 
-    pub fn schedule_shutdown_by_id(&mut self, async_http_id: u32) {
+    pub fn schedule_shutdown_by_id(async_http_id: u32) {
         bun_core::scoped_log!(HTTPThread, "scheduleShutdown {}", async_http_id);
-        {
-            let _guard = self.queued_shutdowns_lock.lock_guard();
-            self.queued_shutdowns
-                .push(ShutdownMessage { async_http_id });
-        }
-        self.wakeup();
+        SHARED
+            .queued_shutdowns
+            .lock()
+            .push(ShutdownMessage { async_http_id });
+        Self::wakeup();
     }
 
-    pub fn schedule_cert_check_resume(&mut self, http: &AsyncHttp) {
+    pub fn schedule_cert_check_resume(http: &AsyncHttp) {
         bun_core::scoped_log!(HTTPThread, "scheduleCertCheckResume {}", http.async_http_id);
-        {
-            let _guard = self.queued_cert_check_resumes_lock.lock_guard();
-            self.queued_cert_check_resumes.push(CertCheckResumeMessage {
+        SHARED
+            .queued_cert_check_resumes
+            .lock()
+            .push(CertCheckResumeMessage {
                 async_http_id: http.async_http_id,
             });
-        }
-        self.wakeup();
+        Self::wakeup();
     }
 
-    pub fn schedule_request_write(&mut self, http: &AsyncHttp, kind: WriteMessageType) {
-        {
-            let _guard = self.queued_writes_lock.lock_guard();
-            self.queued_writes.push(WriteMessage {
-                async_http_id: http.async_http_id,
-                kind,
-            });
-        }
-        self.wakeup();
+    pub fn schedule_request_write(http: &AsyncHttp, kind: WriteMessageType) {
+        SHARED.queued_writes.lock().push(WriteMessage {
+            async_http_id: http.async_http_id,
+            kind,
+        });
+        Self::wakeup();
     }
 
     pub(crate) fn schedule_proxy_deref(&mut self, proxy: *mut ProxyTunnel) {
         // this is always called on the http thread,
         self.queued_threadlocal_proxy_derefs.push(proxy);
-        self.wakeup();
+        Self::wakeup();
     }
 
     /// Called from [`crate::shutdown_for_exit`] on the HTTP thread once
@@ -1060,7 +1044,7 @@ impl HttpThread {
         for http in core::mem::take(&mut self.deferred_tasks) {
             release_unstarted(http);
         }
-        while let Some(http) = NonNull::new(self.queued_tasks.pop()) {
+        while let Some(http) = NonNull::new(SHARED.queued_tasks.pop()) {
             release_unstarted(http);
         }
         for nn in core::mem::take(&mut self.in_flight) {
@@ -1102,64 +1086,41 @@ impl HttpThread {
         }
     }
 
-    pub(crate) fn wakeup(&self) {
-        // Acquire (not Relaxed): pairs with the Release store in `on_start`
-        // so the read of `self.uws_loop` (a non-atomic field set there)
-        // observes the published value. This is the canonical "Relaxed gives
-        // no happens-before for the init it guards" case.
-        if self.has_awoken.load(Ordering::Acquire) {
-            // SAFETY: uws_loop is the live HTTP-thread loop set in on_start.
-            // Call the raw extern (not `Loop::wakeup(&mut self)`) — this runs
-            // cross-thread while the HTTP thread owns the loop, so forming
-            // `&mut Loop` here would alias.
-            unsafe { uws::us_wakeup_loop(self.uws_loop) };
+    /// Any thread. A no-op until `on_start` has published the loop.
+    pub(crate) fn wakeup() {
+        let loop_ = SHARED.uws_loop.load(Ordering::Acquire);
+        if !loop_.is_null() {
+            // SAFETY: the Acquire load pairs with the Release store in `on_start`, so the loop it
+            // published is fully initialized; it is never destroyed (`process_events` never
+            // returns). `us_wakeup_loop` is the thread-safe wake and takes the raw pointer, so no
+            // `&mut Loop` is formed here next to the one `process_events` holds across `tick()`.
+            unsafe { uws::us_wakeup_loop(loop_) };
         }
     }
 
-    /// Enqueue a batch of `AsyncHttp` tasks for the HTTP thread. Safe to
-    /// call from any thread: only touches the lock-free `queued_tasks` MPSC
-    /// queue and `wakeup()` (atomic load + raw FFI call). This is the
-    /// **only** cross-thread entry point — every other `HttpThread` method
-    /// is HTTP-thread-only via [`http_thread()`](crate::http_thread).
-    pub fn schedule(batch: bun_threading::thread_pool::Batch) {
+    pub(crate) fn has_queued_tasks() -> bool {
+        !SHARED.queued_tasks.is_empty()
+    }
+
+    /// Enqueue a batch of `AsyncHttp` tasks for the HTTP thread. Any thread.
+    pub fn schedule(mut batch: bun_threading::thread_pool::Batch) {
         if batch.len == 0 {
             return;
         }
-        // Release-mode guard: `HttpThread` has niche-bearing fields, so
-        // dereffing `as_mut_ptr()` below on an uninitialized static is UB.
-        // The "every caller goes through `init`" invariant was unenforced
-        // (e.g. `async_http::preconnect` did not), so check it here. The
-        // `Acquire` load pairs with `init_once`'s `Release` store to publish
-        // the `HTTP_THREAD.write(..)` to this thread.
+        // A caller that skipped `init()` would otherwise hang (`async_http::preconnect` once did).
         assert!(
             crate::HTTP_THREAD_INIT.load(Ordering::Acquire),
             "HTTPThread::schedule() called before HTTPThread::init()"
         );
-        // SAFETY: `HTTP_THREAD_INIT == true` (checked above) ⇒ `HTTP_THREAD`
-        // is fully written. `get_unchecked` (no owner assert) so the
-        // `ThreadCell` debug-owner check is skipped on this cross-thread
-        // caller. Wrap the result in a `ParentRef` (process-lifetime backref)
-        // so the `&self`-only calls below — `queued_tasks.push` (lock-free
-        // MPSC) and `wakeup` (atomics + raw uws ptr) — go through the safe
-        // `Deref` impl instead of open-coded `(*this_p)` raw derefs. Only a
-        // shared `&HttpThread` is ever materialised; the HTTP thread itself
-        // never holds a long-lived `&mut HttpThread` across the points these
-        // touch (both fields are designed for cross-thread shared access).
-        let this = unsafe {
-            bun_ptr::ParentRef::<Self>::from_raw((*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr())
-        };
-        {
-            let mut batch_ = batch;
-            while let Some(task) = batch_.pop() {
-                // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
-                let http: *mut AsyncHttp =
-                    unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
-                // SAFETY: `http` recovered from a live batch node (non-null); valid until popped.
-                let http = unsafe { core::ptr::NonNull::new_unchecked(http) };
-                this.queued_tasks.push(http);
-            }
+        while let Some(task) = batch.pop() {
+            // SAFETY: task points to AsyncHttp.task; recover parent via field offset.
+            let http: *mut AsyncHttp =
+                unsafe { bun_core::from_field_ptr!(AsyncHttp, task, task.as_ptr()) };
+            // SAFETY: `http` recovered from a live batch node (non-null); valid until popped.
+            let http = unsafe { core::ptr::NonNull::new_unchecked(http) };
+            SHARED.queued_tasks.push(http);
         }
-        this.wakeup();
+        Self::wakeup();
     }
 }
 
@@ -1265,12 +1226,13 @@ mod _event_loop_draft {
     }
 
     fn init_once(opts: &InitOpts) {
-        // Initialize the global (with timer
-        // started on the calling thread) BEFORE spawning, so `on_start`'s
-        // `crate::http_thread_mut()` finds `Some(..)` and can fill in
-        // `loop_`/`uws_loop`/contexts.
-        // SAFETY: `init_once` runs under `Once`; no other thread reads
-        // `HTTP_THREAD` until `has_awoken` is set in `on_start`.
+        // Initialize the global (with timer started on the calling thread)
+        // BEFORE spawning, so `on_start`'s `crate::http_thread_mut()` finds it
+        // written and can fill in `loop_`/`uws_loop`/contexts.
+        // SAFETY: `init_once` runs under `Once`, and the only other code that
+        // touches `HTTP_THREAD` runs on the thread spawned below (which
+        // `claim`s the cell in `on_start`), so this write is unaliased and the
+        // spawn publishes it.
         unsafe {
             (*crate::HTTP_THREAD.get()).write(HttpThread::new());
         }
@@ -1336,6 +1298,7 @@ mod _event_loop_draft {
             }
         }
 
+        crate::HTTP_THREAD.claim();
         let thread = crate::http_thread_mut();
         thread.loop_ = loop_;
         thread.uws_loop = uws_loop;
@@ -1363,9 +1326,8 @@ mod _event_loop_draft {
             // none).
             thread.lazy_https_init = Some(opts);
         }
-        // Release: publishes `uws_loop`/`loop_` to cross-thread `wakeup()`
-        // readers (which Acquire-load `has_awoken`).
-        thread.has_awoken.store(true, Ordering::Release);
+        // Release pairs with the Acquire load in `wakeup`.
+        SHARED.uws_loop.store(uws_loop, Ordering::Release);
         thread.process_events();
     }
 
@@ -1438,26 +1400,12 @@ static SHUTDOWN_DONE: (bun_threading::Guarded<bool>, bun_threading::Condvar) = (
 /// touch requests, so the caller must not free anything it shares with it.
 #[must_use]
 pub fn shutdown_for_exit() -> bool {
-    if !crate::HTTP_THREAD_INIT.load(Ordering::Acquire) {
-        return true;
-    }
-    // SAFETY: `HTTP_THREAD_INIT == true` ⇒ `HTTP_THREAD` is fully written.
-    // `get_unchecked` so the `ThreadCell` owner assert is skipped on this
-    // cross-thread caller; `ParentRef` so only a shared `&HttpThread` is
-    // materialised — `process_events(&mut self)` is live on the HTTP thread,
-    // so a `&mut` here would alias. Same shape as `schedule()` above.
-    let thread = unsafe {
-        bun_ptr::ParentRef::<HttpThread>::from_raw(
-            (*crate::HTTP_THREAD.get_unchecked()).as_mut_ptr(),
-        )
-    };
-    if !thread.has_awoken.load(Ordering::Acquire) {
-        // `on_start` hasn't published the loop yet — no `start_queued_task`
-        // can have run, so no boxes exist.
+    if SHARED.uws_loop.load(Ordering::Acquire).is_null() {
+        // Never started, or not yet in `process_events`: `start_queued_task` has not run, no boxes.
         return true;
     }
     SHUTDOWN_REQUESTED.store(true, Ordering::Release);
-    thread.wakeup();
+    HttpThread::wakeup();
     let mut done = SHUTDOWN_DONE.0.lock();
     // 1s upper bound: a stuck HTTP thread shouldn't deadlock process exit.
     let deadline = Instant::now() + std::time::Duration::from_secs(1);

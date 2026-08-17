@@ -357,12 +357,7 @@ pub fn preconnect(url: URL<'static>, is_url_owned: bool) {
         return;
     }
 
-    // Write-before-read: `Bun__fetchPreconnect` reaches here without going
-    // through any path that calls `HTTPThread::init`, so `schedule()` below
-    // would deref the uninitialized `HTTP_THREAD` static (UB on niche-bearing
-    // fields) if `fetch.preconnect()` is the process's first HTTP operation.
-    // `init` is idempotent (`Once`) and every other JS-side entry point
-    // (`send_sync`, `FetchTasklet::start`, S3) passes default opts too.
+    // `fetch.preconnect()` may be the process's first HTTP operation; `schedule()` asserts this ran.
     crate::http_thread::init(&Default::default());
 
     let this: *mut Preconnect = bun_core::heap::into_raw(Box::new(Preconnect {
@@ -795,12 +790,12 @@ impl<'a> AsyncHTTP<'a> {
             }
         }
 
-        let thread = crate::http_thread();
-        if (!thread.queued_tasks.is_empty() || !thread.deferred_tasks.is_empty())
+        if (crate::HTTPThread::has_queued_tasks()
+            || !crate::http_thread().deferred_tasks.is_empty())
             && ACTIVE_REQUESTS_COUNT.load(Ordering::Relaxed)
                 < MAX_SIMULTANEOUS_REQUESTS.load(Ordering::Relaxed)
         {
-            thread.wakeup();
+            crate::HTTPThread::wakeup();
         }
     }
 }

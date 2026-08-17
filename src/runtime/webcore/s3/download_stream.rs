@@ -350,7 +350,7 @@ impl S3HttpDownloadStreamingTask {
         // SAFETY: fn contract; `http` is initialised before the task is registered.
         unsafe {
             (*this).signal_store.aborted.store(true, Ordering::Relaxed);
-            bun_http::http_thread().schedule_shutdown((*this).http.assume_init_ref());
+            bun_http::HTTPThread::schedule_shutdown((*this).http.assume_init_ref());
         }
     }
 

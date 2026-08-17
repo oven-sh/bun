@@ -71,15 +71,12 @@ struct AlignedBlob {
 
 enum Backing {
     Heap,
-    /// What is still mapped (`PROT_READ`/`MAP_PRIVATE`) of the cache file. The
-    /// file is mapped whole to validate it, then the pages in front of the one
-    /// holding [`blob_file_offset`] (header + stored code, never read again
-    /// once compared) are unmapped, leaving the tail from the last page
-    /// boundary at or before the blob; when the blob begins in the first page
-    /// or that partial unmap fails, this is still the whole file. `ptr` stays
-    /// 128-aligned because page boundaries are. Safe against entry rewrites:
-    /// writers go through tmpfile + rename, so a replaced file's old inode
-    /// stays live under the mapping.
+    /// `PROT_READ`/`MAP_PRIVATE` mapping of the cache file from the page the
+    /// blob starts on (so `ptr` stays 128-aligned) to its end; the header and
+    /// stored code before that page are unmapped once validated, or still
+    /// included here if that unmap failed. Safe against entry rewrites: writers
+    /// go through tmpfile + rename, so a replaced file's old inode stays live
+    /// under the mapping.
     Map {
         base: core::ptr::NonNull<u8>,
         map_len: usize,
@@ -115,11 +112,8 @@ impl AlignedBlob {
         unsafe { core::slice::from_raw_parts_mut(self.ptr.as_ptr(), self.len) }
     }
 
-    /// Takes ownership of a validated whole-file mapping, keeping only the
-    /// pages from the blob onwards mapped (see [`Backing::Map`]). The stored
-    /// code in the unmapped prefix was paged in by the byte compare and would
-    /// otherwise stay resident next to the live source string for the rest of
-    /// the process.
+    /// Takes over a validated whole-file mapping, unmapping everything before
+    /// the blob's page (see [`Backing::Map`]).
     ///
     /// # Safety
     /// `(base, map_len)` must be a live mapping nothing else reads any more,
@@ -136,9 +130,6 @@ impl AlignedBlob {
         let (base, map_len) = if prefix_len != 0 && sys::munmap(base.as_ptr(), prefix_len).is_ok() {
             (tail, map_len - prefix_len)
         } else {
-            // The blob starts in the first page, or the kernel refused the
-            // partial unmap: keep owning the whole mapping and release it at
-            // once on drop.
             (base, map_len)
         };
         Self {

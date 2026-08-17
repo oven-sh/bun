@@ -23,22 +23,16 @@ pub(crate) fn remove_stale_workspace_links(previous: &Lockfile, current: &Lockfi
             continue;
         }
 
-        let mut path = AutoAbsPathChecked::init_top_level_dir();
-        let top_level_len = path.len();
-        remove_link_in(&mut path, b"", name);
+        remove_link_in(b"", name);
         for workspace_path in current.workspace_paths.values() {
-            path.set_length(top_level_len);
-            remove_link_in(
-                &mut path,
-                workspace_path.slice(&current.buffers.string_bytes),
-                name,
-            );
+            remove_link_in(workspace_path.slice(&current.buffers.string_bytes), name);
         }
     }
 }
 
 /// `readlink` is the symlink (or junction) check; a real directory or file there is left alone.
-fn remove_link_in(path: &mut AutoAbsPathChecked, package_dir: &[u8], name: &[u8]) {
+fn remove_link_in(package_dir: &[u8], name: &[u8]) {
+    let mut path = AutoAbsPathChecked::init_top_level_dir();
     if path.append(package_dir).is_err()
         || path.append(b"node_modules").is_err()
         || path.append(name).is_err()

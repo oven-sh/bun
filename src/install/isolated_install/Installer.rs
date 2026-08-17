@@ -3,8 +3,7 @@ use std::io::Write as _;
 
 use bun_ast::Log;
 use bun_collections::{ArrayHashMap, DynamicBitSet, StringHashMap};
-use bun_core::fmt::EscapeControlChars;
-use bun_core::fmt::redacted;
+use bun_core::fmt::{EscapeControlChars, redacted};
 use bun_core::{Environment, Global, Output};
 use bun_core::{ZStr, strings};
 use bun_paths::{self as paths, AbsPath, AutoAbsPath, AutoRelPath};
@@ -3117,8 +3116,8 @@ impl<'a> Installer<'a> {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum Which {
-    /// The published location. Use for symlink *targets* that point at other
-    /// entries, and for the warm-hit check.
+    /// The published location (`<cache>/links/<entry>`). Use for symlink
+    /// *targets* that point at other entries, and for the warm-hit check.
     Final,
     /// What the build steps write into, renamed onto `Final` once complete: the
     /// whole entry (`<entry>.tmp-<suffix>`) for a global-store entry, only the

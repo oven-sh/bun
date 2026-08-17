@@ -793,7 +793,7 @@ describe.concurrent("bun pm diff (hostile and awkward inputs)", () => {
       await using p = Bun.spawn({
         cmd: [bunExe(), "pm", "diff", "./a", "./b"],
         cwd: String(dir),
-        env: { ...bunEnv, FORCE_COLOR: "1", COLUMNS: "100", ...env },
+        env: { ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1", COLUMNS: "100", ...env },
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
@@ -991,6 +991,18 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(edited.exitCode).toBe(0);
   });
 
+  test("positional names never capture a free variable, even one already ending in `_`", async () => {
+    // Free `a` and `a_` in scope; the module-level local's positional name goes `a` → `a_` → must become `a__`.
+    // If it captured `a_`, both sides would print `a + a_ + a_` and a real change would fold away.
+    const va = "const x = read();\nexport const g = a + a_ + x;\n";
+    const vb = "const x = read();\nexport const g = a + a_ + a_;\n";
+    for (const args of [[], ["--unminify"]]) {
+      const { text, exitCode } = await pretty({ "a/m.js": va, "b/m.js": vb }, args);
+      expect(text).toMatch(/\nm\.js ─+ (unminified )?\+1 -1\n/);
+      expect(exitCode).toBe(0);
+    }
+  });
+
   test("a scope too big for the LCS table takes the windowed path and still folds a consistent rename", async () => {
     // 2100 × 2100 candidate cells > the 4M-cell table cap.
     const n = 2100;
@@ -1068,7 +1080,7 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
   );
 
   test("hostile shapes do not crash: 300-deep nesting, a 20k-term comma chain, an empty file each side", async () => {
-    const deep = "export const f = " + "() => ".repeat(300) + "1;\n";
+    const deep = "export const f = " + Buffer.alloc(300 * 6, "() => ").toString() + "1;\n";
     const chain =
       "var s = " +
       Array.from({ length: 20000 }, (_, i) => `a${i}`).join(" + ") +

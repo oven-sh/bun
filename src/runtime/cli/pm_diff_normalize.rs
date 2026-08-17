@@ -462,7 +462,8 @@ impl<'s> Namer<'s> {
         if depth > 0 {
             let _ = std::io::Write::write_fmt(out, format_args!("{depth}"));
         }
-        if matches!(out.as_slice(), b"do" | b"if" | b"in" | b"of")
+        // Keep suffixing until the name is free: `a` taken → `a_`, and `a_` may be taken too.
+        while matches!(out.as_slice(), b"do" | b"if" | b"in" | b"of")
             || self.taken.iter().any(|t| t == out)
         {
             out.push(b'_');

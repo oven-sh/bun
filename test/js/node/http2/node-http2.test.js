@@ -4058,6 +4058,130 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+// A pushed stream whose writable side is ended before respond() has no body to send, so its
+// response HEADERS frame has to carry END_STREAM itself (node submits such a response without a
+// body). Without that flag nothing ever ends the pushed response: the client's pushed stream never
+// emits 'end'/'close' and the server push stream's writable never finishes.
+describe("http2 pushStream: response ended before respond()", () => {
+  const END_STREAM = 0x1;
+  // Serves one request that pushes /pushed and hands the pushed stream to `respond`. Checks which
+  // frame of the pushed response carried END_STREAM (the flags argument of the client's 'push'
+  // event is the flags byte of the pushed response's HEADERS frame), then reports how the pushed
+  // response ended on both sides.
+  async function observePushedResponse({ pushHeaders, pushOptions, respond, headersCarryEndStream }) {
+    // Every failure on either side rejects this one promise; it is raced against each wait below.
+    const { promise: failure, reject } = Promise.withResolvers();
+    const { promise: pushedResponseFlags, resolve: onPushedResponse } = Promise.withResolvers();
+    const { promise: parentEnded, resolve: onParentEnd } = Promise.withResolvers();
+    const { promise: pushedClosed, resolve: onPushedClose } = Promise.withResolvers();
+    const { promise: serverPushFinished, resolve: onServerPushFinish } = Promise.withResolvers();
+    let wantTrailersEvents = 0;
+    const server = http2.createServer();
+    server.on("error", reject);
+    server.on("sessionError", reject);
+    server.on("stream", stream => {
+      stream.on("error", reject);
+      stream.pushStream({ ":path": "/pushed", ...pushHeaders }, pushOptions, (err, push) => {
+        if (err) {
+          reject(err);
+          return;
+        }
+        push.on("error", reject);
+        push.on("wantTrailers", () => wantTrailersEvents++);
+        // node finishes an endStream/HEAD push's writable before the callback even runs.
+        if (push.writableFinished) onServerPushFinish();
+        else push.once("finish", onServerPushFinish);
+        try {
+          respond(push);
+        } catch (e) {
+          reject(e);
+          return;
+        }
+        // Written after the pushed response, so once the client has received this response it has
+        // also received every frame the pushed response consisted of.
+        stream.respond({ ":status": 200 });
+        stream.end("parent");
+      });
+    });
+    let client;
+    try {
+      await Promise.race([failure, new Promise(listening => server.listen(0, "127.0.0.1", listening))]);
+      client = http2.connect(`http://127.0.0.1:${server.address().port}`);
+      client.on("error", reject);
+      client.on("stream", pushed => {
+        pushed.on("error", reject);
+        const chunks = [];
+        let ended = false;
+        pushed.on("push", (_headers, flags) => onPushedResponse(flags));
+        pushed.on("data", chunk => chunks.push(chunk));
+        pushed.on("end", () => (ended = true));
+        pushed.on("close", () =>
+          onPushedClose({ ended, rstCode: pushed.rstCode, body: Buffer.concat(chunks).toString() }),
+        );
+      });
+      const req = client.request({ ":path": "/" });
+      req.on("error", reject);
+      req.on("end", onParentEnd);
+      req.resume();
+      await Promise.race([failure, parentEnded]);
+      const flags = await Promise.race([failure, pushedResponseFlags]);
+      // Asserted before waiting for the pushed response to end: a pushed response that was never
+      // ended would otherwise keep the waits below pending forever.
+      expect((flags & END_STREAM) !== 0).toBe(headersCarryEndStream);
+      const pushedResponse = await Promise.race([failure, pushedClosed]);
+      await Promise.race([failure, serverPushFinished]);
+      return { ...pushedResponse, wantTrailersEvents };
+    } finally {
+      client?.close();
+      server.close();
+    }
+  }
+
+  it.each([
+    ["pushStream({ endStream: true })", { pushOptions: { endStream: true }, respond: push => push.respond() }],
+    [
+      "push.end() before push.respond()",
+      {
+        respond: push => {
+          push.end();
+          push.respond({ ":status": 200 });
+        },
+      },
+    ],
+    [
+      // A response without a body never asks for trailers (node: no body, no trailers callback).
+      "push.end() before push.respond({ waitForTrailers: true })",
+      {
+        respond: push => {
+          push.end();
+          push.respond({ ":status": 200 }, { waitForTrailers: true });
+        },
+      },
+    ],
+    [
+      // pushStream() ends a HEAD push's writable side itself; respond() has always ended these
+      // through headRequest, so this one documents that the two paths agree.
+      "a :method HEAD push",
+      { pushHeaders: { ":method": "HEAD" }, respond: push => push.respond({ ":status": 200 }) },
+    ],
+  ])(
+    "%s puts END_STREAM on the pushed response's HEADERS frame",
+    async (_name, { pushHeaders, pushOptions, respond }) => {
+      const observed = await observePushedResponse({ pushHeaders, pushOptions, respond, headersCarryEndStream: true });
+      expect(observed).toEqual({ ended: true, rstCode: 0, body: "", wantTrailersEvents: 0 });
+    },
+  );
+
+  it("a pushed stream that is still writable at respond() time ends with its body", async () => {
+    const respond = push => {
+      push.respond({ ":status": 200 });
+      push.end("pushed body");
+    };
+    const observed = await observePushedResponse({ respond, headersCarryEndStream: false });
+    expect(observed).toEqual({ ended: true, rstCode: 0, body: "pushed body", wantTrailersEvents: 0 });
+  });
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

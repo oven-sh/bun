@@ -66,6 +66,8 @@ Each workspace has its own `package.json`. To reference another package in the m
 }
 ```
 
+A workspace needs a `"name"`. Bun skips a matched `package.json` that has no `"name"`, such as a test fixture containing only `{ "type": "module" }`. Bun does not link the skipped directory into `node_modules` and does not install its dependencies. If the skipped `package.json` declares dependencies, `bun install` prints a warning that names the directory.
+
 `bun install` installs dependencies for all workspaces in the monorepo, de-duplicating packages if possible. To install dependencies for specific workspaces only, use the `--filter` flag.
 
 ```bash

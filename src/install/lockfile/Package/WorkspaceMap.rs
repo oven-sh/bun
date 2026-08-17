@@ -8,6 +8,7 @@ use bun_paths as path;
 use bun_paths::resolve_path;
 use bun_paths::{MAX_PATH_BYTES, PathBuffer, SEP_STR};
 
+use super::DependencyGroup;
 use crate::lockfile_real::{Lockfile, StringBuilder, pruned_workspaces};
 use crate::package_manager::workspace_package_json_cache::{
     GetJSONOptions, WorkspacePackageJSONCache,
@@ -17,6 +18,8 @@ bun_output::declare_scope!(Lockfile, hidden);
 
 pub(crate) struct WorkspaceMap {
     map: Map,
+    /// Relative dirs of nameless members that declare dependencies, for `warn_skipped`.
+    skipped_with_dependencies: Vec<Box<[u8]>>,
 }
 
 type Map = StringArrayHashMap<Entry>;
@@ -28,10 +31,52 @@ pub struct Entry {
     pub(crate) name_loc: bun_ast::Loc,
 }
 
+enum Scanned {
+    Workspace(Entry),
+    /// No usable `"name"`, so nothing to link or resolve it by; skipped, as pnpm and npm do.
+    Nameless {
+        declares_dependencies: bool,
+    },
+}
+
 impl WorkspaceMap {
     pub(crate) fn init() -> WorkspaceMap {
         WorkspaceMap {
             map: Map::default(),
+            skipped_with_dependencies: Vec::new(),
+        }
+    }
+
+    fn workspace_entry(&mut self, scanned: Scanned, relative_dir: &[u8]) -> Option<Entry> {
+        match scanned {
+            Scanned::Workspace(entry) => Some(entry),
+            Scanned::Nameless {
+                declares_dependencies,
+            } => {
+                // Overlapping patterns match the same directory more than once.
+                if declares_dependencies
+                    && !self
+                        .skipped_with_dependencies
+                        .iter()
+                        .any(|dir| **dir == *relative_dir)
+                {
+                    self.skipped_with_dependencies.push(relative_dir.into());
+                }
+                None
+            }
+        }
+    }
+
+    pub(crate) fn warn_skipped(&self, log: &mut bun_ast::Log) {
+        for dir in &self.skipped_with_dependencies {
+            log.add_warning_fmt(
+                None,
+                bun_ast::Loc::EMPTY,
+                format_args!(
+                    "Skipping workspace \"{}\": its package.json has no \"name\", so its dependencies will not be installed",
+                    BStr::new(dir)
+                ),
+            );
         }
     }
 
@@ -127,7 +172,7 @@ fn process_workspace_name(
     json_cache: &mut WorkspacePackageJSONCache,
     abs_package_json_path: &[u8],
     log: &mut bun_ast::Log,
-) -> crate::Result<Entry> {
+) -> crate::Result<Scanned> {
     let workspace_json = json_cache
         .get_with_path(
             log,
@@ -144,17 +189,32 @@ fn process_workspace_name(
     // results are immediately boxed so the bump can drop at scope exit.
     let scratch = Arena::new();
 
-    let name_expr = workspace_json
-        .root
-        .get(b"name")
-        .ok_or(crate::Error::MissingPackageName)?;
-    let name = name_expr
-        .as_string_cloned(&scratch)?
-        .ok_or(crate::Error::MissingPackageName)?;
+    let name = match workspace_json.root.get(b"name") {
+        Some(name_expr) => name_expr
+            .as_string_cloned(&scratch)?
+            .filter(|name| !name.is_empty())
+            .map(|name| (name, name_expr.loc)),
+        None => None,
+    };
+    let Some((name, name_loc)) = name else {
+        bun_output::scoped_log!(
+            Lockfile,
+            "processWorkspaceName({}) has no name, skipping",
+            BStr::new(abs_package_json_path)
+        );
+        return Ok(Scanned::Nameless {
+            declares_dependencies: DependencyGroup::FOUR.iter().any(|group| {
+                workspace_json
+                    .root
+                    .get(group.prop)
+                    .is_some_and(|deps| deps.property_count() > 0)
+            }),
+        });
+    };
 
     let entry = Entry {
         name: Box::<[u8]>::from(name),
-        name_loc: name_expr.loc,
+        name_loc,
         version: 'brk: {
             if let Some(version_expr) = workspace_json.root.get(b"version") {
                 if let Some(version) = version_expr.as_string_cloned(&scratch)? {
@@ -171,7 +231,7 @@ fn process_workspace_name(
         BStr::new(&entry.name)
     );
 
-    Ok(entry)
+    Ok(Scanned::Workspace(entry))
 }
 
 fn workspace_dir_of(abs_package_json_path: &[u8]) -> &[u8] {
@@ -265,12 +325,12 @@ impl WorkspaceMap {
                     }
 
                     process_workspace_name(json_cache, abs_package_json_path, log)
-                        .map(|entry| (abs_package_json_path, entry))
+                        .map(|scanned| (abs_package_json_path, scanned))
                 }
                 None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
             };
 
-            let (abs_package_json_path, workspace_entry) = match processed {
+            let (abs_package_json_path, scanned) = match processed {
                 Ok(processed) => processed,
                 Err(err) => {
                     if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
@@ -302,15 +362,6 @@ impl WorkspaceMap {
                             arr.item_loc(source, i),
                             format_args!("Workspace not found \"{}\"", BStr::new(input_path)),
                         );
-                    } else if err == crate::Error::MissingPackageName {
-                        let _ = log.add_error_fmt(
-                            Some(source),
-                            loc,
-                            format_args!(
-                                "Missing \"name\" from package.json in {}",
-                                BStr::new(input_path)
-                            ),
-                        );
                     } else {
                         let mut cwd_buf = vec![0u8; MAX_PATH_BYTES];
                         let cwd_len = bun_sys::getcwd(&mut cwd_buf).expect("unreachable");
@@ -329,15 +380,16 @@ impl WorkspaceMap {
                 }
             };
 
-            if workspace_entry.name.len() == 0 {
-                continue;
-            }
-
             let rel_input_path = relative_workspace_path(
                 &mut rel_path_buf.0,
                 root_dir,
                 workspace_dir_of(abs_package_json_path),
             );
+
+            let Some(workspace_entry) = workspace_names.workspace_entry(scanned, rel_input_path)
+            else {
+                continue;
+            };
 
             if let Some(builder) = string_builder.as_deref_mut() {
                 builder.count(&workspace_entry.name);
@@ -484,54 +536,43 @@ impl WorkspaceMap {
                     ) {
                         Some(abs_package_json_path) => {
                             process_workspace_name(json_cache, abs_package_json_path, log)
-                                .map(|entry| (abs_package_json_path, entry))
+                                .map(|scanned| (abs_package_json_path, scanned))
                         }
                         None => Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG)),
                     };
 
-                    let (abs_package_json_path, workspace_entry) = match processed {
+                    let (abs_package_json_path, scanned) = match processed {
                         Ok(processed) => processed,
                         Err(err) => {
-                            let entry_base: &[u8] = path::basename(matched_path);
                             if err == crate::Error::Sys(bun_errno::SystemErrno::ENOENT) {
                                 continue;
-                            } else if err == crate::Error::MissingPackageName {
-                                let _ = log.add_error_fmt(
-                                    Some(source),
-                                    bun_ast::Loc::EMPTY,
-                                    format_args!(
-                                        "Missing \"name\" from package.json in {}{}{}",
-                                        BStr::new(entry_dir),
-                                        SEP_STR,
-                                        BStr::new(entry_base),
-                                    ),
-                                );
-                            } else {
-                                let _ = log.add_error_fmt(
-                                    Some(source),
-                                    bun_ast::Loc::EMPTY,
-                                    format_args!(
-                                        "{} reading package.json for workspace package \"{}\" from \"{}\"",
-                                        err.name(),
-                                        BStr::new(entry_dir),
-                                        BStr::new(entry_base),
-                                    ),
-                                );
                             }
-
+                            let entry_base: &[u8] = path::basename(matched_path);
+                            let _ = log.add_error_fmt(
+                                Some(source),
+                                bun_ast::Loc::EMPTY,
+                                format_args!(
+                                    "{} reading package.json for workspace package \"{}\" from \"{}\"",
+                                    err.name(),
+                                    BStr::new(entry_dir),
+                                    BStr::new(entry_base),
+                                ),
+                            );
                             continue;
                         }
                     };
-
-                    if workspace_entry.name.len() == 0 {
-                        continue;
-                    }
 
                     let workspace_path: &[u8] = relative_workspace_path(
                         &mut rel_path_buf.0,
                         root_dir,
                         workspace_dir_of(abs_package_json_path),
                     );
+
+                    let Some(workspace_entry) =
+                        workspace_names.workspace_entry(scanned, workspace_path)
+                    else {
+                        continue;
+                    };
 
                     if let Some(builder) = string_builder.as_deref_mut() {
                         builder.count(&workspace_entry.name);

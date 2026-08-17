@@ -4660,8 +4660,26 @@ bun install --frozen-lockfile exit code: 0
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures workspaces-need-update 1`] = `
-"error: failed to migrate lockfile: InstallFailed
-bun pm migrate exit code: 1"
+"warn: skipped 4 package-lock.json entries not depended on by any package: "a", "b", "node_modules/once", "node_modules/wrappy"
+migrated lockfile from package-lock.json
+bun pm migrate exit code: 0
+bun install --frozen-lockfile exit code: 0
+
+{
+  "lockfileVersion": 2,
+  "configVersion": 1,
+  "workspaces": {
+    "": {
+      "dependencies": {
+        "abbrev": "^1.0.4",
+      },
+    },
+  },
+  "packages": {
+    "abbrev": ["abbrev@1.0.4", "", {}, "sha1-vVWuXkE7oXIu5Mq6H26hBBSlns0="],
+  }
+}
+"
 `;
 
 exports[`package-lock.json migration fixes arborist fixtures workspaces-non-simplistic 1`] = `

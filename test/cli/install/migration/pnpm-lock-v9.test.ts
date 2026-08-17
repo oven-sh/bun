@@ -261,6 +261,111 @@ describe("pnpm-lock.yaml v9", () => {
     expect(existsSync(join(String(dir), "bun.lock"))).toBe(false);
   });
 
+  // pnpm lists every directory matched by pnpm-workspace.yaml as an importer, including
+  // test fixtures whose package.json has no "name" (vite has dozens). Those are not
+  // workspace packages to bun; the migration and the later workspace scan both skip them.
+  describe("importer whose package.json has no name", () => {
+    const fixtureDir = "packages/a/__tests__/fixtures/esm";
+    const files = {
+      "package.json": JSON.stringify({
+        name: "nameless-importer-root",
+        private: true,
+        dependencies: { a: "workspace:*" },
+      }),
+      "pnpm-workspace.yaml": "packages:\n  - 'packages/*'\n  - 'packages/**/__tests__/**'\n",
+      "packages/a/package.json": JSON.stringify({ name: "a" }),
+    };
+    const rootImporter = `lockfileVersion: '9.0'
+
+importers:
+
+  .:
+    dependencies:
+      a:
+        specifier: workspace:*
+        version: link:packages/a
+
+  packages/a: {}
+`;
+
+    async function migrateThenFrozenInstall(dir: string) {
+      const { stderr, exitCode } = await migrate(dir);
+      expect(stderr).toContain("moved pnpm-workspace.yaml to workspaces in package.json");
+      expect(stderr).toContain("migrated lockfile from pnpm-lock.yaml");
+      expect(stderr).not.toContain("warn:");
+      expect(exitCode).toBe(0);
+
+      const migrated = await bunLockOf(dir);
+      expect(workspacesSection(migrated)).toBe(`  "workspaces": {
+    "": {
+      "name": "nameless-importer-root",
+      "dependencies": {
+        "a": "workspace:*",
+      },
+    },
+    "packages/a": {
+      "name": "a",
+    },
+  },
+`);
+      expect((await Bun.file(join(dir, "package.json")).json()).workspaces).toStrictEqual([
+        "packages/*",
+        "packages/**/__tests__/**",
+      ]);
+
+      // The migrated package.json now matches the fixture through the glob; the
+      // workspace scan has to agree with the migration for a frozen install to pass.
+      const install = await run(dir, "install", "--frozen-lockfile", "--linker", "hoisted");
+      expect(install.stderr).not.toContain("error:");
+      expect(install.exitCode).toBe(0);
+      expect(await bunLockOf(dir)).toBe(migrated);
+      expect(await installedPackageJson(dir, "", "a")).toStrictEqual({ name: "a" });
+      return { migrated, install };
+    }
+
+    test.concurrent("is skipped", async () => {
+      using dir = tempDir("pnpm-v9-nameless-importer", {
+        ...files,
+        [`${fixtureDir}/package.json`]: JSON.stringify({ type: "module" }),
+        "pnpm-lock.yaml": `${rootImporter}
+  ${fixtureDir}: {}
+`,
+      });
+
+      const { install } = await migrateThenFrozenInstall(String(dir));
+      expect(install.stderr).not.toContain("warn:");
+    });
+
+    test.concurrent("its dependencies are not migrated, and bun install warns about them", async () => {
+      using dir = tempDir("pnpm-v9-nameless-importer-with-deps", {
+        ...files,
+        [`${fixtureDir}/package.json`]: JSON.stringify({ type: "module", dependencies: { "no-deps": "^1.0.0" } }),
+        "pnpm-lock.yaml": `${rootImporter}
+  ${fixtureDir}:
+    dependencies:
+      no-deps:
+        specifier: ^1.0.0
+        version: 1.0.1
+
+packages:
+
+  no-deps@1.0.1:
+    resolution: {integrity: ${NO_DEPS_1_0_1_INTEGRITY}}
+
+snapshots:
+
+  no-deps@1.0.1: {}
+`,
+      });
+
+      const { migrated, install } = await migrateThenFrozenInstall(String(dir));
+      expect(migrated).not.toContain("no-deps");
+      expect(install.stderr).toContain(
+        `warn: Skipping workspace "${fixtureDir}": its package.json has no "name", so its dependencies will not be installed\n`,
+      );
+    });
+  });
+
   test("registry-qualified dep path resolves from the configured registry with a warning", async () => {
     // shape from pnpm11/deps/path/test/index.ts parse() `foo@work:1.0.0`
     const { packageDir } = await verdaccio.createTestDir({

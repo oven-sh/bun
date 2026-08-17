@@ -2477,6 +2477,8 @@ impl Package<u64> {
             }
         }
 
+        workspace_names.warn_skipped(log);
+
         if FEATURES.trusted_dependencies {
             parse_append_trusted_dependencies(
                 &mut lockfile.trusted_dependencies,

@@ -53,7 +53,7 @@ Each directory holds only what a `package-lock.json -> bun.lock` migration reads
 - `workspaces-add-new-dep` (v2, workspaces) - single workspace `a` at the fixture root, no registry deps
 - `workspaces-conflicting-versions-virtual` (v2, workspaces) - two workspaces pinning different versions of the root's dep, nested under each workspace
 - `workspaces-ignore-nm-virtual` (v2, workspaces) - workspaces glob `packages/**`
-- `workspaces-need-update` (v2, workspaces) - workspaces a/b whose package.json files have no `name` (Bun rejects nameless workspaces)
+- `workspaces-need-update` (v2, workspaces) - workspaces a/b whose package.json files have no `name` (Bun skips nameless workspaces, so only the root's deps migrate)
 - `workspaces-non-simplistic` (v2, workspaces) - workspace with a scoped transitive dep chain, minified lockfile, root devDependencies
 - `workspaces-not-root` (v2, workspaces) - three workspaces sharing hoisted registry deps, `""` specs, root package.json without a name
 - `workspaces-prefer-linking-virtual` (v2, workspaces) - workspace named `abbrev` satisfying another workspace's `abbrev` dep

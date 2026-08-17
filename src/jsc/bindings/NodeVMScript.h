@@ -11,6 +11,7 @@ public:
     WTF::Vector<uint8_t> cachedData;
     std::optional<int64_t> timeout = std::nullopt;
     bool produceCachedData = false;
+    bool cachedDataProvided = false;
 
     using BaseVMOptions::BaseVMOptions;
 
@@ -73,7 +74,6 @@ public:
     WTF::Vector<uint8_t>& cachedData() { return m_options.cachedData; }
     JSC::ProgramExecutable* cachedExecutable() const { return m_cachedExecutable.get(); }
     bool cachedDataProduced() const { return m_cachedDataProduced; }
-    void cachedDataProduced(bool value) { m_cachedDataProduced = value; }
     TriState cachedDataRejected() const { return m_cachedDataRejected; }
     void cachedDataRejected(TriState value) { m_cachedDataRejected = value; }
     bool sourceMapURLParsed() const { return m_sourceMapURLParsed; }

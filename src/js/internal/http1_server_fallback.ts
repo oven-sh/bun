@@ -1,8 +1,9 @@
 // JS HTTP/1 server path over an arbitrary Duplex with a JS stand-in for NodeHTTPResponse.
 // Used by http2's `allowHTTP1` ALPN fallback and http's `server.emit("connection", socket)`.
 // See https://github.com/nodejs/node/blob/main/lib/_http_server.js connectionListener.
-const { STATUS_CODES } = require("internal/http");
+const { STATUS_CODES, NodeHTTPResponseFlags } = require("internal/http");
 const { SafeSet } = require("internal/primordials");
+const { ConnResetException } = require("internal/shared");
 
 const kHttp1Connections = Symbol("http1Connections");
 const kHttp1ActiveRequests = Symbol("http1ActiveRequests");
@@ -147,10 +148,15 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
   }
 
   const handle = {
-    flags: 0,
+    // Derived from the connection like NodeHTTPResponse's socket-closed bit; write()/end() then emit no 'finish'.
+    get flags() {
+      return socket.writable ? 0 : NodeHTTPResponseFlags.socket_closed;
+    },
+    get aborted() {
+      return !handle.ended && !socket.writable;
+    },
     ended: false,
     finished: false,
-    aborted: false,
     bufferedAmount: 0,
     shouldKeepAlive,
     onfinished: null,
@@ -223,7 +229,6 @@ function createHttp1FallbackResponseHandle(socket, shouldKeepAlive, keepAliveTim
       return length;
     },
     abort() {
-      this.aborted = true;
       if (!socket.destroyed) socket.destroy();
     },
   };
@@ -401,6 +406,7 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.removeListener("data", onHttp1SocketData);
       socket.removeListener("error", onHttp1SocketErrorListener);
       socket.removeListener("end", onHttp1SocketEnd);
+      socket.removeListener("close", onHttp1SocketClose);
       connections.delete(socket);
       try {
         parser.close();
@@ -428,7 +434,6 @@ function connectionListenerHTTP1(server, socket, options) {
       return;
     }
     if (!server.httpAllowHalfOpen) {
-      if (req && !req.complete) req.destroy();
       if (socket.writable) socket.end();
       return;
     }
@@ -439,15 +444,23 @@ function connectionListenerHTTP1(server, socket, options) {
       socket.end();
     }
   }
-  socket.on("data", onHttp1SocketData);
-  socket.on("error", onHttp1SocketErrorListener);
-  socket.once("end", onHttp1SocketEnd);
-  socket.once("close", () => {
+  // Node's socketOnClose: freeParser, then abortIncoming.
+  function onHttp1SocketClose() {
     connections.delete(socket);
     try {
       parser.close();
     } catch {}
-  });
+    // Node's state.incoming equivalent: a finished response detached on 'finish'.
+    const inflightReq = socket._httpMessage?.req;
+    if (inflightReq && !inflightReq.destroyed) {
+      inflightReq.destroy(new ConnResetException("aborted"));
+    }
+  }
+  socket.on("data", onHttp1SocketData);
+  socket.on("error", onHttp1SocketErrorListener);
+  socket.once("end", onHttp1SocketEnd);
+  // Ahead of every response's assignSocket() 'close' listener: req 'aborted' precedes res 'close'.
+  socket.once("close", onHttp1SocketClose);
 }
 
 function closeIdleHttp1Connections(server) {

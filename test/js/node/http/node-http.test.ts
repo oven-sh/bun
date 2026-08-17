@@ -4139,3 +4139,297 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     expect(serverSide.destroyed).toBe(true);
   }
 });
+
+// Feeds one request to a server through server.emit("connection", duplex) (the
+// JS connectionListener) and records the request/response lifecycle events in
+// the order they fire. A duplexPair does not propagate destroy() to the other
+// side, so the scenarios close the connection from the server's half, the way
+// a reset TCP connection would surface.
+function connectionListenerRequest(
+  requestBytes: string,
+  handler?: (req: IncomingMessage, res: ServerResponse) => void,
+  { reqErrorListener = true } = {},
+) {
+  const events: string[] = [];
+  const dispatched = Promise.withResolvers<{ req: IncomingMessage; res: ServerResponse }>();
+  const resClosed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    req.on("aborted", () => events.push("req-aborted"));
+    if (reqErrorListener) req.on("error", (err: any) => events.push("req-error:" + err.code));
+    req.on("close", () => events.push("req-close"));
+    res.on("finish", () => events.push("res-finish"));
+    res.on("close", () => {
+      events.push("res-close");
+      resClosed.resolve();
+    });
+    handler?.(req, res);
+    dispatched.resolve({ req, res });
+  });
+  const [clientSide, serverSide] = duplexPair();
+  const serverSideClosed = new Promise<void>(resolve => serverSide.on("close", resolve));
+  clientSide.resume();
+  server.emit("connection", serverSide);
+  clientSide.write(requestBytes);
+  return {
+    server,
+    events,
+    clientSide,
+    serverSide,
+    dispatched: dispatched.promise,
+    resClosed: resClosed.promise,
+    // Resolves once the connection has closed and the request's deferred
+    // 'error'/'close' (process.nextTick hops behind the socket's 'close') have
+    // had their turn, so `events` is final either way.
+    async connectionClosed() {
+      await serverSideClosed;
+      await new Promise(resolve => setImmediate(resolve));
+    },
+  };
+}
+
+const PARTIAL_POST = "POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc";
+
+// Node's socketOnClose runs abortIncoming(): a request whose response has not
+// finished is destroyed with an ECONNRESET "aborted" error when its connection
+// closes, so it emits 'aborted' (before the response's 'close'), then 'error'
+// only if something listens, then 'close'. The event orders asserted below are
+// Node v26's.
+const ABORTED_EVENTS = ["req-aborted", "res-close", "req-error:ECONNRESET", "req-close"];
+
+type ConnectionListenerRequest = ReturnType<typeof connectionListenerRequest>;
+const connectionCloseTriggers: [string, (t: ConnectionListenerRequest) => void][] = [
+  ["the connection is reset while the body is still arriving", t => t.serverSide.destroy()],
+  ["server.closeAllConnections() destroys the connection", t => t.server.closeAllConnections()],
+  // The parser flags the truncated message and the connection is torn down.
+  ["the peer hangs up with the body cut short", t => t.clientSide.end()],
+];
+
+for (const [trigger, closeConnection] of connectionCloseTriggers) {
+  it(`connectionListener aborts the in-flight request when ${trigger}`, async () => {
+    const t = connectionListenerRequest(PARTIAL_POST);
+    const { req } = await t.dispatched;
+    closeConnection(t);
+    await t.connectionClosed();
+    expect(t.events).toEqual(ABORTED_EVENTS);
+    expect({
+      destroyed: req.destroyed,
+      aborted: req.aborted,
+      complete: req.complete,
+      errored: (req.errored as any)?.code,
+    }).toEqual({ destroyed: true, aborted: true, complete: false, errored: "ECONNRESET" });
+  });
+}
+
+it("connectionListener abort does not emit 'error' on a request without an error listener", async () => {
+  // Like Node, the error is only emitted when something listens for it (it
+  // would otherwise be an uncaught exception), but req.errored still carries it.
+  const t = connectionListenerRequest(PARTIAL_POST, undefined, { reqErrorListener: false });
+  const { req } = await t.dispatched;
+  t.serverSide.destroy();
+  await t.connectionClosed();
+  expect(t.events).toEqual(["req-aborted", "res-close", "req-close"]);
+  expect((req.errored as any)?.code).toBe("ECONNRESET");
+});
+
+it("connectionListener aborts a body-less request whose response is still pending", async () => {
+  // The request is complete as far as the parser is concerned; Node keys the
+  // abort off the unfinished response, not off req.complete.
+  const t = connectionListenerRequest("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+  const { req } = await t.dispatched;
+  t.serverSide.destroy();
+  await t.connectionClosed();
+  expect(t.events).toEqual(ABORTED_EVENTS);
+  expect({ complete: req.complete, aborted: req.aborted }).toEqual({ complete: true, aborted: true });
+});
+
+it("connectionListener aborts the request when its response is destroyed", async () => {
+  // res.destroy() tears the connection down. The response emits its own
+  // 'close' synchronously from destroy(), so only the request's events are
+  // order-checked here.
+  const t = connectionListenerRequest(PARTIAL_POST);
+  const { req, res } = await t.dispatched;
+  res.destroy();
+  await t.connectionClosed();
+  expect(t.events.filter(event => event.startsWith("req-"))).toEqual([
+    "req-aborted",
+    "req-error:ECONNRESET",
+    "req-close",
+  ]);
+  expect(t.events).toContain("res-close");
+  expect(req.aborted).toBe(true);
+});
+
+const GET = "GET /events HTTP/1.1\r\nHost: x\r\n\r\n";
+// A long-poll / event-stream handler: the request completed with its headers
+// and the response stays open.
+function startStreamingResponse(_req: IncomingMessage, res: ServerResponse) {
+  res.writeHead(200, { "content-type": "text/event-stream" });
+  res.write("data: hi\n\n");
+}
+
+it("connectionListener aborts a completed request with an open response when the peer hangs up", async () => {
+  // The parser has nothing to complain about at EOF, so node's socketOnEnd
+  // just ends the connection; the abort comes from the 'close' that follows.
+  const t = connectionListenerRequest(GET, startStreamingResponse);
+  const { req } = await t.dispatched;
+  t.clientSide.end();
+  await t.connectionClosed();
+  expect(t.events).toEqual(ABORTED_EVENTS);
+  expect({ complete: req.complete, aborted: req.aborted }).toEqual({ complete: true, aborted: true });
+});
+
+it("connectionListener aborts the request when the response is ended after the peer hung up", async () => {
+  // Once the connection stopped being writable, a res.end() cannot reach the
+  // wire. Like node (the bytes are parked, nothing is written) it must not
+  // count as the response finishing, or the request would be left out of the
+  // abort, and it must not surface as a 'clientError' from writing to the
+  // ended connection.
+  const t = connectionListenerRequest(GET, (req, res) => {
+    // Runs after the listener's own 'end' handler has ended the connection.
+    req.socket.once("end", () => res.end("bye"));
+  });
+  const clientErrors: string[] = [];
+  t.server.on("clientError", (err: any, socket) => {
+    clientErrors.push(err.code);
+    socket.destroy();
+  });
+  const { req } = await t.dispatched;
+  t.clientSide.end();
+  await t.connectionClosed();
+  expect({ events: t.events, clientErrors }).toEqual({ events: ABORTED_EVENTS, clientErrors: [] });
+  expect(req.aborted).toBe(true);
+});
+
+const destroyThenEndTriggers: [string, (req: IncomingMessage, server: Server) => void][] = [
+  ["req.socket.destroy()", req => req.socket.destroy()],
+  ["server.closeAllConnections()", (_req, server) => server.closeAllConnections()],
+];
+
+for (const [trigger, destroyConnection] of destroyThenEndTriggers) {
+  it(`connectionListener aborts the request when res.end() follows ${trigger} on a net socket`, async () => {
+    // A net.Socket emits 'close' a turn after destroy(). A res.end() issued in
+    // between cannot reach the wire, and like node (and the native server) it
+    // must not emit 'finish' and release the response, or the close path finds
+    // nothing to abort. A duplexPair emits 'close' too early to exercise this.
+    const events: string[] = [];
+    const connectionClosed = Promise.withResolvers<IncomingMessage>();
+    const httpServer = createServer((req, res) => {
+      req.on("aborted", () => events.push("req-aborted"));
+      req.on("error", (err: any) => events.push("req-error:" + err.code));
+      req.on("close", () => events.push("req-close"));
+      res.on("finish", () => events.push("res-finish"));
+      res.on("close", () => events.push("res-close"));
+      req.socket.on("close", () => connectionClosed.resolve(req));
+      destroyConnection(req, httpServer);
+      // Still chainable, like node's end() (and the native response's on a closed connection).
+      events.push(res.end("late") === res ? "end-returned-res" : "end-returned-other");
+    });
+    const netServer = createNetServer(socket => httpServer.emit("connection", socket));
+    netServer.listen(0, "127.0.0.1");
+    await once(netServer, "listening");
+    const { port } = netServer.address() as AddressInfo;
+    const client = connect(port, "127.0.0.1", () => {
+      client.write(PARTIAL_POST);
+    });
+    client.on("error", () => {});
+    try {
+      const req = await connectionClosed.promise;
+      // The request's 'error'/'close' are nextTick hops behind the socket's 'close'.
+      await new Promise(resolve => setImmediate(resolve));
+      expect(events).toEqual(["end-returned-res", ...ABORTED_EVENTS]);
+      expect({ destroyed: req.destroyed, aborted: req.aborted }).toEqual({ destroyed: true, aborted: true });
+    } finally {
+      client.destroy();
+      netServer.close();
+    }
+  });
+}
+
+it("connectionListener does not abort a request whose response already finished when the connection closes", async () => {
+  // Node's resOnFinish takes the request out of the abort list: a connection
+  // that dies afterwards (here with the request body still unfinished) leaves
+  // the request untouched.
+  const t = connectionListenerRequest(PARTIAL_POST, (_req, res) => res.end("answered early"));
+  const { req } = await t.dispatched;
+  await t.resClosed;
+  t.serverSide.destroy();
+  await t.connectionClosed();
+  expect(t.events).toEqual(["res-finish", "res-close"]);
+  expect({ destroyed: req.destroyed, aborted: req.aborted }).toEqual({ destroyed: false, aborted: false });
+});
+
+it("connectionListener aborts only the keep-alive request that is in flight when the connection closes", async () => {
+  // The first exchange completed and released the connection; the second
+  // request's body is still arriving when the connection dies. Node aborts the
+  // second request and does not touch the first.
+  const events: Record<string, string[]> = { "/1": [], "/2": [] };
+  const requests: Record<string, IncomingMessage> = {};
+  const firstReqClosed = Promise.withResolvers<void>();
+  const firstResClosed = Promise.withResolvers<void>();
+  const server = createServer((req, res) => {
+    const tag = req.url!;
+    requests[tag] = req;
+    req.on("aborted", () => events[tag].push("aborted"));
+    req.on("error", (err: any) => events[tag].push("error:" + err.code));
+    req.on("close", () => events[tag].push("close"));
+    res.on("close", () => events[tag].push("res-close"));
+    if (tag === "/1") {
+      req.on("close", () => firstReqClosed.resolve());
+      res.on("close", () => firstResClosed.resolve());
+      res.end("one");
+      return;
+    }
+    serverSide.destroy();
+  });
+  const [clientSide, serverSide] = duplexPair();
+  const serverSideClosed = new Promise<void>(resolve => serverSide.on("close", resolve));
+  let received = "";
+  const firstAnswered = Promise.withResolvers<void>();
+  clientSide.on("data", chunk => {
+    received += chunk;
+    if (received.endsWith("one")) firstAnswered.resolve();
+  });
+  server.emit("connection", serverSide);
+  clientSide.write("GET /1 HTTP/1.1\r\nHost: x\r\n\r\n");
+  await Promise.all([firstAnswered.promise, firstReqClosed.promise, firstResClosed.promise]);
+  const firstEvents = [...events["/1"]];
+  expect([...firstEvents].sort()).toEqual(["close", "res-close"]);
+  clientSide.write("POST /2 HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+  await serverSideClosed;
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events["/2"]).toEqual(["aborted", "res-close", "error:ECONNRESET", "close"]);
+  // Nothing happened to the first request after it ended normally.
+  expect(events["/1"]).toEqual(firstEvents);
+  expect({ first: requests["/1"].aborted, second: requests["/2"].aborted }).toEqual({ first: false, second: true });
+});
+
+it("connectionListener does not abort an upgraded request when the tunnel closes", async () => {
+  // After the Upgrade handoff the connection no longer belongs to HTTP (Node
+  // removes its close listener along with the parser), so closing the tunnel
+  // must not abort the upgrade request, even when the 'upgrade' listener
+  // answered through a ServerResponse it assigned to the socket itself.
+  const events: string[] = [];
+  const upgraded = Promise.withResolvers<IncomingMessage>();
+  const server = createServer(() => upgraded.reject(new Error("request handler must not run for a handled upgrade")));
+  server.on("upgrade", (req, socket) => {
+    req.on("aborted", () => events.push("req-aborted"));
+    req.on("error", (err: any) => events.push("req-error:" + err.code));
+    req.on("close", () => events.push("req-close"));
+    const res = new ServerResponse(req);
+    res.assignSocket(socket as any);
+    res.writeHead(400);
+    res.end();
+    upgraded.resolve(req);
+  });
+  const [clientSide, serverSide] = duplexPair();
+  clientSide.resume();
+  const serverSideClosed = new Promise<void>(resolve => serverSide.on("close", resolve));
+  server.emit("connection", serverSide);
+  clientSide.write("GET /ws HTTP/1.1\r\nHost: x\r\nUpgrade: ws\r\nConnection: Upgrade\r\n\r\n");
+  const req = await upgraded.promise;
+  serverSide.destroy();
+  await serverSideClosed;
+  await new Promise(resolve => setImmediate(resolve));
+  expect(events).toEqual([]);
+  expect({ destroyed: req.destroyed, aborted: req.aborted }).toEqual({ destroyed: false, aborted: false });
+});

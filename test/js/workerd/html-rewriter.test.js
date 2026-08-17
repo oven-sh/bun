@@ -2759,6 +2759,91 @@ describe("GC pressure mid-rewrite", () => {
     expect(stash.tagName).toBeUndefined();
   });
 
+  // A handler running inside the input ByteStream's write into the pipe
+  // cancels the output reader and drops the last references to the transform.
+  // The ByteStream follows the pipe's `Done` answer with `end()` on the same
+  // sink snapshot, so the pipe must outlive the write call even when a GC in
+  // the handler swept its Transform cell.
+  it("cancelling the output from a handler mid-chunk does not free the pipe under its caller", async () => {
+    const fixture = /* js */ `
+      const CHUNKS = 6;
+      const CANCEL_AT = 4;
+      let gates;
+      // Chunk N+1 is only sent once the handler saw element N, so every element
+      // after the first reaches the rewriter from the fetch body's ByteStream.
+      const server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                try {
+                  for (let i = 0; i < CHUNKS; i++) {
+                    controller.enqueue(new TextEncoder().encode("<p n=" + i + "></p>"));
+                    await gates[i].promise;
+                  }
+                  controller.close();
+                } catch {}
+              },
+            }),
+            { headers: { "Content-Type": "text/html" } },
+          );
+        },
+      });
+      for (let iter = 0; iter < 3; iter++) {
+        gates = Array.from({ length: CHUNKS }, () => Promise.withResolvers());
+        const cancelled = Promise.withResolvers();
+        let seen = 0;
+        let reader;
+        let out = new HTMLRewriter()
+          .on("p", {
+            element(el) {
+              const n = Number(el.getAttribute("n"));
+              seen++;
+              if (n === CANCEL_AT) {
+                reader.cancel("bye").catch(() => {});
+                reader = out = null;
+                globalThis.junk = Array.from({ length: 2000 }, () => "x".repeat(4096));
+                Bun.gc(true);
+                Bun.gc(true);
+                cancelled.resolve();
+              }
+              el.setAttribute("seen", "1");
+              gates[n].resolve();
+            },
+          })
+          .transform(await fetch(server.url));
+        reader = out.body.getReader();
+        out = null;
+        const drain = (async () => {
+          try {
+            while (reader) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } catch {}
+        })();
+        await cancelled.promise;
+        await drain;
+        Bun.gc(true);
+        for (const g of gates) g.resolve();
+        console.log("iteration", iter, "saw", seen);
+      }
+      console.log("done");
+      server.stop(true);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("iteration 0 saw 5\niteration 1 saw 5\niteration 2 saw 5\ndone\n");
+    expect(exitCode).toBe(0);
+  });
+
   // Chained transform where the intermediate Response is a temporary: while
   // the second pipe's handler is suspended, the first pipe is parked on the
   // shared ByteStream's backpressure with its producer backref installed.

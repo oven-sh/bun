@@ -92,24 +92,11 @@ const PRODUCTION_PARAMS: &[ParamType] = &[
     clap::param!("-P, --prod"),
 ];
 
-const SAVE_PARAMS: &[ParamType] = &[
+const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--no-save                             Don't update package.json or save a lockfile"
     ),
     clap::param!("--save                                Save to package.json (true by default)"),
-];
-
-// `parse` gives link and unlink the opposite default: they only save when --save is passed.
-const LINK_SAVE_PARAMS: &[ParamType] = &[
-    clap::param!(
-        "--no-save                             Don't update package.json or save a lockfile (the default)"
-    ),
-    clap::param!(
-        "--save                                Update package.json and save a lockfile (false by default)"
-    ),
-];
-
-const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--ca <STR>...                         Provide a Certificate Authority signing certificate"
     ),
@@ -176,18 +163,22 @@ const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!("-h, --help                            Print this help menu"),
 ];
 
-const SHARED_PARAMS: &[ParamType] = concat_params![
-    SHARED_HEAD_PARAMS,
-    PRODUCTION_PARAMS,
-    SAVE_PARAMS,
-    SHARED_TAIL_PARAMS
-];
+const SHARED_PARAMS: &[ParamType] =
+    concat_params![SHARED_HEAD_PARAMS, PRODUCTION_PARAMS, SHARED_TAIL_PARAMS];
 
+// `parse` gives link and unlink the opposite default: they only save when --save is passed.
 const LINK_SHARED_PARAMS: &[ParamType] = concat_params![
     SHARED_HEAD_PARAMS,
     PRODUCTION_PARAMS,
-    LINK_SAVE_PARAMS,
-    SHARED_TAIL_PARAMS
+    &[
+        clap::param!(
+            "--no-save                             Don't update package.json or save a lockfile (the default)"
+        ),
+        clap::param!(
+            "--save                                Update package.json and save a lockfile (false by default)"
+        ),
+    ],
+    SHARED_TAIL_PARAMS.split_at(2).1
 ];
 
 pub(crate) static INSTALL_PARAMS: &[ParamType] = concat_params![
@@ -224,7 +215,6 @@ pub(crate) static UPDATE_PARAMS: &[ParamType] = concat_params![
         ),
         clap::param!("-P, --prod"),
     ],
-    SAVE_PARAMS,
     SHARED_TAIL_PARAMS,
     &[
         clap::param!(
@@ -1533,7 +1523,8 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             cli.tolerate_republish = args.flag(b"--tolerate-republish");
         }
 
-        // link and unlink default to not saving (see `LINK_SAVE_PARAMS`), all others to saving.
+        // link and unlink default to not saving, all others default to
+        // saving.
         if matches!(subcommand, Subcommand::Link | Subcommand::Unlink) {
             cli.no_save = !args.flag(b"--save");
         } else {

@@ -2547,7 +2547,7 @@ fn transpile_source_code_inner(
             // ════════════════════════════════════════════════════════════════
             {
                 use bun_ast::RuntimeTranspilerCache;
-                use bun_bundler::transpiler::{AlreadyBundled, ParseOptions, ParseResult};
+                use bun_bundler::transpiler::{ParseOptions, ParseResult};
                 use bun_jsc::resolved_source::Tag as ResolvedSourceTag;
 
                 // Keep the one-shot
@@ -2855,23 +2855,14 @@ fn transpile_source_code_inner(
                     });
                 }
 
-                // already-bundled (bytecode cache hit).
-                if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-                    // The bytes live
-                    // in `AlreadyBundled::Bytecode(Box<[u8]>)`, which would drop
-                    // when `parse_result` drops on return — UAF on the C++ side.
-                    // Move the variant out and `heap::alloc` so ownership
-                    // transfers to C++ exactly as in the spec.
-                    let already_bundled = core::mem::take(&mut parse_result.already_bundled);
-                    let is_commonjs_module = already_bundled.is_common_js();
-                    let bytecode_cache = Bytecode::owned(already_bundled.into_bytecode());
+                // already-bundled (`// @bun`, possibly with a bytecode sidecar).
+                if let Some(already_bundled) = ResolvedSource::from_already_bundled(
+                    core::mem::take(&mut parse_result.already_bundled),
+                    &source.contents,
+                ) {
                     return Ok(ResolvedSource {
-                        source_code: bun_core::String::clone_latin1(&source.contents),
                         source_url: input_specifier.create_if_different(path.text),
-                        already_bundled: true,
-                        bytecode_cache,
-                        is_commonjs_module,
-                        ..Default::default()
+                        ..already_bundled
                     });
                 }
 

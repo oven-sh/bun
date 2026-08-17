@@ -100,12 +100,15 @@ Ref<SourceProvider> SourceProvider::create(
     const auto getProvider = [&]() -> Ref<SourceProvider> {
         auto origin = getSourceOrigin();
         if (resolvedSource.bytecode_cache != nullptr) {
-            const auto destructorOwned = [](const void* ptr) {
-                ResolvedSource__freeBytecode(static_cast<uint8_t*>(const_cast<void*>(ptr)));
-            };
-            // Borrowed from the standalone module graph / compile cache.
-            const auto destructorNoOp = [](const void*) {};
-            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(std::span<uint8_t>(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size), resolvedSource.bytecode_cache_owned ? destructorOwned : destructorNoOp, {});
+            std::span<uint8_t> bytes(std::exchange(resolvedSource.bytecode_cache, nullptr), resolvedSource.bytecode_cache_size);
+            // No file means the bytes are borrowed from the standalone module graph / compile cache.
+            JSC::CachePayload::Destructor destructor;
+            if (void* file = std::exchange(resolvedSource.bytecode_cache_file, nullptr)) {
+                destructor = [file](const void*) {
+                    ResolvedSource__destroyBytecodeFile(file);
+                };
+            }
+            Ref<JSC::CachedBytecode> bytecode = JSC::CachedBytecode::create(bytes, WTF::move(destructor), {});
             if (resolvedSource.bytecode_cache_persistent)
                 bytecode->setPayloadIsPersistent();
             auto provider = adoptRef(*new SourceProvider(

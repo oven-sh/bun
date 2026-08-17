@@ -12,7 +12,7 @@ use bun_ast::{ASTMemoryAllocator, ExportsKind};
 use bun_ast::{ImportRecord, ImportRecordFlags};
 use bun_bundler::analyze_transpiled_module;
 use bun_bundler::options::ModuleType;
-use bun_bundler::transpiler::{self as transpiler, AlreadyBundled, ParseOptions, Transpiler};
+use bun_bundler::transpiler::{self as transpiler, ParseOptions, Transpiler};
 use bun_collections::HiveArrayFallback;
 use bun_core::{MutableString, String, strings};
 use bun_event_loop::{TaskTag, Taskable, task_tag};
@@ -976,18 +976,13 @@ impl TranspilerJob {
             return;
         }
 
-        if !matches!(parse_result.already_bundled, AlreadyBundled::None) {
-            let already_bundled = core::mem::take(&mut parse_result.already_bundled);
-            let is_commonjs_module = already_bundled.is_common_js();
-            let bytecode_cache =
-                crate::resolved_source::Bytecode::owned(already_bundled.into_bytecode());
+        if let Some(already_bundled) = ResolvedSource::from_already_bundled(
+            core::mem::take(&mut parse_result.already_bundled),
+            &parse_result.source.contents,
+        ) {
             self.resolved_source = ResolvedSource {
-                source_code: String::clone_latin1(&parse_result.source.contents),
-                already_bundled: true,
-                bytecode_cache,
-                is_commonjs_module,
                 tag: this_tag,
-                ..Default::default()
+                ..already_bundled
             };
             self.resolved_source.source_code.ensure_hash();
             return;

@@ -119,11 +119,11 @@ typedef struct ResolvedSource {
     uint32_t tag;
     bool already_bundled;
     // -- Bytecode cache fields --
-    // Owned (`ResolvedSource__freeBytecode`) iff `bytecode_cache_owned`; otherwise
-    // borrowed from the standalone module graph / compile cache.
+    // Owned by bytecode_cache_file (`ResolvedSource__destroyBytecodeFile`) when it is
+    // non-null; otherwise borrowed from the standalone module graph / compile cache.
     uint8_t* bytecode_cache;
     size_t bytecode_cache_size;
-    bool bytecode_cache_owned;
+    void* bytecode_cache_file;
     // The bytes outlive every VM (executable section / retired compile-cache blob): JSC may alias them.
     bool bytecode_cache_persistent;
     // Owned; Zig::SourceProvider takes it (nulling the field).
@@ -132,14 +132,14 @@ typedef struct ResolvedSource {
     // Converted to file:// URL. If empty, origin is derived from source_url.
     BunString bytecode_origin_path;
 } ResolvedSource;
-static_assert(sizeof(ResolvedSource) == 136, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
+static_assert(sizeof(ResolvedSource) == 144, "ResolvedSource layout is mirrored in src/jsc/ResolvedSource.rs");
 inline constexpr uint32_t ResolvedSourceTagPackageJSONTypeModule = 1;
 typedef union ErrorableResolvedSourceResult {
     ResolvedSource value;
     JSC::EncodedJSValue err;
 } ErrorableResolvedSourceResult;
 extern "C" void zig__ModuleInfoDeserialized__deinit(bun_ModuleInfoDeserialized* info);
-extern "C" void ResolvedSource__freeBytecode(uint8_t* bytecode);
+extern "C" void ResolvedSource__destroyBytecodeFile(void* file);
 struct ErrorableResolvedSource {
     WTF_MAKE_NONCOPYABLE(ErrorableResolvedSource);
 
@@ -155,13 +155,13 @@ public:
         result.value.source_code.deref();
         result.value.source_url.deref();
         result.value.bytecode_origin_path.deref();
-        if (result.value.bytecode_cache_owned && result.value.bytecode_cache)
-            ResolvedSource__freeBytecode(result.value.bytecode_cache);
+        if (result.value.bytecode_cache_file)
+            ResolvedSource__destroyBytecodeFile(result.value.bytecode_cache_file);
         if (result.value.module_info)
             zig__ModuleInfoDeserialized__deinit(result.value.module_info);
     }
 };
-static_assert(sizeof(ErrorableResolvedSource) == 144 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
+static_assert(sizeof(ErrorableResolvedSource) == 152 && alignof(ErrorableResolvedSource) == 8, "ErrorableResolvedSource layout is mirrored in src/jsc/Errorable.rs");
 
 typedef struct SystemError {
     int errno_;

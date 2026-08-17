@@ -74,6 +74,7 @@ public:
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
         bool hasVirtualModules() const { return virtualModules != nullptr; }
+        bool hasVirtualModule(const String& specifier) const { return virtualModules && virtualModules->contains(specifier); }
 
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
 

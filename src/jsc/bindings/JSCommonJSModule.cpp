@@ -1360,6 +1360,13 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireCommonJS, (JSGlobalObject * lexicalGlo
 }
 #undef REQUIRE_CJS_RETURN_IF_EXCEPTION
 
+// JSCommonJSModule.$requireNativeModule(resolvedId)
+//
+// require()'s fast path for the "node:" ids the resolver hands back. Returns undefined when the
+// id has to take the regular require() path instead: a virtual module (mock.module(),
+// build.module()) registered under a "node:" name resolves to that name unchanged, and only
+// fetchCommonJSModule knows how to run it. It ranks virtual modules against builtins the same way
+// import() does: under `bun test` the virtual module shadows the builtin, otherwise the builtin wins.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexicalGlobalObject, CallFrame* callframe))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
@@ -1373,6 +1380,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
     JSValue specifierValue = callframe->argument(0);
     WTF::String specifier = specifierValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
+
+    const bool isVirtualModule = globalObject->onLoadPlugins.hasVirtualModule(specifier);
+    if (isVirtualModule && isBunTest)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
     ErrorableResolvedSource res;
     res.success = false;
     memset(&res.result, 0, sizeof res.result);
@@ -1383,6 +1395,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionRequireNativeModule, (JSGlobalObject * lexica
         if (res.success)
             return JSC::JSValue::encode(result);
     }
+    if (isVirtualModule)
+        return JSC::JSValue::encode(JSC::jsUndefined());
     throwScope.assertNoExceptionExceptTermination();
     return throwVMError(globalObject, throwScope, "Failed to fetch builtin module"_s);
 }

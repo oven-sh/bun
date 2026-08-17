@@ -3566,23 +3566,48 @@ describe.concurrent("binaries", () => {
     // Also longer than the buffer as written, but normalizes to a short path.
     const longNormalizingValue = Buffer.alloc(20_000 * "x/../".length, "x/../").toString() + "normalizing-bin.js";
     const script = (name: string) => `#!/usr/bin/env node\nconsole.log("${name}")`;
-    const binDir = () => join(packageDir, "node_modules", ".bin");
     const binEntries = (...names: string[]) =>
       names.flatMap(name => (isWindows ? [`${name}.bunx`, `${name}.exe`] : [name])).sort();
 
-    async function run(args: string[], { cwd = packageDir, env: runEnv = env } = {}) {
-      await using proc = spawn({
-        cmd: [bunExe(), ...args],
-        cwd,
-        stdout: "pipe",
-        stderr: "pipe",
-        env: runEnv,
-      });
-      const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { out, err, exitCode };
+    async function setupLongBinTest() {
+      const { packageDir, env } = await setupTest();
+      async function run(args: string[], { cwd = packageDir, env: runEnv = env } = {}) {
+        await using proc = spawn({
+          cmd: [bunExe(), ...args],
+          cwd,
+          stdout: "pipe",
+          stderr: "pipe",
+          env: runEnv,
+        });
+        const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        return { out, err, exitCode };
+      }
+      // Creates `<pkgDir>/bins/<chain>/` holding `entries`. The absolute paths can be
+      // too long for the OS to create directly, so descend one component at a time.
+      async function createBinChain(pkgDir: string, chain: string[], entries: Record<string, string>) {
+        const { err, exitCode } = await run(
+          [
+            "-e",
+            `const fs = require("fs");
+           for (const component of process.argv.slice(1)) { fs.mkdirSync(component); process.chdir(component); }
+           for (const [name, contents] of Object.entries(${JSON.stringify(entries)})) fs.writeFileSync(name, contents);`,
+            "bins",
+            ...chain,
+          ],
+          { cwd: pkgDir },
+        );
+        expect(err).toBe("");
+        expect(exitCode).toBe(0);
+      }
+      return {
+        packageDir,
+        env,
+        binDir: join(packageDir, "node_modules", ".bin"),
+        run,
+        install: (linker: "hoisted" | "isolated", cwd = packageDir) => run(["install", `--linker=${linker}`], { cwd }),
+        createBinChain,
+      };
     }
-    const install = (linker: "hoisted" | "isolated", cwd = packageDir) =>
-      run(["install", `--linker=${linker}`], { cwd });
 
     // For the tests below that need paths close to the limit (POSIX only: the
     // Windows buffer is far larger than any path the filesystem accepts).
@@ -3599,30 +3624,14 @@ describe.concurrent("binaries", () => {
       }
       return components;
     };
-    // Creates `<pkgDir>/bins/<chain>/` holding `entries`. The absolute paths can be
-    // too long for the OS to create directly, so descend one component at a time.
-    async function createBinChain(pkgDir: string, chain: string[], entries: Record<string, string>) {
-      const { err, exitCode } = await run(
-        [
-          "-e",
-          `const fs = require("fs");
-           for (const component of process.argv.slice(1)) { fs.mkdirSync(component); process.chdir(component); }
-           for (const [name, contents] of Object.entries(${JSON.stringify(entries)})) fs.writeFileSync(name, contents);`,
-          "bins",
-          ...chain,
-        ],
-        { cwd: pkgDir },
-      );
-      expect(err).toBe("");
-      expect(exitCode).toBe(0);
-    }
     // Shortens the paths again so that ordinary tools can delete the directory.
     const shortenBinChain = (pkgDir: string, chain: string[]) =>
       rename(join(pkgDir, "bins", chain[0]), join(pkgDir, "bins", "d"));
 
     for (const linker of ["hoisted", "isolated"] as const) {
       test(`file targets are skipped like missing bins (${linker})`, async () => {
-        const { packageDir, packageJson, env } = await setupTest();
+        const { packageDir, binDir, install } = await setupLongBinTest();
+        const packageJson = join(packageDir, "package.json");
         // A target this long cannot exist, and the linker silently skips a bin
         // whose target does not exist, so these install without output and the
         // other bins are still linked. Covers the string, single-entry and
@@ -3669,10 +3678,10 @@ describe.concurrent("binaries", () => {
         ]);
 
         const expectBins = async () => {
-          expect(await readdirSorted(binDir())).toEqual(binEntries("long-map-bin-2", "normalizing-bin"));
+          expect(await readdirSorted(binDir)).toEqual(binEntries("long-map-bin-2", "normalizing-bin"));
           if (linker === "hoisted") {
-            expect(join(binDir(), "long-map-bin-2")).toBeValidBin(join("..", "long-map-bin", "long-map-bin-2.js"));
-            expect(join(binDir(), "normalizing-bin")).toBeValidBin(join("..", "normalizing-bin", "normalizing-bin.js"));
+            expect(join(binDir, "long-map-bin-2")).toBeValidBin(join("..", "long-map-bin", "long-map-bin-2.js"));
+            expect(join(binDir, "normalizing-bin")).toBeValidBin(join("..", "normalizing-bin", "normalizing-bin.js"));
           }
         };
 
@@ -3687,7 +3696,7 @@ describe.concurrent("binaries", () => {
         await expectBins();
 
         // The lockfile stores the values as written, so linking from it hits the same paths.
-        await rm(binDir(), { recursive: true, force: true });
+        await rm(binDir, { recursive: true, force: true });
         ({ err, exitCode } = await install(linker));
         expect(err).not.toContain("error:");
         expect(exitCode).toBe(0);
@@ -3695,7 +3704,8 @@ describe.concurrent("binaries", () => {
       });
 
       test(`directories.bin fails with ENAMETOOLONG (${linker})`, async () => {
-        const { packageDir, packageJson, env } = await setupTest();
+        const { packageDir, binDir, install } = await setupLongBinTest();
+        const packageJson = join(packageDir, "package.json");
         // The linker reports every failure to open a bin directory other than
         // ENOENT, and ENAMETOOLONG is what the OS reports for a directory path it
         // cannot address, so a value that does not fit gets the same error.
@@ -3733,7 +3743,7 @@ describe.concurrent("binaries", () => {
         expect(await exists(join(packageDir, "node_modules", "ok-bin", "package.json"))).toBeTrue();
         if (linker === "hoisted") {
           expect(await exists(join(packageDir, "node_modules", "long-dir-bin", "package.json"))).toBeTrue();
-          expect(await readdirSorted(binDir())).toEqual(binEntries("ok-bin"));
+          expect(await readdirSorted(binDir)).toEqual(binEntries("ok-bin"));
         }
       });
     }
@@ -3741,7 +3751,7 @@ describe.concurrent("binaries", () => {
     // The entries of a bin directory are joined onto the directory's path as
     // well, and so is the temporary file used to rewrite a CRLF shebang.
     test.skipIf(isWindows)("entries of a directories.bin close to the path limit", async () => {
-      const { packageDir, packageJson, env } = await setupTest();
+      const { packageDir, install, createBinChain } = await setupLongBinTest();
       // Most of the depth goes into the project directory: the `.bin` links are
       // relative, so everything below the package ends up in the link targets,
       // and XFS rejects link targets of 1 KiB or more. The bin directory is then
@@ -3787,7 +3797,7 @@ describe.concurrent("binaries", () => {
     // on another branch of the tree contributes one `..` per component, so the
     // link target can be longer than the target's absolute path.
     test.skipIf(isWindows)("bun link with a link target longer than the path buffer", async () => {
-      const { packageDir, packageJson, env } = await setupTest();
+      const { packageDir, env, run, createBinChain } = await setupLongBinTest();
       // As in the previous test, most of the depth has to sit above everything
       // that ends up in a link target that is meant to be created (XFS), so it
       // goes into the global directory itself.
@@ -3848,7 +3858,7 @@ describe.concurrent("binaries", () => {
     });
 
     test("bun link and bun unlink", async () => {
-      const { packageDir, packageJson, env } = await setupTest();
+      const { packageDir, env, run } = await setupLongBinTest();
       // `bun link` links a package's bins into the global bin directory with the
       // same linker, and `bun unlink` is the only caller of its unlink side, which
       // has to open the same bin directory.
@@ -5567,7 +5577,9 @@ describe.concurrent("hoisting", async () => {
       }),
     );
 
-    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({
+      "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2",
+    });
     expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
   });
 
@@ -5584,7 +5596,9 @@ describe.concurrent("hoisting", async () => {
       ),
     ]);
 
-    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({
+      "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2",
+    });
     expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
   });
 });
@@ -6223,6 +6237,7 @@ describe.concurrent("transitive file dependencies", () => {
   // disk while resolving, so it is read like one declared by the root.
   for (const linker of ["hoisted", "isolated"] as const) {
     test(`${linker}: a file: dependency of a local file: package is resolved like a root one`, async () => {
+      const { env } = await setupTest();
       const { packageDir } = await registry.createTestDir({
         bunfigOpts: { linker },
         files: {
@@ -10595,12 +10610,11 @@ describe("global bin links when the package dir is inside the bin dir", () => {
     globalDir = join(binDir, "global");
     const tmp = join(root, "tmp");
     await mkdir(tmp);
-    // `env` is shared with the file-level beforeEach, which points its cache and
-    // temp dirs at whichever test ran last; pin them so `bunx` below (which puts
+    // Pin the cache and temp dirs so `bunx` below (which puts
     // `<temp>/bunx-*/node_modules/.bin` ahead of PATH) sees the same thing in
     // every run.
     globalEnv = mergeWindowEnvs([
-      env,
+      bunEnv,
       {
         BUN_INSTALL_BIN: binDir,
         BUN_INSTALL_GLOBAL_DIR: globalDir,

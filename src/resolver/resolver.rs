@@ -2494,6 +2494,220 @@ impl<'a> Resolver<'a> {
         a || b
     }
 
+    /// After a runtime resolution of `import_path` came back not found, evict
+    /// the cache entries that lookup may have been served stale answers from,
+    /// so the caller can retry it once. Returns whether anything was evicted.
+    ///
+    /// The candidate path and its parent directory are always evicted (`./x`
+    /// is either `x.js` in the parent's listing or `x/index.js`). A package
+    /// path additionally revalidates the `node_modules` search: every
+    /// directory level the lookup walked (or the `require.resolve` `paths`
+    /// roots), plus every `NODE_PATH` entry. A level where the package
+    /// directory exists on disk now gets its cached state for that package
+    /// evicted; a level where it still does not exist costs one `access()` and
+    /// evicts nothing, so a miss for a package that simply is not installed
+    /// does not churn the cache.
+    pub fn bust_dir_cache_for_not_found(&mut self, source_dir: &[u8], import_path: &[u8]) -> bool {
+        // Same parse `load_node_modules` derives the package directory from.
+        let package_name: Option<&[u8]> = if is_package_path(import_path) {
+            crate::package_json::Package::parse(import_path, bufs!(esm_subpath)).map(|esm| esm.name)
+        } else {
+            None
+        };
+
+        let mut busted = false;
+        match self.custom_dir_paths {
+            Some(custom_paths) => {
+                for custom_path in custom_paths {
+                    let custom_utf8 = custom_path.to_utf8_without_ref();
+                    busted |= self.bust_dir_cache_for_not_found_in(
+                        custom_utf8.slice(),
+                        import_path,
+                        package_name,
+                    );
+                }
+            }
+            None => {
+                busted |=
+                    self.bust_dir_cache_for_not_found_in(source_dir, import_path, package_name);
+            }
+        }
+
+        if let Some(name) = package_name {
+            for node_path_dir in self.node_path_entries() {
+                let Some(base) = self
+                    .fs_ref()
+                    .abs_buf_checked(&[node_path_dir], bufs!(node_modules_check))
+                else {
+                    continue;
+                };
+                let base = strings::without_trailing_slash_windows_path(base);
+                if self.package_dir_exists(base, name) {
+                    busted |= self.bust_package_dir_cache(base, name, import_path);
+                }
+            }
+        }
+
+        busted
+    }
+
+    fn bust_dir_cache_for_not_found_in(
+        &mut self,
+        root: &[u8],
+        import_path: &[u8],
+        package_name: Option<&[u8]>,
+    ) -> bool {
+        if !bun_paths::is_absolute(root) {
+            return false;
+        }
+
+        let mut busted = false;
+        {
+            let Some(target) = self
+                .fs_ref()
+                .abs_buf_checked(&[root, import_path], bufs!(esm_absolute_package_path))
+            else {
+                return false;
+            };
+            let target = strings::without_trailing_slash_windows_path(target);
+            busted |= self.bust_dir_cache(target);
+            let parent = strings::without_trailing_slash_windows_path(Dirname::dirname(target));
+            if parent.len() < target.len() {
+                busted |= self.bust_dir_cache(parent);
+            }
+        }
+
+        let Some(name) = package_name else {
+            return busted;
+        };
+        if self.opts.global_cache == GlobalCache::force {
+            return busted;
+        }
+
+        // `check_package_path` starts the walk at the nearest directory that
+        // exists when the source directory itself does not.
+        let mut closest_dir = root;
+        let start: DirInfoRef = loop {
+            if let Some(dir_info) = self.read_dir_info_ignore_error(closest_dir) {
+                break dir_info;
+            }
+            match bun_paths::dirname(closest_dir) {
+                Some(parent) => closest_dir = parent,
+                None => return busted,
+            }
+        };
+
+        // `load_node_modules` only searches levels whose `DirInfo` was built
+        // while a `node_modules` directory existed, and reaches the levels
+        // through cached parent links. A level that gained a `node_modules`
+        // since therefore has to be rebuilt together with every level below
+        // it, or the retry would walk into the same stale `DirInfo`.
+        let mut rebuild_through: Option<usize> = None;
+        let mut depth = 0usize;
+        let mut current = Some(start);
+        while let Some(dir_info) = current {
+            if !dir_info.is_node_modules() {
+                if let Some(node_modules) = self.fs_ref().abs_buf_checked(
+                    &[dir_info.abs_path, b"node_modules"],
+                    bufs!(node_modules_check),
+                ) {
+                    if self.package_dir_exists(node_modules, name) {
+                        busted |= self.bust_package_dir_cache(node_modules, name, import_path);
+                        if !dir_info.has_node_modules() {
+                            rebuild_through = Some(depth);
+                        }
+                    }
+                }
+            }
+            current = dir_info.get_parent();
+            depth += 1;
+        }
+
+        if let Some(rebuild_through) = rebuild_through {
+            let mut current = Some(start);
+            for _ in 0..=rebuild_through {
+                let Some(dir_info) = current else { break };
+                busted |= self.bust_dir_cache(strings::without_trailing_slash_windows_path(
+                    dir_info.abs_path,
+                ));
+                current = dir_info.get_parent();
+            }
+        }
+
+        busted
+    }
+
+    /// One `access()` call; `base` is a `node_modules` directory or a
+    /// `NODE_PATH` entry.
+    fn package_dir_exists(&self, base: &[u8], name: &[u8]) -> bool {
+        let buf = bufs!(esm_absolute_package_path);
+        let end = buf.len() - 1;
+        let Some(len) = self
+            .fs_ref()
+            .abs_buf_checked(&[base, name], &mut buf[..end])
+            .map(<[u8]>::len)
+        else {
+            return false;
+        };
+        buf[len] = 0;
+        bun_sys::exists_z(bun_core::ZStr::from_buf(&buf[..], len))
+    }
+
+    /// `base/name` exists on disk. Evicts the package directory, every
+    /// directory on the literal `base/import_path` chain below `base` (these
+    /// hold the not-found markers and listings the miss was served from), and
+    /// `base` itself when its cached listing predates the package: that
+    /// listing is where the package's own entry, symlink target included, is
+    /// read from.
+    ///
+    /// `base` may live in `bufs!(node_modules_check)`; only
+    /// `esm_absolute_package_path` is used as scratch here.
+    fn bust_package_dir_cache(&mut self, base: &[u8], name: &[u8], import_path: &[u8]) -> bool {
+        let mut busted = false;
+        let buf = bufs!(esm_absolute_package_path);
+
+        if let Some(package_dir) = self.fs_ref().abs_buf_checked(&[base, name], buf) {
+            busted |=
+                self.bust_dir_cache(strings::without_trailing_slash_windows_path(package_dir));
+        }
+
+        if let Some(full_path) = self.fs_ref().abs_buf_checked(&[base, import_path], buf) {
+            // `..` segments in `import_path` can normalize to a path outside of
+            // `base`; only evict what is underneath it. A root `base` (NODE_PATH
+            // naming a filesystem root) already ends in its separator.
+            let base_is_root = ResolvePath::is_sep_any(base[base.len() - 1]);
+            let mut dir = strings::without_trailing_slash_windows_path(full_path);
+            while dir.len() > base.len()
+                && dir.starts_with(base)
+                && (base_is_root || ResolvePath::is_sep_any(dir[base.len()]))
+            {
+                busted |= self.bust_dir_cache(dir);
+                dir = strings::without_trailing_slash_windows_path(Dirname::dirname(dir));
+            }
+        }
+
+        let top_level_entry =
+            &name[..strings::index_of_char_usize(name, b'/').unwrap_or(name.len())];
+        let generation = self.generation;
+        let listed = self
+            .read_dir_info_ignore_error(base)
+            .is_some_and(|dir_info| dir_info.get_entry(generation, top_level_entry).is_some());
+        if !listed {
+            busted |= self.bust_dir_cache(base);
+        }
+
+        busted
+    }
+
+    /// https://nodejs.org/api/modules.html#loading-from-the-global-folders
+    fn node_path_entries(&self) -> strings::TokenizeIterator<'a> {
+        let node_path: &'a [u8] = self
+            .env_loader()
+            .and_then(|env| env.get(b"NODE_PATH"))
+            .unwrap_or(b"");
+        strings::tokenize(node_path, if cfg!(windows) { b";" } else { b":" })
+    }
+
     pub(crate) fn load_node_modules(
         &mut self,
         import_path: &[u8],
@@ -2830,35 +3044,27 @@ impl<'a> Resolver<'a> {
         }
 
         // try resolve from `NODE_PATH`
-        // https://nodejs.org/api/modules.html#loading-from-the-global-folders
-        let node_path: &[u8] = self
-            .env_loader()
-            .and_then(|env| env.get(b"NODE_PATH"))
-            .unwrap_or(b"");
-        if !node_path.is_empty() {
-            let delim = if cfg!(windows) { b';' } else { b':' };
-            for path in node_path.split(|&b| b == delim).filter(|s| !s.is_empty()) {
-                let Some(abs_path) = self
-                    .fs_ref()
-                    .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
-                else {
-                    continue;
-                };
-                if let Some(debug) = self.debug_logs.as_mut() {
-                    debug.add_note_fmt(format_args!(
-                        "Checking for a package in the NODE_PATH directory \"{}\"",
-                        bstr::BStr::new(abs_path)
-                    ));
+        for path in self.node_path_entries() {
+            let Some(abs_path) = self
+                .fs_ref()
+                .abs_buf_checked(&[path, import_path], bufs!(node_modules_check))
+            else {
+                continue;
+            };
+            if let Some(debug) = self.debug_logs.as_mut() {
+                debug.add_note_fmt(format_args!(
+                    "Checking for a package in the NODE_PATH directory \"{}\"",
+                    bstr::BStr::new(abs_path)
+                ));
+            }
+            if self
+                .load_as_file_or_directory(abs_path, kind, out)
+                .is_success()
+            {
+                if let Some(d) = self.debug_logs.as_mut() {
+                    d.decrease_indent();
                 }
-                if self
-                    .load_as_file_or_directory(abs_path, kind, out)
-                    .is_success()
-                {
-                    if let Some(d) = self.debug_logs.as_mut() {
-                        d.decrease_indent();
-                    }
-                    return MatchStatus::Success;
-                }
+                return MatchStatus::Success;
             }
         }
 

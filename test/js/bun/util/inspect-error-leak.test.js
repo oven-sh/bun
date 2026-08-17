@@ -1,14 +1,15 @@
 import { expect, test } from "bun:test";
 import { isASAN, isDebug, rss } from "harness";
 
-// The leak this guards against (the error printer not releasing its
-// ZigException holder) is ~1 KB per printed error, so 30k prints grow a release
-// build by ~30 MB against the 10 MB bound below. ASAN and debug builds print an
-// error 4-50x slower and the bound has no teeth under ASAN's quarantine anyway
-// (the ASAN lane runs LeakSanitizer), so they only get enough iterations to
-// exercise the path.
-const perBatch = isASAN || isDebug ? 250 : 1000;
-const repeat = isASAN || isDebug ? 4 : 30;
+// Release builds are the detector. The leaks this file has caught (#12831's six
+// source-line StringImpls, the per-print path buffer noted in jsc_hooks.rs) are
+// one to two hundred bytes per printed error, so it takes ~100k prints to push
+// them past the 10 MB bound below; a clean run drifts a few MB regardless of the
+// count. ASAN and debug builds print an error 4-50x slower, and the 400 MB ASAN
+// bound is quarantine headroom rather than a leak detector, so they only need
+// enough prints to exercise the path.
+const perBatch = isASAN || isDebug ? 250 : 2000;
+const repeat = isASAN || isDebug ? 4 : 50;
 
 test("Printing errors does not leak", () => {
   function batch() {

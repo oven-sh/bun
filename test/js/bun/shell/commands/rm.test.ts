@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -33,6 +33,7 @@ describe.concurrent("bunshell rm", () => {
   test("force", async () => {
     const files = {
       "existent.txt": "",
+      "other.txt": "",
     };
     await using tempdir = tempDir("rmforce", files);
 
@@ -50,6 +51,68 @@ describe.concurrent("bunshell rm", () => {
       expect(stdout.toString()).toEqual(`${tempdir}/existent.txt\n`);
       expect(exitCode).toBe(0);
       expect(await fileExists(`${tempdir}/existent.txt`)).toBeFalse();
+    }
+
+    // A -v line means the entry was removed, so an operand that -f skips
+    // because it does not exist (or whose parent does not exist) is not listed.
+    for (const flags of ["-fv", "-rfv", "-dfv"]) {
+      const { stdout, stderr, exitCode } = await $`rm ${flags} ${tempdir}/non_existent.txt ${tempdir}/no_dir/file.txt`;
+      expect({ flags, stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        flags,
+        stdout: "",
+        stderr: "",
+        exitCode: 0,
+      });
+    }
+
+    {
+      const { stdout, stderr, exitCode } = await $`rm -fv ${tempdir}/non_existent.txt ${tempdir}/other.txt`;
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: `${tempdir}/other.txt\n`,
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(await fileExists(`${tempdir}/other.txt`)).toBeFalse();
+    }
+  });
+
+  // Every operand is removed on its own worker, so naming a tree and its
+  // subdirectories in one command makes the workers race each other and
+  // every entry is hit with ENOENT by the workers that lose: at the unlink or
+  // rmdir, when opening the directory, or while reading it (overlayfs fails
+  // the readdir of a removed directory). -f has to swallow all of those, and
+  // -v must only list an entry for a worker whose unlink or rmdir succeeded.
+  // Linux serializes removals on the parent directory, so there exactly one
+  // worker succeeds per entry and the listing has no duplicates; on macOS two
+  // workers can both be told they removed the same entry, so only the set of
+  // listed entries is checked. Windows reports success for an entry whose
+  // deletion is still pending and is not what this test is about.
+  test.skipIf(isWindows)("force: operands that overlap with each other's contents", async () => {
+    const DIRS = 8;
+    const FILES = 4;
+    for (let iteration = 0; iteration < 3; iteration++) {
+      const files: Record<string, string> = {};
+      for (let d = 0; d < DIRS; d++) {
+        for (let f = 0; f < FILES; f++) files[`tree/d${d}/f${f}`] = "";
+      }
+      await using tempdir = tempDir("rmoverlap", files);
+      const tree = `${tempdir}/tree`;
+      const subdirs = Array.from({ length: DIRS }, (_, d) => `${tree}/d${d}`);
+      const expected = [tree, ...subdirs, ...Object.keys(files).map(rel => `${tempdir}/${rel}`)].sort();
+
+      const { stdout, stderr, exitCode } = await $`rm -rfv ${subdirs} ${tree} ${tree}`.quiet();
+      const listed = sortedShellOutput(stdout.toString());
+      expect({
+        listed: isLinux ? listed : [...new Set(listed)],
+        stderr: stderr.toString(),
+        exitCode,
+        treeExists: existsSync(tree),
+      }).toEqual({
+        listed: expected,
+        stderr: "",
+        exitCode: 0,
+        treeExists: false,
+      });
     }
   });
 
@@ -130,9 +193,12 @@ foo/
     }
 
     {
-      const { stdout, stderr, exitCode } = await $`rm -d ${tempdir}/sub_dir`;
-      console.log(stderr.toString());
-      expect(exitCode).toBe(0);
+      const { stdout, stderr, exitCode } = await $`rm -dv ${tempdir}/sub_dir`;
+      expect({ stdout: stdout.toString(), stderr: stderr.toString(), exitCode }).toEqual({
+        stdout: `${tempdir}/sub_dir\n`,
+        stderr: "",
+        exitCode: 0,
+      });
       expect(await fileExists(`${tempdir}/sub_dir`)).toBeFalse();
     }
 

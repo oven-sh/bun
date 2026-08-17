@@ -829,9 +829,9 @@ impl ShellRmTask {
     /// `&ZStr` borrowed from `dir_task.path` — never materialise an aliasing
     /// `&mut DirTask`. Only the disjoint `deleted_entries` field is reborrowed
     /// mutably here.
-    fn verbose_deleted(&self, dir_task: *mut DirTask, path: &[u8]) -> bun_sys::Maybe<()> {
+    fn verbose_deleted(&self, dir_task: *mut DirTask, path: &[u8]) {
         if !self.opts.verbose {
-            return Ok(());
+            return;
         }
         // SAFETY: a DirTask's non-atomic fields are single-owner-at-a-time.
         // Ownership starts on the worker that runs `remove_entry*` and is
@@ -850,7 +850,6 @@ impl ShellRmTask {
         }
         entries.extend_from_slice(path);
         entries.push(b'\n');
-        Ok(())
     }
 
     /// Join into `buf` honoring [`join_style`].
@@ -957,11 +956,14 @@ impl ShellRmTask {
             };
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
-                    Ok(()) => return Ok(()),
+                    Ok(()) => {
+                        self.verbose_deleted(dir_task, path.as_bytes());
+                        return Ok(());
+                    }
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                return self.verbose_deleted(dir_task, path.as_bytes());
+                                return Ok(());
                             }
                             return Err(self.error_with_path(&e, path.as_bytes()));
                         }
@@ -994,7 +996,7 @@ impl ShellRmTask {
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(dir_task, path.as_bytes());
+                        return Ok(());
                     }
                     return Err(self.error_with_path(&e, path.as_bytes()));
                 }
@@ -1034,6 +1036,8 @@ impl ShellRmTask {
         let mut i: usize = 0;
         let loop_result: bun_sys::Maybe<()> = loop {
             let current = match iterator.next() {
+                // overlayfs: the directory was removed under us (e.g. by an overlapping operand).
+                Err(e) if self.opts.force && e.get_errno() == E::ENOENT => break Ok(()),
                 Err(e) => break Err(self.error_with_path(&e, path.as_bytes())),
                 Ok(None) => break Ok(()),
                 Ok(Some(ent)) => ent,
@@ -1126,11 +1130,14 @@ impl ShellRmTask {
         }
 
         match bun_sys::unlinkat_with_flags(self.cwd, path, bun_sys::AT_REMOVEDIR) {
-            Ok(()) => self.verbose_deleted(dir_task, path.as_bytes()),
+            Ok(()) => {
+                self.verbose_deleted(dir_task, path.as_bytes());
+                Ok(())
+            }
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(dir_task, path.as_bytes());
+                        return Ok(());
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
@@ -1156,13 +1163,12 @@ impl ShellRmTask {
             if state.treat_as_dir {
                 match bun_sys::rmdirat(dirfd, path) {
                     Ok(()) => {
-                        let _ = self.verbose_deleted(dir_task, path.as_bytes());
+                        self.verbose_deleted(dir_task, path.as_bytes());
                         return Ok(true);
                     }
                     Err(e) => match e.get_errno() {
                         E::ENOENT => {
                             if self.opts.force {
-                                let _ = self.verbose_deleted(dir_task, path.as_bytes());
                                 return Ok(true);
                             }
                             return Err(self.error_with_path(&e, path.as_bytes()));
@@ -1198,11 +1204,14 @@ impl ShellRmTask {
     ) -> bun_sys::Maybe<()> {
         let dirfd = self.cwd;
         match bun_sys::unlinkat_with_flags(dirfd, path, 0) {
-            Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
+            Ok(()) => {
+                self.verbose_deleted(parent_dir_task, path.as_bytes());
+                Ok(())
+            }
             Err(e) => match e.get_errno() {
                 E::ENOENT => {
                     if self.opts.force {
-                        return self.verbose_deleted(parent_dir_task, path.as_bytes());
+                        return Ok(());
                     }
                     Err(self.error_with_path(&e, path.as_bytes()))
                 }
@@ -1236,7 +1245,10 @@ impl ShellRmTask {
                                 bun_sys::AT_REMOVEDIR,
                             ) {
                                 // it was empty, we saved a syscall
-                                Ok(()) => self.verbose_deleted(parent_dir_task, path.as_bytes()),
+                                Ok(()) => {
+                                    self.verbose_deleted(parent_dir_task, path.as_bytes());
+                                    Ok(())
+                                }
                                 Err(e2) => match e2.get_errno() {
                                     // not empty, process directory as we would normally
                                     E::ENOTEMPTY => vtable.on_dir_not_empty(
@@ -1245,6 +1257,8 @@ impl ShellRmTask {
                                         is_absolute,
                                         buf,
                                     ),
+                                    // removed between the two calls
+                                    E::ENOENT if self.opts.force => Ok(()),
                                     // actually a file, the error is a permissions error
                                     E::ENOTDIR => Err(self.error_with_path(&e, path.as_bytes())),
                                     _ => Err(self.error_with_path(&e2, path.as_bytes())),

@@ -1415,50 +1415,35 @@ fn edges_on_instances(
         let deps = lockfile.buffers.dependencies.as_slice();
         let resolutions = lockfile.buffers.resolutions.as_slice();
 
-        // Removed or superseded subtrees (a dropped workspace member included) are still in the buffers: only owners reachable from the root contribute rows.
-        let mut reachable = DynamicBitSet::init_empty(packages_len).unwrap_or_oom();
-        let mut queue: Vec<usize> = Vec::new();
-        for owner in 0..packages_len {
-            if pkg_res[owner].tag == ResolutionTag::Root {
-                reachable.set(owner);
-                queue.push(owner);
-            }
-        }
-        while let Some(owner) = queue.pop() {
-            let slice = dep_slices[owner];
-            let snapshot = matches!(
+        // The differ re-appends root rows unresolved; their pre-diff resolution lives in the snapshot.
+        let is_direct = |owner: usize| {
+            matches!(
                 pkg_res[owner].tag,
                 ResolutionTag::Root | ResolutionTag::Workspace
-            );
-            for row in slice.begin() as usize..slice.end() as usize {
-                let mut target = resolutions[row] as usize;
-                if target >= packages_len && snapshot {
-                    target = snapshot_resolution(
-                        direct_deps,
-                        owner as PackageID,
-                        deps[row].name_hash,
-                        deps[row].behavior,
-                    )
-                    .map_or(usize::MAX, |resolved| resolved as usize);
-                }
-                if target < packages_len && !reachable.is_set(target) {
-                    reachable.set(target);
-                    queue.push(target);
+            )
+        };
+        let mut locked_resolutions = resolutions.to_vec();
+        for owner in (0..packages_len).filter(|&owner| is_direct(owner)) {
+            for row in dep_slices[owner].begin() as usize..dep_slices[owner].end() as usize {
+                if locked_resolutions[row] as usize >= packages_len {
+                    let dep = &deps[row];
+                    let owned =
+                        snapshot_resolution(direct_deps, owner, dep.name_hash, dep.behavior);
+                    locked_resolutions[row] = owned.unwrap_or(invalid_package_id);
                 }
             }
         }
+        // Removed or superseded subtrees (a dropped workspace member included) are still in the buffers.
+        let reachable = crate::lockfile::reachable::packages(
+            lockfile,
+            &locked_resolutions,
+            crate::lockfile::reachable::Options::all(0),
+        );
 
-        for owner in 0..packages_len {
-            if !reachable.is_set(owner) {
-                continue;
-            }
+        for owner in (0..packages_len).filter(|&owner| reachable.is_set(owner)) {
             let slice = dep_slices[owner];
-            let is_direct = matches!(
-                pkg_res[owner].tag,
-                ResolutionTag::Root | ResolutionTag::Workspace
-            );
             for row in slice.begin() as usize..slice.end() as usize {
-                if !is_direct {
+                if !is_direct(owner) {
                     let Some(&slot) = slot_of.get(resolutions[row] as usize) else {
                         continue;
                     };
@@ -1478,25 +1463,13 @@ fn edges_on_instances(
                     _ => continue,
                 };
                 let row_hash = Semver::string::Builder::string_hash(names.slice(buf));
-                // The differ re-appends root rows unresolved; their pre-diff resolution lives in the snapshot.
-                let locked_id = if (resolutions[row] as usize) < packages_len {
-                    Some(resolutions[row])
-                } else {
-                    snapshot_resolution(
-                        direct_deps,
-                        owner as PackageID,
-                        deps[row].name_hash,
-                        deps[row].behavior,
-                    )
-                };
-                let res_slot = locked_id
-                    .and_then(|id| slot_of.get(id as usize).copied())
-                    .unwrap_or(u32::MAX);
-                let locked = locked_id.and_then(|id| {
-                    // An optional row the loaded lockfile left unresolved snapshots as invalid.
-                    let res = pkg_res.get(id as usize)?;
-                    (res.tag == ResolutionTag::Npm).then(|| res.npm().version)
-                });
+                let locked_id = locked_resolutions[row] as usize;
+                let res_slot = slot_of.get(locked_id).copied().unwrap_or(u32::MAX);
+                // An optional row the loaded lockfile left unresolved snapshots as invalid.
+                let locked = pkg_res
+                    .get(locked_id)
+                    .filter(|res| res.tag == ResolutionTag::Npm)
+                    .map(|res| res.npm().version);
                 for (i, inst) in instances.iter().enumerate() {
                     if name_hashes[inst.pkg_id as usize] == row_hash
                         && names.eql(pkg_names[inst.pkg_id as usize], buf, buf)
@@ -1613,14 +1586,14 @@ fn instance_version(
 /// The pre-differ resolution of a root/workspace row, matched by owner, name hash and behavior like `moved_pairs`.
 fn snapshot_resolution(
     direct_deps: &DirectDependencies,
-    owner: PackageID,
+    owner: usize,
     name_hash: PackageNameHash,
     behavior: Behavior,
 ) -> Option<PackageID> {
     let &(_, start, len) = direct_deps
         .owners
         .iter()
-        .find(|&&(pkg, _, _)| pkg == owner)?;
+        .find(|&&(pkg, _, _)| pkg as usize == owner)?;
     direct_deps.rows[start as usize..(start + len) as usize]
         .iter()
         .find(|row| row.0 == name_hash && row.1 == behavior)

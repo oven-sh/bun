@@ -992,7 +992,7 @@ impl QueuedEvent {
 struct WriteReq {
     req: uv::uv_write_t,
     buf: uv::uv_buf_t,
-    _bytes: Box<[u8]>,
+    bytes: Box<[u8]>,
     generation: u32,
 }
 
@@ -1000,14 +1000,14 @@ struct WriteReq {
 impl WriteReq {
     /// Safety: `pipe` is the live command pipe of the Chrome with `generation`.
     unsafe fn submit(pipe: *mut uv::Pipe, chunk: &[u8], generation: u32) -> bool {
-        let bytes: Box<[u8]> = Box::from(chunk);
-        let buf = uv::uv_buf_t::init(&bytes);
-        let req = bun_core::heap::into_raw(Box::new(WriteReq {
+        let mut req = Box::new(WriteReq {
             req: bun_core::ffi::zeroed::<uv::uv_write_t>(),
-            buf,
-            _bytes: bytes,
+            buf: uv::uv_buf_t::init(b""), // re-init below, once `bytes` has stopped moving
+            bytes: Box::from(chunk),
             generation,
-        }));
+        });
+        req.buf = uv::uv_buf_t::init(&req.bytes);
+        let req = bun_core::heap::into_raw(req);
         // SAFETY: caller contract; `req` stays put until `on_write` reclaims it.
         let rc = unsafe {
             (*req)

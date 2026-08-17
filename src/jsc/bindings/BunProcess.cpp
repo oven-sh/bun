@@ -1764,9 +1764,7 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
-// A builder that fails returns empty with the exception pending: nothing is stored, the access
-// throws, and the next access runs the builder again. TopExceptionScope rather than ThrowScope:
-// the JSC callers check with vm.exceptionForInspection(), which does not satisfy a simulated throw.
+// TopExceptionScope, not ThrowScope: JSC checks a failed builder with vm.exceptionForInspection().
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);

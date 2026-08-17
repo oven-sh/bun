@@ -1,8 +1,12 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import path from "path";
 import wt from "worker_threads";
+
+// Worker startup under debug/ASAN is slow enough that several tests here
+// cannot finish inside the 5s default (same ceiling worker_threads.test.ts uses).
+setDefaultTimeout(isDebug || isASAN ? 90_000 : 10_000);
 
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
@@ -449,9 +453,16 @@ describe("web worker", () => {
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       let received = 0;
       w.onmessage = () => received++;
-      // Three timer turns while the flood is running is the property; not the timing.
+      // Poll until the flood reaches us (worker startup outlasts a fixed turn
+      // count under debug/ASAN), then prove timers keep interleaving with it.
+      const deadline = performance.now() + (isDebug || isASAN ? 60_000 : 8_000);
+      while (received === 0) {
+        if (performance.now() > deadline) throw new Error("timed out waiting for the first flooded message");
+        await new Promise<void>(r => setTimeout(r, 10));
+      }
+      const before = received;
       for (let i = 0; i < 3; i++) await new Promise<void>(r => setTimeout(r, 10));
-      expect(received).toBeGreaterThan(0);
+      expect(received).toBeGreaterThan(before);
       w.terminate();
       await once(w, "close");
     });
@@ -544,6 +555,33 @@ describe("web worker", () => {
       const w = new Worker(URL.createObjectURL(new Blob([src])));
       const [ev] = await once(w, "close");
       expect(ev.code).toBe(0);
+    });
+
+    // process.exit() stops the worker at the call (Node's Stop): the 'exit'
+    // handlers it runs first are the last script; the reactions and nextTicks
+    // queued before it never run (so neither does the process.exit(42) in one
+    // of them), whether it is called from the top level or from an event
+    // handler, whose dispatcher runs a checkpoint of its own afterwards. What
+    // ran is recorded in shared memory, read once the worker is gone.
+    test.each([
+      ["the top level", "exit();"],
+      ["an onmessage handler", "self.onmessage = exit;"],
+    ])("process.exit() from %s does not run what was queued before it", async (_, trigger) => {
+      const log = new Int32Array(new SharedArrayBuffer(4 * 8));
+      const src = `const log = require("node:worker_threads").workerData;
+        const put = tag => Atomics.store(log, Atomics.add(log, 0, 1) + 1, tag);
+        process.on("exit", () => put(1));
+        function exit() {
+          Promise.resolve().then(() => { put(2); process.exit(42); });
+          queueMicrotask(() => put(3));
+          process.nextTick(() => put(4));
+          process.exit(0);
+        }
+        ${trigger}`;
+      const w = new Worker(URL.createObjectURL(new Blob([src])), { workerData: log });
+      w.postMessage("go");
+      const [ev] = await once(w, "close");
+      expect({ code: ev.code, ran: Array.from(log.slice(1, 1 + log[0])) }).toEqual({ code: 0, ran: [1] });
     });
 
     // fs completions racing terminate(): whatever completes on the worker

@@ -3067,8 +3067,10 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        // Hand the Exception cell back to the native caller; a termination stays pending by design.
+        // Hand the Exception cell back to the native caller. A termination that has left script is
+        // taken (the caller stands down on the cell); beneath script it stays for JSC to unwind.
         scope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(this);
         return JSC::JSValue::encode(exception);
     }
     return JSC::JSValue::encode(result);

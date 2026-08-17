@@ -1,5 +1,6 @@
 #include "config.h"
 #include "WebStreamsInternals.h"
+#include "BunClientData.h"
 
 #include "ErrorCode.h"
 #include "ExceptionCode.h"
@@ -153,17 +154,20 @@ extern "C" void ReadableStream__cancel(JSC::EncodedJSValue possibleReadableStrea
         return;
 
     auto& vm = JSC::getVM(globalObject);
-    // The native caller cannot observe VM exception state, so nothing may stay pending
-    // here (a termination does, by design).
+    // The native caller cannot observe VM exception state, so nothing may stay pending here: an
+    // ordinary exception is dropped, a termination is taken if it has left script (beneath script it
+    // stays for JSC to unwind).
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue reason = WebCore::createDOMException(globalObject, WebCore::ExceptionCode::AbortError);
     if (catchScope.exception()) [[unlikely]] {
         catchScope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(globalObject);
         return;
     }
     auto* result = readableStreamCancel(globalObject, stream, reason);
     if (catchScope.exception()) [[unlikely]] {
         catchScope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(globalObject);
         return;
     }
     markPromiseAsHandled(vm, result);
@@ -181,6 +185,7 @@ extern "C" void ReadableStream__cancelWithReason(JSC::EncodedJSValue possibleRea
     auto* result = readableStreamCancel(globalObject, stream, JSValue::decode(reason));
     if (catchScope.exception()) [[unlikely]] {
         catchScope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(globalObject);
         return;
     }
     markPromiseAsHandled(vm, result);
@@ -198,6 +203,7 @@ extern "C" void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
     if (catchScope.exception()) [[unlikely]]
         catchScope.clearExceptionExceptTermination();
+    Bun__VM__takeTerminationOutsideScript(globalObject);
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)

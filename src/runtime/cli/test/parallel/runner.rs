@@ -623,22 +623,21 @@ impl<'a> WorkerLoop<'a> {
 /// run each file with isolation, stream per-test events back. Never returns.
 ///
 /// # Safety
-/// `vm` must be a valid, exclusively-accessed pointer to a live `VirtualMachine`
-/// for the entire duration of the call (i.e. for the rest of the process, since
-/// this never returns).
-// `vm` must stay a raw pointer: it is stored in `WorkerLoop`/`WorkerCommands`
-// while a `&mut` derived from it (`vm_ref`) is also live, so a reference param
-// would alias. The `# Safety` contract above documents the caller's obligation.
+/// `vm` must be a valid pointer to this thread's live `VirtualMachine` for the
+/// entire duration of the call (i.e. for the rest of the process, since this
+/// never returns).
+// Raw because `WorkerLoop` stores it as such.
 #[allow(clippy::not_unsafe_ptr_arg_deref)]
 pub(crate) fn run_as_worker(
     reporter: &mut CommandLineReporter,
     vm: *mut VirtualMachine,
     ctx: Command::Context,
 ) -> ! {
+    debug_assert!(core::ptr::eq(vm, VirtualMachine::get_mut_ptr()));
     // SAFETY: caller guarantees `vm` is a valid live VM pointer for the duration.
-    let vm_ref = unsafe { &mut *vm };
-    vm_ref.test_isolation_enabled = ctx.test_options.isolate;
-    vm_ref.auto_killer.enabled = ctx.test_options.isolate;
+    let vm_ref: &VirtualMachine = unsafe { &*vm };
+    vm_ref.as_mut().test_isolation_enabled = ctx.test_options.isolate;
+    vm_ref.as_mut().auto_killer.enabled = ctx.test_options.isolate;
 
     // `vm.arena` is currently a write-only backref: the `MimallocArena.gc()`
     // reader was dropped from the GC path (see web_worker.rs, which wires its
@@ -646,7 +645,7 @@ pub(crate) fn run_as_worker(
     let mut arena = bun_alloc::MimallocArena::new();
     // SAFETY: event_loop pointer is valid while vm lives.
     unsafe { (*vm_ref.event_loop()).ensure_waker() };
-    vm_ref.arena = Some(NonNull::from(&mut arena));
+    vm_ref.as_mut().arena = Some(NonNull::from(&mut arena));
     // vm.allocator = arena.arena(); — allocator params dropped in Rust
 
     let env = vm_ref.env_loader();
@@ -684,8 +683,9 @@ pub(crate) fn run_as_worker(
     }
     // Mirror TestCommand::exec's exit path so BUN_DESTRUCT_VM_ON_EXIT teardown
     // (lastChanceToFinalize) runs; bypassing it leaks JSC-owned native state.
-    vm_ref.exit_handler.exit_code = 0;
-    vm_ref.exit_handler.skip_exit_listeners = test_command::skip_exit_listeners(wloop.reporter);
+    vm_ref.as_mut().exit_handler.exit_code = 0;
+    vm_ref.as_mut().exit_handler.skip_exit_listeners =
+        test_command::skip_exit_listeners(wloop.reporter);
     vm_ref.run_with_api_lock(|| {
         // SAFETY: caller guarantees `vm` is a valid live VM pointer for the worker's lifetime.
         unsafe {
@@ -700,7 +700,7 @@ pub(crate) fn run_as_worker(
 
 fn worker_flush_aggregates(
     reporter: &mut CommandLineReporter,
-    vm: &mut VirtualMachine,
+    vm: &VirtualMachine,
     ctx: &Command::ContextData,
     cmds: &mut WorkerCommands,
 ) {

@@ -279,10 +279,9 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `pt.vm` is the live per-thread VM's BackRef set in `build_command`;
     // `as_ptr()` is `Copy` and does not borrow `pt`.
     let vm_ptr: *mut VirtualMachine = pt.vm.as_ptr();
-    // SAFETY: exclusive access on this thread for the duration of the call.
-    let vm = unsafe { &mut *vm_ptr };
-    // Load and evaluate the configuration module. `global()` returns
-    // `&'static`, decoupled from `vm` so later `&mut vm` reborrows are allowed.
+    debug_assert!(core::ptr::eq(vm_ptr, VirtualMachine::get_mut_ptr()));
+    let vm: &VirtualMachine = VirtualMachine::get();
+    // Load and evaluate the configuration module.
     let global = vm.global();
     // allocator = bun.default_allocator — dropped per §Allocators
 
@@ -300,7 +299,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         unresolved_config_entry_point = prefixed;
     }
 
-    let config_entry_point = match vm.transpiler.resolver.resolve(
+    let config_entry_point = match vm.as_mut().transpiler.resolver.resolve(
         cwd,
         &unresolved_config_entry_point,
         bun_ast::ImportKind::EntryPointBuild,
@@ -346,9 +345,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     // `opaque_mut` is the const-asserted safe `*mut → &mut` accessor
     // (`load_and_evaluate_module_ptr` returned a live JSC-heap cell).
     jsc::JSInternalPromise::opaque_mut(config_promise_ptr).set_handled();
-    vm.wait_for_promise(AnyPromise::Internal(config_promise_ptr))
-        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
-    let jsc_vm = vm.jsc_vm_mut();
+    vm.as_mut()
+        .wait_for_promise(AnyPromise::Internal(config_promise_ptr))
+        .map_err(|stopped| js_err(stopped.throw(global)))?;
+    let jsc_vm = vm.jsc_vm();
     // Promise cell is still live (rooted via the module loader).
     let mut options = match jsc::JSInternalPromise::opaque_mut(config_promise_ptr)
         .unwrap(jsc_vm, UnwrapMode::MarkHandled)
@@ -1176,14 +1176,10 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         )
     };
     render_promise.set_handled();
-    // Rebind from the raw pointer: `PerThread::init`/`attach`/`load_bundled_module`
-    // above accessed the same allocation through `vm_ptr`, invalidating the
-    // earlier `&mut` under Stacked Borrows.
-    let vm = VirtualMachine::get().as_mut();
-    vm.wait_for_promise(AnyPromise::Normal(render_promise))
-        .map_err(|stopped| js_err(stopped.throw(vm.global())))?;
-    let jsc_vm = vm.jsc_vm_mut();
-    match render_promise.unwrap(jsc_vm, UnwrapMode::MarkHandled) {
+    vm.as_mut()
+        .wait_for_promise(AnyPromise::Normal(render_promise))
+        .map_err(|stopped| js_err(stopped.throw(global)))?;
+    match render_promise.unwrap(vm.jsc_vm(), UnwrapMode::MarkHandled) {
         Unwrapped::Pending => unreachable!(),
         Unwrapped::Fulfilled(_) => {
             bun_core::prettyln!("done");
@@ -1193,7 +1189,7 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             return Err(js_err(global.throw_value(err)));
         }
     }
-    vm.wait_for_tasks();
+    vm.as_mut().wait_for_tasks();
     Ok(())
 }
 

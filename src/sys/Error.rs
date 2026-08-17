@@ -413,6 +413,15 @@ impl Error {
         err
     }
 
+    /// Bare `uv_strerror` label as `message`, for `to_error_instance_with_info_object`
+    /// (which formats it again; [`to_system_error`]'s message would be wrapped twice).
+    pub fn to_uv_system_error(&self) -> SystemError {
+        let (mut err, looked_up) = self.fill_system_error_common(&libuv_error_map::LIBUV_ERROR_MAP);
+        let label = looked_up.map_or("unknown error", |(_, label)| label);
+        err.message = BunString::static_(label.as_bytes());
+        err
+    }
+
     /// More complex formatting to precisely match the printing that Node.js emits.
     /// Use this whenever the error will be sent to JavaScript instead of the shell variant above.
     pub fn to_system_error(&self) -> SystemError {

@@ -57,13 +57,11 @@ export const uptime = fn({
   },
   ret: t.f64,
 });
-export const UserInfoOptions = t.dictionary({
-  encoding: t.DOMString.default(""),
-});
+// os.ts unwraps `options`; node ignores (rather than rejects) non-string encodings, which bindgen cannot express.
 export const userInfo = fn({
   args: {
     global: t.globalObject,
-    options: UserInfoOptions.default({}),
+    encoding: t.DOMString.default(""),
   },
   ret: t.any,
 });

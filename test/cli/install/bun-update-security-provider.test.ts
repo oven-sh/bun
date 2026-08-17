@@ -139,7 +139,7 @@ test.concurrent("security scanner does not run on bun update when not configured
     expect(stdout).toMatchInlineSnapshot(`
       "bun update <version> (<revision>)
 
-      installed moo@0.2.0
+      ^ moo 0.1.0 -> 0.2.0
 
       1 package installed"
     `);

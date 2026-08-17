@@ -270,7 +270,7 @@ it("should not list packages missing from node_modules", async () => {
       env,
     });
     expect(await stderr.text()).toBe("");
-    expect(await stdout.text()).toBe(`${package_dir} node_modules (1)
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (1 installed)
 └── moo@moo
 `);
     expect(await exited).toBe(0);

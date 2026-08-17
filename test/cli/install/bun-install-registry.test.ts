@@ -4,11 +4,13 @@ import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "
 import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
+  VerdaccioRegistry,
   assertManifestsPopulated,
   bunEnv,
   bunExe,
   isFlaky,
   isLinux,
+  isMacOS,
   isWindows,
   mergeWindowEnvs,
   normalizeBunSnapshot,
@@ -21,7 +23,6 @@ import {
   toBeValidBin,
   toHaveBins,
   toMatchNodeModulesAt,
-  VerdaccioRegistry,
   writeShebangScript,
 } from "harness";
 import { delimiter, join, resolve } from "path";
@@ -6518,14 +6519,12 @@ describe.concurrent("update", () => {
       ]);
       await check(version);
 
+      // Naming the exact pin does not move it either.
       ({ out } = await runBunUpdate(env, packageDir, [dependency]));
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        `installed ${dependency}@1.0.1`,
-        "",
-        expect.stringContaining("done"),
-        "",
+        "Checked 1 install across 2 packages (no changes)",
       ]);
       await check(version);
 
@@ -10087,8 +10086,8 @@ describe.concurrent("outdated", () => {
   });
 
   test("-F is an alias of --filter", async () => {
-    const { packageDir, packageJson, env } = await setupTest();
-    await setupWorkspace();
+    const { packageDir, env } = await setupTest();
+    await setupWorkspace(packageDir);
     await runBunInstall(env, packageDir);
 
     const long = await runBunOutdated(env, packageDir, "--filter", "pkg1");
@@ -10357,6 +10356,7 @@ describe.concurrent("outdated", () => {
 
   for (const { current, latest } of buildTagCases) {
     test(`colored latest version keeps its build tag (current ${current})`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "build-metadata-1": current } }));
       await runBunInstall(env, packageDir);
 

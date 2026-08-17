@@ -19,9 +19,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const reason = new Error("gave up waiting");
     const pending = sql.reserve({ signal: controller.signal });
     controller.abort(reason);
-    await expect(pending).rejects.toBe(reason);
-
-    reserved.release();
+    try {
+      await expect(pending).rejects.toBe(reason);
+    } finally {
+      reserved.release();
+    }
 
     // the aborted reservation must not have consumed the pool's only
     // connection: a query and a fresh reserve both succeed
@@ -31,6 +33,20 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
 
     // hangs forever if the aborted reserve still holds a connection
     await sql.end();
+  });
+
+  test("end() resolves when an aborted reserve was the only pending work", async () => {
+    await container.ready;
+    await using sql = connect();
+
+    const controller = new AbortController();
+    const reason = new Error("gave up waiting");
+    const pending = sql.reserve({ signal: controller.signal });
+    // the queued reservation is pending work the graceful close waits for
+    const ended = sql.end();
+    controller.abort(reason);
+    await expect(pending).rejects.toBe(reason);
+    await ended;
   });
 
   test("abort while the pool is still establishing its first connection", async () => {
@@ -67,8 +83,11 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
     const reserved = await sql.reserve({ signal: controller.signal });
     controller.abort();
 
-    expect((await reserved`select 3 as x`)[0].x).toBe(3);
-    reserved.release();
+    try {
+      expect((await reserved`select 3 as x`)[0].x).toBe(3);
+    } finally {
+      reserved.release();
+    }
     await sql.end();
   });
 

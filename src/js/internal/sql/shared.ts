@@ -1005,6 +1005,11 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
       return false;
     }
     this.reservedQueue.splice(index, 1);
+    // the cancelled reservation may have been the last pending work; a
+    // graceful close() is waiting on this callback
+    if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+      this.onAllQueriesFinished();
+    }
     return true;
   }
 

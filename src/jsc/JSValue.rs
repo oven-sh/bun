@@ -1902,6 +1902,13 @@ impl PutKey for &str {
 pub trait CoerceTo: Sized {
     fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<Self>;
 }
+/// Identity: `get_optional::<JSValue>` is the property unless absent, `undefined` or `null`.
+impl CoerceTo for JSValue {
+    #[inline]
+    fn coerce_from(v: JSValue, _global: &JSGlobalObject) -> JsResult<JSValue> {
+        Ok(v)
+    }
+}
 impl CoerceTo for i32 {
     fn coerce_from(v: JSValue, global: &JSGlobalObject) -> JsResult<i32> {
         // Fast-path numbers via

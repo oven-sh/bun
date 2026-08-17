@@ -99,8 +99,8 @@ impl Response {
         c::uws_h3_res_end_without_body(self, close_connection)
     }
     /// node:http (the only caller) never reaches HTTP/3; kept for AnyResponse
-    /// dispatch parity. Unlike TCP there is no node:http socket object that
-    /// closes the transport afterwards, so the stream is reset here.
+    /// dispatch parity. No node:http socket closes the transport afterwards
+    /// here, hence the reset.
     pub(crate) fn abandon(&mut self) {
         self.force_close()
     }

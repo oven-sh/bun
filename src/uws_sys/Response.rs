@@ -234,9 +234,8 @@ impl<const SSL: bool> Response<SSL> {
         c::uws_res_end_without_body(Self::ssl_flag(), self.as_raw(), close_connection)
     }
 
-    /// Mark the response ended and the connection as closing without writing
-    /// anything, for a response the application destroyed before finishing it
-    /// (the caller closes the socket next). See `uws_res_abandon`.
+    /// `end_without_body(true)` minus the bytes, for a response the
+    /// application destroyed; see `uws_res_abandon`.
     pub(crate) fn abandon(&mut self) {
         c::uws_res_abandon(Self::ssl_flag(), self.as_raw())
     }

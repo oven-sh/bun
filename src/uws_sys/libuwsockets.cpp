@@ -1461,18 +1461,12 @@ extern "C"
     }
   }
 
-  /* node:http res.destroy() / req.destroy(): the application gave up on the
-   * response and closes the socket right after this. Writes nothing (while
-   * the header section is open, uws_res_end_without_body's status line +
-   * "Connection: close" would form a complete empty 200 response; Node sends
-   * nothing), but leaves the same state behind as that function would.
-   * HTTP_END_CALLED is what the close that follows reads:
-   * JSNodeHTTPServerSocket::close() flushes the corked write() bytes of an
-   * unfinished response and discards those of an ended one, and a destroyed
-   * response's must be discarded (Node drops what destroy() finds corked,
-   * too). HTTP_CONNECTION_CLOSE and markDone() only matter if the socket
-   * outlives this call, and then keep the close gates and callbacks behaving
-   * as they did after the old end. */
+  /* uws_res_end_without_body(res, true) minus its writes, for a response
+   * node:http destroyed (res.destroy() / req.destroy() close the socket right
+   * after this; with the header section still open, the writes would have
+   * been a complete empty 200 response). HTTP_END_CALLED is what
+   * JSNodeHTTPServerSocket::close() reads to discard, rather than flush, any
+   * still-corked write() bytes of the destroyed response. */
   void uws_res_abandon(int ssl, uws_res_r res)
   {
     if (ssl)

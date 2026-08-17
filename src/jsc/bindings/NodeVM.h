@@ -30,6 +30,9 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
+// Every node:vm compile path turns its ParserError into an exception through
+// this rather than ParserError::toErrorObject(); see the definition.
+JSObject* createParseError(JSGlobalObject* globalObject, JSC::ParserError& parseError, JSC::SourceCode source);
 // `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
 // when no filename was provided; compileFunction has no such default.
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);

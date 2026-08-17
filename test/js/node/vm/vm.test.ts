@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import {
   compileFunction,
   constants,
@@ -1526,4 +1526,101 @@ test("node:vm Object.defineProperty on the context global when the sandbox is an
   expect(stderr).toBe("");
   expect(stdout.trim()).toBe(JSON.stringify({ result: 1, sandboxArray: 1 }));
   expect(exitCode).toBe(0);
+});
+
+describe("SyntaxError from compiling vm code under the filename of a file Bun transpiled", () => {
+  // Bun's source maps are keyed by filename, and the only thing a parser
+  // SyntaxError keeps of the source it came from is that filename, so the
+  // location it reports must not be looked up in the map of the file the vm
+  // code merely shares a name with. The fixture compiles vm code under its own
+  // path and under a name Bun never loaded; both must report the same thing.
+  // The fixture opens with a comment spanning PADDING lines that the transpiler
+  // strips, so every line its source map can produce is > PADDING, while the
+  // vm code's syntax error is on line 5: a remapped line can never pass for the
+  // physical one.
+  const PADDING = 20;
+  const padding = ["/*", ...Array.from({ length: PADDING - 2 }, () => " *"), " */"].join("\n") + "\n";
+  const body = String.raw`
+const vm = require("node:vm");
+const source = "\n\n\n\nlet let = 1;";
+const names = { own: __filename, other: "not-a-loaded-file.js" };
+const compile = {
+  script: name => new vm.Script(source, { filename: name }),
+  runInThisContext: name => vm.runInThisContext(source, { filename: name }),
+  runInContext: name => vm.runInContext(source, vm.createContext(), { filename: name }),
+  runInNewContext: name => vm.runInNewContext(source, {}, { filename: name }),
+  compileFunction: name => vm.compileFunction(source, [], { filename: name }),
+  sourceTextModule: name => new vm.SourceTextModule(source, { identifier: name }),
+};
+
+function thrown(fn) {
+  try {
+    fn();
+  } catch (e) {
+    return e;
+  }
+  throw new Error("did not throw");
+}
+
+function report(err) {
+  const lines = err.stack.split("\n");
+  return {
+    header: lines[0],
+    parseFrame: lines.find(line => line.includes("<parse>")) ?? null,
+    line: err.line,
+    originalLine: err.originalLine ?? null,
+    sourceURL: err.sourceURL ?? null,
+  };
+}
+
+const results = {};
+for (const [api, make] of Object.entries(compile)) {
+  results[api] = { own: report(thrown(() => make(names.own))), other: report(thrown(() => make(names.other))) };
+}
+console.log(JSON.stringify({ filename: __filename, results, inspected: Bun.inspect(thrown(() => compile.script(names.own))) }));
+`;
+
+  test("err.stack, err.line and Bun.inspect report the line in the vm code", async () => {
+    using dir = tempDir("vm-parse-error-own-filename", { "fixture.js": padding + body });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "fixture.js"],
+      env: bunEnv,
+      cwd: String(dir),
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { filename, results, inspected } = JSON.parse(stdout);
+
+    const asOther = (own: Record<string, unknown>) =>
+      Object.fromEntries(
+        Object.entries(own).map(([key, value]) => [
+          key,
+          typeof value === "string" ? value.replaceAll(filename, "not-a-loaded-file.js") : value,
+        ]),
+      );
+
+    // err.originalLine records the line a source map was applied to, so nothing
+    // compiled by vm gets one, whatever its name.
+    const physical = {
+      header: "not-a-loaded-file.js:5",
+      parseFrame: "    at <parse> (not-a-loaded-file.js:5)",
+      line: 5,
+      originalLine: null,
+      sourceURL: "not-a-loaded-file.js",
+    };
+    for (const api of ["script", "runInThisContext", "runInContext", "runInNewContext", "compileFunction"]) {
+      expect(asOther(results[api].own)).toEqual(physical);
+      expect(results[api].other).toEqual(physical);
+    }
+    // SourceTextModule does not yet compile under its identifier, so only the
+    // own/other equivalence is pinned for it.
+    expect(asOther(results.sourceTextModule.own)).toEqual(results.sourceTextModule.other);
+
+    // Bun.inspect (like the uncaught error printer) formats the frames of the
+    // already built stack string; it adds a column of its own, dropped here.
+    const inspectedParseFrame = inspected.split("\n").find((line: string) => line.includes("<parse>"));
+    expect(inspectedParseFrame.replace(/(:\d+)(:\d+)?\)$/, "$1)")).toEndWith(`at <parse> (${filename}:5)`);
+  });
 });

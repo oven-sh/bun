@@ -58,7 +58,10 @@ const commonRules: Rule[] = [
   // PLATFORM() macro is ever true, so the Cocoa conditionals are resolved here.
   { from: /PLATFORM\(MAC\)/g, to: "1 /* PLATFORM(MAC) */" },
   { from: /PLATFORM\(COCOA\)/g, to: "1 /* PLATFORM(COCOA) */" },
-  { from: /PLATFORM\((MACCATALYST|WATCHOS|APPLETV|VISION|IOS_FAMILY_SIMULATOR|IOS_FAMILY|IOS)\)/g, to: "0 /* PLATFORM($1) */" },
+  {
+    from: /PLATFORM\((MACCATALYST|WATCHOS|APPLETV|VISION|IOS_FAMILY_SIMULATOR|IOS_FAMILY|IOS)\)/g,
+    to: "0 /* PLATFORM($1) */",
+  },
 ];
 
 // [CallTracer=InspectorCanvasCallTracer] makes every generated operation record
@@ -151,8 +154,14 @@ const unionRules: Rule[] = [{ from: /\bIDLUnion<(?!IDLArrayBufferView, IDLArrayB
 // token is built from the promise before the promise itself is moved into the
 // lambda, which is why it is inserted in front of that capture.
 const eventLoopRules: Rule[] = [
-  { from: /\b(\w*[pP]romise) = WTF::move\((\w*[pP]romise)\)/g, to: "eventLoop = GPUEventLoopKeepAlive($2), $1 = WTF::move($2)" },
-  { from: /^(#include "config.h"\n#include "GPU\w*\.h"\n)(?=[\s\S]*GPUEventLoopKeepAlive\()/m, to: '$1\n#include "GPUEventLoopKeepAlive.h"' },
+  {
+    from: /\b(\w*[pP]romise) = WTF::move\((\w*[pP]romise)\)/g,
+    to: "eventLoop = GPUEventLoopKeepAlive($2), $1 = WTF::move($2)",
+  },
+  {
+    from: /^(#include "config.h"\n#include "GPU\w*\.h"\n)(?=[\s\S]*GPUEventLoopKeepAlive\()/m,
+    to: '$1\n#include "GPUEventLoopKeepAlive.h"',
+  },
 ];
 
 // generate-bindings.pl emits code for the current WebCore bindings layer;
@@ -220,9 +229,24 @@ const sourceExt = /\.(cpp|h|mm|idl)$/;
 
 // Files that the import replaces with bun-specific versions, or adds; see the
 // corresponding files in the output tree. They are never overwritten.
-const bunOwned = new Set(["config.h", "StringCocoa.h", "GPUEventLoopKeepAlive.h", "NavigatorGPU.h", "NavigatorGPU.cpp"]);
+const bunOwned = new Set([
+  "config.h",
+  "StringCocoa.h",
+  "GPUEventLoopKeepAlive.h",
+  "NavigatorGPU.h",
+  "NavigatorGPU.cpp",
+]);
 
-const dropXR = [/^XR/, /^WebGPUXR/, /XRBinding/, /XRProjectionLayer/, /XRSubImage/, /XRView/, /XREye/, /XRLayerBacking/];
+const dropXR = [
+  /^XR/,
+  /^WebGPUXR/,
+  /XRBinding/,
+  /XRProjectionLayer/,
+  /XRSubImage/,
+  /XRView/,
+  /XREye/,
+  /XRLayerBacking/,
+];
 const dropPresentation = [/PresentationContext/, /CompositorIntegration/, /^GPUCanvas/, /^WebGPUCanvas/];
 const dropExternalTexture = [/ExternalTexture/];
 const dropImageCopy = [/ImageCopyExternalImage/, /ImageCopyTextureTagged/];
@@ -382,6 +406,11 @@ if (!bindingsOnly) {
 //   - BindGroup.*, BindableResource.h, CommandEncoder.*, ComputePassEncoder.mm, RenderPassEncoder.mm: the
 //     ExternalTexture object and its CoreVideo plane import (the texture_external binding layout stays)
 //   - Device.mm, Pipeline.mm, ComputePipeline.mm, RenderPipeline.mm: String(NSString *) -> createString()
+//   - Queue.*, RenderPassEncoder.mm (addition, not a deletion): newTemporaryBufferWithBytes() always copies and
+//     lost its noCopy parameter, because QueueImpl hands the JS-owned bytes straight through and nothing keeps
+//     them alive after wgpuQueueWrite{Buffer,Texture} return
+//   - WebGPUExt.h, Device.mm (addition): wgpuDeviceScheduleWork(), used by DeviceImpl to deliver the device
+//     lost and uncaptured error callbacks through the instance's work queue
 //
 // InternalAPI:
 //   - WebGPU.h: PresentationContext / CompositorIntegration / paintToCanvas, and the isValid() overloads
@@ -405,9 +434,19 @@ if (!bindingsOnly) {
 //   - WebGPUBindGroupImpl.*: updateExternalTextures; WebGPUQueueImpl.*: copyExternalImageToTexture, getNativeImage
 //   - WebGPUCreateImpl.*: the ProcessIdentity parameter (create() takes only the ScheduleWorkFunction and passes
 //     a null webProcessResourceOwner) and the weak-link check of wgpuCreateInstance, which is linked statically
+////   Plus the methods upstream only implements in its GPU-process proxies, which bun needs because it uses this
+//   layer in-process (all additions; each mirrors the Remote*Proxy / Remote* code named in its comment):
+//   - WebGPUDeviceImpl.*: the invalid encoder / command buffer / pass encoder placeholders and the empty bind
+//     group layout (RemoteDeviceProxy's constructor); resolveUncapturedErrorEvent and resolveDeviceLostPromise
+//     deliver through wgpuDeviceScheduleWork() instead of re-entering the backend from inside its callbacks
+//   - WebGPUBufferImpl.*: mappedAtCreation / the map mode flags and copyFrom() (RemoteBufferProxy + RemoteBuffer)
+//   - WebGPUQueueImpl.*: the const-span writeBuffer / writeTexture overloads (they delegate; the backend copies)
+//   - WebGPUComputePassEncoderImpl.cpp, WebGPURenderPassEncoderImpl.cpp, WebGPURenderBundleEncoderImpl.cpp: the
+//     span overloads of setBindGroup
 //
-// GPU* objects (webgpu/*.cpp|h; InspectorInstrumentation and the Event enum spellings are handled by the
-// rules above):
+// GPU* objects (webgpu/*.cpp|h; InspectorInstrumentation, the Event enum spellings, IDLVariantUnion and the
+// GPUEventLoopKeepAlive captures are handled by the rules above; GPUEventLoopKeepAlive.h, NavigatorGPU.* and
+// the config.h files are bun's own and are left alone by the import):
 //   - GPU.*: createPresentationContext, createCompositorIntegration, paintToCanvas
 //   - GPUDevice.*: createXRBinding, importExternalTexture and all of the HTMLVideoElement / external texture
 //     bookkeeping (the ENABLE(VIDEO) blocks, which are live because the prebuilt WTF's cmakeconfig.h turns

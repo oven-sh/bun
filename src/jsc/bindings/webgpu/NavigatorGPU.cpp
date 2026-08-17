@@ -50,9 +50,9 @@ namespace Bun {
 
 using namespace JSC;
 
-#define DEFINE_WEBGPU_CONSTRUCTOR_CALLBACK(name)                                               \
-    JSValue name##ConstructorCallback(VM& vm, JSObject* globalObject)                          \
-    {                                                                                          \
+#define DEFINE_WEBGPU_CONSTRUCTOR_CALLBACK(name)                                                          \
+    JSValue name##ConstructorCallback(VM& vm, JSObject* globalObject)                                     \
+    {                                                                                                     \
         return WebCore::JS##name::getConstructor(vm, uncheckedDowncast<Zig::GlobalObject>(globalObject)); \
     }
 FOR_EACH_WEBGPU_GLOBAL_CONSTRUCTOR(DEFINE_WEBGPU_CONSTRUCTOR_CALLBACK)

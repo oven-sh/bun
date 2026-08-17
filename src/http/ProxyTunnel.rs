@@ -206,7 +206,7 @@ fn client_from_ctx<'a, 'c>(ctx: *mut HTTPClient<'c>) -> &'a mut HTTPClient<'c> {
 // fields through raw `addr_of!`/`addr_of_mut!` projections so each borrow
 // covers only memory disjoint from `wrapper`.
 
-fn on_open(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
+fn on_open(ctx: *mut HTTPClient) {
     // HTTPClient owns ProxyTunnel only by `NonNull` pointer, so the borrow
     // here does not overlap the caller's `&SSLWrapper`.
     let this = client_from_ctx(ctx);
@@ -215,7 +215,7 @@ fn on_open(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
     this.state.response_stage = HTTPStage::ProxyHandshake;
     this.state.request_stage = HTTPStage::ProxyHandshake;
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
-        return Ok(());
+        return;
     };
     // Live intrusive-refcounted tunnel allocated in `start()`. Do NOT form
     // `&mut ProxyTunnel` — see ALIASING NOTE.
@@ -249,12 +249,11 @@ fn on_open(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
             }
         }
     }
-    Ok(())
 }
 
-fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) -> bun_uws::js::JsResult<()> {
+fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) {
     if decoded_data.is_empty() {
-        return Ok(());
+        return;
     }
     scoped_log!(
         http_proxy_tunnel,
@@ -267,7 +266,7 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) -> bun_uws::js::JsResult<(
     // `&mut *ctx` (close → on_close, progress_update).
     let this = client_from_ctx(ctx);
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
-        return Ok(());
+        return;
     };
     let _guard = ProxyTunnel::ref_scope(proxy_nn);
     // While parked waiting for the JS `checkServerIdentity` verdict no request
@@ -277,13 +276,13 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) -> bun_uws::js::JsResult<(
         scoped_log!(http_proxy_tunnel, "ProxyTunnel onData while parked");
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
         ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
-        return Ok(());
+        return;
     }
     match this.state.response_stage {
         HTTPStage::Body => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body");
             if decoded_data.is_empty() {
-                return Ok(());
+                return;
             }
             let report_progress = match this.handle_response_body(decoded_data, false) {
                 Ok(v) => v,
@@ -292,34 +291,34 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) -> bun_uws::js::JsResult<(
                     // fresh `&mut *ctx` / `&mut *proxy_ptr` do not alias us.
                     // SAFETY: tunnel pinned by ref_raw above.
                     ProxyTunnel::close_from_callback(proxy_nn, err);
-                    return Ok(());
+                    return;
                 }
             };
 
             if report_progress {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
-                return Ok(());
+                return;
             }
         }
         HTTPStage::BodyChunk => {
             scoped_log!(http_proxy_tunnel, "ProxyTunnel onData body_chunk");
             if decoded_data.is_empty() {
-                return Ok(());
+                return;
             }
             let report_progress = match this.handle_response_body_chunked_encoding(decoded_data) {
                 Ok(v) => v,
                 Err(err) => {
                     // SAFETY: see Body arm.
                     ProxyTunnel::close_from_callback(proxy_nn, err);
-                    return Ok(());
+                    return;
                 }
             };
 
             if report_progress {
                 // `this` dead (NLL); see Body arm.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
-                return Ok(());
+                return;
             }
         }
         HTTPStage::ProxyHeaders => {
@@ -346,18 +345,17 @@ fn on_data(ctx: *mut HTTPClient, decoded_data: &[u8]) -> bun_uws::js::JsResult<(
             ProxyTunnel::close_from_callback(proxy_nn, crate::Error::UnexpectedData);
         }
     }
-    Ok(())
 }
 
 fn on_handshake(
     ctx: *mut HTTPClient,
     handshake_success: bool,
     ssl_error: uws::us_bun_verify_error_t,
-) -> bun_uws::js::JsResult<()> {
+) {
     // NLL ends `this` before any reentrant call below.
     let this = client_from_ctx(ctx);
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
-        return Ok(());
+        return;
     };
     scoped_log!(http_proxy_tunnel, "ProxyTunnel onHandshake");
     // Do NOT form `&mut ProxyTunnel` (see ALIASING NOTE).
@@ -377,7 +375,7 @@ fn on_handshake(
                 // SAFETY: `this` dead (NLL); reenter via raw ptr so on_close's
                 // fresh `&mut *ctx` does not alias us.
                 ProxyTunnel::close_from_callback(proxy_nn, err);
-                return Ok(());
+                return;
             }
 
             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
@@ -385,7 +383,7 @@ fn on_handshake(
             // (no debug_assert) on the ssl-None sub-case.
             debug_assert!(ProxyTunnel::wrapper_ref(proxy_nn.as_ptr()).is_some());
             let Some(ssl_ptr) = ProxyTunnel::wrapper_ssl(proxy_nn) else {
-                return Ok(());
+                return;
             };
 
             // SAFETY: `ssl_ptr` is the live SSL handle from the tunnel's
@@ -402,7 +400,7 @@ fn on_handshake(
                         // → fail() → result callback, which may have
                         // destroyed the AsyncHTTP that embeds `this`. Do not
                         // touch `this` after a `false` return.
-                        return Ok(());
+                        return;
                     }
                 }
                 &Socket::Tcp(socket) => {
@@ -412,7 +410,7 @@ fn on_handshake(
                             "ProxyTunnel onHandshake checkServerIdentity failed"
                         );
                         // see Ssl arm — `this` may be freed here.
-                        return Ok(());
+                        return;
                     }
                 }
                 Socket::None => {}
@@ -441,20 +439,16 @@ fn on_handshake(
             let err = crate::get_cert_error_from_no(handshake_error.error_no);
             // SAFETY: `this` dead (NLL); reenter via raw ptr.
             ProxyTunnel::close_from_callback(proxy_nn, err);
-            return Ok(());
+            return;
         }
         // if handshake_success it self is false, this means that the connection was rejected
         // SAFETY: `this` dead (NLL); reenter via raw ptr.
         ProxyTunnel::close_from_callback(proxy_nn, crate::Error::ConnectionRefused);
-        return Ok(());
+        return;
     }
-    Ok(())
 }
 
-pub(crate) fn write_encrypted(
-    ctx: *mut HTTPClient,
-    encoded_data: &[u8],
-) -> bun_uws::js::JsResult<()> {
+pub(crate) fn write_encrypted(ctx: *mut HTTPClient, encoded_data: &[u8]) {
     // write_encrypted is fired from inside SSLWrapper::flush/handle_traffic;
     // the call chains that reach here (e.g. on_handshake → on_writable → flush,
     // on_open → flush) each NLL-end their `client_from_ctx`/`*ctx` borrow
@@ -464,7 +458,7 @@ pub(crate) fn write_encrypted(
     // tunnel's `data` `NonNull`. The pointee is alive: this client holds a
     // strong ref to the tunnel for the duration of tunneling.
     let Some(proxy_nn) = client_from_ctx(ctx).proxy_tunnel.as_ref().map(|p| p.data) else {
-        return Ok(());
+        return;
     };
     // Live intrusive-refcounted tunnel. Access `write_buffer` and `socket` via
     // disjoint field accessors only — never form `&mut ProxyTunnel`, because
@@ -477,7 +471,7 @@ pub(crate) fn write_encrypted(
         if write_buffer.write(encoded_data).is_err() {
             bun_core::out_of_memory();
         }
-        return Ok(());
+        return;
     }
     let written = match ProxyTunnel::socket_of(proxy_nn) {
         &Socket::Ssl(socket) => socket.write(encoded_data),
@@ -491,10 +485,9 @@ pub(crate) fn write_encrypted(
             bun_core::out_of_memory();
         }
     }
-    Ok(())
 }
 
-fn on_close(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
+fn on_close(ctx: *mut HTTPClient) {
     // on_close is fired from inside SSLWrapper::shutdown (via close_raw) whose
     // caller may itself be a callback that already held `&mut *ctx`; that
     // outer borrow is required to be NLL-dead before close_raw is invoked
@@ -510,7 +503,7 @@ fn on_close(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
         }
     );
     let Some(proxy_nn) = this.proxy_tunnel.as_ref().map(|p| p.data) else {
-        return Ok(());
+        return;
     };
     let proxy_ptr = proxy_nn.as_ptr();
     // bump refcount via the disjoint Cell projection.
@@ -533,7 +526,7 @@ fn on_close(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
                 // `this` dead (NLL); reborrow via `client_from_ctx` inside.
                 progress_update_for_proxy_socket(ctx, proxy_nn);
                 crate::http_thread().schedule_proxy_deref(proxy_ptr);
-                return Ok(());
+                return;
             }
             Err(e) => fail_err = Some(e),
         }
@@ -559,7 +552,6 @@ fn on_close(ctx: *mut HTTPClient) -> bun_uws::js::JsResult<()> {
     ProxyTunnel::set_socket(proxy_nn, Socket::None);
     // Deref after returning to the event loop to avoid lifetime hazards.
     crate::http_thread().schedule_proxy_deref(proxy_ptr);
-    Ok(())
 }
 
 /// `ctx` and `proxy` must be live. Caller must not hold `&mut HTTPClient` or
@@ -638,10 +630,10 @@ impl ProxyTunnel {
         let wrapper = ProxyTunnel::wrapper_ref(proxy_ptr).unwrap();
         if !start_payload.is_empty() {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start with payload");
-            crate::no_js(wrapper.start_with_payload(start_payload));
+            wrapper.start_with_payload(start_payload);
         } else {
             scoped_log!(http_proxy_tunnel, "proxy tunnel start");
-            crate::no_js(wrapper.start());
+            wrapper.start();
         }
     }
 
@@ -664,7 +656,7 @@ impl ProxyTunnel {
         // across the reentrant call.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
             // fast shutdown the connection
-            crate::no_js(wrapper.shutdown(true).map(|_| ()));
+            let _ = wrapper.shutdown(true);
         }
     }
 
@@ -673,7 +665,7 @@ impl ProxyTunnel {
         // tunnel and the caller's `&mut` borrows are NLL-dead before this call.
         if let Some(wrapper) = unsafe { &*addr_of!((*this.as_ptr()).wrapper) } {
             // fast shutdown the connection
-            crate::no_js(wrapper.shutdown(true).map(|_| ()));
+            let _ = wrapper.shutdown(true);
         }
     }
 
@@ -707,7 +699,7 @@ impl ProxyTunnel {
         // the `&wrapper` returned by `wrapper_ref`.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
             // Cycle to through the SSL state machine
-            crate::no_js(wrapper.flush().map(|_| ()));
+            let _ = wrapper.flush();
         }
         // _guard derefs here.
     }
@@ -723,7 +715,7 @@ impl ProxyTunnel {
         // `&SSLWrapper` from `wrapper_ref` is never aliased by a `&mut`
         // across those reentrant calls.
         if let Some(wrapper) = ProxyTunnel::wrapper_ref(this.as_ptr()) {
-            crate::no_js(wrapper.receive_data(buf));
+            wrapper.receive_data(buf);
         }
         // _guard derefs here.
     }
@@ -734,7 +726,6 @@ impl ProxyTunnel {
                 WriteDataError::ConnectionClosed => crate::Error::ConnectionClosed,
                 WriteDataError::WantRead => crate::Error::WantRead,
                 WriteDataError::WantWrite => crate::Error::WantWrite,
-                WriteDataError::Js(_) => unreachable!("the HTTP client thread runs no JavaScript"),
             });
         }
         Err(crate::Error::ConnectionClosed)

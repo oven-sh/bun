@@ -242,7 +242,7 @@ impl MySQLConnection {
                 self.upgrade_to_tls()?;
             } else {
                 // no backpressure yet so pipeline more if possible and flush again
-                self.advance()?;
+                self.advance();
                 self.flush_data();
             }
         }
@@ -256,13 +256,13 @@ impl MySQLConnection {
     /// reaches the queue via `ParentRef`/`JsCell` shared borrows (all queue
     /// fields are interior-mutable), so no `&mut` to the queue bytes is ever
     /// materialised concurrently with the connection backref.
-    fn advance(&mut self) -> bun_jsc::JsResult<()> {
+    fn advance(&mut self) {
         let js_connection = self.get_js_connection();
         // `js_connection` is the `@fieldParentPtr` of `self` — non-null, live,
         // full-allocation provenance. advance() only forms shared borrows of it
         // (queue mutation goes through `Cell`/`JsCell`); the raw pointer is
         // wrapped via the safe `ParentRef::from(NonNull)` inside.
-        MySQLRequestQueue::advance(js_connection)
+        MySQLRequestQueue::advance(js_connection);
     }
 
     fn flush_data(&mut self) {
@@ -291,17 +291,16 @@ impl MySQLConnection {
         }
     }
 
-    pub(crate) fn close(&mut self) -> bun_jsc::JsResult<()> {
-        let closed = self.socket.close(uws::CloseKind::Normal);
+    pub(crate) fn close(&mut self) {
+        self.socket.close(uws::CloseKind::Normal);
         self.write_buffer = OffsetByteList::default();
-        closed
     }
 
     pub(crate) fn clean_queue_and_close(
         &mut self,
         js_reason: Option<JSValue>,
         js_queries_array: JSValue,
-    ) -> bun_jsc::JsResult<()> {
+    ) {
         // cleanup requests
         self.queue.clean(
             js_reason,
@@ -312,7 +311,7 @@ impl MySQLConnection {
             },
         );
 
-        self.close()
+        self.close();
     }
 
     pub(crate) fn cleanup(&mut self) {
@@ -815,16 +814,14 @@ impl MySQLConnection {
                 self.status_flags = ok.status_flags;
                 self.flags.insert(ConnectionFlags::IS_READY_FOR_QUERY);
                 self.queue.mark_as_ready_for_query();
-                self.advance().map_err(crate::jsc::js_error_to_mysql)?;
+                self.advance();
             }
 
             x if x == PacketType::ERROR.0 => {
                 let mut err = ErrorPacket::default();
                 err.decode_internal(reader)?;
 
-                self.js_connection_ref()
-                    .on_error_packet(None, &err)
-                    .map_err(crate::jsc::js_error_to_mysql)?;
+                self.js_connection_ref().on_error_packet(None, &err);
                 return Err(AnyMySQLError::AuthenticationFailed);
             }
 
@@ -1038,11 +1035,8 @@ impl MySQLConnection {
                     // `JsCell`, so re-entrant `connection_mut()` does not alias
                     // this outer shared borrow.
                     self.js_connection_ref()
-                        .on_error_packet(Some(request), &error_response)
-                        .map_err(crate::jsc::js_error_to_mysql)?;
-                    if let Err(FlushQueueError::Js(err)) = self.flush_queue() {
-                        return Err(crate::jsc::js_error_to_mysql(err));
-                    }
+                        .on_error_packet(Some(request), &error_response);
+                    let _ = self.flush_queue();
                 }
             }
         }
@@ -1214,10 +1208,7 @@ impl MySQLConnection {
             })
     }
 
-    fn check_if_prepared_statement_is_done(
-        &mut self,
-        statement: &mut MySQLStatement,
-    ) -> Result<(), AnyMySQLError> {
+    fn check_if_prepared_statement_is_done(&mut self, statement: &mut MySQLStatement) {
         bun_core::scoped_log!(
             MySQLConnection,
             "checkIfPreparedStatementIsDone: {} {} {} {}",
@@ -1235,9 +1226,8 @@ impl MySQLConnection {
             self.queue.mark_as_ready_for_query();
             self.queue.mark_as_prepared();
             statement.reset();
-            self.advance().map_err(crate::jsc::js_error_to_mysql)?;
+            self.advance();
         }
-        Ok(())
     }
 
     pub(crate) fn handle_prepared_statement<C: ReaderContext>(
@@ -1280,7 +1270,7 @@ impl MySQLConnection {
             {
                 let mut eof = EOFPacket::default();
                 eof.decode_internal(reader)?;
-                self.check_if_prepared_statement_is_done(statement)?;
+                self.check_if_prepared_statement_is_done(statement);
                 return Ok(());
             }
             let extended_type_info = self.mariadb_capabilities.MARIADB_CLIENT_EXTENDED_TYPE_INFO;
@@ -1302,7 +1292,7 @@ impl MySQLConnection {
             // completion is deferred to the EOF handler above to avoid marking the
             // statement as prepared before the trailing EOF is consumed.
             if self.capabilities.CLIENT_DEPRECATE_EOF {
-                self.check_if_prepared_statement_is_done(statement)?;
+                self.check_if_prepared_statement_is_done(statement);
             }
             return Ok(());
         }
@@ -1340,7 +1330,7 @@ impl MySQLConnection {
                     statement.columns_received = 0;
                 }
 
-                self.check_if_prepared_statement_is_done(statement)?;
+                self.check_if_prepared_statement_is_done(statement);
             }
 
             PacketType::ERROR => {
@@ -1378,9 +1368,8 @@ impl MySQLConnection {
                 // re-entrant `connection_mut()` does not alias the outer
                 // shared borrow.
                 self.js_connection_ref()
-                    .on_error_packet(Some(request), &err)
-                    .map_err(crate::jsc::js_error_to_mysql)?;
-                self.advance().map_err(crate::jsc::js_error_to_mysql)?;
+                    .on_error_packet(Some(request), &err);
+                self.advance();
             }
 
             _ => {
@@ -1408,7 +1397,7 @@ impl MySQLConnection {
         status_flags: StatusFlags,
         last_insert_id: u64,
         affected_rows: u64,
-    ) -> Result<(), AnyMySQLError> {
+    ) {
         self.status_flags = status_flags;
         let is_last_result = !status_flags.has(StatusFlag::SERVER_MORE_RESULTS_EXISTS);
         debug!(
@@ -1452,10 +1441,7 @@ impl MySQLConnection {
         // by queries added during onQueryResult is actually sent.
         // This fixes a race condition where the auto flusher may not be
         // registered if the queue's current item is completed (not pending).
-        if let Err(FlushQueueError::Js(err)) = self.flush_queue() {
-            return Err(crate::jsc::js_error_to_mysql(err));
-        }
-        Ok(())
+        let _ = self.flush_queue();
     }
 
     fn handle_result_set<C: ReaderContext>(
@@ -1502,11 +1488,8 @@ impl MySQLConnection {
                 // inside the parent's `JsCell`, so re-entrant `connection_mut()`
                 // does not alias this outer shared borrow.
                 self.js_connection_ref()
-                    .on_error_packet(Some(request), &err)
-                    .map_err(crate::jsc::js_error_to_mysql)?;
-                if let Err(FlushQueueError::Js(err)) = self.flush_queue() {
-                    return Err(crate::jsc::js_error_to_mysql(err));
-                }
+                    .on_error_packet(Some(request), &err);
+                let _ = self.flush_queue();
             }
 
             packet_type => {
@@ -1533,7 +1516,7 @@ impl MySQLConnection {
                             ok.status_flags,
                             ok.last_insert_id,
                             ok.affected_rows,
-                        )?;
+                        );
                         return Ok(());
                     }
 
@@ -1632,7 +1615,7 @@ impl MySQLConnection {
                             // Final EOF after all row data - terminates the result set
                             let mut eof = EOFPacket::default();
                             eof.decode_internal(reader)?;
-                            self.handle_result_set_ok(request, eof.status_flags, 0, 0)?;
+                            self.handle_result_set_ok(request, eof.status_flags, 0, 0);
                             return Ok(());
                         }
 
@@ -1644,7 +1627,7 @@ impl MySQLConnection {
                             ok.status_flags,
                             ok.last_insert_id,
                             ok.affected_rows,
-                        )?;
+                        );
                         return Ok(());
                     }
 
@@ -1666,20 +1649,10 @@ impl MySQLConnection {
 #[derive(strum::IntoStaticStr, Debug)]
 pub enum FlushQueueError {
     AuthenticationFailed,
-    /// Script entered while pipelining (a failed request's callback, a socket close) left a JS exception.
-    Js(bun_jsc::JsError),
-}
-impl From<bun_jsc::JsError> for FlushQueueError {
-    fn from(e: bun_jsc::JsError) -> Self {
-        Self::Js(e)
-    }
 }
 impl From<FlushQueueError> for crate::Error {
-    fn from(e: FlushQueueError) -> Self {
-        match e {
-            FlushQueueError::AuthenticationFailed => crate::Error::AuthenticationFailed,
-            FlushQueueError::Js(_) => crate::Error::JSError,
-        }
+    fn from(_: FlushQueueError) -> Self {
+        crate::Error::AuthenticationFailed
     }
 }
 

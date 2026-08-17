@@ -1220,10 +1220,8 @@ where
     pub(crate) fn force_close(&self) {
         if let Some(resp) = self.resp.get() {
             self.detach_response();
-            // With the response detached (no `onAborted`, and a `Bun.serve` response carries no node:http
-            // socket data) the close below dispatches into no script, so it raises nothing of its own.
-            let raised_nothing = resp.force_close();
-            debug_assert!(raised_nothing.is_ok());
+            // SAFETY: FFI handle
+            resp.force_close();
             // end_request_streaming_and_drain() must run after the last
             // `resp` access: its drain_microtasks() can re-enter lsquic (H3)
             // and free the stream out from under the local `resp` copy.

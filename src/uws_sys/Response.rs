@@ -864,19 +864,18 @@ impl AnyResponse {
         any_dispatch!(self, |r| r.end_without_body(close_connection))
     }
 
-    /// Closes the connection under the response; its abort/close handlers run from in here.
-    pub fn force_close(self) -> crate::js::JsResult<()> {
+    pub fn force_close(self) {
         match self {
             AnyResponse::SSL(ptr) => {
                 // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
                 us_socket_t::opaque_mut(TLSResponse::as_handle(ptr).downcast_socket())
-                    .close(crate::us_socket::CloseCode::failure)
+                    .close(crate::us_socket::CloseCode::failure);
             }
             AnyResponse::TCP(ptr) => {
                 us_socket_t::opaque_mut(TCPResponse::as_handle(ptr).downcast_socket())
-                    .close(crate::us_socket::CloseCode::failure)
+                    .close(crate::us_socket::CloseCode::failure);
             }
-            AnyResponse::H3(ptr) => crate::js::checked(|| H3Response::as_handle(ptr).force_close()),
+            AnyResponse::H3(ptr) => H3Response::as_handle(ptr).force_close(),
         }
     }
 

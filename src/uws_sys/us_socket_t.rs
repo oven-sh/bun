@@ -72,19 +72,17 @@ impl us_socket_t {
         c::us_socket_resume(self);
     }
 
-    /// Closes the socket. uSockets dispatches `on_close` from in here — script, when a VM drives this loop —
-    /// so the caller gets what that left.
-    pub fn close(&mut self, code: CloseCode) -> crate::js::JsResult<()> {
+    pub fn close(&mut self, code: CloseCode) {
         bun_core::scoped_log!(
             uws,
             "us_socket_close({:p}, {})",
             self,
             <&'static str>::from(code)
         );
-        crate::js::checked(|| unsafe {
+        unsafe {
             // SAFETY: self is a live us_socket_t
             let _ = c::us_socket_close(self, code, ptr::null_mut());
-        })
+        }
     }
 
     pub fn shutdown(&mut self) {

@@ -31,7 +31,7 @@ pub use bun_uws_sys::{
 /// hook, so no `catch_unwind` wrapper is emitted.
 pub use bun_jsc_macros::uws_callback;
 pub use bun_uws_sys::response::State;
-pub use bun_uws_sys::{h3 as H3, js, quic, socket_transfer, udp, vtable};
+pub use bun_uws_sys::{h3 as H3, quic, socket_transfer, udp, vtable};
 pub type Socket = us_socket_t;
 
 /// Bare BoringSSL `SSL_CTX`. `SSL_CTX_up_ref`/`SSL_CTX_free` is the refcount;
@@ -215,8 +215,6 @@ pub mod ssl_wrapper {
         pub(crate) renegotiation_count: Cell<u8>,
         pub(crate) renegotiation_window_start: Cell<Option<std::time::Instant>>,
         traffic: Cell<Traffic>,
-        /// The first `Err` a callback returned during the current public call; see [`Handlers`].
-        js_err: Cell<Option<crate::js::JsError>>,
     }
 
     /// Re-entrancy state of [`SSLWrapper::handle_traffic`].
@@ -340,14 +338,11 @@ pub mod ssl_wrapper {
     pub struct Handlers<T: Copy> {
         /// Backref to the parent (e.g. *mut HTTPClient / *mut WebSocketProxyTunnel / *mut UpgradedDuplex).
         pub ctx: T,
-        // Each callback may enter script (write to a JS duplex, close a socket whose handler runs, …); an `Err`
-        // it returns winds the wrapper down like a fatal error and comes back out of the public call that was
-        // on the stack (`start`, `receive_data`, `write_data`, `shutdown`, `flush`).
-        pub on_open: fn(T) -> crate::js::JsResult<()>,
-        pub on_handshake: fn(T, bool, us_bun_verify_error_t) -> crate::js::JsResult<()>,
-        pub write: fn(T, &[u8]) -> crate::js::JsResult<()>,
-        pub on_data: fn(T, &[u8]) -> crate::js::JsResult<()>,
-        pub on_close: fn(T) -> crate::js::JsResult<()>,
+        pub on_open: fn(T),
+        pub on_handshake: fn(T, bool, us_bun_verify_error_t),
+        pub write: fn(T, &[u8]),
+        pub on_data: fn(T, &[u8]),
+        pub on_close: fn(T),
         /// A new resumable TLS session arrived (serialized SSL_SESSION bytes)
         /// - node's `'session'` event. `None` opts the SSL out of session
         /// parking entirely (fetch / WebSocket tunnels have no consumer).
@@ -368,8 +363,6 @@ pub mod ssl_wrapper {
         ConnectionClosed,
         WantRead,
         WantWrite,
-        /// A callback fired during the write left a JS exception (see [`Handlers`]); propagate it.
-        Js(crate::js::JsError),
     }
 
     impl<T: Copy> SSLWrapper<T> {
@@ -499,7 +492,6 @@ pub mod ssl_wrapper {
                 renegotiation_count: Cell::new(0),
                 renegotiation_window_start: Cell::new(None),
                 traffic: Cell::new(Traffic::Idle),
-                js_err: Cell::new(None),
             })
         }
 
@@ -569,22 +561,20 @@ pub mod ssl_wrapper {
             }
         }
 
-        pub fn start(&self) -> crate::js::JsResult<()> {
+        pub fn start(&self) {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
             let handlers = self.handlers.get();
-            (handlers.on_open)(handlers.ctx)?;
+            (handlers.on_open)(handlers.ctx);
             // start the handshake
             self.handle_traffic();
-            self.settle(())
         }
 
-        pub fn start_with_payload(&self, payload: &[u8]) -> crate::js::JsResult<()> {
+        pub fn start_with_payload(&self, payload: &[u8]) {
             let handlers = self.handlers.get();
-            (handlers.on_open)(handlers.ctx)?;
-            self.receive_data(payload)?;
+            (handlers.on_open)(handlers.ctx);
+            self.receive_data(payload);
             // start the handshake
             self.handle_traffic();
-            self.settle(())
         }
 
         /// Shutdown the read direction of the SSL (fake it just for convenience)
@@ -592,9 +582,7 @@ pub mod ssl_wrapper {
             // We cannot shutdown read in SSL, the read direction is closed by
             // the peer. So we just ignore the onData data, we still wanna to
             // wait until we received the shutdown.
-            fn dummy_on_data<T: Copy>(_: T, _: &[u8]) -> crate::js::JsResult<()> {
-                Ok(())
-            }
+            fn dummy_on_data<T: Copy>(_: T, _: &[u8]) {}
             let mut handlers = self.handlers.get();
             handlers.on_data = dummy_on_data::<T>;
             self.handlers.set(handlers);
@@ -606,9 +594,9 @@ pub mod ssl_wrapper {
         /// complete the 2-step shutdown ASAP. Caution: never reuse a socket if
         /// fast_shutdown = true, this will also fully close both read and
         /// write directions.
-        pub fn shutdown(&self, fast_shutdown: bool) -> crate::js::JsResult<bool> {
+        pub fn shutdown(&self, fast_shutdown: bool) -> bool {
             let Some(ssl) = self.ssl.get() else {
-                return self.settle(false);
+                return false;
             };
             // we already sent the ssl shutdown
             if self.flags.sent_ssl_shutdown() || self.flags.fatal_error() {
@@ -632,9 +620,9 @@ pub mod ssl_wrapper {
                     self.trigger_close_callback();
                     // Do not read self after the close callback: the owner's
                     // teardown chain has started.
-                    return self.settle(true);
+                    return true;
                 }
-                return self.settle(self.flags.received_ssl_shutdown());
+                return self.flags.received_ssl_shutdown();
             }
 
             // Calling SSL_shutdown() only closes the write direction of the
@@ -680,7 +668,7 @@ pub mod ssl_wrapper {
 
                 // we need to trigger close because we are not receiving a SSL_shutdown
                 self.trigger_close_callback();
-                return self.settle(false);
+                return false;
             }
 
             // we sent the shutdown
@@ -693,7 +681,7 @@ pub mod ssl_wrapper {
                 if err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL {
                     self.flags.set_fatal_error(true);
                     self.trigger_close_callback();
-                    return self.settle(false);
+                    return false;
                 }
             }
             // SSL_shutdown only queues close_notify into the write BIO; nothing
@@ -701,21 +689,17 @@ pub mod ssl_wrapper {
             // drain it now or the peer never sees our shutdown.
             let mut buffer = [0u8; BUFFER_SIZE];
             self.handle_writing(&mut buffer);
-            self.settle(ret == 1) // truly closed
+            ret == 1 // truly closed
         }
 
         /// flush buffered data and returns amount of pending data to write
-        pub fn flush(&self) -> crate::js::JsResult<usize> {
+        pub fn flush(&self) -> usize {
             // handle_traffic may trigger a close callback which frees ssl,
             // so we must not capture the ssl pointer before calling it.
             self.handle_traffic();
-            let Some(ssl) = self.ssl.get() else {
-                return self.settle(0);
-            };
+            let Some(ssl) = self.ssl.get() else { return 0 };
             // SAFETY: ssl is a live SSL*; SSL_get_wbio returns the BIO bound in init_with_ctx.
-            self.settle(unsafe {
-                boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr()))
-            })
+            unsafe { boring_sys::BIO_ctrl_pending(boring_sys::SSL_get_wbio(ssl.as_ptr())) }
         }
 
         /// Return if we have pending data to be read or write. Covers both
@@ -757,15 +741,13 @@ pub mod ssl_wrapper {
         }
 
         /// Receive data from the network (encrypted data)
-        pub fn receive_data(&self, data: &[u8]) -> crate::js::JsResult<()> {
-            let Some(ssl) = self.ssl.get() else {
-                return Ok(());
-            };
+        pub fn receive_data(&self, data: &[u8]) {
+            let Some(ssl) = self.ssl.get() else { return };
 
             // SAFETY: ssl is a live SSL*; rbio bound in init_with_ctx.
             let Some(input) = NonNull::new(unsafe { boring_sys::SSL_get_rbio(ssl.as_ptr()) })
             else {
-                return Ok(());
+                return;
             };
             // SAFETY: input is a valid BIO*; data is a valid &[u8] for len bytes.
             let written = unsafe {
@@ -778,30 +760,23 @@ pub mod ssl_wrapper {
             if written > -1 {
                 self.handle_traffic();
             }
-            self.settle(())
         }
 
         /// Send data to the network (unencrypted data)
         pub fn write_data(&self, data: &[u8]) -> Result<usize, WriteDataError> {
             let Some(ssl) = self.ssl.get() else {
-                return self
-                    .settle(())
-                    .map_err(WriteDataError::Js)
-                    .and(Err(WriteDataError::ConnectionClosed));
+                return Err(WriteDataError::ConnectionClosed);
             };
 
             // shutdown is sent we cannot write anymore
             if self.flags.sent_ssl_shutdown() {
-                return self
-                    .settle(())
-                    .map_err(WriteDataError::Js)
-                    .and(Err(WriteDataError::ConnectionClosed));
+                return Err(WriteDataError::ConnectionClosed);
             }
 
             if data.is_empty() {
                 // just cycle through internal openssl's state
                 self.handle_traffic();
-                return self.settle(()).map_err(WriteDataError::Js).and(Ok(0));
+                return Ok(0);
             }
             // SAFETY: ssl is a live SSL*; data is a valid &[u8] for len bytes.
             let written = unsafe {
@@ -819,31 +794,21 @@ pub mod ssl_wrapper {
                 if err == boring_sys::SSL_ERROR_WANT_READ {
                     // we wanna read/write
                     self.handle_traffic();
-                    return self
-                        .settle(())
-                        .map_err(WriteDataError::Js)
-                        .and(Err(WriteDataError::WantRead));
+                    return Err(WriteDataError::WantRead);
                 }
                 if err == boring_sys::SSL_ERROR_WANT_WRITE {
                     // we wanna read/write
                     self.handle_traffic();
-                    return self
-                        .settle(())
-                        .map_err(WriteDataError::Js)
-                        .and(Err(WriteDataError::WantWrite));
+                    return Err(WriteDataError::WantWrite);
                 }
                 // some bad error happened here we must close
                 self.flags.set_fatal_error(
                     err == boring_sys::SSL_ERROR_SSL || err == boring_sys::SSL_ERROR_SYSCALL,
                 );
                 self.trigger_close_callback();
-                return self
-                    .settle(())
-                    .map_err(WriteDataError::Js)
-                    .and(Err(WriteDataError::ConnectionClosed));
+                return Err(WriteDataError::ConnectionClosed);
             }
             self.handle_traffic();
-            self.settle(()).map_err(WriteDataError::Js)?;
             Ok(usize::try_from(written).expect("int cast"))
         }
 
@@ -859,55 +824,32 @@ pub mod ssl_wrapper {
             }
         }
 
-        /// A callback returned `Err` (script it entered was cut short or threw where nothing folds it): keep the
-        /// first one for the public call on the stack to return, and stop driving the connection.
-        #[cold]
-        fn callback_failed(&self, err: crate::js::JsError) {
-            if self.js_err.get().is_none() {
-                self.js_err.set(Some(err));
-            }
-            self.flags.set_fatal_error(true);
-        }
-
-        #[inline]
-        fn note(&self, r: crate::js::JsResult<()>) {
-            if let Err(err) = r {
-                self.callback_failed(err);
-            }
-        }
-
-        /// What the callbacks fired during this public call left: `Err` if any of them failed.
-        #[inline]
-        fn settle<R>(&self, ok: R) -> crate::js::JsResult<R> {
-            match self.js_err.take() {
-                Some(err) => Err(err),
-                None => Ok(ok),
-            }
-        }
-
         fn trigger_handshake_callback(&self, success: bool, result: us_bun_verify_error_t) {
             if self.flags.closed_notified() {
                 return;
             }
             self.flags.set_authorized(success);
+            // trigger the handshake callback
             let handlers = self.handlers.get();
-            self.note((handlers.on_handshake)(handlers.ctx, success, result));
+            (handlers.on_handshake)(handlers.ctx, success, result);
         }
 
         fn trigger_wanna_write_callback(&self, data: &[u8]) {
             if self.flags.closed_notified() {
                 return;
             }
+            // trigger the write callback
             let handlers = self.handlers.get();
-            self.note((handlers.write)(handlers.ctx, data));
+            (handlers.write)(handlers.ctx, data);
         }
 
         fn trigger_data_callback(&self, data: &[u8]) {
-            if self.flags.closed_notified() || self.js_err.get().is_some() {
+            if self.flags.closed_notified() {
                 return;
             }
+            // trigger the onData callback
             let handlers = self.handlers.get();
-            self.note((handlers.on_data)(handlers.ctx, data));
+            (handlers.on_data)(handlers.ctx, data);
         }
 
         fn trigger_close_callback(&self) {
@@ -915,8 +857,9 @@ pub mod ssl_wrapper {
                 return;
             }
             self.flags.set_closed_notified(true);
+            // trigger the onClose callback
             let handlers = self.handlers.get();
-            self.note((handlers.on_close)(handlers.ctx));
+            (handlers.on_close)(handlers.ctx);
         }
 
         fn get_verify_error(&self) -> us_bun_verify_error_t {

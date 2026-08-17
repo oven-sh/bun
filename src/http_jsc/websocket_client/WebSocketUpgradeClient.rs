@@ -32,7 +32,7 @@ use bun_core::{FeatureFlags, ZBox};
 use bun_core::{String as BunString, ZigStringSlice as Utf8Slice};
 use bun_http::{HeaderValueIterator, Headers};
 use bun_io::KeepAlive;
-use bun_jsc::{JSGlobalObject, JsResult, VirtualMachineRef};
+use bun_jsc::{JSGlobalObject, VirtualMachineRef};
 use bun_picohttp as picohttp;
 use bun_ptr::ThisPtr;
 use bun_uws::{self as uws, SocketHandler, SocketKind, SslCtx};
@@ -612,7 +612,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// socket userdata pointer, which would alias a `&mut self` argument; and
     /// the trailing `deref` may free `this`, which would violate a `&mut self`
     /// argument protector.
-    pub(crate) unsafe fn cancel(this: *mut Self) -> JsResult<()> {
+    pub(crate) unsafe fn cancel(this: *mut Self) {
         // SAFETY: caller (C++ / uWS) holds a live ref; `this` carries root
         // (userdata) provenance from `heap::alloc`.
         let this = unsafe { ThisPtr::new(this) };
@@ -649,7 +649,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // `connect_group`; single-threaded (JS thread), no other `&mut`
             // to it is live.
             .is_some_and(|ext| unsafe { (*ext).take().is_some() });
-        let closed = tcp.close(uws::CloseCode::Failure);
+        tcp.close(uws::CloseCode::Failure);
         if had_socket_ref {
             // SAFETY: short-lived `&mut` for the field detach.
             unsafe { (*this.as_ptr()).tcp.detach() };
@@ -657,7 +657,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::deref(this.as_ptr()) };
         }
         // `_guard` drops here, balancing the ref above. May free `this`.
-        closed
     }
 
     /// # Safety
@@ -665,7 +664,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// `did_abrupt_close` may run JS that re-enters via `cancel()`, and
     /// `tcp.close()` synchronously dispatches `handle_close`; both would alias
     /// a `&mut self` argument.
-    pub(crate) unsafe fn fail(this: *mut Self, code: ErrorCode) -> JsResult<()> {
+    pub(crate) unsafe fn fail(this: *mut Self, code: ErrorCode) {
         log!("onFail: {}", <&'static str>::from(code));
         bun_jsc::mark_binding!();
         // SAFETY: caller contract — `this` is a live `heap::alloc` pointer.
@@ -681,7 +680,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // connection — close it gracefully (FIN) like Node's ws client does.
         // A Failure close arms SO_LINGER{1,0} and sends an RST, which the
         // server observes as ECONNRESET on a connection it served correctly.
-        tcp.close(uws::CloseCode::Normal)
+        tcp.close(uws::CloseCode::Normal);
     }
 
     /// # Safety
@@ -702,12 +701,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// Takes `ThisPtr<Self>` because the trailing `deref` releases the socket
     /// ref and on the normal path frees `this`; a `&mut self` argument would
     /// carry a Stacked Borrows protector that makes deallocating it UB.
-    pub fn handle_close(
-        this: ThisPtr<Self>,
-        _: Socket<SSL>,
-        _: c_int,
-        _: *mut c_void,
-    ) -> JsResult<()> {
+    pub fn handle_close(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int, _: *mut c_void) {
         log!("onClose");
         bun_jsc::mark_binding!();
         // SAFETY: short-lived `&mut` borrows; each ends before the next call.
@@ -719,16 +713,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // SAFETY: may free `this`; no `&mut Self` is live.
         unsafe { Self::deref(this.as_ptr()) };
-        Ok(())
     }
 
     /// # Safety
     /// `this` must point to a live `Self`. See `fail`.
-    pub(crate) unsafe fn terminate(this: *mut Self, code: ErrorCode) -> JsResult<()> {
+    pub(crate) unsafe fn terminate(this: *mut Self, code: ErrorCode) {
         // SAFETY: forwards `this` with root provenance.
-        unsafe { Self::fail(this, code)? };
+        unsafe { Self::fail(this, code) };
         // We cannot access the pointer after fail is called.
-        Ok(())
     }
 
     /// Takes `ThisPtr<Self>` because `fail` may free `this` / be re-entered.
@@ -737,7 +729,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         socket: Socket<SSL>,
         success: i32,
         ssl_error: uws::us_bun_verify_error_t,
-    ) -> JsResult<()> {
+    ) {
         log!(
             "onHandshake({}) ssl_error.error_no={}",
             success,
@@ -761,7 +753,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         this.secure.is_some()
                     );
                     // SAFETY: no `&mut Self` is live across this call.
-                    return unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
+                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
+                    return;
                 }
                 // SAFETY: native handle on a TLS socket is `*SSL`.
                 let ssl_ptr = socket
@@ -771,7 +764,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // No SSL object to verify against — treat as handshake failure
                     // rather than dereferencing null below.
                     // SAFETY: no `&mut Self` is live across this call.
-                    return unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
+                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
+                    return;
                 }
                 // SAFETY: ssl_ptr is a live *SSL from the open socket; SSL_get_servername
                 // returns a nullable borrowed C string valid for the SSL's lifetime.
@@ -793,20 +787,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     || !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname)
                 {
                     // SAFETY: no `&mut Self` is live across this call.
-                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed)? };
+                    unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
                 }
             }
         } else {
             // if we are here is because server rejected us, and the error_no is the cause of this
             // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
             // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed)? };
+            unsafe { Self::fail(this.as_ptr(), ErrorCode::TlsHandshakeFailed) };
         }
-        Ok(())
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_open(this: ThisPtr<Self>, socket: Socket<SSL>) -> JsResult<()> {
+    pub fn handle_open(this: ThisPtr<Self>, socket: Socket<SSL>) {
         log!("onOpen");
         // SAFETY: scoped write; nothing re-enters here.
         unsafe { (*this.as_ptr()).tcp = socket };
@@ -851,13 +844,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let wrote = socket.write(&this.input_body_buf);
         if wrote < 0 {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+            return;
         }
 
         let pending = this.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
         // SAFETY: scoped write.
         unsafe { (*this.as_ptr()).to_send_len = pending };
-        Ok(())
     }
 
     pub(crate) fn is_same_socket(&self, socket: Socket<SSL>) -> bool {
@@ -899,7 +892,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// Takes `ThisPtr<Self>` because `socket.close()` synchronously dispatches
     /// `handle_close` (aliased `&mut`), and `terminate`/`process_response`/the
     /// trailing `deref` may free `this` (argument-protector UB on `&mut self`).
-    pub fn handle_data(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) -> JsResult<()> {
+    pub fn handle_data(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("onData");
 
         // For tunnel mode after successful upgrade, forward all data to the tunnel
@@ -914,10 +907,10 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     // SAFETY: `p` holds a live ref on `tunnel`.
                     let _g = unsafe { bun_ptr::ScopedRef::new(tp) };
                     // SAFETY: ref guard above keeps the tunnel live.
-                    unsafe { WebSocketProxyTunnel::receive(tp, data)? };
+                    unsafe { WebSocketProxyTunnel::receive(tp, data) };
                 }
             }
-            return Ok(());
+            return;
         }
 
         if this.outgoing_websocket.is_none() {
@@ -926,8 +919,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: short-lived `&mut` for clear_data; ends before `socket.close` below.
             unsafe { (*this.as_ptr()).clear_data() };
             // No `&mut Self` is live across this call (handle_close reenters).
-            socket.close(uws::CloseCode::Failure)?;
-            return Ok(());
+            socket.close(uws::CloseCode::Failure);
+            return;
         }
         // Bumps the intrusive refcount and derefs on Drop at every return path
         // below. No `&`/`&mut Self` is live when the guard drops.
@@ -939,8 +932,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // Handle proxy handshake response
         if this.state == State::ProxyHandshake {
-            Self::handle_proxy_response(this, socket, data)?;
-            return Ok(());
+            Self::handle_proxy_response(this, socket, data);
+            return;
         }
 
         // Route through proxy tunnel if TLS handshake is in progress or complete
@@ -949,8 +942,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
                 if let Some(tunnel) = p.get_tunnel() {
                     // SAFETY: `p` holds a live ref on `tunnel`.
-                    unsafe { WebSocketProxyTunnel::receive(tunnel.as_ptr(), data)? };
-                    return Ok(());
+                    unsafe { WebSocketProxyTunnel::receive(tunnel.as_ptr(), data) };
+                    return;
                 }
             }
         }
@@ -961,12 +954,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             HeadParse::Done { full, .. } => full,
             HeadParse::Invalid => {
                 // SAFETY: no borrow of `*this` is live across this call.
-                return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                return;
             }
-            HeadParse::NeedMore => return Ok(()),
+            HeadParse::NeedMore => return,
         };
+        Self::process_websocket_upgrade_response(this, &full);
         // `_guard` drops here, balancing the ref above. May free `this`.
-        Self::process_websocket_upgrade_response(this, &full)
     }
 
     /// Forward the handshake response to C++ as a `'handshake'` event.
@@ -991,7 +985,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     }
 
     /// Caller holds a `ref_guard` and owns `full` (must not borrow `self`).
-    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) -> JsResult<()> {
+    fn process_websocket_upgrade_response(this: ThisPtr<Self>, full: &[u8]) {
         let mut scratch = [picohttp::Header::ZERO; 128];
         let Ok(response) = picohttp::Response::parse(full, &mut scratch) else {
             // SAFETY: forwards to the existing teardown path.
@@ -1007,20 +1001,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if let Some(ws) = this.outgoing_websocket {
             Self::dispatch_handshake(ws, &response, if is_101 { &[] } else { &full[head_len..] });
             if this.outgoing_websocket.is_none() {
-                return Ok(());
+                return;
             }
         }
         // SAFETY: forwards to the existing handoff path.
-        unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..])? };
-        Ok(())
+        unsafe { Self::process_response(this.as_ptr(), response, &full[head_len..]) };
     }
 
     /// Takes `ThisPtr<Self>` because `terminate`/`handle_data` may free `this`.
-    fn handle_proxy_response(
-        this: ThisPtr<Self>,
-        socket: Socket<SSL>,
-        data: &[u8],
-    ) -> JsResult<()> {
+    fn handle_proxy_response(this: ThisPtr<Self>, socket: Socket<SSL>, data: &[u8]) {
         log!("handleProxyResponse");
 
         const HTTP_200: &[u8] = b"HTTP/1.1 200 ";
@@ -1032,7 +1021,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         {
             // Proxy connection failed
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyConnectFailed) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyConnectFailed) };
+            return;
         }
 
         // SAFETY: scoped `&mut` for the pure buffer+parse; it ends before the
@@ -1046,21 +1036,22 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 } => (full, status_code, head_len),
                 HeadParse::Invalid => {
                     // SAFETY: no borrow of `*this` is live across this call.
-                    return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                    unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                    return;
                 }
-                HeadParse::NeedMore => return Ok(()),
+                HeadParse::NeedMore => return,
             };
 
         // Proxy returned non-200 status
         if status_code != 200 {
             if status_code == 407 {
                 // SAFETY: no borrow of `*this` is live across this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyAuthenticationRequired)? };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyAuthenticationRequired) };
             } else {
                 // SAFETY: no borrow of `*this` is live across this call.
-                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyConnectFailed)? };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyConnectFailed) };
             }
-            return Ok(());
+            return;
         }
 
         // Proxy tunnel established
@@ -1077,13 +1068,15 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // before the re-entrant calls below.
         let Some(p) = (unsafe { (*this.as_ptr()).proxy.as_mut() }) else {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyTunnelFailed) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::ProxyTunnelFailed) };
+            return;
         };
 
         // For wss:// through proxy, we need to do TLS handshake inside the tunnel
         if p.is_target_https() {
             // SAFETY: `p` is dead; forwards `this` with root provenance.
-            return unsafe { Self::start_proxy_tls_handshake(this.as_ptr(), socket, &remain_buf) };
+            unsafe { Self::start_proxy_tls_handshake(this.as_ptr(), socket, &remain_buf) };
+            return;
         }
 
         // Use the WebSocket upgrade request from proxy state (replaces CONNECT
@@ -1103,7 +1096,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let wrote = socket.write(&this.input_body_buf);
         if wrote < 0 {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+            return;
         }
 
         let pending = this.input_body_buf.len() - usize::try_from(wrote).expect("int cast");
@@ -1112,9 +1106,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // If there's remaining data after the proxy response, process it
         if !remain_buf.is_empty() {
-            Self::handle_data(this, socket, &remain_buf)?;
+            Self::handle_data(this, socket, &remain_buf);
         }
-        Ok(())
     }
 
     /// Start TLS handshake inside the proxy tunnel for wss:// connections
@@ -1122,11 +1115,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` may free `this`; see `fail`.
-    unsafe fn start_proxy_tls_handshake(
-        this: *mut Self,
-        socket: Socket<SSL>,
-        initial_data: &[u8],
-    ) -> JsResult<()> {
+    unsafe fn start_proxy_tls_handshake(this: *mut Self, socket: Socket<SSL>, initial_data: &[u8]) {
         log!("startProxyTLSHandshake");
 
         // Get certificate verification setting
@@ -1150,12 +1139,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 Ok(t) => t,
                 Err(_) => {
                     // SAFETY: no borrow of `*this` is live across this call.
-                    return unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+                    unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+                    return;
                 }
             },
             None => {
                 // SAFETY: no borrow of `*this` is live across this call.
-                return unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+                unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+                return;
             }
         };
 
@@ -1180,7 +1171,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
             // SAFETY: release the ref taken by `init`.
             unsafe { WebSocketProxyTunnel::deref(tunnel.as_ptr()) };
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            return;
         }
 
         // Re-check proxy state: `start` dispatches SSLWrapper callbacks that
@@ -1188,12 +1180,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // SAFETY: `this` is live; the borrow covers only `proxy`.
         let Some(p) = (unsafe { (*this).proxy.as_mut() }) else {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            return;
         };
         p.set_tunnel(Some(tunnel));
         // SAFETY: scoped write; `p` is dead.
         unsafe { (*this).state = State::Reading };
-        Ok(())
     }
 
     /// Called by WebSocketProxyTunnel when TLS handshake completes successfully
@@ -1201,7 +1193,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate` may free `this`; see `fail`.
-    pub(crate) unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) -> JsResult<()> {
+    pub(crate) unsafe fn on_proxy_tls_handshake_complete(this: *mut Self) {
         log!("onProxyTLSHandshakeComplete");
 
         // TLS handshake done - send WebSocket upgrade request through tunnel
@@ -1221,11 +1213,13 @@ impl<const SSL: bool> HTTPClient<SSL> {
             .map(|p| (p.take_websocket_request_buf().into_vec(), p.get_tunnel()));
         let Some((request_buf, tunnel)) = step else {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            return;
         };
         if request_buf.is_empty() {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
+            unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
+            return;
         }
         // Store it in input_body_buf so handle_writable can retry on drain.
         // SAFETY: scoped write.
@@ -1235,7 +1229,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         // portion in to_send so handle_writable retries when the socket drains.
         let Some(tunnel) = tunnel else {
             // SAFETY: no borrow of `*this` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            unsafe { Self::terminate(this, ErrorCode::ProxyTunnelFailed) };
+            return;
         };
         // SAFETY: `proxy` holds a live ref on `tunnel`; the shared borrow
         // covers only `input_body_buf`, which the tunnel's TLS write path
@@ -1246,12 +1241,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             Ok(n) => n,
             Err(_) => {
                 // SAFETY: no borrow of `*this` is live across this call.
-                return unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
+                unsafe { Self::terminate(this, ErrorCode::FailedToWrite) };
+                return;
             }
         };
         // SAFETY: scoped read + write; nothing re-enters here.
         unsafe { (*this).to_send_len = (*this).input_body_buf.len() - wrote };
-        Ok(())
     }
 
     /// Called by WebSocketProxyTunnel with decrypted data from the TLS tunnel
@@ -1259,7 +1254,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// # Safety
     /// `this` must point to a live `Self`. Takes `*mut Self` because
     /// `terminate`/`process_response` may free `this`; see `fail`.
-    pub(crate) unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) -> JsResult<()> {
+    pub(crate) unsafe fn handle_decrypted_data(this: *mut Self, data: &[u8]) {
         log!("handleDecryptedData: {} bytes", data.len());
         // SAFETY: caller (proxy tunnel) holds a live ref on `this`.
         let this = unsafe { ThisPtr::new(this) };
@@ -1272,19 +1267,19 @@ impl<const SSL: bool> HTTPClient<SSL> {
             HeadParse::Done { full, .. } => full,
             HeadParse::Invalid => {
                 // SAFETY: no borrow of `*this` is live across this call.
-                return unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                unsafe { Self::terminate(this.as_ptr(), ErrorCode::InvalidResponse) };
+                return;
             }
-            HeadParse::NeedMore => return Ok(()),
+            HeadParse::NeedMore => return,
         };
-        Self::process_websocket_upgrade_response(this, &full)
+        Self::process_websocket_upgrade_response(this, &full);
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_end(this: ThisPtr<Self>, _: Socket<SSL>) -> JsResult<()> {
+    pub fn handle_end(this: ThisPtr<Self>, _: Socket<SSL>) {
         log!("onEnd");
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
-        unsafe { Self::terminate(this.as_ptr(), ErrorCode::Ended)? };
-        Ok(())
+        unsafe { Self::terminate(this.as_ptr(), ErrorCode::Ended) };
     }
 
     /// # Safety
@@ -1296,7 +1291,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
         this: *mut Self,
         response: picohttp::Response,
         remain_buf: &[u8],
-    ) -> JsResult<()> {
+    ) {
         let mut upgrade_header = picohttp::Header::ZERO;
         let mut connection_header_seen = false;
         let mut connection_has_upgrade = false;
@@ -1308,7 +1303,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         if response.status_code != 101 {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
+            unsafe { Self::terminate(this, ErrorCode::Expected101StatusCode) };
+            return;
         }
 
         for header in response.headers.list {
@@ -1342,9 +1338,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     ) {
                         if !strings::eql_comptime(header.value(), b"13") {
                             // SAFETY: no `&mut Self` is live across this call.
-                            return unsafe {
-                                Self::terminate(this, ErrorCode::InvalidWebsocketVersion)
-                            };
+                            unsafe { Self::terminate(this, ErrorCode::InvalidWebsocketVersion) };
+                            return;
                         }
                     }
                 }
@@ -1402,9 +1397,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
                         if !valid {
                             // SAFETY: no `&mut Self` is live across this call.
-                            return unsafe {
-                                Self::terminate(this, ErrorCode::MismatchClientProtocol)
-                            };
+                            unsafe { Self::terminate(this, ErrorCode::MismatchClientProtocol) };
+                            return;
                         }
                     }
                 }
@@ -1421,7 +1415,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
                         // SAFETY: short-lived read.
                         if !unsafe { (*this).offered_permessage_deflate } {
                             // SAFETY: no `&mut Self` is live across this call.
-                            return unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                            unsafe { Self::terminate(this, ErrorCode::InvalidResponse) };
+                            return;
                         }
                         // This is a simplified parser. A full parser would handle multiple extensions and quoted values.
                         for ext_str in strings::split(header.value(), b",") {
@@ -1514,12 +1509,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
             == 0
         {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::MissingUpgradeHeader) };
+            unsafe { Self::terminate(this, ErrorCode::MissingUpgradeHeader) };
+            return;
         }
 
         if !connection_header_seen {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::MissingConnectionHeader) };
+            unsafe { Self::terminate(this, ErrorCode::MissingConnectionHeader) };
+            return;
         }
 
         if websocket_accept_header
@@ -1529,29 +1526,34 @@ impl<const SSL: bool> HTTPClient<SSL> {
             == 0
         {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::MissingWebsocketAcceptHeader) };
+            unsafe { Self::terminate(this, ErrorCode::MissingWebsocketAcceptHeader) };
+            return;
         }
 
         // SAFETY: short-lived `&self` read.
         if !protocol_header_seen && !unsafe { (*this).subprotocols.is_empty() } {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::MissingClientProtocol) };
+            unsafe { Self::terminate(this, ErrorCode::MissingClientProtocol) };
+            return;
         }
 
         if !connection_has_upgrade {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };
+            unsafe { Self::terminate(this, ErrorCode::InvalidConnectionHeader) };
+            return;
         }
 
         if !strings::eql_case_insensitive_ascii(upgrade_header.value(), b"websocket", true) {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::InvalidUpgradeHeader) };
+            unsafe { Self::terminate(this, ErrorCode::InvalidUpgradeHeader) };
+            return;
         }
 
         // SAFETY: `this` is live (caller contract); short-lived shared borrow of the field.
         if websocket_accept_header.value() != unsafe { &(&(*this).expected_accept)[..] } {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader) };
+            unsafe { Self::terminate(this, ErrorCode::MismatchWebsocketAcceptHeader) };
+            return;
         }
 
         // Ownership transfer: `overflow` is HANDED OFF across FFI —
@@ -1633,12 +1635,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
                     unsafe { Self::deref(this) };
                 } else if tcp.is_closed() {
                     // SAFETY: no `&mut Self` is live across this call.
-                    unsafe { Self::terminate(this, ErrorCode::Cancel)? };
+                    unsafe { Self::terminate(this, ErrorCode::Cancel) };
                 } else if !has_ws {
                     // No `&mut Self` spans this call (handle_close reenters).
-                    tcp.close(uws::CloseCode::Failure)?;
+                    tcp.close(uws::CloseCode::Failure);
                 }
-                return Ok(());
+                return;
             }
         }
 
@@ -1688,7 +1690,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
                 };
             } else {
                 // SAFETY: no `&mut Self` is live across this call.
-                unsafe { Self::terminate(this, ErrorCode::FailedToConnect)? };
+                unsafe { Self::terminate(this, ErrorCode::FailedToConnect) };
             }
             // SAFETY: two refs are released here (the outgoing_websocket ref
             // then the TCP socket ref). The first call cannot reach zero
@@ -1701,15 +1703,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
             unsafe { Self::deref(this) };
         } else if tcp.is_closed() {
             // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::terminate(this, ErrorCode::Cancel)? };
+            unsafe { Self::terminate(this, ErrorCode::Cancel) };
         } else if !has_ws {
             // No `&mut Self` spans this call (handle_close reenters).
-            tcp.close(uws::CloseCode::Failure)?;
+            tcp.close(uws::CloseCode::Failure);
         }
         // Any arm above that didn't transfer ownership to `did_connect` left
         // the retained ref in `saved_secure`; RAII drop releases it now.
         drop(saved_secure);
-        Ok(())
     }
 
     pub(crate) fn memory_cost(&self) -> usize {
@@ -1721,7 +1722,7 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
     /// Takes `ThisPtr<Self>` because `terminate` and the trailing `deref` may
     /// free `this`; see `fail`.
-    pub fn handle_writable(this: ThisPtr<Self>, socket: Socket<SSL>) -> JsResult<()> {
+    pub fn handle_writable(this: ThisPtr<Self>, socket: Socket<SSL>) {
         debug_assert!(this.is_same_socket(socket));
 
         // Forward to proxy tunnel if active
@@ -1729,40 +1730,40 @@ impl<const SSL: bool> HTTPClient<SSL> {
         if let Some(p) = unsafe { &mut (*this.as_ptr()).proxy } {
             if let Some(tunnel) = p.get_tunnel() {
                 // SAFETY: `p` holds a live ref on `tunnel`.
-                unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr())? };
+                unsafe { WebSocketProxyTunnel::on_writable(tunnel.as_ptr()) };
                 // In .done state (after WebSocket upgrade), just handle tunnel writes
                 if this.state == State::Done {
-                    return Ok(());
+                    return;
                 }
 
                 // Flush any unwritten upgrade request bytes through the tunnel
                 if this.to_send_len == 0 {
-                    return Ok(());
+                    return;
                 }
                 // Bumps the intrusive refcount and derefs on Drop at every
                 // return path below.
                 let _guard = this.ref_guard();
                 // SAFETY: `p` holds a live ref on `tunnel`.
-                let wrote = match unsafe {
-                    WebSocketProxyTunnel::write(tunnel.as_ptr(), this.to_send())
-                } {
-                    Ok(n) => n,
-                    Err(_) => {
-                        // SAFETY: no `&mut Self` is live across this call.
-                        return unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
-                    }
-                };
+                let wrote =
+                    match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), this.to_send()) } {
+                        Ok(n) => n,
+                        Err(_) => {
+                            // SAFETY: no `&mut Self` is live across this call.
+                            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+                            return;
+                        }
+                    };
                 // SAFETY: short-lived `&mut` write.
                 unsafe {
                     let to_send_len = &mut (*this.as_ptr()).to_send_len;
                     *to_send_len -= wrote.min(*to_send_len);
                 }
-                return Ok(());
+                return;
             }
         }
 
         if this.to_send_len == 0 {
-            return Ok(());
+            return;
         }
 
         // Bumps the intrusive refcount and derefs on Drop at every return path
@@ -1772,7 +1773,8 @@ impl<const SSL: bool> HTTPClient<SSL> {
         let wrote = socket.write(this.to_send());
         if wrote < 0 {
             // SAFETY: no `&mut Self` is live across this call.
-            return unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToWrite) };
+            return;
         }
         let wrote = usize::try_from(wrote).expect("int cast");
         // SAFETY: short-lived `&mut` write.
@@ -1780,14 +1782,12 @@ impl<const SSL: bool> HTTPClient<SSL> {
             let to_send_len = &mut (*this.as_ptr()).to_send_len;
             *to_send_len -= wrote.min(*to_send_len);
         }
-        Ok(())
     }
 
     /// Takes `ThisPtr<Self>` because `terminate` may free `this`; see `fail`.
-    pub fn handle_timeout(this: ThisPtr<Self>, _: Socket<SSL>) -> JsResult<()> {
+    pub fn handle_timeout(this: ThisPtr<Self>, _: Socket<SSL>) {
         // SAFETY: forwards `this` with root provenance; no `&mut Self` is live.
-        unsafe { Self::terminate(this.as_ptr(), ErrorCode::Timeout)? };
-        Ok(())
+        unsafe { Self::terminate(this.as_ptr(), ErrorCode::Timeout) };
     }
 
     /// In theory, this could be called immediately.
@@ -1796,14 +1796,14 @@ impl<const SSL: bool> HTTPClient<SSL> {
     /// Takes `ThisPtr<Self>` because the trailing `deref` releases the socket
     /// ref and may free `this`; a `&mut self` argument would carry a Stacked
     /// Borrows protector that makes deallocating its referent UB.
-    pub fn handle_connect_error(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int) -> JsResult<()> {
+    pub fn handle_connect_error(this: ThisPtr<Self>, _: Socket<SSL>, _: c_int) {
         // SAFETY: short-lived `&mut` for detach; ends before any reentrant call.
         unsafe { (*this.as_ptr()).tcp.detach() };
 
         // For the TCP socket.
         if this.state == State::Reading {
             // SAFETY: no `&mut Self` is live across this call.
-            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToConnect)? };
+            unsafe { Self::terminate(this.as_ptr(), ErrorCode::FailedToConnect) };
         } else {
             // SAFETY: short-lived write.
             unsafe { (*this.as_ptr()).state = State::Failed };
@@ -1811,7 +1811,6 @@ impl<const SSL: bool> HTTPClient<SSL> {
 
         // SAFETY: may free `this`; no `&mut Self` is live.
         unsafe { Self::deref(this.as_ptr()) };
-        Ok(())
     }
 }
 
@@ -2235,11 +2234,7 @@ macro_rules! export_http_client {
             pub(crate) unsafe extern "C" fn $cancel(this: *mut HTTPClient<$ssl>) {
                 // SAFETY: caller (C++) holds a live ref; `this` carries root
                 // (userdata) provenance from `heap::alloc`.
-                if let Err(err) = unsafe { HTTPClient::<$ssl>::cancel(this) } {
-                    // The C++ WebSocket that called this has no scope of ours to hand it to: fold here.
-                    let global = bun_jsc::virtual_machine::VirtualMachine::get().global();
-                    let _ = bun_jsc::task::report_error_or_terminate(global, err);
-                }
+                unsafe { HTTPClient::<$ssl>::cancel(this) };
             }
 
             #[unsafe(no_mangle)]

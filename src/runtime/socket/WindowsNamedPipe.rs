@@ -228,7 +228,7 @@ impl WindowsNamedPipe {
         let mut data = self.incoming.replace(Vec::new());
 
         if self
-            .with_wrapper(|w| Self::folded(w.receive_data(data.as_slice())))
+            .with_wrapper(|w| w.receive_data(data.as_slice()))
             .is_none()
         {
             (self.handlers.on_data)(self.handlers.ctx, data.as_slice());
@@ -340,27 +340,17 @@ impl WindowsNamedPipe {
     // `ssl_wrapper::Handlers<*mut Self>` carries `fn(*mut Self, ..)` slots.
     // SAFETY (all): `this` is the `ctx` set in `wrapper_handlers`; the engine
     // only fires handlers while `self` (its owner) is alive.
-    // The owner callbacks these forward to (`WindowsNamedPipeContext`) fold what the script they ran left, so
-    // the TLS engine gets `Ok(())` back and its entry points driven from this file have nothing to return
-    // (see `folded`).
-    fn ssl_on_open(this: *mut Self) -> bun_uws::js::JsResult<()> {
+    fn ssl_on_open(this: *mut Self) {
         // SAFETY: see block note above.
-        unsafe { &*this }.on_open();
-        Ok(())
+        unsafe { &*this }.on_open()
     }
-    fn ssl_on_handshake(
-        this: *mut Self,
-        ok: bool,
-        e: us_bun_verify_error_t,
-    ) -> bun_uws::js::JsResult<()> {
+    fn ssl_on_handshake(this: *mut Self, ok: bool, e: us_bun_verify_error_t) {
         // SAFETY: see block note above.
-        unsafe { &*this }.on_handshake(ok, e);
-        Ok(())
+        unsafe { &*this }.on_handshake(ok, e)
     }
-    fn ssl_on_data(this: *mut Self, d: &[u8]) -> bun_uws::js::JsResult<()> {
+    fn ssl_on_data(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
-        unsafe { &*this }.on_data(d);
-        Ok(())
+        unsafe { &*this }.on_data(d)
     }
     fn ssl_on_session(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
@@ -370,24 +360,13 @@ impl WindowsNamedPipe {
         // SAFETY: see block note above.
         unsafe { &*this }.on_keylog(d)
     }
-    fn ssl_on_close(this: *mut Self) -> bun_uws::js::JsResult<()> {
+    fn ssl_on_close(this: *mut Self) {
         // SAFETY: see block note above.
-        unsafe { &*this }.on_close();
-        Ok(())
+        unsafe { &*this }.on_close()
     }
-    fn ssl_write(this: *mut Self, d: &[u8]) -> bun_uws::js::JsResult<()> {
+    fn ssl_write(this: *mut Self, d: &[u8]) {
         // SAFETY: see block note above.
-        unsafe { &*this }.internal_write(d);
-        Ok(())
-    }
-
-    #[inline]
-    fn folded<R>(r: bun_uws::js::JsResult<R>) {
-        debug_assert!(
-            r.is_ok(),
-            "WindowsNamedPipe engine callbacks fold at WindowsNamedPipeContext"
-        );
-        let _ = r;
+        unsafe { &*this }.internal_write(d)
     }
 
     #[cfg(windows)]
@@ -460,7 +439,7 @@ impl WindowsNamedPipe {
 
         if !msg_more {
             let _ = self.with_wrapper(|w| {
-                Self::folded(w.shutdown(false));
+                let _ = w.shutdown(false);
             });
             self.with_writer(|w| w.end());
         }
@@ -518,7 +497,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__flush")]
     pub fn flush(&self) {
         let _ = self.with_wrapper(|w| {
-            Self::folded(w.flush());
+            let _ = w.flush();
         });
         if !self.flags.get().disconnected() {
             let _ = self.writer.with_mut(|w| w.flush());
@@ -624,7 +603,7 @@ impl WindowsNamedPipe {
         if self.start(true) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
-                let _ = self.with_wrapper(|w| Self::folded(w.start()));
+                let _ = self.with_wrapper(|w| w.start());
             } else {
                 // trigger onOpen
                 self.on_open();
@@ -695,7 +674,7 @@ impl WindowsNamedPipe {
         if self.start(false) {
             if self.is_tls() {
                 // trigger onOpen and start the handshake
-                let _ = self.with_wrapper(|w| Self::folded(w.start()));
+                let _ = self.with_wrapper(|w| w.start());
             } else {
                 // trigger onOpen
                 self.on_open();
@@ -953,7 +932,7 @@ impl WindowsNamedPipe {
     #[bun_uws::uws_callback(export = "WindowsNamedPipe__close")]
     pub fn close(&self) {
         let _ = self.with_wrapper(|w| {
-            Self::folded(w.shutdown(false));
+            let _ = w.shutdown(false);
         });
         self.with_writer(|w| w.end());
     }

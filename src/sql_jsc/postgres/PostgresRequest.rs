@@ -456,9 +456,8 @@ pub(crate) fn on_data<Context: ReaderContext>(
                 b'S' => {
                     debug_assert!(n == 8);
                     connection.tls_status.set(TlsStatus::SslOk);
-                    return connection
-                        .setup_tls()
-                        .map_err(crate::jsc::js_error_to_postgres);
+                    connection.setup_tls();
+                    return Ok(());
                 }
                 b'N' => {
                     connection.tls_status.set(TlsStatus::SslNotAvailable);
@@ -467,12 +466,10 @@ pub(crate) fn on_data<Context: ReaderContext>(
                         connection.ssl_mode,
                         SslMode::Require | SslMode::VerifyCa | SslMode::VerifyFull
                     ) {
-                        connection
-                            .fail(
-                                b"Server does not support SSL",
-                                AnyPostgresError::TLSNotAvailable,
-                            )
-                            .map_err(crate::jsc::js_error_to_postgres)?;
+                        connection.fail(
+                            b"Server does not support SSL",
+                            AnyPostgresError::TLSNotAvailable,
+                        );
                         return Ok(());
                     }
                     continue;

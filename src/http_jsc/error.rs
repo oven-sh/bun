@@ -8,15 +8,6 @@ pub enum Error {
     DeflateInitFailed,
     #[error("InflateInitFailed")]
     InflateInitFailed,
-    /// Script entered along the way (a socket / TLS callback) left a JS exception: propagate it.
-    #[error("JSError")]
-    Js(bun_jsc::JsError),
-}
-
-impl From<bun_jsc::JsError> for Error {
-    fn from(e: bun_jsc::JsError) -> Self {
-        Self::Js(e)
-    }
 }
 
 impl Error {
@@ -27,7 +18,6 @@ impl Error {
             Self::ConnectionClosed => "ConnectionClosed",
             Self::DeflateInitFailed => "DeflateInitFailed",
             Self::InflateInitFailed => "InflateInitFailed",
-            Self::Js(_) => "JSError",
         }
     }
 }

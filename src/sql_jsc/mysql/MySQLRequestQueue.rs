@@ -113,7 +113,7 @@ impl MySQLRequestQueue {
     /// is consumed via the safe `ParentRef::from(NonNull)` constructor (null
     /// checked at the boundary), so a function-level guard adds nothing —
     /// caller liveness/provenance is the `ParentRef` contract.
-    pub(crate) fn advance(connection: *mut MySQLConnection) -> bun_jsc::JsResult<()> {
+    pub(crate) fn advance(connection: *mut MySQLConnection) {
         // R-2: every `JSMySQLConnection` method reached below is `&self`
         // (interior mutability), so a `ParentRef` (yields `&T` only) collapses
         // the per-site `unsafe { (*connection).… }` / `&*connection` derefs.
@@ -179,7 +179,7 @@ impl MySQLRequestQueue {
                 if let Err(err) = req.run(conn_ref.get()) {
                     debug!("run failed");
                     // R-2: `on_error` takes `&self`.
-                    conn_ref.on_error(Some(req.get()), err)?;
+                    conn_ref.on_error(Some(req.get()), err);
                     if offset == 0
                         && queue_ref.requests.get().readable_length() > 0
                         && queue_ref.requests.get().peek_item(0) == request
@@ -246,7 +246,6 @@ impl MySQLRequestQueue {
             }
             break;
         }
-        Ok(())
     }
 
     pub(crate) fn init() -> Self {

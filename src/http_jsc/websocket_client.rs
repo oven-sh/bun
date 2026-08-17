@@ -135,15 +135,6 @@ impl<const SSL: bool> WebSocket<SSL> {
     };
 
     #[inline]
-    /// An `extern "C"` entry point that closed the socket has no caller to hand what the close handler left;
-    /// fold it here (report an ordinary error, stand down on a termination).
-    #[cold]
-    fn fold_close(&self, closed: jsc::JsResult<()>) {
-        if let Err(err) = closed {
-            let _ = jsc::task::report_error_or_terminate(&self.global_this, err);
-        }
-    }
-
     fn vm_loop_ctx(global_this: &JSGlobalObject) -> bun_io::EventLoopCtx {
         // SAFETY: `EventLoopCtx.owner` is a type-erased `*mut ()` slot. Source
         // it from `bun_vm_ptr()` (the FFI `*mut VirtualMachine`) rather than
@@ -194,7 +185,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // fire SSLWrapper callbacks that re-enter the tunnel allocation,
             // so call the raw-ptr overload which never holds a `&mut Self`
             // across the dispatch (see WebSocketProxyTunnel::shutdown).
-            self.fold_close(unsafe { WebSocketProxyTunnel::shutdown(tunnel_ptr) });
+            unsafe { WebSocketProxyTunnel::shutdown(tunnel_ptr) };
             // SAFETY: `tunnel` (NonNull) held a live intrusive ref; release it.
             unsafe { WebSocketProxyTunnel::deref(tunnel_ptr) };
             // Release the I/O-layer ref taken in init_with_tunnel() — the
@@ -227,7 +218,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         this.clear_data();
 
         // Failure still sends close_notify best-effort but never waits for the peer's reply.
-        this.fold_close(this.tcp.get().close(uws::CloseKind::Failure));
+        this.tcp.get().close(uws::CloseKind::Failure);
 
         // In tunnel mode tcp is .detached so close() above is a no-op and
         // handle_close() never fires. Mirror what handle_close() does for
@@ -259,7 +250,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         socket: Socket<SSL>,
         success: i32,
         ssl_error: us_bun_verify_error_t,
-    ) -> jsc::JsResult<()> {
+    ) {
         jsc::mark_binding!();
 
         let authorized = success == 1;
@@ -267,16 +258,16 @@ impl<const SSL: bool> WebSocket<SSL> {
         log!("onHandshake({})", success);
 
         let Some(ws) = self.outgoing_websocket.get() else {
-            return Ok(());
+            return;
         };
         if !CppWebSocket::opaque_ref(ws.as_ptr()).reject_unauthorized() {
             // We accept the connection regardless of SSL errors.
-            return Ok(());
+            return;
         }
 
         if ssl_error.error_no != 0 || !authorized {
             self.fail(ErrorCode::FailedToConnect);
-            return Ok(());
+            return;
         }
 
         // SAFETY: native handle of an SSL socket is an SSL*
@@ -286,7 +277,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         // Fail closed: without the SSL handle we cannot verify the peer.
         if ssl_ptr.is_null() {
             self.fail(ErrorCode::FailedToConnect);
-            return Ok(());
+            return;
         }
         // `TLSEXT_NAMETYPE_host_name` is 0 per RFC 6066 / `<openssl/tls1.h>`.
         const TLSEXT_NAMETYPE_HOST_NAME: c_int = 0;
@@ -294,7 +285,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let servername =
             unsafe { boringssl::c::SSL_get_servername(ssl_ptr, TLSEXT_NAMETYPE_HOST_NAME) };
         if servername.is_null() {
-            return Ok(());
+            return;
         }
         // SAFETY: servername is a NUL-terminated C string owned by the SSL session.
         let hostname = unsafe { bun_core::ffi::cstr(servername) }.to_bytes();
@@ -303,7 +294,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         if !boringssl::check_server_identity(unsafe { &mut *ssl_ptr }, hostname) {
             self.fail(ErrorCode::FailedToConnect);
         }
-        Ok(())
     }
 
     fn detach_tcp(&self) {
@@ -312,12 +302,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.tcp.set(tcp);
     }
 
-    pub fn handle_close(
-        &self,
-        _socket: Socket<SSL>,
-        _code: c_int,
-        _reason: *mut c_void,
-    ) -> jsc::JsResult<()> {
+    pub fn handle_close(&self, _socket: Socket<SSL>, _code: c_int, _reason: *mut c_void) {
         log!("onClose");
         jsc::mark_binding!();
         if let Some((code, mut reason)) = self.close_dispatch_pending.take() {
@@ -331,7 +316,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: this is the terminal release of the socket's
             // I/O-layer ref.
             unsafe { Self::deref(self.as_ctx_ptr()) };
-            return Ok(());
+            return;
         }
         self.clear_data();
         self.detach_tcp();
@@ -342,7 +327,6 @@ impl<const SSL: bool> WebSocket<SSL> {
         // SAFETY: this is the terminal release of the socket's
         // I/O-layer ref.
         unsafe { Self::deref(self.as_ctx_ptr()) };
-        Ok(())
     }
 
     pub(crate) fn terminate(&self, code: ErrorCode) {
@@ -558,10 +542,10 @@ impl<const SSL: bool> WebSocket<SSL> {
     // There is no `socket` parameter: the dispatch thunk wraps the same
     // `us_socket_t*` that `adopt_group` stored into `self.tcp`, so the parse
     // loop reads `self.tcp` directly.
-    pub fn handle_data(this: ThisPtr<Self>, data_: &[u8]) -> jsc::JsResult<()> {
+    pub fn handle_data(this: ThisPtr<Self>, data_: &[u8]) {
         // after receiving close we should ignore the data
         if this.close_received.get() {
-            return Ok(());
+            return;
         }
         // Bumps the intrusive refcount and derefs on Drop.
         let _guard = this.ref_guard();
@@ -576,7 +560,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // SAFETY: `initial_handler` is valid (managed by microtask queue).
             // `handle_without_deinit` re-enters `Self::handle_data` via the
             // `adopted` raw ptr (same `heap::alloc` provenance as `this`).
-            unsafe { (*initial_handler.as_ptr()).handle_without_deinit()? };
+            unsafe { (*initial_handler.as_ptr()).handle_without_deinit() };
 
             // handle_without_deinit is supposed to clear the handler from WebSocket*
             // to prevent an infinite loop
@@ -584,14 +568,14 @@ impl<const SSL: bool> WebSocket<SSL> {
 
             // If we disconnected for any reason in the re-entrant case, we should just ignore the data
             if this.outgoing_websocket.get().is_none() || !this.has_tcp() {
-                return Ok(());
+                return;
             }
         }
 
-        this.handle_data_loop(data_)
+        this.handle_data_loop(data_);
     }
 
-    fn handle_data_loop(&self, data: &[u8]) -> jsc::JsResult<()> {
+    fn handle_data_loop(&self, data: &[u8]) {
         // In the WebSocket specification, control frames may not be fragmented.
         // However, the frame parser should handle fragmented control frames nonetheless.
         // Whether or not the frame parser is given a set of fragmented bytes to parse is subject
@@ -626,10 +610,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 Step::Continue => {}
                 Step::NeedMoreData => break false,
                 Step::Terminated => break true,
-                Step::Failed(err) => {
-                    self.close_received.set(true);
-                    return Err(err);
-                }
             }
         };
 
@@ -640,7 +620,6 @@ impl<const SSL: bool> WebSocket<SSL> {
             self.receiving_type.set(cursor.last_data_type);
             self.receive_body_remain.set(cursor.body_remain);
         }
-        Ok(())
     }
 
     fn recv_failed(&self, code: ErrorCode) -> Step {
@@ -848,9 +827,7 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if opcode == Opcode::Ping {
             // we need to send all pongs to pass autobahn tests
-            if let Err(err) = self.send_pong() {
-                return Step::Failed(err);
-            }
+            let _ = self.send_pong();
         }
         if cursor.data.is_empty() {
             return Step::NeedMoreData;
@@ -895,7 +872,8 @@ impl<const SSL: bool> WebSocket<SSL> {
 
         if cursor.body_remain == 0 {
             self.close_received.set(true);
-            return self.send_close().into();
+            self.send_close();
+            return Step::Terminated;
         }
 
         let Some((payload, payload_len)) = self.buffer_control_payload(cursor) else {
@@ -906,21 +884,20 @@ impl<const SSL: bool> WebSocket<SSL> {
         if payload_len >= 2 {
             let received_code = u16::from_be_bytes([payload[0], payload[1]]);
             let (echo_code, dispatch_code) = received_close_codes(received_code);
-            self.send_close_with_body(echo_code, Some(dispatch_code), &payload[2..payload_len])
-                .into()
+            self.send_close_with_body(echo_code, Some(dispatch_code), &payload[2..payload_len]);
         } else {
-            self.send_close().into()
+            self.send_close();
         }
+        Step::Terminated
     }
 
-    pub(crate) fn send_close(&self) -> jsc::JsResult<()> {
+    pub(crate) fn send_close(&self) {
         // Received a bodyless Close: echo a normal-closure frame on the wire,
         // but report 1005 ("no status received") to JS per RFC 6455 §7.1.5.
-        self.send_close_with_body(1000, Some(1005), &[])?;
-        Ok(())
+        self.send_close_with_body(1000, Some(1005), &[]);
     }
 
-    fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> jsc::JsResult<bool> {
+    fn enqueue_encoded_bytes(&self, bytes: &[u8]) -> bool {
         // For tunnel mode, write through the tunnel instead of direct socket
         if let Some(tunnel) = self.proxy_tunnel.get() {
             // SAFETY: `tunnel` holds a live ref (RefPtr has no `Deref`).
@@ -929,17 +906,16 @@ impl<const SSL: bool> WebSocket<SSL> {
             // holds a `&mut WebSocketProxyTunnel` across the dispatch.
             let wrote = match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), bytes) } {
                 Ok(w) => w,
-                Err(crate::Error::Js(err)) => return Err(err),
                 Err(_) => {
                     self.terminate(ErrorCode::FailedToWrite);
-                    return Ok(false);
+                    return false;
                 }
             };
             // Buffer any data the tunnel couldn't accept
             if wrote < bytes.len() {
-                let _ = self.copy_to_send_buffer(&bytes[wrote..], false)?;
+                let _ = self.copy_to_send_buffer(&bytes[wrote..], false);
             }
-            return Ok(true);
+            return true;
         }
 
         // fast path: no backpressure, no queue, just send the bytes.
@@ -948,27 +924,27 @@ impl<const SSL: bool> WebSocket<SSL> {
             let wrote = self.tcp.get().write(bytes);
             let expected = c_int::try_from(bytes.len()).expect("int cast");
             if wrote == expected {
-                return Ok(true);
+                return true;
             }
 
             if wrote < 0 {
                 self.terminate(ErrorCode::FailedToWrite);
-                return Ok(false);
+                return false;
             }
 
             let _ = self
-                .copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false)?;
-            return Ok(true);
+                .copy_to_send_buffer(&bytes[usize::try_from(wrote).expect("int cast")..], false);
+            return true;
         }
 
         self.copy_to_send_buffer(bytes, true)
     }
 
-    fn copy_to_send_buffer(&self, bytes: &[u8], do_write: bool) -> jsc::JsResult<bool> {
+    fn copy_to_send_buffer(&self, bytes: &[u8], do_write: bool) -> bool {
         self.send_data(Copy::Raw(bytes), do_write, Opcode::Binary)
     }
 
-    fn send_data(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> jsc::JsResult<bool> {
+    fn send_data(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
         let may_compress = self.deflate.borrow().is_some()
             && matches!(opcode, Opcode::Text | Opcode::Binary)
             && !matches!(bytes, Copy::Raw(_));
@@ -1039,15 +1015,10 @@ impl<const SSL: bool> WebSocket<SSL> {
             return self.send_buffer_out();
         }
 
-        Ok(true)
+        true
     }
 
-    fn send_data_uncompressed(
-        &self,
-        bytes: Copy<'_>,
-        do_write: bool,
-        opcode: Opcode,
-    ) -> jsc::JsResult<bool> {
+    fn send_data_uncompressed(&self, bytes: Copy<'_>, do_write: bool, opcode: Opcode) -> bool {
         let (write_len, content_byte_len) = bytes.frame_and_content_len();
         debug_assert!(write_len > 0);
 
@@ -1068,7 +1039,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             return self.send_buffer_out();
         }
 
-        Ok(true)
+        true
     }
 
     /// In debug builds, assert that the underlying socket can still be written
@@ -1083,7 +1054,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
     }
 
-    fn send_buffer_out(&self) -> jsc::JsResult<bool> {
+    fn send_buffer_out(&self) -> bool {
         let mut buf = self
             .send_buffer
             .replace(LinearFifo::<u8, DynamicBuffer<u8>>::init());
@@ -1100,7 +1071,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                 // hold a `&mut WebSocketProxyTunnel` across that dispatch.
                 match unsafe { WebSocketProxyTunnel::write(tunnel.as_ptr(), out_buf) } {
                     Ok(w) => Ok(w),
-                    Err(crate::Error::Js(err)) => return Err(err),
                     Err(_) => Err(true),
                 }
             } else if self.tcp.get().is_closed() {
@@ -1118,26 +1088,26 @@ impl<const SSL: bool> WebSocket<SSL> {
             Ok(wrote) => {
                 buf.discard(wrote);
                 self.send_buffer.replace(buf);
-                Ok(true)
+                true
             }
             Err(true) => {
                 // `terminate → clear_data` resets `send_buffer`; drop the
                 // taken fifo without restoring.
                 drop(buf);
                 self.terminate(ErrorCode::FailedToWrite);
-                Ok(false)
+                false
             }
             Err(false) => {
                 self.send_buffer.replace(buf);
-                Ok(false)
+                false
             }
         }
     }
 
-    fn send_pong(&self) -> jsc::JsResult<bool> {
+    fn send_pong(&self) -> bool {
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
-            return Ok(false);
+            return false;
         }
 
         let ping_len = self.ping_len.get() as usize;
@@ -1166,23 +1136,18 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// overrides the code reported to JS (`CloseEvent.code`) when it differs
     /// from the wire code — e.g. a received bodyless Close echoes 1000 but
     /// reports 1005; when `None`, JS sees `code`.
-    fn send_close_with_body(
-        &self,
-        code: u16,
-        dispatch_code: Option<u16>,
-        body: &[u8],
-    ) -> jsc::JsResult<()> {
+    fn send_close_with_body(&self, code: u16, dispatch_code: Option<u16>, body: &[u8]) {
         let body_len = body.len().min(MAX_CLOSE_REASON);
         log!("Sending close with code {}", code);
         if self.has_pending_close_dispatch() {
             // A close is already mid-flush (user-initiated ws.close() under
             // backpressure); don't enqueue a second close frame on top of it.
-            return Ok(());
+            return;
         }
         if !self.has_tcp() {
             self.dispatch_abrupt_close(ErrorCode::Ended);
             self.clear_data();
-            return Ok(());
+            return;
         }
         // shutdown_read/shutdown are deferred to shutdown_after_close_frame()
         // so the close frame can finish writing first: SHUT_RD on Linux makes
@@ -1201,7 +1166,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             // close is always utf8
             if !strings::is_valid_utf8(body) {
                 self.terminate(ErrorCode::InvalidUtf8);
-                return Ok(());
+                return;
             }
             reason = bun_core::String::clone_utf8(body);
             frame[CONTROL_HEADER_SIZE + 2..][..body_len].copy_from_slice(body);
@@ -1217,7 +1182,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             Mask::fill_in_place(&self.global_this, mask_buf, &mut payload[..2 + body_len]);
         }
 
-        if self.enqueue_encoded_bytes(&frame[..frame_len])? {
+        if self.enqueue_encoded_bytes(&frame[..frame_len]) {
             let dispatch_code = dispatch_code.unwrap_or(code);
             if self.send_buffer.borrow().readable_length() == 0 {
                 self.shutdown_after_close_frame();
@@ -1232,7 +1197,6 @@ impl<const SSL: bool> WebSocket<SSL> {
                     .replace(Some((dispatch_code, reason)));
             }
         }
-        Ok(())
     }
 
     /// SHUT_RD + SHUT_WR after the close frame is in the kernel send buffer.
@@ -1276,36 +1240,32 @@ impl<const SSL: bool> WebSocket<SSL> {
         self.close_dispatch_pending.borrow().is_some()
     }
 
-    pub fn handle_end(&self, socket: Socket<SSL>) -> jsc::JsResult<()> {
+    pub fn handle_end(&self, socket: Socket<SSL>) {
         debug_assert!(self.is_same_socket(&socket));
         if self.has_pending_close_dispatch() {
             // Peer FIN'd while we're still draining our close frame; finish the
             // drain on the next writable event instead of RST'ing via
             // terminate → fail → cancel(Failure).
-            return Ok(());
+            return;
         }
         self.terminate(ErrorCode::Ended);
-        Ok(())
     }
 
-    pub fn handle_writable(&self, socket: Socket<SSL>) -> jsc::JsResult<()> {
+    pub fn handle_writable(&self, socket: Socket<SSL>) {
         if self.close_received.get() && !self.has_pending_close_dispatch() {
-            return Ok(());
+            return;
         }
         debug_assert!(self.is_same_socket(&socket));
         self.drain_send_buffer_and_finish_close();
-        Ok(())
     }
 
-    pub fn handle_timeout(&self, _socket: Socket<SSL>) -> jsc::JsResult<()> {
+    pub fn handle_timeout(&self, _socket: Socket<SSL>) {
         self.terminate(ErrorCode::Timeout);
-        Ok(())
     }
 
-    pub fn handle_connect_error(&self, _socket: Socket<SSL>, _errno: c_int) -> jsc::JsResult<()> {
+    pub fn handle_connect_error(&self, _socket: Socket<SSL>, _errno: c_int) {
         self.detach_tcp();
         self.terminate(ErrorCode::FailedToConnect);
-        Ok(())
     }
 
     pub(crate) fn has_backpressure(&self) -> bool {
@@ -1520,10 +1480,7 @@ impl<const SSL: bool> WebSocket<SSL> {
             .and_then(|str| encode_close_reason(str, &mut reason_buf))
             .unwrap_or(0);
 
-        // Called beneath the C++ `WebSocket::close()` binding: an exception this left is pending on the VM for
-        // that binding's ThrowScope, which takes it from here.
-        let _pending_for_cpp_scope =
-            this.send_close_with_body(code, None, &reason_buf[..reason_len]);
+        this.send_close_with_body(code, None, &reason_buf[..reason_len]);
     }
 
     /// Allocate a client with `ref_count == 1` (the I/O-layer ref, released by
@@ -1722,12 +1679,12 @@ impl<const SSL: bool> WebSocket<SSL> {
     /// `this_ptr` must point to a live `WebSocket<SSL>` allocated via
     /// `heap::alloc`; no `&`/`&mut` borrow of `*this_ptr` may be live across
     /// this call (the tunnel calls through its raw `connected_websocket` backref).
-    pub(crate) unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) -> jsc::JsResult<()> {
+    pub(crate) unsafe fn handle_tunnel_data(this_ptr: *mut Self, data: &[u8]) {
         // Process the decrypted data as if it came from the socket
         // has_tcp() now returns true for tunnel mode, so this will work correctly
         // SAFETY: caller contract — `this_ptr` is a live `heap::alloc` pointer
         // with no outstanding `&`/`&mut` borrow.
-        Self::handle_data(unsafe { ThisPtr::new(this_ptr) }, data)
+        Self::handle_data(unsafe { ThisPtr::new(this_ptr) }, data);
     }
 
     /// Called by the WebSocketProxyTunnel when the underlying socket drains.
@@ -1775,7 +1732,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         }
 
         if !this.tcp.get().is_closed() {
-            this.fold_close(this.tcp.get().close(uws::CloseKind::Failure));
+            this.tcp.get().close(uws::CloseKind::Failure);
         }
     }
 
@@ -1794,7 +1751,7 @@ impl<const SSL: bool> WebSocket<SSL> {
         let had_cpp = this.outgoing_websocket.take().is_some();
         this.clear_data();
         if !this.tcp.get().is_closed() {
-            this.fold_close(this.tcp.get().close(uws::CloseKind::Failure));
+            this.tcp.get().close(uws::CloseKind::Failure);
         }
         if had_cpp {
             // The ref held on behalf of the C++ object.
@@ -2007,9 +1964,9 @@ pub struct InitialDataHandler<const SSL: bool> {
 }
 
 impl<const SSL: bool> InitialDataHandler<SSL> {
-    fn handle_without_deinit(&mut self) -> jsc::JsResult<()> {
+    fn handle_without_deinit(&mut self) {
         let Some(this_socket_ptr) = self.adopted.take() else {
-            return Ok(());
+            return;
         };
         let ws_ptr = this_socket_ptr.as_ptr();
         // this fn is reachable re-entrantly from `WebSocket::handle_data`,
@@ -2033,9 +1990,8 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
             // SAFETY: `ws_ptr` carries `heap::alloc` provenance and is live; no
             // borrow of `*ws_ptr` is live in this frame across the call.
             let ws = unsafe { ThisPtr::new(ws_ptr) };
-            return WebSocket::<SSL>::handle_data(ws, &self.slice);
+            WebSocket::<SSL>::handle_data(ws, &self.slice);
         }
-        Ok(())
     }
 
     /// `extern "C"` thunk shape for `JSGlobalObject::queue_microtask_callback`.
@@ -2047,11 +2003,7 @@ impl<const SSL: bool> InitialDataHandler<SSL> {
         // this allocation — it clears the WebSocket's backref before any
         // dispatch — so the owning `&mut` never aliases.
         let mut this = unsafe { bun_core::heap::take(this) };
-        // SAFETY: `adopted`, when set, is a live WebSocket (see handle_without_deinit).
-        let global = this.adopted.map(|ws| unsafe { (*ws.as_ptr()).global_this });
-        if let (Err(err), Some(global)) = (this.handle_without_deinit(), global) {
-            let _ = jsc::task::report_error_or_terminate(&global, err);
-        }
+        this.handle_without_deinit();
     }
 }
 
@@ -2166,17 +2118,6 @@ enum Step {
     Continue,
     NeedMoreData,
     Terminated,
-    /// Script entered while handling the frame left a JS exception; the receive stops and it propagates.
-    Failed(jsc::JsError),
-}
-
-impl From<jsc::JsResult<()>> for Step {
-    fn from(r: jsc::JsResult<()>) -> Self {
-        match r {
-            Ok(()) => Step::Terminated,
-            Err(err) => Step::Failed(err),
-        }
-    }
 }
 
 /// Map a status code received in a Close frame to the `(wire echo, JS dispatch)`

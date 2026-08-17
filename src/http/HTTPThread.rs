@@ -662,7 +662,7 @@ impl HttpThread {
                                 h2::ClientSession::abort_by_http_id(session, http.async_http_id);
                                 continue;
                             }
-                            crate::no_js(socket.close(uws::CloseKind::Failure));
+                            socket.close(uws::CloseKind::Failure);
                         }
                         uws::AnySocket::SocketTcp(socket) => {
                             let tagged = HTTPContext::<false>::get_tagged_from_socket(socket);
@@ -674,7 +674,7 @@ impl HttpThread {
                                 h2::ClientSession::abort_by_http_id(session, http.async_http_id);
                                 continue;
                             }
-                            crate::no_js(socket.close(uws::CloseKind::Failure));
+                            socket.close(uws::CloseKind::Failure);
                         }
                     }
                 } else {

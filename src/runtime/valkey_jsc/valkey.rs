@@ -625,6 +625,7 @@ impl ValkeyClient {
         if self.socket.is_closed() {
             return Ok(());
         }
+        let global = self.global_object();
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
@@ -641,7 +642,9 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
-        socket.close(uws::CloseCode::Normal)?;
+        // On an established socket uSockets dispatches the close event — the user's `onclose` — synchronously
+        // from in here, so this is a call that enters script: checked like one.
+        bun_jsc::from_js_host_call_generic(&global, || socket.close(uws::CloseCode::Normal))?;
         if is_semi_socket {
             self.status = Status::Disconnected;
             // A half-open socket never gets uSockets' close dispatch, so run the

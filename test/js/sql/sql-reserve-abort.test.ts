@@ -8,8 +8,7 @@ import { expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
 describeWithContainer("postgres", { image: "postgres_plain" }, container => {
-  const connect = () =>
-    new SQL(`postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`, { max: 1 });
+  const connect = () => new SQL(`postgres://bun_sql_test@${container.host}:${container.port}/bun_sql_test`, { max: 1 });
 
   test("aborting a queued reserve() keeps the pool intact and lets end() resolve", async () => {
     await container.ready;

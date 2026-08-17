@@ -797,7 +797,6 @@ async function runTests() {
     if (isCI && !isWindows && (await installCiRemapServer(execPath))) {
       const { promise: portPromise, resolve: portResolve } = Promise.withResolvers();
       const { promise: errorPromise, resolve: errorResolve } = Promise.withResolvers();
-      console.log("run in", cwd);
       let exiting = false;
 
       const server = spawn(execPath, ["run", "--silent", "ci-remap-server", execPath, cwd, getCommit()], {

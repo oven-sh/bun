@@ -206,7 +206,14 @@ impl CatalogMap {
         if catalog_name.is_empty() {
             return Ok(&mut self.default);
         }
-        get_or_put_named_group(&mut self.groups, buf, catalog_name)
+
+        let entry = self.groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
+        if !entry.found_existing {
+            *entry.key_ptr = catalog_name;
+            *entry.value_ptr = Map::default();
+        }
+
+        Ok(entry.value_ptr)
     }
 
     // Deliberately takes no `Lockfile` param so `lockfile.catalogs.parse_count`
@@ -388,28 +395,30 @@ impl CatalogMap {
         Ok(())
     }
 
-    /// `catalog_obj`/`catalogs_obj` are the pnpm-workspace.yaml objects the migration writes into package.json for `parse_append` to read back, so the map takes their shape: pnpm-lock.yaml's section has only the entries in use and spells every default catalog `default`, while entries it does record keep its specifier, which their resolutions were made with.
+    /// Gives the map the shape of the pnpm-workspace.yaml objects the migration writes into package.json for `parse_append` to read back: pnpm-lock.yaml's section has only the entries in use (kept, with the specifier they were resolved with) and files every default catalog under `default`.
     pub(crate) fn put_missing_from_pnpm_workspace(
-        catalogs: &mut CatalogMap,
+        &mut self,
         catalog_obj: Option<Expr>,
         catalogs_obj: Option<Expr>,
         string_buf: &mut StringBuf,
     ) -> Result<(), AllocError> {
         if let Some(declared) = catalog_obj {
-            put_declared_entries(&mut catalogs.default, None, &declared, string_buf)?;
+            put_declared_entries(&mut self.default, None, &declared, string_buf)?;
         }
         let Some(declared_groups) = catalogs_obj else {
             return Ok(());
         };
         declared_groups.try_for_each_property(|group_name_str, _, declared| {
+            // package.json's `catalogs.default` is a named group; its recorded entries move there.
+            let mut recorded =
+                (group_name_str == b"default").then(|| core::mem::take(&mut self.default));
             let group_name = string_buf.append(group_name_str)?;
-            if group_name_str != b"default" {
-                let group = catalogs.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
-                return put_declared_entries(group, None, &declared, string_buf);
+            let group = self.get_or_put_group(string_buf.bytes.as_slice(), group_name)?;
+            put_declared_entries(group, recorded.as_mut(), &declared, string_buf)?;
+            if let Some(rest) = recorded {
+                self.default = rest;
             }
-            let CatalogMap { default, groups } = &mut *catalogs;
-            let group = get_or_put_named_group(groups, string_buf.bytes.as_slice(), group_name)?;
-            put_declared_entries(group, Some(default), &declared, string_buf)
+            Ok(())
         })
     }
 
@@ -651,17 +660,4 @@ fn parse_entry(
         version,
         ..Dependency::default()
     }))
-}
-
-fn get_or_put_named_group<'a>(
-    groups: &'a mut ArrayHashMap<String, Map>,
-    buf: &[u8],
-    catalog_name: String,
-) -> Result<&'a mut Map, AllocError> {
-    let entry = groups.get_or_put_adapted(&catalog_name, &ctx(buf))?;
-    if !entry.found_existing {
-        *entry.key_ptr = catalog_name;
-        *entry.value_ptr = Map::default();
-    }
-    Ok(entry.value_ptr)
 }

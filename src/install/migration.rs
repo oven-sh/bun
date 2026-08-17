@@ -55,26 +55,8 @@ pub fn detect_and_load_other_lockfile<'a>(
         let Ok(data) = lockfile.read_to_end() else {
             continue;
         };
-        let migrate_result = match migrate_npm_lockfile(
-            this,
-            manager,
-            log,
-            &data,
-            lockfile_path,
-            dir,
-            lockfile_name,
-        ) {
-            Ok(r) => r,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::Migrating,
-                    value: e,
-                    lockfile_path: lockfile_name_z,
-                    format: LockfileFormat::Text,
-                });
-            }
-        };
-
+        let migrate_result =
+            migrate_npm_lockfile(this, manager, log, &data, lockfile_path, dir, lockfile_name);
         return finish_migration(migrate_result, manager, log, &timer, lockfile_name_z);
     }
 
@@ -83,18 +65,7 @@ pub fn detect_and_load_other_lockfile<'a>(
         let Ok(data) = File::read_from(dir, b"yarn.lock") else {
             break 'yarn;
         };
-        let migrate_result = match yarn::migrate_yarn_lockfile(this, manager, log, &data) {
-            Ok(r) => r,
-            Err(e) => {
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::Migrating,
-                    value: e,
-                    lockfile_path: zstr!("yarn.lock"),
-                    format: LockfileFormat::Text,
-                });
-            }
-        };
-
+        let migrate_result = yarn::migrate_yarn_lockfile(this, manager, log, &data);
         return finish_migration(migrate_result, manager, log, &timer, zstr!("yarn.lock"));
     }
 
@@ -113,12 +84,7 @@ pub fn detect_and_load_other_lockfile<'a>(
                     "pnpm install --lockfile-only",
                 );
                 log.reset();
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::Migrating,
-                    value: Error::UnexpectedLockfileVersion,
-                    lockfile_path: zstr!("pnpm-lock.yaml"),
-                    format: LockfileFormat::Text,
-                });
+                return migrating_error(Error::UnexpectedLockfileVersion, zstr!("pnpm-lock.yaml"));
             }
             Err(e) => {
                 if !manager.options.log_level.is_silent() {
@@ -144,37 +110,36 @@ pub fn detect_and_load_other_lockfile<'a>(
                     Output::flush();
                 }
                 log.reset();
-                return LoadResult::Err(LoadResultErr {
-                    step: LoadStep::Migrating,
-                    value: e.into(),
-                    lockfile_path: zstr!("pnpm-lock.yaml"),
-                    format: LockfileFormat::Text,
-                });
+                return migrating_error(e.into(), zstr!("pnpm-lock.yaml"));
             }
         };
-
-        return finish_migration(
-            migrate_result,
-            manager,
-            log,
-            &timer,
-            zstr!("pnpm-lock.yaml"),
-        );
+        let name = zstr!("pnpm-lock.yaml");
+        return finish_migration(Ok(migrate_result), manager, log, &timer, name);
     }
 
     LoadResult::NotFound
 }
 
+fn migrating_error(err: Error, lockfile_name: &'static ZStr) -> LoadResult<'static> {
+    LoadResult::Err(LoadResultErr {
+        step: LoadStep::Migrating,
+        value: err,
+        lockfile_path: lockfile_name,
+        format: LockfileFormat::Text,
+    })
+}
+
 fn finish_migration<'a>(
-    migrate_result: LoadResult<'a>,
+    migrate_result: Result<LoadResult<'a>, Error>,
     manager: &mut PackageManager,
     log: &mut bun_ast::Log,
     timer: &std::time::Instant,
     lockfile_name: &'static ZStr,
 ) -> LoadResult<'a> {
     let ok = match migrate_result {
-        LoadResult::Ok(ok) => ok,
-        other => return other,
+        Ok(LoadResult::Ok(ok)) => ok,
+        Ok(not_migrated) => return not_migrated,
+        Err(err) => return migrating_error(err, lockfile_name),
     };
     if let Err(err) = record_trusted_dependencies(&mut *ok.lockfile, manager, log) {
         if !manager.options.log_level.is_silent() && log.has_errors() {
@@ -182,12 +147,7 @@ fn finish_migration<'a>(
             Output::flush();
         }
         log.reset();
-        return LoadResult::Err(LoadResultErr {
-            step: LoadStep::Migrating,
-            value: err,
-            lockfile_path: lockfile_name,
-            format: LockfileFormat::Text,
-        });
+        return migrating_error(err, lockfile_name);
     }
     report_migrated(manager, log, timer, lockfile_name);
     LoadResult::Ok(ok)
@@ -201,13 +161,10 @@ fn record_trusted_dependencies(
 ) -> Result<(), Error> {
     let bump = bun_alloc::Arena::new();
     let string_bytes = lockfile.buffers.string_bytes.as_slice();
-    let root: &[u8] = b"";
-    let members = lockfile
-        .workspace_paths
-        .values()
-        .iter()
-        .map(|path| path.slice(string_bytes));
-    for relative_dir in core::iter::once(root).chain(members) {
+    let members = lockfile.workspace_paths.values().iter();
+    for relative_dir in
+        core::iter::once(b"".as_slice()).chain(members.map(|p| p.slice(string_bytes)))
+    {
         let mut package_json_path = AutoAbsPath::init_top_level_dir();
         let _ = package_json_path.append(relative_dir);
         let _ = package_json_path.append(b"package.json");

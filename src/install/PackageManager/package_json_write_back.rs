@@ -58,9 +58,8 @@ fn root_target() -> WorkspaceTarget {
     }
 }
 
-/// The root package.json a pnpm migration edited in memory (`pnpm::update_package_json_after_migration`), announced
-/// once; `None` when the load did not touch it. Only the places that save the migrated lockfile ask for it, so a load
-/// that is never saved (`--frozen-lockfile`, `--dry-run`, `bun outdated`, ...) leaves the file alone.
+/// The root package.json a pnpm migration edited in memory, announced once; `None` when the load did not touch it.
+/// Only the places that save the migrated lockfile ask, so a load that is never saved leaves the file alone.
 fn take_migrated_root(manager: &mut PackageManager) -> Option<WorkspaceTarget> {
     if manager.migrated_package_json_moves.is_empty() {
         return None;
@@ -82,10 +81,8 @@ pub(crate) fn record_migrated_root(manager: &mut PackageManager) {
     }
 }
 
-/// `bun pm migrate` and `bun pm trust` save the lockfile without consulting `--dry-run` / `--no-save`, so the
-/// package.json that belongs with it is written the same way instead of through `flush`, which those flags disable.
-/// The lockfile is already on disk at this point, so a package.json that cannot be written (a read-only checkout)
-/// is reported and left as it was rather than failing the command.
+/// `bun pm migrate` / `bun pm trust`: they save the lockfile regardless of `--dry-run` / `--no-save` (which disable
+/// `flush`), so its package.json is written directly; a write failure is reported, not fatal (the lockfile is saved).
 pub fn write_migrated_root(manager: &mut PackageManager) {
     if let Some(root) = take_migrated_root(manager) {
         let _ = write_target(manager, &root);

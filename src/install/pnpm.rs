@@ -2525,8 +2525,8 @@ fn update_package_json_after_migration(
             catalogs_obj = ws_root.get_object(b"catalogs").filter(is_non_empty_object);
             // The migrated root skips `Package::parse`, so the catalog these declare is recorded in the lockfile here.
             if let Some(lockfile) = lockfile.as_deref_mut() {
-                crate::lockfile_real::CatalogMap::put_missing_from_pnpm_workspace(
-                    &mut lockfile.catalogs,
+                let catalogs = &mut lockfile.catalogs;
+                catalogs.put_missing_from_pnpm_workspace(
                     catalog_obj,
                     catalogs_obj,
                     &mut sbuf!(lockfile),

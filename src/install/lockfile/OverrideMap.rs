@@ -144,16 +144,12 @@ fn is_comment_key(key: &[u8]) -> bool {
     key.starts_with(b"//")
 }
 
-/// Parsing only appends or replaces in place, so the rules `"overrides"` produced are the first `flat` entries of `map` and the first `scoped` entries of `scoped`.
-#[derive(Clone, Copy, Default)]
-struct RuleCount {
-    flat: usize,
-    scoped: usize,
-}
-
 struct ParseContext<'a, 'b> {
     field: Field,
-    from_overrides: RuleCount,
+    /// Parsing only appends or replaces in place, so the rules `"overrides"` produced are the first
+    /// `overrides_flat` entries of `map` and the first `overrides_scoped` of `scoped`.
+    overrides_flat: usize,
+    overrides_scoped: usize,
     pm: &'a mut PackageManager,
     lockfile_dependencies: &'a [Dependency],
     root_package: &'a Package,
@@ -520,37 +516,33 @@ impl OverrideMap {
         self.put_scoped(rule, buf, 0);
     }
 
-    /// Like `push_scoped`, except that a matching rule at a position below `keep` is kept and `rule` is dropped.
+    /// Like `push_scoped`, except that a matching rule among the first `keep` is kept and `rule` is dropped.
     fn put_scoped(&mut self, rule: ScopedOverride, buf: &[u8], keep: usize) {
-        match self.scoped_position(&rule, buf) {
-            Some(index) if index < keep => {}
-            Some(index) => self.scoped[index] = rule,
-            None => {
-                self.scoped_names.insert(rule.dep.name_hash, ());
-                self.scoped.push(rule);
-            }
-        }
-    }
-
-    fn scoped_position(&self, rule: &ScopedOverride, buf: &[u8]) -> Option<usize> {
-        if !self.scoped_names.contains(&rule.dep.name_hash) {
-            return None;
-        }
-        self.scoped.iter().position(|existing| {
-            existing.dep.name_hash == rule.dep.name_hash
-                && match (&existing.parent, &rule.parent) {
-                    (None, None) => true,
-                    (Some(a), Some(b)) => {
-                        a.name_hash == b.name_hash
-                            && a.version.literal.eql(b.version.literal, buf, buf)
+        if self.scoped_names.contains(&rule.dep.name_hash) {
+            if let Some(index) = self.scoped.iter().position(|existing| {
+                existing.dep.name_hash == rule.dep.name_hash
+                    && match (&existing.parent, &rule.parent) {
+                        (None, None) => true,
+                        (Some(a), Some(b)) => {
+                            a.name_hash == b.name_hash
+                                && a.version.literal.eql(b.version.literal, buf, buf)
+                        }
+                        _ => false,
                     }
-                    _ => false,
+                    && existing
+                        .target_range
+                        .literal
+                        .eql(rule.target_range.literal, buf, buf)
+            }) {
+                if index >= keep {
+                    self.scoped[index] = rule;
                 }
-                && existing
-                    .target_range
-                    .literal
-                    .eql(rule.target_range.literal, buf, buf)
-        })
+                return;
+            }
+        } else {
+            self.scoped_names.insert(rule.dep.name_hash, ());
+        }
+        self.scoped.push(rule);
     }
 
     /// Row constructor for bun.lock / pnpm-lock.yaml; `Ok(false)` when `value`, the parent range or the target range does not parse.
@@ -630,86 +622,57 @@ impl OverrideMap {
         builder: &mut StringBuilder,
     ) {
         for field in [Field::Overrides, Field::Resolutions] {
-            if let Some(property) = expr.as_property(field.json_name().as_bytes()) {
-                Self::count_field(
-                    pm,
-                    log,
-                    json_source,
-                    workspace_names,
-                    &expr,
-                    field,
-                    property.expr,
-                    builder,
-                );
-            }
-        }
-    }
-
-    fn count_field(
-        pm: &mut PackageManager,
-        log: &mut bun_ast::Log,
-        json_source: &bun_ast::Source,
-        workspace_names: &WorkspaceMap,
-        root_json: &Expr,
-        field: Field,
-        field_expr: Expr,
-        builder: &mut StringBuilder,
-    ) {
-        field_expr.for_each_property(|key, _key_loc, value| {
-            if is_comment_key(key) {
-                return;
-            }
-            builder.count(key);
-            if let Some(value) = value.as_utf8_string_literal() {
-                if let Ok(Selector { parent, target }) = parse_selector(key) {
-                    builder.count(target.name);
-                    builder.count(target.range);
-                    if let Some(parent) = parent {
-                        builder.count(parent.name);
-                        builder.count(parent.range);
-                    }
-                }
-                builder.count(value);
-                count_ref_value(
-                    pm,
-                    log,
-                    json_source,
-                    workspace_names,
-                    root_json,
-                    value,
-                    builder,
-                );
-                return;
-            }
-            if field != Field::Overrides || !value.is_object() {
-                return;
-            }
-            if let Ok(parent) = parse_package_segment(key) {
-                builder.count(parent.name);
-                builder.count(parent.range);
-            }
-            value.for_each_property(|child_key, _child_key_loc, child_value| {
-                if is_comment_key(child_key) {
+            let Some(property) = expr.as_property(field.json_name().as_bytes()) else {
+                continue;
+            };
+            property.expr.for_each_property(|key, _key_loc, value| {
+                if is_comment_key(key) {
                     return;
                 }
-                if let Ok(selector) = parse_selector(child_key) {
-                    builder.count(selector.target.name);
-                    builder.count(selector.target.range);
+                builder.count(key);
+                if let Some(value) = value.as_utf8_string_literal() {
+                    if let Ok(Selector { parent, target }) = parse_selector(key) {
+                        builder.count(target.name);
+                        builder.count(target.range);
+                        if let Some(parent) = parent {
+                            builder.count(parent.name);
+                            builder.count(parent.range);
+                        }
+                    }
+                    builder.count(value);
+                    count_ref_value(pm, log, json_source, workspace_names, &expr, value, builder);
+                    return;
                 }
-                if let Some(child_value) = child_value.as_utf8_string_literal() {
-                    builder.count(child_value);
-                    count_ref_value(
-                        pm,
-                        log,
-                        json_source,
-                        workspace_names,
-                        root_json,
-                        child_value,
-                        builder,
-                    );
+                if field != Field::Overrides || !value.is_object() {
+                    return;
                 }
+                if let Ok(parent) = parse_package_segment(key) {
+                    builder.count(parent.name);
+                    builder.count(parent.range);
+                }
+                value.for_each_property(|child_key, _child_key_loc, child_value| {
+                    if is_comment_key(child_key) {
+                        return;
+                    }
+                    if let Ok(selector) = parse_selector(child_key) {
+                        builder.count(selector.target.name);
+                        builder.count(selector.target.range);
+                    }
+                    if let Some(child_value) = child_value.as_utf8_string_literal() {
+                        builder.count(child_value);
+                        count_ref_value(
+                            pm,
+                            log,
+                            json_source,
+                            workspace_names,
+                            &expr,
+                            child_value,
+                            builder,
+                        );
+                    }
+                });
             });
-        });
+        }
     }
 
     /// Parses the root package.json's `"overrides"` and `"resolutions"` into this (empty) map.
@@ -728,7 +691,8 @@ impl OverrideMap {
         debug_assert!(self.map.count() == 0 && self.scoped.is_empty()); // only call parse once
         let mut ctx = ParseContext {
             field: Field::Overrides,
-            from_overrides: RuleCount::default(),
+            overrides_flat: 0,
+            overrides_scoped: 0,
             pm,
             lockfile_dependencies,
             root_package,
@@ -739,10 +703,7 @@ impl OverrideMap {
         };
         if let Some(overrides) = expr.as_property(b"overrides") {
             self.parse_from_overrides(&mut ctx, overrides.expr)?;
-            ctx.from_overrides = RuleCount {
-                flat: self.map.count(),
-                scoped: self.scoped.len(),
-            };
+            (ctx.overrides_flat, ctx.overrides_scoped) = (self.map.count(), self.scoped.len());
         }
         if let Some(resolutions) = expr.as_property(b"resolutions") {
             ctx.field = Field::Resolutions;
@@ -972,7 +933,7 @@ impl OverrideMap {
             && self
                 .map
                 .get_index(&name_hash)
-                .is_some_and(|index| index < ctx.from_overrides.flat)
+                .is_some_and(|index| index < ctx.overrides_flat)
         {
             return Ok(());
         }
@@ -995,7 +956,7 @@ impl OverrideMap {
                     dep,
                 },
                 ctx.builder.string_bytes.as_slice(),
-                ctx.from_overrides.scoped,
+                ctx.overrides_scoped,
             );
         }
         Ok(())

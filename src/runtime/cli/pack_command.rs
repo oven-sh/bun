@@ -69,21 +69,12 @@ fn file_to_source_at(dir: &Dir, path: &ZStr) -> bun_sys::Maybe<bun_ast::Source> 
     ))
 }
 
-/// `manager.log` deref — set once at `init()`.
-/// Raw-pointer receiver so the borrow doesn't conflict with the simultaneous
-/// `&mut workspace_package_json_cache` borrow at the call site.
-#[inline]
-fn pm_log<'a>(m: *mut PackageManager) -> &'a mut bun_ast::Log {
-    // SAFETY: `m` came from `&mut PackageManager`; `log` is non-null after
-    // `PackageManager::init()`.
-    unsafe { &mut *(*m).log }
-}
-/// `manager.workspace_package_json_cache` field projection via raw pointer.
+/// Raw projection: `pack()` holds the `&mut MapEntry` this yields across other `ctx.manager` uses.
 #[inline]
 fn pm_workspace_cache<'a>(
     m: *mut PackageManager,
 ) -> &'a mut WorkspacePackageJSONCache::WorkspacePackageJSONCache {
-    // SAFETY: `m` came from `&mut PackageManager`; field disjoint from `log`.
+    // SAFETY: `m` is `pack()`'s live `ctx.manager`; `pack()` touches the cache only through here.
     unsafe { &mut (*m).workspace_package_json_cache }
 }
 #[inline]
@@ -106,7 +97,8 @@ pub(crate) struct PackCommand;
 // Context
 // ───────────────────────────────────────────────────────────────────────────
 
-pub(crate) struct Context<'a> {
+/// `'l` is the caller-local lockfile; `'a` flows on into the `Publish::Context` `pack()` returns.
+pub(crate) struct Context<'a, 'l> {
     pub(crate) manager: &'a mut PackageManager,
     // allocator param dropped — global mimalloc (see PORTING.md §Allocators)
     pub(crate) command_ctx: Command::Context<'a>,
@@ -115,7 +107,7 @@ pub(crate) struct Context<'a> {
     /// it's possible we will need it for finding
     /// workspace versions. This is the only valid lockfile
     /// pointer in this file. `manager.lockfile` is incorrect
-    pub(crate) lockfile: Option<&'a Lockfile>,
+    pub(crate) lockfile: Option<&'l Lockfile>,
 
     pub(crate) bundled_deps: Vec<BundledDep>,
 
@@ -130,7 +122,7 @@ pub struct Stats {
     pub(crate) bundled_deps: usize,
 }
 
-impl<'a> Context<'a> {
+impl Context<'_, '_> {
     pub(crate) fn print_summary(
         stats: Stats,
         maybe_shasum: Option<&[u8; sha::SHA1::DIGEST]>,
@@ -215,14 +207,8 @@ impl PackCommand {
         }
 
         let mut lockfile = Lockfile::default();
-        // `log` is non-null after `PackageManager::init()`.
-        let log_ptr: *mut bun_ast::Log = manager.log;
-        let manager_ptr: *mut PackageManager = manager;
-        // SAFETY: `manager_ptr`/`log_ptr` came from live `&mut`; reborrowed
-        // disjointly (`log` is a separate allocation from the manager fields
-        // `load_from_cwd` touches).
-        let load_from_disk_result = lockfile
-            .load_from_cwd::<false>(Some(unsafe { &mut *manager_ptr }), unsafe { &mut *log_ptr });
+        let log = manager.log_mut();
+        let load_from_disk_result = lockfile.load_from_cwd::<false>(Some(&mut *manager), log);
 
         let lockfile_ref: Option<&Lockfile> = match load_from_disk_result {
             LoadResult::Ok(ok) => Some(&*ok.lockfile),
@@ -256,8 +242,8 @@ impl PackCommand {
                         );
                     }
                 }
-                if pm_log(manager_ptr).has_errors() {
-                    let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
+                if log.has_errors() {
+                    let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 }
                 Global::crash();
             }
@@ -269,7 +255,7 @@ impl PackCommand {
         // package.json path before constructing `Context`.
         let abs_pkg_json = ZBox::from_bytes(manager.original_package_json_path.as_bytes());
 
-        let mut pack_ctx = Context {
+        let pack_ctx = Context {
             manager,
             command_ctx: ctx,
             lockfile: lockfile_ref,
@@ -278,7 +264,7 @@ impl PackCommand {
         };
 
         // just pack the current workspace
-        if let Err(err) = pack::<false>(&mut pack_ctx, &abs_pkg_json) {
+        if let Err(err) = pack::<false>(pack_ctx, &abs_pkg_json) {
             match err {
                 PackError::OutOfMemory => bun_core::out_of_memory(),
                 PackError::MissingPackageName | PackError::MissingPackageVersion => {
@@ -1888,23 +1874,16 @@ fn opt_pack_gzip_level(m: &PackageManager) -> Option<&[u8]> {
 // Const generics cannot vary the
 // return type directly, so both instantiations return an Option that is
 // `Some` only when FOR_PUBLISH == true.
-pub(crate) type PackReturn<'a, const FOR_PUBLISH: bool> = Option<Publish::Context<'a, true>>;
-
-pub(crate) fn pack<const FOR_PUBLISH: bool>(
-    ctx: &mut Context<'_>,
+pub(crate) fn pack<'a, const FOR_PUBLISH: bool>(
+    mut ctx: Context<'a, '_>,
     abs_package_json_path: &ZStr,
-) -> Result<PackReturn<'static, FOR_PUBLISH>, PackError<FOR_PUBLISH>> {
-    // Raw pointer for the `pm_workspace_cache`/`pm_log` disjoint-field
-    // projections and the `'static` lifetime extension when returning
-    // `Publish::Context`.
+) -> Result<Option<Publish::Context<'a, true>>, PackError<FOR_PUBLISH>> {
     let manager_ptr: *mut PackageManager = &raw mut *ctx.manager;
     let log_level = ctx.manager.options.log_level;
     let bump = pack_bump();
-    // Note: `workspace_package_json_cache` and `log` are disjoint fields on
-    // `PackageManager`; route through raw-pointer field projections so the
-    // two `&mut` borrows don't conflict.
+    let log = ctx.manager.log_mut();
     let mut json = match pm_workspace_cache(manager_ptr).get_with_path(
-        pm_log(manager_ptr),
+        log,
         abs_package_json_path.as_bytes(),
         WorkspacePackageJSONCache::GetJSONOptions {
             guess_indentation: true,
@@ -1925,7 +1904,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 "failed to parse package.json: {}",
                 format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
             );
-            let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
+            let _ = log.print(std::ptr::from_mut(Output::error_writer()));
             Global::crash();
         }
         WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
@@ -2157,8 +2136,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         let _ = pm_workspace_cache(manager_ptr).map.remove(cache_key);
 
         // Re-read package.json from disk
+        let log = ctx.manager.log_mut();
         json = match pm_workspace_cache(manager_ptr).get_with_path(
-            pm_log(manager_ptr),
+            log,
             abs_package_json_path.as_bytes(),
             WorkspacePackageJSONCache::GetJSONOptions {
                 guess_indentation: true,
@@ -2179,7 +2159,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                     "failed to parse package.json: {}",
                     format_args!("{}", bstr::BStr::new(abs_package_json_path.as_bytes())),
                 );
-                let _ = pm_log(manager_ptr).print(std::ptr::from_mut(Output::error_writer()));
+                let _ = log.print(std::ptr::from_mut(Output::error_writer()));
                 Global::crash();
             }
             WorkspacePackageJSONCache::GetResult::Entry(entry) => entry,
@@ -2370,7 +2350,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     let mut bundled_pack_queue = iterate_bundled_deps(
         &mut ctx.bundled_deps,
         &mut ctx.stats,
-        pm_log(manager_ptr),
+        ctx.manager.log_mut(),
         &root_dir,
         log_level,
     )?;
@@ -2382,7 +2362,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // don't create the tarball, but run scripts if they exist
 
         print_archived_files_and_packages::<true>(
-            ctx,
+            &mut ctx,
             &root_dir,
             PackListOrQueue::Queue(&mut pack_queue),
             0,
@@ -2440,17 +2420,9 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
                 package_version,
                 &mut dest_buf[..],
             );
-            // Note: `manager`/`command_ctx` reborrowed via raw pointer —
-            // both are process-lifetime
-            // singletons (see `cli::command::GLOBAL_CLI_CTX`).
             return Ok(Some(Publish::Context {
-                // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
-                // process-lifetime singleton outlives the returned `Publish::Context`.
-                manager: unsafe { &mut *manager_ptr },
-                // SAFETY: `ctx.command_ctx` aliases the process-lifetime
-                // `GLOBAL_CLI_CTX` singleton (see note above); reborrowed
-                // disjointly from `manager`.
-                command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
+                manager: ctx.manager,
+                command_ctx: ctx.command_ctx,
                 package_name: package_name.into(),
                 package_version: package_version.into(),
                 abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
@@ -2593,7 +2565,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
         // exit and `end()` once after the loops.
 
         entry = archive_package_json(
-            ctx,
+            &mut ctx,
             // SAFETY: `archive` is the non-null `*mut Archive` returned by
             // `Archive::write_new()` above; only this thread accesses it.
             unsafe { &mut *archive },
@@ -2668,7 +2640,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             });
 
             entry = add_archive_entry(
-                ctx,
+                &mut ctx,
                 fd,
                 &stat,
                 &item.path,
@@ -2723,7 +2695,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
             };
 
             entry = add_archive_entry(
-                ctx,
+                &mut ctx,
                 file.handle,
                 &stat,
                 &item.path,
@@ -2879,7 +2851,7 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
     };
 
     print_archived_files_and_packages::<false>(
-        ctx,
+        &mut ctx,
         &root_dir,
         PackListOrQueue::List(&pack_list),
         edited_package_json.len(),
@@ -2917,13 +2889,8 @@ pub(crate) fn pack<const FOR_PUBLISH: bool>(
 
     if FOR_PUBLISH {
         return Ok(Some(Publish::Context {
-            // SAFETY: `manager_ptr` was derived from `&mut *ctx.manager`; the
-            // process-lifetime singleton outlives the returned `Publish::Context`.
-            manager: unsafe { &mut *manager_ptr },
-            // SAFETY: `ctx.command_ctx` aliases the process-lifetime
-            // `GLOBAL_CLI_CTX` singleton (see dry-run note above);
-            // reborrowed disjointly from `manager`.
-            command_ctx: unsafe { &mut *std::ptr::from_mut(ctx.command_ctx) },
+            manager: ctx.manager,
+            command_ctx: ctx.command_ctx,
             package_name: package_name.into(),
             package_version: package_version.into(),
             abs_tarball_path: ZStr::boxed(abs_tarball_dest.as_bytes()),
@@ -3135,7 +3102,7 @@ impl<'a> fmt::Display for TarballNameFormatter<'a> {
 }
 
 fn archive_package_json(
-    ctx: &mut Context<'_>,
+    ctx: &mut Context<'_, '_>,
     archive: &mut Archive,
     entry: *mut ArchiveEntry,
     root_dir: &Dir,
@@ -3185,7 +3152,7 @@ fn archive_package_json(
 }
 
 fn add_archive_entry(
-    ctx: &mut Context<'_>,
+    ctx: &mut Context<'_, '_>,
     file: Fd,
     stat: &bun_sys::Stat,
     filename: &ZStr,
@@ -3771,7 +3738,7 @@ enum PackListOrQueue<'a> {
 }
 
 fn print_archived_files_and_packages<const IS_DRY_RUN: bool>(
-    ctx: &mut Context<'_>,
+    ctx: &mut Context<'_, '_>,
     root_dir_std: &Dir,
     pack_list: PackListOrQueue<'_>,
     package_json_len: usize,

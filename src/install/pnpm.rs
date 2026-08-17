@@ -196,17 +196,15 @@ fn root_package_json<'a>(
 ) -> Option<&'a mut crate::WorkspacePackageJsonCacheEntry> {
     let mut pkg_json_path = bun_paths::AutoAbsPath::init_top_level_dir();
     let _ = pkg_json_path.append(b"package.json"); // OOM/capacity error is non-actionable here
-    match manager.workspace_package_json_cache.get_with_path(
-        log,
-        pkg_json_path.slice(),
-        crate::GetJsonOptions {
-            guess_indentation: true,
-            ..Default::default()
-        },
-    ) {
-        crate::GetJsonResult::Entry(entry) => Some(entry),
-        crate::GetJsonResult::ReadErr(_) | crate::GetJsonResult::ParseErr(_) => None,
-    }
+    let options = crate::GetJsonOptions {
+        guess_indentation: true,
+        ..Default::default()
+    };
+    let cache = &mut manager.workspace_package_json_cache;
+    cache
+        .get_with_path(log, pkg_json_path.slice(), options)
+        .unwrap()
+        .ok()
 }
 
 /// Current pnpm records only the patch hash in the lockfile; the patch file path lives in the config.
@@ -2356,15 +2354,12 @@ fn collect_only_built_dependencies(list: &Expr, out: &mut Vec<&'static [u8]>) ->
     };
     let mut found_any = false;
     while let Some(item) = items.next() {
-        let Some(name) = as_string(&item) else {
+        let Some(name) = as_string(&item).filter(|name| !name.is_empty()) else {
             continue;
         };
-        if name.is_empty() {
-            continue;
-        }
         found_any = true;
         if !out.contains(&name) {
-            out.push(js_ast::data_store_dupe_str(name));
+            out.push(name);
         }
     }
     found_any
@@ -2387,22 +2382,18 @@ fn add_trusted_dependencies(
         }
     }
 
-    let mut added_any = false;
+    let existing_len = items.len_u32();
     for &name in names {
-        if items
+        if !items
             .slice()
             .iter()
             .any(|item| as_string(item) == Some(name))
         {
-            continue;
+            let item = Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY);
+            VecExt::append(&mut items, item);
         }
-        VecExt::append(
-            &mut items,
-            Expr::init(E::EString::init(name), bun_ast::Loc::EMPTY),
-        );
-        added_any = true;
     }
-    if !added_any {
+    if items.len_u32() == existing_len {
         return Ok(false);
     }
 

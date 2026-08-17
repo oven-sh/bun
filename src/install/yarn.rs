@@ -203,12 +203,9 @@ impl<'a> Entry<'a> {
     /// `commit`, `git_repo_name` and `resolved` of a git `version`/`resolved` value; a `github:`
     /// shorthand resolves to its `https://github.com/` URL.
     fn set_git_source(&mut self, version: &'a [u8]) {
-        let mut url = version.strip_prefix(b"git+").unwrap_or(version);
-        self.commit = None;
-        if let Some((before_hash, commit)) = strings::split_once_char(url, b'#') {
-            url = before_hash;
-            self.commit = Some(commit);
-        }
+        let url = version.strip_prefix(b"git+").unwrap_or(version);
+        self.commit = strings::split_once_char(url, b'#').map(|(_, commit)| commit);
+        let url = Entry::url_without_hash(url);
         if let Some(github_path) = version.strip_prefix(b"github:") {
             let path = Entry::url_without_hash(github_path);
             if let Some((_, repo)) = strings::split_once_char(path, b'/') {
@@ -435,14 +432,12 @@ fn append_package_json(
         // Cloned because parsing the root's `workspaces` grows the cache holding this entry.
         GetJsonResult::Entry(entry) => (entry.source.clone(), entry.root),
         GetJsonResult::ReadErr(err) => {
+            let path = bstr::BStr::new(path.slice());
+            let loc = bun_ast::Loc::EMPTY;
             log.add_error_fmt(
                 None,
-                bun_ast::Loc::EMPTY,
-                format_args!(
-                    "{} reading \"{}\"",
-                    err.name(),
-                    bstr::BStr::new(path.slice())
-                ),
+                loc,
+                format_args!("{} reading \"{}\"", err.name(), path),
             );
             return Err(err);
         }
@@ -458,55 +453,47 @@ fn append_package_json(
     Ok(this.append_package(&package)?)
 }
 
-struct Binder<'a> {
-    spec_to_package_id: &'a StringHashMap<PackageID>,
-    workspace_id_by_path: &'a StringHashMap<PackageID>,
-    spec: Vec<u8>,
-}
-
-impl Binder<'_> {
-    /// Only the exact `name@range` key binds; an entry that merely satisfies it is another resolution.
-    fn bind(&mut self, this: &Lockfile, dep: &Dependency) -> Option<PackageID> {
-        let string_bytes = this.buffers.string_bytes.as_slice();
-        if dep.version.tag == dependency::Tag::Workspace {
-            return self
-                .workspace_id_by_path
-                .get(dep.version.workspace().slice(string_bytes))
-                .copied();
-        }
-        // yarn never locked these peers; bind them the way loading a bun.lock does.
-        if dep.behavior.is_peer() {
-            if dep.behavior.is_optional_peer() {
-                // Bound by the hoister, as after a fresh resolve.
-                return Some(install::INVALID_PACKAGE_ID);
-            }
-            // Overrides are not consulted: yarn applied them to the entries the candidates come from.
-            let range = this.catalogs.resolve_range(string_bytes, dep);
-            let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
-            return lockfile::bun_lock::resolve_peer_dep_by_range(
-                range,
-                name_hash,
-                &this.package_index,
-                this.packages.items_resolution(),
-                string_bytes,
-                |_| true,
-            )
-            // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
-            .or_else(|| {
-                this.package_index
-                    .get(&name_hash)?
-                    .as_slice()
-                    .first()
-                    .copied()
-            });
-        }
-        self.spec.clear();
-        self.spec.extend_from_slice(dep.name.slice(string_bytes));
-        self.spec.push(b'@');
-        self.spec
-            .extend_from_slice(dep.version.literal.slice(string_bytes));
-        self.spec_to_package_id.get(self.spec.as_slice()).copied()
+/// Only the exact `name@range` key binds; an entry that merely satisfies it is another resolution.
+fn bind_importer_dependency(
+    this: &Lockfile,
+    dep: &Dependency,
+    spec_to_package_id: &StringHashMap<PackageID>,
+    workspace_id_by_path: &StringHashMap<PackageID>,
+    spec: &mut Vec<u8>,
+) -> Option<PackageID> {
+    let string_bytes = this.buffers.string_bytes.as_slice();
+    if dep.version.tag == dependency::Tag::Workspace {
+        let path = dep.version.workspace().slice(string_bytes);
+        return workspace_id_by_path.get(path).copied();
     }
+    // yarn never locked these peers; bind them the way loading a bun.lock does.
+    if dep.behavior.is_peer() {
+        if dep.behavior.is_optional_peer() {
+            // Bound by the hoister, as after a fresh resolve.
+            return Some(install::INVALID_PACKAGE_ID);
+        }
+        // Overrides are not consulted: yarn applied them to the entries the candidates come from.
+        let range = this.catalogs.resolve_range(string_bytes, dep);
+        let name_hash = lockfile::bun_lock::peer_candidate_name_hash(dep, range, string_bytes);
+        let resolutions = this.packages.items_resolution();
+        let index = &this.package_index;
+        // Nothing satisfies it: the highest version there is, as a fresh install's peer pass picks.
+        let newest = || index.get(&name_hash)?.as_slice().first().copied();
+        return lockfile::bun_lock::resolve_peer_dep_by_range(
+            range,
+            name_hash,
+            index,
+            resolutions,
+            string_bytes,
+            |_| true,
+        )
+        .or_else(newest);
+    }
+    spec.clear();
+    spec.extend_from_slice(dep.name.slice(string_bytes));
+    spec.push(b'@');
+    spec.extend_from_slice(dep.version.literal.slice(string_bytes));
+    spec_to_package_id.get(spec.as_slice()).copied()
 }
 
 /// Packages `0..importer_count` (root, then workspaces) own every row in the buffers so far.
@@ -523,11 +510,7 @@ fn bind_importer_dependencies(
     let mut declared = core::mem::take(&mut this.buffers.dependencies).into_iter();
     this.buffers.resolutions.clear();
 
-    let mut binder = Binder {
-        spec_to_package_id,
-        workspace_id_by_path,
-        spec: Vec::new(),
-    };
+    let mut spec: Vec<u8> = Vec::new();
     let mut consumed: u32 = 0;
     for package_id in 0..importer_count {
         let declared_slice = this.packages.items_dependencies()[package_id];
@@ -536,7 +519,14 @@ fn bind_importer_dependencies(
 
         let off = u32::try_from(this.buffers.dependencies.len()).expect("int cast");
         for dep in declared.by_ref().take(declared_slice.len as usize) {
-            let Some(resolution) = binder.bind(this, &dep) else {
+            let bound = bind_importer_dependency(
+                this,
+                &dep,
+                spec_to_package_id,
+                workspace_id_by_path,
+                &mut spec,
+            );
+            let Some(resolution) = bound else {
                 // `bun install` resolves it, like a dependency added after yarn.lock was written.
                 continue;
             };
@@ -611,14 +601,10 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
         key.extend_from_slice(entry.dedupe_name());
         key.push(b'\n');
         key.extend_from_slice(entry.version);
-        let package_id = match package_id_by_name_version.get(key.as_slice()) {
-            Some(&package_id) => package_id,
-            None => {
-                package_id_by_name_version.put(&key, next_package_id)?;
-                next_package_id += 1;
-                next_package_id - 1
-            }
-        };
+        let package_id = *package_id_by_name_version.get_or_put_value(&key, next_package_id)?;
+        if package_id == next_package_id {
+            next_package_id += 1;
+        }
         yarn_entry_to_package_id.push(package_id);
     }
 
@@ -682,23 +668,25 @@ pub(crate) fn migrate_yarn_lockfile<'a>(
                     }
                 }
                 let is_github = !owner_str.is_empty() && !repo_str.is_empty();
+                let committish = if is_github {
+                    &commit[..7.min(commit.len())]
+                } else {
+                    commit
+                };
+                let package_name = entry.git_repo_name.as_deref().unwrap_or(repo_str);
                 let repository = Repository {
                     owner: sbuf!().append(owner_str)?,
                     repo: sbuf!().append(repo_str)?,
-                    committish: sbuf!().append(if is_github {
-                        &commit[0..b"github:".len().min(commit.len())]
-                    } else {
-                        commit
-                    })?,
+                    committish: sbuf!().append(committish)?,
                     resolved: SemverString::default(),
-                    package_name: sbuf!()
-                        .append(entry.git_repo_name.as_deref().unwrap_or(repo_str))?,
+                    package_name: sbuf!().append(package_name)?,
                 };
-                break 'blk Resolution::init(if is_github {
-                    ResolutionValue::Github(repository)
+                let value = if is_github {
+                    ResolutionValue::Github
                 } else {
-                    ResolutionValue::Git(repository)
-                });
+                    ResolutionValue::Git
+                };
+                break 'blk Resolution::init(value(repository));
             } else {
                 match resolved_url {
                     Some(resolved) if is_direct_url_dep => {

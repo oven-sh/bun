@@ -23,7 +23,7 @@
 
 import assert from "assert";
 import { describe, expect, it } from "bun:test";
-import "harness";
+import { bunEnv, bunExe } from "harness";
 import util from "util";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
@@ -153,16 +153,25 @@ describe("util", () => {
       strictEqual(util.isError(err8), true);
     });
 
-    it("propagates an exception from a getPrototypeOf trap", () => {
-      const proxy = new Proxy(
-        {},
-        {
-          getPrototypeOf() {
-            throw new Error("getPrototypeOf trap");
-          },
-        },
-      );
-      expect(() => util.isError(proxy)).toThrow("getPrototypeOf trap");
+    it("propagates an exception from a getPrototypeOf trap", async () => {
+      // Used to crash the process, so the call runs in a child.
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const proxy = new Proxy({}, { getPrototypeOf() { throw new Error("getPrototypeOf trap"); } });
+           try {
+             console.log("returned", require("util").isError(proxy));
+           } catch (e) {
+             console.log("threw", e.message);
+           }`,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({ stdout: "threw getPrototypeOf trap\n", stderr: "", exitCode: 0 });
     });
   });
 

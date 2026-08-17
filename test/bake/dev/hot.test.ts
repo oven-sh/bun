@@ -1,5 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
+import { runWithErrorPromise } from "harness";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
@@ -633,12 +634,65 @@ devTest("dev.write resolves only after the new module body has run", {
         globalThis.marker = "updated";
         import.meta.hot.accept();
       `,
-      // errors: null skips the post-write expectErrorOverlay poll (5 * 200ms),
-      // which would otherwise mask a premature ack.
-      { errors: null },
     );
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
     // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
     expect(await c.js`globalThis.marker`).toBe("updated");
+  },
+});
+
+devTest("dev.client rejects when the page has a build error the test did not expect", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `import "./missing";`,
+  },
+  async test(dev) {
+    // Not expect().rejects: on Windows that matcher starves the client's IPC messages while it waits.
+    const error = await runWithErrorPromise(() => dev.client("/"));
+    expect(error?.message).toContain("index.ts:1:8: error: Could not resolve");
+  },
+});
+
+devTest("dev.write rejects on an unexpected build error and resolves once the fix has been applied", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      globalThis.marker = "initial";
+      import.meta.hot.accept();
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    expect(await c.js`globalThis.marker`).toBe("initial");
+
+    const error = await runWithErrorPromise(() => dev.write("index.ts", `import "./missing";`));
+    expect(error?.message).toContain("index.ts:1:8: error: Could not resolve");
+
+    // The fixing build sends "e" (overlay hidden) then "u"; dev.write must resolve on the update, after the 200ms TLA.
+    await dev.write(
+      "index.ts",
+      `
+        await new Promise(r => setTimeout(r, 200));
+        globalThis.marker = "fixed";
+        import.meta.hot.accept();
+      `,
+    );
+    expect(await c.js`globalThis.marker`).toBe("fixed");
+  },
+});
+
+devTest("dev.write resolves only after a reload it triggers has loaded the new page", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    // Not self-accepting, so updating it falls back to a full reload.
+    "index.ts": `globalThis.marker = "v1";`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    expect(await c.js`globalThis.marker`).toBe("v1");
+
+    await c.expectReload(() => dev.write("index.ts", `globalThis.marker = "v2";`));
+    // Acked by the reloaded page once connected; the abandoned page's bun:afterUpdate would see undefined here.
+    expect(await c.js`globalThis.marker`).toBe("v2");
   },
 });

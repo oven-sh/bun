@@ -295,8 +295,8 @@ devTest("hmr handles rapid consecutive edits", {
     // `num_subscribers(HotUpdate) == 0` / `active_viewers == 0` and the
     // hot_update is dropped server-side (DevServer.rs finalize_bundle), so
     // the sentinel never reaches the client. Re-writing on each
-    // `received-hmr-event` (which fires on socket open and on every 'u'/'e'
-    // WS frame) guarantees that at least one sentinel write lands after the
+    // `received-hmr-event` (which fires on socket open and once per applied
+    // hot update) guarantees that at least one sentinel write lands after the
     // server has a subscriber. The same-content writes are idempotent and
     // the loop terminates the moment waitForMessage resolves below.
     const sentinelContent = hmrSelfAcceptingModule("render sentinel");

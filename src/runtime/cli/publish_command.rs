@@ -437,6 +437,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
     pub(crate) fn from_workspace(
         ctx: Command::Context<'a>,
         manager: &'a mut PackageManager,
+        original_cwd: &[u8],
     ) -> Result<Context<'static, true>, FromWorkspaceError> {
         let mut lockfile = Lockfile::default();
         let manager_ptr: *mut PackageManager = manager;
@@ -496,6 +497,7 @@ impl<'a, const DIRECTORY_PUBLISH: bool> Context<'a, DIRECTORY_PUBLISH> {
             manager: unsafe { &mut *manager_ptr },
             command_ctx: ctx,
             lockfile: lockfile_ref,
+            original_cwd,
             bundled_deps: Vec::new(),
             stats: pack::Stats::default(),
         };
@@ -599,7 +601,7 @@ impl PublishCommand {
             return Ok(());
         }
 
-        let context = match Context::<true>::from_workspace(ctx, manager) {
+        let context = match Context::<true>::from_workspace(ctx, manager, &original_cwd) {
             Ok(c) => c,
             Err(err) => {
                 use pack::PackError;

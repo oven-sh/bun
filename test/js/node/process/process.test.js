@@ -2669,3 +2669,176 @@ it("no socket close handler runs after the 'exit' event", async () => {
   expect(stdout).toBe("exit\n");
   expect(exitCode).toBe(0);
 });
+
+// process.stdout/stderr/stdin/nextTick/finalization/allowedNodeEnvironmentFlags (and a few
+// more) are lazy: the first read runs a native builder that calls into JS. When that JS throws,
+// the read must throw and the property must stay unbuilt so that the next read builds it. The
+// builders used to swallow the error, report it as an uncaught exception (exit code 1 with no
+// handler) and store undefined in the property for the rest of the process.
+describe.concurrent("lazy process properties whose builder throws", () => {
+  async function run(code) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", code],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("a builder that runs out of stack throws, and the next read builds the property", async () => {
+    // Only the deepest frame reaches the catch block. There is less than one JS frame of stack
+    // left at that point, so every builder that has to call into JS fails with the RangeError.
+    const { stdout, stderr, exitCode } = await run(`
+      const names = ["stdout", "stderr", "stdin", "nextTick", "finalization", "allowedNodeEnvironmentFlags"];
+      const atLimit = {};
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          for (const name of names) {
+            try {
+              atLimit[name] = typeof process[name];
+            } catch (e) {
+              atLimit[name] = "threw " + e.constructor.name;
+            }
+          }
+          for (const name of ["_stdout", "_stderr"]) {
+            try {
+              atLimit["console" + name] = typeof console[name];
+            } catch (e) {
+              atLimit["console" + name] = "threw " + e.constructor.name;
+            }
+          }
+        }
+      }
+      recurse();
+      const afterwards = {};
+      for (const name of names) afterwards[name] = typeof process[name];
+      afterwards.console_stdout = console._stdout === process.stdout;
+      afterwards.console_stderr = console._stderr === process.stderr;
+      process.nextTick(() => process.stdout.write(JSON.stringify({ atLimit, afterwards }) + "\\n"));
+    `);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      atLimit: {
+        stdout: "threw RangeError",
+        stderr: "threw RangeError",
+        stdin: "threw RangeError",
+        nextTick: "threw RangeError",
+        finalization: "threw RangeError",
+        allowedNodeEnvironmentFlags: "threw RangeError",
+        console_stdout: "threw RangeError",
+        console_stderr: "threw RangeError",
+      },
+      afterwards: {
+        stdout: "object",
+        stderr: "object",
+        stdin: "object",
+        nextTick: "function",
+        finalization: "object",
+        allowedNodeEnvironmentFlags: "object",
+        console_stdout: true,
+        console_stderr: true,
+      },
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  it("inspecting process while out of stack leaves every property buildable", async () => {
+    // Bun.inspect(process) reads every property, so it runs all of the builders in one go. Done
+    // while unwinding, the deepest inspections fail every builder that calls into JS. Whatever
+    // failed must be missing from that inspection only.
+    const listUndefinedProperties = `
+      const undefinedProperties = Object.getOwnPropertyNames(process).filter(name => process[name] === undefined);
+      process.nextTick(() => process.stdout.write(JSON.stringify(undefinedProperties) + "\\n"));
+    `;
+    const [outOfStack, baseline] = await Promise.all([
+      run(`
+        let inspections = 0;
+        function recurse() {
+          try {
+            recurse();
+          } catch {}
+          if (inspections < 50) {
+            inspections++;
+            try {
+              Bun.inspect(process, { depth: 0 });
+            } catch {}
+          }
+        }
+        recurse();
+        ${listUndefinedProperties}
+      `),
+      run(listUndefinedProperties),
+    ]);
+    expect(baseline.stderr).toBe("");
+    // e.g. ["channel", "disconnect", "exitCode", "mainModule", "send"]
+    expect(JSON.parse(baseline.stdout)).not.toContain("stdout");
+    expect(baseline.exitCode).toBe(0);
+    expect(outOfStack).toEqual(baseline);
+  });
+
+  it("a builder that throws is retried once the cause is gone, without reporting an uncaught exception", async () => {
+    // buildAllowedNodeEnvironmentFlags constructs a Set.
+    const { stdout, stderr, exitCode } = await run(`
+      process.on("uncaughtException", e => console.log("uncaughtException: " + e.constructor.name));
+      const RealSet = Set;
+      globalThis.Set = undefined;
+      let brokenRead;
+      try {
+        brokenRead = typeof process.allowedNodeEnvironmentFlags;
+      } catch (e) {
+        brokenRead = "threw " + e.constructor.name;
+      }
+      globalThis.Set = RealSet;
+      const flags = process.allowedNodeEnvironmentFlags;
+      console.log(JSON.stringify({
+        brokenRead,
+        sameObjectOnEveryRead: flags === process.allowedNodeEnvironmentFlags,
+        has: [flags.has("--no-warnings"), flags.has("--not-a-flag")],
+      }));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({ brokenRead: "threw TypeError", sameObjectOnEveryRead: true, has: [true, false] }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  it("a builder failure during bulk reification throws from the operation that triggered it", async () => {
+    // Deleting a property of process makes JSC build all of its remaining lazy properties first.
+    // The ones after the failing builder stay lazy and are built by the next such operation.
+    // The stdio builders load modules, which may need Set themselves, so they are built up front
+    // to make allowedNodeEnvironmentFlags the one builder that fails.
+    const { stdout, stderr, exitCode } = await run(`
+      process.stdout; process.stderr; process.stdin; process.nextTick;
+      const RealSet = Set;
+      globalThis.Set = undefined;
+      let brokenDelete;
+      try {
+        brokenDelete = "deleted: " + delete process._debugProcess;
+      } catch (e) {
+        brokenDelete = "threw " + e.constructor.name;
+      }
+      globalThis.Set = RealSet;
+      console.log(JSON.stringify({
+        brokenDelete,
+        deleteAfterwards: delete process._debugEnd,
+        flags: process.allowedNodeEnvironmentFlags.has("--no-warnings"),
+        finalization: typeof process.finalization.register,
+      }));
+    `);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(
+      JSON.stringify({
+        brokenDelete: "threw TypeError",
+        deleteAfterwards: true,
+        flags: true,
+        finalization: "function",
+      }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+});

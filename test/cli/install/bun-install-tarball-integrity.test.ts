@@ -493,6 +493,132 @@ describe.concurrent("tarball integrity", () => {
   });
 });
 
+// A `file:` tarball's resolution is the path written in package.json (`pkg.tgz`),
+// which names a different tarball in every project sharing the cache, and an
+// install from a lockfile never reads the tarball itself. So the cache entry is
+// keyed by the integrity the lockfile pins, not by that path: two projects (or two
+// branches of one project) with different tarballs at the same path get separate
+// entries, and a lockfile that does not pin an integrity cannot name an entry and
+// has the tarball read instead.
+describe.concurrent.each(["hoisted", "isolated"] as const)("local tarball cache entries (%s)", linker => {
+  async function tarball(exported: string) {
+    const tgz = await new Bun.Archive(
+      {
+        "package/package.json": JSON.stringify({ name: "pkg", version: "1.0.0" }),
+        "package/index.js": `module.exports = ${JSON.stringify(exported)};\n`,
+      },
+      { compress: "gzip" },
+    ).bytes();
+    const digest = createHash("sha512").update(tgz).digest();
+    return {
+      file: Buffer.from(tgz),
+      integrity: "sha512-" + digest.toString("base64"),
+      cacheEntry: `@T@sha512-${digest.subarray(0, 16).toString("hex")}@@@1`,
+    };
+  }
+
+  function project(tgz: Buffer, extraFiles: Record<string, string> = {}) {
+    return {
+      "package.json": JSON.stringify({ name: "app", dependencies: { pkg: "file:pkg.tgz" } }),
+      "pkg.tgz": tgz,
+      "bunfig.toml": Bun.TOML.stringify({ install: { linker } }),
+      ...extraFiles,
+    };
+  }
+
+  // The projects under `root` share `root/cache`.
+  async function install(root: string, name: string, ...args: string[]) {
+    await using proc = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: join(root, name),
+      env: { ...env, BUN_INSTALL_CACHE_DIR: join(root, "cache") },
+      stdout: "ignore",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    expect(stderr).not.toContain("error:");
+    expect(exitCode).toBe(0);
+  }
+
+  const installedExport = (root: string, name: string) =>
+    file(join(root, name, "node_modules", "pkg", "index.js")).text();
+  const lockfile = (root: string, name: string) => file(join(root, name, "bun.lock")).text();
+  const reinstall = (root: string, name: string, ...args: string[]) =>
+    rm(join(root, name, "node_modules"), { recursive: true }).then(() => install(root, name, ...args));
+  const cacheEntries = async (root: string) =>
+    (await readdirSorted(join(root, "cache"))).filter(entry => entry.startsWith("@T@"));
+
+  it("keeps the tarballs of two projects that both depend on file:pkg.tgz apart", async () => {
+    const one = await tarball("one");
+    const two = await tarball("two");
+    using root = tempDir("local-tarball-two-projects", { one: project(one.file), two: project(two.file) });
+
+    await install(String(root), "one");
+    await install(String(root), "two");
+    expect(await lockfile(String(root), "one")).toContain(one.integrity);
+
+    await reinstall(String(root), "one");
+    expect(await installedExport(String(root), "one")).toBe('module.exports = "one";\n');
+    expect(await installedExport(String(root), "two")).toBe('module.exports = "two";\n');
+    expect(await cacheEntries(String(root))).toEqual([one.cacheEntry, two.cacheEntry].sort());
+  });
+
+  it("installs the tarball the lockfile pins after another build of it was extracted from the same path", async () => {
+    const v1 = await tarball("v1");
+    const v2 = await tarball("v2");
+    using root = tempDir("local-tarball-two-builds", { app: project(v1.file) });
+    const app = join(String(root), "app");
+
+    await install(String(root), "app");
+    const v1Lockfile = await lockfile(String(root), "app");
+    expect(v1Lockfile).toContain(v1.integrity);
+
+    // Like checking out a branch that ships v2: the rebuilt tarball is resolved and extracted.
+    await writeFile(join(app, "pkg.tgz"), v2.file);
+    await rm(join(app, "bun.lock"));
+    await reinstall(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "v2";\n');
+    expect(await lockfile(String(root), "app")).toContain(v2.integrity);
+
+    // Back on the v1 branch, pkg.tgz and bun.lock are v1's again.
+    await writeFile(join(app, "pkg.tgz"), v1.file);
+    await writeFile(join(app, "bun.lock"), v1Lockfile);
+    await reinstall(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "v1";\n');
+    expect(await cacheEntries(String(root))).toEqual([v1.cacheEntry, v2.cacheEntry].sort());
+  });
+
+  it("reads the tarball when the lockfile does not record its integrity, then records it", async () => {
+    const other = await tarball("other");
+    const mine = await tarball("mine");
+    using root = tempDir("local-tarball-unpinned", {
+      other: project(other.file),
+      app: project(mine.file, {
+        // Written before bun recorded the integrity of tarball packages.
+        "bun.lock": JSON.stringify({
+          lockfileVersion: 1,
+          configVersion: 1,
+          workspaces: { "": { name: "app", dependencies: { pkg: "file:pkg.tgz" } } },
+          packages: { pkg: ["pkg@pkg.tgz", {}] },
+        }),
+      }),
+    });
+
+    await install(String(root), "other");
+    await install(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "mine";\n');
+    expect(await lockfile(String(root), "app")).toContain(mine.integrity);
+    expect(await cacheEntries(String(root))).toEqual([mine.cacheEntry, other.cacheEntry].sort());
+
+    // The recorded integrity names the entry that extraction created: this
+    // install is served from it without reading pkg.tgz (which would no longer
+    // match the pin).
+    await writeFile(join(String(root), "app", "pkg.tgz"), other.file);
+    await reinstall(String(root), "app");
+    expect(await installedExport(String(root), "app")).toBe('module.exports = "mine";\n');
+  });
+});
+
 describe.concurrent.each(["hoisted", "isolated"] as const)("tarball integrity mismatch (%s)", linker => {
   // Regression test for #29646 — with the isolated linker, a SHA-512 mismatch
   // during the resolve-phase tarball extract left `task_queue` /

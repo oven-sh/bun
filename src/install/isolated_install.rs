@@ -144,8 +144,12 @@ impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
     const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
     const IS_STORE_INSTALLER: bool = true;
 
-    fn on_extract_store_installer(ctx: &mut Self::Ctx, task_id: Task::Id) {
-        ctx.on_package_extracted(task_id);
+    fn on_extract_store_installer(
+        ctx: &mut Self::Ctx,
+        task_id: Task::Id,
+        data: &install::ExtractData,
+    ) {
+        ctx.on_package_extracted(task_id, data);
     }
 
     fn on_package_download_error_store(
@@ -2366,11 +2370,12 @@ pub(crate) fn install_isolated_packages(
                             pkg_res.github(),
                             None,
                         ),
-                        ResolutionTag::LocalTarball => package_manager::cached_tarball_folder_name(
-                            installer.manager(),
-                            *pkg_res.local_tarball(),
-                            None,
-                        ),
+                        ResolutionTag::LocalTarball => {
+                            package_manager::cached_local_tarball_folder_name(
+                                &pkgs.items_meta()[pkg_id as usize].integrity,
+                                None,
+                            )
+                        }
                         ResolutionTag::RemoteTarball => {
                             package_manager::cached_tarball_folder_name(
                                 installer.manager(),
@@ -2385,23 +2390,26 @@ pub(crate) fn install_isolated_packages(
                         installer.manager_mut().get_cache_directory_and_abs_path();
                     let _ = &cache_dir_path; // dropped at scope exit
 
-                    let missing_from_cache = match installer.manager().get_preinstall_state(pkg_id)
-                    {
-                        install::PreinstallState::Done => false,
-                        _ => {
-                            let exists = package_manager::directories::is_package_in_cache_at(
-                                cache_dir,
-                                cache_subpath_z,
-                                pkg_res_tag,
-                            );
-                            if exists {
-                                installer
-                                    .manager_mut()
-                                    .set_preinstall_state(pkg_id, install::PreinstallState::Done);
+                    // An empty name is a local tarball whose integrity the lockfile
+                    // does not record; extracting it is what names its entry.
+                    let missing_from_cache = cache_subpath_z.is_empty()
+                        || match installer.manager().get_preinstall_state(pkg_id) {
+                            install::PreinstallState::Done => false,
+                            _ => {
+                                let exists = package_manager::directories::is_package_in_cache_at(
+                                    cache_dir,
+                                    cache_subpath_z,
+                                    pkg_res_tag,
+                                );
+                                if exists {
+                                    installer.manager_mut().set_preinstall_state(
+                                        pkg_id,
+                                        install::PreinstallState::Done,
+                                    );
+                                }
+                                !exists
                             }
-                            !exists
-                        }
-                    };
+                        };
 
                     if !missing_from_cache {
                         if let installer::PatchInfo::Patch(patch) = &patch_info {

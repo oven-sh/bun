@@ -203,7 +203,8 @@ use directories::attempt_to_create_package_json_and_open;
 pub use directories::{
     attempt_to_create_package_json, cached_git_folder_name, cached_git_folder_name_print,
     cached_git_folder_name_print_auto, cached_github_folder_name, cached_github_folder_name_print,
-    cached_github_folder_name_print_auto, cached_npm_package_folder_name,
+    cached_github_folder_name_print_auto, cached_local_tarball_folder_name,
+    cached_local_tarball_folder_name_print, cached_npm_package_folder_name,
     cached_npm_package_folder_name_print, cached_npm_package_folder_print_basename,
     cached_tarball_folder_name, cached_tarball_folder_name_print, compute_cache_dir_and_subpath,
     fetch_cache_directory_path, get_cache_directory, get_cache_directory_and_abs_path,

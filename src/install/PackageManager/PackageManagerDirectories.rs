@@ -11,7 +11,7 @@ use bun_core::{Global, Output, ZBox, env_var, fmt as bun_fmt};
 use bun_dotenv::Loader as DotEnvLoader;
 use bun_install::lockfile::{Format as LockfileFormat, LoadResult, Lockfile};
 use bun_install::resolution::Tag as ResolutionTag;
-use bun_install::{PackageID, Resolution};
+use bun_install::{Integrity, PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
 #[cfg(windows)]
@@ -487,6 +487,14 @@ impl<'a> ByteCursor<'a> {
         self.put(bun_fmt::u64_hex_var_lower(&mut tmp, n));
     }
 
+    /// Two lower-hex digits per byte.
+    #[inline(always)]
+    fn put_hex_bytes(&mut self, bytes: &[u8]) {
+        let end = self.at + bytes.len() * 2;
+        bun_fmt::bytes_to_hex_lower(bytes, &mut self.buf[self.at..end]);
+        self.at = end;
+    }
+
     /// `@@@{d}` when set.
     #[inline(always)]
     fn put_cache_version(&mut self, v: Option<usize>) {
@@ -725,6 +733,8 @@ pub fn cached_npm_package_folder_print_basename<'a>(
     w.finish_z()
 }
 
+/// `@T@<hash of the URL>@@@1`, for URL tarballs. `file:` tarballs use
+/// `cached_local_tarball_folder_name_print`.
 pub fn cached_tarball_folder_name_print<'a>(
     buf: &'a mut [u8],
     url: &[u8],
@@ -748,6 +758,43 @@ pub fn cached_tarball_folder_name(
         this.lockfile.str(&url),
         patch_hash,
     )
+}
+
+/// `@T@sha512-<first 16 digest bytes as hex>@@@1`.
+///
+/// A `file:` tarball's resolution is the path as written in package.json
+/// (`pkg.tgz`), which names a different tarball in every project sharing the
+/// cache, so unlike a URL tarball it is cached under the integrity bun.lock
+/// pins for it: the entry is only reused for the bytes it was extracted from.
+///
+/// Empty when the integrity is not known yet (lockfile written before tarball
+/// integrity was recorded). Callers treat that like a cache miss: extracting the
+/// tarball computes the integrity, and the install callbacks record it in the
+/// lockfile before installing from the entry named after it.
+pub fn cached_local_tarball_folder_name_print<'a>(
+    buf: &'a mut [u8],
+    integrity: &Integrity,
+    patch_hash: Option<u64>,
+) -> &'a ZStr {
+    let Some(algorithm) = integrity.tag.name() else {
+        return ZStr::EMPTY;
+    };
+    let digest = integrity.slice();
+    let mut w = ByteCursor::new(buf);
+    w.put(b"@T@");
+    w.put(algorithm.as_bytes());
+    w.put_byte(b'-');
+    w.put_hex_bytes(&digest[..digest.len().min(16)]);
+    w.put_cache_version(Some(CacheVersion::CURRENT));
+    w.put_patch_hash(patch_hash);
+    w.finish_z()
+}
+
+pub fn cached_local_tarball_folder_name(
+    integrity: &Integrity,
+    patch_hash: Option<u64>,
+) -> &'static ZStr {
+    cached_local_tarball_folder_name_print(cached_package_folder_name_buf(), integrity, patch_hash)
 }
 
 pub fn is_folder_in_cache(this: &mut PackageManager, folder_path: &ZStr) -> bool {
@@ -947,6 +994,7 @@ pub fn compute_cache_dir_and_subpath<'a>(
     manager: &mut PackageManager,
     pkg_name: &[u8],
     resolution: &Resolution,
+    integrity: &Integrity,
     folder_path_buf: &'a mut PathBuffer,
     patch_hash: Option<u64>,
 ) -> CacheDirAndSubpath<'a> {
@@ -986,8 +1034,20 @@ pub fn compute_cache_dir_and_subpath<'a>(
             cache_dir = Fd::cwd();
         }
         ResolutionTag::LocalTarball => {
-            let tarball = *resolution.local_tarball();
-            cache_dir_subpath = cached_tarball_folder_name(manager, tarball, patch_hash);
+            cache_dir_subpath = cached_local_tarball_folder_name(integrity, patch_hash);
+            if cache_dir_subpath.is_empty() {
+                Output::err_generic(
+                    "the lockfile does not record an integrity for <b>{}@{}<r>, run <cyan>bun install<r> first",
+                    (
+                        bun_fmt::s(name),
+                        resolution.fmt(
+                            manager.lockfile.buffers.string_bytes.as_slice(),
+                            bun_fmt::PathSep::Posix,
+                        ),
+                    ),
+                );
+                Global::exit(1);
+            }
             cache_dir = get_cache_directory(manager);
         }
         ResolutionTag::RemoteTarball => {

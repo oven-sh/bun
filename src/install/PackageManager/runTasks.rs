@@ -110,7 +110,11 @@ pub trait RunTasksCallbacks {
     ) {
         unreachable!()
     }
-    fn on_extract_store_installer(_ctx: &mut Self::Ctx, _task_id: Task::Id) {
+    fn on_extract_store_installer(
+        _ctx: &mut Self::Ctx,
+        _task_id: Task::Id,
+        _data: &bun_install::ExtractData,
+    ) {
         unreachable!()
     }
 
@@ -1146,7 +1150,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                        C::on_extract_store_installer(extract_ctx, task.id, task.data_extract());
                     } else {
                         unreachable!("unexpected context type");
                     }
@@ -1475,7 +1479,11 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             log_level,
                         );
                     } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                        C::on_extract_store_installer(
+                            extract_ctx,
+                            task.id,
+                            task.data_git_checkout(),
+                        );
                     } else {
                         unreachable!("unexpected context type");
                     }

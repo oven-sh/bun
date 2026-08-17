@@ -2,7 +2,10 @@ import { type BuildConfig } from "bun";
 import { strict as assert } from "node:assert";
 import type { CompileOptions, ModuleCompileOptions } from "svelte/compiler";
 
-type OverrideCompileOptions = Pick<CompileOptions, "customElement" | "runes" | "modernAst" | "namespace">;
+type OverrideCompileOptions = Pick<
+  CompileOptions,
+  "customElement" | "runes" | "modernAst" | "namespace" | "preserveWhitespace" | "preserveComments"
+>;
 export interface SvelteOptions extends Pick<CompileOptions, "runes"> {
   /**
    * Force client-side or server-side generation.
@@ -24,6 +27,9 @@ export interface SvelteOptions extends Pick<CompileOptions, "runes"> {
 
   /**
    * Options to forward to the Svelte compiler.
+   *
+   * `preserveWhitespace` and `preserveComments` default to Svelte's own defaults
+   * (`false`, and `false` when minifying) and can be overridden here.
    */
   compilerOptions?: OverrideCompileOptions;
 }
@@ -61,30 +67,28 @@ export function validateOptions(options: unknown): asserts options is SvelteOpti
 export function getBaseCompileOptions(pluginOptions: SvelteOptions, config: Partial<BuildConfig>): CompileOptions {
   let {
     development = false,
-    compilerOptions: { customElement, runes, modernAst, namespace } = kEmptyObject as OverrideCompileOptions,
+    compilerOptions: {
+      customElement,
+      runes,
+      modernAst,
+      namespace,
+      preserveWhitespace,
+      preserveComments,
+    } = kEmptyObject as OverrideCompileOptions,
   } = pluginOptions;
   const { minify = false } = config;
 
   const shouldMinify = Boolean(minify);
-  const {
-    whitespace: minifyWhitespace,
-    syntax: _minifySyntax,
-    identifiers: _minifyIdentifiers,
-  } = typeof minify === "object"
-    ? minify
-    : {
-        whitespace: shouldMinify,
-        syntax: shouldMinify,
-        identifiers: shouldMinify,
-      };
 
   const generate = generateSide(pluginOptions, config);
 
   return {
     css: "external",
     generate,
-    preserveWhitespace: !minifyWhitespace,
-    preserveComments: !shouldMinify,
+    // `preserveWhitespace` is semantic, not cosmetic: it changes which nodes a component
+    // receives. Deliberately not derived from the bundler's `minify.whitespace`.
+    preserveWhitespace: preserveWhitespace ?? false,
+    preserveComments: preserveComments ?? !shouldMinify,
     dev: development,
     customElement,
     runes,

@@ -2822,7 +2822,7 @@ describe("no JS entry after a worker's termination has been thrown", () => {
       const counts = new Int32Array(sab);
       const w = new Worker(worker(stuckIn), { eval: true, workerData: { sab } });
       w.postMessage("go");
-      await new Promise<void>(r => w.on("message", m => m === "stuck" && r()));
+      expect(await once(w, "message")).toEqual(["stuck"]);
       for (let k = 0; k < 200; k++) w.postMessage("flood");
       const t = Date.now();
       while (Date.now() - t < 50) {}

@@ -987,13 +987,14 @@ pub mod ssl_wrapper {
                     return false;
                 };
 
-                // SAFETY: ssl is a live SSL*; `read < BUFFER_SIZE`, so the pointer and
-                // length describe the unwritten tail of `buffer`.
+                // SAFETY: write-only view of the unfilled tail; SSL_read only stores into it.
+                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
+                // SAFETY: ssl is a live SSL*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::SSL_read(
                         ssl.as_ptr(),
-                        buffer.as_mut_ptr().add(read).cast::<c_void>(),
-                        c_int::try_from(BUFFER_SIZE - read).expect("int cast"),
+                        available.as_mut_ptr().cast::<c_void>(),
+                        c_int::try_from(available.len()).expect("int cast"),
                     )
                 };
                 log!("just read {}", just_read);
@@ -1122,13 +1123,14 @@ pub mod ssl_wrapper {
                 else {
                     return;
                 };
-                // SAFETY: output is a valid BIO*; `read < BUFFER_SIZE`, so the pointer and
-                // length describe the unwritten tail of `buffer`.
+                // SAFETY: write-only view of the unfilled tail; BIO_read only stores into it.
+                let available = unsafe { &mut buffer.as_bytes_mut()[read..] };
+                // SAFETY: output is a valid BIO*; available is a valid mutable slice.
                 let just_read = unsafe {
                     boring_sys::BIO_read(
                         output.as_ptr(),
-                        buffer.as_mut_ptr().add(read).cast::<c_void>(),
-                        c_int::try_from(BUFFER_SIZE - read).expect("int cast"),
+                        available.as_mut_ptr().cast::<c_void>(),
+                        c_int::try_from(available.len()).expect("int cast"),
                     )
                 };
                 if just_read > 0 {

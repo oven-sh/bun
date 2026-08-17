@@ -578,8 +578,8 @@ pub mod vec {
         /// A producer must have written every byte of `[0..len]` (`len <= N`).
         #[inline(always)]
         pub unsafe fn filled(&self, len: usize) -> &[u8] {
-            debug_assert!(len <= N);
-            // SAFETY: caller contract: `[0..len]` is initialized and, as `len <= N`, inside the array.
+            assert!(len <= N);
+            // SAFETY: `[0..len]` is inside the array (asserted above) and initialized (caller contract).
             unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
         }
     }

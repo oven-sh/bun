@@ -540,8 +540,6 @@ pub fn expand(
     contains_nested: bool,
 ) -> Result<(), ExpandError> {
     check_brace_group_count(tokens)?;
-    // Next unclaimed `out` slot; ends at `out.len()` once every slot is
-    // claimed, so it must hold one more than the largest key.
     let mut out_key_counter: usize = 1;
     if !contains_nested {
         let expansions_table = build_expansion_table_alloc(tokens)?;

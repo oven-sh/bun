@@ -60,6 +60,7 @@ class GlobalObject;
 
 namespace Bun {
 class StrongRootBlock;
+struct InternalModuleExecutableCache;
 }
 
 namespace WebCore {
@@ -187,6 +188,12 @@ public:
     // only owner once the previous global is GC'd, so a weak map would empty
     // after every swap.
     WTF::UncheckedKeyHashMap<WTF::String, RefPtr<JSC::SourceProvider>> isolationSourceProviderCache;
+
+    // See InternalModuleExecutableCache (InternalModuleRegistry.cpp).
+    struct InternalModuleExecutableCacheDeleter {
+        void operator()(Bun::InternalModuleExecutableCache*) const;
+    };
+    std::unique_ptr<Bun::InternalModuleExecutableCache, InternalModuleExecutableCacheDeleter> internalModuleExecutableCache;
 
 private:
     bool isWebCoreJSClientData() const final { return true; }

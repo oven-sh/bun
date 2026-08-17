@@ -423,6 +423,16 @@ pub struct DevServer {
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
 
+    /// Perfect incremental bundling would mean the code that bundles, watches
+    /// and rebuilds routes has no bugs, so a route's stored failures are always
+    /// accurate. Since it is not perfect, when this is false a request for a
+    /// route with failures re-bundles everything the route imports before
+    /// showing them (`check_route_failures`). This happens once per route per
+    /// file change (`RouteBundle::rebundled_for_failures`); otherwise a page
+    /// sitting on an error page would rebuild the route on every request.
+    ///
+    /// Disabled in release builds, enabled in debug builds; override with
+    /// `BUN_ASSUME_PERFECT_INCREMENTAL`.
     pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.
@@ -2259,6 +2269,9 @@ fn check_route_failures(
     resp: DevResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
+    // Still holds whatever the last bundle added; the trace below must only
+    // collect the failures this route can reach.
+    dev.incremental_result.failures_added.clear();
     // Note: erase to a raw pointer so the deferred cleanup only fires on
     // scope exit when no other borrow of `dev` is live.
     let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
@@ -2278,8 +2291,11 @@ fn check_route_failures(
         TraceImportGoal::FindErrors,
     )?;
     if !dev.incremental_result.failures_added.is_empty() {
-        // See comment on this field for information
-        if !dev.assume_perfect_incremental_bundling {
+        let assume_perfect_incremental_bundling = dev.assume_perfect_incremental_bundling;
+        let rb = dev.route_bundle_ptr(route_bundle_index);
+        // See `assume_perfect_incremental_bundling`.
+        if !assume_perfect_incremental_bundling && !rb.rebundled_for_failures {
+            rb.rebundled_for_failures = true;
             // Cache bust EVERYTHING reachable
             {
                 let mut it = gts.client_bits.iterator::<true, true>();
@@ -3146,6 +3162,12 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
+
+        if had_reload_event {
+            for route_bundle in &mut self.route_bundles {
+                route_bundle.rebundled_for_failures = false;
+            }
+        }
 
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
@@ -5253,6 +5275,7 @@ impl DevServer {
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,
+            rebundled_for_failures: false,
         });
         // SAFETY: index_location still valid (route_bundles is a separate field)
         unsafe { *index_location = Some(bundle_index) };

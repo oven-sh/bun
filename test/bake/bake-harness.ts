@@ -279,6 +279,49 @@ export class Dev extends EventEmitter {
     });
   }
 
+  /**
+   * Resolves once the dev server finishes its next bundle, whether it
+   * succeeded or failed. Call this before triggering the bundle.
+   */
+  waitForBundle(): Promise<void> {
+    return new Promise<void>(resolve => {
+      const handle = (kind: WatchSynchronization) => {
+        if (
+          kind === WatchSynchronization.AnyBuildFinished ||
+          kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets
+        ) {
+          this.off("watch_synchronization", handle);
+          resolve();
+        }
+      };
+      this.on("watch_synchronization", handle);
+    });
+  }
+
+  /**
+   * Returns how many bundles (successful or failed) the dev server finished
+   * while `fn` ran. `dev.write` and friends wait for the bundle they trigger,
+   * so those are counted too.
+   */
+  async countBundles(fn: () => Promise<void>): Promise<number> {
+    let count = 0;
+    const handle = (kind: WatchSynchronization) => {
+      if (
+        kind === WatchSynchronization.AnyBuildFinished ||
+        kind === WatchSynchronization.AnyBuildFinishedWaitForWebSockets
+      ) {
+        count++;
+      }
+    };
+    this.on("watch_synchronization", handle);
+    try {
+      await fn();
+    } finally {
+      this.off("watch_synchronization", handle);
+    }
+    return count;
+  }
+
   async batchChanges(options: { errors?: null | ErrorSpec[]; snapshot?: string } = {}) {
     if (this.batchingChanges) {
       this.batchingChanges.write?.();

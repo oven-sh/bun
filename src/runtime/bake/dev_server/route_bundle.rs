@@ -157,6 +157,12 @@ pub struct RouteBundle {
     pub(crate) client_bundle: Option<StaticRouteRef>,
     pub(crate) client_script_generation: u32,
     pub(crate) active_viewers: u32,
+    /// A request already re-bundled everything this route imports because
+    /// the route had bundling failures (see
+    /// `DevServer::assume_perfect_incremental_bundling`), and no file has
+    /// changed since. Further requests serve the stored failures instead of
+    /// bundling again; cleared whenever a hot-reload bundle starts.
+    pub(crate) rebundled_for_failures: bool,
 }
 
 impl RouteBundle {

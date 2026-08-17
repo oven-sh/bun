@@ -639,13 +639,6 @@ impl<'a> SplitIterator<'a> {
 
         Some(&self.buffer[start..end])
     }
-
-    /// Returns a slice of the remaining bytes. Does not affect iterator state.
-    pub fn rest(&self) -> &'a [u8] {
-        let end = self.buffer.len();
-        let start = self.index.unwrap_or(end);
-        &self.buffer[start..end]
-    }
 }
 
 impl<'a> Iterator for SplitIterator<'a> {

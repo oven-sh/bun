@@ -142,4 +142,3 @@ pub use ffi_body::FFI;
 // ABIType — single source of truth lives in abi_type.rs
 // ═════════════════════════════════════════════════════════════════════════════
 mod abi_type;
-pub use abi_type::{ABI_TYPE_LABEL, ABIType, ToCFormatter, ToJSFormatter};

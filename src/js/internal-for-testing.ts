@@ -184,15 +184,6 @@ export const npm_manifest_test_helpers = $rust("npm.rs", "PackageManifest.bindin
   parseManifest: (manifestFileName: string, registryUrl: string) => any;
 };
 
-// Like npm-package-arg, sort of https://www.npmjs.com/package/npm-package-arg
-export type Dependency = any;
-export const npa: (name: string) => Dependency = $newRustFunction("dependency.rs", "fromJS", 1);
-
-export const npmTag: (
-  name: string,
-) => undefined | "npm" | "dist_tag" | "tarball" | "folder" | "symlink" | "workspace" | "git" | "github" =
-  $newRustFunction("dependency.rs", "Version.Tag.inferFromJS", 1);
-
 export const readTarball: (tarball: string) => any = $newRustFunction("pack_command.rs", "bindings.jsReadTarball", 1);
 
 export const isArchitectureMatch: (architecture: string[]) => boolean = $newRustFunction(
@@ -653,8 +644,6 @@ export const structuredCloneAdvanced: (
   forStorage: boolean,
   serializationContext: SerializationContext,
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
-
-export const lsanDoLeakCheck = $newCppFunction("InternalForTesting.cpp", "jsFunction_lsanDoLeakCheck", 1);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
 

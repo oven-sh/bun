@@ -947,39 +947,6 @@ impl BuiltinName {
     pub const Error: Self = Self::error;
     pub const Encoding: Self = Self::encoding;
     pub const Type: Self = Self::type_;
-
-    pub fn get(property: &[u8]) -> Option<BuiltinName> {
-        BUILTIN_NAME_MAP.get(property).copied()
-    }
-}
-
-bun_core::comptime_string_map! {
-    static BUILTIN_NAME_MAP: BuiltinName = {
-        b"method" => BuiltinName::method,
-        b"headers" => BuiltinName::headers,
-        b"status" => BuiltinName::status,
-        b"statusText" => BuiltinName::statusText,
-        b"url" => BuiltinName::url,
-        b"body" => BuiltinName::body,
-        b"data" => BuiltinName::data,
-        b"toString" => BuiltinName::toString,
-        b"redirect" => BuiltinName::redirect,
-        b"inspectCustom" => BuiltinName::inspectCustom,
-        b"highWaterMark" => BuiltinName::highWaterMark,
-        b"path" => BuiltinName::path,
-        b"stream" => BuiltinName::stream,
-        b"asyncIterator" => BuiltinName::asyncIterator,
-        b"name" => BuiltinName::name,
-        b"message" => BuiltinName::message,
-        b"error" => BuiltinName::error,
-        b"default" => BuiltinName::default,
-        b"encoding" => BuiltinName::encoding,
-        b"fatal" => BuiltinName::fatal,
-        b"ignoreBOM" => BuiltinName::ignoreBOM,
-        b"type" => BuiltinName::type_,
-        b"signal" => BuiltinName::signal,
-        b"cmd" => BuiltinName::cmd,
-    };
 }
 
 /// RAII guard that keeps a `JSValue` reachable across an FFI call by emitting

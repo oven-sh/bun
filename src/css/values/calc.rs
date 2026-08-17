@@ -141,7 +141,6 @@ pub trait CalcValue:
     fn into_calc(self) -> Calc<Self>;
     /// Convert a `Calc<Self>` into `Self` if representable.
     fn from_calc(c: Calc<Self>, input: &mut css::Parser) -> CssResult<Self>;
-    fn eql(&self, other: &Self) -> bool;
 }
 
 impl<V: Clone> Clone for Calc<V> {
@@ -152,8 +151,7 @@ impl<V: Clone> Clone for Calc<V> {
 
 // Structural equality decoupled from `CalcValue` so `derive(PartialEq)` on
 // `Length` / `DimensionPercentage<D>` consumers can compare through
-// `Box<Calc<V>>` without pulling in the full behavior bound. `Calc::eql`
-// (below) keeps its `V: CalcValue` bound for callers that already have it.
+// `Box<Calc<V>>` without pulling in the full behavior bound.
 impl<V: PartialEq + Clone> PartialEq for Calc<V> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
@@ -217,38 +215,6 @@ impl<V> Calc<V> {
 
     // Cleanup is handled by Drop on Box<V>/Box<Calc<V>>/
     // Box<MathFunction<V>>. No explicit Drop impl needed.
-
-    pub fn eql(&self, other: &Self) -> bool
-    where
-        V: CalcValue,
-    {
-        match (self, other) {
-            (Calc::Value(a), Calc::Value(b)) => a.eql(b),
-            (Calc::Number(a), Calc::Number(b)) => *a == *b,
-            (
-                Calc::Sum {
-                    left: al,
-                    right: ar,
-                },
-                Calc::Sum {
-                    left: bl,
-                    right: br,
-                },
-            ) => al.eql(bl) && ar.eql(br),
-            (
-                Calc::Product {
-                    number: an,
-                    expression: ae,
-                },
-                Calc::Product {
-                    number: bn,
-                    expression: be,
-                },
-            ) => an == bn && ae.eql(be),
-            (Calc::Function(a), Calc::Function(b)) => a.eql(b),
-            _ => false,
-        }
-    }
 }
 
 // `PartialEq for Calc<V>` is provided above with the looser `V: PartialEq +
@@ -1204,8 +1170,8 @@ pub enum MathFunction<V> {
 
 impl<V: PartialEq + Clone> PartialEq for MathFunction<V> {
     fn eq(&self, other: &Self) -> bool {
-        // Mirrors `MathFunction::eql` but bounds only on `V: PartialEq` so
-        // `Calc<V>: PartialEq` (above) closes without `CalcValue`.
+        // Bounds only on `V: PartialEq` so `Calc<V>: PartialEq` (above)
+        // closes without `CalcValue`.
         match (self, other) {
             (MathFunction::Calc(a), MathFunction::Calc(b)) => a == b,
             (MathFunction::Min(a), MathFunction::Min(b)) => a == b,
@@ -1262,78 +1228,7 @@ impl<V: PartialEq + Clone> PartialEq for MathFunction<V> {
     }
 }
 
-fn eql_calc_list<V: CalcValue>(a: &[Calc<V>], b: &[Calc<V>]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    for (l, r) in a.iter().zip(b.iter()) {
-        if !l.eql(r) {
-            return false;
-        }
-    }
-    true
-}
-
 impl<V> MathFunction<V> {
-    pub fn eql(&self, other: &Self) -> bool
-    where
-        V: CalcValue,
-    {
-        match (self, other) {
-            (MathFunction::Calc(a), MathFunction::Calc(b)) => a.eql(b),
-            (MathFunction::Min(a), MathFunction::Min(b)) => eql_calc_list(a, b),
-            (MathFunction::Max(a), MathFunction::Max(b)) => eql_calc_list(a, b),
-            (
-                MathFunction::Clamp {
-                    min: a0,
-                    center: a1,
-                    max: a2,
-                },
-                MathFunction::Clamp {
-                    min: b0,
-                    center: b1,
-                    max: b2,
-                },
-            ) => a0.eql(b0) && a1.eql(b1) && a2.eql(b2),
-            (
-                MathFunction::Round {
-                    strategy: as_,
-                    value: av,
-                    interval: ai,
-                },
-                MathFunction::Round {
-                    strategy: bs,
-                    value: bv,
-                    interval: bi,
-                },
-            ) => as_ == bs && av.eql(bv) && ai.eql(bi),
-            (
-                MathFunction::Rem {
-                    dividend: ad,
-                    divisor: av,
-                },
-                MathFunction::Rem {
-                    dividend: bd,
-                    divisor: bv,
-                },
-            ) => ad.eql(bd) && av.eql(bv),
-            (
-                MathFunction::Mod {
-                    dividend: ad,
-                    divisor: av,
-                },
-                MathFunction::Mod {
-                    dividend: bd,
-                    divisor: bv,
-                },
-            ) => ad.eql(bd) && av.eql(bv),
-            (MathFunction::Abs(a), MathFunction::Abs(b)) => a.eql(b),
-            (MathFunction::Sign(a), MathFunction::Sign(b)) => a.eql(b),
-            (MathFunction::Hypot(a), MathFunction::Hypot(b)) => eql_calc_list(a, b),
-            _ => false,
-        }
-    }
-
     pub(crate) fn deep_clone(&self) -> Self
     where
         V: Clone,
@@ -1615,10 +1510,6 @@ impl CalcValue for CSSNumber {
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        *self == *other
-    }
 }
 
 impl CalcValue for Angle {
@@ -1635,10 +1526,6 @@ impl CalcValue for Angle {
             Calc::Value(v) => Ok(*v),
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
-    }
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        Angle::eql(*self, *other)
     }
 }
 
@@ -1777,10 +1664,6 @@ impl CalcValue for Percentage {
             _ => Ok(Percentage { v: f32::NAN }),
         }
     }
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        Percentage::eql(*self, *other)
-    }
 }
 
 calc_protocol_forwarders!(Time {
@@ -1823,10 +1706,6 @@ impl CalcValue for Time {
             _ => Err(input.new_custom_error(css::ParserError::invalid_value)),
         }
     }
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        Time::eql(*self, *other)
-    }
 }
 
 calc_protocol_forwarders!(Length {
@@ -1863,10 +1742,6 @@ impl CalcValue for Length {
     }
     fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
         Ok(Length::Calc(Box::new(c)))
-    }
-    #[inline]
-    fn eql(&self, other: &Self) -> bool {
-        self == other
     }
 }
 
@@ -1916,7 +1791,6 @@ macro_rules! dim_pct_protocol {
             fn from_calc(c: Calc<Self>, _input: &mut css::Parser) -> CssResult<Self> {
                 Ok(DimensionPercentage::Calc(Box::new(c)))
             }
-            #[inline] fn eql(&self, other: &Self) -> bool { self == other }
         }
     };
 }

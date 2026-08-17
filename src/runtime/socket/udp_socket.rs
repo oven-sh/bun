@@ -1593,7 +1593,7 @@ impl UDPSocket {
                         {
                             // Windows: zone identifier is a numeric scope id, not an
                             // interface name (`fe80::1%5`).
-                            // toInt32 → BunString__toInt32 → WTF::parseIntegerAllowingTrailingJunk<int32_t>:
+                            // Same rules as WTF::parseIntegerAllowingTrailingJunk<int32_t>:
                             // skip leading ASCII whitespace, optional '-' (no '+'), parse leading
                             // decimal digits, ignore trailing junk; nullopt on no-digits/overflow.
                             let zone = &address_slice[percent + 1..bytes_len];

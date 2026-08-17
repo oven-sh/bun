@@ -659,12 +659,6 @@ pub struct AddrInfo_hints {
 // SAFETY: four `c_int` fields; all-zero is a valid hints value (S021).
 unsafe impl bun_core::ffi::Zeroable for AddrInfo_hints {}
 
-impl AddrInfo_hints {
-    pub fn is_empty(&self) -> bool {
-        self.ai_flags == 0 && self.ai_family == 0 && self.ai_socktype == 0 && self.ai_protocol == 0
-    }
-}
-
 #[derive(Copy, Clone, Default)]
 pub struct ChannelOptions {
     pub timeout: Option<i32>,

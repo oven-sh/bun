@@ -28,17 +28,6 @@ TransferredMessagePort::~TransferredMessagePort()
         pipe->close(side, MessagePortPipe::CloseKind::Explicit);
 }
 
-TransferredMessagePort& TransferredMessagePort::operator=(TransferredMessagePort&& other)
-{
-    if (this != &other) {
-        if (pipe)
-            pipe->close(side, MessagePortPipe::CloseKind::Explicit);
-        pipe = WTF::move(other.pipe);
-        side = other.side;
-    }
-    return *this;
-}
-
 void MessagePortPipe::send(uint8_t fromSide, MessageWithMessagePorts&& message)
 {
     ASSERT(fromSide < 2);

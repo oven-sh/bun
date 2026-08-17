@@ -935,6 +935,56 @@ impl BunxCommand {
             BStr::new(result_package_name)
         );
 
+        // With more than one `--package`, every raw specifier becomes its own
+        // `bun add` target — no name@version reconstruction needed, since
+        // `bun add` already parses raw specifiers itself, including
+        // github:/URL forms that don't reduce to a clean name. The cache key
+        // is derived from the same raw specifiers, sorted, so `--package a
+        // --package b` and `--package b --package a` share one cache
+        // directory, then hashed so the key stays short and filesystem-safe
+        // regardless of package name length, scoped-package slashes, or how
+        // many packages were requested. For 0 or 1 `--package` this is
+        // unreachable — the single-package `package_fmt`/`install_param`
+        // computed above are used unchanged.
+        let (package_fmt, install_params): (Vec<u8>, Vec<Vec<u8>>) =
+            if opts.specified_packages.len() <= 1 {
+                (package_fmt, vec![install_param])
+            } else {
+                let params: Vec<Vec<u8>> = opts
+                    .specified_packages
+                    .iter()
+                    .copied()
+                    .map(|p| p.to_vec())
+                    .collect();
+
+                let mut sorted: Vec<&[u8]> = opts.specified_packages.clone();
+                sorted.sort();
+                let mut combined_hash: u64 = 0;
+                for p in sorted.iter().copied() {
+                    combined_hash = combined_hash.wrapping_add(hash(p));
+                }
+                let mut key = Vec::new();
+                write!(&mut key, "multi-{}-{:x}", sorted.len(), combined_hash)
+                    .map_err(|_| crate::Error::Alloc(bun_alloc::AllocError))?;
+
+                (key, params)
+            };
+        bun_output::scoped_log!(bunx, "package_fmt (final): {}", BStr::new(&package_fmt));
+
+        // `install_param` was moved into `install_params` above; log/error
+        // messages further down need a single displayable string covering
+        // every requested package, not just the first.
+        let install_param_display: Vec<u8> = {
+            let mut v = Vec::new();
+            for (i, p) in install_params.iter().enumerate() {
+                if i > 0 {
+                    v.extend_from_slice(b", ");
+                }
+                v.extend_from_slice(p);
+            }
+            v
+        };
+
         let temp_dir = RealFS::platform_temp_dir();
 
         let path_for_bin_dirs: Vec<u8> = 'brk: {
@@ -1358,10 +1408,13 @@ impl BunxCommand {
             let _ = package_json.write_all(b"{}\n");
         }
 
+        // TODO(next commit): only the first requested package is installed
+        // here — the fixed-size argv below is generalized to every entry in
+        // `install_params` right after this.
         let install_args: [&[u8]; 4] = [
             bun_core::self_exe_path()?.as_bytes(),
             b"add",
-            install_param.as_slice(),
+            install_params[0].as_slice(),
             b"--no-summary",
         ];
         let mut args: BoundedArray<&[u8], 8> =
@@ -1436,7 +1489,7 @@ impl BunxCommand {
             Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error <b>{}<r>",
-                    BStr::new(&install_param),
+                    BStr::new(&install_param_display),
                     err.name(),
                 );
                 Global::exit(1);
@@ -1484,7 +1537,7 @@ impl BunxCommand {
             SpawnStatus::Err(err) => {
                 bun_core::pretty_errorln!(
                     "<r><red>error<r>: bunx failed to install <b>{}<r> due to error:\n{}",
-                    BStr::new(&install_param),
+                    BStr::new(&install_param_display),
                     err,
                 );
                 Global::exit(1);

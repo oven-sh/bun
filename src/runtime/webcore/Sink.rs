@@ -255,12 +255,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         result
     }
 
-    /// Disconnect the upstream source: JSController → unprotect + detachPtr; ByteStream → clear its SinkHandle.
+    /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
     pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
         match *source {
             SourceHandle::JSController(value) => {
                 source.clear();
-                value.unprotect();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
                 let _ = ::bun_jsc::call_check_slow(_global, || {
                     streams::controller_abi::detach_ptr(value)

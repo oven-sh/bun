@@ -309,9 +309,7 @@ pub(crate) fn label(lockfile: &Lockfile, id: PackageID) -> Vec<u8> {
     label
 }
 
-const MAX_DEPENDENTS_SHOWN: usize = 3;
-
-// Biggest group first, dependents in name order, versioned only when the name alone is ambiguous.
+// Biggest group first, dependents (at most 3) in name order, versioned only when the name alone is ambiguous.
 fn format_wanted(
     lockfile: &Lockfile,
     group_of: &[u32],
@@ -332,7 +330,7 @@ fn format_wanted(
                 strings::order(names[a as usize].slice(buf), names[b as usize].slice(buf))
                     .then(a.cmp(&b))
             });
-            let shown = owners.len().min(MAX_DEPENDENTS_SHOWN);
+            let shown = owners.len().min(3);
             let mut dependents = Vec::new();
             for (i, &owner) in owners[..shown].iter().enumerate() {
                 if i > 0 {

@@ -82,23 +82,27 @@ public:
 
     String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }
     bool fastHas(HTTPHeaderName name) const { return m_headers.contains(name); }
-    bool fastRemove(HTTPHeaderName name) { return m_headers.remove(name); }
-    void fastSet(HTTPHeaderName name, const String& value) { m_headers.set(name, value); }
+    bool fastRemove(HTTPHeaderName name)
+    {
+        ++m_updateCounter;
+        return m_headers.remove(name);
+    }
 
     const Vector<String, 0>& getSetCookieHeaders() const { return m_headers.getSetCookieHeaders(); }
 
     class Iterator {
     public:
-        explicit Iterator(FetchHeaders&);
         Iterator(FetchHeaders&, bool lowerCaseKeys);
         std::optional<KeyValuePair<String, String>> next();
 
     private:
         Ref<FetchHeaders> m_headers;
         size_t m_currentIndex { 0 };
-        Vector<String> m_keys;
+        // The sorted-and-combined header list as of m_updateCounter. Rebuilt by
+        // next() once the headers have been mutated since it was taken.
+        Vector<KeyValuePair<String, String>> m_entries;
         uint64_t m_updateCounter { 0 };
-        size_t m_cookieIndex { 0 };
+        bool m_hasEntries { false };
         bool m_lowerCaseKeys { true };
     };
     Iterator createIterator(bool lowerCaseKeys = true)
@@ -111,7 +115,11 @@ public:
         return Iterator(*this, true);
     }
 
-    void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTF::move(headers); }
+    void setInternalHeaders(HTTPHeaderMap&& headers)
+    {
+        ++m_updateCounter;
+        m_headers = WTF::move(headers);
+    }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }
 
     void setGuard(Guard);
@@ -120,11 +128,13 @@ public:
     FetchHeaders(Guard, HTTPHeaderMap&&);
     explicit FetchHeaders(const FetchHeaders&);
 
-    uint64_t m_updateCounter { 0 };
-
 private:
     Guard m_guard;
     HTTPHeaderMap m_headers;
+    // Incremented by every member function that mutates m_headers; Iterator
+    // compares it against the value it cached to decide whether its snapshot of
+    // the header list is still current.
+    uint64_t m_updateCounter { 0 };
 };
 
 inline FetchHeaders::FetchHeaders(Guard guard, HTTPHeaderMap&& headers)

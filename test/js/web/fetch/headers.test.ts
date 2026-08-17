@@ -2,6 +2,7 @@ import { beforeAll, describe, expect, test } from "bun:test";
 // Namespace import so a missing binding fails only the kernel tests below
 // (accessing an absent export is `undefined`), not the whole file.
 import * as internalForTesting from "bun:internal-for-testing";
+import { isDebug } from "harness";
 
 beforeAll(() => {
   // expect(Headers).toBeDefined();
@@ -519,6 +520,189 @@ describe("Headers", () => {
       ]);
     });
   });
+
+  // entries()/keys()/values()/forEach()/for-of share one native iterator. Per
+  // Web IDL, each next() reads the current sort-and-combine list of the headers
+  // at the iterator's index, so a mutation between two next() calls is visible
+  // from that index on and never rewinds or fast-forwards the iterator. Node
+  // yields the same sequences for every case in this block.
+  describe("mutation during iteration", () => {
+    test("a header added past the index is yielded", () => {
+      const headers = new Headers({ a: "1", b: "2", c: "3" });
+      const it = headers.entries();
+      const first = it.next().value;
+      headers.set("d", "4");
+      expect([first, ...it]).toEqual([
+        ["a", "1"],
+        ["b", "2"],
+        ["c", "3"],
+        ["d", "4"],
+      ]);
+    });
+
+    test("values changed past the index are yielded with their new value", () => {
+      const headers = new Headers({ a: "1", b: "2", c: "3" });
+      const it = headers.entries();
+      const first = it.next().value;
+      headers.append("b", "x");
+      headers.set("c", "changed");
+      expect([first, ...it]).toEqual([
+        ["a", "1"],
+        ["b", "2, x"],
+        ["c", "changed"],
+      ]);
+    });
+
+    test("deleting a header before the index shifts the list under the index", () => {
+      const headers = new Headers({ a: "1", b: "2", c: "3" });
+      const it = headers.entries();
+      const first = it.next().value;
+      headers.delete("a");
+      expect([first, ...it]).toEqual([
+        ["a", "1"],
+        ["c", "3"],
+      ]);
+    });
+
+    test("adding a header before the index shifts the list under the index", () => {
+      const headers = new Headers({ b: "2", c: "3" });
+      const it = headers.keys();
+      const first = it.next().value;
+      headers.set("a", "1");
+      expect([first, ...it]).toEqual(["b", "b", "c"]);
+    });
+
+    test("deleting every header ends the iteration", () => {
+      const headers = new Headers({ a: "1", b: "2", c: "3" });
+      const it = headers.keys();
+      const first = it.next().value;
+      for (const name of ["a", "b", "c"]) headers.delete(name);
+      expect([first, ...it]).toEqual(["a"]);
+    });
+
+    test("forEach observes mutations made by its callback", () => {
+      const headers = new Headers({ a: "1", b: "2", c: "3" });
+      const seen: string[] = [];
+      headers.forEach((value, name) => {
+        seen.push(`${name}=${value}`);
+        if (name === "a") {
+          headers.set("c", "c2");
+          headers.set("e", "5");
+        }
+        if (name === "b") headers.delete("a");
+      });
+      expect(seen).toEqual(["a=1", "b=2", "e=5"]);
+    });
+
+    // set-cookie is iterated as one entry per value. The other names used
+    // below sort before "set-cookie", so these sequences do not depend on
+    // where the set-cookie entries are placed relative to the other headers.
+    test("a set-cookie value appended past the index is yielded", () => {
+      const headers = new Headers();
+      headers.append("a", "1");
+      headers.append("set-cookie", "k1=1");
+      headers.append("set-cookie", "k2=2");
+      const it = headers.entries();
+      const seen = [it.next().value, it.next().value];
+      headers.append("set-cookie", "k3=3");
+      expect([...seen, ...it]).toEqual([
+        ["a", "1"],
+        ["set-cookie", "k1=1"],
+        ["set-cookie", "k2=2"],
+        ["set-cookie", "k3=3"],
+      ]);
+    });
+
+    test("deleting set-cookie before reaching it removes all of its entries", () => {
+      const headers = new Headers();
+      headers.append("a", "1");
+      headers.append("b", "2");
+      headers.append("set-cookie", "k1=1");
+      headers.append("set-cookie", "k2=2");
+      const it = headers.keys();
+      const first = it.next().value;
+      headers.delete("set-cookie");
+      expect([first, ...it]).toEqual(["a", "b"]);
+    });
+
+    test("deleting a header before the index while inside the set-cookie entries skips one value", () => {
+      const headers = new Headers();
+      headers.append("a", "1");
+      headers.append("set-cookie", "k1=1");
+      headers.append("set-cookie", "k2=2");
+      headers.append("set-cookie", "k3=3");
+      const it = headers.values();
+      const seen = [it.next().value, it.next().value];
+      headers.delete("a");
+      expect([...seen, ...it]).toEqual(["1", "k1=1", "k3=3"]);
+    });
+
+    test("replacing the set-cookie values with set() shortens the list", () => {
+      const headers = new Headers();
+      headers.append("set-cookie", "k1=1");
+      headers.append("set-cookie", "k2=2");
+      headers.append("set-cookie", "k3=3");
+      const it = headers.values();
+      const first = it.next().value;
+      headers.set("set-cookie", "only=1");
+      expect([first, ...it]).toEqual(["k1=1"]);
+    });
+  });
+
+  // The iterator used to look each name up in the header map as it yielded it
+  // (a linear scan per entry), making a full iteration quadratic in the header
+  // count. Both workloads below yield LARGE entries: LARGE/SMALL passes over a
+  // SMALL-header object versus one pass over a LARGE-header object. When the
+  // per-entry cost is independent of the map size only the sort differs
+  // between them, which bounds the ratio at about 2 (measured 1.1-1.25 on
+  // release and 1.5-1.9 on debug+ASAN, where string comparisons are at their
+  // most expensive). With the per-entry scan the large pass searches a 32x
+  // bigger map for every entry: measured 10-16 on release and 18-21 on
+  // debug+ASAN. Equal allocation and back-to-back timing cancel machine speed
+  // and GC settings out of each repetition's ratio, and the median over the
+  // repetitions discards the ones disturbed by other processes. The timeout is
+  // a ceiling: passing takes 2-3s on a debug build, while the quadratic version
+  // needs 30-45s there to reach the failing assertion (or times out, which
+  // fails as well).
+  test("per-entry iteration cost does not grow with the number of headers", () => {
+    const SMALL = 32;
+    const LARGE = 1024;
+    // A repetition costs ~0.5s on a debug build and well under 1ms on release.
+    const repetitions = isDebug ? 5 : 10;
+
+    function build(count: number) {
+      const headers = new Headers();
+      for (let i = 0; i < count; i++) headers.append(`x-${i}`, `${i}`);
+      return headers;
+    }
+    function drain(headers: Headers) {
+      let yielded = 0;
+      for (const _ of headers.keys()) yielded++;
+      return yielded;
+    }
+    const small = build(SMALL);
+    const large = build(LARGE);
+
+    const ratios: number[] = [];
+    for (let rep = 0; rep < repetitions; rep++) {
+      let start = performance.now();
+      let yielded = 0;
+      for (let i = 0; i < LARGE / SMALL; i++) yielded += drain(small);
+      const smallMs = performance.now() - start;
+      expect(yielded).toBe(LARGE);
+
+      start = performance.now();
+      yielded = drain(large);
+      const largeMs = performance.now() - start;
+      expect(yielded).toBe(LARGE);
+
+      ratios.push(largeMs / smallMs);
+    }
+
+    ratios.sort((a, b) => a - b);
+    expect(ratios[ratios.length >> 1]).toBeLessThan(4);
+  }, 60_000);
+
   describe("Bun.inspect()", () => {
     const it = "toJSON" in new Headers() ? test : test.skip;
     it("can convert to json when empty", () => {

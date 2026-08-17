@@ -10,6 +10,7 @@ import {
 } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { bunEnv, bunExe, isASAN, rss } from "harness";
+import zlib from "node:zlib";
 import path from "path";
 
 describe("Zstandard compression", async () => {
@@ -328,43 +329,26 @@ describe("decompressing frames whose size is not known up front", () => {
 describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", () => {
   const MiB = 1024 * 1024;
   const CAP_MIB = 8;
+  const outOfMemory = { name: "RangeError", message: "Out of memory" };
 
-  it("compress and decompress, sync and async", async () => {
-    // All three decompress to more than the cap and each reaches the allocation differently:
-    // a header size under the 16 MiB limit is allocated up front; one above it starts the
-    // streaming decoder at 16 MiB; no header size starts small and fails while growing.
-    const frames = {
-      headerSize: zstdCompressSync(Buffer.alloc(12 * MiB)),
-      headerSizeAboveLimit: zstdCompressSync(Buffer.alloc(32 * MiB)),
-      noHeaderSize: await new Response(
-        new Response(Buffer.alloc(12 * MiB)).body!.pipeThrough(new CompressionStream("zstd")),
-      ).bytes(),
-    };
-    expect(frames.noHeaderSize[4] & 0xe0).toBe(0);
-    const framesBase64 = Object.fromEntries(
-      Object.entries(frames).map(([name, frame]) => [name, Buffer.from(frame).toString("base64")]),
+  // Runs `script` in a child whose native allocations above the cap fail. `inputs` arrive in the
+  // child as Buffers in a `inputs` object; the script prints a JSON object, which is returned.
+  async function runCapped(inputs: Record<string, Uint8Array>, script: string): Promise<unknown> {
+    const inputsBase64 = Object.fromEntries(
+      Object.entries(inputs).map(([name, bytes]) => [name, Buffer.from(bytes).toString("base64")]),
     );
-
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         /* js */ `
-          const frames = Object.fromEntries(
-            Object.entries(${JSON.stringify(framesBase64)}).map(([name, b64]) => [name, Buffer.from(b64, "base64")]),
+          const inputs = Object.fromEntries(
+            Object.entries(${JSON.stringify(inputsBase64)}).map(([name, b64]) => [name, Buffer.from(b64, "base64")]),
           );
           const describeError = e => ({ name: e.name, message: e.message });
           const results = {};
-          // The compression bound of this is a little over the cap.
-          const input = Buffer.alloc(${2 * CAP_MIB} * 1024 * 1024);
-          try { results.compressSync = Bun.zstdCompressSync(input).length; } catch (e) { results.compressSync = describeError(e); }
-          results.compress = await Bun.zstdCompress(input).then(out => out.length, describeError);
-          for (const [name, frame] of Object.entries(frames)) {
-            try { results["decompressSync " + name] = Bun.zstdDecompressSync(frame).length; } catch (e) { results["decompressSync " + name] = describeError(e); }
-            results["decompress " + name] = await Bun.zstdDecompress(frame).then(out => out.length, describeError);
-          }
-          results.afterwards = Bun.zstdDecompressSync(Bun.zstdCompressSync("still works")).toString();
-          results.afterwardsAsync = (await Bun.zstdDecompress(await Bun.zstdCompress("still works"))).toString();
+          const attempt = (name, fn) => { try { results[name] = fn().length; } catch (e) { results[name] = describeError(e); } };
+          ${script}
           console.log(JSON.stringify(results));
         `,
       ],
@@ -385,10 +369,40 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-
-    const outOfMemory = { name: "RangeError", message: "Out of memory" };
     expect(stdout, `the child printed nothing and exited with ${exitCode}\nstderr:\n${stderr}`).not.toBe("");
-    expect(JSON.parse(stdout)).toEqual({
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it.concurrent("zstd: compress and decompress, sync and async", async () => {
+    // All three decompress to more than the cap and each reaches the allocation differently:
+    // a header size under the 16 MiB limit is allocated up front; one above it starts the
+    // streaming decoder at 16 MiB; no header size starts small and fails while growing.
+    const frames = {
+      headerSize: zstdCompressSync(Buffer.alloc(12 * MiB)),
+      headerSizeAboveLimit: zstdCompressSync(Buffer.alloc(32 * MiB)),
+      noHeaderSize: await new Response(
+        new Response(Buffer.alloc(12 * MiB)).body!.pipeThrough(new CompressionStream("zstd")),
+      ).bytes(),
+    };
+    expect(frames.noHeaderSize[4] & 0xe0).toBe(0);
+
+    const results = await runCapped(
+      frames,
+      /* js */ `
+        // The compression bound of this is a little over the cap.
+        const input = Buffer.alloc(${2 * CAP_MIB} * 1024 * 1024);
+        attempt("compressSync", () => Bun.zstdCompressSync(input));
+        results.compress = await Bun.zstdCompress(input).then(out => out.length, describeError);
+        for (const [name, frame] of Object.entries(inputs)) {
+          attempt("decompressSync " + name, () => Bun.zstdDecompressSync(frame));
+          results["decompress " + name] = await Bun.zstdDecompress(frame).then(out => out.length, describeError);
+        }
+        results.afterwards = Bun.zstdDecompressSync(Bun.zstdCompressSync("still works")).toString();
+        results.afterwardsAsync = (await Bun.zstdDecompress(await Bun.zstdCompress("still works"))).toString();
+      `,
+    );
+    expect(results).toEqual({
       compressSync: outOfMemory,
       compress: outOfMemory,
       "decompressSync headerSize": outOfMemory,
@@ -400,7 +414,81 @@ describe.skipIf(!isASAN)("a failed output allocation is an error, not a crash", 
       afterwards: "still works",
       afterwardsAsync: "still works",
     });
-    expect(exitCode).toBe(0);
+  });
+
+  it.concurrent("gzip and deflate, with zlib and with libdeflate", async () => {
+    // gunzip reads the size from the gzip trailer (12 MiB, which cannot be reserved, so it
+    // starts small); inflate has no such hint. Both then fail while growing towards 12 MiB.
+    const streams = {
+      gzip: gzipSync(Buffer.alloc(12 * MiB)),
+      deflate: deflateSync(Buffer.alloc(12 * MiB)),
+    };
+
+    const results = await runCapped(
+      streams,
+      /* js */ `
+        // Both compression bounds of this are a little over the cap.
+        const input = Buffer.alloc(${2 * CAP_MIB} * 1024 * 1024);
+        for (const library of ["zlib", "libdeflate"]) {
+          attempt("gzipSync " + library, () => Bun.gzipSync(input, { library }));
+          attempt("deflateSync " + library, () => Bun.deflateSync(input, { library }));
+          attempt("gunzipSync " + library, () => Bun.gunzipSync(inputs.gzip, { library }));
+          attempt("inflateSync " + library, () => Bun.inflateSync(inputs.deflate, { library }));
+        }
+        const text = bytes => new TextDecoder().decode(bytes);
+        results.afterwards = text(Bun.gunzipSync(Bun.gzipSync("still works"))) + " " + text(Bun.inflateSync(Bun.deflateSync("still works", { library: "libdeflate" }), { library: "libdeflate" }));
+      `,
+    );
+    expect(results).toEqual({
+      "gzipSync zlib": outOfMemory,
+      "deflateSync zlib": outOfMemory,
+      "gunzipSync zlib": outOfMemory,
+      "inflateSync zlib": outOfMemory,
+      "gzipSync libdeflate": outOfMemory,
+      "deflateSync libdeflate": outOfMemory,
+      "gunzipSync libdeflate": outOfMemory,
+      "inflateSync libdeflate": outOfMemory,
+      afterwards: "still works still works",
+    });
+  });
+
+  it.concurrent("fetch() decompressing a response body", async () => {
+    // Each body decompresses to 12 MiB: the gzip trailer's size cannot be reserved up front and
+    // every streaming decoder (zlib, brotli, zstd) fails while growing its output.
+    const zeros = Buffer.alloc(12 * MiB);
+    const bodies = {
+      gzip: gzipSync(zeros),
+      deflate: zlib.deflateSync(zeros),
+      br: zlib.brotliCompressSync(zeros, { params: { [zlib.constants.BROTLI_PARAM_QUALITY]: 1 } }),
+      zstd: zstdCompressSync(zeros),
+      afterwards: gzipSync(Buffer.from("still works")),
+    };
+
+    const results = await runCapped(
+      bodies,
+      /* js */ `
+        using server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            const name = new URL(req.url).pathname.slice(1);
+            return new Response(inputs[name], { headers: { "Content-Encoding": name === "afterwards" ? "gzip" : name } });
+          },
+        });
+        for (const name of Object.keys(inputs)) {
+          results[name] = await fetch(new URL(name, server.url))
+            .then(res => res.text())
+            .then(text => text.length > 64 ? text.length : text, e => ({ name: e.name, code: e.code }));
+        }
+      `,
+    );
+    const fetchOutOfMemory = { name: "TypeError", code: "OutOfMemory" };
+    expect(results).toEqual({
+      gzip: fetchOutOfMemory,
+      deflate: fetchOutOfMemory,
+      br: fetchOutOfMemory,
+      zstd: fetchOutOfMemory,
+      afterwards: "still works",
+    });
   });
 });
 

@@ -309,12 +309,10 @@ pub fn decompress_alloc(src: &[u8]) -> core::result::Result<Vec<u8>, ZstdError> 
     // 1. Content size is unknown, OR
     // 2. Reported size exceeds safety limit (to prevent malicious inputs claiming huge sizes)
     if size == ZSTD_CONTENTSIZE_UNKNOWN || size > MAX_PREALLOCATE_SIZE {
-        let mut list: Vec<u8> = Vec::new();
-        let mut reader = ZstdReaderArrayList::init(src, &mut list)?;
-
-        reader.read_all(true)?;
-        drop(reader);
-        return Ok(list);
+        let mut output = Vec::new();
+        let mut decoder = StreamingDecoder::new()?;
+        decoder.decompress(src, &mut output, true)?;
+        return Ok(output);
     }
 
     // Fast path: size is known and within reasonable limits
@@ -337,187 +335,12 @@ pub fn get_decompressed_size(src: &[u8]) -> usize {
 
 pub use bun_core::compress::State;
 
-struct ZstdReaderArrayList<'a> {
-    pub(crate) input: &'a [u8],
-    // We operate on the caller's Vec directly via the `&mut` borrow.
-    pub(crate) list_ptr: &'a mut Vec<u8>,
-    // `list_allocator` / `allocator` params deleted — global mimalloc.
-    pub(crate) zstd: *mut c::ZSTD_DStream,
-    pub(crate) state: State,
-    pub(crate) total_out: usize,
-    pub(crate) total_in: usize,
-    /// Decompression-bomb guard: `read_all` errors instead of growing the
-    /// output past this many bytes. Defaults to unbounded.
-    pub(crate) max_output_size: usize,
-}
-
-impl<'a> ZstdReaderArrayList<'a> {
-    // `pub const new = bun.TrivialNew(...)` → Box::new; no associated const needed.
-
-    pub(crate) fn init(
-        input: &'a [u8],
-        list: &'a mut Vec<u8>,
-    ) -> core::result::Result<Box<ZstdReaderArrayList<'a>>, ZstdError> {
-        Self::init_with_list_allocator(input, list)
-    }
-
-    pub(crate) fn init_with_list_allocator(
-        input: &'a [u8],
-        list: &'a mut Vec<u8>,
-        // list_allocator / allocator params deleted (global mimalloc).
-    ) -> core::result::Result<Box<ZstdReaderArrayList<'a>>, ZstdError> {
-        let zstd = c::ZSTD_createDStream();
-        if zstd.is_null() {
-            return Err(ZstdError::ZstdFailedToCreateInstance);
-        }
-        // SAFETY: zstd is a freshly created non-null DStream.
-        let _ = unsafe { c::ZSTD_initDStream(zstd) };
-
-        Ok(Box::new(ZstdReaderArrayList {
-            input,
-            list_ptr: list,
-            zstd,
-            state: State::Uninitialized,
-            total_out: 0,
-            total_in: 0,
-            max_output_size: usize::MAX,
-        }))
-    }
-
-    pub(crate) fn end(&mut self) {
-        if self.state != State::End {
-            // SAFETY: self.zstd was created by ZSTD_createDStream and has not been freed
-            // (guarded by state != End).
-            let _ = unsafe { c::ZSTD_freeDStream(self.zstd) };
-            self.state = State::End;
-        }
-    }
-
-    pub(crate) fn read_all(&mut self, is_done: bool) -> core::result::Result<(), ZstdError> {
-        if self.state == State::End || self.state == State::Error {
-            return Ok(());
-        }
-
-        while self.state == State::Uninitialized || self.state == State::Inflating {
-            let next_in = &self.input[self.total_in..];
-
-            // If we have no input to process
-            if next_in.is_empty() {
-                if is_done {
-                    // If we're in the middle of inflating and stream is done, it's truncated
-                    if self.state == State::Inflating {
-                        self.state = State::Error;
-                        return Err(ZstdError::ZstdDecompressionError);
-                    }
-                    // No more input and stream is done, we can end
-                    self.end();
-                }
-                return Ok(());
-            }
-
-            // Decompression-bomb guard: clamp the output space handed to a single
-            // ZSTD_decompressStream call so one call can never write past the cap.
-            let remaining_output = self.max_output_size.saturating_sub(self.list_ptr.len());
-            if remaining_output == 0 {
-                self.state = State::Error;
-                return Err(ZstdError::ZstdDecompressionError);
-            }
-
-            // SAFETY: write-only spare; ZSTD_decompressStream initializes the
-            // first `out_buf.pos` bytes.
-            let spare = unsafe { bun_core::vec::reserve_spare_bytes(self.list_ptr, 4096) };
-            let mut in_buf = c::ZSTD_inBuffer {
-                src: next_in.as_ptr().cast::<c_void>(),
-                size: next_in.len(),
-                pos: 0,
-            };
-            let mut out_buf = c::ZSTD_outBuffer {
-                dst: spare.as_mut_ptr().cast::<c_void>(),
-                size: spare.len().min(remaining_output),
-                pos: 0,
-            };
-
-            // SAFETY: self.zstd is a valid DStream (state != End); in_buf/out_buf point
-            // into live slices with correct sizes.
-            let rc =
-                unsafe { c::ZSTD_decompressStream(self.zstd, &raw mut out_buf, &raw mut in_buf) };
-            if c::ZSTD_isError(rc) != 0 {
-                self.state = State::Error;
-                return Err(ZstdError::ZstdDecompressionError);
-            }
-
-            let bytes_written = out_buf.pos;
-            let bytes_read = in_buf.pos;
-            // SAFETY: ZSTD_decompressStream wrote exactly `bytes_written` initialized bytes
-            // into the spare capacity starting at the previous len.
-            unsafe { bun_core::vec::commit_spare(self.list_ptr, bytes_written) };
-            self.total_in += bytes_read;
-            self.total_out += bytes_written;
-
-            if rc == 0 {
-                // Frame is complete
-                self.state = State::Uninitialized; // Reset state since frame is complete
-
-                // Check if there's more input (multiple frames)
-                if self.total_in >= self.input.len() {
-                    // We've consumed all available input
-                    if is_done {
-                        // No more data coming, we can end the stream
-                        self.end();
-                        return Ok(());
-                    }
-                    // Frame is complete and no more input available right now.
-                    // Just return normally - the caller can provide more data later if they have it.
-                    return Ok(());
-                }
-                // More input available, reset for the next frame
-                // ZSTD_initDStream() safely resets the stream state without needing cleanup
-                // It's designed to be called multiple times on the same DStream object
-                // SAFETY: self.zstd is a valid DStream.
-                let _ = unsafe { c::ZSTD_initDStream(self.zstd) };
-                continue;
-            }
-
-            // If rc > 0, decompressor needs more data
-            if rc > 0 {
-                self.state = State::Inflating;
-            }
-
-            if bytes_read == next_in.len() {
-                // We've consumed all available input
-                if bytes_written > 0 {
-                    // We wrote some output, continue to see if we need more output space
-                    continue;
-                }
-
-                if is_done {
-                    // Stream is truncated - we're at EOF but need more data
-                    self.state = State::Error;
-                    return Err(ZstdError::ZstdDecompressionError);
-                }
-                // Not at EOF - we can retry with more data
-                return Err(ZstdError::ShortRead);
-            }
-        }
-        Ok(())
-    }
-}
-
-impl Drop for ZstdReaderArrayList<'_> {
-    fn drop(&mut self) {
-        self.end();
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // StreamingDecoder
 // ──────────────────────────────────────────────────────────────────────────
 
-/// Streaming zstd decoder that owns only the `ZSTD_DStream`. Unlike
-/// [`ZstdReaderArrayList`] it stores no `&'a [u8]` / `&'a mut Vec<u8>`
-/// borrows — input and output are passed to [`decompress`](Self::decompress)
-/// per call, so callers can hold the decoder across multiple body chunks
-/// without lifetime erasure.
+/// Owns only the `ZSTD_DStream`; input and output are passed per
+/// [`decompress`](Self::decompress) call, so it can be held across body chunks.
 pub struct StreamingDecoder {
     stream: core::ptr::NonNull<c::ZSTD_DStream>,
     pub(crate) state: State,

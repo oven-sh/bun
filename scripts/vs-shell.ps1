@@ -15,7 +15,10 @@ if($env:VSINSTALLDIR -eq $null) {
     throw "Command not found: vswhere (did you install Visual Studio?)"
   }
 
-  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
+  # -products * is required to also match Build Tools installs, which vswhere
+  # skips by default (a machine with only Build Tools would fall through to the
+  # hardcoded 2022 paths and miss newer toolsets entirely).
+  $vsDir = (& $vswhere -products * -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
     # Check common VS installation paths
     $searchPaths = @(

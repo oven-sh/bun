@@ -393,7 +393,33 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
 
 // ─── materializing a side ───────────────────────────────────────────────────
 
+/// A one-line status on stderr while a side is fetched or read, erased before anything else prints — so a large
+/// package or a slow registry never looks like a hang. Only when stderr is an interactive terminal.
+struct Status;
+impl Status {
+    fn show(what: &str, label: &[u8]) -> Option<Status> {
+        if !Output::is_stderr_tty() || !Output::enable_ansi_colors_stderr() {
+            return None;
+        }
+        Output::print_error(format_args!("\x1b[2m{what} {}…\x1b[0m\r", BStr::new(label)));
+        Output::flush();
+        Some(Status)
+    }
+}
+impl Drop for Status {
+    fn drop(&mut self) {
+        Output::print_error(format_args!("\x1b[2K\r"));
+        Output::flush();
+    }
+}
+
 fn materialize(pm: &mut PackageManager, spec: &Spec) -> Result<Tree, crate::Error> {
+    let _status = match spec {
+        Spec::Registry { name, version } => {
+            Status::show("fetching", &[&name[..], b"@", &version[..]].concat())
+        }
+        Spec::Tarball(path) | Spec::Dir(path) => Status::show("reading", path),
+    };
     match spec {
         Spec::Registry { name, version } => fetch_registry_tree(pm, name, version),
         Spec::Tarball(path) => {
@@ -492,6 +518,43 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
         );
         Global::exit(1);
     };
+    // A package (has a package.json) is read as `bun pm pack` would publish it: `files`, .npmignore/.gitignore,
+    // bins — not the whole checkout with its vendor/ and build/.
+    if let Ok(pkg) = bun_sys::File::read_from(root_fd, b"package.json") {
+        let bump = Bump::new();
+        let src: &[u8] = bump.alloc_slice_copy(&pkg);
+        if let Ok(json) = bun_parsers::json::parse_utf8(
+            &bun_ast::Source::init_path_string(b"package.json", src),
+            &mut bun_ast::Log::init(),
+            &bump,
+        ) {
+            let dir = bun_sys::Dir::from_fd(root_fd);
+            let (queue, _bins) = crate::cli::pack_command::published_files(
+                &dir,
+                &json,
+                &bump,
+                bun_install::package_manager::LogLevel::Silent,
+            )?;
+            let _ = dir.into_raw();
+            for (path, optional) in queue.into_paths() {
+                let rel = path.as_bytes();
+                match bun_sys::File::read_from(root_fd, rel) {
+                    Err(err) if optional && err.get_errno() == bun_sys::E::ENOENT => {}
+                    Ok(bytes) => {
+                        #[cfg(not(windows))]
+                        if let Ok(st) = bun_sys::fstatat(root_fd, path.as_zstr()) {
+                            tree.modes.insert(rel.to_vec(), st.st_mode as u32 & 0o777);
+                        }
+                        tree.files.insert(rel.to_vec(), bytes);
+                    }
+                    Err(err) => fail(err, rel),
+                }
+            }
+            tree.files.insert(b"package.json".to_vec(), pkg);
+            root_fd.close();
+            return Ok(tree);
+        }
+    }
     let mut stack: Vec<(Fd, Vec<u8>)> = vec![(root_fd, Vec::new())];
     while let Some((dir, prefix)) = stack.pop() {
         let mut it = DirIterator::iterate(dir);

@@ -1123,6 +1123,33 @@ describe.concurrent("bun pm diff (engine invariants)", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a folder with a package.json is read as `bun pm pack` would publish it: files, .npmignore, bins", async () => {
+    const pkg = (v: string) => JSON.stringify({ name: "p", version: v, files: ["lib", "cli.js"], bin: { p: "cli.js" } });
+    const { text, exitCode } = await pretty({
+      "a/package.json": pkg("1.0.0"),
+      "a/lib/index.js": "module.exports = 1;\n",
+      "a/lib/scratch.log": "old log\n",
+      "a/lib/.npmignore": "*.log\n",
+      "a/test/index.test.js": "test('x', () => {});\n",
+      "a/node_modules/dep/index.js": "dep\n",
+      "a/vendor/huge.bin": Buffer.alloc(64, 1),
+      "b/package.json": pkg("1.0.1"),
+      "b/lib/index.js": "module.exports = 2;\n",
+      "b/lib/scratch.log": "new log\n",
+      "b/lib/.npmignore": "*.log\n",
+      "b/test/index.test.js": "test('y', () => {});\n",
+      "b/cli.js": "#!/usr/bin/env node\n",
+      "b/vendor/huge.bin": Buffer.alloc(64, 2),
+    });
+    // Only what would ship: package.json, lib/index.js (and the bin, which appears in b).
+    const headers = text.split("\n").filter(l => /^\S.* ─+ /.test(l)).map(l => l.split(" ─")[0]);
+    expect(headers).toStrictEqual(["cli.js", "lib/index.js", "package.json"]);
+    expect(text).not.toContain("scratch.log");
+    expect(text).not.toContain("index.test.js");
+    expect(text).not.toContain("vendor/");
+    expect(exitCode).toBe(0);
+  });
+
   test("package.json callouts: main, bin, exports, engines, license, types — changed, added, removed", async () => {
     const { text, exitCode } = await pretty({
       "a/package.json": JSON.stringify({

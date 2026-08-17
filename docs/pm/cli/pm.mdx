@@ -265,7 +265,10 @@ $ bun pm diff axios@1.6.0:lib/adapters 1.6.1          # one directory
 $ bun pm diff axios@1.6.0 axios@1.6.1 dist/node/axios.cjs README.md
 $ bun pm diff lodash :trimEnd.js                       # installed → latest, one file
 $ bun pm diff react-dom@18.2.0 18.3.1 '*.min.js'
+$ bun pm diff react-dom@18.2.0 18.3.1 'cjs/**/*.production.min.js'
 ```
+
+A local folder that has a `package.json` is read the way `bun pm pack` would publish it — the `files` field, `.npmignore` / `.gitignore`, `bin` — so diffing a checkout against the registry compares what would ship, not `node_modules/`, `vendor/` or build output.
 
 Piped or with `NO_COLOR`, the output is a plain unified patch of the real file contents (so `bun pm diff a b > changes.patch` applies), and `--raw` turns the re-print off on a terminal too.
 

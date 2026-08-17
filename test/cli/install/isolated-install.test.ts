@@ -821,6 +821,96 @@ describe("transitive file dependencies of registry packages", () => {
   });
 });
 
+test("a bin that fails to link does not stop the remaining bins of the package or of its siblings from being linked", async () => {
+  // `directories.bin` names a file, so opening it as a directory fails with
+  // ENOTDIR (a missing directory would be skipped silently).
+  const badBinDir = (name: string) => JSON.stringify({ name, version: "1.0.0", directories: { bin: "package.json" } });
+  // Longer than a file name may be, so creating the link itself fails. It is
+  // the first of the package's bins, both as declared and sorted.
+  const longBinName = Buffer.alloc(300, "a").toString();
+  const longBinNameError = isWindows ? "ENOENT" : "ENAMETOOLONG";
+  const { packageDir } = await registry.createTestDir({
+    bunfigOpts: { linker: "isolated" },
+    files: {
+      "package.json": JSON.stringify({
+        name: "test-pkg-bin-link-errors",
+        workspaces: ["packages/*"],
+        dependencies: {
+          "a-bin": "file:./deps/a-bin",
+          "bad-bin-dir-1": "file:./deps/bad-bin-dir-1",
+          "bad-bin-dir-2": "file:./deps/bad-bin-dir-2",
+          "multi-bin": "file:./deps/multi-bin",
+          "z-bin": "file:./deps/z-bin",
+        },
+      }),
+      "packages/ws/package.json": JSON.stringify({
+        name: "ws",
+        dependencies: {
+          "bad-bin-dir-1": "file:../../deps/bad-bin-dir-1",
+          "z-bin": "file:../../deps/z-bin",
+        },
+      }),
+      "deps/a-bin/package.json": JSON.stringify({ name: "a-bin", version: "1.0.0", bin: { "a-cli": "cli.js" } }),
+      "deps/a-bin/cli.js": "#!/usr/bin/env node\nconsole.log('a');\n",
+      "deps/z-bin/package.json": JSON.stringify({ name: "z-bin", version: "1.0.0", bin: { "z-cli": "cli.js" } }),
+      "deps/z-bin/cli.js": "#!/usr/bin/env node\nconsole.log('z');\n",
+      "deps/bad-bin-dir-1/package.json": badBinDir("bad-bin-dir-1"),
+      "deps/bad-bin-dir-2/package.json": badBinDir("bad-bin-dir-2"),
+      "deps/multi-bin/package.json": JSON.stringify({
+        name: "multi-bin",
+        version: "1.0.0",
+        bin: { [longBinName]: "cli.js", "multi-b": "cli.js", "multi-c": "cli.js" },
+      }),
+      "deps/multi-bin/cli.js": "#!/usr/bin/env node\nconsole.log('multi');\n",
+    },
+  });
+
+  await using proc = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const binDir = async (dir: string) => {
+    const path = join(dir, "node_modules", ".bin");
+    return existsSync(path) ? await readdirSorted(path) : [];
+  };
+  const bins = (...names: string[]) => (isWindows ? names.flatMap(n => [`${n}.bunx`, `${n}.exe`]) : names).sort();
+  expect({
+    root: await binDir(packageDir),
+    ws: await binDir(join(packageDir, "packages", "ws")),
+    "multi-bin's own": await binDir(join(packageDir, "node_modules", ".bun", "multi-bin@file+deps+multi-bin")),
+  }).toEqual({
+    root: bins("a-cli", "multi-b", "multi-c", "z-cli"),
+    ws: bins("z-cli"),
+    "multi-bin's own": bins("multi-b", "multi-c"),
+  });
+
+  // Every failing package is reported once for its own `.bin` and once per
+  // package whose `.bin` it could not be linked into. Tasks run in parallel,
+  // so sort.
+  const binErrors = stderr
+    .split("\n")
+    .filter(line => line.includes("failed to link binaries"))
+    .map(line => line.replaceAll("\\", "/"))
+    .sort();
+  expect(binErrors).toEqual(
+    [
+      "ENOTDIR: failed to link binaries for package: bad-bin-dir-1@deps/bad-bin-dir-1",
+      "ENOTDIR: failed to link binaries for package: bad-bin-dir-2@deps/bad-bin-dir-2",
+      `${longBinNameError}: failed to link binaries for package: multi-bin@deps/multi-bin`,
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: test-pkg-bin-link-errors@",
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-1@deps/bad-bin-dir-1 for package: ws@workspace:packages/ws",
+      "ENOTDIR: failed to link binaries of dependency bad-bin-dir-2@deps/bad-bin-dir-2 for package: test-pkg-bin-link-errors@",
+      `${longBinNameError}: failed to link binaries of dependency multi-bin@deps/multi-bin for package: test-pkg-bin-link-errors@`,
+    ].sort(),
+  );
+  expect(exitCode).toBe(1);
+});
+
 describe("isolated workspaces", () => {
   test("basic", async () => {
     const { packageJson, packageDir } = await registry.createTestDir({ bunfigOpts: { linker: "isolated" } });

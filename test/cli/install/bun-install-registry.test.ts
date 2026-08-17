@@ -2653,6 +2653,40 @@ test("--production without a lockfile will install and not save lockfile", async
 });
 
 describe("binaries", () => {
+  test("a bin that fails to link does not stop the remaining bins of the package from being linked", async () => {
+    // Longer than a file name may be, so creating the link itself fails. It is
+    // the first of the package's bins, both as declared and sorted.
+    const longBinName = Buffer.alloc(300, "a").toString();
+    await Promise.all([
+      write(packageJson, JSON.stringify({ name: "foo", dependencies: { "multi-bin": "file:./multi-bin" } })),
+      write(
+        join(packageDir, "multi-bin", "package.json"),
+        JSON.stringify({
+          name: "multi-bin",
+          version: "1.0.0",
+          bin: { [longBinName]: "cli.js", "multi-b": "cli.js", "multi-c": "cli.js" },
+        }),
+      ),
+      write(join(packageDir, "multi-bin", "cli.js"), "#!/usr/bin/env node\nconsole.log('multi');\n"),
+    ]);
+
+    await using proc = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(await readdirSorted(join(packageDir, "node_modules", ".bin"))).toEqual(
+      isWindows ? ["multi-b.bunx", "multi-b.exe", "multi-c.bunx", "multi-c.exe"] : ["multi-b", "multi-c"],
+    );
+    expect(join(packageDir, "node_modules", ".bin", "multi-b")).toBeValidBin(join("..", "multi-bin", "cli.js"));
+    expect(stderr).toContain(`error: Failed to link multi-bin: ${isWindows ? "ENOENT" : "ENAMETOOLONG"}`);
+    expect(exitCode).toBe(1);
+  });
+
   for (const global of [false, true]) {
     describe(`existing destinations${global ? " (global)" : ""}`, () => {
       test("existing non-symlink", async () => {

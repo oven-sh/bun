@@ -144,7 +144,7 @@ impl BodyAbortListener {
             if let BodyValue::Locked(locked) = response.get_body_value() {
                 if let Some(readable) = locked.readable.get() {
                     readable.value.ensure_still_alive();
-                    readable.error(&global, reason);
+                    crate::dispatch::fold(readable.error(&global, reason));
                 }
             }
             let err = BodyValueError::JSValue(bun_jsc::strong::Optional::create(reason, &global));

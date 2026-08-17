@@ -1366,7 +1366,7 @@ impl Value {
                 if let Some(bytes) = readable.ptr.bytes() {
                     bytes.on_data(streams::Result::Err(err_ref.to_stream_error(global)));
                 } else {
-                    readable.abort(global);
+                    readable.abort(global)?;
                 }
             }
 

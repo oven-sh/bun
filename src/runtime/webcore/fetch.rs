@@ -1632,7 +1632,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
                 if let Some(stream) = stream_ref.get() {
-                    stream.cancel_with_reason(global_this, reason);
+                    stream.cancel_with_reason(global_this, reason)?;
                 }
             }
             body.detach();

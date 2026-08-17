@@ -1407,7 +1407,7 @@ where
                 if let Some(stream) = shim::response_body_stream(response) {
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     shim::response_detach_stream(response, global_this);
-                    stream.abort(global_this);
+                    crate::dispatch::fold(stream.abort(global_this));
                     any_js_calls.set(true);
                 }
             }
@@ -1923,7 +1923,7 @@ where
         let global_this = this.server().global_this();
 
         if this.is_aborted_or_ended() {
-            stream.cancel(global_this);
+            crate::dispatch::fold(stream.cancel(global_this));
             this.response_body_readable_stream_ref
                 .with_mut(|s| s.deinit());
             return;
@@ -2095,7 +2095,7 @@ where
                             .response_body_readable_stream_ref
                             .replace(readable_stream::Strong::default());
                         this.handle_reject_stream(global_this, err);
-                        stream.cancel(global_this);
+                        crate::dispatch::fold(stream.cancel(global_this));
                         readable_ref.deinit();
                     }
                 }
@@ -2118,7 +2118,7 @@ where
                 &mut response_stream.sink.source,
                 global_this,
             );
-            stream.cancel(global_this);
+            crate::dispatch::fold(stream.cancel(global_this));
             let mut readable_ref = this
                 .response_body_readable_stream_ref
                 .replace(readable_stream::Strong::default());
@@ -2168,7 +2168,7 @@ where
             &mut response_stream.sink.source,
             global_this,
         );
-        stream.cancel(global_this);
+        crate::dispatch::fold(stream.cancel(global_this));
         response_stream.sink.mark_done();
         response_stream.sink.finalize();
         this.sink.set(None);
@@ -2517,7 +2517,9 @@ where
                     let _keep = jsc::EnsureStillAlive(stream.value);
                     response.detach_readable_stream(global_this);
                     // Unread stream has no reader; `cancel()` would no-op.
-                    stream.cancel_with_reason(global_this, JSValue::UNDEFINED);
+                    crate::dispatch::fold(
+                        stream.cancel_with_reason(global_this, JSValue::UNDEFINED),
+                    );
                 }
                 *response.get_body_value() = Body::Value::Used;
                 this.end_without_body(this.should_close_connection());

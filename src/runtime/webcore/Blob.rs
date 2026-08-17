@@ -1652,7 +1652,7 @@ impl BlobExt for Blob {
                     jsc::js_promise::Status::Rejected => {
                         // SAFETY: release our +1 ref on the sink.
                         unsafe { webcore::FileSink::deref(file_sink) };
-                        readable_stream.cancel(global_this);
+                        readable_stream.cancel(global_this)?;
                         return Ok(JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                             global_this,
                             promise.result(global_this.vm()),
@@ -1662,7 +1662,7 @@ impl BlobExt for Blob {
             } else {
                 // SAFETY: release our +1 ref on the sink.
                 unsafe { webcore::FileSink::deref(file_sink) };
-                readable_stream.cancel(global_this);
+                readable_stream.cancel(global_this)?;
                 return Ok(
                     JSPromise::dangerously_create_rejected_promise_value_without_notifying_vm(
                         global_this,
@@ -5930,7 +5930,7 @@ pub(crate) fn on_file_stream_reject_request_stream(
     this.promise.reject(global_this, Ok(err))?;
 
     if let Some(stream) = strong.get() {
-        stream.cancel(global_this);
+        stream.cancel(global_this)?;
     }
     Ok(JSValue::UNDEFINED)
 }

@@ -145,13 +145,6 @@ unsafe extern "C" {
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
-    safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
-    safe fn ReadableStream__cancelWithReason(
-        stream: JSValue,
-        global: &JSGlobalObject,
-        reason: JSValue,
-    );
-    safe fn ReadableStream__error(stream: JSValue, global: &JSGlobalObject, reason: JSValue);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     safe fn ZigGlobalObject__createNativeReadableStream(
@@ -260,33 +253,39 @@ impl ReadableStream {
         self.detach_if_possible(global_this);
     }
 
-    pub fn cancel(&self, global_this: &JSGlobalObject) {
-        // cancel the stream
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__cancel(self.value, global_this);
-        // mark the stream source as done
+    /// Cancel the stream (an `AbortError` reason) and mark its native source done. The source's own
+    /// cancel failure is the cancel promise's (handled) rejection; `Err` is a termination met in there.
+    pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
         self.done(global_this);
+        result
     }
 
     /// Cancel the stream and forward `reason` verbatim to the underlying source's
     /// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
     /// this does not synthesize a DOMException — fetch() uses it to surface
     /// `AbortSignal.reason` to the request body's cancel callback.
-    pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__cancelWithReason(self.value, global_this, reason);
+    pub fn cancel_with_reason(
+        &self,
+        global_this: &JSGlobalObject,
+        reason: JSValue,
+    ) -> JsResult<()> {
+        let result =
+            bun_jsc::cpp::ReadableStream__cancelWithReason(self.value, global_this, reason);
         self.done(global_this);
+        result
     }
 
-    pub fn abort(&self, global_this: &JSGlobalObject) {
+    pub fn abort(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         // for now we are just calling cancel should be fine
-        self.cancel(global_this);
+        self.cancel(global_this)
     }
 
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
-    pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
-        ReadableStream__error(self.value, global_this, reason);
+    pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
+        let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
         self.done(global_this);
+        result
     }
 
     pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {

@@ -1,0 +1,31 @@
+{
+  "_id": "test-native-binlink-libc-musl",
+  "name": "test-native-binlink-libc-musl",
+  "dist-tags": {
+    "latest": "1.0.0"
+  },
+  "versions": {
+    "1.0.0": {
+      "name": "test-native-binlink-libc-musl",
+      "version": "1.0.0",
+      "_id": "test-native-binlink-libc-musl@1.0.0",
+      "os": [
+        "darwin",
+        "linux",
+        "win32"
+      ],
+      "cpu": [
+        "arm64",
+        "x64"
+      ],
+      "libc": [
+        "musl"
+      ],
+      "dist": {
+        "integrity": "sha512-yx0izt+2IW0gLczi5/jpu5DSzbpUYmz8GP75Lq+WzL8cYiJPY77s8ySTxhAXLK6ofayFvnKpHa34zpdwsc9n2Q==",
+        "shasum": "829db1d74b0f1addb48a0e772a6f6bda58b82088",
+        "tarball": "http://localhost:4873/test-native-binlink-libc-musl/-/test-native-binlink-libc-musl-1.0.0.tgz"
+      }
+    }
+  }
+}

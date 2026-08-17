@@ -74,11 +74,32 @@ impl PackageManifestMap {
         )
     }
 
+    /// Stores a manifest that was just fetched. When the same package was
+    /// requested both abbreviated and extended during this install (it is a
+    /// regular dependency of one package and an optional dependency of
+    /// another), the extended response must win regardless of which one
+    /// arrives last, otherwise the dependencies waiting for the extended one
+    /// would never resolve.
+    ///
+    /// This only decides what this install resolves from. A fetched document
+    /// is written to the disk cache by the task that parsed it, before it gets
+    /// here, so when both were fetched the disk ends up with whichever save
+    /// finished last; if that was the abbreviated one, the next resolve that
+    /// needs the extended document fetches it again, nothing else depends on it.
     pub(crate) fn insert(
         &mut self,
         name_hash: PackageNameHash,
         manifest: npm::PackageManifest,
     ) -> Result<(), bun_alloc::AllocError> {
+        if !manifest.pkg.has_extended_manifest
+            && matches!(
+                self.hash_map.get(&name_hash),
+                Some(Value::Manifest(existing))
+                    if existing.pkg.has_extended_manifest && existing.name() == manifest.name()
+            )
+        {
+            return Ok(());
+        }
         self.hash_map.insert(name_hash, Value::Manifest(manifest));
         Ok(())
     }
@@ -144,6 +165,11 @@ impl PackageManifestMap {
     /// `timestamp_for_manifest_cache_control`) are hoisted into
     /// [`DiskCacheCtx`] so callers never hold `&mut pm.manifests` and a
     /// `PackageManager` borrow simultaneously.
+    ///
+    /// With `needs_extended_manifest`, an abbreviated manifest is reported as
+    /// missing so the caller fetches the extended one. The entry itself is left
+    /// untouched: it is still valid for the callers that don't need the
+    /// extended fields, and `insert` replaces it once the extended one arrives.
     pub(crate) fn by_name_hash_allow_expired(
         &mut self,
         ctx: DiskCacheCtx,
@@ -154,11 +180,15 @@ impl PackageManifestMap {
         cache_behavior: CacheBehavior,
         needs_extended_manifest: bool,
     ) -> Option<&mut npm::PackageManifest> {
+        let usable = |m: &npm::PackageManifest| {
+            m.name() == name && (!needs_extended_manifest || m.pkg.has_extended_manifest)
+        };
+
         if cache_behavior == CacheBehavior::LoadFromMemory {
             let entry = self.hash_map.get_mut(&name_hash)?;
             return match entry {
-                Value::Manifest(m) if m.name() == name => Some(m),
-                Value::Expired(m) if m.name() == name => {
+                Value::Manifest(m) if usable(m) => Some(m),
+                Value::Expired(m) if usable(m) => {
                     if let Some(expiry) = is_expired {
                         *expiry = true;
                         Some(m)
@@ -170,90 +200,42 @@ impl PackageManifestMap {
             };
         }
 
-        match self.hash_map.entry(name_hash) {
-            Entry::Occupied(occ) => {
-                let value_ptr = occ.into_mut();
-                if let Value::Manifest(m) | Value::Expired(m) = &*value_ptr {
-                    if m.name() != name {
-                        return None;
-                    }
-                }
-                // Compute the demote decision first without holding a borrow
-                // that escapes the fn.
-                let demote = matches!(
-                    value_ptr,
-                    Value::Manifest(m)
-                        if needs_extended_manifest && !m.pkg.has_extended_manifest
-                );
-                if demote {
-                    let Value::Manifest(m) = core::mem::replace(value_ptr, Value::NotFound) else {
-                        unreachable!()
-                    };
-                    *value_ptr = Value::Expired(m);
-                } else if let Value::Manifest(m) = value_ptr {
-                    return Some(m);
-                }
-
-                if let Some(expiry) = is_expired {
-                    if let Value::Expired(m) = value_ptr {
-                        *expiry = true;
-                        return Some(m);
-                    }
-                }
-
-                None
-            }
+        let value_ptr = match self.hash_map.entry(name_hash) {
+            Entry::Occupied(occ) => occ.into_mut(),
             Entry::Vacant(vac) => {
+                let mut loaded = None;
                 if ctx.enable_manifest_cache {
                     // `ctx.cache_directory` is `Some` iff `enable_manifest_cache`
                     // (see `manifest_disk_cache_ctx`).
                     let cache_fd = ctx.cache_directory.expect("cache_directory");
-                    if let Some(manifest) = npm::package_manifest::Serializer::load_by_file_id(
+                    loaded = npm::package_manifest::Serializer::load_by_file_id(
                         scope, cache_fd, name, name_hash,
                     )
                     .ok()
-                    .flatten()
-                    {
-                        if needs_extended_manifest && !manifest.pkg.has_extended_manifest {
-                            let value_ptr = vac.insert(Value::Expired(manifest));
-                            if let Some(expiry) = is_expired {
-                                *expiry = true;
-                                let Value::Expired(m) = value_ptr else {
-                                    unreachable!()
-                                };
-                                return Some(m);
-                            }
-                            return None;
-                        }
-
+                    .flatten();
+                }
+                vac.insert(match loaded {
+                    Some(manifest)
                         if ctx.enable_manifest_cache_control
                             && manifest.pkg.public_max_age
-                                > ctx.timestamp_for_manifest_cache_control
-                        {
-                            let value_ptr = vac.insert(Value::Manifest(manifest));
-                            let Value::Manifest(m) = value_ptr else {
-                                unreachable!()
-                            };
-                            return Some(m);
-                        } else {
-                            let value_ptr = vac.insert(Value::Expired(manifest));
-
-                            if let Some(expiry) = is_expired {
-                                *expiry = true;
-                                let Value::Expired(m) = value_ptr else {
-                                    unreachable!()
-                                };
-                                return Some(m);
-                            }
-
-                            return None;
-                        }
+                                > ctx.timestamp_for_manifest_cache_control =>
+                    {
+                        Value::Manifest(manifest)
                     }
-                }
-
-                vac.insert(Value::NotFound);
-                None
+                    Some(manifest) => Value::Expired(manifest),
+                    None => Value::NotFound,
+                })
             }
+        };
+
+        match value_ptr {
+            Value::Manifest(m) if usable(m) => Some(m),
+            Value::Expired(m) if usable(m) => {
+                let expiry = is_expired?;
+                *expiry = true;
+                Some(m)
+            }
+            _ => None,
         }
     }
 }

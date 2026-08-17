@@ -1412,6 +1412,14 @@
           "multiple": false
         },
         {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "help",
           "shortName": "h",
           "description": "Print this help menu",
@@ -1862,6 +1870,14 @@
           "multiple": false
         },
         {
+          "name": "libc",
+          "description": "Override libc for optional dependencies (e.g., glibc, musl, * for all)",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "help",
           "shortName": "h",
           "description": "Print this help menu",
@@ -1942,6 +1958,14 @@
         {
           "name": "cpu",
           "description": "Prune for a different CPU architecture than the current one",
+          "hasValue": true,
+          "valueType": "val",
+          "required": false,
+          "multiple": false
+        },
+        {
+          "name": "libc",
+          "description": "Prune for a different libc than the current one",
           "hasValue": true,
           "valueType": "val",
           "required": false,

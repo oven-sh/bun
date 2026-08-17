@@ -5,6 +5,7 @@ import { access, copyFile, cp, exists, open, rm, writeFile } from "fs/promises";
 import {
   bunExe,
   bunEnv as env,
+  isLinux,
   isWindows,
   normalizeBunSnapshot,
   readdirSorted,
@@ -475,6 +476,11 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
+  // optional-native depends on native-libc-glibc and native-libc-musl; on Linux only the one
+  // matching the host libc is installed, elsewhere libc is not filtered. The lockfile is the
+  // same everywhere.
+  const installedLine = `${isLinux ? 12 : 13} packages installed`;
+  expect(out1.pop()).toBe(installedLine);
   expect(out1).toMatchInlineSnapshot(`
     [
       "preinstall",
@@ -483,7 +489,6 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
       "+ optional-native@1.0.0",
       "+ uses-what-bin@1.0.0 (v1.5.0 available)",
       "",
-      "13 packages installed",
     ]
   `);
 
@@ -507,13 +512,13 @@ index d156130662798530e852e1afaec5b1c03d429cdc..b4ddf35975a952fdaed99f2b14236519
     .replaceAll(/\s*\[[0-9\.]+m?s\]\s*$/g, "")
     .split(/\r?\n/)
     .slice(1);
+  expect(out2.pop()).toBe(installedLine);
   expect(out2).toMatchInlineSnapshot(`
     [
       "preinstall",
       "",
       "+ bundled-1@1.0.0",
       "",
-      "13 packages installed",
     ]
   `);
 

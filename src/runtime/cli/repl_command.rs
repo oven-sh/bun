@@ -78,6 +78,7 @@ impl ReplCommand {
             transform_options: core::mem::take(&mut ctx.args),
             debugger: core::mem::take(&mut ctx.runtime_options.debugger),
             log: core::ptr::NonNull::new(ctx.log),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             eval_mode: true,
             is_main_thread: true,

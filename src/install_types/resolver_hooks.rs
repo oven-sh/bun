@@ -1450,7 +1450,15 @@ pub trait AutoInstaller {
     fn lockfile_dependencies_buf(&self) -> &[Dependency];
     fn lockfile_resolutions_buf(&self) -> &[PackageID];
     fn lockfile_string_bytes(&self) -> &[u8];
-    fn lockfile_resolve(&self, name: &[u8], version: &DependencyVersion) -> Option<PackageID>;
+    /// `version_buf` holds the strings `version` was parsed against (a
+    /// package.json's bytes, the lockfile's string buffer, or the import
+    /// specifier itself).
+    fn lockfile_resolve(
+        &self,
+        name: &[u8],
+        version: &DependencyVersion,
+        version_buf: &[u8],
+    ) -> Option<PackageID>;
     fn lockfile_legacy_package_to_dependency_id(
         &self,
         package_id: PackageID,

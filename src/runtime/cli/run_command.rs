@@ -614,6 +614,13 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
         this_transpiler.resolver.care_about_bin_folder = true;
         this_transpiler.resolver.care_about_scripts = true;
         this_transpiler.resolver.store_fd = opts.store_root_fd;
+        // The directories read below are cached process-wide and reused by the
+        // VM that `bun run file.js` boots afterwards, and a package.json's
+        // dependency ranges (what auto-install resolves against) are only
+        // recorded when the resolver caching it has auto-install enabled. So
+        // this resolver needs the VM's setting (see `InitOptions::global_cache`).
+        this_transpiler.options.global_cache = ctx.debug.global_cache;
+        this_transpiler.resolver.opts.global_cache = ctx.debug.global_cache;
 
         // Bundler-linker + JSX-runtime config: only callers that actually
         // transpile through this `Transpiler` need it. `configure_linker`'s
@@ -956,6 +963,7 @@ Full documentation is available at <magenta>https://bun.com/docs/cli/run<r>
             transform_options: ctx.args.clone(),
             log: ::core::ptr::NonNull::new(ctx.log),
             debugger: ::core::mem::take(&mut ctx.runtime_options.debugger),
+            global_cache: ctx.debug.global_cache,
             smol: ctx.runtime_options.smol,
             mini_mode: ctx.runtime_options.smol,
             eval_mode: ctx.runtime_options.eval.eval_and_print,

@@ -121,7 +121,7 @@ A few value types are also parsed differently:
 
 - `inf` / `-inf` / `nan` are numbers (`Infinity` / `-Infinity` / `NaN`), not the strings `"inf"` / `"-inf"` / `"nan"`.
 - Integers outside `Number.MAX_SAFE_INTEGER` throw instead of silently losing precision.
-- Date and time literals parse as strings (previously rejected).
+- Date and time literals (previously rejected) parse as `Temporal` objects: offset date-times as `Temporal.Instant`, local date-times as `Temporal.PlainDateTime`, local dates as `Temporal.PlainDate`, and local times as `Temporal.PlainTime`. `bun build` emits them as `Temporal.<Type>.from(...)` calls for every target, so a bundle that imports such a file needs a `Temporal` global where it runs.
 - `Bun.TOML.parse()` throws a `SyntaxError` instead of a `BuildMessage`.
 
 See the [TOML docs](/runtime/toml) for the full supported syntax.

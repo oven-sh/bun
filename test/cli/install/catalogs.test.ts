@@ -259,6 +259,54 @@ describe("basic", () => {
     await runBunInstall(bunEnv, packageDir, { savesLockfile: false });
   });
 
+  // A file: path outside the project is only accepted on a row the root (or a workspace) owns. A catalog change
+  // re-resolves every catalog: row; the rows the root was loaded with have been replaced by then and belong to
+  // nobody, so re-resolving them fails the way an escaping transitive file: dependency does.
+  test.concurrent("changing the entry of a catalog: dependency pointing outside the project", async () => {
+    const packageJson = (xPath: string) =>
+      JSON.stringify({
+        name: "catalog-file-dep",
+        workspaces: { packages: [], catalog: { x: xPath } },
+        dependencies: { x: "catalog:" },
+      });
+    using dir = tempDir("catalog-file-dep", {
+      "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "project/package.json": packageJson("file:../x"),
+    });
+    const packageDir = join(String(dir), "project");
+    const installedVersion = async () =>
+      (await file(join(packageDir, "node_modules", "x", "package.json")).json()).version;
+
+    await runBunInstall(bunEnv, packageDir);
+    expect(await installedVersion()).toBe("1.0.0");
+
+    await write(join(packageDir, "package.json"), packageJson("file:../x2"));
+    await runBunInstall(bunEnv, packageDir);
+    expect(await installedVersion()).toBe("2.0.0");
+    expect(normalizeBunSnapshot(await file(join(packageDir, "bun.lock")).text(), packageDir)).toMatchInlineSnapshot(`
+      "{
+        "lockfileVersion": 2,
+        "configVersion": 1,
+        "workspaces": {
+          "": {
+            "name": "catalog-file-dep",
+            "dependencies": {
+              "x": "catalog:",
+            },
+          },
+        },
+        "catalog": {
+          "x": "file:../x2",
+        },
+        "packages": {
+          "x": ["x@file:../x2", {}],
+        }
+      }"
+    `);
+    await runBunInstall(bunEnv, packageDir, { frozenLockfile: true });
+  });
+
   test.concurrent("catalog and catalogs.default may split different packages between them", async () => {
     const { packageDir } = await registry.createTestDir({
       files: {
@@ -1272,6 +1320,65 @@ describe("peer dependencies", () => {
     ({ err } = await install(dir, "hoisted"));
     expect(err).toContain("Saved lockfile");
     expect(await packageKeys(dir)).toStrictEqual(dedupedKeys);
+  });
+
+  // When the catalog changes, every row declared through it is re-resolved. The root's rows from bun.lock have
+  // been replaced by then and belong to no package; re-resolving them too bound the peer a second time and
+  // repeated its warning.
+  describe("a root peer whose catalog range stops matching the installed version is checked once", () => {
+    const peerWarning = 'warn: incorrect peer dependency "no-deps@1.0.0"';
+    const peerWarnings = (err: string) => err.split(peerWarning).length - 1;
+
+    function rootWithPeer(peerSpec: string, fields: Record<string, unknown> = {}) {
+      return JSON.stringify({ name: "root", peerDependencies: { "no-deps": peerSpec }, ...fields });
+    }
+
+    async function installedAlone(packageJson: string) {
+      const { packageDir } = await registry.createTestDir({
+        bunfigOpts: { linker: "hoisted" },
+        files: { "package.json": packageJson },
+      });
+      const { err } = await install(packageDir, "hoisted");
+      expect(peerWarnings(err)).toBe(0);
+      expect((await Bun.file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).version).toBe(
+        "1.0.0",
+      );
+      return packageDir;
+    }
+
+    async function reinstall(dir: string, packageJson: string) {
+      await Bun.write(join(dir, "package.json"), packageJson);
+      const { err } = await install(dir, "hoisted");
+      expect(err).toContain("Saved lockfile");
+      return peerWarnings(err);
+    }
+
+    // The inline row is the baseline: it changes itself and is only re-enqueued by the add/update pass.
+    test.concurrent.each([
+      [
+        "through the catalog",
+        (range: string) => rootWithPeer("catalog:", { workspaces: { catalog: { "no-deps": range } } }),
+      ],
+      ["inline", (range: string) => rootWithPeer(range)],
+    ])("declared %s", async (_, packageJson) => {
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+    });
+
+    test.concurrent("overridden to catalog:", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("1.0.0", { overrides: { "no-deps": "catalog:" }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+    });
+
+    // Selected both as an overridden name and as a catalog: row; one pass handles both.
+    test.concurrent("declared through the catalog while an override of the same name changes too", async () => {
+      const packageJson = (range: string) =>
+        rootWithPeer("catalog:", { overrides: { "no-deps": range }, workspaces: { catalog: { "no-deps": range } } });
+      const dir = await installedAlone(packageJson("1.0.0"));
+      expect(await reinstall(dir, packageJson("^1.0.1"))).toBe(1);
+    });
   });
 
   // pnpm: deps-installer/test/catalogs.ts "frozen lockfile error is thrown if catalog config changes"

@@ -485,70 +485,26 @@ pub fn install_with_manager(
                         pinned_rows = enqueue_transitive(manager, &transitive, invalidates_rows)?;
                     }
 
-                    // `enqueueDependencyWithMain` can reach `Lockfile.Package.fromNPM`,
-                    // which grows `buffers.dependencies` and may reallocate it.
-                    // Iterate by index against a snapshot of the original length and
-                    // copy each entry to the stack so neither the loop nor the callee
-                    // ever reads through a pointer into the old backing storage.
-                    if manager.summary.overrides_changed && !all_name_hashes.is_empty() {
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for dependency_i in 0..dependencies_len {
-                            if pinned_rows.is_set_allow_out_of_bound(dependency_i, false) {
-                                continue;
-                            }
-                            let dependency =
-                                manager.lockfile.buffers.dependencies[dependency_i].clone();
-                            if all_name_hashes.binary_search(&dependency.name_hash).is_ok() {
-                                manager.lockfile.buffers.resolutions[dependency_i] =
-                                    invalid_package_id;
-                                if let Err(err) = enqueue_dependency_with_main(
-                                    manager,
-                                    dependency_i as u32,
-                                    &dependency,
-                                    invalid_package_id,
-                                    false,
-                                ) {
-                                    add_dependency_error(manager, &dependency, err);
-                                }
-                            }
-                        }
-                    }
-
-                    if manager.summary.catalogs_changed {
+                    if invalidates_rows {
+                        let catalogs_changed = manager.summary.catalogs_changed;
                         let mut catalog_overridden: Vec<PackageNameHash> = Vec::new();
-                        manager
-                            .lockfile
-                            .overrides
-                            .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        catalog_overridden.sort_unstable();
-                        catalog_overridden.dedup();
-                        let dependencies_len = manager.lockfile.buffers.dependencies.len();
-                        for _dep_id in 0..dependencies_len {
-                            let dep_id: DependencyID = u32::try_from(_dep_id).expect("int cast");
-                            if pinned_rows.is_set_allow_out_of_bound(_dep_id, false) {
-                                continue;
-                            }
-                            let dep =
-                                manager.lockfile.buffers.dependencies[dep_id as usize].clone();
-                            if dep.version.tag != DependencyVersionTag::Catalog
-                                && (catalog_overridden.is_empty()
-                                    || catalog_overridden.binary_search(&dep.name_hash).is_err())
-                            {
-                                continue;
-                            }
-
-                            manager.lockfile.buffers.resolutions[dep_id as usize] =
-                                invalid_package_id;
-                            if let Err(err) = enqueue_dependency_with_main(
-                                manager,
-                                dep_id,
-                                &dep,
-                                invalid_package_id,
-                                false,
-                            ) {
-                                add_dependency_error(manager, &dep, err);
-                            }
+                        if catalogs_changed {
+                            manager
+                                .lockfile
+                                .overrides
+                                .append_catalog_valued_name_hashes(&mut catalog_overridden);
+                            catalog_overridden.sort_unstable();
+                            catalog_overridden.dedup();
                         }
+                        // `all_name_hashes` is empty unless the overrides changed.
+                        reresolve_owned_rows(manager, &pinned_rows, |dependency| {
+                            all_name_hashes.binary_search(&dependency.name_hash).is_ok()
+                                || (catalogs_changed
+                                    && dependency.version.tag == DependencyVersionTag::Catalog)
+                                || catalog_overridden
+                                    .binary_search(&dependency.name_hash)
+                                    .is_ok()
+                        });
                     }
 
                     // Split this into two passes because the below may allocate memory or invalidate pointers
@@ -1536,7 +1492,7 @@ fn report_lockfile_load_error(
     Ok(())
 }
 
-/// Returns the rows the plan re-resolved so the overrides/catalogs invalidation loops that follow leave them pinned; only tracked when those loops will run.
+/// Returns the rows the plan re-resolved so the overrides/catalogs invalidation pass that follows leaves them pinned; only tracked when that pass will run.
 fn enqueue_transitive(
     manager: &mut PackageManager,
     transitive: &TransitiveUpdate,
@@ -1547,6 +1503,42 @@ fn enqueue_transitive(
         return Ok(DynamicBitSet::default());
     }
     transitive.enqueue_tracked(manager)
+}
+
+/// Re-resolves the rows `selects`, walking each package's current dependency list in package order. The root's
+/// list (just rebuilt by the differ) goes first because a later row dedupes onto what an earlier one appended
+/// (`Lockfile::get_package_id`); the root's loaded rows, now in no list, would resolve as nobody's and are not
+/// walked, nor are `pinned_rows`, which the update plan just resolved. A workspace the add/update pass is about
+/// to re-read still holds its loaded list here and is walked like any other package.
+fn reresolve_owned_rows(
+    manager: &mut PackageManager,
+    pinned_rows: &DynamicBitSet,
+    selects: impl Fn(&Dependency) -> bool,
+) {
+    // Resolving appends packages and rows; only the lists present now are walked.
+    let lists: Vec<lockfile::DependencySlice> =
+        manager.lockfile.packages.items_dependencies().to_vec();
+    for list in lists {
+        for dep_id in list.begin()..list.end() {
+            if pinned_rows.is_set_allow_out_of_bound(dep_id as usize, false) {
+                continue;
+            }
+            let dependency = manager.lockfile.buffers.dependencies[dep_id as usize].clone();
+            if !selects(&dependency) {
+                continue;
+            }
+            manager.lockfile.buffers.resolutions[dep_id as usize] = invalid_package_id;
+            if let Err(err) = enqueue_dependency_with_main(
+                manager,
+                dep_id,
+                &dependency,
+                invalid_package_id,
+                false,
+            ) {
+                add_dependency_error(manager, &dependency, err);
+            }
+        }
+    }
 }
 
 #[derive(Default)]

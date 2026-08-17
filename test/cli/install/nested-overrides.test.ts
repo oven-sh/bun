@@ -2,7 +2,7 @@ import { file, write } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, realpathSync } from "fs";
 import { rm } from "fs/promises";
-import { VerdaccioRegistry, bunEnv, bunExe } from "harness";
+import { VerdaccioRegistry, bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 const registry = new VerdaccioRegistry();
@@ -1288,6 +1288,125 @@ describe.concurrent("lockfile", () => {
     expect(after).not.toContain("no-deps@2.0.0");
     expect(after).toContain('"lockfileVersion": 2');
     await installOk(dir, "--frozen-lockfile");
+  });
+
+  // An overrides change re-resolves every row naming a previously or newly overridden package. By then the root's
+  // rows from bun.lock have been replaced by freshly parsed ones and belong to no package; they must not be
+  // re-resolved as well: a range that is no longer in package.json would add a package the current row then dedupes
+  // onto, and a file: path outside the project is only accepted on a row the root (or a workspace) owns. The
+  // root's current rows also have to be resolved before everybody else's, as on a fresh install, since a row
+  // resolved later dedupes onto a same-major package an earlier one added.
+  describe.concurrent("removing a flat rule re-resolves only the root's current rows", () => {
+    test("the root's row resolves before a dependency's row of the same name", async () => {
+      const deps = { "no-deps": "^1.0.0", "one-dep": "1.0.0" }; // one-dep@1.0.0 depends on no-deps@1.0.1
+      const [dir, fresh] = await Promise.all([
+        project({ dependencies: deps, overrides: { "no-deps": "2.0.0" } }),
+        project({ dependencies: deps }),
+      ]);
+      await Promise.all([installOk(dir), installOk(fresh)]);
+      expect(await lock(dir)).toContain("no-deps@2.0.0");
+
+      await write(join(dir, "package.json"), JSON.stringify({ name: "nested-overrides", dependencies: deps }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+      expect(await versionSeenBy(dir, "one-dep", "no-deps")).toBe("1.0.1");
+      // Same packages as installing this package.json from scratch.
+      expect(await lock(dir)).toBe(await lock(fresh));
+    });
+
+    test("a range changed in the same edit resolves on its own", async () => {
+      const dir = await project({ dependencies: { "no-deps": "~1.0.0" }, overrides: { "no-deps": "2.0.0" } });
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("2.0.0");
+
+      await write(
+        join(dir, "package.json"),
+        JSON.stringify({ name: "nested-overrides", dependencies: { "no-deps": "^1.0.0" } }),
+      );
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      // 1.0.1 is what the dropped ~1.0.0 range would pick.
+      expect(await versionSeenBy(dir, undefined, "no-deps")).toBe("1.1.0");
+      const after = await lock(dir);
+      expect(after).not.toContain('"overrides"');
+      expect(after).not.toContain("no-deps@1.0.1");
+      expect(after).not.toContain("no-deps@2.0.0");
+      await installOk(dir, "--frozen-lockfile");
+    });
+
+    const outside = {
+      "x/package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "x2/package.json": JSON.stringify({ name: "x", version: "2.0.0" }),
+      "project/y/package.json": JSON.stringify({ name: "y", version: "1.0.0" }),
+    };
+    const rootPackageJson = (pkg: Record<string, unknown>) => JSON.stringify({ name: "nested-overrides", ...pkg });
+    const before = rootPackageJson({
+      dependencies: { x: "file:../x", y: "file:./y" },
+      overrides: { x: "file:../x2" },
+    });
+
+    test("a file: dependency outside the project re-resolves to its own path", async () => {
+      using root = tempDir("override-removed-file-dep", { ...outside, "project/package.json": before });
+      const dir = join(String(root), "project");
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "x")).toBe("2.0.0");
+
+      await write(join(dir, "package.json"), rootPackageJson({ dependencies: { x: "file:../x", y: "file:./y" } }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(await versionSeenBy(dir, undefined, "x")).toBe("1.0.0");
+      expect(normalizeBunSnapshot(await lock(dir), dir)).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 2,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "nested-overrides",
+              "dependencies": {
+                "x": "file:../x",
+                "y": "file:./y",
+              },
+            },
+          },
+          "packages": {
+            "x": ["x@file:../x", {}],
+
+            "y": ["y@file:y", {}],
+          }
+        }"
+      `);
+      await installOk(dir, "--frozen-lockfile");
+    });
+
+    test("a file: dependency outside the project removed together with its rule", async () => {
+      using root = tempDir("override-and-file-dep-removed", { ...outside, "project/package.json": before });
+      const dir = join(String(root), "project");
+      await installOk(dir);
+      expect(await versionSeenBy(dir, undefined, "x")).toBe("2.0.0");
+
+      await write(join(dir, "package.json"), rootPackageJson({ dependencies: { y: "file:./y" } }));
+      const { err } = await installOk(dir);
+      expect(err).toContain("Saved lockfile");
+      expect(normalizeBunSnapshot(await lock(dir), dir)).toMatchInlineSnapshot(`
+        "{
+          "lockfileVersion": 2,
+          "configVersion": 1,
+          "workspaces": {
+            "": {
+              "name": "nested-overrides",
+              "dependencies": {
+                "y": "file:./y",
+              },
+            },
+          },
+          "packages": {
+            "y": ["y@file:y", {}],
+          }
+        }"
+      `);
+      await installOk(dir, "--frozen-lockfile");
+    });
   });
 
   test("changing only the parent's range text is a frozen-lockfile change", async () => {

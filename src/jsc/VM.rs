@@ -100,7 +100,7 @@ impl VM {
     }
 
     /// Non-blocking full collection on the GC thread (unlike [`VM::run_gc`]).
-    pub fn collect_full_async(&self) {
+    pub(crate) fn collect_full_async(&self) {
         JSC__VM__collectFullAsync(self)
     }
 

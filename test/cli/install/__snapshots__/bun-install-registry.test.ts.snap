@@ -1,13 +1,5 @@
 // Bun Snapshot v1, https://bun.sh/docs/test/snapshots
 
-exports[`auto-install symlinks (and junctions) are created correctly in the install cache 1`] = `
-"{
-  name: "is-number",
-  version: "2.0.0",
-}
-"
-`;
-
 exports[`text lockfile workspace sorting 1`] = `
 "{
   "lockfileVersion": 1,

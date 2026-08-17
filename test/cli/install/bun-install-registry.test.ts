@@ -5,8 +5,8 @@ import { copyFileSync, existsSync, mkdirSync, readFileSync } from "fs";
 import { cp, exists, lstat, mkdir, readlink, rename, rm, writeFile } from "fs/promises";
 import {
   assertManifestsPopulated,
+  bunEnv,
   bunExe,
-  bunEnv as env,
   isFlaky,
   isLinux,
   isLinux,
@@ -36,32 +36,51 @@ expect.extend({
 
 var registry: VerdaccioRegistry;
 var port: number;
-var packageDir: string;
-/** packageJson = join(packageDir, "package.json"); */
-var packageJson: string;
-
-let users: Record<string, string> = {};
 
 setDefaultTimeout(1000 * 60 * 5);
 registry = new VerdaccioRegistry();
 await registry.start();
 port = registry.port;
 
-afterAll(async () => {
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+afterAll(() => {
   registry.stop();
 });
 
-beforeEach(async () => {
-  ({ packageDir, packageJson } = await registry.createTestDir({
-    bunfigOpts: { saveTextLockfile: false, linker: "hoisted" },
-  }));
-  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
-  users = {};
-  env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
-  env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
-});
+/**
+ * Every test starts by creating its own project directory (`packageJson` is its `package.json`,
+ * `bunfig.toml` points at the registry) and an `env` whose install cache and temp directory live
+ * inside it. Tests run concurrently (`describe.concurrent` / `test.concurrent`) unless marked
+ * `serial`, so nothing else may be shared between tests. The serial ones use `toMatchSnapshot()`
+ * (not available in concurrent tests), register registry users, or need the registry to be idle.
+ */
+let previousSetup: Promise<void> = Promise.resolve();
+async function setupTest() {
+  // `createTestDir()` also deletes the registry's htpasswd file. When a concurrent group starts,
+  // every test in it calls this at once, and concurrent deletions of the same file fail on Windows
+  // (EFAULT), so the calls are chained. The directory creation itself takes a few milliseconds.
+  const created = previousSetup.then(() =>
+    registry.createTestDir({ bunfigOpts: { saveTextLockfile: false, linker: "hoisted" } }),
+  );
+  previousSetup = created.then(
+    () => {},
+    () => {},
+  );
+  const { packageDir, packageJson } = await created;
+  const tmpDir = join(packageDir, ".bun-tmp");
+  const env: NodeJS.Dict<string> = {
+    ...bunEnv,
+    BUN_INSTALL_CACHE_DIR: join(packageDir, ".bun-cache"),
+    BUN_TMPDIR: tmpDir,
+    TMPDIR: tmpDir,
+    TEMP: tmpDir,
+  };
+  return { packageDir, packageJson, env };
+}
+
+// Assigned per test by the sequential tests that share describe-level helpers; concurrent tests keep their own.
+let packageDir: string;
+let packageJson: string;
+let env: NodeJS.Dict<string>;
 
 function registryUrl() {
   return registry.registryUrl();
@@ -70,36 +89,13 @@ function registryUrl() {
 /**
  * Returns auth token
  */
-async function generateRegistryUser(username: string, password: string): Promise<string> {
-  if (users[username]) {
-    throw new Error("that user already exists");
-  } else users[username] = password;
-
-  const url = `http://localhost:${port}/-/user/org.couchdb.user:${username}`;
-  const user = {
-    name: username,
-    password: password,
-    email: `${username}@example.com`,
-  };
-
-  const response = await fetch(url, {
-    method: "PUT",
-    headers: {
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(user),
-  });
-
-  if (response.ok) {
-    const data = await response.json();
-    return data.token;
-  } else {
-    throw new Error("Failed to create user:", response.statusText);
-  }
+function generateRegistryUser(username: string, password: string): Promise<string> {
+  return registry.generateUser(username, password);
 }
 
-describe("auto-install", () => {
+describe.concurrent("auto-install", () => {
   test("symlinks (and junctions) are created correctly in the install cache", async () => {
+    const { packageDir, env } = await setupTest();
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "--print", "require('is-number')"],
       cwd: packageDir,
@@ -112,7 +108,13 @@ describe("auto-install", () => {
     });
 
     const out = await stdout.text();
-    expect(out).toMatchSnapshot();
+    expect(out).toMatchInlineSnapshot(`
+      "{
+        name: "is-number",
+        version: "2.0.0",
+      }
+      "
+    `);
     const err = await stderr.text();
     expect(err).not.toContain("error:");
     expect(await exited).toBe(0);
@@ -123,7 +125,7 @@ describe("auto-install", () => {
   });
 });
 
-describe("certificate authority", () => {
+describe.concurrent("certificate authority", () => {
   const mockRegistryFetch = function (opts?: any): (req: Request) => Promise<Response> {
     return async function (req: Request) {
       if (req.url.includes("no-deps")) {
@@ -133,6 +135,7 @@ describe("certificate authority", () => {
     };
   };
   test("valid --cafile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     using server = Bun.serve({
       port: 0,
       fetch: mockRegistryFetch(),
@@ -177,6 +180,7 @@ describe("certificate authority", () => {
     expect(await exited).toBe(0);
   });
   test("valid --ca", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     using server = Bun.serve({
       port: 0,
       fetch: mockRegistryFetch(),
@@ -233,6 +237,7 @@ describe("certificate authority", () => {
     expect(await exited).toBe(0);
   });
   test(`non-existent --cafile`, async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
 
     const { stdout, stderr, exited } = spawn({
@@ -250,6 +255,7 @@ describe("certificate authority", () => {
   });
 
   test("non-existent --cafile (absolute path)", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", version: "1.0.0", "dependencies": { "no-deps": "1.1.1" } }));
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install", "--cafile", "/does/not/exist"],
@@ -266,6 +272,7 @@ describe("certificate authority", () => {
   });
 
   test("non-existent --cafile with workspaces exits 1 without crashing", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // The workspace walk in `PackageManager::init()` populates the workspace
     // package.json cache before the HTTP thread starts. When the HTTP thread
     // then fails CA validation and drives process exit, the exit path must not
@@ -302,6 +309,7 @@ describe("certificate authority", () => {
   });
 
   test("cafile from bunfig does not exist", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -340,6 +348,7 @@ describe("certificate authority", () => {
     expect(await exited).toBe(1);
   });
   test("invalid cafile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -377,6 +386,7 @@ ljelkjwelkgjw;lekj;lkejflkj
     expect(await exited).toBe(1);
   });
   test("invalid --ca", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -403,8 +413,11 @@ ljelkjwelkgjw;lekj;lkejflkj
   });
 });
 
-describe("whoami", async () => {
+// Registering a user writes to the registry's htpasswd file, which `setupTest()` resets, so these
+// cannot overlap with each other.
+describe.serial("whoami", async () => {
   test("can get username", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     const bunfig = await registry.authBunfig("whoami");
     await Promise.all([
       write(
@@ -432,6 +445,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("username from .npmrc", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // It should report the username from npmrc, even without an account
     const bunfig = Bun.TOML.stringify({
       install: {
@@ -464,6 +478,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("only .npmrc", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     const token = await generateRegistryUser("whoami-npmrc", "whoami-npmrc");
     const npmrc = `
     //localhost:${port}/:_authToken=${token}
@@ -486,6 +501,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("two .npmrc", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     const token = await generateRegistryUser("whoami-two-npmrc", "whoami-two-npmrc");
     const packageNpmrc = `registry=http://localhost:${port}/`;
     const homeNpmrc = `//localhost:${port}/:_authToken=${token}`;
@@ -513,6 +529,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(0);
   });
   test("not logged in", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "whoami-pkg", version: "1.1.1" }));
     const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "pm", "whoami"],
@@ -528,6 +545,7 @@ describe("whoami", async () => {
     expect(await exited).toBe(1);
   });
   test("invalid token", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // create the user and provide an invalid token
     const token = await generateRegistryUser("invalid-token", "invalid-token");
     const bunfig = Bun.TOML.stringify({
@@ -556,8 +574,9 @@ describe("whoami", async () => {
   });
 });
 
-describe("package.json indentation", async () => {
+describe.concurrent("package.json indentation", async () => {
   test("works for root and workspace packages", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       // 5 space indentation
       write(packageJson, `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"]\n}`),
@@ -565,15 +584,19 @@ describe("package.json indentation", async () => {
       write(join(packageDir, "packages", "bar", "package.json"), `\n{\n\n\t"name": "bar",\n}`),
     ]);
 
-    let { exited } = spawn({
+    let { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", "no-deps"],
       cwd: packageDir,
-      stdout: "ignore",
-      stderr: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
       env,
     });
 
-    expect(await exited).toBe(0);
+    let [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed no-deps@2.0.0");
+    expect(exitCode).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     const rootPackageJson = await file(packageJson).text();
@@ -583,15 +606,19 @@ describe("package.json indentation", async () => {
     );
 
     // now add to workspace. it should keep tab indentation
-    ({ exited } = spawn({
+    ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", "no-deps"],
       cwd: join(packageDir, "packages", "bar"),
-      stdout: "inherit",
-      stderr: "inherit",
+      stdout: "pipe",
+      stderr: "pipe",
       env,
     }));
 
-    expect(await exited).toBe(0);
+    [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed no-deps@2.0.0");
+    expect(exitCode).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
     expect(await file(packageJson).text()).toBe(rootPackageJson);
@@ -600,21 +627,27 @@ describe("package.json indentation", async () => {
   });
 
   test("install maintains indentation", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, `{\n  "dependencies": {}\n  }\n`);
-    let { exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "add", "no-deps"],
       cwd: packageDir,
-      stdout: "ignore",
-      stderr: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
       env,
     });
-    expect(await exited).toBe(0);
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("error:");
+    expect(out).toContain("installed no-deps@2.0.0");
+    expect(exitCode).toBe(0);
     expect(await file(packageJson).text()).toBe(`{\n  "dependencies": {\n    "no-deps": "^2.0.0"\n  }\n}\n`);
   });
 });
 
-describe("text lockfile", () => {
-  test("workspace sorting", async () => {
+describe.concurrent("text lockfile", () => {
+  test.serial("workspace sorting", async () => {
+    const { packageDir, env } = await setupTest();
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -685,7 +718,8 @@ describe("text lockfile", () => {
     expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchSnapshot();
   });
 
-  test("--frozen-lockfile", async () => {
+  test.serial("--frozen-lockfile", async () => {
+    const { packageDir, env } = await setupTest();
     await Promise.all([
       write(
         join(packageDir, "package.json"),
@@ -754,6 +788,7 @@ describe("text lockfile", () => {
 
   for (const omit of ["dev", "peer", "optional"]) {
     test(`resolvable lockfile with ${omit} dependencies disabled`, async () => {
+      const { packageDir, env } = await setupTest();
       await Promise.all([
         write(
           join(packageDir, "package.json"),
@@ -811,6 +846,7 @@ describe("text lockfile", () => {
   }
 
   test("optionalPeers", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -872,7 +908,8 @@ describe("text lockfile", () => {
   });
 });
 
-test("--lockfile-only", async () => {
+test.concurrent("--lockfile-only", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await Promise.all([
     write(
       packageJson,
@@ -959,6 +996,7 @@ describe("frozen lockfile", () => {
   }
 
   test("CI=1 does not imply --frozen-lockfile: an out-of-date bun.lock is rewritten", async () => {
+    ({ packageDir, packageJson, env } = await setupTest());
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
 
     let { err, exitCode } = await runInstall(["--save-text-lockfile"], { CI: "1" });
@@ -986,6 +1024,7 @@ describe("frozen lockfile", () => {
   });
 
   test("--frozen-lockfile without a lockfile installs and writes no lockfile", async () => {
+    ({ packageDir, packageJson, env } = await setupTest());
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
 
     const { out, err, exitCode } = await runInstall(["--frozen-lockfile"]);
@@ -1002,6 +1041,7 @@ describe("frozen lockfile", () => {
   });
 
   test("bunfig [install] production = true treats bun.lock as frozen", async () => {
+    ({ packageDir, packageJson, env } = await setupTest());
     await write(
       packageJson,
       JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "a-dep": "1.0.1" } }),
@@ -1046,9 +1086,37 @@ describe("frozen lockfile", () => {
   });
 });
 
-describe("bundledDependencies", () => {
+describe.concurrent("bundledDependencies", () => {
+  async function install(packageDir: string, env: NodeJS.Dict<string>, args: string[]) {
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install", ...args],
+      cwd: packageDir,
+      stdout: "pipe",
+      stderr: "pipe",
+      env,
+    });
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).not.toContain("error:");
+    expect(exitCode).toBe(0);
+    return { out, err };
+  }
+
+  async function installSavingLockfile(packageDir: string, env: NodeJS.Dict<string>, textLockfile: boolean) {
+    const { err } = await install(packageDir, env, textLockfile ? ["--save-text-lockfile"] : []);
+    expect(err).toContain("Saved lockfile");
+    expect(await exists(join(packageDir, textLockfile ? "bun.lock" : "bun.lockb"))).toBeTrue();
+  }
+
+  // Installing again from the lockfile must not touch the bundled packages.
+  async function expectReinstallIsNoop(packageDir: string, env: NodeJS.Dict<string>) {
+    const { out, err } = await install(packageDir, env, []);
+    expect(err).not.toContain("Saved lockfile");
+    expect(out).toMatch(/Checked \d+ installs? across \d+ packages \(no changes\)/);
+  }
+
   for (const textLockfile of [true, false]) {
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) basic`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await Promise.all([
         write(
           packageJson,
@@ -1062,16 +1130,7 @@ describe("bundledDependencies", () => {
         ),
       ]);
 
-      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
-      let { exited } = spawn({
-        cmd,
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      });
-
-      expect(await exited).toBe(0);
+      await installSavingLockfile(packageDir, env, textLockfile);
 
       expect(
         await Promise.all([
@@ -1080,15 +1139,7 @@ describe("bundledDependencies", () => {
         ]),
       ).toEqual([false, true]);
 
-      ({ exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      }));
-
-      expect(await exited).toBe(0);
+      await expectReinstallIsNoop(packageDir, env);
 
       expect(
         await Promise.all([
@@ -1099,6 +1150,7 @@ describe("bundledDependencies", () => {
     });
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundledDependencies === true`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await Promise.all([
         write(
           packageJson,
@@ -1112,16 +1164,7 @@ describe("bundledDependencies", () => {
         ),
       ]);
 
-      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
-      let { exited } = spawn({
-        cmd,
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      });
-
-      expect(await exited).toBe(0);
+      await installSavingLockfile(packageDir, env, textLockfile);
 
       async function check() {
         return Promise.all([
@@ -1146,20 +1189,13 @@ describe("bundledDependencies", () => {
 
       expect(await check()).toEqual([false, false, true, true, true]);
 
-      ({ exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      }));
-
-      expect(await exited).toBe(0);
+      await expectReinstallIsNoop(packageDir, env);
 
       expect(await check()).toEqual([false, false, true, true, true]);
     });
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) transitive bundled dependency collision`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       // Install a package with one bundled dependency and one regular dependency.
       // The bundled dependency has a transitive dependency of the same regular dependency,
       // but at a different version. Test that the regular dependency does not replace the
@@ -1180,16 +1216,7 @@ describe("bundledDependencies", () => {
         ),
       ]);
 
-      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
-      let { exited } = spawn({
-        cmd,
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      });
-
-      expect(await exited).toBe(0);
+      await installSavingLockfile(packageDir, env, textLockfile);
 
       async function check() {
         expect(
@@ -1222,20 +1249,13 @@ describe("bundledDependencies", () => {
 
       await check();
 
-      ({ exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      }));
-
-      expect(await exited).toBe(0);
+      await expectReinstallIsNoop(packageDir, env);
 
       await check();
     });
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled names from dependencies and optionalDependencies`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       // bundled-with-optional@1.0.0 has dependencies { no-deps }, optionalDependencies { a-dep, basic-1 }
       // and bundleDependencies [no-deps, a-dep, not-a-dependency]. Its tarball ships no-deps and a-dep.
       // Only basic-1 should be installed from the registry; not-a-dependency is declared in no group
@@ -1309,6 +1329,7 @@ describe("bundledDependencies", () => {
     });
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) bundled name declared in peerDependencies`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       // bundled-peer@1.0.0 has peerDependencies { no-deps } and bundleDependencies [no-deps], and its
       // tarball ships no-deps. The peer is satisfied by the bundled copy, so nothing else is installed.
       await write(
@@ -1369,6 +1390,7 @@ describe("bundledDependencies", () => {
     });
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) git dependencies`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await Promise.all([
         write(
           packageJson,
@@ -1382,26 +1404,20 @@ describe("bundledDependencies", () => {
             },
           }),
         ),
+        // Both git packages depend on `zod`, which the local registry does not have: even though it is
+        // bundled, bun still resolves it, so this test has to use the default registry.
         write(
           join(packageDir, "bunfig.toml"),
           Bun.TOML.stringify({
             install: {
               cache: join(packageDir, ".bun-cache"),
+              saveTextLockfile: false,
             },
           }),
         ),
       ]);
 
-      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
-      let { exited } = spawn({
-        cmd,
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      });
-
-      expect(await exited).toBe(0);
+      await installSavingLockfile(packageDir, env, textLockfile);
 
       async function check() {
         expect(
@@ -1415,20 +1431,13 @@ describe("bundledDependencies", () => {
 
       await check();
 
-      ({ exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      }));
-
-      expect(await exited).toBe(0);
+      await expectReinstallIsNoop(packageDir, env);
 
       await check();
     });
 
     test(`(${textLockfile ? "bun.lock" : "bun.lockb"}) workspace dependencies bundle correctly`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await Promise.all([
         write(
           packageJson,
@@ -1450,16 +1459,7 @@ describe("bundledDependencies", () => {
         ),
       ]);
 
-      const cmd = textLockfile ? [bunExe(), "install", "--save-text-lockfile"] : [bunExe(), "install"];
-      let { exited } = spawn({
-        cmd,
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      });
-
-      expect(await exited).toBe(0);
+      await installSavingLockfile(packageDir, env, textLockfile);
 
       async function check() {
         expect(
@@ -1473,24 +1473,17 @@ describe("bundledDependencies", () => {
 
       await check();
 
-      ({ exited } = spawn({
-        cmd: [bunExe(), "install"],
-        cwd: packageDir,
-        stdout: "ignore",
-        stderr: "ignore",
-        env,
-      }));
-
-      expect(await exited).toBe(0);
+      await expectReinstallIsNoop(packageDir, env);
 
       await check();
     });
   }
 });
 
-describe("optionalDependencies", () => {
+describe.concurrent("optionalDependencies", () => {
   for (const optional of [true, false]) {
     test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -1520,6 +1513,7 @@ describe("optionalDependencies", () => {
 
   for (const rootOptional of [true, false]) {
     test(`exit code is 0 when ${rootOptional ? "root" : ""} optional dependency does not exist in registry`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -1540,6 +1534,7 @@ describe("optionalDependencies", () => {
     });
   }
   test("should not install optional deps if false in bunfig", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       join(packageDir, "bunfig.toml"),
       Bun.TOML.stringify({
@@ -1595,6 +1590,7 @@ describe("optionalDependencies", () => {
   });
 
   test("lifecycle scripts failures from transitive dependencies are ignored", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // Dependency with a transitive optional dependency that fails during its preinstall script.
     await write(
       packageJson,
@@ -1623,7 +1619,8 @@ describe("optionalDependencies", () => {
   });
 });
 
-test("it should ignore peerDependencies within workspaces", async () => {
+test.serial("it should ignore peerDependencies within workspaces", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await Promise.all([
     write(
       packageJson,
@@ -1667,28 +1664,83 @@ test("it should ignore peerDependencies within workspaces", async () => {
   expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["Baz", "a-dep", "no-deps"]);
 });
 
-test("disabled dev/peer/optional dependencies are still included in the lockfile", async () => {
-  await Promise.all([
-    write(
-      packageJson,
-      JSON.stringify({
-        devDependencies: {
-          "no-deps": "1.0.0",
-        },
-        peerDependencies: {
-          "a-dep": "1.0.1",
-        },
-        optionalDependencies: {
-          "basic-1": "1.0.0",
-        },
-      }),
-    ),
-  ]);
+test.concurrent("disabled dev/peer/optional dependencies are still included in the lockfile", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
+  await write(
+    packageJson,
+    JSON.stringify({
+      name: "foo",
+      devDependencies: {
+        "no-deps": "1.0.0",
+      },
+      peerDependencies: {
+        "a-dep": "1.0.1",
+      },
+      optionalDependencies: {
+        "basic-1": "1.0.0",
+      },
+    }),
+  );
 
-  await runBunInstall;
+  let { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--save-text-lockfile", "--omit=dev", "--omit=peer", "--omit=optional"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  let [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  // nothing to install, so there is no summary
+  expect(out.split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
+    "",
+    expect.stringMatching(/^\[[0-9.]+m?s\] done$/),
+    "",
+  ]);
+  expect(exitCode).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([]);
+
+  const lockfile = (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
+  expect(lockfile).toContain('"no-deps": ["no-deps@1.0.0",');
+  expect(lockfile).toContain('"a-dep": ["a-dep@1.0.1",');
+  expect(lockfile).toContain('"basic-1": ["basic-1@1.0.0",');
+
+  // the same lockfile resolves everything once the dependency groups are enabled again
+  ({ stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stderr: "pipe",
+    env,
+  }));
+
+  [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  // the summary follows the lockfile's order: devDependencies, optionalDependencies, peerDependencies
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
+    "",
+    "+ no-deps@1.0.0",
+    "+ basic-1@1.0.0",
+    "+ a-dep@1.0.1",
+    "",
+    "3 packages installed",
+  ]);
+  expect(exitCode).toBe(0);
+
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["a-dep", "basic-1", "no-deps"]);
+  expect((await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234")).toBe(
+    lockfile,
+  );
 });
 
-test("tarball override does not crash", async () => {
+test.concurrent("tarball override does not crash", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await write(
     packageJson,
     JSON.stringify({
@@ -1712,7 +1764,7 @@ test("tarball override does not crash", async () => {
   });
 });
 
-describe.each(["--production", "without --production"])("%s", flag => {
+describe.concurrent.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
   const order = ["devDependencies", "dependencies"];
   // const stdio = process.versions.bun.includes("debug") ? "inherit" : "ignore";
@@ -1720,6 +1772,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
 
   if (prod) {
     test("modifying package.json with --production should not save lockfile", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -1817,6 +1870,7 @@ describe.each(["--production", "without --production"])("%s", flag => {
   }
 
   test(`should prefer ${order[+prod % 2]} over ${order[1 - (+prod % 2)]}`, async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -1911,7 +1965,8 @@ describe.each(["--production", "without --production"])("%s", flag => {
   });
 });
 
-test("hardlinks on windows dont fail with long paths", async () => {
+test.concurrent("hardlinks on windows dont fail with long paths", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await mkdir(join(packageDir, "a-package"));
   await writeFile(
     join(packageDir, "a-package", "package.json"),
@@ -1958,7 +2013,8 @@ test("hardlinks on windows dont fail with long paths", async () => {
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
-test("basic 1", async () => {
+test.concurrent("basic 1", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -2024,7 +2080,8 @@ test("basic 1", async () => {
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
-test("manifest cache will invalidate when registry changes", async () => {
+test.concurrent("manifest cache will invalidate when registry changes", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   const cacheDir = join(packageDir, ".bun-cache");
   await Promise.all([
     write(
@@ -2082,7 +2139,8 @@ test("manifest cache will invalidate when registry changes", async () => {
   }
 });
 
-test("dependency from root satisfies range from dependency", async () => {
+test.concurrent("dependency from root satisfies range from dependency", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -2152,7 +2210,8 @@ test("dependency from root satisfies range from dependency", async () => {
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
-test("duplicate names and versions in a manifest do not install incorrect packages", async () => {
+test.concurrent("duplicate names and versions in a manifest do not install incorrect packages", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   /**
    * `duplicate-name-and-version` has two versions:
    *   1.0.1:
@@ -2199,7 +2258,7 @@ test("duplicate names and versions in a manifest do not install incorrect packag
   ]);
 });
 
-describe("peerDependency index out of bounds", async () => {
+describe.concurrent("peerDependency index out of bounds", async () => {
   // Test for "index of out bounds" errors with peer dependencies when adding/removing a package
   //
   // Repro:
@@ -2214,6 +2273,7 @@ describe("peerDependency index out of bounds", async () => {
     for (const secondDep of dependencies) {
       if (firstDep === secondDep) continue;
       test(`replacing ${firstDep} with ${secondDep}`, async () => {
+        const { packageDir, packageJson, env } = await setupTest();
         await write(
           packageJson,
           JSON.stringify({
@@ -2281,6 +2341,7 @@ describe("peerDependency index out of bounds", async () => {
   // internally, testing for index out of bounds. It's also important cache is deleted to ensure a tarball
   // task is created for it.
   test("optional", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -2320,90 +2381,95 @@ describe("peerDependency index out of bounds", async () => {
   });
 });
 
-test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
+test.concurrent(
+  "peerDependency in child npm dependency should not maintain old version when package is upgraded",
+  async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await stderr.text();
+    var out = await stdout.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      expect.stringContaining("+ no-deps@1.0.0"),
+      "+ peer-deps-fixed@1.0.0",
+      "",
+      "2 packages installed",
+    ]);
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
       version: "1.0.0",
-      dependencies: {
-        "peer-deps-fixed": "1.0.0",
-        "no-deps": "1.0.0",
-      },
-    }),
-  );
+    } as any);
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
+    await writeFile(
+      packageJson,
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "peer-deps-fixed": "1.0.0",
+          "no-deps": "1.0.1", // upgrade the package
+        },
+      }),
+    );
 
-  var err = await stderr.text();
-  var out = await stdout.text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
-    "",
-    expect.stringContaining("+ no-deps@1.0.0"),
-    "+ peer-deps-fixed@1.0.0",
-    "",
-    "2 packages installed",
-  ]);
-  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
-    name: "no-deps",
-    version: "1.0.0",
-  } as any);
-  expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
 
-  await writeFile(
-    packageJson,
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "peer-deps-fixed": "1.0.0",
-        "no-deps": "1.0.1", // upgrade the package
-      },
-    }),
-  );
+    err = await stderr.text();
+    out = await stdout.text();
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
+      name: "no-deps",
+      version: "1.0.1",
+    } as any);
+    expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      expect.stringContaining("+ no-deps@1.0.1"),
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+  },
+);
 
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await stderr.text();
-  out = await stdout.text();
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toEqual({
-    name: "no-deps",
-    version: "1.0.1",
-  } as any);
-  expect(await exists(join(packageDir, "node_modules", "peer-deps-fixed", "node_modules"))).toBeFalse();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
-    "",
-    expect.stringContaining("+ no-deps@1.0.1"),
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-});
-
-test("package added after install", async () => {
+test.concurrent("package added after install", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -2519,7 +2585,8 @@ test("package added after install", async () => {
   assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 });
 
-test("--production excludes devDependencies in workspaces", async () => {
+test.concurrent("--production excludes devDependencies in workspaces", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await Promise.all([
     write(
       packageJson,
@@ -2615,7 +2682,8 @@ test("--production excludes devDependencies in workspaces", async () => {
   expect(results).toMatchObject(expectedResults);
 });
 
-test("--production without a lockfile will install and not save lockfile", async () => {
+test.concurrent("--production without a lockfile will install and not save lockfile", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -2654,8 +2722,9 @@ test("--production without a lockfile will install and not save lockfile", async
   expect(await exists(join(packageDir, "node_modules", "no-deps", "index.js"))).toBeTrue();
 });
 
-describe("binaries", () => {
+describe.concurrent("binaries", () => {
   test("a bin that fails to link does not stop the remaining bins of the package from being linked", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // Longer than a file name may be, so creating the link itself fails. It is
     // the first of the package's bins, both as declared and sorted.
     const longBinName = Buffer.alloc(300, "a").toString();
@@ -2692,6 +2761,7 @@ describe("binaries", () => {
   for (const global of [false, true]) {
     describe(`existing destinations${global ? " (global)" : ""}`, () => {
       test("existing non-symlink", async () => {
+        const { packageDir, packageJson, env } = await setupTest();
         await Promise.all([
           write(
             packageJson,
@@ -2715,6 +2785,7 @@ describe("binaries", () => {
     });
   }
   test("it should correctly link binaries after deleting node_modules", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     const json: any = {
       name: "foo",
       version: "1.0.0",
@@ -2785,6 +2856,7 @@ describe("binaries", () => {
   });
 
   test("will link binaries for packages installed multiple times", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -2835,6 +2907,7 @@ describe("binaries", () => {
   });
 
   test("it should re-symlink binaries that become invalid when updating package versions", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -2919,6 +2992,7 @@ describe("binaries", () => {
   });
 
   test("will only link global binaries for requested packages", async () => {
+    const { packageDir, env } = await setupTest();
     await Promise.all([
       write(
         join(packageDir, "bunfig.toml"),
@@ -2979,6 +3053,7 @@ describe("binaries", () => {
 
   for (const global of [false, true]) {
     test(`bin types${global ? " (global)" : ""}`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       if (global) {
         await write(
           join(packageDir, "bunfig.toml"),
@@ -3018,22 +3093,38 @@ describe("binaries", () => {
         env: global ? { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") } : env,
       });
 
-      const err = await stderr.text();
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(err).not.toContain("error:");
+      expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+        expect.stringContaining("bun add v1."),
+        "",
+        "installed dep-with-file-bin@1.0.0 with binaries:",
+        " - dep-with-file-bin",
+        "installed dep-with-single-entry-map-bin@1.0.0 with binaries:",
+        " - single-entry-map-bin",
+        // the summary does not enumerate `directories.bin` entries
+        "installed dep-with-directory-bins@1.0.0",
+        "installed dep-with-map-bins@1.0.0 with binaries:",
+        " - map-bin-1",
+        " - map-bin-2",
+        "",
+        "4 packages installed",
+      ]);
+      expect(exitCode).toBe(0);
 
-      const out = await stdout.text();
-      expect(await exited).toBe(0);
-
-      await runBin("dep-with-file-bin", "file-bin\n", global);
-      await runBin("single-entry-map-bin", "single-entry-map-bin\n", global);
-      await runBin("directory-bin-1", "directory-bin-1\n", global);
-      await runBin("directory-bin-2", "directory-bin-2\n", global);
-      await runBin("map-bin-1", "map-bin-1\n", global);
-      await runBin("map-bin-2", "map-bin-2\n", global);
+      await Promise.all([
+        runBin(packageDir, env, "dep-with-file-bin", "file-bin\n", global),
+        runBin(packageDir, env, "single-entry-map-bin", "single-entry-map-bin\n", global),
+        runBin(packageDir, env, "directory-bin-1", "directory-bin-1\n", global),
+        runBin(packageDir, env, "directory-bin-2", "directory-bin-2\n", global),
+        runBin(packageDir, env, "map-bin-1", "map-bin-1\n", global),
+        runBin(packageDir, env, "map-bin-2", "map-bin-2\n", global),
+      ]);
     });
   }
 
-  test("each type of binary serializes correctly to text lockfile", async () => {
+  test.serial("each type of binary serializes correctly to text lockfile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -3156,7 +3247,8 @@ describe("binaries", () => {
     expect(join(packageDir, "node_modules", ".bin", "map-bin-2")).toBeValidBin(join("..", "map-bin", "map-bin-2.js"));
   });
 
-  test.todo("text lockfile updates with new bin entry for folder dependencies", async () => {
+  test.serial.todo("text lockfile updates with new bin entry for folder dependencies", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -3252,6 +3344,7 @@ describe("binaries", () => {
   });
 
   test("bin targets with a trailing slash are linked", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // npm resolves each target with path.resolve, which drops trailing separators,
     // so all of these link the file. Covers the string, single-entry and multi-entry
     // forms of "bin" since each is linked by a separate code path.
@@ -3317,7 +3410,8 @@ describe("binaries", () => {
     expectBins();
   });
 
-  test("root resolution bins", async () => {
+  test.serial("root resolution bins", async () => {
+    const { packageDir, env } = await setupTest();
     // As of writing this test, the only way to get a root resolution
     // is to migrate a package-lock.json with a root resolution. For now,
     // we'll just mock the bun.lock.
@@ -3407,7 +3501,13 @@ describe("binaries", () => {
     expect(join(packageDir, "node_modules", ".bin", "fooooo")).toBeValidBin(join("..", "fooooo", "fooooo.js"));
   });
 
-  async function runBin(binName: string, expected: string, global: boolean) {
+  async function runBin(
+    packageDir: string,
+    env: NodeJS.Dict<string>,
+    binName: string,
+    expected: string,
+    global: boolean,
+  ) {
     const args = global ? [`./global-bin-dir/${binName}`] : [bunExe(), binName];
     const result = Bun.spawn({
       cmd: [...args, "--linker=hoisted"],
@@ -3417,14 +3517,12 @@ describe("binaries", () => {
       env,
     });
 
-    const out = await result.stdout.text();
-    expect(out).toEqual(expected);
-    const err = await result.stderr.text();
-    expect(err).toBeEmpty();
-    expect(await result.exited).toBe(0);
+    const [out, err, exitCode] = await Promise.all([result.stdout.text(), result.stderr.text(), result.exited]);
+    expect({ binName, out, err, exitCode }).toEqual({ binName, out: expected, err: "", exitCode: 0 });
   }
 
   test("it will skip (without errors) if a folder from `directories.bin` does not exist", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -3438,16 +3536,27 @@ describe("binaries", () => {
       cp(join(import.meta.dir, "missing-directory-bin-1.1.1.tgz"), join(packageDir, "missing-directory-bin-1.1.1.tgz")),
     ]);
 
-    const { stderr, exited } = spawn({
+    const { stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
       cwd: packageDir,
       stdout: "pipe",
       stderr: "pipe",
       env,
     });
-    const err = await stderr.text();
+    const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+    expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("error:");
-    expect(await exited).toBe(0);
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "+ missing-directory-bin@missing-directory-bin-1.1.1.tgz",
+      "",
+      "1 package installed",
+    ]);
+    expect(exitCode).toBe(0);
+
+    // the package itself is installed, it just has no bins to link
+    expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["missing-directory-bin"]);
   });
 
   describe("bin values longer than the path buffer", () => {
@@ -3514,6 +3623,7 @@ describe("binaries", () => {
 
     for (const linker of ["hoisted", "isolated"] as const) {
       test(`file targets are skipped like missing bins (${linker})`, async () => {
+        ({ packageDir, packageJson, env } = await setupTest());
         // A target this long cannot exist, and the linker silently skips a bin
         // whose target does not exist, so these install without output and the
         // other bins are still linked. Covers the string, single-entry and
@@ -3586,6 +3696,7 @@ describe("binaries", () => {
       });
 
       test(`directories.bin fails with ENAMETOOLONG (${linker})`, async () => {
+        ({ packageDir, packageJson, env } = await setupTest());
         // The linker reports every failure to open a bin directory other than
         // ENOENT, and ENAMETOOLONG is what the OS reports for a directory path it
         // cannot address, so a value that does not fit gets the same error.
@@ -3631,6 +3742,7 @@ describe("binaries", () => {
     // The entries of a bin directory are joined onto the directory's path as
     // well, and so is the temporary file used to rewrite a CRLF shebang.
     test.skipIf(isWindows)("entries of a directories.bin close to the path limit", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       // Most of the depth goes into the project directory: the `.bin` links are
       // relative, so everything below the package ends up in the link targets,
       // and XFS rejects link targets of 1 KiB or more. The bin directory is then
@@ -3676,6 +3788,7 @@ describe("binaries", () => {
     // on another branch of the tree contributes one `..` per component, so the
     // link target can be longer than the target's absolute path.
     test.skipIf(isWindows)("bun link with a link target longer than the path buffer", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       // As in the previous test, most of the depth has to sit above everything
       // that ends up in a link target that is meant to be created (XFS), so it
       // goes into the global directory itself.
@@ -3736,6 +3849,7 @@ describe("binaries", () => {
     });
 
     test("bun link and bun unlink", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       // `bun link` links a package's bins into the global bin directory with the
       // same linker, and `bun unlink` is the only caller of its unlink side, which
       // has to open the same bin directory.
@@ -3787,7 +3901,8 @@ describe("binaries", () => {
   });
 });
 
-test("--config cli flag works", async () => {
+test.concurrent("--config cli flag works", async () => {
+  const { packageDir, env } = await setupTest();
   await Promise.all([
     write(
       join(packageDir, "package.json"),
@@ -3814,7 +3929,7 @@ test("--config cli flag works", async () => {
   ]);
 
   // should install dev dependencies
-  let { exited } = spawn({
+  let { stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "i"],
     cwd: packageDir,
     stdout: "pipe",
@@ -3822,7 +3937,18 @@ test("--config cli flag works", async () => {
     env,
   });
 
-  expect(await exited).toBe(0);
+  let [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
+    "",
+    expect.stringContaining("+ a-dep@1.0.1"),
+    expect.stringContaining("+ no-deps@1.0.0"),
+    "",
+    "2 packages installed",
+  ]);
+  expect(exitCode).toBe(0);
   expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
     name: "a-dep",
     version: "1.0.1",
@@ -3831,7 +3957,7 @@ test("--config cli flag works", async () => {
   await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
   // should not install dev dependencies
-  ({ exited } = spawn({
+  ({ stdout, stderr, exited } = spawn({
     cmd: [bunExe(), "i", "--config=bunfig2.toml"],
     cwd: packageDir,
     stdout: "pipe",
@@ -3839,11 +3965,22 @@ test("--config cli flag works", async () => {
     env,
   }));
 
-  expect(await exited).toBe(0);
-  expect(await exists(join(packageDir, "node_modules", "a-dep"))).toBeFalse();
+  [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
+  expect(err).not.toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    expect.stringContaining("bun install v1."),
+    "",
+    "+ no-deps@1.0.0",
+    "",
+    "1 package installed",
+  ]);
+  expect(exitCode).toBe(0);
+  expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual(["no-deps"]);
 });
 
-test("it should invalid cached package if package.json is missing", async () => {
+test.concurrent("it should invalid cached package if package.json is missing", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await Promise.all([
     write(
       packageJson,
@@ -3915,7 +4052,8 @@ const checkedCountWithOptionalNative = expect.stringContaining(
   `Checked ${installsWithOptionalNative} installs across 23 packages (no changes)`,
 );
 
-test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {
+test.concurrent("it should install with missing bun.lockb, node_modules, and/or cache", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   // first clean install
   await writeFile(
     packageJson,
@@ -4119,9 +4257,10 @@ test("it should install with missing bun.lockb, node_modules, and/or cache", asy
   ]);
 });
 
-describe("hoisting", async () => {
+describe.concurrent("hoisting", async () => {
   // https://github.com/oven-sh/bun/issues/7241
   test("nested dependency is preserved when its parent is reinstalled from an empty cache", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // `one-fixed-dep@1.0.0` depends on `no-deps@1.0.0`. With `no-deps@2.0.0`
     // at the root, `no-deps@1.0.0` is forced to nest under
     // `node_modules/one-fixed-dep/node_modules/no-deps`.
@@ -4170,6 +4309,7 @@ describe("hoisting", async () => {
 
   // https://github.com/oven-sh/bun/issues/16968
   test("nested dependency is preserved when its parent changes version via lockfile", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // has-bin-entries@1.0.0 and @2.0.0 both depend on no-deps@1.0.0. With
     // no-deps@2.0.0 at the root, no-deps@1.0.0 nests under has-bin-entries.
 
@@ -4226,6 +4366,7 @@ describe("hoisting", async () => {
   });
 
   test("nested dependency is left alone when only an unrelated root sibling is reinstalled", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -4261,6 +4402,7 @@ describe("hoisting", async () => {
   });
 
   test("dependencies nested two levels below a reinstalled package are reinstalled", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // See registry/packages/create-two-level-nest-package.ts for the layout.
     await writeFile(
       packageJson,
@@ -4309,6 +4451,7 @@ describe("hoisting", async () => {
   });
 
   test("recreating a workspace link leaves the workspace's nested dependencies alone", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } }),
@@ -4339,6 +4482,7 @@ describe("hoisting", async () => {
   });
 
   test("dependency nested in a reinstalled file: dependency of a workspace is reinstalled", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({ name: "foo", workspaces: ["packages/*"], dependencies: { "no-deps": "2.0.0" } }),
@@ -4470,6 +4614,7 @@ describe("hoisting", async () => {
 
   for (const { dependencies, expected, situation } of tests) {
     test(`it should hoist ${expected} when ${situation}`, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -4522,7 +4667,9 @@ describe("hoisting", async () => {
     });
   }
 
-  describe("peers", async () => {
+  // Which `a-dep` gets hoisted depends on the order the manifests arrive in, so these run one at a
+  // time to keep the registry quiet while they run.
+  describe.serial("peers", async () => {
     var peerTests: any = [
       {
         situation: "peer 1.0.2",
@@ -4632,6 +4779,7 @@ describe("hoisting", async () => {
     ];
     for (const { dependencies, expected, situation } of peerTests) {
       test(`it should hoist ${expected} when ${situation}`, async () => {
+        const { packageDir, packageJson, env } = await setupTest();
         await writeFile(
           packageJson,
           JSON.stringify({
@@ -4678,7 +4826,8 @@ describe("hoisting", async () => {
         expect(err).toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(out).not.toContain("package installed");
+        // re-resolving without a lockfile must land on the same tree
+        expect(out).toMatch(/Checked \d+ installs across \d+ packages \(no changes\)/);
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
@@ -4700,7 +4849,10 @@ describe("hoisting", async () => {
         expect(err).not.toContain("Saved lockfile");
         expect(err).not.toContain("not found");
         expect(err).not.toContain("error:");
-        expect(out).not.toContain("package installed");
+        for (const dep of Object.keys(dependencies)) {
+          expect(out).toContain(`+ ${dep}@${dependencies[dep]}`);
+        }
+        expect(out).toMatch(/\d+ packages installed/);
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
@@ -4709,6 +4861,7 @@ describe("hoisting", async () => {
     }
 
     test("peer * hoists the same version no matter which manifest the registry answers first", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       // Proxy in front of verdaccio that forces the arrival order seen on slow
       // CI machines: the a-dep manifest gets processed (so a-dep@1.0.1..1.0.9
       // exist in the lockfile) before peer-a-dep-star's manifest arrives, and
@@ -4763,6 +4916,7 @@ describe("hoisting", async () => {
     });
 
     test("peer * binds to the same version when bun.lock is loaded as when it was resolved", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       // Nothing above `peer-a-dep-star` provides a-dep, so the isolated linker
       // installs the peer from the version the edge resolved to and keys the
       // store entry by it. The root of the printed tree holds a-dep@1.0.1 (from
@@ -4819,6 +4973,7 @@ describe("hoisting", async () => {
   });
 
   test("hoisting/using incorrect peer dep after install", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -4923,6 +5078,7 @@ describe("hoisting", async () => {
   });
 
   test("root workspace (other than root) dependency will not hoist incorrect peer", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -4995,6 +5151,7 @@ describe("hoisting", async () => {
   });
 
   test("hoisting/using incorrect peer dep on initial install", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -5100,6 +5257,7 @@ describe("hoisting", async () => {
 
   describe("devDependencies", () => {
     test("from normal dependency", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       // Root package should choose no-deps@1.0.1.
       //
       // `normal-dep-and-dev-dep` should install `no-deps@1.0.0` and `normal-dep@1.0.1`.
@@ -5151,6 +5309,7 @@ describe("hoisting", async () => {
     });
 
     test("from workspace", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -5212,6 +5371,7 @@ describe("hoisting", async () => {
     });
 
     test("from linked package", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -5280,6 +5440,7 @@ describe("hoisting", async () => {
     });
 
     test("dependency with normal dependency same as root", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -5324,7 +5485,8 @@ describe("hoisting", async () => {
     });
   });
 
-  test.todoIf(isFlaky && isWindows)("text lockfile is hoisted", async () => {
+  test.serial.todoIf(isFlaky && isWindows)("text lockfile is hoisted", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     // Each dependency depends on 'hoist-lockfile-shared'.
     // 1 - "*"
     // 2 - "^1.0.1"
@@ -5397,6 +5559,7 @@ describe("hoisting", async () => {
   }
 
   test("a dependency's `*` shares the version the root's own range resolved to", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -5410,6 +5573,7 @@ describe("hoisting", async () => {
   });
 
   test("a dependency's `*` shares the version a workspace's own range resolved to", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -5426,8 +5590,8 @@ describe("hoisting", async () => {
   });
 });
 
-describe("transitive file dependencies", () => {
-  async function checkHoistedFiles() {
+describe.concurrent("transitive file dependencies", () => {
+  async function checkHoistedFiles(packageDir: string) {
     const aliasedFileDepFilesPackageJson = join(
       packageDir,
       "node_modules",
@@ -5487,7 +5651,7 @@ describe("transitive file dependencies", () => {
     ]);
   }
 
-  async function checkUnhoistedFiles() {
+  async function checkUnhoistedFiles(packageDir: string) {
     const results = await Promise.all([
       file(join(packageDir, "node_modules", "dep-file-dep", "package.json")).json(),
       file(join(packageDir, "node_modules", "file-dep", "package.json")).json(),
@@ -5570,6 +5734,7 @@ describe("transitive file dependencies", () => {
   }
 
   test("from hoisted workspace dependencies", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -5611,7 +5776,7 @@ describe("transitive file dependencies", () => {
       "14 packages installed",
     ]);
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
     expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
@@ -5626,7 +5791,7 @@ describe("transitive file dependencies", () => {
       "14 packages installed",
     ]);
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
 
     ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -5637,7 +5802,7 @@ describe("transitive file dependencies", () => {
       "1 package installed",
     ]);
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "bun.lockb"), { force: true });
@@ -5660,7 +5825,7 @@ describe("transitive file dependencies", () => {
       "14 packages installed",
     ]);
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
     expect(await exists(join(packageDir, "pkg1", "node_modules"))).toBeFalse();
 
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
@@ -5690,9 +5855,12 @@ describe("transitive file dependencies", () => {
       "",
       "14 packages installed",
     ]);
+
+    await checkHoistedFiles(packageDir);
   });
 
   test("from non-hoisted workspace dependencies", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -5753,7 +5921,7 @@ describe("transitive file dependencies", () => {
       "15 packages installed",
     ]);
 
-    await checkUnhoistedFiles();
+    await checkUnhoistedFiles(packageDir);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
@@ -5776,7 +5944,7 @@ describe("transitive file dependencies", () => {
       "15 packages installed",
     ]);
 
-    await checkUnhoistedFiles();
+    await checkUnhoistedFiles(packageDir);
 
     ({ out } = await runBunInstall(env, packageDir, { savesLockfile: false }));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -5787,7 +5955,7 @@ describe("transitive file dependencies", () => {
       "1 package installed",
     ]);
 
-    await checkUnhoistedFiles();
+    await checkUnhoistedFiles(packageDir);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
     await rm(join(packageDir, "pkg1", "node_modules"), { recursive: true, force: true });
@@ -5811,7 +5979,7 @@ describe("transitive file dependencies", () => {
       "15 packages installed",
     ]);
 
-    await checkUnhoistedFiles();
+    await checkUnhoistedFiles(packageDir);
 
     ({ out } = await runBunInstall(env, join(packageDir, "pkg1"), { savesLockfile: false }));
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -5841,9 +6009,12 @@ describe("transitive file dependencies", () => {
       "",
       "15 packages installed",
     ]);
+
+    await checkUnhoistedFiles(packageDir);
   });
 
   test("from root dependencies", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -5909,7 +6080,7 @@ describe("transitive file dependencies", () => {
       "self-file-dep",
     ]);
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
 
     ({ stdout, stderr, exited } = spawn({
       cmd: [bunExe(), "install"],
@@ -5934,7 +6105,7 @@ describe("transitive file dependencies", () => {
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -5953,6 +6124,19 @@ describe("transitive file dependencies", () => {
     expect(err).not.toContain("not found");
     expect(err).not.toContain("error:");
     expect(err).not.toContain("panic:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      "+ @another-scope/file-dep@1.0.0",
+      "+ @scoped/file-dep@1.0.0",
+      "+ aliased-file-dep@1.0.1",
+      "+ dep-file-dep@1.0.0",
+      expect.stringContaining("+ file-dep@1.0.0"),
+      "+ missing-file-dep@1.0.0",
+      "+ self-file-dep@1.0.0",
+      "",
+      "13 packages installed",
+    ]);
     expect(await readdirSorted(join(packageDir, "node_modules"))).toEqual([
       "@another-scope",
       "@scoped",
@@ -5965,9 +6149,10 @@ describe("transitive file dependencies", () => {
     expect(await exited).toBe(0);
     assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-    await checkHoistedFiles();
+    await checkHoistedFiles(packageDir);
   });
   test("it should install folder dependencies with absolute paths", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     async function writePackages(num: number) {
       await rm(join(packageDir, `pkg0`), { recursive: true, force: true });
       for (let i = 0; i < num; i++) {
@@ -6128,6 +6313,7 @@ describe("transitive file dependencies", () => {
   // `file-dep@1.0.0` declares `"files": "file:./the-files"` and ships `the-files/`
   // (index.js + package.json) in its tarball.
   test("a root override redirects a registry package's own file: dependency to a folder in the project", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -6155,6 +6341,7 @@ describe("transitive file dependencies", () => {
   });
 
   test("a scoped override for another dependent leaves a registry package's own file: dependency alone", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -6175,7 +6362,8 @@ describe("transitive file dependencies", () => {
   });
 });
 
-test("name from manifest is scoped and url encoded", async () => {
+test.concurrent("name from manifest is scoped and url encoded", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await write(
     packageJson,
     JSON.stringify({
@@ -6203,8 +6391,9 @@ test("name from manifest is scoped and url encoded", async () => {
   ]);
 });
 
-describe("update", () => {
+describe.concurrent("update", () => {
   test("duplicate peer dependency (one package is invalid_package_id)", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -6236,6 +6425,7 @@ describe("update", () => {
     });
   });
   test("dist-tags", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -6288,12 +6478,13 @@ describe("update", () => {
     });
     expect((await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version).toBe("1.0.10");
   });
-  test("exact versions stay exact", async () => {
+  describe("exact versions stay exact", () => {
     const runs = [
-      { version: "1.0.1", dependency: "a-dep" },
-      { version: "npm:a-dep@1.0.1", dependency: "aliased" },
+      { version: "1.0.1", dependency: "a-dep", latest: "1.0.10" },
+      { version: "npm:a-dep@1.0.1", dependency: "aliased", latest: "npm:a-dep@1.0.10" },
     ];
-    for (const { version, dependency } of runs) {
+    test.each(runs)("$dependency", async ({ version, dependency, latest }) => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6320,22 +6511,40 @@ describe("update", () => {
       await runBunInstall(env, packageDir);
       await check(version);
 
-      await runBunUpdate(env, packageDir);
+      let { out } = await runBunUpdate(env, packageDir);
+      expect(out).toEqual([
+        expect.stringContaining("bun update v1."),
+        "",
+        "Checked 1 install across 2 packages (no changes)",
+      ]);
       await check(version);
 
-      await runBunUpdate(env, packageDir, [dependency]);
+      ({ out } = await runBunUpdate(env, packageDir, [dependency]));
+      expect(out).toEqual([
+        expect.stringContaining("bun update v1."),
+        "",
+        `installed ${dependency}@1.0.1`,
+        "",
+        expect.stringContaining("done"),
+        "",
+      ]);
       await check(version);
 
       // this will actually update the package, but the version should remain exact
-      await runBunUpdate(env, packageDir, ["--latest"]);
-      await check(dependency === "aliased" ? "npm:a-dep@1.0.10" : "1.0.10");
-
-      await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-      await rm(join(packageDir, "bun.lockb"));
-    }
+      ({ out } = await runBunUpdate(env, packageDir, ["--latest"]));
+      expect(out).toEqual([
+        expect.stringContaining("bun update v1."),
+        "",
+        `^ ${dependency} 1.0.1 -> 1.0.10`,
+        "",
+        "1 package installed",
+      ]);
+      await check(latest);
+    });
   });
   describe("tilde", () => {
     test("without args", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6388,6 +6597,7 @@ describe("update", () => {
 
     for (const latest of [true, false]) {
       test(`update no args${latest ? " --latest" : ""}`, async () => {
+        const { packageDir, packageJson, env } = await setupTest();
         await write(
           packageJson,
           JSON.stringify({
@@ -6494,6 +6704,7 @@ describe("update", () => {
     }
 
     test("with package name in args", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6551,6 +6762,7 @@ describe("update", () => {
   });
   describe("alises", () => {
     test("update all", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6576,6 +6788,7 @@ describe("update", () => {
       });
     });
     test("update specific aliased package", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6601,6 +6814,7 @@ describe("update", () => {
       });
     });
     test("with pre and build tags", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6661,6 +6875,7 @@ describe("update", () => {
 
     for (const [dependency, version, args, updated, installed] of cases) {
       test(`${JSON.stringify(version)} with \`bun update${args.map(arg => ` ${arg}`).join("")}\``, async () => {
+        ({ packageDir, packageJson, env } = await setupTest());
         await write(
           packageJson,
           JSON.stringify({
@@ -6688,6 +6903,7 @@ describe("update", () => {
     }
 
     test("bun update --interactive keeps the alias and the range prefix", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       await write(
         packageJson,
         JSON.stringify({
@@ -6726,6 +6942,7 @@ describe("update", () => {
     });
 
     test("a catalog reference in an earlier dependency group is left alone", async () => {
+      ({ packageDir, packageJson, env } = await setupTest());
       // devDependencies are visited before dependencies. The entry recorded for `dependencies`
       // must not be spent rewriting the `catalog:` reference.
       await write(
@@ -6766,6 +6983,7 @@ describe("update", () => {
     });
   });
   test("--no-save will update packages in node_modules and not save to package.json", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -6837,6 +7055,7 @@ describe("update", () => {
     });
   });
   test("update won't update beyond version range unless the specified version allows it", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -6888,6 +7107,7 @@ describe("update", () => {
     });
   });
   test("update should update all packages in the current workspace", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -7068,42 +7288,45 @@ describe("update", () => {
       },
     });
   });
-  test("update different dependency groups", async () => {
-    for (const args of [true, false]) {
-      for (const group of ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]) {
-        await write(
-          packageJson,
-          JSON.stringify({
-            name: "foo",
-            [group]: {
-              "a-dep": "^1.0.0",
-            },
-          }),
-        );
-
-        const { out } = args ? await runBunUpdate(env, packageDir, ["a-dep"]) : await runBunUpdate(env, packageDir);
-        assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
-
-        expect(out).toStrictEqual([
-          expect.stringContaining("bun update v1."),
-          "",
-          "+ a-dep@1.0.10",
-          "",
-          "1 package installed",
-        ]);
-        expect(await file(packageJson).json()).toStrictEqual({
+  describe("update different dependency groups", () => {
+    const groups = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"];
+    const cases = [true, false].flatMap(args => groups.map(group => ({ args, group })));
+    test.each(cases)("a-dep in $group (args: $args)", async ({ args, group }) => {
+      const { packageDir, packageJson, env } = await setupTest();
+      await write(
+        packageJson,
+        JSON.stringify({
           name: "foo",
           [group]: {
-            "a-dep": "^1.0.10",
+            "a-dep": "^1.0.0",
           },
-        });
+        }),
+      );
 
-        await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-        await rm(join(packageDir, "bun.lockb"));
-      }
-    }
+      const { out } = args ? await runBunUpdate(env, packageDir, ["a-dep"]) : await runBunUpdate(env, packageDir);
+      assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+
+      expect(out).toStrictEqual([
+        expect.stringContaining("bun update v1."),
+        "",
+        "+ a-dep@1.0.10",
+        "",
+        "1 package installed",
+      ]);
+      expect(await file(packageJson).json()).toStrictEqual({
+        name: "foo",
+        [group]: {
+          "a-dep": "^1.0.10",
+        },
+      });
+      expect(await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).toEqual({
+        name: "a-dep",
+        version: "1.0.10",
+      });
+    });
   });
   test("it should update packages from update requests", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -7219,6 +7442,7 @@ describe("update", () => {
   });
 
   test("--latest works with packages from arguments", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -7241,7 +7465,8 @@ describe("update", () => {
   });
 });
 
-test("packages dependening on each other with aliases does not infinitely loop", async () => {
+test.concurrent("packages dependening on each other with aliases does not infinitely loop", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await write(
     packageJson,
     JSON.stringify({
@@ -7270,7 +7495,8 @@ test("packages dependening on each other with aliases does not infinitely loop",
   ]);
 });
 
-test("it should re-populate .bin folder if package is reinstalled", async () => {
+test.concurrent("it should re-populate .bin folder if package is reinstalled", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -7352,7 +7578,8 @@ test("it should re-populate .bin folder if package is reinstalled", async () => 
   }
 });
 
-test("one version with binary map", async () => {
+test.concurrent("one version with binary map", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -7391,7 +7618,8 @@ test("one version with binary map", async () => {
   expect(join(packageDir, "node_modules", ".bin", "map_bin")).toBeValidBin(join("..", "map-bin", "bin", "map-bin"));
 });
 
-test("multiple versions with binary map", async () => {
+test.concurrent("multiple versions with binary map", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -7435,7 +7663,8 @@ test("multiple versions with binary map", async () => {
   );
 });
 
-test("duplicate dependency in optionalDependencies maintains sort order", async () => {
+test.serial("duplicate dependency in optionalDependencies maintains sort order", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await write(
     packageJson,
     JSON.stringify({
@@ -7472,7 +7701,8 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
   expect(await exited).toBe(0);
 });
 
-test("missing package on reinstall, some with binaries", async () => {
+test.concurrent("missing package on reinstall, some with binaries", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await writeFile(
     packageJson,
     JSON.stringify({
@@ -7594,8 +7824,9 @@ test("missing package on reinstall, some with binaries", async () => {
   ).toBe(join(packageDir, "node_modules", "uses-what-bin", "node_modules", ".bin", bin));
 });
 
-describe("pm trust", async () => {
+describe.concurrent("pm trust", async () => {
   test("--default", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -7623,6 +7854,7 @@ describe("pm trust", async () => {
 
   describe("--all", async () => {
     test("no dependencies", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -7646,6 +7878,7 @@ describe("pm trust", async () => {
     });
 
     test("some dependencies, non with scripts", async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -7705,59 +7938,63 @@ describe("pm trust", async () => {
   });
 });
 
-test("it should be able to find binary in node_modules/.bin from parent directory of root package", async () => {
-  await mkdir(join(packageDir, "node_modules", ".bin"), { recursive: true });
-  await mkdir(join(packageDir, "morePackageDir"));
-  await writeFile(
-    join(packageDir, "morePackageDir", "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      scripts: {
-        install: "missing-bin",
-      },
-      dependencies: {
-        "what-bin": "1.0.0",
-      },
-    }),
-  );
+test.concurrent(
+  "it should be able to find binary in node_modules/.bin from parent directory of root package",
+  async () => {
+    const { packageDir, env } = await setupTest();
+    await mkdir(join(packageDir, "node_modules", ".bin"), { recursive: true });
+    await mkdir(join(packageDir, "morePackageDir"));
+    await writeFile(
+      join(packageDir, "morePackageDir", "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        scripts: {
+          install: "missing-bin",
+        },
+        dependencies: {
+          "what-bin": "1.0.0",
+        },
+      }),
+    );
 
-  await cp(join(packageDir, "bunfig.toml"), join(packageDir, "morePackageDir", "bunfig.toml"));
+    await cp(join(packageDir, "bunfig.toml"), join(packageDir, "morePackageDir", "bunfig.toml"));
 
-  await writeShebangScript(
-    join(packageDir, "node_modules", ".bin", "missing-bin"),
-    "node",
-    `require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");`,
-  );
+    await writeShebangScript(
+      join(packageDir, "node_modules", ".bin", "missing-bin"),
+      "node",
+      `require("fs").writeFileSync("missing-bin.txt", "missing-bin@WHAT");`,
+    );
 
-  const { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: join(packageDir, "morePackageDir"),
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
+    const { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: join(packageDir, "morePackageDir"),
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
 
-  const err = await stderr.text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  const out = await stdout.text();
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    expect.stringContaining("bun install v1."),
-    "",
-    expect.stringContaining("+ what-bin@1.0.0"),
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
+    const err = await stderr.text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    const out = await stdout.text();
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      expect.stringContaining("bun install v1."),
+      "",
+      expect.stringContaining("+ what-bin@1.0.0"),
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-  expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");
-});
+    expect(await file(join(packageDir, "morePackageDir", "missing-bin.txt")).text()).toBe("missing-bin@WHAT");
+  },
+);
 
-describe("semver", () => {
+describe.concurrent("semver", () => {
   const taggedVersionTests = [
     {
       title: "tagged version last in range",
@@ -7858,6 +8095,7 @@ describe("semver", () => {
 
   for (const { title, depVersion, expected } of taggedVersionTests) {
     test(title, async () => {
+      const { packageDir, packageJson, env } = await setupTest();
       await writeFile(
         packageJson,
         JSON.stringify({
@@ -7890,12 +8128,18 @@ describe("semver", () => {
         "",
         "1 package installed",
       ]);
+      expect(await file(join(packageDir, "node_modules", "dep-with-tags", "package.json")).json()).toEqual({
+        name: "dep-with-tags",
+        version: expected,
+        dependencies: {},
+      });
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
     });
   }
 
   test.todo("only tagged versions in range errors", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -7926,7 +8170,8 @@ describe("semver", () => {
   });
 });
 
-test("doesn't error when the migration is out of sync", async () => {
+test.concurrent("doesn't error when the migration is out of sync", async () => {
+  const { env } = await setupTest();
   await using cwd = tempDir("out-of-sync-1", {
     "package.json": JSON.stringify({
       "devDependencies": {
@@ -8082,9 +8327,10 @@ const prereleaseTests = [
 for (let i = 0; i < prereleaseTests.length; i++) {
   const tests = prereleaseTests[i];
   const depName = `prereleases-${i + 1}`;
-  describe(`${depName} should pass`, () => {
+  describe.concurrent(`${depName} should pass`, () => {
     for (const { title, depVersion, expected } of tests) {
       test(title, async () => {
+        const { packageDir, packageJson, env } = await setupTest();
         await writeFile(
           packageJson,
           JSON.stringify({
@@ -8228,9 +8474,10 @@ const prereleaseFailTests = [
 for (let i = 0; i < prereleaseFailTests.length; i++) {
   const tests = prereleaseFailTests[i];
   const depName = `prereleases-${i + 1}`;
-  describe(`${depName} should fail`, () => {
+  describe.concurrent(`${depName} should fail`, () => {
     for (const { title, depVersion } of tests) {
       test(title, async () => {
+        const { packageDir, packageJson, env } = await setupTest();
         await writeFile(
           packageJson,
           JSON.stringify({
@@ -8262,8 +8509,9 @@ for (let i = 0; i < prereleaseFailTests.length; i++) {
   });
 }
 
-describe("yarn tests", () => {
+describe.concurrent("yarn tests", () => {
   test("dragon test 1", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8328,6 +8576,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 2", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8402,6 +8651,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 3", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8454,6 +8704,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 4", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8516,6 +8767,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 5", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8599,6 +8851,7 @@ describe("yarn tests", () => {
   });
 
   test.todo("dragon test 6", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8716,6 +8969,7 @@ describe("yarn tests", () => {
   });
 
   test.todo("dragon test 7", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8799,6 +9053,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 8", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8842,6 +9097,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 9", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8885,6 +9141,7 @@ describe("yarn tests", () => {
   });
 
   test.todo("dragon test 10", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -8960,6 +9217,7 @@ describe("yarn tests", () => {
   });
 
   test("dragon test 12", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9033,6 +9291,7 @@ describe("yarn tests", () => {
   });
 
   test("it should not warn when the peer dependency resolution is compatible", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9074,6 +9333,7 @@ describe("yarn tests", () => {
   });
 
   test("it should warn when the peer dependency resolution is incompatible", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9115,6 +9375,7 @@ describe("yarn tests", () => {
   });
 
   test("it should install in such a way that two identical packages with different peer dependencies are different instances", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9223,6 +9484,7 @@ describe("yarn tests", () => {
   });
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (simple)", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9287,6 +9549,7 @@ describe("yarn tests", () => {
   });
 
   test("it should install in such a way that two identical packages with the same peer dependencies are the same instances (complex)", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9353,6 +9616,7 @@ describe("yarn tests", () => {
   });
 
   test("it shouldn't deduplicate two packages with similar peer dependencies but different names", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9413,6 +9677,7 @@ describe("yarn tests", () => {
   });
 
   test("it should reinstall and rebuild dependencies deleted by the user on the next install", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await writeFile(
       packageJson,
       JSON.stringify({
@@ -9474,7 +9739,8 @@ describe("yarn tests", () => {
   });
 });
 
-test("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
+test.concurrent("tarball `./` prefix, duplicate directory with file, and empty directory", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await write(
     packageJson,
     JSON.stringify({
@@ -9550,7 +9816,7 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
   );
 });
 
-describe("outdated", () => {
+describe.concurrent("outdated", () => {
   const edgeCaseTests = [
     {
       description: "normal dep, smaller than column title",
@@ -9619,7 +9885,9 @@ describe("outdated", () => {
   ];
 
   for (const { description, packageJson } of edgeCaseTests) {
-    test(description, async () => {
+    // serial: `toMatchSnapshot()` is not available inside concurrent tests
+    test.serial(description, async () => {
+      const { packageDir, env } = await setupTest();
       await write(join(packageDir, "package.json"), JSON.stringify(packageJson));
       await runBunInstall(env, packageDir);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
@@ -9633,20 +9901,19 @@ describe("outdated", () => {
         env: testEnv,
       });
 
-      expect(await exited).toBe(0);
-
-      const err = await stderr.text();
+      const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
       expect(err).not.toContain("error:");
       expect(err).not.toContain("panic:");
-      const out = await stdout.text();
       const first = out.slice(0, out.indexOf("\n"));
       expect(first).toEqual(expect.stringContaining("bun outdated "));
       expect(first).toEqual(expect.stringContaining("v1."));
       const rest = out.slice(out.indexOf("\n") + 1);
       expect(rest).toMatchSnapshot();
+      expect(exitCode).toBe(0);
     });
   }
   test("in workspace", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -9704,7 +9971,8 @@ describe("outdated", () => {
     expect(await exited).toBe(0);
   });
 
-  test("NO_COLOR works", async () => {
+  test.serial("NO_COLOR works", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({
@@ -9741,10 +10009,10 @@ describe("outdated", () => {
     expect(await exited).toBe(0);
   });
 
-  async function setupWorkspace() {
+  async function setupWorkspace(packageDir: string) {
     await Promise.all([
       write(
-        packageJson,
+        join(packageDir, "package.json"),
         JSON.stringify({
           name: "foo",
           workspaces: ["packages/*"],
@@ -9793,7 +10061,8 @@ describe("outdated", () => {
   }
 
   test("--filter with workspace names and paths", async () => {
-    await setupWorkspace();
+    const { packageDir, env } = await setupTest();
+    await setupWorkspace(packageDir);
     await runBunInstall(env, packageDir);
 
     let out = await runBunOutdated(env, packageDir, "--filter", "*");
@@ -9819,6 +10088,7 @@ describe("outdated", () => {
   });
 
   test("-F is an alias of --filter", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await setupWorkspace();
     await runBunInstall(env, packageDir);
 
@@ -9837,6 +10107,7 @@ describe("outdated", () => {
   });
 
   test("--filter with relation selectors lists only the selected workspaces' dependencies", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -9893,18 +10164,19 @@ describe("outdated", () => {
   });
 
   test("dependency pattern args", async () => {
-    await setupWorkspace();
+    const { packageDir, env } = await setupTest();
+    await setupWorkspace(packageDir);
     await runBunInstall(env, packageDir);
 
     let out = await runBunOutdated(env, packageDir, "no-deps", "--filter", "*");
     expect(out).toContain("no-deps");
     expect(out).not.toContain("a-dep");
-    expect(out).not.toContain("prerelease-1");
+    expect(out).not.toContain("prereleases-1");
 
     out = await runBunOutdated(env, packageDir, "a-dep");
     expect(out).not.toContain("a-dep");
     expect(out).not.toContain("no-deps");
-    expect(out).not.toContain("prerelease-1");
+    expect(out).not.toContain("prereleases-1");
 
     out = await runBunOutdated(env, packageDir, "*", "--filter", "*");
     expect(out).toContain("no-deps");
@@ -9913,6 +10185,7 @@ describe("outdated", () => {
   });
 
   test("scoped workspace names", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -9947,6 +10220,7 @@ describe("outdated", () => {
   });
 
   test("catalog dependencies", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -9987,6 +10261,7 @@ describe("outdated", () => {
   });
 
   test("--recursive flag for outdated", async () => {
+    const { packageDir, env } = await setupTest();
     // First verify the flag appears in help
     const {
       stdout: helpOut,
@@ -10006,7 +10281,7 @@ describe("outdated", () => {
     expect(help).toContain("-r");
 
     // Setup workspace
-    await setupWorkspace();
+    await setupWorkspace(packageDir);
     await runBunInstall(env, packageDir);
 
     // Test --recursive shows all workspaces
@@ -10017,6 +10292,7 @@ describe("outdated", () => {
   });
 
   test("catalog grouping with multiple workspaces", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     await Promise.all([
       write(
         packageJson,
@@ -10120,7 +10396,7 @@ function readBunxShim(path: string) {
   };
 }
 
-describe("windows bin linking shim should work", async () => {
+describe.concurrent("windows bin linking shim should work", async () => {
   if (!isWindows) return;
 
   const packageDir = tmpdirSync();
@@ -10153,7 +10429,7 @@ describe("windows bin linking shim should work", async () => {
     stdout: "pipe",
     stdin: "pipe",
     stderr: "pipe",
-    env,
+    env: bunEnv,
   });
 
   var err = await stderr.text();
@@ -10183,6 +10459,15 @@ describe("windows bin linking shim should work", async () => {
   copyFileSync(join(packageDir, "node_modules\\bunx-bins\\native.exe"), join(temp_bin_dir, "native.exe"));
 
   const PATH = process.env.PATH + ";" + temp_bin_dir;
+  // Every test below only executes the bins installed above, so they can all share this directory.
+  const shimEnv = mergeWindowEnvs([bunEnv, { PATH }]);
+  // `--bun` creates its fake `node.exe` inside %TEMP% (and debug builds recreate it on every run),
+  // so each `--bun` test gets its own temp directory instead of racing the others on the shared one.
+  function shimEnvWithOwnTemp(subdir: string) {
+    const temp = join(packageDir, subdir);
+    mkdirSync(temp);
+    return mergeWindowEnvs([shimEnv, { TMP: temp, TEMP: temp }]);
+  }
 
   const bins = [
     { bin: "bin1", name: "bin1" },
@@ -10220,7 +10505,7 @@ describe("windows bin linking shim should work", async () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([env, { PATH: PATH }]),
+        env: shimEnv,
       });
       expect(stderr).toBeDefined();
       const err = await stderr.text();
@@ -10239,7 +10524,7 @@ describe("windows bin linking shim should work", async () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([env, { PATH: PATH }]),
+        env: shimEnvWithOwnTemp(`temp-run-${bin}`),
       });
       expect(stderr).toBeDefined();
       const err = await stderr.text();
@@ -10258,7 +10543,7 @@ describe("windows bin linking shim should work", async () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([env, { PATH: PATH }]),
+        env: shimEnvWithOwnTemp(`temp-x-${bin}`),
       });
       expect(stderr).toBeDefined();
       const err = await stderr.text();
@@ -10277,7 +10562,7 @@ describe("windows bin linking shim should work", async () => {
         stdout: "pipe",
         stdin: "pipe",
         stderr: "pipe",
-        env: mergeWindowEnvs([env, { PATH: PATH }]),
+        env: shimEnv,
       });
       expect(stderr).toBeDefined();
       const err = await stderr.text();
@@ -10401,7 +10686,8 @@ describe("global bin links when the package dir is inside the bin dir", () => {
   }
 });
 
-test("rejects dependency aliases containing relative path segments", async () => {
+test.concurrent("rejects dependency aliases containing relative path segments", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   // A dependency alias is used verbatim as a folder name when building install
   // paths (`node_modules/<alias>/node_modules/...`). `one-fixed-dep@2.0.0`
   // depends on `no-deps@2.0.0`, which conflicts with the root `no-deps@1.0.0`
@@ -10477,7 +10763,8 @@ test("rejects dependency aliases containing relative path segments", async () =>
   expect(await exited).toBe(0);
 });
 
-test("rejects package names containing relative path components in bun.lock", async () => {
+test.concurrent("rejects package names containing relative path components in bun.lock", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   // The package name from a bun.lock `packages` entry is written verbatim into
   // the cache folder name (`<cache>/<name>@<version>@@<host>@@@1`) before the
   // extracted tarball is renamed into place. A name with a leading `..`
@@ -10550,7 +10837,8 @@ test("rejects package names containing relative path components in bun.lock", as
   expect(await exited).toBe(0);
 });
 
-test("rejects npm aliases whose manifest URL resolves to a different host than the registry", async () => {
+test.concurrent("rejects npm aliases whose manifest URL resolves to a different host than the registry", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   // The manifest URL is built by joining the registry URL with the package
   // name. WHATWG URL joining treats "\" like "/" for http(s) schemes, so a
   // name beginning with two backslashes becomes a protocol-relative authority:
@@ -10567,7 +10855,8 @@ test("rejects npm aliases whose manifest URL resolves to a different host than t
     },
   });
 
-  const token = await generateRegistryUser("manifest-host-pinning", "manifest-host-pinning");
+  // The request is refused before it is sent, so the token only has to exist, not be valid.
+  const token = "manifest-host-pinning-token";
   await Promise.all([
     write(
       join(packageDir, "bunfig.toml"),
@@ -10612,144 +10901,149 @@ test("rejects npm aliases whose manifest URL resolves to a different host than t
   expect(await exited).not.toBe(0);
 });
 
-test("registry override from a project .env only keeps the saved token when the host matches and the scheme is not downgraded", async () => {
-  // `bun install` loads the project's `.env` before computing installer
-  // options, so a repo-committed `.env` can point BUN_CONFIG_REGISTRY at a
-  // different registry host. The token configured for the default registry
-  // scope is host-scoped and must only be attached to requests for that host.
-  const received: { url: string; authorization: string | null }[] = [];
-  using otherRegistry = Bun.serve({
-    port: 0,
-    fetch(req) {
-      received.push({ url: req.url, authorization: req.headers.get("authorization") });
-      return new Response("not found", { status: 404 });
-    },
-  });
-
-  const token = "default-registry-secret-token";
-
-  // Case 1: the .env points the registry at a different host. The manifest
-  // request must reach that host without the default registry's token.
-  await Promise.all([
-    write(
-      join(packageDir, "bunfig.toml"),
-      Bun.TOML.stringify({
-        install: {
-          cache: false,
-          registry: { url: `http://localhost:${port}/`, token },
-        },
-      }),
-    ),
-    write(
-      packageJson,
-      JSON.stringify({
-        name: "foo",
-        version: "1.0.0",
-        dependencies: {
-          "no-deps": "1.0.0",
-        },
-      }),
-    ),
-    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
-  ]);
-
-  {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
+test.concurrent(
+  "registry override from a project .env only keeps the saved token when the host matches and the scheme is not downgraded",
+  async () => {
+    const { packageDir, packageJson, env } = await setupTest();
+    // `bun install` loads the project's `.env` before computing installer
+    // options, so a repo-committed `.env` can point BUN_CONFIG_REGISTRY at a
+    // different registry host. The token configured for the default registry
+    // scope is host-scoped and must only be attached to requests for that host.
+    const received: { url: string; authorization: string | null }[] = [];
+    using otherRegistry = Bun.serve({
+      port: 0,
+      fetch(req) {
+        received.push({ url: req.url, authorization: req.headers.get("authorization") });
+        return new Response("not found", { status: 404 });
+      },
     });
-    await stderr.text();
-    await stdout.text();
 
-    // The .env override must take effect: the manifest request goes to the
-    // overridden registry...
-    expect(received.length).toBeGreaterThan(0);
-    // ...but the token configured for the localhost registry must not be sent
-    // to the different host.
-    expect(received.filter(r => r.authorization !== null)).toEqual([]);
-    // The overridden registry returned 404, so this install fails.
-    expect(await exited).not.toBe(0);
-  }
+    const token = "default-registry-secret-token";
 
-  // Case 2: when the override points at the same host the token was
-  // configured for, the token is still sent.
-  received.length = 0;
-  await Promise.all([
-    rm(join(packageDir, "bun.lock"), { force: true }),
-    rm(join(packageDir, "bun.lockb"), { force: true }),
-    write(
-      join(packageDir, "bunfig.toml"),
-      Bun.TOML.stringify({
-        install: {
-          cache: false,
-          registry: { url: `http://127.0.0.1:${otherRegistry.port}/`, token },
-        },
-      }),
-    ),
-    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
-  ]);
+    // Case 1: the .env points the registry at a different host. The manifest
+    // request must reach that host without the default registry's token.
+    await Promise.all([
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://localhost:${port}/`, token },
+          },
+        }),
+      ),
+      write(
+        packageJson,
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+    ]);
 
-  {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    await stderr.text();
-    await stdout.text();
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      await stderr.text();
+      await stdout.text();
 
-    expect(received.length).toBeGreaterThan(0);
-    expect(received.some(r => r.authorization === `Bearer ${token}`)).toBe(true);
-    expect(await exited).not.toBe(0);
-  }
+      // The .env override must take effect: the manifest request goes to the
+      // overridden registry...
+      expect(received.length).toBeGreaterThan(0);
+      // ...but the token configured for the localhost registry must not be sent
+      // to the different host.
+      expect(received.filter(r => r.authorization !== null)).toEqual([]);
+      // The overridden registry returned 404, so this install fails.
+      expect(await exited).not.toBe(0);
+    }
 
-  // Case 3: the override points at the same host but downgrades https to
-  // http. The token configured for the https registry must not be sent.
-  received.length = 0;
-  await Promise.all([
-    rm(join(packageDir, "bun.lock"), { force: true }),
-    rm(join(packageDir, "bun.lockb"), { force: true }),
-    write(
-      join(packageDir, "bunfig.toml"),
-      Bun.TOML.stringify({
-        install: {
-          cache: false,
-          registry: { url: `https://127.0.0.1:${otherRegistry.port}/`, token },
-        },
-      }),
-    ),
-    write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
-  ]);
+    // Case 2: when the override points at the same host the token was
+    // configured for, the token is still sent.
+    received.length = 0;
+    await Promise.all([
+      rm(join(packageDir, "bun.lock"), { force: true }),
+      rm(join(packageDir, "bun.lockb"), { force: true }),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `http://127.0.0.1:${otherRegistry.port}/`, token },
+          },
+        }),
+      ),
+      write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+    ]);
 
-  {
-    const { stdout, stderr, exited } = spawn({
-      cmd: [bunExe(), "install"],
-      cwd: packageDir,
-      stdout: "pipe",
-      stdin: "pipe",
-      stderr: "pipe",
-      env,
-    });
-    await stderr.text();
-    await stdout.text();
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      await stderr.text();
+      await stdout.text();
 
-    expect(received.length).toBeGreaterThan(0);
-    expect(received.filter(r => r.authorization !== null)).toEqual([]);
-    expect(await exited).not.toBe(0);
-  }
-});
+      expect(received.length).toBeGreaterThan(0);
+      expect(received.some(r => r.authorization === `Bearer ${token}`)).toBe(true);
+      expect(await exited).not.toBe(0);
+    }
 
-describe("registry/token env var priority", () => {
+    // Case 3: the override points at the same host but downgrades https to
+    // http. The token configured for the https registry must not be sent.
+    received.length = 0;
+    await Promise.all([
+      rm(join(packageDir, "bun.lock"), { force: true }),
+      rm(join(packageDir, "bun.lockb"), { force: true }),
+      write(
+        join(packageDir, "bunfig.toml"),
+        Bun.TOML.stringify({
+          install: {
+            cache: false,
+            registry: { url: `https://127.0.0.1:${otherRegistry.port}/`, token },
+          },
+        }),
+      ),
+      write(join(packageDir, ".env"), `BUN_CONFIG_REGISTRY=http://127.0.0.1:${otherRegistry.port}/\n`),
+    ]);
+
+    {
+      const { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "install"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env,
+      });
+      await stderr.text();
+      await stdout.text();
+
+      expect(received.length).toBeGreaterThan(0);
+      expect(received.filter(r => r.authorization !== null)).toEqual([]);
+      expect(await exited).not.toBe(0);
+    }
+  },
+);
+
+describe.concurrent("registry/token env var priority", () => {
   // BUN_CONFIG_* takes precedence over NPM_CONFIG_*, which takes precedence
   // over npm_config_*. An empty value falls through to the next candidate.
   async function installAndCaptureAuth(extraEnv: Record<string, string>) {
+    const { packageDir, packageJson, env } = await setupTest();
     const received: (string | null)[] = [];
     await using server = Bun.serve({
       port: 0,
@@ -10806,6 +11100,7 @@ describe("registry/token env var priority", () => {
   });
 
   test("BUN_CONFIG_REGISTRY wins over NPM_CONFIG_REGISTRY", async () => {
+    const { packageDir, packageJson, env } = await setupTest();
     const hits = { preferred: 0, other: 0 };
     await using preferred = Bun.serve({
       port: 0,
@@ -10845,7 +11140,8 @@ describe("registry/token env var priority", () => {
   });
 });
 
-test("npm manifest cache entries with invalid package version records are treated as invalid", async () => {
+test.concurrent("npm manifest cache entries with invalid package version records are treated as invalid", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   await write(
     packageJson,
     JSON.stringify({
@@ -10907,7 +11203,8 @@ test("npm manifest cache entries with invalid package version records are treate
   expect(() => parseManifest(corrupted, registryUrl())).toThrow("manifest is invalid");
 });
 
-test("npm manifest cache entries are only reused for the package name they were saved for", async () => {
+test.concurrent("npm manifest cache entries are only reused for the package name they were saved for", async () => {
+  const { packageDir, packageJson, env } = await setupTest();
   const { parseManifest } = npm_manifest_test_helpers;
   const cacheDir = join(packageDir, ".bun-cache");
 
@@ -11202,6 +11499,7 @@ describe("manifest conditional requests", () => {
   // deleted the entry, and another install reading the cache in between missed it. The poll
   // below is that other reader. Linux only: the other platforms rename the new file into place.
   test.skipIf(!isLinux)("rewriting a cached manifest never leaves the cache without the entry", async () => {
+    ({ packageDir, packageJson, env } = await setupTest());
     const { server, requests } = startRegistry({ etag });
     using _ = server;
     await setup(server.port);

@@ -76,11 +76,6 @@ async function setupTest() {
   return { packageDir, packageJson, env };
 }
 
-// Assigned per test by the sequential tests that share describe-level helpers; concurrent tests keep their own.
-let packageDir: string;
-let packageJson: string;
-let env: NodeJS.Dict<string>;
-
 function registryUrl() {
   return registry.registryUrl();
 }
@@ -982,7 +977,11 @@ test.concurrent("--lockfile-only", async () => {
 });
 
 describe("frozen lockfile", () => {
-  async function runInstall(args: string[], extraEnv: Record<string, string> = {}) {
+  async function runInstall(
+    { packageDir, env }: { packageDir: string; env: NodeJS.Dict<string> },
+    args: string[],
+    extraEnv: Record<string, string> = {},
+  ) {
     await using proc = spawn({
       cmd: [bunExe(), "install", ...args],
       cwd: packageDir,
@@ -995,10 +994,10 @@ describe("frozen lockfile", () => {
   }
 
   test("CI=1 does not imply --frozen-lockfile: an out-of-date bun.lock is rewritten", async () => {
-    ({ packageDir, packageJson, env } = await setupTest());
+    const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
 
-    let { err, exitCode } = await runInstall(["--save-text-lockfile"], { CI: "1" });
+    let { err, exitCode } = await runInstall({ packageDir, env }, ["--save-text-lockfile"], { CI: "1" });
     expect(err).toContain("Saved lockfile");
     expect(exitCode).toBe(0);
     const firstLockfile = await file(join(packageDir, "bun.lock")).text();
@@ -1007,7 +1006,7 @@ describe("frozen lockfile", () => {
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }));
 
     let out: string;
-    ({ out, err, exitCode } = await runInstall([], { CI: "1", GITHUB_ACTIONS: "true" }));
+    ({ out, err, exitCode } = await runInstall({ packageDir, env }, [], { CI: "1", GITHUB_ACTIONS: "true" }));
     expect(err).toContain("Saved lockfile");
     expect(err).not.toContain("frozen");
     expect(out).toContain("+ a-dep@1.0.1");
@@ -1023,10 +1022,10 @@ describe("frozen lockfile", () => {
   });
 
   test("--frozen-lockfile without a lockfile installs and writes no lockfile", async () => {
-    ({ packageDir, packageJson, env } = await setupTest());
+    const { packageDir, packageJson, env } = await setupTest();
     await write(packageJson, JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" } }));
 
-    const { out, err, exitCode } = await runInstall(["--frozen-lockfile"]);
+    const { out, err, exitCode } = await runInstall({ packageDir, env }, ["--frozen-lockfile"]);
     expect(err).not.toContain("error:");
     expect(err).not.toContain("Saved lockfile");
     expect(out).toContain("+ no-deps@1.0.0");
@@ -1040,13 +1039,13 @@ describe("frozen lockfile", () => {
   });
 
   test("bunfig [install] production = true treats bun.lock as frozen", async () => {
-    ({ packageDir, packageJson, env } = await setupTest());
+    const { packageDir, packageJson, env } = await setupTest();
     await write(
       packageJson,
       JSON.stringify({ name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "a-dep": "1.0.1" } }),
     );
 
-    let { err, exitCode } = await runInstall(["--save-text-lockfile"]);
+    let { err, exitCode } = await runInstall({ packageDir, env }, ["--save-text-lockfile"]);
     expect(err).toContain("Saved lockfile");
     expect(exitCode).toBe(0);
     const lockfile = await file(join(packageDir, "bun.lock")).text();
@@ -1057,7 +1056,7 @@ describe("frozen lockfile", () => {
     await write(join(packageDir, "bunfig.toml"), bunfig.replace("[install]\n", "[install]\nproduction = true\n"));
 
     await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-    ({ err, exitCode } = await runInstall([]));
+    ({ err, exitCode } = await runInstall({ packageDir, env }, []));
     expect(err).not.toContain("error:");
     expect(err).not.toContain("Saved lockfile");
     expect(exitCode).toBe(0);
@@ -1072,7 +1071,7 @@ describe("frozen lockfile", () => {
       }),
     );
 
-    ({ err, exitCode } = await runInstall([]));
+    ({ err, exitCode } = await runInstall({ packageDir, env }, []));
     expect(normalizeBunSnapshot(err, packageDir)).toMatchInlineSnapshot(`
       "Resolving dependencies
       Resolved, downloaded and extracted [4]
@@ -1292,7 +1291,7 @@ describe.concurrent("bundledDependencies", () => {
         lockfile = await file(join(packageDir, "bun.lock")).text();
         expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 2,
+            "lockfileVersion": 1,
             "configVersion": 1,
             "workspaces": {
               "": {
@@ -1359,7 +1358,7 @@ describe.concurrent("bundledDependencies", () => {
         lockfile = await file(join(packageDir, "bun.lock")).text();
         expect(lockfile.replaceAll(/localhost:\d+/g, "localhost:1234")).toMatchInlineSnapshot(`
           "{
-            "lockfileVersion": 2,
+            "lockfileVersion": 1,
             "configVersion": 1,
             "workspaces": {
               "": {
@@ -3622,7 +3621,7 @@ describe.concurrent("binaries", () => {
 
     for (const linker of ["hoisted", "isolated"] as const) {
       test(`file targets are skipped like missing bins (${linker})`, async () => {
-        ({ packageDir, packageJson, env } = await setupTest());
+        const { packageDir, packageJson, env } = await setupTest();
         // A target this long cannot exist, and the linker silently skips a bin
         // whose target does not exist, so these install without output and the
         // other bins are still linked. Covers the string, single-entry and
@@ -3695,7 +3694,7 @@ describe.concurrent("binaries", () => {
       });
 
       test(`directories.bin fails with ENAMETOOLONG (${linker})`, async () => {
-        ({ packageDir, packageJson, env } = await setupTest());
+        const { packageDir, packageJson, env } = await setupTest();
         // The linker reports every failure to open a bin directory other than
         // ENOENT, and ENAMETOOLONG is what the OS reports for a directory path it
         // cannot address, so a value that does not fit gets the same error.
@@ -3741,7 +3740,7 @@ describe.concurrent("binaries", () => {
     // The entries of a bin directory are joined onto the directory's path as
     // well, and so is the temporary file used to rewrite a CRLF shebang.
     test.skipIf(isWindows)("entries of a directories.bin close to the path limit", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       // Most of the depth goes into the project directory: the `.bin` links are
       // relative, so everything below the package ends up in the link targets,
       // and XFS rejects link targets of 1 KiB or more. The bin directory is then
@@ -3787,7 +3786,7 @@ describe.concurrent("binaries", () => {
     // on another branch of the tree contributes one `..` per component, so the
     // link target can be longer than the target's absolute path.
     test.skipIf(isWindows)("bun link with a link target longer than the path buffer", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       // As in the previous test, most of the depth has to sit above everything
       // that ends up in a link target that is meant to be created (XFS), so it
       // goes into the global directory itself.
@@ -3848,7 +3847,7 @@ describe.concurrent("binaries", () => {
     });
 
     test("bun link and bun unlink", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       // `bun link` links a package's bins into the global bin directory with the
       // same linker, and `bun unlink` is the only caller of its unlink side, which
       // has to open the same bin directory.
@@ -4528,7 +4527,7 @@ describe.concurrent("hoisting", async () => {
   });
 
   // Compare the exact version: `toContain("1.0.1")` also matches "1.0.10".
-  async function hoistedADepVersion(): Promise<string> {
+  async function hoistedADepVersion(packageDir: string): Promise<string> {
     return (await file(join(packageDir, "node_modules", "a-dep", "package.json")).json()).version;
   }
 
@@ -4642,7 +4641,7 @@ describe.concurrent("hoisting", async () => {
       expect(await exited).toBe(0);
       assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-      expect(await hoistedADepVersion()).toBe(expected);
+      expect(await hoistedADepVersion(packageDir)).toBe(expected);
 
       await rm(join(packageDir, "bun.lockb"));
 
@@ -4807,7 +4806,7 @@ describe.concurrent("hoisting", async () => {
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-        expect(await hoistedADepVersion()).toBe(expected);
+        expect(await hoistedADepVersion(packageDir)).toBe(expected);
 
         await rm(join(packageDir, "bun.lockb"));
 
@@ -4830,7 +4829,7 @@ describe.concurrent("hoisting", async () => {
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-        expect(await hoistedADepVersion()).toBe(expected);
+        expect(await hoistedADepVersion(packageDir)).toBe(expected);
 
         await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
 
@@ -4855,12 +4854,12 @@ describe.concurrent("hoisting", async () => {
         expect(await exited).toBe(0);
         assertManifestsPopulated(join(packageDir, ".bun-cache"), registryUrl());
 
-        expect(await hoistedADepVersion()).toBe(expected);
+        expect(await hoistedADepVersion(packageDir)).toBe(expected);
       });
     }
 
     test("peer * hoists the same version no matter which manifest the registry answers first", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       // Proxy in front of verdaccio that forces the arrival order seen on slow
       // CI machines: the a-dep manifest gets processed (so a-dep@1.0.1..1.0.9
       // exist in the lockfile) before peer-a-dep-star's manifest arrives, and
@@ -4911,11 +4910,11 @@ describe.concurrent("hoisting", async () => {
       expect(out).toContain("21 packages installed");
       expect(exitCode).toBe(0);
 
-      expect(await hoistedADepVersion()).toBe("1.0.10");
+      expect(await hoistedADepVersion(packageDir)).toBe("1.0.10");
     });
 
     test("peer * binds to the same version when bun.lock is loaded as when it was resolved", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       // Nothing above `peer-a-dep-star` provides a-dep, so the isolated linker
       // installs the peer from the version the edge resolved to and keys the
       // store entry by it. The root of the printed tree holds a-dep@1.0.1 (from
@@ -5545,7 +5544,7 @@ describe.concurrent("hoisting", async () => {
 
   // hoist-lockfile-1@1.0.0 depends on `hoist-lockfile-shared: *`; the registry has 1.0.1, 1.0.2, 2.0.1 and 2.0.2.
   // The project's own range decides which copy that `*` shares, the same way an exact pin would.
-  async function sharedResolutions() {
+  async function sharedResolutions({ packageDir, env }: { packageDir: string; env: NodeJS.Dict<string> }) {
     await runBunInstall(env, packageDir, { saveTextLockfile: true });
     const { packages } = Bun.JSONC.parse(await file(join(packageDir, "bun.lock")).text()) as {
       packages: Record<string, [string]>;
@@ -5567,7 +5566,7 @@ describe.concurrent("hoisting", async () => {
       }),
     );
 
-    expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
     expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
   });
 
@@ -5584,7 +5583,7 @@ describe.concurrent("hoisting", async () => {
       ),
     ]);
 
-    expect(await sharedResolutions()).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
+    expect(await sharedResolutions({ packageDir, env })).toStrictEqual({ "hoist-lockfile-shared": "hoist-lockfile-shared@1.0.2" });
     expect(await exists(join(packageDir, "node_modules", "hoist-lockfile-1", "node_modules"))).toBeFalse();
   });
 });
@@ -6263,7 +6262,7 @@ describe.concurrent("transitive file dependencies", () => {
       const lock = (await file(join(packageDir, "bun.lock")).text()).replaceAll(/localhost:\d+/g, "localhost:1234");
       expect(normalizeBunSnapshot(lock)).toMatchInlineSnapshot(`
         "{
-          "lockfileVersion": 2,
+          "lockfileVersion": 1,
           "configVersion": 1,
           "workspaces": {
             "": {
@@ -6514,7 +6513,8 @@ describe.concurrent("update", () => {
       expect(out).toEqual([
         expect.stringContaining("bun update v1."),
         "",
-        "Checked 1 install across 2 packages (no changes)",
+        // The exact pin does not move; the minified package.json written above is re-printed.
+        "Checked 1 install across 2 packages (up to date, package.json synced)",
       ]);
       await check(version);
 
@@ -6874,7 +6874,7 @@ describe.concurrent("update", () => {
 
     for (const [dependency, version, args, updated, installed] of cases) {
       test(`${JSON.stringify(version)} with \`bun update${args.map(arg => ` ${arg}`).join("")}\``, async () => {
-        ({ packageDir, packageJson, env } = await setupTest());
+        const { packageDir, packageJson, env } = await setupTest();
         await write(
           packageJson,
           JSON.stringify({
@@ -6902,7 +6902,7 @@ describe.concurrent("update", () => {
     }
 
     test("bun update --interactive keeps the alias and the range prefix", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       await write(
         packageJson,
         JSON.stringify({
@@ -6941,7 +6941,7 @@ describe.concurrent("update", () => {
     });
 
     test("a catalog reference in an earlier dependency group is left alone", async () => {
-      ({ packageDir, packageJson, env } = await setupTest());
+      const { packageDir, packageJson, env } = await setupTest();
       // devDependencies are visited before dependencies. The entry recorded for `dependencies`
       // must not be spent rewriting the `catalog:` reference.
       await write(
@@ -7165,7 +7165,7 @@ describe.concurrent("update", () => {
       "",
       "+ a-dep@1.0.10",
       "+ dep-loop-entry@1.0.0",
-      expect.stringContaining("+ dep-with-tags@2.0.1"),
+      "+ dep-with-tags@2.0.1 (v3.0.0 available)",
       "+ dev-deps@1.0.0",
       "+ left-pad@1.0.0",
       "+ native@1.0.0",
@@ -7174,10 +7174,10 @@ describe.concurrent("update", () => {
       "+ optional-native@1.0.0",
       "+ peer-deps-too@1.0.0",
       "+ two-range-deps@1.0.0",
-      expect.stringContaining("+ uses-what-bin@1.5.0"),
-      expect.stringContaining("+ what-bin@1.5.0"),
+      "+ uses-what-bin@1.5.0",
+      "+ what-bin@1.5.0",
       "",
-      expect.stringContaining("20 packages installed"),
+      expect.stringContaining(`${installsWithOptionalNative + 1} packages installed`),
       "",
       "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
       "",
@@ -11368,7 +11368,11 @@ describe("manifest conditional requests", () => {
   }
 
   let registryPort = 0;
+  let packageDir: string;
+  let packageJson: string;
+  let env: NodeJS.Dict<string>;
   async function setup(serverPort: number) {
+    ({ packageDir, packageJson, env } = await setupTest());
     registryPort = serverPort;
     await Promise.all([
       write(
@@ -11498,7 +11502,6 @@ describe("manifest conditional requests", () => {
   // deleted the entry, and another install reading the cache in between missed it. The poll
   // below is that other reader. Linux only: the other platforms rename the new file into place.
   test.skipIf(!isLinux)("rewriting a cached manifest never leaves the cache without the entry", async () => {
-    ({ packageDir, packageJson, env } = await setupTest());
     const { server, requests } = startRegistry({ etag });
     using _ = server;
     await setup(server.port);

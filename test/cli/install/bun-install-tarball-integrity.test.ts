@@ -863,7 +863,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(other.sha512, real.tgz);
+    await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
     using dir = projectDir("integrity-no-verify-flag", server.port);
 
     await using proc = spawn({
@@ -887,7 +887,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(other.sha512, real.tgz);
+    await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
     using dir = projectDir("integrity-no-verify-env-1", server.port);
 
     await using proc = spawn({
@@ -911,7 +911,7 @@ describe.concurrent("tarball integrity metadata forms", () => {
     const real = buildTarball(Buffer.from('{"name":"pkg","version":"1.0.0"}\n'));
     const other = buildTarball(Buffer.from('{"name":"other","version":"9.9.9"}\n'));
 
-    await using server = serveManifest(other.sha512, real.tgz);
+    await using server = serveManifest({ integrity: other.sha512 }, real.tgz);
     using dir = projectDir("integrity-no-verify-env-0", server.port);
 
     await using proc = spawn({
@@ -1165,9 +1165,10 @@ describe.concurrent("tarball re-extraction over an existing cache folder", () =>
     expect(await installFresh(String(dir))).toBe("1.0.0");
     expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
 
+    // A file: tarball is cached under its integrity, so the new contents get a folder of their own.
     await writeFile(join(String(dir), "pkg.tgz"), tarballOfVersion("2.0.0"));
     expect(await installFresh(String(dir))).toBe("2.0.0");
-    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 1 });
+    expect(await cacheState(String(dir))).toEqual({ tmp: [], tarballFolders: 2 });
   });
 
   it("tarball URL", async () => {

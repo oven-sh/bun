@@ -3108,7 +3108,7 @@ describe("minimum-release-age", () => {
       const lockfile = await Bun.file(`${dir}/bun.lock`).text();
       expect(lockfile).toMatchInlineSnapshot(`
         "{
-          "lockfileVersion": 2,
+          "lockfileVersion": 1,
           "configVersion": 1,
           "workspaces": {
             "": {

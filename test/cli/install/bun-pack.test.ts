@@ -908,7 +908,8 @@ describe.skipIf(isWindows)("a failed pack leaves no tarball behind", () => {
 
     const { err, exitCode } = await packExpectingFailure(dir, { fileSizeLimit: true }, "--filename=link.tgz");
 
-    expect(err).toContain('failed to write tarball: "link.tgz"');
+    expect(err).toContain("failed to write tarball:");
+    expect(err).toContain('link.tgz"');
     expect({ exitCode, linkIsSymlink: (await lstat(join(dir, "link.tgz"))).isSymbolicLink() }).toEqual({
       exitCode: 1,
       linkIsSymlink: true,

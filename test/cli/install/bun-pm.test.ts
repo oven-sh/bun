@@ -251,7 +251,7 @@ it("should not list packages missing from node_modules", async () => {
       env,
     });
     expect(await stderr.text()).toBe("");
-    expect(await stdout.text()).toBe(`${package_dir} node_modules (2)
+    expect(await stdout.text()).toBe(`${package_dir} node_modules (2 installed)
 ├── bar@0.0.2
 └── moo@moo
 `);
@@ -1369,16 +1369,16 @@ test("bun pm untrusted and bun pm trust escape control characters in dependency 
   expect(exitCode).toBe(0);
 });
 
-// The dependency alias becomes the node_modules folder and the file: target becomes the
-// resolution, so a dependent can put control characters in both. Windows does not allow
-// them in file names, so the packages cannot be installed there in the first place.
+// The file: target becomes the resolution, so a dependent can put control characters in it (an
+// alias containing them is rejected before anything is installed). Windows does not allow them in
+// file names, so the package cannot be installed there in the first place.
 test.skipIf(isWindows)("bun pm untrusted escapes control characters in the package path and resolution", async () => {
   using dir = tempDir("pm-untrusted-control-chars-path", {
     "package.json": JSON.stringify({
       name: "foo",
       version: "1.0.0",
       dependencies: {
-        "nice\x1b[2Kpkg": "file:./real\rpkg",
+        "nice-pkg": "file:./real\rpkg",
       },
     }),
     "real\rpkg/package.json": JSON.stringify({
@@ -1397,7 +1397,7 @@ test.skipIf(isWindows)("bun pm untrusted escapes control characters in the packa
 
   [stdout, stderr, exitCode] = await runInDir(String(dir), "pm", "untrusted");
   expect(stderr).not.toContain("error:");
-  expect(stdout).toContain("./node_modules/nice\\x1b[2Kpkg @real\\rpkg\n » [postinstall]: exit 0\n");
+  expect(stdout).toContain("./node_modules/nice-pkg @real\\rpkg\n » [postinstall]: exit 0\n");
   expect(stdout).not.toContain("\x1b");
   expect(stdout).not.toContain("\r");
   expect(exitCode).toBe(0);

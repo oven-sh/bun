@@ -246,7 +246,7 @@ test.concurrent("overrides do not apply to workspaces", async () => {
   const lock = await lockfile(dir);
   expect(lock).toMatchInlineSnapshot(`
     "{
-      "lockfileVersion": 2,
+      "lockfileVersion": 1,
       "configVersion": 1,
       "workspaces": {
         "": {

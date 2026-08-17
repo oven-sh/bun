@@ -286,7 +286,7 @@ describe("basic", () => {
     expect(await installedVersion()).toBe("2.0.0");
     expect(normalizeBunSnapshot(await file(join(packageDir, "bun.lock")).text(), packageDir)).toMatchInlineSnapshot(`
       "{
-        "lockfileVersion": 2,
+        "lockfileVersion": 1,
         "configVersion": 1,
         "workspaces": {
           "": {

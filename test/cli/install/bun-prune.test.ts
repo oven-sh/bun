@@ -703,7 +703,7 @@ test.concurrent("isolated linker: --verbose does not print the store build timin
 
     - no-deps@1.0.1
     - one-dep@1.0.0
-    2 packages removed (checked 5)"
+    2 packages removed (checked 5 installed packages)"
   `);
   expect(stderr).not.toContain("Resolved peers");
   expect(stderr).not.toContain("Created store");

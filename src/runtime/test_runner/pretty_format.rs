@@ -1793,7 +1793,9 @@ impl<'a> Formatter<'a> {
                     writer.write_all(b"\n");
                 }
                 Tag::JSON => {
-                    let mut str = bun_core::String::empty();
+                    // `json_stringify` stores a +1 WTFStringImpl ref;
+                    // `OwnedString` releases it on scope exit.
+                    let mut str = bun_core::OwnedString::default();
 
                     value.json_stringify(self.global_this, self.indent, &mut str)?;
                     self.add_for_new_line(str.length());

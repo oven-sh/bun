@@ -288,10 +288,10 @@ impl Options {
 
     /// Text to append to the `GET <url> - 401` line of a request that bun sent
     /// without an `Authorization` header, saying which `.npmrc` line would have
-    /// supplied one. Empty when credentials were sent (the registry rejected
-    /// them, and the status line already says everything bun knows) and for
-    /// downloads that never carry registry credentials, where no `.npmrc` line
-    /// would change anything.
+    /// supplied one. Empty when a header was sent (the server rejected it, and
+    /// the status line already says everything bun knows) and for downloads
+    /// that never carry registry credentials, where no `.npmrc` line would
+    /// change anything.
     pub(crate) fn missing_credentials_note(
         &self,
         package_name: &[u8],
@@ -315,12 +315,19 @@ impl Options {
                     RegistryPath(registry.pathname),
                 );
             }
-            RequestKind::Tarball(Authorization::NoAuthorization) => {}
-            RequestKind::Tarball(Authorization::AllowAuthorization) => {
+            RequestKind::Tarball {
+                sent_authorization: true,
+                ..
+            }
+            | RequestKind::Tarball {
+                authorization: Authorization::NoAuthorization,
+                ..
+            } => {}
+            RequestKind::Tarball {
+                authorization: Authorization::AllowAuthorization,
+                sent_authorization: false,
+            } => {
                 let url = bun_url::URL::parse(url);
-                if self.tarball_credentials(scope, &url).is_some() {
-                    return note;
-                }
                 if scope.has_credentials() {
                     let _ = write!(
                         note,
@@ -377,9 +384,15 @@ fn is_same_origin(a: &bun_url::URL, b: &bun_url::URL) -> bool {
 pub(crate) enum RequestKind {
     /// Always on the package's registry, so it carries the scope's credentials.
     Manifest,
-    /// May be anywhere; see `Options::tarball_credentials`. Carries what the
-    /// request was enqueued with (`NetworkTask::authorization`).
-    Tarball(Authorization),
+    /// May be anywhere; see `Options::tarball_credentials`. Both fields are
+    /// read back from the `NetworkTask` that made the request.
+    Tarball {
+        /// Whether registry credentials were allowed on this download at all.
+        authorization: Authorization,
+        /// Whether some `Authorization` header actually went out (registry
+        /// credentials, a `.npmrc` line, or the URL's own userinfo).
+        sent_authorization: bool,
+    },
 }
 
 /// A registry pathname in the form `.npmrc` keys use: `/` or `/some/path/`.

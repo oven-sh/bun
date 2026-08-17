@@ -1007,6 +1007,51 @@ describe.concurrent("//host/ credential lines are matched against the request UR
     expect(stderr).not.toContain(".npmrc");
   });
 
+  test("a 401 for a dist.tarball whose own userinfo was sent is reported without a suggestion", async () => {
+    using cdn = mockRegistry("Bearer what-the-cdn-actually-wants");
+    using registry = mockRegistry("Bearer registry-token", {
+      tarballOrigin: () => `http://carol:wrong-password@${cdn.host}`,
+    });
+    using dir = tempDir("npmrc-url-auth-tarball-userinfo-rejected", {
+      "package.json": packageJson,
+      ".npmrc": [`registry=${registry.origin}/`, `//${registry.host}/:_authToken=registry-token`, ""].join("\n"),
+    });
+
+    const { stderr, exitCode } = await install(String(dir));
+
+    // The URL's userinfo went out as basic auth and was rejected; no .npmrc
+    // line is missing, so none is suggested.
+    expect({ cdn: cdn.requests, exitCode }).toEqual({
+      cdn: [{ path: tarballPath, auth: basic("carol", "wrong-password") }],
+      exitCode: 1,
+    });
+    expect(stderr).toContain(`error: GET ${cdn.origin}${tarballPath} - 401\n`);
+    expect(stderr).not.toContain(".npmrc");
+  });
+
+  test("a line for the tarball host takes precedence over userinfo in the dist.tarball url", async () => {
+    using cdn = mockRegistry("Bearer cdn-token");
+    using registry = mockRegistry("Bearer registry-token", {
+      tarballOrigin: () => `http://carol:s3cret@${cdn.host}`,
+    });
+    using dir = tempDir("npmrc-url-auth-line-over-userinfo", {
+      "package.json": packageJson,
+      ".npmrc": [
+        `registry=${registry.origin}/`,
+        `//${registry.host}/:_authToken=registry-token`,
+        `//${cdn.host}/:_authToken=cdn-token`,
+        "",
+      ].join("\n"),
+    });
+
+    const { exitCode } = await install(String(dir));
+
+    expect({ cdn: cdn.requests, exitCode }).toEqual({
+      cdn: [{ path: tarballPath, auth: "Bearer cdn-token" }],
+      exitCode: 0,
+    });
+  });
+
   test("a tarball on a different host than its registry gets that host's own line", async () => {
     using cdn = mockRegistry("Bearer cdn-token");
     using registry = mockRegistry("Bearer registry-token", { tarballOrigin: () => cdn.origin });

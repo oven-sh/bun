@@ -65,6 +65,11 @@ pub struct NetworkTask {
     /// (`github:` and URL tarball dependencies are not). Read back when a
     /// 401/403 is reported, so the suggested fix is one that would apply.
     pub(crate) authorization: Authorization,
+    /// Whether a tarball request went out with an `Authorization` header from
+    /// any source (registry credentials, a `.npmrc` line for its host, or the
+    /// URL's own userinfo). A 401/403 after that is a rejection, not missing
+    /// configuration.
+    pub(crate) sent_authorization: bool,
     pub(crate) retried: u16,
     pub(crate) response_buffer: MutableString,
     // BACKREF: PackageManager owns this task via `preallocated_network_tasks`.
@@ -871,6 +876,7 @@ impl NetworkTask {
                 b""
             }
         };
+        self.sent_authorization = !header_buf.is_empty();
 
         // SAFETY: lifetime extension — `url_buf` is a heap allocation owned by
         // `*self`, which outlives the HTTP request. `AsyncHTTP::init` demands a
@@ -1013,6 +1019,7 @@ impl NetworkTask {
             addr_of_mut!((*slot).url_buf).write(Box::default());
             addr_of_mut!((*slot).header_buf).write(Box::default());
             addr_of_mut!((*slot).authorization).write(Authorization::NoAuthorization);
+            addr_of_mut!((*slot).sent_authorization).write(false);
             addr_of_mut!((*slot).retried).write(0);
             addr_of_mut!((*slot).next).write(bun_threading::Link::new());
             addr_of_mut!((*slot).tarball_stream).write(None);

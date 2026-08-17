@@ -2191,7 +2191,7 @@ unsafe extern "C" {
 }
 impl Default for StackCheck {
     /// `cached_stack_end` defaults to `0`, so
-    /// `is_safe_to_recurse()` always reports true until `init`/`update`.
+    /// `is_safe_to_recurse()` always reports true; use `init()` for a real bound.
     #[inline]
     fn default() -> Self {
         Self {
@@ -2209,10 +2209,6 @@ impl StackCheck {
         Self {
             cached_stack_end: Bun__StackCheck__getMaxStack() as usize,
         }
-    }
-    #[inline]
-    pub fn update(&mut self) {
-        self.cached_stack_end = Bun__StackCheck__getMaxStack() as usize;
     }
     /// Is there enough stack space to safely recurse?
     /// Threshold: `> 256K` on Windows, `> 128K` elsewhere.

@@ -169,6 +169,14 @@ pub(crate) fn install_hoisted_packages(
         this.downloads_node = None;
     });
 
+    // A partial install (security scanner) runs ahead of the real one and must not touch the layout.
+    let replacing_isolated_node_modules = packages_to_install.is_none()
+        && sys::directory_exists_at(Fd::cwd(), bun_paths::path_literal!("node_modules/.bun"))
+            .unwrap_or(false);
+    if replacing_isolated_node_modules {
+        crate::isolated_install::move_node_modules_aside(&this.lockfile);
+    }
+
     // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
     // the packages could still not be in the cache dir
     // this would be a common scenario in a CI environment
@@ -218,7 +226,8 @@ pub(crate) fn install_hoisted_packages(
     let mut skip_delete = new_node_modules;
     let mut skip_verify_installed_version_number = new_node_modules;
 
-    if this.options.enable.force_install() {
+    // Whatever `move_node_modules_aside` could not move is still deleted before it is reinstalled.
+    if this.options.enable.force_install() || replacing_isolated_node_modules {
         skip_verify_installed_version_number = true;
         skip_delete = false;
     }

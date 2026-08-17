@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, test } from "bun:test";
 import { exists, mkdir, writeFile } from "fs/promises";
-import { bunEnv, bunExe, bunEnv as env, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunEnv as env, bunExe, isLinux, isWindows, readdirSorted, tempDir, tmpdirSync } from "harness";
 import { cpSync } from "node:fs";
 import { join } from "path";
 import {
@@ -1213,4 +1213,107 @@ test.skipIf(isWindows)("bun pm untrusted escapes control characters in the packa
   expect(stdout).not.toContain("\x1b");
   expect(stdout).not.toContain("\r");
   expect(exitCode).toBe(0);
+});
+
+// The global directory (`$BUN_INSTALL/install/global`, otherwise `.bun/install/global` under
+// $XDG_CACHE_HOME or $HOME) and the global bin directory (`$BUN_INSTALL/bin`, otherwise `.bun/bin`
+// under the same two) are each joined in a path buffer of MAX_PATH_BYTES: 4096 bytes on Linux, 1024
+// on macOS. On Windows the buffer holds more than an environment variable can, so this is POSIX only.
+describe.concurrent.skipIf(isWindows)("global directories longer than the path buffer", () => {
+  const PATH_BUFFER_BYTES = isLinux ? 4096 : 1024;
+  const LONG_VALUE = "/" + Buffer.alloc(8192, "a").toString();
+
+  type GlobalDirectory = "global directory" | "global bin directory";
+  type Variable = "BUN_INSTALL" | "XDG_CACHE_HOME" | "HOME";
+
+  // A -g command opens the global directory (which has to contain a package.json) and then the
+  // global bin directory; `bun pm bin -g` prints the latter. Every variable the two lookups read is
+  // set, so that a case reaches exactly the arm it names: the directory not under test is named
+  // outright ($BUN_INSTALL_GLOBAL_DIR and $BUN_INSTALL_BIN are opened as given, not joined), and
+  // $XDG_CONFIG_HOME holds an .npmrc so that neither the bunfig nor the .npmrc lookup joins $HOME.
+  async function runGlobal(
+    args: string[],
+    directory: GlobalDirectory,
+    variable: Variable,
+    value: string | ((dir: string) => string),
+  ) {
+    using dir = tempDir("pm-global-dir-too-long", {
+      "global/package.json": JSON.stringify({ name: "global" }),
+      "xdg-config/.npmrc": "",
+    });
+    const spawnEnv: NodeJS.Dict<string> = {
+      ...env,
+      HOME: String(dir),
+      XDG_CONFIG_HOME: join(String(dir), "xdg-config"),
+    };
+    delete spawnEnv.BUN_INSTALL;
+    delete spawnEnv.BUN_INSTALL_GLOBAL_DIR;
+    delete spawnEnv.BUN_INSTALL_BIN;
+    delete spawnEnv.XDG_CACHE_HOME;
+    if (directory === "global directory") {
+      spawnEnv.BUN_INSTALL_BIN = join(String(dir), "bin");
+    } else {
+      spawnEnv.BUN_INSTALL_GLOBAL_DIR = join(String(dir), "global");
+    }
+    spawnEnv[variable] = typeof value === "string" ? value : value(String(dir));
+
+    await using proc = spawn({
+      cmd: [bunExe(), ...args],
+      cwd: String(dir),
+      env: spawnEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { dir: String(dir), stdout, stderr, exitCode };
+  }
+
+  function expectNameTooLong({ stdout, stderr, exitCode }: Awaited<ReturnType<typeof runGlobal>>) {
+    expect(stderr).toContain("ENAMETOOLONG");
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  }
+
+  test.each<[GlobalDirectory, Variable]>([
+    ["global directory", "BUN_INSTALL"],
+    ["global directory", "XDG_CACHE_HOME"],
+    ["global directory", "HOME"],
+    ["global bin directory", "BUN_INSTALL"],
+    ["global bin directory", "XDG_CACHE_HOME"],
+    ["global bin directory", "HOME"],
+  ])("bun pm bin -g: %s from $%s", async (directory, variable) => {
+    expectNameTooLong(await runGlobal(["pm", "bin", "-g"], directory, variable, LONG_VALUE));
+  });
+
+  test("bun install -g: global directory from $BUN_INSTALL", async () => {
+    expectNameTooLong(await runGlobal(["install", "-g"], "global directory", "BUN_INSTALL", LONG_VALUE));
+  });
+
+  // A joined path of exactly the buffer size is already one byte longer than the OS accepts; one
+  // byte more and it does not fit the buffer either.
+  test.each([
+    ["exactly", 0],
+    ["one byte above", 1],
+  ])("global directory path %s the path buffer size", async (_, offset) => {
+    const suffix = "/install/global";
+    const value = "/" + Buffer.alloc(PATH_BUFFER_BYTES + offset - "/".length - suffix.length, "a").toString();
+    expect(Buffer.byteLength(value + suffix)).toBe(PATH_BUFFER_BYTES + offset);
+
+    expectNameTooLong(await runGlobal(["pm", "bin", "-g"], "global directory", "BUN_INSTALL", value));
+  });
+
+  // What has to fit the buffer is the normalized path, not the value as written.
+  test("a value that only fits the path buffer once normalized is used", async () => {
+    const { dir, stdout, stderr, exitCode } = await runGlobal(
+      ["pm", "bin", "-g"],
+      "global bin directory",
+      "BUN_INSTALL",
+      // `${dir}/x/../x/../...` normalizes to `${dir}` (path.join would normalize it here already).
+      dir => `${dir}/${Buffer.alloc(100_000, "x/../").toString()}`,
+    );
+
+    expect(stderr).toBe("");
+    expect(stdout).toBe(join(dir, "bin") + "\n");
+    expect(exitCode).toBe(0);
+  });
 });

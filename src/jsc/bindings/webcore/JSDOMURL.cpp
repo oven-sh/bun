@@ -177,6 +177,12 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMURLDOMConstructor::const
     RETURN_IF_EXCEPTION(throwScope, {});
     auto* jsDOMURL = uncheckedDowncast<JSDOMURL>(jsValue.asCell());
     vm.heap.reportExtraMemoryAllocated(jsDOMURL, jsDOMURL->wrapped().memoryCostForGC());
+    if (argument0.value().isString()) {
+        // An already-canonical URL parses to the argument's own StringImpl; hand that JSString back from href.
+        JSString* input = asString(argument0.value());
+        if (input->tryGetValueImpl() == jsDOMURL->wrapped().href().string().impl())
+            jsDOMURL->m_href.set(vm, jsDOMURL, input);
+    }
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSDOMURLDOMConstructorConstruct, JSDOMURLDOMConstructor::construct);
@@ -271,12 +277,20 @@ JSC_DEFINE_CUSTOM_GETTER(jsDOMURLConstructor, (JSGlobalObject * lexicalGlobalObj
     return JSValue::encode(JSDOMURL::getConstructor(vm, prototype->globalObject()));
 }
 
-static inline JSValue jsDOMURL_hrefGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
+JSString* JSDOMURL::href(JSGlobalObject& lexicalGlobalObject) const
 {
     auto& vm = JSC::getVM(&lexicalGlobalObject);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLUSVString>(lexicalGlobalObject, throwScope, impl.href())));
+    const String& href = wrapped().href().string();
+    if (JSString* cached = m_href.get(); cached && cached->tryGetValueImpl() == href.impl()) [[likely]]
+        return cached;
+    JSString* string = JSC::jsString(vm, href);
+    m_href.set(vm, this, string);
+    return string;
+}
+
+static inline JSValue jsDOMURL_hrefGetter(JSGlobalObject& lexicalGlobalObject, JSDOMURL& thisObject)
+{
+    return thisObject.href(lexicalGlobalObject);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDOMURL_href, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
@@ -833,8 +847,7 @@ static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toJSONBody(JSC::JSGl
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.toJSON())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis->href(*lexicalGlobalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -854,8 +867,7 @@ static inline JSC::EncodedJSValue jsDOMURLPrototypeFunction_toStringBody(JSC::JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     UNUSED_PARAM(throwScope);
     UNUSED_PARAM(callFrame);
-    auto& impl = castedThis->wrapped();
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUSVString>(*lexicalGlobalObject, throwScope, impl.href())));
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(castedThis->href(*lexicalGlobalObject)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -880,6 +892,7 @@ void JSDOMURL::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_searchParams);
+    visitor.append(thisObject->m_href);
     visitor.reportExtraMemoryVisited(thisObject->protectedWrapped()->memoryCostForGC());
 }
 

@@ -686,7 +686,7 @@ pub mod fs {
     // Canonical definitions live in `fs.rs` (mounted as `crate::fs_full`).
     // Re-exported here so the public path `bun_resolver::fs::*` is preserved.
     pub use crate::fs_full::{
-        DirEntry, DirEntryIterator, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
+        DirEntry, Entry, EntryCache, EntryKind, EntryKindResolver, EntryLookup,
         FilenameStoreAppender, dir_entry,
     };
 
@@ -1118,14 +1118,13 @@ pub mod fs {
 
         /// Iterate `handle` and populate a
         /// fresh `DirEntry` (re-using `prev_map` Entry slots where the name matches).
-        fn readdir<I: DirEntryIterator>(
+        fn readdir(
             &mut self,
             store_fd: bool,
             mut prev_map: Option<&mut dir_entry::EntryMap>,
             dir_: &'static [u8],
             generation: Generation,
             handle: Fd,
-            iterator: I,
         ) -> crate::CrateResult<DirEntry> {
             let mut iter = bun_sys::iterate_dir(handle);
             let mut dir = DirEntry::init(dir_, generation);
@@ -1138,12 +1137,7 @@ pub mod fs {
             let mut filename_store = FilenameStoreAppender::new();
             while let Some(entry_) = iter.next()? {
                 // debug("readdir entry {}", BStr::new(entry_.name.slice()));
-                dir.add_entry_with_store(
-                    prev_map.as_deref_mut(),
-                    &entry_,
-                    &mut filename_store,
-                    &iterator,
-                )?;
+                dir.add_entry_with_store(prev_map.as_deref_mut(), &entry_, &mut filename_store)?;
             }
 
             // debug("readdir({}, {}) = {}", handle, dir_, dir.data.count());
@@ -1189,16 +1183,6 @@ pub mod fs {
             )))
         }
 
-        pub fn read_directory(
-            &mut self,
-            dir_: &[u8],
-            handle_: Option<Fd>,
-            generation: Generation,
-            store_fd: bool,
-        ) -> crate::CrateResult<&mut EntriesOption> {
-            self.read_directory_with_iterator(dir_, handle_, generation, store_fd, ())
-        }
-
         // One of the learnings here
         //
         //   Closing file descriptors yields significant performance benefits on Linux
@@ -1209,13 +1193,12 @@ pub mod fs {
         // https://twitter.com/jarredsumner/status/1655464485245845506
         /// Caller borrows the returned `EntriesOption`. When `FeatureFlags::ENABLE_ENTRY_CACHE`
         /// is `false`, it is not safe to store this pointer past the current function call.
-        pub fn read_directory_with_iterator<I: DirEntryIterator>(
+        pub fn read_directory(
             &mut self,
             dir_maybe_trail_slash: &[u8],
             maybe_handle: Option<Fd>,
             generation: Generation,
             store_fd: bool,
-            iterator: I,
         ) -> crate::CrateResult<&'static mut EntriesOption> {
             let dir = strings::paths::without_trailing_slash_windows_path(dir_maybe_trail_slash);
 
@@ -1298,8 +1281,7 @@ pub mod fs {
                 // SAFETY: BSSMap-owned, no aliasing here (entries_mutex held).
                 unsafe { &mut (*p).data }
             });
-            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle, iterator)
-            {
+            let mut entries = match self.readdir(store_fd, prev, dir, generation, handle) {
                 Ok(e) => e,
                 Err(err) => {
                     if let Some(existing) = in_place {
@@ -1624,7 +1606,7 @@ pub mod fs {
                     });
                     // SAFETY: see above — exclusive `&mut` on the prev map for the duration of `readdir`.
                     let prev = Some(unsafe { &mut (*e_ptr).data });
-                    match self.readdir(false, prev, dir, generation, handle, ()) {
+                    match self.readdir(false, prev, dir, generation, handle) {
                         Ok(new_entry) => {
                             // SAFETY: see above.
                             unsafe { (*e_ptr).data.clear() };

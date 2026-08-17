@@ -1882,4 +1882,55 @@ describe.concurrent("test file discovery (scanner)", () => {
     expect(stderr).toContain(" 1 pass");
     expect(exitCode).toBe(0);
   });
+
+  // https://github.com/oven-sh/bun/issues/6655
+  test("runs test files in stable sorted order regardless of filesystem readdir order", async () => {
+    // These names give a non-alphabetical getdents order on ext4/overlayfs
+    // (htree hash: echo, alpha, golf, bravo, delta, charlie, foxtrot, hotel).
+    const names = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot", "golf", "hotel"] as const;
+    const tpl = (n: string) => `import { test } from "bun:test"; test("t", () => { console.log("ORDER ${n}"); });`;
+    const files: Record<string, string> = {};
+    for (const n of names) {
+      files[`pkg/src/${n}.test.ts`] = tpl(`src/${n}`);
+      files[`pkg/lib/inner/${n}.test.ts`] = tpl(`lib/inner/${n}`);
+    }
+    files["pkg/src/Zeta.test.ts"] = tpl("src/Zeta");
+    using dir = tempDir("scanner-order", files);
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    const ran = stdout
+      .split("\n")
+      .filter(l => l.startsWith("ORDER "))
+      .map(l => l.slice("ORDER ".length));
+
+    expect(ran).toEqual([
+      "src/alpha",
+      "src/bravo",
+      "src/charlie",
+      "src/delta",
+      "src/echo",
+      "src/foxtrot",
+      "src/golf",
+      "src/hotel",
+      "src/Zeta",
+      "lib/inner/alpha",
+      "lib/inner/bravo",
+      "lib/inner/charlie",
+      "lib/inner/delta",
+      "lib/inner/echo",
+      "lib/inner/foxtrot",
+      "lib/inner/golf",
+      "lib/inner/hotel",
+    ]);
+    expect(stderr).toContain(" 17 pass");
+    expect(exitCode).toBe(0);
+  });
 });

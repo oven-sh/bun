@@ -3951,10 +3951,10 @@ Server.prototype[kRealListen] = function (
   }
 
   if (contexts) {
-    for (const [name, context] of contexts) {
+    for (const [name, { context }] of contexts) {
       // tls.ts stores the InternalSecureContext wrapper; the native side wants
       // the native SSL_CTX wrapper at `.context`.
-      addServerName(this._handle, name, context.context ?? context);
+      addServerName(this._handle, name, context.context);
     }
   }
 
@@ -4110,7 +4110,8 @@ function listenInCluster(
     readableAll,
     writableAll,
     ...options,
-    sharedOnly: tls ? true : undefined,
+    // Not on Windows: two processes cannot accept on copies of one listening socket there (oven-sh/bun#37896).
+    sharedOnly: tls && process.platform !== "win32" ? true : undefined,
   };
   const listeningId = (server[kClusterListeningId] = (server[kClusterListeningId] || 0) + 1);
   // https://github.com/nodejs/node/blob/v26.3.0/lib/net.js#L2080-L2102

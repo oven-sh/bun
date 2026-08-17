@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, expiredTls, isDebug } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -1421,6 +1421,138 @@ it("an asynchronous SNICallback resolving cb(null, null) still honors addContext
   await once(client, "close");
   server.close();
   await once(server, "close");
+});
+
+describe("addContext() on connections the server wraps itself", () => {
+  // Connections handed in with server.emit('connection') (and, in a cluster
+  // worker fed by the primary, every connection) never pass through a listener's
+  // SNI tree, so tls.Server has to resolve its addContext() entries itself.
+  const defaultFingerprint = new crypto.X509Certificate(COMMON_CERT.cert).fingerprint256;
+  const altFingerprint = new crypto.X509Certificate(cert).fingerprint256;
+  const expiredFingerprint = new crypto.X509Certificate(expiredTls.cert).fingerprint256;
+  const altContext = { key: rawKey, cert };
+
+  async function serverCertificateFor(port: number, servername: string) {
+    const client = connect({ port, host: "127.0.0.1", servername, rejectUnauthorized: false });
+    try {
+      await once(client, "secureConnect");
+      return client.getPeerCertificate().fingerprint256;
+    } finally {
+      client.destroy();
+    }
+  }
+
+  async function withInjectingServer(tlsServer: Server, run: (port: number) => Promise<void>) {
+    tlsServer.on("secureConnection", socket => socket.end());
+    const rawServer = net.createServer(raw => tlsServer.emit("connection", raw));
+    rawServer.listen(0, "127.0.0.1");
+    await once(rawServer, "listening");
+    try {
+      await run((rawServer.address() as AddressInfo).port);
+    } finally {
+      rawServer.close();
+      tlsServer.close();
+    }
+  }
+
+  it("selects the addContext() entry matching the servername, node's way", async () => {
+    const tlsServer = createServer(COMMON_CERT);
+    tlsServer.addContext("alt.example.com", altContext);
+    tlsServer.addContext("*.wild.example.com", altContext);
+    // A name added twice ends up with the last context given for it.
+    tlsServer.addContext("readded.example.com", { ...expiredTls });
+    tlsServer.addContext("readded.example.com", altContext);
+    await withInjectingServer(tlsServer, async port => {
+      expect({
+        exact: await serverCertificateFor(port, "alt.example.com"),
+        wildcard: await serverCertificateFor(port, "a.wild.example.com"),
+        readded: await serverCertificateFor(port, "readded.example.com"),
+        // `*` covers a single label.
+        twoLabels: await serverCertificateFor(port, "a.b.wild.example.com"),
+        unknown: await serverCertificateFor(port, "other.example.com"),
+      }).toEqual({
+        exact: altFingerprint,
+        wildcard: altFingerprint,
+        readded: altFingerprint,
+        twoLabels: defaultFingerprint,
+        unknown: defaultFingerprint,
+      });
+    });
+  });
+
+  it("consults addContext() only for servernames the SNICallback selects nothing for", async () => {
+    // Same precedence as the native listener (see the asynchronous cb(null, null)
+    // test above); node's own default stops consulting addContext() entries once
+    // an SNICallback is configured.
+    const picked = tls.createSecureContext({ ...expiredTls });
+    const seen: string[] = [];
+    const tlsServer = createServer({
+      ...COMMON_CERT,
+      SNICallback(name, cb) {
+        seen.push(name);
+        // Resolve asynchronously too: the fallback has to work with either style.
+        if (name === "picked.example.com") setImmediate(cb, null, picked);
+        else cb(null, undefined);
+      },
+    });
+    tlsServer.addContext("alt.example.com", altContext);
+    // The callback is consulted even for a name addContext() knows.
+    tlsServer.addContext("picked.example.com", altContext);
+    await withInjectingServer(tlsServer, async port => {
+      expect({
+        picked: await serverCertificateFor(port, "picked.example.com"),
+        alt: await serverCertificateFor(port, "alt.example.com"),
+        unknown: await serverCertificateFor(port, "other.example.com"),
+        seen,
+      }).toEqual({
+        picked: expiredFingerprint,
+        alt: altFingerprint,
+        unknown: defaultFingerprint,
+        seen: ["picked.example.com", "alt.example.com", "other.example.com"],
+      });
+    });
+  });
+
+  it("an SNICallback error is reported as tlsClientError even when addContext() knows the name", async () => {
+    const tlsServer = createServer({
+      ...COMMON_CERT,
+      SNICallback: (_name, cb) => cb(new Error("refused by SNICallback")),
+    });
+    tlsServer.addContext("alt.example.com", altContext);
+    const clientError = Promise.withResolvers<Error>();
+    tlsServer.on("tlsClientError", clientError.resolve);
+    await withInjectingServer(tlsServer, async port => {
+      const client = connect({ port, host: "127.0.0.1", servername: "alt.example.com", rejectUnauthorized: false });
+      client.on("error", () => {});
+      try {
+        expect((await clientError.promise).message).toBe("refused by SNICallback");
+      } finally {
+        client.destroy();
+      }
+    });
+  });
+
+  it("addContext() after listen() still reaches the native listener, and a later listen() reloads every entry", async () => {
+    const server = createServer(COMMON_CERT);
+    server.on("secureConnection", socket => socket.end());
+    try {
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      server.addContext("alt.example.com", altContext);
+      const whileListening = await serverCertificateFor((server.address() as AddressInfo).port, "alt.example.com");
+      server.close();
+      await once(server, "close");
+      server.listen(0, "127.0.0.1");
+      await once(server, "listening");
+      const afterRelisten = await serverCertificateFor((server.address() as AddressInfo).port, "alt.example.com");
+      expect({ whileListening, afterRelisten }).toEqual({
+        whileListening: altFingerprint,
+        afterRelisten: altFingerprint,
+      });
+    } finally {
+      server.close();
+    }
+  });
 });
 
 describe("tls.Server socket destroySoon", () => {

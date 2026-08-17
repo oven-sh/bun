@@ -11,7 +11,9 @@ import {
   tempDirWithFiles,
   tls as tlsCerts,
 } from "harness";
+import { readFileSync } from "node:fs";
 import net from "node:net";
+import { join } from "node:path";
 
 test.concurrent("cloneable and transferable equals", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -174,9 +176,13 @@ process.send("regular message");
   expect(exitCode).toBe(0);
 });
 
-test("TLS worker listening on a key already owned by a round-robin handle fails with EINVAL", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "main.ts": `
+// TLS workers only ask for a shared listening socket on POSIX; on Windows the primary hands them
+// connections like plain workers (see the Windows test further down), so nothing is refused there.
+test.skipIf(isWindows)(
+  "TLS worker listening on a key already owned by a round-robin handle fails with EINVAL",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const tls = require("node:tls");
@@ -200,11 +206,14 @@ if (cluster.isPrimary) {
   server.listen(0);
 }
 `,
-  });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("tls listen error code: EINVAL");
-  expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
-});
+    });
+    const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect(stdout).toContain("tls listen error code: EINVAL");
+    expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+  },
+  // Three debug processes, two of them loading node:tls, like its two siblings below.
+  30_000,
+);
 
 test("cluster pipe listen error carries no port suffix", async () => {
   const dir = tempDirWithFiles("bun-test", {
@@ -807,11 +816,14 @@ if (cluster.isPrimary) {
   expect(stdout).toContain("reply: echo:hi");
 }, 30_000);
 
-test("plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL", async () => {
-  const dir = tempDirWithFiles("bun-test", {
-    "cert.pem": tlsCerts.cert,
-    "key.pem": tlsCerts.key,
-    "main.ts": `
+// Not on Windows: no shared-only handle exists there (see the next test).
+test.skipIf(isWindows)(
+  "plain worker listening on a key already owned by a TLS shared-only handle fails with EINVAL",
+  async () => {
+    const dir = tempDirWithFiles("bun-test", {
+      "cert.pem": tlsCerts.cert,
+      "key.pem": tlsCerts.key,
+      "main.ts": `
 const cluster = require("node:cluster");
 const net = require("node:net");
 const tls = require("node:tls");
@@ -839,11 +851,157 @@ if (cluster.isPrimary) {
   server.listen(0);
 }
 `,
+    });
+    const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
+    expect(stdout).toContain("net listen error code: EINVAL");
+    expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
+  },
+  30_000,
+);
+
+// On Windows, TLS workers used to accept on copies of one listening socket like SCHED_NONE workers,
+// whatever the policy. Two processes accepting on one Windows socket do not work: the worker losing
+// the race for a connection blocked inside accept() until the next connection arrived (it stopped
+// answering IPC and never reacted to disconnect()), and the two workers' exclusive AFD polls kept
+// cancelling each other while idle. TLS workers there now take the primary's connections in turn,
+// like plain workers do, and wrap each one themselves, which also has to honor addContext() (there is
+// no native listener in the worker to attach the contexts to).
+test.skipIf(!isWindows)(
+  "Windows: two TLS workers on one port are served by the primary in turn, honor addContext() and keep answering IPC",
+  async () => {
+    const tlsFixtures = join(import.meta.dir, "tls", "fixtures");
+    using dir = tempDir("cluster-windows-tls-workers", {
+      "cert.pem": tlsCerts.cert,
+      "key.pem": tlsCerts.key,
+      "alt-cert.pem": readFileSync(join(tlsFixtures, "rsa_cert.crt"), "utf8"),
+      "alt-key.pem": readFileSync(join(tlsFixtures, "rsa_private.pem"), "utf8"),
+      "main.ts": `
+const cluster = require("node:cluster");
+const tls = require("node:tls");
+const fs = require("node:fs");
+const path = require("node:path");
+const { X509Certificate } = require("node:crypto");
+const key = fs.readFileSync(path.join(__dirname, "key.pem"));
+const cert = fs.readFileSync(path.join(__dirname, "cert.pem"));
+const altKey = fs.readFileSync(path.join(__dirname, "alt-key.pem"));
+const altCert = fs.readFileSync(path.join(__dirname, "alt-cert.pem"));
+const ALT_NAME = "alt.example.com";
+
+if (cluster.isPrimary) {
+  const CONNECTIONS = 40;
+  const fingerprints = {
+    cert: new X509Certificate(cert).fingerprint256,
+    altCert: new X509Certificate(altCert).fingerprint256,
+  };
+  const workers = [cluster.fork({ ADD_CONTEXT: "before-listen" }), cluster.fork({ ADD_CONTEXT: "after-listen" })];
+  const ports = new Set();
+  const exits = [];
+  let listening = 0;
+
+  function fail(message) {
+    console.log(message);
+    for (const worker of workers) worker.process.kill();
+    process.exit(1);
+  }
+
+  for (const worker of workers) {
+    worker.on("message", message => {
+      if (message?.error) fail("worker " + worker.id + " error: " + message.error);
+    });
+  }
+
+  cluster.on("listening", (worker, address) => {
+    ports.add(address.port);
+    if (++listening !== workers.length) return;
+    run(address.port).catch(err => fail("error: " + err.message));
   });
-  const { stdout } = await bunRun(joinP(dir, "main.ts"), bunEnv);
-  expect(stdout).toContain("net listen error code: EINVAL");
-  expect(stdout).toContain("TLS and non-TLS cluster workers cannot share");
-}, 30_000);
+
+  cluster.on("exit", (worker, code, signal) => {
+    exits.push(code ?? signal);
+    if (exits.length === workers.length) console.log("exits:", exits.join(","));
+  });
+
+  // Returns "<worker id>:<which certificate the client was shown>".
+  function connectOnce(port, servername) {
+    return new Promise((resolve, reject) => {
+      const client = tls.connect({ port, host: "127.0.0.1", servername, rejectUnauthorized: false });
+      let shown = "no certificate";
+      let data = "";
+      client.setEncoding("utf8");
+      client.on("secureConnect", () => {
+        const fingerprint = client.getPeerCertificate().fingerprint256;
+        shown = Object.keys(fingerprints).find(name => fingerprints[name] === fingerprint) ?? "unknown certificate";
+      });
+      client.on("data", chunk => (data += chunk));
+      client.on("error", reject);
+      client.on("close", () => (data ? resolve(data + ":" + shown) : reject(new Error("no reply from the worker"))));
+    });
+  }
+
+  function pingWorkers(connection) {
+    return Promise.all(
+      workers.map(worker => {
+        return new Promise(resolve => {
+          // A worker blocked inside accept() produces no event at all; name it instead of timing out.
+          const stuck = setTimeout(() => fail("worker " + worker.id + " stopped answering after connection " + connection), 10_000);
+          worker.once("message", () => {
+            clearTimeout(stuck);
+            resolve();
+          });
+          worker.send("ping");
+        });
+      }),
+    );
+  }
+
+  async function run(port) {
+    const servedBy = [];
+    const wrongCertificates = [];
+    for (let connection = 1; connection <= CONNECTIONS; connection++) {
+      // Two connections in a row per name, so each worker (they alternate) sees both names.
+      const useAlt = (connection >> 1) & 1;
+      const [workerId, shown] = (await connectOnce(port, useAlt ? ALT_NAME : "localhost")).split(":");
+      servedBy.push(workerId);
+      const expected = useAlt ? "altCert" : "cert";
+      if (shown !== expected) wrongCertificates.push("connection " + connection + " expected " + expected + ", got " + shown);
+      await pingWorkers(connection);
+    }
+    console.log("served:", servedBy.length, "ports:", ports.size);
+    const alternating = servedBy.every((id, i) => i === 0 || id !== servedBy[i - 1]);
+    console.log("distribution:", alternating ? "alternating" : servedBy.join(""));
+    console.log("certificates:", wrongCertificates.length === 0 ? "ok" : wrongCertificates.join("; "));
+    for (const worker of workers) worker.disconnect();
+  }
+} else {
+  const server = tls.createServer({ key, cert }, socket => socket.end(String(cluster.worker.id)));
+  server.on("error", err => process.send({ error: err.message }));
+  server.on("tlsClientError", err => process.send({ error: "tlsClientError: " + err.message }));
+  if (process.env.ADD_CONTEXT === "before-listen") server.addContext(ALT_NAME, { key: altKey, cert: altCert });
+  server.listen(0, "127.0.0.1", () => {
+    if (process.env.ADD_CONTEXT === "after-listen") server.addContext(ALT_NAME, { key: altKey, cert: altCert });
+  });
+  process.on("message", message => {
+    if (message === "ping") process.send("pong");
+  });
+}
+`,
+    });
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "main.ts"],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "served: 40 ports: 1\ndistribution: alternating\ncertificates: ok\nexits: 0,0\n",
+      stderr: expect.any(String),
+      exitCode: 0,
+    });
+  },
+  30_000,
+);
 
 test.skipIf(isWindows)(
   "SCHED_NONE listen({fd:2}) fails EINVAL like node and does not close the primary's stderr",

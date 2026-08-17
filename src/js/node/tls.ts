@@ -1160,6 +1160,26 @@ function buildSharedCreds(server) {
   ));
 }
 
+// An addContext() entry, matched like node's: https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L1571-L1611
+type ServerContext = { re: RegExp; context: InstanceType<typeof InternalSecureContext> };
+
+function contextMatcher(hostname: string): RegExp {
+  const source = RegExpPrototypeSymbolReplace.$call(
+    /\*/g,
+    RegExpPrototypeSymbolReplace.$call(/([.^$+?\-\\[\]{}])/g, hostname, "\\$1"),
+    "[^.]*",
+  );
+  return new RegExp(`^${source}$`);
+}
+
+function matchContext(contexts: Map<string, ServerContext>, servername: string) {
+  let match;
+  for (const { 1: entry } of contexts) {
+    if (RegExpPrototypeExec.$call(entry.re, servername) !== null) match = entry.context;
+  }
+  return match;
+}
+
 function Server(options, secureConnectionListener): void {
   if (!(this instanceof Server)) {
     return new Server(options, secureConnectionListener);
@@ -1214,7 +1234,7 @@ function Server(options, secureConnectionListener): void {
   this.ALPNProtocols = undefined;
   this._sharedCreds = undefined;
 
-  let contexts: Map<string, typeof InternalSecureContext> | null = null;
+  const contexts: Map<string, ServerContext> = new Map();
 
   this.addContext = function (hostname, context) {
     if (typeof hostname !== "string") {
@@ -1223,15 +1243,30 @@ function Server(options, secureConnectionListener): void {
     if (!(context instanceof InternalSecureContext)) {
       context = new InternalSecureContext(context, true);
     }
+    // Kept like node's _contexts: reloaded by the next listen(), matched for connections wrapped below.
+    contexts.delete(hostname); // a re-added name becomes the newest entry
+    contexts.set(hostname, { re: contextMatcher(hostname), context });
     const handle = this._handle;
-    if (handle) {
+    // A cluster worker fed by the primary listens on node's faux handle, which has no SNI tree.
+    if (handle && typeof handle.stop === "function") {
       // Pass the native SSL_CTX wrapper, not the JS InternalSecureContext —
       // the native side detects it via SecureContext.fromJS and up_refs.
       addServerName(handle, hostname, context.context);
-    } else {
-      if (!contexts) contexts = new Map();
-      contexts.set(hostname, context);
     }
+  };
+
+  const server = this;
+  // Like our native listener (and unlike node), addContext() entries apply when the SNICallback selects nothing.
+  const wrappedSNICallback = function (servername, callback) {
+    const userCallback = server._SNICallback;
+    if (typeof userCallback !== "function") {
+      callback(null, matchContext(contexts, servername));
+      return;
+    }
+    userCallback.$call(this, servername, (err, context) => {
+      if (err || context != null) callback(err, context);
+      else callback(null, matchContext(contexts, servername));
+    });
   };
 
   this.setSecureContext = function (options) {
@@ -1500,7 +1535,7 @@ function Server(options, secureConnectionListener): void {
       isServer: true,
       requestCert: this._requestCert,
       rejectUnauthorized: this._rejectUnauthorized,
-      SNICallback: this._SNICallback,
+      SNICallback: contexts.size !== 0 ? wrappedSNICallback : this._SNICallback,
       ALPNProtocols: this.ALPNProtocols,
       ALPNCallback: this._ALPNCallback,
     });

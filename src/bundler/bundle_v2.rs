@@ -1903,6 +1903,13 @@ pub mod bv2_impl {
         bv2: *mut BundleV2<'static>,
     }
 
+    impl ScanCounterGuard {
+        /// Hands the scan unit to a scheduled parse task, which gives it back on completion.
+        pub(crate) fn transfer(self) {
+            core::mem::forget(self);
+        }
+    }
+
     impl Drop for ScanCounterGuard {
         fn drop(&mut self) {
             // SAFETY: constructed from `&mut BundleV2` in
@@ -4349,6 +4356,8 @@ pub mod bv2_impl {
                 this.graph.deferred_pending -= 1;
                 this.graph.pending_items += 1;
             }
+            // Declared first so it drops last: in the dev server the decrement can finish the bundle and free `load` and `this`.
+            let mut scan_unit = Some(this.decrement_scan_counter_on_drop());
             // `Load` is arena-allocated (no Drop); free its owned heap fields on every exit path.
             struct LoadDeinitGuard(*mut jsc_api::JSBundler::Load);
             impl Drop for LoadDeinitGuard {
@@ -4389,23 +4398,39 @@ pub mod bv2_impl {
                     // The file could be on disk.
                     if source.path.is_file() {
                         this.graph.pool().schedule(load.parse_task_mut());
+                        scan_unit.take().unwrap().transfer();
                         return;
                     }
 
                     // When it's not a file, this is a build error and we should report it.
                     // we have no way of loading non-files.
-                    let _ = log.add_error_fmt(
-                        Some(source),
-                        bun_ast::Loc::EMPTY,
-                        format_args!(
-                            "Module not found {} in namespace {}",
-                            bun_core::fmt::quote(source.path.pretty),
-                            bun_core::fmt::quote(source.path.namespace),
-                        ),
-                    );
-
-                    // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
+                    fn add_module_not_found(log: &mut bun_ast::Log, source: &bun_ast::Source) {
+                        let _ = log.add_error_fmt(
+                            Some(source),
+                            bun_ast::Loc::EMPTY,
+                            format_args!(
+                                "Module not found {} in namespace {}",
+                                bun_core::fmt::quote(source.path.pretty),
+                                bun_core::fmt::quote(source.path.namespace),
+                            ),
+                        );
+                    }
+                    match this.dev_server {
+                        Some(dev) => {
+                            // Attributed to this module like the `Err` arm; not `ModuleNotFound`, which means the file was deleted.
+                            let mut temp_log = bun_ast::Log::init();
+                            add_module_not_found(&mut temp_log, source);
+                            dev.handle_parse_task_failure(
+                                crate::Error::Plugin,
+                                load.bake_graph(),
+                                source.path.key_for_incremental_graph(),
+                                &raw const temp_log,
+                                this,
+                            )
+                            .expect("oom");
+                        }
+                        None => add_module_not_found(log, source),
+                    }
                 }
                 jsc_api::JSBundler::LoadValue::Success(code) => {
                     // `code`: LoadSuccess { source_code, loader }
@@ -4448,6 +4473,7 @@ pub mod bv2_impl {
                     parse_task.loader = Some(code.loader);
                     parse_task.contents_or_fd = parse_task::ContentsOrFd::Contents(source_code);
                     this.graph.pool().schedule(parse_task);
+                    scan_unit.take().unwrap().transfer();
 
                     if this.bun_watcher.is_some() {
                         'add_watchers: {
@@ -4519,9 +4545,6 @@ pub mod bv2_impl {
                         log.errors += (kind == bun_ast::Kind::Err) as u32;
                         log.warnings += (kind == bun_ast::Kind::Warn) as u32;
                     }
-
-                    // An error occurred, prevent spinning the event loop forever
-                    this.decrement_scan_counter();
                 }
                 jsc_api::JSBundler::LoadValue::Pending
                 | jsc_api::JSBundler::LoadValue::Consumed => unreachable!(),

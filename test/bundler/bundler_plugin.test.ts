@@ -142,6 +142,21 @@ describe("bundler", () => {
       "/foo.magic": [`123`],
     },
   });
+  // A plugin-namespace module can only come from onLoad, so the callback answering nothing fails the build against it.
+  itBundled("plugin/LoadNoAnswerInPluginNamespace", {
+    files: {
+      "index.ts": /* ts */ `
+        import "virtual-config";
+      `,
+    },
+    plugins(builder) {
+      builder.onResolve({ filter: /^virtual-config$/ }, () => ({ path: "config.ts", namespace: "virtual" }));
+      builder.onLoad({ filter: /.*/, namespace: "virtual" }, () => undefined);
+    },
+    bundleErrors: {
+      "virtual:config.ts": [`Module not found "virtual:config.ts" in namespace "virtual"`],
+    },
+  });
   itBundled("plugin/ResolveAndLoadDefaultExport", {
     files: {
       "index.ts": /* ts */ `

@@ -1,4 +1,5 @@
 // Plugin tests concern plugins in development mode.
+import { expect } from "bun:test";
 import { devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 // Note: more in depth testing of plugins is done in test/bundler/bundler_plugin.test.ts
@@ -108,6 +109,93 @@ devTest("onResolve + onLoad virtual file", {
       },
       "file-on-disk",
     ]);
+  },
+});
+// Each failing onLoad below awaits `defer()` so its answer finishes the bundle; MIMALLOC_PURGE_DELAY=0 makes a touch of the torn-down arena fault.
+devTest("onLoad callback that throws fails the route and leaves the dev server usable", {
+  env: { MIMALLOC_PURGE_DELAY: "0" },
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "throwing-onload",
+        setup(build) {
+          build.onLoad({ filter: /entry\\.ts$/ }, async ({ defer }) => {
+            await defer();
+            throw new Error("onLoad failed on purpose");
+          });
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({ scripts: ["entry.ts"] }),
+    "entry.ts": `console.log("never bundled");`,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.output.waitForLine(/onLoad failed on purpose/);
+    // Bundles the route again, so the dev server has to be intact after the failed bundle.
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+// Nothing else can load a plugin-namespace module whose onLoad answers nothing, so the routes importing it must fail.
+const decliningOnLoadPlugin = /* ts */ `
+  {
+    name: "declining-onload",
+    setup(build) {
+      build.onResolve({ filter: /^virtual-config$/ }, () => ({ path: "config.ts", namespace: "virtual" }));
+      build.onLoad({ filter: /.*/, namespace: "virtual" }, async ({ defer }) => {
+        await defer();
+        return undefined;
+      });
+    },
+  }
+`;
+const decliningOnLoadError = 'virtual:config.ts: error: Module not found "virtual:config.ts" in namespace "virtual"';
+devTest("onLoad that does not answer for a module outside the file namespace fails the html route", {
+  env: { MIMALLOC_PURGE_DELAY: "0" },
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `export default ${decliningOnLoadPlugin};`,
+    "index.html": emptyHtmlFile({ scripts: ["entry.ts"] }),
+    "entry.ts": `
+      import "virtual-config";
+      console.log("entry ran");
+    `,
+  },
+  async test(dev) {
+    {
+      await using _ = await dev.client("/", { errors: [decliningOnLoadError] });
+    }
+    // The failure is recorded against the module itself, so the route keeps failing when requested again.
+    expect((await dev.fetch("/")).status).toBe(500);
+  },
+});
+devTest("onLoad that does not answer for a module outside the file namespace fails the server route", {
+  env: { MIMALLOC_PURGE_DELAY: "0" },
+  framework: minimalFramework,
+  pluginFile: `export default [${decliningOnLoadPlugin}];`,
+  files: {
+    "routes/index.ts": `
+      import "virtual-config";
+
+      export default function (req, meta) {
+        return new Response("route ran");
+      }
+    `,
+  },
+  async test(dev) {
+    for (let i = 0; i < 2; i++) {
+      const res = await dev.fetch("/");
+      expect(await res.text()).toContain("Build Failed");
+      expect(res.status).toBe(500);
+    }
+    await dev.output.waitForLine(/Module not found "virtual:config.ts" in namespace "virtual"/);
   },
 });
 // devTest("onLoad with watchFile", {

@@ -12,13 +12,13 @@ use bun_install::package_manager_real::{
     CommandLineArguments, Subcommand, fetch_cache_directory_path, get_cache_directory,
     package_json_write_back, package_manager_options::LogLevel, setup_global_dir,
 };
-use bun_install::{DependencyID, PackageID, PackageManager, migration};
-use bun_paths::{self as Path, PathBuffer};
+use bun_install::{DependencyID, PackageID, PackageManager, ResolutionTag, migration};
+use bun_paths::{self as Path, AutoAbsPath, PathBuffer};
 use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
-use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
+use crate::cli::pm_licenses_command::{BunStore, LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
 use crate::cli::pm_version_command::PmVersionCommand;
@@ -34,6 +34,83 @@ pub(crate) use crate::cli::scan_command::ScanCommand;
 pub(crate) struct NodeModulesFolder {
     relative_path: bun_core::ZBox,
     dependencies: Box<[DependencyID]>,
+}
+
+/// Disk-existence check for `bun pm ls`: the lockfile also contains entries
+/// that were never installed (platform-mismatched optionals) or were removed
+/// after install (`bun prune --production`), and those must not be listed as
+/// the contents of `node_modules`.
+struct InstalledFilter {
+    path: AutoAbsPath,
+    top_len: usize,
+    store: BunStore,
+}
+
+impl InstalledFilter {
+    fn init() -> Self {
+        let path = AutoAbsPath::init_top_level_dir();
+        let top_len = path.len();
+        Self {
+            path,
+            top_len,
+            store: BunStore::init(),
+        }
+    }
+
+    fn node_modules_exists(&mut self) -> bool {
+        self.path.set_length(self.top_len);
+        let _ = self.path.append(b"node_modules");
+        let exists = bun_sys::exists(self.path.slice());
+        self.path.set_length(self.top_len);
+        exists
+    }
+
+    fn is_installed(
+        &mut self,
+        lockfile: &Lockfile,
+        relative_path: &[u8],
+        dep_id: DependencyID,
+    ) -> bool {
+        let package_id = lockfile.buffers.resolutions.as_slice()[dep_id as usize];
+        if package_id as usize >= lockfile.packages.len() {
+            return false;
+        }
+        let slice = lockfile.packages.slice();
+        let resolution = &slice.items_resolution()[package_id as usize];
+        // Local sources (the project itself, workspaces, `bun link`ed packages)
+        // always exist on disk outside of node_modules.
+        if matches!(
+            resolution.tag,
+            ResolutionTag::Root | ResolutionTag::Workspace | ResolutionTag::Symlink
+        ) {
+            return true;
+        }
+
+        let buf = lockfile.buffers.string_bytes.as_slice();
+        let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
+            .name
+            .slice(buf);
+        self.path.set_length(self.top_len);
+        let _ = self.path.append(relative_path);
+        let _ = self.path.append(alias);
+        let exists = bun_sys::exists(self.path.slice());
+        self.path.set_length(self.top_len);
+        if exists {
+            return true;
+        }
+
+        // Isolated installs (`node_modules/.bun`) only link direct dependencies
+        // into each package's node_modules; transitive packages live in the store.
+        self.store
+            .lookup(
+                &mut self.path,
+                self.top_len,
+                slice.items_name()[package_id as usize],
+                resolution,
+                buf,
+            )
+            .is_some()
+    }
 }
 
 // Transient sort-comparator context; lifetime is fn-local.
@@ -184,8 +261,8 @@ impl PackageManagerCommand {
   <d>└<r> <cyan>--quiet<r>                   only output the tarball filename\n\
   <b><green>bun pm<r> <blue>bin<r>                  print the path to bin folder\n\
   <d>└<r> <cyan>-g<r>                        print the <b>global<r> path to bin folder\n\
-  <b><green>bun pm<r> <blue>ls<r>                   list the dependency tree according to the current lockfile\n\
-  <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
+  <b><green>bun pm<r> <blue>ls<r>                   list the tree of installed dependencies\n\
+  <d>├<r> <cyan>--all<r>                     list the entire tree of installed dependencies\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
@@ -546,10 +623,21 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             Output::flush();
             Output::disable_buffering();
             let lockfile: &Lockfile = &pm.lockfile;
+
+            let mut installed = InstalledFilter::init();
+            if !installed.node_modules_exists() {
+                if log_level != LogLevel::Silent {
+                    Output::err_generic("node_modules not found, nothing to list", ());
+                    bun_core::note!("run 'bun install' first");
+                }
+                Global::exit(1);
+            }
+
             let mut iterator =
                 tree::Iterator::<{ tree::IteratorPathStyle::NodeModules }>::init(lockfile);
 
             let mut max_depth: usize = 0;
+            let mut installed_count: usize = 0;
 
             let mut directories: Vec<NodeModulesFolder> = Vec::new();
             while let Some(node_modules) = iterator.next(None) {
@@ -558,7 +646,19 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 path.extend_from_slice(node_modules.relative_path.as_bytes());
                 path.push(0);
 
-                let dependencies: Box<[DependencyID]> = Box::from(node_modules.dependencies);
+                let dependencies: Box<[DependencyID]> = node_modules
+                    .dependencies
+                    .iter()
+                    .copied()
+                    .filter(|&dep_id| {
+                        installed.is_installed(
+                            lockfile,
+                            node_modules.relative_path.as_bytes(),
+                            dep_id,
+                        )
+                    })
+                    .collect();
+                installed_count += dependencies.len();
 
                 if max_depth < node_modules.depth + 1 {
                     max_depth = node_modules.depth + 1;
@@ -621,7 +721,7 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 Output::println(format_args!(
                     "{} node_modules ({} installed)",
                     bstr::BStr::new(path),
-                    lockfile.buffers.hoisted_dependencies.len(),
+                    installed_count,
                 ));
                 let string_bytes = lockfile.buffers.string_bytes.as_slice();
                 let mut sorted_dependencies: Vec<DependencyID> =
@@ -636,6 +736,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 // `sort_unstable_by` is pdqsort; names are
                 // unique so stability is irrelevant.
                 sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+
+                sorted_dependencies
+                    .retain(|&dep_id| installed.is_installed(lockfile, b"node_modules", dep_id));
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {

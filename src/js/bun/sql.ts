@@ -28,6 +28,15 @@ interface TransactionState {
   queries: Set<Query<any, any>>;
 }
 
+/// Bound as `this` to both callbacks of a reserve({ signal }) call, so each can
+/// reach the other without a per-call closure.
+interface ReserveAbortState {
+  signal: AbortSignal;
+  promiseWithResolvers: { promise: Promise<any>; resolve: (value: any) => void; reject: (reason?: any) => void };
+  onConnected: ((err: Error | null, pooledConnection: any) => void) | null;
+  onAbort: (() => void) | null;
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
     case "postgres":
@@ -492,6 +501,19 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
   }
+
+  function onReserveConnectedWithSignal(this: ReserveAbortState, err: Error | null, pooledConnection) {
+    this.signal.removeEventListener("abort", this.onAbort!);
+    onReserveConnected.$call(this.promiseWithResolvers, err, pooledConnection);
+  }
+
+  function onReserveAbort(this: ReserveAbortState) {
+    // Once the callback left the queue a connection was handed out; the
+    // caller owns it and must release() it, so abort becomes a no-op.
+    if (pool.cancelReserve && pool.cancelReserve(this.onConnected!)) {
+      this.promiseWithResolvers.reject(this.signal.reason);
+    }
+  }
   async function onTransactionConnected(
     callback,
     options,
@@ -889,20 +911,11 @@ const SQL: typeof Bun.SQL = function SQL(
       return promiseWithResolvers.promise;
     }
 
-    const boundOnReserveConnected = onReserveConnected.bind(promiseWithResolvers);
-    const onConnected = (err: Error | null, pooledConnection) => {
-      signal.removeEventListener("abort", onAbort);
-      boundOnReserveConnected(err, pooledConnection);
-    };
-    const onAbort = () => {
-      // Once the callback left the queue a connection was handed out; the
-      // caller owns it and must release() it, so abort becomes a no-op.
-      if (pool.cancelReserve && pool.cancelReserve(onConnected)) {
-        promiseWithResolvers.reject(signal.reason);
-      }
-    };
-    signal.addEventListener("abort", onAbort, { once: true });
-    pool.connect(onConnected, true);
+    const state: ReserveAbortState = { signal, promiseWithResolvers, onConnected: null, onAbort: null };
+    state.onConnected = onReserveConnectedWithSignal.bind(state);
+    state.onAbort = onReserveAbort.bind(state);
+    signal.addEventListener("abort", state.onAbort, { once: true });
+    pool.connect(state.onConnected, true);
     return promiseWithResolvers.promise;
   };
 

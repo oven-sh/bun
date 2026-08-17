@@ -3407,6 +3407,50 @@ impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
     }
 }
 
+// ───────────────────────────────────────────────────────────────────────────
+// escapeControlChars
+// ───────────────────────────────────────────────────────────────────────────
+
+/// `Display` adapter that spells out C0 controls, DEL and C1 controls
+/// (`\n`, `\x1b`, `\x7f`, `\u009b`, ...) so text authored by a dependency
+/// cannot erase, repaint or forge lines of terminal output when printed.
+pub struct EscapeControlChars<T>(pub T);
+
+/// [`EscapeControlChars`] over raw bytes; invalid UTF-8 renders as U+FFFD.
+pub fn escape_control_chars(text: &[u8]) -> EscapeControlChars<&bstr::BStr> {
+    EscapeControlChars(bstr::BStr::new(text))
+}
+
+impl<T: Display> Display for EscapeControlChars<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        let mut writer = EscapeControlCharsWriter(f);
+        write!(writer, "{}", self.0)
+    }
+}
+
+struct EscapeControlCharsWriter<'a, 'f>(&'a mut Formatter<'f>);
+
+impl fmt::Write for EscapeControlCharsWriter<'_, '_> {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        let mut start = 0;
+        for (i, c) in s.char_indices() {
+            if !matches!(c, '\0'..='\x1f' | '\x7f' | '\u{80}'..='\u{9f}') {
+                continue;
+            }
+            self.0.write_str(&s[start..i])?;
+            match c {
+                '\n' => self.0.write_str("\\n")?,
+                '\r' => self.0.write_str("\\r")?,
+                '\t' => self.0.write_str("\\t")?,
+                c if c.is_ascii() => write!(self.0, "\\x{:02x}", c as u32)?,
+                c => write!(self.0, "\\u{:04x}", c as u32)?,
+            }
+            start = i + c.len_utf8();
+        }
+        self.0.write_str(&s[start..])
+    }
+}
+
 // js_bindings (fmtString for highlighter.test.ts) lives in src/jsc/fmt_jsc.rs
 // alongside fmt_jsc.bind.ts; bun_core/ stays JSC-free.
 

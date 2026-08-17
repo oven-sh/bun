@@ -75,6 +75,7 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
 #include "PathInlines.h"
+#include "EmbedFunctionBody.h"
 #include "wtf/NakedPtr.h"
 #include "wtf/URL.h"
 #include "wtf/text/StringImpl.h"
@@ -737,17 +738,20 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
     String filenameString = filenameValue.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(throwScope, {});
 
+    auto [bodyPrefix, body] = embedFunctionBody(sourceString);
     String wrappedString;
     auto* zigGlobalObject = uncheckedDowncast<Zig::GlobalObject>(globalObject);
     if (zigGlobalObject->hasOverriddenModuleWrapper) [[unlikely]] {
         wrappedString = makeString(
             zigGlobalObject->m_moduleWrapperStart,
-            sourceString,
+            bodyPrefix,
+            body,
             zigGlobalObject->m_moduleWrapperEnd);
     } else {
         wrappedString = makeString(
             "(function(exports,require,module,__filename,__dirname){"_s,
-            sourceString,
+            bodyPrefix,
+            body,
             "\n})"_s);
     }
 

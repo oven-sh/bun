@@ -3100,21 +3100,10 @@ fn would_revive_leftover(
     }
     let deps = lockfile.buffers.dependencies.as_slice();
     let resolutions = lockfile.buffers.resolutions.as_slice();
-    let mut owned_rows = lockfile
-        .packages
-        .items_dependencies()
-        .iter()
-        .zip(lockfile.packages.items_resolutions())
-        .enumerate()
-        .flat_map(|(owner, (dep_slice, res_slice))| {
-            dep_slice
-                .get(deps)
-                .iter()
-                .zip(res_slice.get(resolutions))
-                .map(move |(dep, &resolved)| (owner, dep, resolved))
-        });
-    !owned_rows.any(|(owner, dep, resolved)| {
-        resolved == package_id && (owner == 0 || !dep.behavior.is_peer())
+    !(lockfile.packages.items_dependencies().iter().enumerate()).any(|(owner, list)| {
+        (list.begin() as usize..list.end() as usize).any(|row| {
+            resolutions[row] == package_id && (owner == 0 || !deps[row].behavior.is_peer())
+        })
     })
 }
 

@@ -408,9 +408,7 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
     header_builder.count("npm-auth-type", "legacy");
 }
 
-/// Splits `http://user:pass@host/pkg.tgz` into `user:pass` and
-/// `http://host/pkg.tgz`. `None` when the authority has no `@`; the `@` of a
-/// scoped package in the path (`/@scope/pkg/-/pkg.tgz`) is not one.
+/// Splits `http://user:pass@host/pkg.tgz` into `user:pass` and `http://host/pkg.tgz`; only an `@` in the authority counts, not `/@scope/`.
 fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     let authority_start = strings::index_of(url, b"://")? + b"://".len();
     let rest = &url[authority_start..];
@@ -423,11 +421,7 @@ fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     Some((&rest[..at], without_userinfo.into_boxed_slice()))
 }
 
-/// `Basic base64(userinfo)`, the header npm sends for credentials embedded in a
-/// tarball URL: minipass-fetch (`getNodeRequestOptions` in `lib/request.js`)
-/// hands the URL's `username:password` to node's `auth` option as is, so
-/// nothing is percent-decoded here either, and a userinfo without a `:` is a
-/// username with an empty password.
+/// `Basic base64(userinfo)` as written (no percent-decoding, `user` means `user:`), matching what npm sends via node's `auth` option.
 fn basic_authorization_from_userinfo(userinfo: &[u8]) -> Vec<u8> {
     const SCHEME: &[u8] = b"Basic ";
     let mut user_pass = Vec::with_capacity(userinfo.len() + 1);
@@ -818,11 +812,7 @@ impl NetworkTask {
             return Err(ForTarballError::InvalidURL);
         }
 
-        // `"dep": "https://user:pass@host/dep.tgz"`: the credentials become a
-        // header, as npm sends them, and the URL is requested without them.
-        // They cannot stay in the URL: `bun_url` keeps the userinfo in `origin`,
-        // and the HTTP client compares origins to decide whether `Authorization`
-        // follows a redirect, so a redirect to the same host would lose it.
+        // Userinfo becomes a header and leaves the URL: `bun_url` keeps it in `origin`, which the redirect same-origin check compares.
         let url_authorization: Option<Vec<u8>> = match split_url_userinfo(&self.url_buf) {
             Some((userinfo, url_without_userinfo)) => {
                 let value =
@@ -864,9 +854,7 @@ impl NetworkTask {
             count_auth(&mut header_builder, scope);
         }
 
-        // Same precedence as npm, where node derives `Authorization` from the
-        // URL only when the request does not carry one already: credentials
-        // configured for the registry win over the ones embedded in the URL.
+        // Registry credentials win over URL userinfo, as in npm.
         let url_authorization = match url_authorization {
             Some(value) if header_builder.header_count == 0 => {
                 header_builder.count("Authorization", &value);

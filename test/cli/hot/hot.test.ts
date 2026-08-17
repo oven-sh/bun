@@ -1,7 +1,17 @@
 import { spawn } from "bun";
 import { beforeEach, expect, it } from "bun:test";
-import { copyFileSync, cpSync, readFileSync, renameSync, rmSync, unlinkSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, isDebug, isWindows, tmpdirSync, waitForFileToExist } from "harness";
+import {
+  copyFileSync,
+  cpSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  unlinkSync,
+  writeFileSync,
+} from "fs";
+import { bunEnv, bunExe, isDebug, isWindows, tempDir, tmpdirSync, waitForFileToExist } from "harness";
 import { join } from "path";
 
 const timeout = isDebug ? Infinity : 10_000;
@@ -775,4 +785,60 @@ ${Buffer.alloc(counter * 2, " ").toString()}throw new Error(${counter});`,
     // TODO: bun has a memory leak when --hot is used on very large files
   },
   longTimeout,
+);
+
+// The resolver caches, per directory entry, whether the entry is a symlink and
+// where it points. A change inside a watched directory marks its entries stale;
+// the link target has to be looked up again on the next resolve, or the reload
+// loads the entry under the symlink's own path.
+it.skipIf(isWindows)(
+  "a symlinked entrypoint still resolves to its target after its directory entry is invalidated",
+  async () => {
+    const script = (tag: string) =>
+      `console.log(${JSON.stringify(tag)} + " " + import.meta.path);\nsetInterval(() => {}, 1 << 30);\n`;
+    using dir = tempDir("hot-symlinked-entry", { "real/entry.js": script("loaded") });
+    const root = String(dir);
+    const realEntry = join(root, "real", "entry.js");
+    const link = join(root, "dir", "link.js");
+    mkdirSync(join(root, "dir"));
+    symlinkSync(join("..", "real", "entry.js"), link);
+
+    await using runner = spawn({
+      cmd: [bunExe(), "--hot", join("dir", "link.js")],
+      env: bunEnv,
+      cwd: root,
+      stdout: "pipe",
+      stderr: "inherit",
+      stdin: "ignore",
+    });
+
+    let buffered = "";
+    const reader = runner.stdout.getReader();
+    const decoder = new TextDecoder();
+    async function nextLineStartingWith(prefix: string): Promise<string> {
+      while (true) {
+        const newline = buffered.indexOf("\n");
+        if (newline !== -1) {
+          const line = buffered.slice(0, newline);
+          buffered = buffered.slice(newline + 1);
+          if (line.startsWith(prefix)) return line;
+          continue;
+        }
+        const { value, done } = await reader.read();
+        if (done) throw new Error(`--hot exited before printing a line starting with ${JSON.stringify(prefix)}`);
+        buffered += decoder.decode(value, { stream: true });
+      }
+    }
+
+    expect(await nextLineStartingWith("loaded")).toBe(`loaded ${realEntry}`);
+
+    // Recreating the link is a change to `dir/`, which the resolver watches, so
+    // its cached entry for `link.js` is marked stale. Editing the target then
+    // reloads the entrypoint, which resolves `dir/link.js` again.
+    unlinkSync(link);
+    symlinkSync(join("..", "real", "entry.js"), link);
+    writeFileSync(realEntry, script("reloaded"));
+
+    expect(await nextLineStartingWith("reloaded")).toBe(`reloaded ${realEntry}`);
+  },
 );

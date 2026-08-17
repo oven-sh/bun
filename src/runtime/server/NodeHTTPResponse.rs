@@ -909,27 +909,8 @@ impl NodeHTTPResponse {
         auto_header_bits: u32,
         keep_alive_timeout_secs: u32,
     ) -> JsResult<JSValue> {
-        if self.is_requested_completed_or_ended() {
-            return err_throw(
-                global_object,
-                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
-                "Stream is already ended",
-            );
-        }
-
-        let flags = self.flags.get();
-        let Some(raw_response) = self.raw_response.get() else {
-            // We haven't emitted the "close" event yet.
-            return Ok(JSValue::UNDEFINED);
-        };
-        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
-            // We haven't emitted the "close" event yet.
-            return Ok(JSValue::UNDEFINED);
-        }
-
-        let state = raw_response.state();
-        handle_ended_if_necessary(state, global_object)?;
-
+        // Arguments are converted before any response state is read: ToString on
+        // `statusMessage` can run user JS that destroys or ends the response.
         let status_code_value: JSValue = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         let status_message_value: JSValue = match arguments.get(1).copied() {
             Some(v) if v != JSValue::NULL => v,
@@ -974,6 +955,27 @@ impl NodeHTTPResponse {
         if global_object.has_exception() {
             return Err(jsc::JsError::Thrown);
         }
+
+        if self.is_requested_completed_or_ended() {
+            return err_throw(
+                global_object,
+                ErrorCode::ERR_STREAM_ALREADY_FINISHED,
+                "Stream is already ended",
+            );
+        }
+
+        let flags = self.flags.get();
+        let Some(raw_response) = self.raw_response.get() else {
+            // We haven't emitted the "close" event yet.
+            return Ok(JSValue::UNDEFINED);
+        };
+        if flags.contains(Flags::SOCKET_CLOSED) || flags.contains(Flags::UPGRADED) {
+            // We haven't emitted the "close" event yet.
+            return Ok(JSValue::UNDEFINED);
+        }
+
+        let state = raw_response.state();
+        handle_ended_if_necessary(state, global_object)?;
 
         if state.is_http_status_called() {
             return err_throw(
@@ -1219,16 +1221,6 @@ impl NodeHTTPResponse {
         global_object: &JSGlobalObject,
         callframe: &CallFrame,
     ) -> JsResult<JSValue> {
-        if self.is_done() {
-            return Ok(JSValue::UNDEFINED);
-        }
-        {
-            let Some(raw_response) = self.raw_response.get() else {
-                return Ok(JSValue::UNDEFINED);
-            };
-            handle_ended_if_necessary(raw_response.state(), global_object)?;
-        }
-
         let arguments = callframe.arguments();
         let input_value = arguments.first().copied().unwrap_or(JSValue::UNDEFINED);
         if input_value.is_undefined_or_null() {
@@ -1256,10 +1248,15 @@ impl NodeHTTPResponse {
             ));
         }
 
-        // Re-read after the JS-capable coercion above (R-2: re-entry may clear it).
+        // Response state is read only after the JS-capable coercion above
+        // (R-2: re-entry may destroy or end the response).
+        if self.is_done() {
+            return Ok(JSValue::UNDEFINED);
+        }
         let Some(raw_response) = self.raw_response.get() else {
             return Ok(JSValue::UNDEFINED);
         };
+        handle_ended_if_necessary(raw_response.state(), global_object)?;
         raw_response.write_informational(string_or_buffer.slice());
         Ok(JSValue::UNDEFINED)
     }

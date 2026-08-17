@@ -2281,21 +2281,27 @@ it("socket handle write keeps buffered data intact when encoding coercion re-ent
   expect(exitCode).toBe(0);
 }, 30_000);
 
-it("ServerResponse.write() with an encoding whose toPrimitive destroys the response does not crash", async () => {
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
+it.each([
+  ["write", `result = res.write(payload, enc); res.end();`, "returned boolean"],
+  ["end", `res.flushHeaders(); result = res.end(payload, enc);`, "returned object"],
+])(
+  "ServerResponse.%s() with an encoding whose toPrimitive destroys the response does not crash",
+  async (_method, call, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
         const http = require("node:http");
         const server = http.createServer((req, res) => {
           const enc = Object.assign(new String("hex"), {
             [Symbol.toPrimitive]() { res.destroy(); Bun.gc(true); return "hex"; },
           });
+          const payload = Buffer.alloc(40000, "41").toString();
           let result;
           try {
-            result = "returned " + typeof res.write("41".repeat(20000), enc);
-            res.end();
+            ${call}
+            result = "returned " + typeof result;
           } catch (e) {
             result = "threw " + (e.code || e.message);
           }
@@ -2306,16 +2312,17 @@ it("ServerResponse.write() with an encoding whose toPrimitive destroys the respo
           fetch("http://127.0.0.1:" + server.address().port + "/").then(r => r.text()).catch(() => {});
         });
       `,
-    ],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toBe("returned boolean\n");
-  if (exitCode !== 0) expect(stderr).toBe("");
-  expect(exitCode).toBe(0);
-});
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe(expected + "\n");
+    expect(exitCode).toBe(0);
+  },
+);
 
 it("client request path that does not begin with a slash stays on the configured host", async () => {
   // `options.path` must only ever influence the request target that is written

@@ -928,3 +928,65 @@ describe.skipIf(!isASAN)("object mutated while being formatted", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("property lookup throws while an object is being formatted", () => {
+  it("skips the property and keeps formatting", async () => {
+    // A Proxy is unwrapped when it is the value being formatted, but it is
+    // walked normally when it is on the prototype chain.
+    const fixture = `
+      const throwingGet = new Proxy({ a: 1, b: 2, c: 3 }, {
+        get(target, key, receiver) {
+          if (key === "b") throw new Error("get trap");
+          return Reflect.get(target, key, receiver);
+        },
+      });
+      console.log(Bun.inspect(Object.create(throwingGet)));
+      const withOwn = Object.create(throwingGet);
+      withOwn.own = 0;
+      console.log(Bun.inspect(withOwn));
+
+      const throwingGetPrototypeOf = new Proxy({ a: 1 }, {
+        getPrototypeOf() { throw new Error("getPrototypeOf trap"); },
+      });
+      console.log(Bun.inspect(Object.create(throwingGetPrototypeOf)));
+
+      // Lazily initialized properties of native objects can throw from their
+      // initializer too. Bun.$ is built by JS that calls Symbol(), so breaking
+      // the global makes it throw; the properties after it must still show up.
+      const RealSymbol = Symbol;
+      globalThis.Symbol = 1;
+      const bun = Bun.inspect(Bun);
+      globalThis.Symbol = RealSymbol;
+      console.log("Bun:", bun.includes("Archive:"), bun.includes("version:"));
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe(
+      [
+        "{",
+        "  a: 1,",
+        "  c: 3,",
+        "}",
+        "{",
+        "  own: 0,",
+        "  a: 1,",
+        "  c: 3,",
+        "}",
+        "{",
+        "  a: 1,",
+        "}",
+        "Bun: true true",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});

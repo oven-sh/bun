@@ -92,6 +92,7 @@ const PRODUCTION_PARAMS: &[ParamType] = &[
     clap::param!("-P, --prod"),
 ];
 
+// `LINK_SHARED_PARAMS` swaps out the first two.
 const SHARED_TAIL_PARAMS: &[ParamType] = &[
     clap::param!(
         "--no-save                             Don't update package.json or save a lockfile"

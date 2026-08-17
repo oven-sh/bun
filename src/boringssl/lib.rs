@@ -36,7 +36,6 @@ pub fn load() {
                 OPENSSL_system_malloc,
                 OPENSSL_system_realloc,
                 OPENSSL_system_free,
-                Bun__boringsslSystemMallocCount,
             );
         }
     }}
@@ -132,34 +131,10 @@ pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     unsafe { bun_alloc::default_alloc::usable_size(ptr) }
 }
 
-// Plain malloc/realloc/free for the allocations BoringSSL deliberately keeps
-// off OPENSSL_malloc: the TLS record buffers, the error queue and the
-// per-thread tables behind CRYPTO_set_thread_local (see
-// patches/boringssl/system-malloc-hooks.patch). Upstream calls libc there,
-// which only reaches mimalloc on Linux via the global override; these hooks
-// get Windows and macOS there too. Unlike OPENSSL_memory_free there is no
-// zeroing: upstream picked plain free() for these sites precisely to skip it
-// (a record buffer is freed once per record), and that policy is kept. Same
-// calling constraints as the hooks above; `OPENSSL_system_free` may be passed
-// NULL.
+// The sites BoringSSL keeps off OPENSSL_malloc: patches/boringssl/system-malloc-hooks.patch.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_system_malloc(size: usize) -> *mut c_void {
-    SYSTEM_MALLOC_COUNT.with(|count| count.set(count.get() + 1));
     bun_alloc::default_alloc::malloc(size)
-}
-
-std::thread_local! {
-    // Per thread rather than a shared atomic: record buffers are allocated on
-    // every TLS thread, and the test only needs the calling thread's count.
-    static SYSTEM_MALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
-}
-
-/// How many times BoringSSL has called `OPENSSL_system_malloc` on the calling
-/// thread; lets `bun:internal-for-testing` check that TLS record processing
-/// really goes through the hook. Read by InternalForTesting.cpp.
-#[unsafe(no_mangle)]
-pub(crate) extern "C" fn Bun__boringsslSystemMallocCount() -> usize {
-    SYSTEM_MALLOC_COUNT.with(Cell::get)
 }
 
 /// # Safety

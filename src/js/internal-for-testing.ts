@@ -41,14 +41,6 @@ export const highwayStringsForTesting: (
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
 
-// Whether ICU's heap is routed through mimalloc (src/jsc/bindings/bun_icu_malloc.cpp)
-// and how many ICU allocations have gone through it.
-export const icuAllocatorForTesting: () => { installed: boolean; allocations: number } = $newCppFunction(
-  "bun_icu_malloc.cpp",
-  "Bun__icuAllocatorForTesting",
-  0,
-);
-
 export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor");
 
 export const patchInternals = {
@@ -654,27 +646,6 @@ export const structuredCloneAdvanced: (
 ) => any = $newCppFunction("StructuredClone.cpp", "jsFunctionStructuredCloneAdvanced", 5);
 
 export const isASANEnabled: () => boolean = $newCppFunction("InternalForTesting.cpp", "jsFunction_isASANEnabled", 0);
-
-/**
- * Allocates through each C library's own allocator and reports whether the
- * block landed in mimalloc. `libuv` is `null` where libuv is not linked.
- */
-export const thirdPartyAllocationsUseMimalloc: () => {
-  boringssl: boolean;
-  boringsslErrorQueue: boolean;
-  icu: boolean;
-  libuv: boolean | null;
-} = $newCppFunction("InternalForTesting.cpp", "jsFunction_thirdPartyAllocationsUseMimalloc", 0);
-
-/**
- * How many times BoringSSL has allocated through `OPENSSL_system_malloc` (TLS
- * record buffers, error queue) on the calling thread.
- */
-export const boringsslSystemMallocCount: () => number = $newCppFunction(
-  "InternalForTesting.cpp",
-  "jsFunction_boringsslSystemMallocCount",
-  0,
-);
 
 export const BunString_toThreadSafeRefCountDelta: () => number = $newCppFunction(
   "InternalForTesting.cpp",

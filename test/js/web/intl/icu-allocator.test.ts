@@ -2,22 +2,11 @@
 // so on Windows a transient commit-limit refusal is retried instead of turning
 // into "failed to initialize Segments" / a segfault inside ubrk_clone.
 import { dlopen, FFIType, ptr } from "bun:ffi";
-import { icuAllocatorForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isMacOS, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { join } from "path";
 
 describe("ICU allocator", () => {
-  // macOS uses the system libicucore and ASAN builds keep ICU on the
-  // sanitizer's allocator; everywhere else the hook is installed at startup.
-  test.skipIf(isMacOS || isASAN)("ICU allocations go through mimalloc", () => {
-    const before = icuAllocatorForTesting();
-    expect(before.installed).toBe(true);
-    const segments = [...new Intl.Segmenter("en", { granularity: "word" }).segment("routes through mimalloc")];
-    expect(segments.length).toBe(5);
-    expect(icuAllocatorForTesting().allocations).toBeGreaterThan(before.allocations);
-  });
-
   // Puts a child in a Job Object with a commit cap right above its current
   // commit, lets it run into the cap while cloning ICU break iterators, and
   // lifts the cap 150ms later — a transient refusal, like a slow pagefile

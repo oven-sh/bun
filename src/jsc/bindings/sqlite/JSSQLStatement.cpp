@@ -1031,7 +1031,8 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
                 return {};
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }), "\""_s)));
+                    // A gap in explicit "?N" numbering makes sqlite allocate the skipped parameters with no name.
+                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, name ? WTF::String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const unsigned char*>(name), strlen(name) }) : makeString('?', i + 1), "\""_s)));
                 } else {
                     continue;
                 }

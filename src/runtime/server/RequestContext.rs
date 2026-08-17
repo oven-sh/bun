@@ -3497,6 +3497,11 @@ where
                     )
                     .unwrap_or_else(|err| server.global_this().take_exception(err));
                 let _keep = jsc::EnsureStillAlive(result);
+                // error() may have ended the request or called server.upgrade(req),
+                // either of which already released this context's ref.
+                if self.is_aborted_or_ended() || self.did_upgrade_web_socket() {
+                    return;
+                }
                 if !result.is_empty_or_undefined_or_null() {
                     if let Some(err) = result.to_error() {
                         self.finish_running_error_handler(err, status);
@@ -3558,14 +3563,6 @@ where
                 ); // TODO: properly propagate exception upwards
             }
             jsc::PromiseResult::Fulfilled(fulfilled_value) => {
-                // if you return a Response object or a Promise<Response>
-                // but you upgraded the connection to a WebSocket
-                // just ignore the Response object. It doesn't do anything.
-                // it's better to do that than to throw an error
-                if ctx.did_upgrade_web_socket() {
-                    return;
-                }
-
                 // `fulfilled_value` is rooted via ensure_still_alive() below for
                 // as long as `response` is used.
                 let Some(response) = as_response(fulfilled_value) else {

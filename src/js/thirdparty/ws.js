@@ -15,8 +15,7 @@ const readyStates = ["CONNECTING", "OPEN", "CLOSING", "CLOSED"];
 
 const encoder = new TextEncoder();
 
-// Loaded on first use: node:http is almost the entire cost of require("ws"),
-// and the client API never touches it.
+// node:http is almost the entire cost of require("ws"); load it on first use.
 let http;
 function lazyHttp() {
   return (http ??= require("node:http"));

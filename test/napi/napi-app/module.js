@@ -321,6 +321,40 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
+nativeTests.test_get_all_property_names_throwing_trap = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  // The enumerable filter makes both engines ask the proxy for descriptors.
+  const makeProxy = () =>
+    new Proxy(
+      { k: 1 },
+      {
+        getOwnPropertyDescriptor() {
+          throw new Error("descriptor trap");
+        },
+      },
+    );
+  for (const [label, obj, mode] of [
+    ["own_only", makeProxy(), napi_key_own_only],
+    ["include_prototypes", Object.create(makeProxy()), napi_key_include_prototypes],
+  ]) {
+    try {
+      const { status, keys } = nativeTests.get_all_property_names(
+        obj,
+        mode,
+        napi_key_enumerable,
+        napi_key_keep_numbers,
+      );
+      console.log(`${label}: returned status=${status} keys=${JSON.stringify(keys)}`);
+    } catch (e) {
+      console.log(`${label}: threw ${e.message}`);
+    }
+  }
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},

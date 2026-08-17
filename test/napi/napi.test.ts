@@ -880,6 +880,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
       expect(output).toContain(`plain writable: status=0 keys=["w","nc"]`);
       expect(output).toContain(`frozen writable: status=0 keys=[]`);
     });
+    it("propagates an exception thrown by a Proxy trap while filtering", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_throwing_trap", []);
+      expect(output).toContain("own_only: threw descriptor trap");
+      expect(output).toContain("include_prototypes: threw descriptor trap");
+    });
   });
 
   describe("napi_value <=> integer conversion", () => {

@@ -4622,6 +4622,11 @@ describe("link: dependencies", () => {
     return Buffer.alloc(segments * "x/../".length, "x/../").toString() + "linked";
   }
 
+  // `..` segments are resolved before the length check, so only a target still this long
+  // afterwards fails it (here in the resolver already). No directory of this name can exist,
+  // which is the point: the install has to report the length instead of overrunning a buffer.
+  const targetTooLongOnceJoined = Buffer.alloc(MAX_PATH_BYTES - 16, "l").toString();
+
   const linkedPackageJson = JSON.stringify({ name: "linked", version: "1.0.0" });
 
   // Registers `<dir>/linked` in a global link dir private to the test, so the
@@ -4683,7 +4688,7 @@ describe("link: dependencies", () => {
   test.concurrent("fails with ENAMETOOLONG when the target in bun.lock does not fit", async () => {
     // A lockfile resolution is used as-is, so this never passes through the
     // resolver: the linker is the first thing that builds a path from it.
-    const target = linkTarget(MAX_PATH_BYTES + 64);
+    const target = Buffer.alloc(MAX_PATH_BYTES + 64, "l").toString();
     using dir = tempDir("isolated-link-lockfile-too-long", {
       "linked/package.json": linkedPackageJson,
       "project/package.json": JSON.stringify({
@@ -4719,7 +4724,7 @@ describe("link: dependencies", () => {
 
   test.concurrent("fails with ENAMETOOLONG when the target in package.json does not fit", async () => {
     // Fits on its own, so it resolves; does not fit once joined onto the link dir.
-    const target = linkTarget(MAX_PATH_BYTES - 16);
+    const target = targetTooLongOnceJoined;
     using dir = tempDir("isolated-link-package-json-too-long", {
       "linked/package.json": linkedPackageJson,
       "project/package.json": JSON.stringify({
@@ -4730,16 +4735,15 @@ describe("link: dependencies", () => {
     const { env, projectDir, linkDir } = await registerLinked(String(dir));
     expect(linkDir.length + "/".length + target.length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
 
-    const { stdout, stderr, exitCode } = await installIsolated(env, projectDir);
+    const { stderr, exitCode } = await installIsolated(env, projectDir);
 
-    expect(stderr).toContain("ENAMETOOLONG: link path for package linked is too long");
-    expect(stdout).toContain("Failed to install 1 package");
+    expect(stderr).toContain("ENAMETOOLONG");
     expect(exitCode).toBe(1);
     expect(() => lstatSync(join(projectDir, "node_modules", "linked"))).toThrow();
   });
 
   test.concurrent("fails the workspace package that depends on a target that does not fit", async () => {
-    const target = linkTarget(MAX_PATH_BYTES - 16);
+    const target = targetTooLongOnceJoined;
     using dir = tempDir("isolated-link-workspace-too-long", {
       "linked/package.json": linkedPackageJson,
       "project/package.json": JSON.stringify({
@@ -4754,10 +4758,10 @@ describe("link: dependencies", () => {
     const { env, projectDir, linkDir } = await registerLinked(String(dir));
     expect(linkDir.length + "/".length + target.length).toBeGreaterThanOrEqual(MAX_PATH_BYTES);
 
-    const { stdout, stderr, exitCode } = await installIsolated(env, projectDir);
+    const { stderr, exitCode } = await installIsolated(env, projectDir);
 
-    expect(stderr).toContain("ENAMETOOLONG: link path for package linked is too long");
-    expect(stdout).toContain("Failed to install 1 package");
+    expect(stderr).toContain("linked@link:");
+    expect(stderr).toContain("failed to resolve");
     expect(exitCode).toBe(1);
     expect(() => lstatSync(join(projectDir, "packages", "app", "node_modules", "linked"))).toThrow();
   });

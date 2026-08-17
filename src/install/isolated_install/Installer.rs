@@ -2500,8 +2500,12 @@ impl<'a> Installer<'a> {
             } else if uses_global_store {
                 debug_assert!(self.entry_uses_global_store(dep.entry_id));
                 self.append_real_store_path(&mut dep_store_path, dep.entry_id, Which::Final);
-            } else {
-                self.append_dependency_path(&mut dep_store_path, dep.entry_id)?;
+            } else if self
+                .append_dependency_path(&mut dep_store_path, dep.entry_id)
+                .is_err()
+            {
+                // The `link:` entry itself reports the over-long target.
+                continue;
             }
 
             let dest_len = dest.len();
@@ -3083,14 +3087,18 @@ impl<'a> Installer<'a> {
         let string_buf = self.lockfile().buffers.string_bytes.as_slice();
         let link_target = pkg_res.symlink().slice(string_buf);
 
-        let mut target = paths::AutoAbsPathChecked::init();
-        if target.append(link_dir_path).is_err() || target.append(link_target).is_err() {
+        let mut join_buf = paths::path_buffer_pool::get();
+        let Some(target) = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+            link_dir_path,
+            &mut join_buf[..],
+            &[link_target],
+        ) else {
             return Err(TaskError::LinkPathTooLong(pkg_id));
-        }
+        };
 
         paths::PathLike::clear(buf);
-        // Same unit width and `target` passed the length check, so this fits.
-        buf.append(target.slice()).assume_ok();
+        // `join_abs_string_buf_checked` bounded `target` by the same buffer size.
+        buf.append(target).assume_ok();
         Ok(())
     }
 

@@ -459,7 +459,9 @@ fn count_auth(header_builder: &mut HeaderBuilder, scope: &npm::registry::Scope) 
 fn split_url_userinfo(url: &[u8]) -> Option<(&[u8], Box<[u8]>)> {
     let authority_start = strings::index_of(url, b"://")? + b"://".len();
     let rest = &url[authority_start..];
-    let authority = &rest[..strings::index_of_any(rest, b"/?#").unwrap_or(rest.len())];
+    // Like `bun_url`: userinfo ends at the last `@` before the path, so an unencoded `#` or `?` in
+    // a password stays part of it.
+    let authority = &rest[..strings::index_of_char_usize(rest, b'/').unwrap_or(rest.len())];
     let at = strings::last_index_of_char(authority, b'@')?;
 
     let mut without_userinfo = Vec::with_capacity(url.len() - (at + 1));

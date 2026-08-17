@@ -9952,15 +9952,15 @@ describe.concurrent("bun-install", () => {
       });
 
       it("still refuses a name that joins to a URL outside the registry directory", async () => {
-        const { result, origin } = await installNoDeps(origin => ({
+        const { result } = await installNoDeps(origin => ({
           "bunfig.toml": Bun.TOML.stringify({ install: { registry: { url: `${singleColon(origin)}/npm/`, token } } }),
           "package.json": JSON.stringify({ name: "app", version: "1.0.0", dependencies: { "..": "1.0.0" } }),
         }));
         expect(result).toEqual({
           requests: [],
           stdout: expect.stringContaining("bun install v1."),
-          // The error quotes the registry in the form the check compared against.
-          stderr: expect.stringContaining(`manifest URL "${origin}/" is not on registry "${origin}/npm/"`),
+          // Rejected as a name before any URL is built from it.
+          stderr: expect.stringContaining(`error: Invalid dependency name ".."`),
           exitCode: 1,
         });
       });

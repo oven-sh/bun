@@ -798,6 +798,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         this.log_mut()
                     .add_error_fmt(
@@ -818,6 +820,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
@@ -1635,6 +1639,24 @@ pub fn enqueue_dependency_with_main_and_success_fn(
         }
         _ => Ok(()),
     }
+}
+
+/// Unmet peers stay unresolved instead of failing the install; see `may_stay_unresolved`.
+#[cold]
+#[inline(never)]
+fn warn_unmet_peer_dependency(
+    this: &PackageManager,
+    name: SemverString,
+    version: &dependency::Version,
+) {
+    bun_ast::add_warning_pretty!(
+        this.log_mut(),
+        None,
+        bun_ast::Loc::EMPTY,
+        "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
+        bstr::BStr::new(this.lockfile.str(&version.literal)),
+        bstr::BStr::new(this.lockfile.str(&name)),
+    );
 }
 
 /// Allocate and initialise an `.extract` Task for an npm tarball.
@@ -2566,7 +2588,8 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    if behavior.is_peer() {
+                    // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
+                    if behavior.is_peer() && !install_peer {
                         return Ok(None);
                     }
 

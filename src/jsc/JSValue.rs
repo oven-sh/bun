@@ -227,6 +227,14 @@ impl JSValue {
         const NOT_CELL_MASK: usize = 0xfffe_0000_0000_0002;
         !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
     }
+    /// False for a cell the last completed GC found dead but the sweeper has not destroyed yet.
+    #[inline]
+    pub fn is_live_cell(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isLiveCell(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isLiveCell(self)
+    }
     #[inline]
     pub fn is_int32(self) -> bool {
         const NUMBER_TAG: usize = 0xfffe_0000_0000_0000;
@@ -926,10 +934,17 @@ impl JSValue {
     /// source attached rather than throwing. See `JSC__JSValue__pinArrayBuffer`
     /// in bindings.cpp for why. Release the pin with `ArrayBuffer::unpin`.
     pub fn as_pinned_arraybuffer(self, global: &JSGlobalObject) -> Option<ArrayBuffer> {
-        if !JSC__JSValue__pinArrayBuffer(self) {
+        let kind = JSC__JSValue__pinArrayBuffer(self);
+        if kind == 0 {
             return None;
         }
-        self.as_array_buffer(global)
+        let mut buffer = self.as_array_buffer(global);
+        match &mut buffer {
+            Some(buffer) => buffer.pinned = kind == 1,
+            None if kind == 1 => self.unpin_array_buffer(),
+            None => {}
+        }
+        buffer
     }
     /// Generic downcast. Dispatches via [`JsClass::from_js`].
     #[inline]
@@ -2093,7 +2108,8 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         out: &mut ArrayBuffer,
     ) -> bool;
-    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> bool;
+    /// 0 = nothing to pin, 1 = pinned an ArrayBuffer (unpin later), 2 = held a bufferless view (nothing to unpin).
+    safe fn JSC__JSValue__pinArrayBuffer(this: JSValue) -> u8;
     safe fn JSC__JSValue__asPromise(this: JSValue) -> *mut JSPromise;
     safe fn JSC__JSValue__asInternalPromise(this: JSValue) -> *mut JSInternalPromise;
     safe fn Bun__attachAsyncStackFromPromise(

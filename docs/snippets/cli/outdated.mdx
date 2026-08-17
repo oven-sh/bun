@@ -22,6 +22,10 @@ bun outdated <filter>
   Display outdated dependencies for each matching workspace
 </ParamField>
 
+<ParamField path="-r, --recursive" type="boolean">
+  Check outdated packages in all workspaces
+</ParamField>
+
 ### Output & Logging
 
 <ParamField path="--silent" type="boolean">
@@ -115,7 +119,7 @@ bun outdated <filter>
 ### Execution Behavior
 
 <ParamField path="--dry-run" type="boolean">
-  Don't install anything
+  Has no effect. <code>bun outdated</code> is read-only
 </ParamField>
 
 <ParamField path="-f, --force" type="boolean">
@@ -127,12 +131,12 @@ bun outdated <filter>
 </ParamField>
 
 <ParamField path="--ignore-scripts" type="boolean">
-  Skip lifecycle scripts in the project's <code>package.json</code> (Bun never runs dependency scripts)
+  Skip lifecycle scripts for all packages, including the project's <code>package.json</code> and trusted dependencies
 </ParamField>
 
-<ParamField path="--backend" type="string" default="clonefile">
-  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default),{" "}
-  <code>hardlink</code>, <code>symlink</code>, <code>copyfile</code>
+<ParamField path="--backend" type="string">
+  Platform-specific optimizations for installing dependencies. Possible values: <code>clonefile</code> (default on
+  macOS), <code>hardlink</code> (default on Linux and Windows), <code>symlink</code>, <code>copyfile</code>
 </ParamField>
 
 <ParamField path="--concurrent-scripts" type="number">

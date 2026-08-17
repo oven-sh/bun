@@ -1132,6 +1132,26 @@ enum BatchSegment {
     Ext { ptr: *const u8, len: u32 },
 }
 
+impl BatchSegment {
+    #[inline(always)]
+    fn raw_parts(self, batch: &[u8]) -> (*const u8, usize) {
+        match self {
+            BatchSegment::Batch { off, len } => (batch[off as usize..].as_ptr(), len as usize),
+            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
+        }
+    }
+}
+
+/// Flags for one `H2FrameParser::send_data` call.
+#[derive(Clone, Copy)]
+struct SendDataOptions {
+    close: bool,
+    /// Report a HALF_CLOSED_LOCAL transition through the return value instead of onStreamEnd.
+    suppress_half_closed_local_dispatch: bool,
+    /// Hand an unqueued payload's write callback back to the caller instead of invoking it here.
+    defer_write_callback: bool,
+}
+
 struct DispatchGuard<'a>(&'a Cell<u32>);
 
 impl Drop for DispatchGuard<'_> {
@@ -1972,7 +1992,7 @@ impl Stream {
             }
             if lf!().len == 0 {
                 // we have an empty frame with means we can just use this frame with a new buffer
-                lf!().buffer = vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME];
+                lf!().buffer = Vec::with_capacity(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
             }
             let max_size = MAX_PAYLOAD_SIZE_WITHOUT_FRAME as u32;
             let remaining = max_size - lf!().len;
@@ -1980,8 +2000,7 @@ impl Stream {
                 // ok we can cork frames
                 let consumed_len = (remaining as usize).min(bytes.len());
                 let merge = &bytes[0..consumed_len];
-                let len = lf!().len as usize;
-                lf!().buffer[len..len + consumed_len].copy_from_slice(merge);
+                lf!().buffer.extend_from_slice(merge);
                 lf!().len += u32::try_from(consumed_len).expect("int cast");
                 bun_output::scoped_log!(H2FrameParser, "dataFrame merged {}", consumed_len);
 
@@ -2024,7 +2043,7 @@ impl Stream {
             end_stream
         );
 
-        let mut frame = PendingFrame {
+        let frame = PendingFrame {
             end_stream,
             len: u32::try_from(bytes.len()).expect("int cast"),
             offset: 0,
@@ -2032,7 +2051,10 @@ impl Stream {
             buffer: if bytes.is_empty() {
                 Vec::new()
             } else {
-                vec![0u8; MAX_PAYLOAD_SIZE_WITHOUT_FRAME]
+                // Full-frame capacity so later writes cork into this frame without reallocating.
+                let mut buffer = Vec::with_capacity(MAX_PAYLOAD_SIZE_WITHOUT_FRAME);
+                buffer.extend_from_slice(bytes);
+                buffer
             },
             callback: if callback.is_callable() {
                 StrongOptional::create(callback, &global_this)
@@ -2041,7 +2063,6 @@ impl Stream {
             },
         };
         if !bytes.is_empty() {
-            frame.buffer[0..bytes.len()].copy_from_slice(bytes);
             global_this.vm().deprecated_report_extra_memory(bytes.len());
         }
         bun_output::scoped_log!(H2FrameParser, "dataFrame enqueued {}", frame.len);
@@ -3496,12 +3517,7 @@ impl H2FrameParser {
                     iov.clear();
                     iov.reserve(segments.len());
                     for seg in segments {
-                        let (ptr, len) = match *seg {
-                            BatchSegment::Batch { off, len } => {
-                                (batch[off as usize..].as_ptr(), len as usize)
-                            }
-                            BatchSegment::Ext { ptr, len } => (ptr, len as usize),
-                        };
+                        let (ptr, len) = seg.raw_parts(batch);
                         if len == 0 {
                             continue;
                         }
@@ -3522,17 +3538,10 @@ impl H2FrameParser {
                 // to preserve order.
                 let mut all: Vec<u8> = Vec::new();
                 for seg in segments {
-                    match *seg {
-                        BatchSegment::Batch { off, len } => {
-                            all.extend_from_slice(&batch[off as usize..(off + len) as usize])
-                        }
-                        BatchSegment::Ext { ptr, len } => {
-                            // SAFETY: Ext slices are valid for the send_data call duration
-                            all.extend_from_slice(unsafe {
-                                core::slice::from_raw_parts(ptr, len as usize)
-                            })
-                        }
-                    }
+                    let (ptr, len) = seg.raw_parts(batch);
+                    // SAFETY: Batch ranges were recorded inside `batch`, and Ext slices are
+                    // valid for the send_data call duration, which is still running.
+                    all.extend_from_slice(unsafe { core::slice::from_raw_parts(ptr, len) });
                 }
                 let _ = self._write(&all);
                 return;
@@ -3543,17 +3552,12 @@ impl H2FrameParser {
             let mut skip = total_written;
             let mut buffered: usize = 0;
             for seg in segments {
-                let (ptr, len) = match *seg {
-                    BatchSegment::Batch { off, len } => {
-                        (batch[off as usize..].as_ptr(), len as usize)
-                    }
-                    BatchSegment::Ext { ptr, len } => (ptr, len as usize),
-                };
+                let (ptr, len) = seg.raw_parts(batch);
                 if skip >= len {
                     skip -= len;
                     continue;
                 }
-                // SAFETY: same provenance as the iovec build above; skip < len
+                // SAFETY: same as the copy path above; skip < len
                 let rest = unsafe { core::slice::from_raw_parts(ptr.add(skip), len - skip) };
                 skip = 0;
                 let _ = self.write_buffer.with_mut(|wb| wb.write(rest));
@@ -7029,18 +7033,10 @@ impl H2FrameParser {
                 }
                 let origin_string = item.to_slice(global_object)?;
                 let slice = origin_string.slice();
-                if stream
-                    .write_all(&u16::try_from(slice.len()).expect("int cast").to_be_bytes())
-                    .is_err()
-                {
-                    let exception = global_object.to_type_error(
-                        bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
-                        format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
-                    );
-                    return Err(global_object.throw_value(exception));
-                }
-
-                if stream.write_all(slice).is_err() {
+                let fits = u16::try_from(slice.len()).is_ok_and(|len| {
+                    stream.write_all(&len.to_be_bytes()).is_ok() && stream.write_all(slice).is_ok()
+                });
+                if !fits {
                     let exception = global_object.to_type_error(
                         bun_jsc::ErrorCode::HTTP2_ORIGIN_LENGTH,
                         format_args!("HTTP/2 ORIGIN frames are limited to 16382 bytes"),
@@ -7464,29 +7460,20 @@ impl H2FrameParser {
         ))
     }
 
-    /// Returns `(settled_state, callback_deferred)`.
-    ///
-    /// `settled_state` is the state code the close tail settled on (5 = HALF_CLOSED_LOCAL,
-    /// 7 = CLOSED, 0 = no close-tail transition ran). With
-    /// `suppress_half_closed_local_dispatch` the HALF_CLOSED_LOCAL onStreamEnd dispatch
-    /// is skipped — the synchronous caller (writeStream) hands the state to JS via its
-    /// return value instead of re-entering the VM mid-host-call.
-    ///
-    /// With `defer_write_callback`, when the payload is handed to the socket without being
-    /// queued (no flow-control / socket backpressure) the write callback is NOT invoked here:
-    /// `callback_deferred` is true and the JS caller completes it asynchronously instead, so a
-    /// node Writable's `_write` callback never settles synchronously inside `write()`. When the
-    /// payload is queued, the engine still owns the callback and invokes it once the queued
-    /// frames are flushed (backpressure cleared), exactly as before.
+    /// Returns `(settled_state, callback_deferred)`: the state the close tail settled on (5 =
+    /// HALF_CLOSED_LOCAL, 7 = CLOSED, 0 = none) and whether `callback` was left to the caller.
     fn send_data(
         &self,
         stream: &mut Stream,
         payload: &[u8],
-        close: bool,
         callback: JSValue,
-        suppress_half_closed_local_dispatch: bool,
-        defer_write_callback: bool,
+        options: SendDataOptions,
     ) -> (u8, bool) {
+        let SendDataOptions {
+            close,
+            suppress_half_closed_local_dispatch,
+            defer_write_callback,
+        } = options;
         bun_output::scoped_log!(
             H2FrameParser,
             "HTTP_FRAME_DATA {} sendData({}, {}, {})",
@@ -7748,7 +7735,16 @@ impl H2FrameParser {
         let stream = unsafe { &mut *stream };
 
         stream.wait_for_trailers = false;
-        let _ = this.send_data(stream, b"", true, JSValue::UNDEFINED, false, false);
+        let _ = this.send_data(
+            stream,
+            b"",
+            JSValue::UNDEFINED,
+            SendDataOptions {
+                close: true,
+                suppress_half_closed_local_dispatch: false,
+                defer_write_callback: false,
+            },
+        );
         Ok(JSValue::UNDEFINED)
     }
 
@@ -8280,10 +8276,12 @@ impl H2FrameParser {
         let (settled_state, callback_deferred) = this.send_data(
             &mut stream,
             &payload,
-            close,
             callback_arg,
-            true,
-            defer_callback_arg.to_boolean(),
+            SendDataOptions {
+                close,
+                suppress_half_closed_local_dispatch: true,
+                defer_write_callback: defer_callback_arg.to_boolean(),
+            },
         );
 
         // 5 = HALF_CLOSED_LOCAL: the JS caller runs markWritableDone itself instead of

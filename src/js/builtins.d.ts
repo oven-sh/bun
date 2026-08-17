@@ -49,14 +49,8 @@ declare var $overriddenName: string;
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
 declare var $visibility: "Public" | "Private" | "PrivateRecursive";
-/** ??? */
-declare var $nakedConstructor: never;
-/** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
-declare var $intrinsic: string;
 /** Assign to this directly above a function declaration (like a decorator) to make it a constructor. */
 declare var $constructor;
-/** Place this directly above a function declaration (like a decorator) to NOT include "use strict" */
-declare var $sloppy;
 /** Place this directly above a function declaration (like a decorator) to always inline the function */
 declare var $alwaysInline;
 
@@ -202,11 +196,6 @@ declare function $throwTypeError(message: string): never;
  * @deprecated
  */
 declare function $throwRangeError(message: string): never;
-/**
- * **NOTE** - use `throw new OutOfMemoryError()` instead. it compiles to the same builtin
- * @deprecated
- */
-declare function $throwOutOfMemoryError(): never;
 declare function $putByIdDirect(obj: any, key: PropertyKey, value: any): void;
 
 /**
@@ -469,10 +458,6 @@ declare interface AddEventListenerOptions {
    * internal `kResistStopPropagation`.
    */
   $kResistStopPropagation?: boolean;
-}
-
-declare class OutOfMemoryError {
-  constructor();
 }
 
 // Provided by the C++ Web Streams implementation.

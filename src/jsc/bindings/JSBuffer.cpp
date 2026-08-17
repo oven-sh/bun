@@ -486,11 +486,6 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
     return createBuffer(lexicalGlobalObject, data.data(), data.size());
 }
 
-JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const char* ptr, size_t length)
-{
-    return createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(ptr), length);
-}
-
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
 {
     return createBuffer(lexicalGlobalObject, data.begin(), data.size());
@@ -552,12 +547,6 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGl
 static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
 {
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
-}
-
-JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> bytes, WebCore::BufferEncodingType encoding)
-{
-    WTF::StringView view(bytes);
-    return constructFromEncoding(lexicalGlobalObject, view, encoding);
 }
 
 JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, WTF::StringView view, WebCore::BufferEncodingType encoding)
@@ -2422,13 +2411,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         }
     }
 
-    // Re-check if detached after potential JS execution
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
-    }
-
-    // Now safe to cache byteLength after all JS calls
+    // Now safe to cache byteLength after all JS calls. A detached view reports 0, so it
+    // goes through the same bounds checks as an empty buffer and writes nothing, as in node.
     size_t byteLength = castedThis->byteLength();
 
     // Node.js JS wrapper checks: if (offset < 0 || offset > this.byteLength)
@@ -2480,11 +2464,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
 
     if (!castedThis) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
 

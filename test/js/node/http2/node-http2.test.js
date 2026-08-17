@@ -708,7 +708,12 @@ for (const nodeExecutable of [nodeExe(), bunExe()]) {
             await promise;
             expect("unreachable").toBe(true);
           } catch (err) {
-            expect(err.code).toBe("ABORT_ERR");
+            expect({ name: err.name, code: err.code, message: err.message, cause: err.cause }).toEqual({
+              name: "AbortError",
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+              cause: abortController.signal.reason,
+            });
           }
         });
         it("aborted event should work with abortController", async () => {
@@ -2854,6 +2859,75 @@ it("http2 client.request() rejects header names longer than 4096 bytes with a ca
   expect(exitCode).toBe(0);
 });
 
+it("http2 session.origin() with several origins rejects one longer than 65535 bytes with a catchable error", async () => {
+  // Each entry of a multi-origin ORIGIN frame carries a 16-bit length prefix.
+  // An entry that does not fit in it must surface as ERR_HTTP2_ORIGIN_LENGTH
+  // like any other oversized origin, not terminate the process. Run in a
+  // subprocess so a crash shows up as a failed assertion instead of taking down
+  // the test runner.
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const http2 = require("node:http2");
+      const server = http2.createServer();
+      server.on("session", session => {
+        const huge = "https://" + Buffer.alloc(70000, "a").toString();
+        for (const origins of [
+          [huge, "https://b.example"],
+          ["https://b.example", huge],
+          [{ origin: huge }, "https://b.example"],
+        ]) {
+          try {
+            session.origin(...origins);
+            console.log("NO_ERROR");
+          } catch (err) {
+            console.log("CODE:" + err.code + " NAME:" + err.name);
+          }
+        }
+        // The session is still usable afterwards.
+        session.origin("https://c.example", "https://d.example");
+        console.log("ORIGIN_SENT");
+      });
+      server.on("stream", stream => {
+        stream.respond({ ":status": 200 });
+        stream.end("ok");
+      });
+      server.listen(0, "127.0.0.1", () => {
+        const client = http2.connect("http://127.0.0.1:" + server.address().port);
+        client.on("error", () => {});
+        const req = client.request({ ":path": "/" });
+        req.on("response", headers => {
+          console.log("STATUS:" + headers[":status"]);
+        });
+        req.resume();
+        req.on("close", () => {
+          client.close();
+          server.close();
+        });
+        req.end();
+      });
+      `,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  expect(stderr).toBe("");
+  expect(stdout.split("\n").filter(Boolean)).toEqual([
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "CODE:ERR_HTTP2_ORIGIN_LENGTH NAME:TypeError",
+    "ORIGIN_SENT",
+    "STATUS:200",
+  ]);
+  expect(exitCode).toBe(0);
+});
+
 it("http2 client.request() propagates a throwing header-value toString() instead of masking it", async () => {
   // Node calls `${value}` and lets the user's exception escape; it must not be
   // replaced with ERR_HTTP2_INVALID_HEADER_VALUE.
@@ -4716,6 +4790,82 @@ it("end(chunk) on a HALF_CLOSED_REMOTE stream still emits 'finish'", async () =>
     expect(await serverFinish.promise).toBe(true);
     client.close();
   } finally {
+    server.close();
+  }
+});
+
+it("write() completes its callback on a later turn, not inside write()", async () => {
+  // _write hands the chunk to the native session with the write callback deferred, so the
+  // chunk is still counted in writableLength when write() returns and the Writable settles it
+  // later, like node, where a write only completes once the session has flushed it. Were the
+  // callback invoked inside the native call, writableLength would already be 0 here.
+  const server = http2.createServer();
+  let client;
+  try {
+    const lengths = Promise.withResolvers();
+    server.on("stream", async stream => {
+      try {
+        stream.respond({ ":status": 200 });
+        const chunk = Buffer.from("hello");
+        const written = new Promise((resolve, reject) => stream.write(chunk, err => (err ? reject(err) : resolve())));
+        const afterWrite = stream.writableLength;
+        await written;
+        lengths.resolve({ afterWrite, afterCallback: stream.writableLength });
+        stream.end();
+      } catch (err) {
+        lengths.reject(err);
+      }
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", lengths.reject);
+    const req = client.request({ ":path": "/" });
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([lengths.promise, body])).toEqual([{ afterWrite: 5, afterCallback: 0 }, "hello"]);
+  } finally {
+    client?.close();
+    server.close();
+  }
+});
+
+it("sendTrailers({}) ends the stream without a trailer block", async () => {
+  // An empty trailer object ends the stream with an empty END_STREAM DATA frame rather than a
+  // HEADERS frame: the peer sees the body end and no 'trailers' event, and the stream closes
+  // cleanly on both sides.
+  const server = http2.createServer();
+  let client;
+  try {
+    const serverClose = Promise.withResolvers();
+    server.on("stream", stream => {
+      stream.on("error", serverClose.reject);
+      stream.on("wantTrailers", () => stream.sendTrailers({}));
+      stream.on("close", () => serverClose.resolve(stream.rstCode));
+      stream.respond({ ":status": 200 }, { waitForTrailers: true });
+      stream.end("OK");
+    });
+    const port = await new Promise(resolve => server.listen(0, () => resolve(server.address().port)));
+    client = http2.connect(`http://127.0.0.1:${port}`);
+    client.on("error", serverClose.reject);
+    const req = client.request({ ":path": "/" });
+    const trailerEvents = [];
+    req.on("trailers", headers => trailerEvents.push(headers));
+    const body = new Promise((resolve, reject) => {
+      const chunks = [];
+      req.on("error", reject);
+      req.on("data", chunk => chunks.push(chunk));
+      req.on("end", () => resolve(Buffer.concat(chunks).toString()));
+    });
+    req.end();
+    expect(await Promise.all([body, serverClose.promise])).toEqual(["OK", 0]);
+    expect(trailerEvents).toEqual([]);
+  } finally {
+    client?.close();
     server.close();
   }
 });

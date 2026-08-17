@@ -583,6 +583,9 @@ impl UpdateInteractiveCommand {
             manager,
             populate_manifest_cache::Packages::Ids(&workspace_pkg_ids),
         )?;
+        if populate_manifest_cache::print_fetch_failures(manager)? {
+            Global::crash();
+        }
 
         // Get outdated packages
         let (mut outdated_packages, checked) =
@@ -1009,7 +1012,7 @@ impl UpdateInteractiveCommand {
         let mut grouped_result = Self::group_catalog_dependencies(outdated_packages)?;
 
         // Sort packages: dependencies first, then devDependencies, etc.
-        grouped_result.sort_by(|a, b| {
+        index_sort::sort_slice_by(&mut grouped_result, |a, b| {
             // First sort by dependency type
             let a_priority = dep_type_priority(a.dependency_type);
             let b_priority = dep_type_priority(b.dependency_type);

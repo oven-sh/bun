@@ -319,15 +319,16 @@ impl Source {
 mod stdarg {
     use super::*;
 
+    // Defined in c-bindings.cpp; `ap` is a `va_list`.
     unsafe extern "C" {
-        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
-        pub(super) fn ffi_vprintf(_: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vfprintf(_: *mut c_void, _: *const c_char, ap: *mut c_void) -> c_int;
+        pub(super) fn ffi_vprintf(_: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_fprintf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_printf(_: *const c_char, ...) -> c_int;
         pub(super) fn ffi_fscanf(_: *mut c_void, _: *const c_char, ...) -> c_int;
         pub(super) fn ffi_scanf(_: *const c_char, ...) -> c_int;
         pub(super) fn ffi_sscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
-        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ...) -> c_int;
+        pub(super) fn ffi_vsscanf(_: *const c_char, _: *const c_char, ap: *mut c_void) -> c_int;
         pub(super) fn ffi_fopen(_: *const c_char, _: *const c_char) -> *mut c_void;
         pub(super) fn ffi_fclose(_: *mut c_void) -> c_int;
         pub(super) fn ffi_fgetc(_: *mut c_void) -> c_int;
@@ -1402,9 +1403,7 @@ impl FFI {
         let mut symbols = StringArrayHashMap::<Function>::default();
         // SAFETY: `get_object()` returned a non-null `*mut JSObject`; `object` keeps it alive.
         let obj = unsafe { &*obj };
-        if let Some(val) =
-            generate_symbols(global, &mut symbols, obj).unwrap_or(Some(JSValue::ZERO))
-        {
+        if let Some(val) = generate_symbols(global, &mut symbols, obj)? {
             // an error while validating symbols
             // keys/arg_types freed by Drop
             return Ok(val);
@@ -2135,7 +2134,7 @@ impl Function {
                 writer.write_all(b", ")?;
             }
             first = false;
-            arg.param_typename(writer)?;
+            arg.typename(writer)?;
             write!(writer, " arg{}", i)?;
         }
         writer.write_all(

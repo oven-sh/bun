@@ -48,7 +48,7 @@ public:
     {
         auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
-        callSite->finishCreation(vm, globalObject, stackFrame, encounteredStrictFrame);
+        callSite->finishCreation(vm, stackFrame, encounteredStrictFrame);
         return callSite;
     }
 
@@ -101,7 +101,7 @@ private:
     {
     }
 
-    void finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

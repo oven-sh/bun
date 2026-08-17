@@ -5,7 +5,7 @@ use crate::Error;
 use crate::bun_json as JSON;
 use crate::bun_schema::api;
 use bun_alloc::AllocError;
-use bun_collections::{HashMap, IdentityContext, StringSet};
+use bun_collections::{HashMap, IdentityContext, StringSet, index_sort};
 use bun_core::{Global, Output, fmt as bun_fmt};
 use bun_core::{MutableString, strings};
 use bun_dotenv::Loader as DotEnv;
@@ -322,6 +322,13 @@ pub mod registry {
             bun_semver::semver_string::Builder::string_hash(str)
         }
 
+        /// Stores the WHATWG serialization (the base `bun_url::join` resolves against) so same-origin checks, concatenated tarball URLs and `url_hash` agree with the requests; credentials must already be split off.
+        pub fn set_url(&mut self, href: Box<[u8]>) {
+            self.url = URL::from_string(&bun_core::String::borrow_utf8(&href))
+                .unwrap_or_else(|_| OwnedURL::from_href(href));
+            self.url_hash = Self::hash(strings::without_trailing_slash(self.url.href()));
+        }
+
         pub(crate) fn get_name(name: &[u8]) -> &[u8] {
             if name.is_empty() || name[0] != b'@' {
                 return name;
@@ -508,16 +515,15 @@ pub mod registry {
                 registry_url
             };
 
-            let url_hash = Self::hash(strings::without_trailing_slash(&final_href));
-
-            Ok(Scope {
+            let mut scope = Scope {
                 name: name.into(),
-                url: OwnedURL::from_href(final_href),
-                url_hash,
                 token: registry.token,
                 auth,
                 user,
-            })
+                ..Default::default()
+            };
+            scope.set_url(final_href);
+            Ok(scope)
         }
     }
 
@@ -3081,104 +3087,69 @@ impl PackageManifest {
         //
         // The tricky part about this code is we need to sort two different arrays.
         // To do that, we create a 3rd array, containing indices into the other 2 arrays.
-        // Creating a 3rd array is expensive! But mostly expensive if the size of the integers is large
-        // Most packages don't have > 65,000 versions
-        // So instead of having a hardcoded limit of how many packages we can sort, we ask
-        //    > "How many bytes do we need to store the indices?"
-        // We decide what size of integer to use based on that.
-        let how_many_bytes_to_store_indices: usize = match max_versions_count {
-            // log2(0) == Infinity
-            0 => 0,
-            // log2(1) == 0
-            1 => 1,
-            n => {
-                // ceil(log2_int_ceil(n) / 8)
-                let bits = (usize::BITS - (n - 1).leading_zeros()) as usize;
-                bits.div_ceil(8)
-            }
-        };
+        {
+            let mut all_indices: Vec<u32> = vec![0; max_versions_count];
+            let mut all_cloned_versions: Vec<Semver::Version> =
+                vec![Semver::Version::default(); max_versions_count];
+            let mut all_cloned_packages: Vec<PackageVersion> =
+                vec![PackageVersion::default(); max_versions_count];
 
-        // A macro expands
-        // the 1..=8 byte cases. Could collapse to a single usize path if profiling allows.
-        macro_rules! sort_with_int {
-            ($Int:ty) => {{
-                type Int = $Int;
+            let releases_list = [result.pkg.releases, result.pkg.prereleases];
 
-                let mut all_indices: Vec<Int> = vec![0 as Int; max_versions_count];
-                let mut all_cloned_versions: Vec<Semver::Version> =
-                    vec![Semver::Version::default(); max_versions_count];
-                let mut all_cloned_packages: Vec<PackageVersion> =
-                    vec![PackageVersion::default(); max_versions_count];
+            for release_i in 0..2usize {
+                let release = releases_list[release_i];
+                let len = release.keys.len as usize;
+                let indices = &mut all_indices[..len];
+                let cloned_packages = &mut all_cloned_packages[..len];
+                let cloned_versions = &mut all_cloned_versions[..len];
+                // `ExternalSlice` offsets index into `versioned_packages` /
+                // `all_semver_versions`, both fully-initialised `Box<[T]>`s
+                // (created via `vec![Default; n].into_boxed_slice()` above),
+                // so safe slice indexing suffices. The two boxes are
+                // distinct allocations so the two `&mut` borrows do not
+                // overlap.
+                let versioned_packages_ =
+                    &mut versioned_packages[release.values.off as usize..][..len];
+                let semver_versions_ = &mut all_semver_versions[release.keys.off as usize..][..len];
+                cloned_packages.copy_from_slice(versioned_packages_);
+                cloned_versions.copy_from_slice(semver_versions_);
 
-                let releases_list = [result.pkg.releases, result.pkg.prereleases];
+                for (i, dest) in indices.iter_mut().enumerate() {
+                    *dest = i as u32;
+                }
 
-                for release_i in 0..2usize {
-                    let release = releases_list[release_i];
-                    let len = release.keys.len as usize;
-                    let indices = &mut all_indices[..len];
-                    let cloned_packages = &mut all_cloned_packages[..len];
-                    let cloned_versions = &mut all_cloned_versions[..len];
-                    // `ExternalSlice` offsets index into `versioned_packages` /
-                    // `all_semver_versions`, both fully-initialised `Box<[T]>`s
-                    // (created via `vec![Default; n].into_boxed_slice()` above),
-                    // so safe slice indexing suffices. The two boxes are
-                    // distinct allocations so the two `&mut` borrows do not
-                    // overlap.
-                    let versioned_packages_ =
-                        &mut versioned_packages[release.values.off as usize..][..len];
-                    let semver_versions_ =
-                        &mut all_semver_versions[release.keys.off as usize..][..len];
-                    cloned_packages.copy_from_slice(versioned_packages_);
-                    cloned_versions.copy_from_slice(semver_versions_);
+                let string_bytes = string_builder.allocated_slice();
+                index_sort::sort_indices(indices, &mut |left, right| {
+                    cloned_versions[left as usize].order(
+                        cloned_versions[right as usize],
+                        string_bytes,
+                        string_bytes,
+                    )
+                });
+                debug_assert_eq!(indices.len(), versioned_packages_.len());
+                debug_assert_eq!(indices.len(), semver_versions_.len());
+                for ((i, pkg), version) in indices
+                    .iter()
+                    .copied()
+                    .zip(versioned_packages_.iter_mut())
+                    .zip(semver_versions_.iter_mut())
+                {
+                    *pkg = cloned_packages[i as usize];
+                    *version = cloned_versions[i as usize];
+                }
 
-                    for (i, dest) in indices.iter_mut().enumerate() {
-                        *dest = i as Int;
-                    }
-
-                    let string_bytes = string_builder.allocated_slice();
-                    indices.sort_by(|&left, &right| {
-                        cloned_versions[left as usize].order(
-                            cloned_versions[right as usize],
-                            string_bytes,
-                            string_bytes,
-                        )
-                    });
-                    debug_assert_eq!(indices.len(), versioned_packages_.len());
-                    debug_assert_eq!(indices.len(), semver_versions_.len());
-                    for ((i, pkg), version) in indices
-                        .iter()
-                        .copied()
-                        .zip(versioned_packages_.iter_mut())
-                        .zip(semver_versions_.iter_mut())
-                    {
-                        *pkg = cloned_packages[i as usize];
-                        *version = cloned_versions[i as usize];
-                    }
-
-                    if cfg!(debug_assertions) {
-                        if cloned_versions.len() > 1 {
-                            // Sanity check:
-                            // When reading the versions, we iterate through the
-                            // list backwards to choose the highest matching
-                            // version
-                            let first = semver_versions_[0];
-                            let second = semver_versions_[1];
-                            let order = second.order(first, string_bytes, string_bytes);
-                            debug_assert!(order == core::cmp::Ordering::Greater);
-                        }
+                if cfg!(debug_assertions) {
+                    if cloned_versions.len() > 1 {
+                        // Sanity check:
+                        // When reading the versions, we iterate through the
+                        // list backwards to choose the highest matching
+                        // version
+                        let first = semver_versions_[0];
+                        let second = semver_versions_[1];
+                        let order = second.order(first, string_bytes, string_bytes);
+                        debug_assert!(order == core::cmp::Ordering::Greater);
                     }
                 }
-            }};
-        }
-
-        match how_many_bytes_to_store_indices {
-            1 => sort_with_int!(u8),
-            2 => sort_with_int!(u16),
-            3 => sort_with_int!(u32),
-            4 => sort_with_int!(u32),
-            5..=8 => sort_with_int!(u64),
-            _ => {
-                debug_assert!(max_versions_count == 0);
             }
         }
 

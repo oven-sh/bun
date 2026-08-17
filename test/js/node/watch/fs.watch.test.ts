@@ -933,15 +933,18 @@ describe("fs.promises.watch", () => {
     const watcher = fs.promises.watch(filepath, { signal: ac.signal });
 
     const promise = (async () => {
-      try {
-        for await (const _ of watcher);
-      } catch (e: any) {
-        expect(e.message).toBe("The operation was aborted.");
-      }
+      for await (const _ of watcher);
     })();
     await Bun.sleep(10);
     ac.abort();
-    await promise;
+    await expect(promise).rejects.toThrow(
+      expect.objectContaining({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        message: "The operation was aborted",
+        cause: ac.signal.reason,
+      }),
+    );
   });
 
   test("Signal aborted before creating the watcher", async () => {
@@ -949,13 +952,18 @@ describe("fs.promises.watch", () => {
 
     const signal = AbortSignal.abort();
     const watcher = fs.promises.watch(filepath, { signal });
-    await (async () => {
-      try {
+    await expect(
+      (async () => {
         for await (const _ of watcher);
-      } catch (e: any) {
-        expect(e.message).toBe("The operation was aborted.");
-      }
-    })();
+      })(),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        message: "The operation was aborted",
+        cause: signal.reason,
+      }),
+    );
   });
 
   test("Signal aborted before creating the watcher does not keep the process alive", async () => {

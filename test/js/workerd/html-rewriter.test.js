@@ -673,6 +673,35 @@ describe("HTMLRewriter", () => {
       });
     });
 
+    // Same as above, but the rewriter has already produced output (the `<a>`)
+    // by the time the handler suspends. Nothing is consuming the body yet, so
+    // those bytes sit in the rewriter's own buffer; the stream that `.body` or
+    // `.clone()` creates afterwards has to be seeded with them, or the output
+    // would start at `<p>`. Both consumers are attached before the handler
+    // resumes.
+    describe("output produced before the rewrite suspended reaches a stream created later", () => {
+      const expected = "<a>first</a><p>new</p>";
+      const suspending = () =>
+        new HTMLRewriter()
+          .on("p", {
+            async element(element) {
+              await setImmediatePromise();
+              element.setInnerContent("new");
+            },
+          })
+          .transform(new Response("<a>first</a><p>old</p>"));
+
+      it(".body", async () => {
+        expect(await suspending().body.text()).toBe(expected);
+      });
+
+      it(".clone() seeds both branches", async () => {
+        const res = suspending();
+        const clone = res.clone();
+        expect(await Promise.all([res.text(), clone.text()])).toEqual([expected, expected]);
+      });
+    });
+
     it("transform(ArrayBuffer) throws the ArrayBuffer wording", () => {
       expect(() =>
         new HTMLRewriter()
@@ -1895,8 +1924,18 @@ describe("streamed input pacing", () => {
   const count = 2500; // ~2.4 MB of input: many upstream chunks
   const input = Buffer.alloc(piece.length * count, piece).toString();
   const rewritten = Buffer.alloc((piece.length + 6) * count, `<p x="1">${text}</p>`).toString();
-  const dir = tempDirWithFiles("hr-pacing", { "in.html": input });
+  // A second document made of different bytes, for the tests below that read
+  // it while another document is being parsed: if that read lands in the
+  // other document's buffer, these bytes show up in its output.
+  const otherText = Buffer.alloc(1000, "b").toString();
+  const otherPiece = `<p>${otherText}</p>`;
+  const otherRewritten = Buffer.alloc((otherPiece.length + 6) * count, `<p x="1">${otherText}</p>`).toString();
+  const dir = tempDirWithFiles("hr-pacing", {
+    "in.html": input,
+    "other.html": Buffer.alloc(otherPiece.length * count, otherPiece).toString(),
+  });
   const file = path.join(dir, "in.html");
+  const otherFile = path.join(dir, "other.html");
 
   function transformInput(body = Bun.file(file)) {
     let seen = 0;
@@ -1992,16 +2031,25 @@ describe("streamed input pacing", () => {
     expect(seen()).toBe(count);
   });
 
-  it("a locked but idle reader holds the input", async () => {
+  // Progress is driven by the reader's pulls: one read yields one chunk and
+  // leaves the rest of the document unread until the next.
+  it("a locked reader paces the input by its reads", async () => {
     const { res, seen } = transformInput();
     const reader = res.body.getReader();
-    for (let i = 0; i < 5; i++) await setImmediatePromise();
+    const first = await reader.read();
     const held = seen();
     expect(held).toBeLessThan(count);
-    for (let i = 0; i < 5; i++) await setImmediatePromise();
-    expect(seen()).toBe(held);
+    // Locked but not reading: give the loop real work to turn on and check the input did not advance meanwhile.
+    // (Windows reads are completions: the one already in flight when the sink pushed back still lands, nothing after it.)
+    expect((await Bun.file(otherFile).bytes()).length).toBe(otherPiece.length * count);
+    expect(seen() - held).toBeLessThanOrEqual(isWindows ? (256 * 1024) / piece.length : 0);
+    const second = await reader.read();
+    expect(seen()).toBeGreaterThan(held);
+    expect(seen()).toBeLessThan(count);
     reader.releaseLock();
-    expect(await readAll(res.body)).toBe(rewritten);
+    const rest = await readAll(res.body);
+    expect(Buffer.concat([first.value, second.value]).toString() + rest).toBe(rewritten);
+    expect(seen()).toBe(count);
   });
 
   // With nothing reading the output the rewrite is a side effect the caller is
@@ -2075,6 +2123,120 @@ describe("streamed input pacing", () => {
       .transform(new Response(Bun.file(file)));
     expect(await outer.text()).toBe(rewritten);
     expect(await inner).toBe(rewritten);
+  });
+
+  // Starting a transform inside the handler and reading it are two reads
+  // nested in the outer one, which still has its document in the read buffer:
+  // the second nested read must be kept out of it just like the first.
+  it("a handler may transform and read another file", async () => {
+    let inner;
+    const outer = new HTMLRewriter()
+      .on("p", {
+        element(e) {
+          e.setAttribute("x", "1");
+          inner ??= transformInput(Bun.file(otherFile)).res.text();
+        },
+      })
+      .transform(new Response(Bun.file(file)));
+    expect(await outer.text()).toBe(rewritten);
+    expect(await inner).toBe(otherRewritten);
+  });
+
+  // Same, with the outer document arriving on a pipe (the child's stdin): a
+  // pipe is read by a different loop than a regular file, out of the same
+  // buffer.
+  it("a handler may transform and read another file while its document arrives on stdin", async () => {
+    const pieces = 64;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const attr = { element: e => void e.setAttribute("x", "1") };
+         let inner;
+         const outer = new HTMLRewriter()
+           .on("p", {
+             element(e) {
+               attr.element(e);
+               inner ??= new HTMLRewriter().on("p", attr).transform(new Response(Bun.file(process.argv[1]))).text();
+             },
+           })
+           .transform(new Response(Bun.stdin));
+         const out = await outer.text();
+         const innerText = await inner;
+         const expectedInner = await new HTMLRewriter().on("p", attr).transform(new Response(await Bun.file(process.argv[1]).bytes())).text();
+         console.log(JSON.stringify({ out, innerMatches: innerText === expectedInner, innerLength: innerText.length }));`,
+        otherFile,
+      ],
+      env: bunEnv,
+      stdin: "pipe",
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+    proc.stdin.end();
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      out: Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString(),
+      innerMatches: true,
+      innerLength: otherRewritten.length,
+    });
+    expect(exitCode).toBe(0);
+  });
+
+  // Same hazard with the other user of that read buffer: readFileSync reads
+  // the file into it before deciding whether it needs to stat. Covers both a
+  // regular-file input and a pipe (stdin of a child).
+  describe("a handler may call readFileSync", () => {
+    const otherContent = Buffer.alloc(4096, "Z").toString();
+    const otherTxt = path.join(dir, "other.txt");
+    beforeAll(() => fs.writeFileSync(otherTxt, otherContent));
+
+    it("while the input is a file", async () => {
+      let intactInnerReads = 0;
+      const res = new HTMLRewriter()
+        .on("p", {
+          element(e) {
+            e.setAttribute("x", "1");
+            if (fs.readFileSync(otherTxt, "utf8") === otherContent) intactInnerReads++;
+          },
+        })
+        .transform(new Response(Bun.file(file)));
+      expect(await res.text()).toBe(rewritten);
+      expect(intactInnerReads).toBe(count);
+    });
+
+    it("while the input is a pipe", async () => {
+      const pieces = 64;
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `import { readFileSync } from "fs";
+           const otherContent = Buffer.alloc(4096, "Z").toString();
+           const res = new HTMLRewriter()
+             .on("p", {
+               element(e) {
+                 e.setAttribute("x", "1");
+                 if (readFileSync(process.argv[1], "utf8") !== otherContent) throw new Error("inner read corrupted");
+               },
+             })
+             .transform(new Response(Bun.stdin));
+           process.stdout.write(await res.text());`,
+          otherTxt,
+        ],
+        env: bunEnv,
+        stdin: "pipe",
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      proc.stdin.write(Buffer.alloc(piece.length * pieces, piece));
+      proc.stdin.end();
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe(Buffer.alloc((piece.length + 6) * pieces, `<p x="1">${text}</p>`).toString());
+      expect(exitCode).toBe(0);
+    });
   });
 
   // Regular-file reads are synchronous on POSIX, so reading ahead of the
@@ -2197,6 +2359,62 @@ it.each([
   expect(res.bodyUsed).toBe(true);
   expect(() => rw.transform(res)).toThrow("Response body already used");
   await expect(res.text()).rejects.toThrow("Body already used");
+});
+
+// `on()` stores one (selector, handlers) record per call; `transform()` turns
+// the records collected so far into a fresh lol-html rewriter each time.
+describe("on() registrations", () => {
+  it("each selector runs the handlers it was registered with, also after a rejected on()", () => {
+    const rw = new HTMLRewriter();
+    const count = 24;
+    for (let i = 0; i < count; i++) {
+      if (i === count / 2) {
+        // Neither of these may leave a half-registered record behind, or the
+        // registrations after them would pair up with the wrong handlers.
+        expect(() => rw.on("p[", { element() {} })).toThrow(expect.objectContaining({ name: "HTMLRewriterError" }));
+        expect(() => rw.on(`p[data-i="${i}"]`, { element: "not a function" })).toThrow("element must be a function");
+      }
+      if (i % 2 === 0) {
+        rw.on(`p[data-i="${i}"]`, { element: el => el.setInnerContent(`element ${i}`) });
+      } else {
+        rw.on(`p[data-i="${i}"]`, {
+          text(chunk) {
+            if (chunk.text) chunk.replace(`text ${i}`);
+          },
+        });
+      }
+    }
+
+    const indices = Array.from({ length: count }, (_, i) => count - 1 - i);
+    const input = indices.map(i => `<p data-i="${i}">x</p>`).join("");
+    const expected = indices.map(i => `<p data-i="${i}">${i % 2 === 0 ? "element" : "text"} ${i}</p>`).join("");
+    expect(rw.transform(input)).toBe(expected);
+    expect(rw.transform(input)).toBe(expected);
+  });
+
+  it("on() from inside a handler applies to the next transform, not the running one", () => {
+    const rw = new HTMLRewriter();
+    let grown = false;
+    rw.on("div", {
+      element(el) {
+        el.setInnerContent("div");
+        if (!grown) {
+          grown = true;
+          // Many more records than were registered before this transform
+          // started, so the registry has to grow while lol-html is still
+          // calling the handlers registered above and below.
+          for (let i = 0; i < 64; i++) {
+            rw.on("span", { element: span => span.setAttribute("n", String(i)) });
+          }
+        }
+      },
+    });
+    rw.on("span", { element: el => el.setInnerContent("span") });
+
+    const input = "<div>1</div><span>2</span><div>3</div><span>4</span>";
+    expect(rw.transform(input)).toBe("<div>div</div><span>span</span><div>div</div><span>span</span>");
+    expect(rw.transform(input)).toBe('<div>div</div><span n="63">span</span><div>div</div><span n="63">span</span>');
+  });
 });
 
 // lol-html reports an absent attribute with a NULL pointer and a
@@ -2541,6 +2759,91 @@ describe("GC pressure mid-rewrite", () => {
     expect(stash.tagName).toBeUndefined();
   });
 
+  // A handler running inside the input ByteStream's write into the pipe
+  // cancels the output reader and drops the last references to the transform.
+  // The ByteStream follows the pipe's `Done` answer with `end()` on the same
+  // sink snapshot, so the pipe must outlive the write call even when a GC in
+  // the handler swept its Transform cell.
+  it("cancelling the output from a handler mid-chunk does not free the pipe under its caller", async () => {
+    const fixture = /* js */ `
+      const CHUNKS = 6;
+      const CANCEL_AT = 4;
+      let gates;
+      // Chunk N+1 is only sent once the handler saw element N, so every element
+      // after the first reaches the rewriter from the fetch body's ByteStream.
+      const server = Bun.serve({
+        port: 0,
+        fetch() {
+          return new Response(
+            new ReadableStream({
+              async start(controller) {
+                try {
+                  for (let i = 0; i < CHUNKS; i++) {
+                    controller.enqueue(new TextEncoder().encode("<p n=" + i + "></p>"));
+                    await gates[i].promise;
+                  }
+                  controller.close();
+                } catch {}
+              },
+            }),
+            { headers: { "Content-Type": "text/html" } },
+          );
+        },
+      });
+      for (let iter = 0; iter < 3; iter++) {
+        gates = Array.from({ length: CHUNKS }, () => Promise.withResolvers());
+        const cancelled = Promise.withResolvers();
+        let seen = 0;
+        let reader;
+        let out = new HTMLRewriter()
+          .on("p", {
+            element(el) {
+              const n = Number(el.getAttribute("n"));
+              seen++;
+              if (n === CANCEL_AT) {
+                reader.cancel("bye").catch(() => {});
+                reader = out = null;
+                globalThis.junk = Array.from({ length: 2000 }, () => "x".repeat(4096));
+                Bun.gc(true);
+                Bun.gc(true);
+                cancelled.resolve();
+              }
+              el.setAttribute("seen", "1");
+              gates[n].resolve();
+            },
+          })
+          .transform(await fetch(server.url));
+        reader = out.body.getReader();
+        out = null;
+        const drain = (async () => {
+          try {
+            while (reader) {
+              const { done } = await reader.read();
+              if (done) break;
+            }
+          } catch {}
+        })();
+        await cancelled.promise;
+        await drain;
+        Bun.gc(true);
+        for (const g of gates) g.resolve();
+        console.log("iteration", iter, "saw", seen);
+      }
+      console.log("done");
+      server.stop(true);
+      process.exit(0);
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe("iteration 0 saw 5\niteration 1 saw 5\niteration 2 saw 5\ndone\n");
+    expect(exitCode).toBe(0);
+  });
+
   // Chained transform where the intermediate Response is a temporary: while
   // the second pipe's handler is suspended, the first pipe is parked on the
   // shared ByteStream's backpressure with its producer backref installed.
@@ -2566,5 +2869,92 @@ describe("GC pressure mid-rewrite", () => {
     // stack before the GC loop in rw2's handler runs.
     const start = () => rw2.transform(rw1.transform(new Response("<p>x</p>"))).text();
     expect(await start()).toBe('<p one="" two="">x</p>');
+  });
+
+  // Content ops coerce their first argument to a string, then coerce the
+  // second (the `{ html }` options getter / the attribute value), which runs
+  // user JS. A GC in that window must not free the first argument's bytes
+  // before lol-html copies them into the output.
+  it("content op string arguments survive a GC triggered while coercing a later argument", async () => {
+    const fixture = /* js */ `
+      const N = 20000;
+      // A fresh, non-atom string each call (slice+concat resolves to a new StringImpl on toString()).
+      const mk = (ch, n) => {
+        const s = ch.repeat(n);
+        return s.slice(0, 1) + s.slice(1);
+      };
+      const churn = () => {
+        Bun.gc(true);
+        for (let i = 0; i < 50; i++) mk("SECRET", 20000);
+        Bun.gc(true);
+      };
+      // toString() hands back a temporary string nothing else references.
+      const content = ch => ({ toString: () => mk(ch, N) + "END" });
+      const opts = {
+        get html() {
+          churn();
+          return false;
+        },
+      };
+      const out = new HTMLRewriter()
+        .on("p", {
+          element(el) {
+            el.setInnerContent(content("I"), opts);
+            el.before(content("B"), opts);
+            el.setAttribute({ toString: () => mk("n", N) }, { toString: () => (churn(), "v") });
+            el.onEndTag(end => {
+              end.after(content("E"), opts);
+            });
+          },
+        })
+        .onDocument({
+          comments(c) {
+            c.replace(content("C"), opts);
+          },
+          text(t) {
+            if (t.text === "txt") t.after(content("T"), opts);
+          },
+          end(end) {
+            end.append(content("D"), opts);
+          },
+        })
+        .transform("<p>x</p><div>txt</div><!-- c -->");
+      const fragments = {
+        "element.before": mk("B", N) + "END<p ",
+        "element.setAttribute": "<p " + mk("n", N) + '="v">',
+        "element.setInnerContent": '="v">' + mk("I", N) + "END</p>",
+        "endTag.after": "</p>" + mk("E", N) + "END<div>",
+        "text.after": "<div>txt" + mk("T", N) + "END</div>",
+        "comment.replace": "</div>" + mk("C", N) + "END",
+        "documentEnd.append": "END" + mk("D", N) + "END",
+      };
+      const result = {};
+      for (const [op, fragment] of Object.entries(fragments)) result[op] = out.includes(fragment);
+      result.exact =
+        out ===
+        mk("B", N) + "END<p " + mk("n", N) + '="v">' + mk("I", N) + "END</p>" + mk("E", N) + "END" +
+        "<div>txt" + mk("T", N) + "END</div>" + mk("C", N) + "END" + mk("D", N) + "END";
+      console.log(JSON.stringify(result));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      // Malloc=1 routes JSC string allocations through the system allocator so ASan builds see the free
+      // (bmalloc's SystemHeap is unavailable on Windows).
+      env: isWindows ? bunEnv : { ...bunEnv, Malloc: "1", ASAN_OPTIONS: "detect_leaks=0" },
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(JSON.parse(stdout.trim() || "{}")).toEqual({
+      "element.before": true,
+      "element.setAttribute": true,
+      "element.setInnerContent": true,
+      "endTag.after": true,
+      "text.after": true,
+      "comment.replace": true,
+      "documentEnd.append": true,
+      exact: true,
+    });
+    expect(exitCode).toBe(0);
   });
 });

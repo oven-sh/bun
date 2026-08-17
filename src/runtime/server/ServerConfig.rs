@@ -19,6 +19,7 @@ use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
+use bun_collections::index_sort;
 
 pub struct ServerConfig {
     pub(crate) address: Address,
@@ -174,6 +175,17 @@ pub enum RouteMethod {
     Specific(Method),
 }
 
+impl RouteMethod {
+    /// `None` for [`RouteMethod::Any`]: the method is not known until it is
+    /// read off the request.
+    pub(crate) fn specific(&self) -> Option<Method> {
+        match self {
+            RouteMethod::Any => None,
+            RouteMethod::Specific(method) => Some(*method),
+        }
+    }
+}
+
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
@@ -245,7 +257,7 @@ impl ServerConfig {
 
         // sort the cloned static routes by name for determinism
         // (descending by path: `order(b, a)`).
-        list.sort_by(|a, b| strings::order(&b.path, &a.path));
+        index_sort::sort_slice_by(list, |a, b| strings::order(&b.path, &a.path));
 
         Ok(())
     }

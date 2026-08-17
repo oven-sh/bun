@@ -24,6 +24,7 @@ use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, Untrus
 use crate::cli::pm_version_command::PmVersionCommand;
 use crate::cli::pm_view_command as PmViewCommand;
 use crate::cli::pm_why_command::PmWhyCommand;
+use bun_collections::index_sort;
 
 pub(crate) use crate::cli::pack_command::PackCommand;
 pub(crate) use crate::cli::scan_command::ScanCommand;
@@ -601,7 +602,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
                 };
                 // `sort_unstable_by` is pdqsort; names are
                 // unique so stability is irrelevant.
-                sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+                index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| {
+                    by_name.cmp(a, b)
+                });
 
                 if trusted_only {
                     sorted_dependencies.retain(|&dep_id| {
@@ -823,7 +826,7 @@ fn print_node_modules_folder_structure(
     };
     // `sort_unstable_by` is pdqsort; names are unique so
     // stability is irrelevant.
-    sorted_dependencies.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+    index_sort::sort_indices_unstable(&mut sorted_dependencies, &mut |a, b| by_name.cmp(a, b));
 
     let sorted_len = sorted_dependencies.len();
     for (index, &dependency_id) in sorted_dependencies.iter().enumerate() {
@@ -977,7 +980,7 @@ fn print_trusted_dependencies_flat(
         dependencies,
         buf: string_bytes,
     };
-    trusted.sort_unstable_by(|a, b| by_name.cmp(*a, *b));
+    index_sort::sort_indices_unstable(&mut trusted, &mut |a, b| by_name.cmp(a, b));
 
     for (index, &dep_id) in trusted.iter().enumerate() {
         let package_id = resolutions_buf[dep_id as usize];

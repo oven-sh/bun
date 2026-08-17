@@ -157,11 +157,6 @@ impl<T: ?Sized> BackRef<T, Mut> {
         // liveness/alignment; `Mut` records write provenance.
         unsafe { self.0.as_mut() }
     }
-
-    #[inline]
-    pub const fn shared(self) -> BackRef<T, Shared> {
-        BackRef(self.0, core::marker::PhantomData)
-    }
 }
 
 impl<T, P> BackRef<T, P> {
@@ -710,12 +705,6 @@ impl<T> DetachablePtr<T> {
     #[inline]
     pub fn is_detached(&self) -> bool {
         self.0.get().is_null()
-    }
-
-    /// Recover the raw pointer (for forwarding / identity checks).
-    #[inline]
-    pub fn as_ptr(&self) -> *mut T {
-        self.0.get()
     }
 
     /// Load the parked `&mut T`, or `None` if detached.

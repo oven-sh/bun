@@ -1,4 +1,5 @@
 use core::cell::UnsafeCell;
+use core::mem::MaybeUninit;
 
 use crate::fs as Fs;
 use crate::{MAX_PATH_BYTES, PathBuffer, SEP, SEP_POSIX, SEP_WINDOWS};
@@ -1480,6 +1481,22 @@ pub fn join_string_buf_w_same<'a, P: PlatformT>(buf: &'a mut [u16], parts: &[&[u
     join_string_buf_t_same::<u16, P>(buf, parts)
 }
 
+const JOIN_TEMP_LEN: usize = 4096;
+
+/// Uninitialized scratch for `join_string_buf_t*`'s unnormalized concatenation of `count` units.
+#[inline]
+fn join_temp_buf<'a, T>(
+    stack: &'a mut [MaybeUninit<T>; JOIN_TEMP_LEN],
+    heap: &'a mut Vec<T>,
+    count: usize,
+) -> &'a mut [MaybeUninit<T>] {
+    if count * 2 > JOIN_TEMP_LEN {
+        heap.reserve_exact(count * 2);
+        return heap.spare_capacity_mut();
+    }
+    stack
+}
+
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// split out of `join_string_buf_t` because Rust can't monomorphize on the
 /// parts' element types — callers pick the overload.
@@ -1488,9 +1505,8 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
     parts: &[&[T]],
 ) -> &'a [T] {
     let mut written: usize = 0;
-    let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];
-    let mut temp_buf: &mut [T] = &mut temp_buf_;
-    let mut heap_temp_buf: Vec<T>;
+    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
+    let mut heap_temp_buf: Vec<T> = Vec::new();
 
     let mut count: usize = 0;
     for part in parts {
@@ -1500,12 +1516,7 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         count += part.len() + 1;
     }
 
-    if count * 2 > temp_buf.len() {
-        heap_temp_buf = vec![T::from_u8(0); count * 2];
-        temp_buf = &mut heap_temp_buf;
-    }
-
-    temp_buf[0] = T::from_u8(0);
+    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
 
     for part in parts {
         if part.is_empty() {
@@ -1513,11 +1524,11 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         }
 
         if written > 0 {
-            temp_buf[written] = T::from_u8(P::P.separator());
+            temp_buf[written].write(T::from_u8(P::P.separator()));
             written += 1;
         }
 
-        temp_buf[written..written + part.len()].copy_from_slice(part);
+        temp_buf[written..written + part.len()].write_copy_of_slice(part);
         written += part.len();
     }
 
@@ -1526,7 +1537,9 @@ fn join_string_buf_t_same<'a, T: PathChar, P: PlatformT>(
         return &buf[0..1];
     }
 
-    normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
+    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
+    let joined = unsafe { temp_buf[..written].assume_init_ref() };
+    normalize_string_node_t::<T, P>(joined, buf)
 }
 
 pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -> &'a ZStr {
@@ -1550,9 +1563,8 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
     // Takes `&[&[u8]]` — every in-tree caller passes u8
     // parts — and transcodes to u16 below when `T == u16`.
     let mut written: usize = 0;
-    let mut temp_buf_: [T; 4096] = [T::from_u8(0); 4096];
-    let mut temp_buf: &mut [T] = &mut temp_buf_;
-    let mut heap_temp_buf: Vec<T>;
+    let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
+    let mut heap_temp_buf: Vec<T> = Vec::new();
 
     let mut count: usize = 0;
     for part in parts {
@@ -1562,12 +1574,7 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
         count += part.len() + 1;
     }
 
-    if count * 2 > temp_buf.len() {
-        heap_temp_buf = vec![T::from_u8(0); count * 2];
-        temp_buf = &mut heap_temp_buf;
-    }
-
-    temp_buf[0] = T::from_u8(0);
+    let temp_buf = join_temp_buf(&mut stack_temp_buf, &mut heap_temp_buf, count);
 
     for part in parts {
         if part.is_empty() {
@@ -1575,12 +1582,16 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
         }
 
         if written > 0 {
-            temp_buf[written] = T::from_u8(P::P.separator());
+            temp_buf[written].write(T::from_u8(P::P.separator()));
             written += 1;
         }
 
+        let spare = &mut temp_buf[written..];
+        // SAFETY: write-only view; `write_u8_part` only stores into it and returns the units written.
+        let dest: &mut [T] =
+            unsafe { core::slice::from_raw_parts_mut(spare.as_mut_ptr().cast::<T>(), spare.len()) };
         // Parts are always u8 (see fn-level comment); transcode iff T == u16.
-        written += T::write_u8_part(&mut temp_buf[written..], part);
+        written += T::write_u8_part(dest, part);
     }
 
     if written == 0 {
@@ -1588,7 +1599,9 @@ fn join_string_buf_t<'a, T: PathChar, P: PlatformT>(buf: &'a mut [T], parts: &[&
         return &buf[0..1];
     }
 
-    normalize_string_node_t::<T, P>(&temp_buf[0..written], buf)
+    // SAFETY: the loop above wrote every unit of `temp_buf[..written]`.
+    let joined = unsafe { temp_buf[..written].assume_init_ref() };
+    normalize_string_node_t::<T, P>(joined, buf)
 }
 
 /// Scratch buffer for `_join_abs_string_buf`'s unnormalized concatenation.
@@ -2559,6 +2572,63 @@ mod tests {
         assert_eq!(
             normalize_string_spill::<true, platform::Windows>(&mut spill, b"c:"),
             b"C:."
+        );
+    }
+
+    #[test]
+    fn join_string_buf_skips_empty_parts_and_normalizes() {
+        let mut out = [0u8; 64];
+        assert_eq!(
+            join_string_buf::<platform::Posix>(&mut out, &[b"foo", b"", b"bar/../baz"]),
+            b"foo/baz"
+        );
+        assert_eq!(
+            join_string_buf::<platform::Posix>(&mut out, &[b"", b""]),
+            b"."
+        );
+    }
+
+    #[test]
+    fn join_string_buf_spills_parts_longer_than_the_stack_scratch() {
+        let long = vec![b'a'; JOIN_TEMP_LEN];
+        let mut expected = long.clone();
+        expected.extend_from_slice(b"/y");
+
+        let mut out = vec![0u8; JOIN_TEMP_LEN + 16];
+        assert_eq!(
+            join_string_buf::<platform::Posix>(&mut out, &[&long, b"x/../y"]),
+            &expected[..]
+        );
+    }
+
+    #[test]
+    fn join_string_buf_w_same_skips_empty_parts_and_normalizes() {
+        let foo: Vec<u16> = "foo".encode_utf16().collect();
+        let rest: Vec<u16> = "bar\\..\\baz".encode_utf16().collect();
+        let expected: Vec<u16> = "foo\\baz".encode_utf16().collect();
+
+        let mut out = [0u16; 64];
+        assert_eq!(
+            join_string_buf_w_same::<platform::Windows>(&mut out, &[&foo, &[], &rest]),
+            &expected[..]
+        );
+        assert_eq!(
+            join_string_buf_w_same::<platform::Windows>(&mut out, &[&[], &[]]),
+            &[b'.' as u16][..]
+        );
+    }
+
+    #[test]
+    fn join_string_buf_w_same_spills_parts_longer_than_the_stack_scratch() {
+        let long = vec![b'a' as u16; JOIN_TEMP_LEN];
+        let rest: Vec<u16> = "x\\..\\y".encode_utf16().collect();
+        let mut expected = long.clone();
+        expected.extend_from_slice(&[b'\\' as u16, b'y' as u16]);
+
+        let mut out = vec![0u16; JOIN_TEMP_LEN + 16];
+        assert_eq!(
+            join_string_buf_w_same::<platform::Windows>(&mut out, &[&long, &rest]),
+            &expected[..]
         );
     }
 }

@@ -280,8 +280,7 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
 /// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
-/// don't (e.g. diff-match-patch's `usize` line hashes), which keep a scalar
-/// arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
+/// don't, which keep a scalar arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
 /// initialized; the `u16` view additionally requires `T`'s own alignment.
 enum Lanes<'a> {
     U8(&'a [u8]),
@@ -354,8 +353,6 @@ pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    // The generic index_of_t below returns Some(0) for an empty needle, so
-    // dispatch to the u8-specific index_of (which returns None for empty).
     index_of(self_, str).is_some()
 }
 
@@ -580,21 +577,6 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     Some(i)
 }
 
-/// Width-generic substring search. Unlike [`index_of`], an empty needle
-/// matches at `Some(0)`.
-pub fn index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (lanes(haystack), lanes(needle)) {
-        (Lanes::U8(h), Lanes::U8(n)) => memmem(h, n),
-        (Lanes::U16(h), Lanes::U16(n)) => highway::memmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
-    }
-}
-
 pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
     SplitIterator {
         buffer: self_,
@@ -656,13 +638,6 @@ impl<'a> SplitIterator<'a> {
         };
 
         Some(&self.buffer[start..end])
-    }
-
-    /// Returns a slice of the remaining bytes. Does not affect iterator state.
-    pub fn rest(&self) -> &'a [u8] {
-        let end = self.buffer.len();
-        let start = self.index.unwrap_or(end);
-        &self.buffer[start..end]
     }
 }
 

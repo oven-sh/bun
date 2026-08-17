@@ -184,6 +184,16 @@ describe("safeIntegers", () => {
             });
           }
         });
+
+        it("gap in ?N numbering reports the missing parameter instead of crashing", () => {
+          const db = Database.open(":memory:", { strict: true });
+
+          // "select ?2" makes sqlite implicitly allocate parameter 1, which has no name.
+          expect(() => db.query("select ?2 as x").all({})).toThrow('Missing parameter "?1"');
+          expect(() => db.query("select ?2 as x").all({ 1: "a", 2: "b" })).toThrow('Missing parameter "?1"');
+          expect(() => db.query("select ?1, ?3 as x").all({ 0: "a" })).toThrow('Missing parameter "?2"');
+          expect(db.query("select ?2 as x").all({ 0: "a", 1: "b" })).toEqual([{ x: "b" }]);
+        });
       }
     });
   }

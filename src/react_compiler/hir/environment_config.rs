@@ -52,10 +52,6 @@ impl Default for ExhaustiveEffectDepsMode {
     }
 }
 
-fn default_true() -> bool {
-    true
-}
-
 /// Compiler environment configuration. Contains feature flags and settings.
 ///
 /// Fields that would require passing JS functions across the JS/Rust boundary
@@ -92,7 +88,6 @@ pub struct EnvironmentConfig {
     pub enable_use_keyed_state: bool,
     pub validate_no_set_state_in_effects: bool,
     pub validate_no_derived_computations_in_effects: bool,
-    pub validate_no_derived_computations_in_effects_exp: bool,
     pub validate_no_jsx_in_try_statements: bool,
     pub validate_static_components: bool,
     pub validate_no_capitalized_calls: Option<Vec<String>>,
@@ -142,7 +137,6 @@ impl Default for EnvironmentConfig {
             enable_use_keyed_state: false,
             validate_no_set_state_in_effects: false,
             validate_no_derived_computations_in_effects: false,
-            validate_no_derived_computations_in_effects_exp: false,
             validate_no_jsx_in_try_statements: false,
             validate_static_components: false,
             validate_no_capitalized_calls: None,

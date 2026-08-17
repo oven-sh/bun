@@ -2537,43 +2537,33 @@ mod tests {
             .unwrap_or(text_len)
     }
 
-    /// Returns `haystack_len` when `needle` does not occur, like the kernel.
+    /// `n` when `c` does not occur, like the kernel.
     #[unsafe(no_mangle)]
-    unsafe extern "C" fn highway_last_index_of_char(
-        haystack: *const u8,
-        haystack_len: usize,
-        needle: u8,
-    ) -> usize {
+    unsafe extern "C" fn highway_last_index_of_char(h: *const u8, n: usize, c: u8) -> usize {
         // SAFETY: test stub; callers pass a valid (ptr, len) pair.
-        let haystack = unsafe { core::slice::from_raw_parts(haystack, haystack_len) };
-        haystack
-            .iter()
-            .rposition(|&b| b == needle)
-            .unwrap_or(haystack_len)
+        let h = unsafe { core::slice::from_raw_parts(h, n) };
+        h.iter().rposition(|&b| b == c).unwrap_or(n)
     }
 
-    /// Returns `usize::MAX` when `needle` does not occur, like the kernel.
+    /// `usize::MAX` when `nd` does not occur, like the kernel.
     #[unsafe(no_mangle)]
     unsafe extern "C" fn highway_memrmem16(
-        haystack: *const u16,
-        haystack_len: usize,
-        needle: *const u16,
-        needle_len: usize,
+        h: *const u16,
+        n: usize,
+        nd: *const u16,
+        k: usize,
     ) -> usize {
         // SAFETY: test stub; callers pass valid (ptr, len) pairs.
-        let (haystack, needle) = unsafe {
+        let (h, nd) = unsafe {
             (
-                core::slice::from_raw_parts(haystack, haystack_len),
-                core::slice::from_raw_parts(needle, needle_len),
+                core::slice::from_raw_parts(h, n),
+                core::slice::from_raw_parts(nd, k),
             )
         };
-        if needle_len > haystack_len {
-            return usize::MAX;
-        }
-        (0..=haystack_len - needle_len)
-            .rev()
-            .find(|&i| haystack[i..i + needle_len] == *needle)
-            .unwrap_or(usize::MAX)
+        let last = n
+            .checked_sub(k)
+            .and_then(|end| (0..=end).rev().find(|&i| h[i..i + k] == *nd));
+        last.unwrap_or(usize::MAX)
     }
 
     #[test]

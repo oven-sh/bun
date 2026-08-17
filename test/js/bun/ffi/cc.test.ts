@@ -10,7 +10,7 @@ import {
   symlinkSync,
   writeFileSync,
 } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, rss, tempDir, tempDirWithFiles } from "harness";
 import path from "path";
 
 // TODO: we need to install build-essential and Apple SDK in CI.
@@ -100,6 +100,57 @@ describe.skipIf(isASAN)("given an add(a, b) function", () => {
     }).toThrow(/"subtract" is missing/);
   });
 }); // </given add(a, b) function>
+
+// This path does not hit TinyCC's setjmp/longjmp error handling (the source
+// compiles; the lookup of the missing symbol just returns NULL), so unlike the
+// rest of the cc() coverage it also runs under ASAN.
+describe("given a source that compiles but lacks a requested symbol", () => {
+  // The 1 MiB initialised array is relocated into the TinyCC state before the
+  // missing symbol is noticed, so a state that is not freed on that error path
+  // costs about 1 MiB per attempt: 600 attempts grew RSS by 618 MiB on a build
+  // that leaked it. Under ASAN a build that frees it still grew by about 200 MiB,
+  // because the quarantine holds freed memory (256 MiB of it at most), hence the
+  // looser bound there.
+  const attempts = 600;
+  const allowedGrowthMiB = isASAN ? 400 : 64;
+  const source = /* c */ `
+    static char big[1048576] = {1};
+    int present(void) { return big[0]; }
+  `;
+  let dir: string;
+
+  beforeAll(() => {
+    dir = tempDirWithFiles("bun-ffi-cc-test", {
+      "present.c": source,
+    });
+  });
+
+  afterAll(async () => {
+    await fs.rm(dir, { recursive: true, force: true });
+  });
+
+  it("frees the compilation state of every failed cc() call", () => {
+    const attempt = () =>
+      expect(() =>
+        cc({
+          source: path.join(dir, "present.c"),
+          symbols: {
+            missing: { returns: "int", args: [] },
+          },
+        }),
+      ).toThrow(/missing/);
+
+    for (let i = 0; i < 10; i++) attempt();
+    Bun.gc(true);
+    const baseline = rss();
+    for (let i = 0; i < attempts; i++) attempt();
+    Bun.gc(true);
+    const grownMiB = (rss() - baseline) / 1024 / 1024;
+    expect(grownMiB, `RSS grew by ${grownMiB.toFixed(1)} MiB over ${attempts} failed cc() calls`).toBeLessThan(
+      allowedGrowthMiB,
+    );
+  });
+});
 
 describe("given a source file with syntax errors", () => {
   const source = /* c */ `

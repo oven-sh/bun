@@ -1,4 +1,5 @@
 use core::ffi::{c_char, c_int, c_void};
+use core::marker::PhantomData;
 use core::ptr::NonNull;
 
 use bun_core::ZStr;
@@ -126,8 +127,55 @@ pub type SymbolCallback =
     unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
 
 bun_opaque::opaque_ffi! {
-    /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
+    /// Opaque TinyCC compilation state. Owned by a [`StateHandle`], used via `&mut State`.
     pub struct State;
+}
+
+/// Dropping this `tcc_delete`s the state together with the code relocated into it.
+#[repr(transparent)]
+pub struct StateHandle(NonNull<State>);
+
+/// The address of a symbol in the code relocated into a [`State`]. The state
+/// owns the memory it points into, so this borrows the state: it cannot be
+/// kept past the [`StateHandle`] whose `Drop` unmaps that memory. Passing it
+/// on to something outliving the borrow goes through [`as_ptr`](Self::as_ptr).
+#[derive(Clone, Copy)]
+pub struct SymbolAddr<'state> {
+    addr: NonNull<c_void>,
+    state: PhantomData<&'state State>,
+}
+
+impl SymbolAddr<'_> {
+    #[inline]
+    pub fn as_ptr(self) -> *mut c_void {
+        self.addr.as_ptr()
+    }
+}
+
+impl core::ops::Deref for StateHandle {
+    type Target = State;
+    #[inline]
+    fn deref(&self) -> &State {
+        // SAFETY: `self.0` came from `tcc_new` and is deleted only in `Drop`.
+        unsafe { self.0.as_ref() }
+    }
+}
+
+impl core::ops::DerefMut for StateHandle {
+    #[inline]
+    fn deref_mut(&mut self) -> &mut State {
+        // SAFETY: as in `Deref`; `&mut self` makes this the only live borrow.
+        unsafe { self.0.as_mut() }
+    }
+}
+
+impl Drop for StateHandle {
+    #[inline]
+    fn drop(&mut self) {
+        // SAFETY: `self.0` came from `tcc_new` and this handle is its only
+        // owner, so it has not been deleted yet.
+        unsafe { tcc_delete(self.0.as_ptr()) }
+    }
 }
 
 pub struct ConfigErr<ErrCtx> {
@@ -160,23 +208,18 @@ where
 
 impl State {
     /// Create a new TCC compilation context
-    pub(crate) fn new() -> Result<NonNull<State>, bun_alloc::AllocError> {
+    pub(crate) fn new() -> Result<StateHandle, bun_alloc::AllocError> {
         // SAFETY: tcc_new has no preconditions.
-        NonNull::new(unsafe { tcc_new() }).ok_or(bun_alloc::AllocError)
+        NonNull::new(unsafe { tcc_new() })
+            .map(StateHandle)
+            .ok_or(bun_alloc::AllocError)
     }
 
     /// Create and initialize a new TCC compilation context
     pub fn init<ErrCtx, const VALIDATE_OPTIONS: bool>(
         config: &Config<ErrCtx>,
-    ) -> Result<NonNull<State>, Error> {
-        let state_ptr = State::new()?;
-        // errdefer state.destroy() — State is an FFI handle without Drop, so use scopeguard.
-        let guard = scopeguard::guard(state_ptr, |p| {
-            // SAFETY: p was returned by tcc_new and has not yet been deleted.
-            unsafe { tcc_delete(p.as_ptr()) }
-        });
-        // SAFETY: state_ptr is valid and uniquely owned for the duration of this fn.
-        let state: &mut State = unsafe { &mut *state_ptr.as_ptr() };
+    ) -> Result<StateHandle, Error> {
+        let mut state = State::new()?;
 
         // setOutputType has side effects that are conditional on existing
         // options, so this must be called after setOptions
@@ -207,18 +250,7 @@ impl State {
 
         state.set_output_type(config.output_type)?;
 
-        let state_ptr = scopeguard::ScopeGuard::into_inner(guard);
-        Ok(state_ptr)
-    }
-
-    /// Free a TCC compilation context
-    ///
-    /// # Safety
-    /// `s` must have been returned by [`State::new`]/[`State::init`] and not yet freed.
-    pub unsafe fn destroy(s: *mut State) {
-        // opaque FFI handle — kept as explicit destroy fn, not `impl Drop`.
-        // SAFETY: caller's contract guarantees `s` is a live `tcc_new` handle not yet deleted.
-        unsafe { tcc_delete(s) }
+        Ok(state)
     }
 
     /// Set error/warning display callback
@@ -409,9 +441,15 @@ impl State {
         Ok(())
     }
 
-    /// Return symbol value or NULL if not found
-    pub fn get_symbol(&mut self, name: &ZStr) -> Option<NonNull<Symbol>> {
-        // SAFETY: self is a valid *mut TCCState; name is NUL-terminated.
-        NonNull::new(unsafe { tcc_get_symbol(self, name.as_ptr()) }.cast::<Symbol>())
+    /// Look a symbol up in the relocated code; `None` if it is not defined.
+    /// A lookup, so it only needs `&self`, and the address it returns borrows
+    /// `self` (see [`SymbolAddr`]).
+    pub fn get_symbol(&self, name: &ZStr) -> Option<SymbolAddr<'_>> {
+        // SAFETY: self is a valid TCCState; name is NUL-terminated.
+        let addr = NonNull::new(unsafe { tcc_get_symbol(self.as_mut_ptr(), name.as_ptr()) })?;
+        Some(SymbolAddr {
+            addr,
+            state: PhantomData,
+        })
     }
 }

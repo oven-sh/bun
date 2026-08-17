@@ -1129,18 +1129,17 @@ impl FrameworkRouter {
 
         let file_id = ctx.get_file_id_for_router(file_path, new_route_index, file_kind)?;
 
-        let new_route = self.route_ptr_mut(new_route_index);
-        if let Some(existing) = *new_route.file_ptr(file_kind) {
+        if let Some(existing) = *self.route_ptr_mut(new_route_index).file_ptr(file_kind) {
             if existing == file_id {
                 return Ok(()); // exact match already exists. Hot-reloading code hits this
             }
             *out_colliding_file_id = existing;
             return Err(InsertError::RouteCollision);
         }
-        *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
-            match pattern {
+            // A different route can still serve the same URLs (see `dynamic_routes`).
+            let aliased_route = match pattern {
                 InsertPattern::Static(p) => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
@@ -1149,19 +1148,32 @@ impl FrameworkRouter {
                     };
                     let gop = self.static_routes.get_or_put(key)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
                     let gop = self.dynamic_routes.get_or_put(p)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
+            };
+            if let Some(aliased_route) = aliased_route {
+                *out_colliding_file_id = self
+                    .route_ptr(aliased_route)
+                    .file_page
+                    .expect("routes in the url maps have a page");
+                return Err(InsertError::RouteCollision);
             }
         }
+
+        *self.route_ptr_mut(new_route_index).file_ptr(file_kind) = Some(file_id);
         Ok(())
     }
 }
@@ -1673,8 +1685,15 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if param_count > 64 {
-                            log.write(format_args!("Pattern cannot have more than 64 param"));
+                        if param_count > MatchedParams::MAX_COUNT {
+                            log.fail(
+                                format_args!(
+                                    "Pattern cannot have more than {} params",
+                                    MatchedParams::MAX_COUNT
+                                ),
+                                0,
+                                full_rel_path.len(),
+                            );
                             ctx.on_router_syntax_error(full_rel_path, log)?;
                             arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;
@@ -1686,7 +1705,18 @@ impl FrameworkRouter {
                             ParsedPatternKind::Page => FileKind::Page,
                             ParsedPatternKind::Layout => FileKind::Layout,
                             ParsedPatternKind::Extra => {
-                                panic!("TODO: associate extra files with route")
+                                let file_name = paths::basename(full_rel_path);
+                                log.fail(
+                                    format_args!(
+                                        "Bun Bake currently does not support \"{}\" files",
+                                        bstr::BStr::new(paths::stem(full_rel_path))
+                                    ),
+                                    full_rel_path.len() - file_name.len(),
+                                    file_name.len(),
+                                );
+                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
+                                continue 'outer;
                             }
                         };
 
@@ -1768,13 +1798,21 @@ impl FrameworkRouter {
 pub struct JSFrameworkRouter {
     pub(crate) files: Vec<bun_core::String>,
     pub(crate) router: FrameworkRouter,
-    pub(crate) stored_parse_errors: Vec<StoredParseError>,
+    pub(crate) stored_scan_errors: Vec<StoredScanError>,
 }
 
-pub(crate) struct StoredParseError {
-    /// Owned by global allocator
-    pub rel_path: Box<[u8]>,
-    pub log: TinyLog,
+/// Collected while scanning and thrown together once the scan is done.
+pub(crate) enum StoredScanError {
+    InvalidRoute {
+        rel_path: Box<[u8]>,
+        message: Box<[u8]>,
+    },
+    Collision {
+        rel_path: Box<[u8]>,
+        /// Indexes `JSFrameworkRouter.files`.
+        other: OpaqueFileId,
+        file_kind: FileKind,
+    },
 }
 
 impl JSFrameworkRouter {
@@ -1846,34 +1884,57 @@ impl JSFrameworkRouter {
         let mut jsfr = Box::new(JSFrameworkRouter {
             router: FrameworkRouter::init_empty(&abs_root, types)?,
             files: Vec::new(),
-            stored_parse_errors: Vec::new(),
+            stored_scan_errors: Vec::new(),
         });
 
         let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-        // The handler only touches `files`/`stored_parse_errors`, so split-borrow
+        // The handler only touches `files`/`stored_scan_errors`, so split-borrow
         // those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
             let JSFrameworkRouter {
                 router,
                 files,
-                stored_parse_errors,
+                stored_scan_errors,
             } = &mut *jsfr;
             let mut ctx = JSFrameworkRouterScanCtx {
                 files,
-                stored_parse_errors,
+                stored_scan_errors,
             };
             router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
         }
 
-        if !jsfr.stored_parse_errors.is_empty() {
-            let arr =
-                JSValue::create_array_from_iter(global, jsfr.stored_parse_errors.iter(), |item| {
-                    Ok(global.create_error_instance(format_args!(
-                        "Invalid route {}: {}",
-                        bun_core::fmt::quote(&item.rel_path),
-                        bstr::BStr::new(item.log.msg.const_slice()),
-                    )))
-                })?;
+        if !jsfr.stored_scan_errors.is_empty() {
+            let JSFrameworkRouter {
+                router,
+                files,
+                stored_scan_errors,
+            } = &*jsfr;
+            let arr = JSValue::create_array_from_iter(global, stored_scan_errors.iter(), |item| {
+                Ok(match item {
+                    StoredScanError::InvalidRoute { rel_path, message } => global
+                        .create_error_instance(format_args!(
+                            "Invalid route {}: {}",
+                            bun_core::fmt::quote(rel_path),
+                            bstr::BStr::new(message),
+                        )),
+                    StoredScanError::Collision {
+                        rel_path,
+                        other,
+                        file_kind,
+                    } => {
+                        let other_abs_path = files[other.get() as usize].to_utf8();
+                        global.create_error_instance(format_args!(
+                            "Multiple {} matching the same route pattern is ambiguous: {} and {}",
+                            file_kind.collision_noun(),
+                            bun_core::fmt::quote(rel_path),
+                            bun_core::fmt::quote(paths::resolve_path::relative(
+                                &router.root,
+                                other_abs_path.slice(),
+                            )),
+                        ))
+                    }
+                })
+            })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
                 bun_core::String::static_str("Errors scanning routes"),
                 arr,
@@ -1985,7 +2046,7 @@ impl JSFrameworkRouter {
 
     pub fn finalize(self: Box<Self>) {
         drop(self);
-        // files, router, stored_parse_errors freed by Drop.
+        // files, router, stored_scan_errors freed by Drop.
     }
 
     pub(crate) fn parse_route_pattern(
@@ -2071,12 +2132,12 @@ fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 use bun_core::fmt::VecWriter as ByteFmtWriter;
 
 // `scan` needs `&mut jsfr.router` and the insertion handler simultaneously.
-// The handler only touches `files` / `stored_parse_errors`, so we split-borrow
+// The handler only touches `files` / `stored_scan_errors`, so we split-borrow
 // those two fields into a dedicated context struct instead of implementing the
 // trait on `JSFrameworkRouter` itself.
 struct JSFrameworkRouterScanCtx<'a> {
     files: &'a mut Vec<bun_core::String>,
-    stored_parse_errors: &'a mut Vec<StoredParseError>,
+    stored_scan_errors: &'a mut Vec<StoredScanError>,
 }
 
 impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
@@ -2093,20 +2154,24 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     }
 
     fn on_router_syntax_error(&mut self, rel_path: &[u8], log: TinyLog) -> Result<(), AllocError> {
-        let rel_path_dupe: Box<[u8]> = rel_path.into();
-        self.stored_parse_errors.push(StoredParseError {
-            rel_path: rel_path_dupe,
-            log,
+        self.stored_scan_errors.push(StoredScanError::InvalidRoute {
+            rel_path: rel_path.into(),
+            message: log.msg.const_slice().into(),
         });
         Ok(())
     }
 
     fn on_router_collision_error(
         &mut self,
-        _rel_path: &[u8],
-        _other_id: OpaqueFileId,
-        _file_kind: FileKind,
+        rel_path: &[u8],
+        other_id: OpaqueFileId,
+        file_kind: FileKind,
     ) -> Result<(), AllocError> {
-        panic!("TODO: onRouterCollisionError for JSFrameworkRouter")
+        self.stored_scan_errors.push(StoredScanError::Collision {
+            rel_path: rel_path.into(),
+            other: other_id,
+            file_kind,
+        });
+        Ok(())
     }
 }

@@ -638,3 +638,92 @@ describe("dynamic route precedence", () => {
     expect(servedBy(files, Object.keys(expected))).toStrictEqual(expected);
   });
 });
+
+describe("scan errors", () => {
+  // A collision names the file being inserted first, which depends on scan order, so the two names are sorted here.
+  function scanErrors(style: string, files: Record<string, string>): string[] {
+    using dir = tempDir("fsr-scan-errors", files);
+    let thrown: unknown;
+    try {
+      new FrameworkRouter({ root: String(dir), style });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(thrown).toBeInstanceOf(AggregateError);
+    expect((thrown as AggregateError).message).toBe("Errors scanning routes");
+    return (thrown as AggregateError).errors
+      .map((e: Error) =>
+        e.message
+          .replaceAll("\\", "/")
+          .replace(/: "(.*)" and "(.*)"$/, (_, a, b) => `: "${[a, b].sort().join('" and "')}"`),
+      )
+      .sort();
+  }
+
+  test("two files on the same route", () => {
+    expect(
+      scanErrors("nextjs-pages", {
+        "about.tsx": "1",
+        "about/index.tsx": "1",
+        "_layout.tsx": "1",
+        "_layout.js": "1",
+      }),
+    ).toStrictEqual([
+      'Multiple layout matching the same route pattern is ambiguous: "_layout.js" and "_layout.tsx"',
+      'Multiple pages matching the same route pattern is ambiguous: "about.tsx" and "about/index.tsx"',
+    ]);
+  });
+
+  test("two dynamic routes with the same shape", () => {
+    expect(
+      scanErrors("nextjs-pages", {
+        "blog/[id].tsx": "1",
+        "blog/[slug].tsx": "1",
+      }),
+    ).toStrictEqual(['Multiple pages matching the same route pattern is ambiguous: "blog/[id].tsx" and "blog/[slug].tsx"']);
+  });
+
+  // A route group adds no URL segment, so both files land on the same route.
+  test("a route group next to the plain route", () => {
+    expect(
+      scanErrors("nextjs-app-ui", {
+        "docs/page.tsx": "1",
+        "(marketing)/docs/page.tsx": "1",
+      }),
+    ).toStrictEqual([
+      'Multiple pages matching the same route pattern is ambiguous: "(marketing)/docs/page.tsx" and "docs/page.tsx"',
+    ]);
+  });
+
+  test("app router files that are not pages or layouts", () => {
+    expect(
+      scanErrors("nextjs-app-ui", {
+        "page.tsx": "1",
+        "loading.tsx": "1",
+        "docs/not-found.tsx": "1",
+        // A plain error.tsx on Windows; on POSIX a name starting with ".\\" that the scan normalizes away.
+        ".\\error.tsx": "1",
+      }),
+    ).toStrictEqual([
+      'Invalid route "docs/not-found.tsx": Bun Bake currently does not support "not-found" files',
+      'Invalid route "error.tsx": Bun Bake currently does not support "error" files',
+      'Invalid route "loading.tsx": Bun Bake currently does not support "loading" files',
+    ]);
+  });
+
+  test("invalid routes and collisions are reported together", () => {
+    const params = Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/");
+    expect(
+      scanErrors("nextjs-pages", {
+        "blog-[slug].tsx": "1",
+        [`${params}.tsx`]: "1",
+        "[id].tsx": "1",
+        "[name].tsx": "1",
+      }),
+    ).toStrictEqual([
+      `Invalid route "${params}.tsx": Pattern cannot have more than 64 params`,
+      'Invalid route "blog-[slug].tsx": Parameters must take up the entire file name',
+      'Multiple pages matching the same route pattern is ambiguous: "[id].tsx" and "[name].tsx"',
+    ]);
+  });
+});

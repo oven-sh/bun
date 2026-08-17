@@ -374,20 +374,6 @@ export default function Docs() {
     expect(exitCode).toBe(1);
   });
 
-  test("two pages resolving to the same route are reported", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
-      "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
-    });
-
-    const { stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).toContain("Multiple pages matching the same route pattern is ambiguous");
-  });
-
   // The bundler's diagnostics are the whole report for a build it rejects; it then exits 1 through the build VM.
   describe.concurrent("a build the bundler rejects", () => {
     const config = `
@@ -1399,5 +1385,145 @@ export default async function IndexPage() {
     expect(html).toContain("<li>read from disk while rendering</li>");
     expect(html).toContain("<li>resolved relative to the file on disk</li>");
     expect(html).toContain("<li>one module instance</li>");
+  });
+
+  describe("route scan errors", () => {
+    async function build(dir: string) {
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx --outdir ./dist`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      return { exitCode, stderr: normalizePath(stderr.toString()) };
+    }
+
+    test("two files resolving to the same route fail the build", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-collision", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+        "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/about.tsx");
+      expect(stderr).toContain("  - pages/about/index.tsx");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
+    test("a file that is not a valid route fails the build", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-syntax-error", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function Index() { return <p>index</p>; }`,
+        "pages/blog-[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain('"pages/blog-[slug].tsx" is not a valid route');
+      expect(stderr).toContain("Parameters must take up the entire file name");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
+    test("two dynamic routes with the same shape fail the build", async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-route-alias", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/blog/[id].tsx": `export default function Post() { return <p>post</p>; }`,
+        "pages/blog/[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/blog/[id].tsx");
+      expect(stderr).toContain("  - pages/blog/[slug].tsx");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
+
+    test("two router types claiming the same static route fail the build", async () => {
+      // Router types share one URL space, so this needs a framework with two of them.
+      using dir = tempDir("bake-production-route-alias-across-types", {
+        "src/index.tsx": `export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [
+                { root: "pages", style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+                { root: "docs", style: "nextjs-pages", serverEntryPoint: "./server.ts" },
+              ],
+            },
+          },
+        };`,
+        "server.ts": `export default {};`,
+        "pages/about.tsx": `export default function About() { return "about"; }`,
+        "docs/about.tsx": `export default function About() { return "about"; }`,
+      });
+
+      const { exitCode, stderr } = await build(String(dir));
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/about.tsx");
+      expect(stderr).toContain("  - docs/about.tsx");
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    });
+
+    test("an app router file bake does not support fails the build", async () => {
+      using dir = tempDir("bake-production-app-router-extra-file", {
+        "src/index.tsx": `export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "app", style: "nextjs-app-ui", serverEntryPoint: "./server.ts" }],
+            },
+          },
+        };`,
+        "server.ts": `export default {};`,
+        "app/page.tsx": `export default function Page() { return "page"; }`,
+        "app/loading.tsx": `export default function Loading() { return "loading"; }`,
+      });
+
+      const { exitCode, stderr } = await build(String(dir));
+      // The file name is underlined (the indentation matches `error: "app/`).
+      expect(stderr).toContain(
+        'error: "app/loading.tsx" is not a valid route\n' +
+          "            ----------\n" +
+          '            Bun Bake currently does not support "loading" files\n',
+      );
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(String(dir), "dist"))).toBe(false);
+    });
+
+    test("every route error is reported before the build fails", async () => {
+      const tooManyParams = "pages/" + Array.from({ length: 65 }, (_, i) => `[p${i}]`).join("/") + ".tsx";
+      const dir = await tempDirWithBakeDeps("bake-production-route-errors", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/about.tsx": `export default function About() { return <p>about</p>; }`,
+        "pages/about/index.tsx": `export default function About() { return <p>about</p>; }`,
+        "pages/_layout.tsx": `export default function Layout({ children }) { return <main>{children}</main>; }`,
+        "pages/_layout.jsx": `export default function Layout({ children }) { return <main>{children}</main>; }`,
+        "pages/[id].tsx": `export default function Item() { return <p>item</p>; }`,
+        "pages/[name].tsx": `export default function Item() { return <p>item</p>; }`,
+        "pages/blog-[slug].tsx": `export default function Post() { return <p>post</p>; }`,
+        [tooManyParams]: `export default function Deep() { return <p>deep</p>; }`,
+      });
+
+      const { exitCode, stderr } = await build(dir);
+      expect(stderr).toContain("Multiple layout matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/_layout.tsx");
+      expect(stderr).toContain("  - pages/_layout.jsx");
+      expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+      expect(stderr).toContain("  - pages/about.tsx");
+      expect(stderr).toContain("  - pages/about/index.tsx");
+      expect(stderr).toContain("  - pages/[id].tsx");
+      expect(stderr).toContain("  - pages/[name].tsx");
+      expect(stderr).toContain('"pages/blog-[slug].tsx" is not a valid route');
+      expect(stderr).toContain("Parameters must take up the entire file name");
+      // The whole path is underlined (the indentation matches `error: "`).
+      expect(stderr).toContain(
+        `error: "${tooManyParams}" is not a valid route\n` +
+          `        ${Buffer.alloc(tooManyParams.length - 1, "-").toString()}\n` +
+          "        Pattern cannot have more than 64 params\n",
+      );
+      expect(exitCode).toBe(1);
+      expect(existsSync(path.join(dir, "dist"))).toBe(false);
+    });
   });
 });

@@ -591,10 +591,17 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
 
     let mut router = FrameworkRouter::init_empty(cwd, router_types.into_boxed_slice())?;
+    let mut route_scan = RouteScan {
+        entry_points: &mut entry_points,
+        error_count: 0,
+    };
     router.scan_all(
         &mut server_transpiler.resolver,
-        framework_router::InsertionContext::wrap(&mut entry_points),
+        framework_router::InsertionContext::wrap(&mut route_scan),
     )?;
+    if route_scan.error_count > 0 {
+        return Err(crate::Error::BakeBuildFailed);
+    }
 
     // Projected again so the bundle sees the paths `resolve()` filled in.
     let bundler_framework = framework.as_bundler_view();
@@ -1436,26 +1443,33 @@ extern "C" fn BakeProdResolve(
 pub use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
-impl framework_router::InsertionHandler for EntryPointMap {
+/// Route scan callbacks for `bun build --app`; counts the reported errors so the build can fail.
+struct RouteScan<'a> {
+    entry_points: &'a mut EntryPointMap,
+    error_count: usize,
+}
+
+impl framework_router::InsertionHandler for RouteScan<'_> {
     fn get_file_id_for_router(
         &mut self,
         abs_path: &[u8],
         _: framework_router::RouteIndex,
         _: framework_router::FileKind,
     ) -> Result<OpaqueFileId, bun_alloc::AllocError> {
-        self.get_or_put_entry_point(abs_path, bake::Side::Server)
+        self.entry_points
+            .get_or_put_entry_point(abs_path, bake::Side::Server)
             .map(|id| OpaqueFileId::init(id.get()))
             .map_err(|_| bun_alloc::AllocError)
     }
 
     fn on_router_syntax_error(
         &mut self,
-        _rel_path: &[u8],
-        _fail: framework_router::TinyLog,
+        rel_path: &[u8],
+        fail: framework_router::TinyLog,
     ) -> Result<(), bun_alloc::AllocError> {
-        // EntryPointMap does not handle this, so a malformed route pattern
-        // during a production build must crash loudly rather than be swallowed.
-        bun_core::todo_panic!("onRouterSyntaxError for EntryPointMap")
+        fail.print(rel_path);
+        self.error_count += 1;
+        Ok(())
     }
 
     fn on_router_collision_error(
@@ -1472,11 +1486,12 @@ impl framework_router::InsertionHandler for EntryPointMap {
         bun_core::pretty_errorln!(
             "  - <blue>{}<r>",
             BStr::new(resolve_path::relative(
-                &self.root,
-                self.files.keys()[other_id.get() as usize].abs_path()
+                &self.entry_points.root,
+                self.entry_points.files.keys()[other_id.get() as usize].abs_path()
             ))
         );
         Output::flush();
+        self.error_count += 1;
         Ok(())
     }
 }

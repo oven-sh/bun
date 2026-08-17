@@ -220,10 +220,12 @@ fn use_mimalloc_in_dependencies() {
     }
     Bun__useMimallocForICU();
 
-    // libuv (only linked on Windows). Must precede the first uv call.
+    // libuv (only linked on Windows). Must precede the first uv call. Left on
+    // the CRT heap under ASAN like ICU and BoringSSL, so the sanitizer sees
+    // its allocations too (the global allocator is `System` there as well).
     // SAFETY: mimalloc fns match the libuv allocator signatures; called
     // exactly once before any uv handle is created.
-    #[cfg(windows)]
+    #[cfg(all(windows, not(bun_asan)))]
     unsafe {
         let _ = bun_sys::windows::libuv::uv_replace_allocator(
             Some(bun_alloc::mimalloc::mi_malloc),

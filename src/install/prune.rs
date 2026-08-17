@@ -649,10 +649,8 @@ struct HoistedTree<'a> {
     /// The expected tree excludes dev/optional/peer dependencies.
     filtered: bool,
     kept_mismatched: Cell<bool>,
-    checked: RefCell<DynamicBitSet>,
-    matched: RefCell<DynamicBitSet>,
-    missing: RefCell<DynamicBitSet>,
-    other_version: RefCell<DynamicBitSet>,
+    /// Memoized `installed()` per `expected` index.
+    verified: RefCell<Vec<Option<Installed>>>,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -707,10 +705,7 @@ impl<'a> HoistedTree<'a> {
             };
         }
 
-        let checked = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let matched = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let missing = handle_oom(DynamicBitSet::init_empty(expected.len()));
-        let other_version = handle_oom(DynamicBitSet::init_empty(expected.len()));
+        let verified = vec![None; expected.len()];
         HoistedTree {
             lockfile,
             trees,
@@ -720,10 +715,7 @@ impl<'a> HoistedTree<'a> {
             quiet,
             filtered,
             kept_mismatched: Cell::new(false),
-            checked: RefCell::new(checked),
-            matched: RefCell::new(matched),
-            missing: RefCell::new(missing),
-            other_version: RefCell::new(other_version),
+            verified: RefCell::new(verified),
         }
     }
 
@@ -799,25 +791,11 @@ impl<'a> HoistedTree<'a> {
         alias: &[u8],
         pkg_id: PackageID,
     ) -> Installed {
-        if self.checked.borrow().is_set(idx) {
-            return if self.matched.borrow().is_set(idx) {
-                Installed::Matches
-            } else if self.missing.borrow().is_set(idx) {
-                Installed::Missing
-            } else if self.other_version.borrow().is_set(idx) {
-                Installed::OtherVersion
-            } else {
-                Installed::Mismatch
-            };
+        if let Some(installed) = self.verified.borrow()[idx] {
+            return installed;
         }
         let installed = self.installed(tree_id, alias, pkg_id);
-        self.checked.borrow_mut().set(idx);
-        match installed {
-            Installed::Matches => self.matched.borrow_mut().set(idx),
-            Installed::Missing => self.missing.borrow_mut().set(idx),
-            Installed::OtherVersion => self.other_version.borrow_mut().set(idx),
-            Installed::Mismatch => {}
-        }
+        self.verified.borrow_mut()[idx] = Some(installed);
         installed
     }
 

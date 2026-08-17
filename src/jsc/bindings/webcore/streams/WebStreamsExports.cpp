@@ -201,9 +201,10 @@ extern "C" void ReadableStream__error(JSC::EncodedJSValue possibleReadableStream
     // See ReadableStream__cancel: never return to the native caller with a pending exception.
     auto catchScope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     Bun::WebStreams::webStreamControllerError(globalObject, stream, JSValue::decode(reason));
-    if (catchScope.exception()) [[unlikely]]
+    if (catchScope.exception()) [[unlikely]] {
         catchScope.clearExceptionExceptTermination();
-    Bun__VM__takeTerminationOutsideScript(globalObject);
+        Bun__VM__takeTerminationOutsideScript(globalObject);
+    }
 }
 
 extern "C" void ReadableStream__detach(JSC::EncodedJSValue possibleReadableStream, Zig::GlobalObject* globalObject)

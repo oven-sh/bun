@@ -219,19 +219,13 @@ pub enum IPCDecodeError {
     /// The decode ran under a VM that is stopping (loop-level; not an exception).
     #[error("Stopped")]
     Stopped,
-    // —— bun.JSError variants ——
-    #[error("JSError")]
+    #[error("{0:?}")]
     Js(JsError),
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
-        match e {
-            JsError::Thrown | JsError::Terminated => IPCDecodeError::Js(e),
-            JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
-        }
+        IPCDecodeError::Js(e)
     }
 }
 
@@ -508,7 +502,7 @@ mod json {
             );
             if s.tag() == bun_core::Tag::Dead {
                 bun_core::hint::cold();
-                return Err(IPCDecodeError::OutOfMemory);
+                return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
             s
         } else {
@@ -530,7 +524,8 @@ mod json {
         }
         let deserialized = match parsed {
             Ok(v) => v,
-            Err(JsError::Thrown | JsError::Terminated) => {
+            Err(JsError::Terminated) => return Err(IPCDecodeError::Js(JsError::Terminated)),
+            Err(JsError::Thrown) => {
                 // A malformed message; a pending termination is not cleared by this and keeps unwinding.
                 global_this.clear_exception();
                 return Err(IPCDecodeError::InvalidFormat);
@@ -2268,7 +2263,7 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         DecodeStep::Wait => {
             log!("hit NotEnoughBytes");
         }
-        DecodeStep::Fail(IPCDecodeError::OutOfMemory) => {
+        DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory)) => {
             Output::print_errorln("IPC message is too long.");
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }

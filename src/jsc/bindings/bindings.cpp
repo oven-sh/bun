@@ -5216,15 +5216,6 @@ void JSC__VM__setExecutionForbidden(JSC::VM* arg0)
     (*arg0).setExecutionForbidden();
 }
 
-// The stop of a VM (worker terminate() / process.exit()), armed by the requesting thread right before it fires the
-// termination trap: JSC then forbids execution in the same step that throws the TerminationException, as it does for
-// WebCore's worker VMs (which arm this at creation — Bun cannot, node:vm's timeouts terminate the same VM and must
-// not forbid). Ordered before the trap by VMTraps' signalling lock.
-extern "C" void JSC__VM__forbidExecutionOnTermination(JSC::VM* vm)
-{
-    vm->forbidExecutionOnTermination();
-}
-
 // These may be called concurrently from another thread — or from the VM's own thread inside a host call,
 // API lock held: VMTraps::fireTrap is CONCURRENT_SAFE and needs no lock either way (releasing the API lock
 // here would run JSLock's microtask checkpoint mid-host-call).
@@ -6801,29 +6792,30 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
-// The VM's TerminationException has unwound past the outermost script frame (WebCore takes it at the
-// same point: JSExecState::profiledCall's returnedException + forbidExecution). It never stays pending
-// across native code out here — JSC resets its "termination in progress" state when the outermost VM
-// entry exits and expects the embedder to have taken the exception by then — so take it: nothing is
-// pending afterwards, execution is forbidden, and the caller stands down (Rust: JsError::Terminated /
-// Stopped). Beneath script (the VM is entered) it is left for JSC to unwind the frames above; false.
-// Every termination that gets this far is the VM's stop: a node:vm run converts its own beneath script.
-extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
+// See BunClientData.h.
+bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scope)
 {
-    auto& vm = JSC::getVM(globalObject);
     if (vm.isEntered())
         return false;
-    auto* exception = vm.exceptionForInspection();
+    auto* exception = scope.exception();
     if (!exception || !vm.isTerminationException(exception))
         return false;
+    // Every termination that unwinds past the outermost script frame is the VM's stop (node:vm withdraws its own
+    // beneath script), and the stop closed the gate before firing the trap.
     ASSERT(!WebCore::clientData(vm)->scriptAllowed());
-    ASSERT(vm.executionForbidden()); // the stop armed forbidExecutionOnTermination before firing the trap
-    DECLARE_TOP_EXCEPTION_SCOPE(vm).clearException();
+    scope.clearException();
     // Thrown by a trap check out here, no VM entry exit will reset this for JSC (VM::executeEntryScopeServicesOnExit).
     if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
         vm.clearHasTerminationRequest();
     vm.setExecutionForbidden();
     return true;
+}
+
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
+{
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return Bun::takeTerminationOutsideScript(vm, scope);
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

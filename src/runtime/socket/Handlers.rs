@@ -275,10 +275,6 @@ impl Handlers {
         if global_object.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
-        // The VM has stopped: what the callback "threw" is its termination, and no handler runs.
-        if !global_object.bun_vm().script_allowed() {
-            return Err(bun_jsc::JsError::Terminated);
-        }
         let on_error = self.on_error();
 
         if on_error.is_empty() {

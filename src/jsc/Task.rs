@@ -43,13 +43,6 @@ pub fn new<T: Taskable>(ptr: *mut T) -> Task {
 /// `has_exception()`, or this fold runs beneath script) is taken now if no script is left to unwind.
 #[cold]
 pub fn report_error_or_terminate(global: &JSGlobalObject, proof: JsError) -> Result<(), Stopped> {
-    if proof == JsError::Terminated
-        || (proof == JsError::Thrown
-            && !global.has_exception()
-            && global.vm().execution_forbidden())
-    {
-        return Err(Stopped);
-    }
     let ex = global.take_exception(proof);
     if ex.is_termination_exception() {
         crate::top_exception_scope::thrown(global);

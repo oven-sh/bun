@@ -1419,7 +1419,7 @@ impl JSValkeyClient {
         Ok(())
     }
 
-    pub(super) fn close_socket_next_tick(&self) {
+    fn close_socket_next_tick(&self) {
         if self.client.get().socket.is_closed() {
             return;
         }

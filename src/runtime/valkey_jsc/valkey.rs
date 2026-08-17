@@ -619,22 +619,13 @@ impl ValkeyClient {
         val
     }
 
-    /// Never runs the close event beneath a frame that is unwinding an exception (it closes from the task
-    /// queue instead); `Err` when the event left a termination pending, or, for a half-open socket whose
-    /// `on_close` runs by hand here, whatever that left.
+    /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
+    /// runs by hand here, whatever that left.
     pub fn close(&mut self) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
         }
         let global = self.global_object();
-        if global.has_exception() {
-            // A caller is unwinding an exception (it holds the `Err` for it). Closing now could run
-            // the close event — user script — on top of it, and whatever that left pending would be
-            // indistinguishable from the caller's; close from the task queue instead, where the
-            // event's result is folded as a top-level callback's.
-            self.parent().close_socket_next_tick();
-            return Ok(());
-        }
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),

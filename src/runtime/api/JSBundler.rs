@@ -1717,12 +1717,14 @@ pub mod js_bundler {
             let rejection_value = match rejection {
                 Ok(v) => v,
                 Err(JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-                // A terminated worker runs no onEnd callbacks: keep its termination pending and unwind.
-                Err(JsError::Thrown) if global_this.has_pending_termination_exception() => {
-                    return Err(JsError::Thrown);
+                // A terminated worker runs no onEnd callbacks: its termination keeps unwinding.
+                Err(err) => {
+                    let value = global_this.take_error(err);
+                    if value.is_termination_exception() {
+                        return Err(bun_jsc::top_exception_scope::thrown(global_this));
+                    }
+                    value
                 }
-                Err(JsError::Terminated) => return Err(JsError::Terminated),
-                Err(JsError::Thrown) => global_this.take_error(JsError::Thrown),
             };
 
             // The C++ side has a `DECLARE_THROW_SCOPE` whose dtor sets

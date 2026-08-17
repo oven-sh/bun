@@ -38,14 +38,3 @@
 )]
 
 include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"));
-
-/// `JSC__JSGlobalObject__throwTerminationException` without the generated wrapper's exception read: for a
-/// caller that means to *leave* the termination pending (the wrapper's `return_if_exception` would take
-/// it straight back at loop level).
-#[inline]
-pub fn raw_throw_termination_exception(global: &crate::JSGlobalObject) {
-    // SAFETY: opaque-ZST handle valid for the call.
-    unsafe {
-        raw::JSC__JSGlobalObject__throwTerminationException(core::ptr::from_ref(global).cast_mut())
-    }
-}

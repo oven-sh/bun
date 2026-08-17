@@ -1872,9 +1872,8 @@ impl Outcome {
             Err(bun_jsc::JsError::OutOfMemory) => {
                 Outcome::Error(global.create_out_of_memory_error())
             }
-            Err(bun_jsc::JsError::Terminated) => Outcome::Stopped,
-            Err(bun_jsc::JsError::Thrown) => {
-                let e = global.take_exception(bun_jsc::JsError::Thrown);
+            Err(err) => {
+                let e = global.take_exception(err);
                 if e.is_termination_exception() {
                     Outcome::Stopped
                 } else {

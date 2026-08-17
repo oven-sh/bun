@@ -60,9 +60,8 @@ void NodeVMRunTermination::finish(ThrowScope& scope)
         return;
 
     vm.cancelTermination();
-    // A stop requested between the check above and the withdrawal went with it. Its trap fired after this
-    // run's, so it forbade execution as it landed (or will, re-requested here): the stop still wins.
-    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+    // A stop requested between the check above and the withdrawal went with it: re-request, the stop wins.
+    if (!WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
         vm.notifyNeedTermination();
         return;
     }

@@ -364,15 +364,12 @@ impl JSPromise {
             // We can't use `global.take_exception()` because it throws an
             // out-of-memory error when we instead need to take the exception.
             Err(JsError::OutOfMemory) => global.create_out_of_memory_error(),
-            Err(JsError::Thrown) if global.has_pending_termination_exception() => {
-                return Err(JsError::Thrown);
-            }
-            // The VM is dead: nothing settles.
-            Err(JsError::Terminated) => return Err(JsError::Terminated),
-            Err(JsError::Thrown) => {
-                let exception = global.take_exception(JsError::Thrown);
+            Err(err) => {
+                let exception = global.take_exception(err);
+                // A termination is nothing to settle a promise with: pending beneath script it keeps
+                // unwinding (`Thrown`); outside script it is taken (`Terminated`).
                 if exception.is_termination_exception() {
-                    return Err(JsError::Terminated);
+                    return Err(crate::top_exception_scope::thrown(global));
                 }
                 exception.to_error().unwrap_or(exception)
             }

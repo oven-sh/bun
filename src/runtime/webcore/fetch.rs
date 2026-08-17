@@ -350,8 +350,10 @@ fn reject_on_exception(
     let err = match result {
         Ok(v) if !v.is_empty() => return Ok(v),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
-        // A terminated worker gets no rejected promise: leave its termination pending and keep unwinding.
-        Ok(_) | Err(jsc::JsError::Thrown) if global_this.has_pending_termination_exception() => {
+        // A terminated worker gets no rejected promise: its termination keeps unwinding.
+        Ok(_) | Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
+            if global_this.has_pending_termination_exception() =>
+        {
             return Err(jsc::JsError::Thrown);
         }
         Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),

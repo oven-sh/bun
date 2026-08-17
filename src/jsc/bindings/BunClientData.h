@@ -7,7 +7,16 @@ struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
 extern "C" void Bun__VmHandle__release(const BunVmHandleRef*);
-// bindings.cpp: a TerminationException carried on to / arriving at its landing frame (see definitions).
+namespace JSC {
+class TopExceptionScope;
+}
+namespace Bun {
+// A TerminationException that has unwound past the outermost script frame (!vm.isEntered()) is the VM's stop arriving
+// at native code that keeps running: take it off the VM, reset JSC's request flag as an entry-scope exit would, forbid
+// execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
+// taken. bindings.cpp.
+bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
+}
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
 
 namespace WebCore {

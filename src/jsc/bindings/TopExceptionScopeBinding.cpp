@@ -57,24 +57,11 @@ extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
     return nullptr;
 }
 
-// See Bun__VM__takeTerminationOutsideScript.
 extern "C" bool TopExceptionScope__takeTerminationOutsideScript(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     auto* scope = static_cast<TopExceptionScope*>(ptr);
-    auto& vm = scope->vm();
-    if (vm.isEntered())
-        return false;
-    auto* exception = scope->exception();
-    if (!exception || !vm.isTerminationException(exception))
-        return false;
-    ASSERT(!WebCore::clientData(vm)->scriptAllowed());
-    ASSERT(vm.executionForbidden()); // the stop armed forbidExecutionOnTermination before firing the trap
-    scope->clearException();
-    if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
-        vm.clearHasTerminationRequest();
-    vm.setExecutionForbidden();
-    return true;
+    return Bun::takeTerminationOutsideScript(scope->vm(), *scope);
 }
 
 extern "C" void TopExceptionScope__clearException(void* ptr)

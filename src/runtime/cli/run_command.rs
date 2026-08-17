@@ -1421,8 +1421,9 @@ impl Run<'_> {
                     // SAFETY: `vm.jsc_vm` set in `init`; FFI takes `*mut`.
                     let result = promise.result(unsafe { &mut *vm.jsc_vm });
                     let global = vm.global;
-                    // A CJS entry runs synchronously in Node, so its top-level
-                    // throw is an uncaughtException; only an ESM entry
+                    // `promise` belongs to the entry or to the preload that
+                    // rejected. Node `require()`s a CJS one synchronously, so
+                    // its top-level throw is an uncaughtException; only an ESM
                     // rejection reports origin "unhandledRejection".
                     let is_rejection = !vm.entry_point_result.evaluated_as_cjs;
                     // SAFETY: `global` valid for VM lifetime.

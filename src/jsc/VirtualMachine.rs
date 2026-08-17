@@ -68,10 +68,17 @@ pub type ExceptionList = Vec<crate::exception_list::JsException>;
 pub struct EntryPointResult {
     pub value: crate::strong::Optional, // jsc.Strong.Optional
     pub cjs_set_value: bool,
-    /// True when the entry module evaluated as CommonJS: Node reports a CJS
-    /// entry's top-level throw with origin `uncaughtException` but an ESM
-    /// entry rejection with `unhandledRejection`; the run command consults this.
+    /// True when the module whose load promise `reload_entry_point` handed back
+    /// (the preload that rejected, else the entry) evaluated as CommonJS. Node
+    /// `require()`s both synchronously, so their top-level throw is reported
+    /// with origin `uncaughtException`; an ESM rejection keeps
+    /// `unhandledRejection`. Set by `Bun__VM__noteCommonJSEvaluation`, read by
+    /// the run command and the worker entry loop once the promise rejected.
     pub evaluated_as_cjs: bool,
+    /// Resolved path of the preload `load_preloads` is importing, so that a
+    /// CommonJS evaluation is matched against it instead of against
+    /// `VirtualMachine::main`. `None` while nothing but the entry is loading.
+    pub loading_preload: Option<Box<[u8]>>,
 }
 
 /// Downstream-compat alias: lib.rs previously exposed `virtual_machine::InitOptions`.

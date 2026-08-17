@@ -123,16 +123,6 @@ static bool evaluateCommonJSModuleOnce(JSC::VM& vm, Zig::GlobalObject* globalObj
         return false;
     }
 
-    // Node reports a CJS entry's top-level throw as origin "uncaughtException", not
-    // "unhandledRejection"; record the entry mode for the run command. Only the root
-    // module (m_id == ".") can be the entry, so the FFI compare runs at most once.
-    if (auto* id = moduleObject->m_id.get(); id && id->length() == 1) [[unlikely]] {
-        auto view = id->view(globalObject);
-        RETURN_IF_EXCEPTION(scope, false);
-        if (view == "."_s)
-            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(filename));
-    }
-
     JSFunction* resolveFunction = nullptr;
     JSFunction* requireFunction = nullptr;
     const auto initializeModuleObject = [&]() {
@@ -1585,6 +1575,11 @@ static JSC::SourceCode commonJSModuleSyntheticSourceCode(const SourceOrigin& sou
                 if (entry) {
                     if (auto* moduleObject = dynamicDowncast<JSCommonJSModule>(entry)) {
                         if (!moduleObject->hasEvaluated) {
+                            // Only the module loader (not require()) evaluates the entry and
+                            // preloads, so this is where the VM learns that the module it is
+                            // loading at top level is CommonJS, whose top-level throw Node
+                            // reports with origin "uncaughtException".
+                            Bun__VM__noteCommonJSEvaluation(globalObject->bunVM(), JSValue::encode(keyValue));
                             evaluateCommonJSModuleOnce(
                                 vm,
                                 globalObject,

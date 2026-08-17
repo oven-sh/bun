@@ -710,7 +710,8 @@ fn generate_entry_point(_vm: &VirtualMachine, watch: bool, entry_path: &[u8]) ->
 }
 
 /// `loadPreloads()` — runs `--preload` scripts. Returns the first rejected
-/// preload promise if any, else null.
+/// preload promise if any (with `entry_point_result.evaluated_as_cjs` telling
+/// whether that preload was CommonJS), else null.
 ///
 /// Error mapping: resolver `Failure` returns the resolver error,
 /// `Pending`/`NotFound` returns `error.ModuleNotFound`,
@@ -734,7 +735,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
     let vm_for_guard = vm;
     scopeguard::defer! {
         // SAFETY: per fn contract.
-        unsafe { (*vm_for_guard).is_in_preload = false };
+        unsafe {
+            (*vm_for_guard).is_in_preload = false;
+            (*vm_for_guard).entry_point_result.loading_preload = None;
+        }
     }
 
     // SAFETY: `vm.global` is set during `VirtualMachine::init` and outlives the VM.
@@ -771,8 +775,8 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         // resolves them internally. node:worker_threads is preloaded this way so
         // its node-style worker bootstrap (stdio rebinding) runs before user code;
         // this also means `bun --import node:*` works like Node's.
-        let module_name = if normalized.starts_with(b"node:") {
-            bun_core::String::from_bytes(normalized)
+        let module_path: &[u8] = if normalized.starts_with(b"node:") {
+            normalized
         } else {
             // ── resolve ─────────────────────────────────────────────────────
             // SAFETY: per fn contract; `top_level_dir` is the `'static` fs
@@ -820,13 +824,21 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 }
             };
 
-            // ── import ──────────────────────────────────────────────────────
-            let path_text = result
+            result
                 .path()
                 .expect("resolver Success result has a primary path")
-                .text;
-            bun_core::String::from_bytes(path_text)
+                .text
         };
+
+        // ── import ──────────────────────────────────────────────────────────
+        let module_name = bun_core::String::from_bytes(module_path);
+        // Until this import settles, a CommonJS evaluation of `module_path` is
+        // what `Bun__VM__noteCommonJSEvaluation` records (see `EntryPointResult`).
+        // SAFETY: per fn contract.
+        unsafe {
+            (*vm).entry_point_result.evaluated_as_cjs = false;
+            (*vm).entry_point_result.loading_preload = Some(module_path.into());
+        }
         // Note: use `import_ptr` (not `import`) so the `*mut` we store in
         // `pending_internal_promise` keeps the FFI's mutable provenance instead
         // of being laundered through `&JSInternalPromise -> *const -> *mut`
@@ -893,6 +905,10 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
         if unsafe { &*promise }.status() == PromiseStatus::Rejected {
             return Ok(promise);
         }
+        // Only a rejected preload is reported on; don't let this one's verdict
+        // leak into whatever loads next.
+        // SAFETY: per fn contract.
+        unsafe { (*vm).entry_point_result.evaluated_as_cjs = false };
         // A stop was requested (worker terminate()/exit) while it loaded: the
         // caller checks the same and shuts down; load nothing more.
         // SAFETY: per fn contract.

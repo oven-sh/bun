@@ -879,8 +879,8 @@ impl WebWorker {
                 }
                 entry_rejection_seen = true;
                 // Same rule as the main thread (run_command): a CJS worker
-                // entry's top-level throw is an uncaughtException; only an
-                // ESM entry rejection reports origin "unhandledRejection".
+                // entry's (or preload's) top-level throw is an uncaughtException;
+                // only an ESM rejection reports origin "unhandledRejection".
                 let is_rejection = !vm.as_mut().entry_point_result.evaluated_as_cjs;
                 let handled = vm.as_mut().uncaught_exception(
                     vm.global(),

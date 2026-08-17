@@ -4058,6 +4058,111 @@ it("http2 pushStream reports an unsendable array element through the callback", 
   expect(blocks).toEqual([]);
 });
 
+// Every kind of field name the native header-block materializer distinguishes, in one request and
+// one response: pseudo-headers, names WebCore knows (with the cookie and set-cookie special cases),
+// names it has never seen, and all-digit names. The second round trip on the same session is served
+// from the per-VM name cache the first one populated, so both must materialize identically.
+it("http2 materializes pseudo, known, unknown and all-digit header names the same way on every request", async () => {
+  const server = http2.createServer();
+  server.on("stream", (stream, headers, _flags, rawHeaders) => {
+    // Raw-array form so the wire order and the duplicate fields are exactly these; an explicit
+    // date keeps respond() from adding the current one.
+    stream.respond([
+      ...[":status", "201"],
+      ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+      ...["content-type", "text/plain"],
+      ...["set-cookie", "a=1", "set-cookie", "b=2"],
+      ...["x-unknown", "u1", "x-unknown", "u2"],
+      ...["123", "first", "123", "second"],
+    ]);
+    stream.end(JSON.stringify({ headers, rawHeaders, sensitive: headers[http2.sensitiveHeaders] }));
+  });
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  const authority = `127.0.0.1:${server.address().port}`;
+  const client = http2.connect(`http://${authority}`);
+  try {
+    const roundTrip = () =>
+      new Promise((resolve, reject) => {
+        // authorization is never-indexed automatically (nghttp2 behavior), so the receiver lists
+        // it under sensitiveHeaders without the request having to mark anything.
+        const req = client.request({
+          ":method": "POST",
+          ":path": "/materialize",
+          "content-type": "text/plain",
+          "authorization": "Bearer t",
+          "cookie": ["c=1", "d=2"],
+          "x-unknown": ["u1", "u2"],
+          "123": "digits",
+        });
+        req.on("error", reject);
+        let response;
+        req.on("response", (headers, _flags, rawHeaders) => {
+          response = {
+            headers: Object.fromEntries(Object.entries(headers)),
+            rawHeaders,
+            sensitive: headers[http2.sensitiveHeaders],
+          };
+        });
+        let body = "";
+        req.setEncoding("utf8");
+        req.on("data", chunk => (body += chunk));
+        req.on("end", () => resolve({ request: JSON.parse(body), response }));
+        req.end();
+      });
+
+    const first = await roundTrip();
+    const second = await roundTrip();
+    expect(second).toEqual(first);
+
+    expect(first.request).toEqual({
+      headers: {
+        ":method": "POST",
+        ":path": "/materialize",
+        ":authority": authority,
+        ":scheme": "http",
+        "123": "digits",
+        "content-type": "text/plain",
+        "authorization": "Bearer t",
+        "cookie": "c=1; d=2",
+        "x-unknown": "u1, u2",
+      },
+      // Wire order: the pseudo-headers, then the remaining fields in property enumeration order,
+      // which puts the all-digit name first.
+      rawHeaders: [
+        ...[":method", "POST", ":path", "/materialize", ":authority", authority, ":scheme", "http"],
+        ...["123", "digits"],
+        ...["content-type", "text/plain"],
+        ...["authorization", "Bearer t"],
+        ...["cookie", "c=1", "cookie", "d=2"],
+        ...["x-unknown", "u1", "x-unknown", "u2"],
+      ],
+      sensitive: ["authorization"],
+    });
+    expect(first.response).toEqual({
+      headers: {
+        ":status": 201,
+        "date": "Thu, 01 Jan 2026 00:00:00 GMT",
+        "content-type": "text/plain",
+        "set-cookie": ["a=1", "b=2"],
+        "x-unknown": "u1, u2",
+        "123": "first",
+      },
+      rawHeaders: [
+        ...[":status", "201"],
+        ...["date", "Thu, 01 Jan 2026 00:00:00 GMT"],
+        ...["content-type", "text/plain"],
+        ...["set-cookie", "a=1", "set-cookie", "b=2"],
+        ...["x-unknown", "u1", "x-unknown", "u2"],
+        ...["123", "first", "123", "second"],
+      ],
+      sensitive: [],
+    });
+  } finally {
+    client.close();
+    server.close();
+  }
+});
+
 it("http2 option range error messages use the options. prefix", () => {
   for (const opt of ["maxSessionInvalidFrames", "maxSessionRejectedStreams", "unknownProtocolTimeout"]) {
     let error;

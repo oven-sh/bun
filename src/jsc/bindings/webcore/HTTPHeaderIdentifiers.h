@@ -100,7 +100,27 @@ namespace WebCore {
     macro("x-sourcemap", XSourceMap)                                                       \
     macro("x-temp-tablet", XTempTablet)                                                    \
     macro("x-xss-protection", XXSSProtection)
+
+// HTTP/2 pseudo-header fields (RFC 9113 section 8.3). They are not header
+// fields, so HTTPHeaderNames.in does not list them, but every HTTP/2 request
+// block carries four of them and every response block carries :status.
+#define HTTP2_PSEUDO_HEADERS_EACH_NAME(macro) \
+    macro(":authority", Authority)            \
+    macro(":method", Method)                  \
+    macro(":path", Path)                      \
+    macro(":scheme", Scheme)                  \
+    macro(":status", Status)
 // clang-format on
+
+#define HTTP2_PSEUDO_HEADERS_ENUM_ENTRY(literal, name) name,
+
+enum class HTTP2PseudoHeaderName : uint8_t {
+    HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP2_PSEUDO_HEADERS_ENUM_ENTRY)
+};
+
+#undef HTTP2_PSEUDO_HEADERS_ENUM_ENTRY
+
+bool findHTTP2PseudoHeaderName(WTF::StringView, HTTP2PseudoHeaderName&);
 
 #define HTTP_HEADERS_ACCESSOR_DECLARATIONS(literal, name) \
     JSC::Identifier& name##Identifier(JSC::VM& vm);       \
@@ -110,19 +130,27 @@ namespace WebCore {
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString> m_##name##String; \
     JSC::Identifier m_##name##Identifier;
 
+// Per-VM cache of one atomized Identifier and one JSString per header name, so
+// materializing inbound headers (NodeHTTP.cpp, H2HeadersMaterializer.cpp)
+// allocates nothing for the names it recognizes.
 class HTTPHeaderIdentifiers {
 public:
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DECLARATIONS)
+    HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP_HEADERS_ACCESSOR_DECLARATIONS)
 
     HTTPHeaderIdentifiers();
 
+    JSC::Identifier& identifierFor(JSC::VM&, HTTPHeaderName);
     JSC::JSString* stringFor(JSC::JSGlobalObject*, HTTPHeaderName);
+    JSC::Identifier& identifierFor(JSC::VM&, HTTP2PseudoHeaderName);
+    JSC::JSString* stringFor(JSC::JSGlobalObject*, HTTP2PseudoHeaderName);
 
     template<typename Visitor>
     void visit(Visitor& visitor);
 
 private:
     HTTP_HEADERS_EACH_NAME(HTTP_HEADERS_PROPERTY_DECLARATIONS)
+    HTTP2_PSEUDO_HEADERS_EACH_NAME(HTTP_HEADERS_PROPERTY_DECLARATIONS)
 };
 
 } // namespace WebCore

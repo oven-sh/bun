@@ -2,11 +2,13 @@
 // native pass: the flat raw-headers array ([name1, value1, name2, value2, ...]),
 // the node-shaped headers object (toHeaderObject semantics from node:http2),
 // and the sensitive-names array. Replaces per-field JSArray::push round trips
-// from the Rust engine sink with one call per block, and reuses WebCore's
-// interned header-name strings so known header names allocate nothing.
+// from the Rust engine sink with one call per block, and takes header names
+// from the per-VM HTTPHeaderIdentifiers cache so pseudo-headers and the names
+// in HTTPHeaderNames.in allocate nothing.
 
 #include "root.h"
 #include "ZigGlobalObject.h"
+#include "BunClientData.h"
 #include "helpers.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/JSArray.h>
@@ -16,6 +18,7 @@
 #include <wtf/text/SymbolImpl.h>
 #include <wtf/text/MakeString.h>
 #include <wtf/text/StringView.h>
+#include "HTTPHeaderIdentifiers.h"
 #include "HTTPHeaderNames.h"
 #include "wtf/SIMDUTF.h"
 
@@ -80,6 +83,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
     JSC::JSObject* obj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
     RETURN_IF_EXCEPTION(scope, {});
     JSC::JSArray* sensitive = nullptr;
+    auto& identifiers = WebCore::clientData(vm)->httpHeaderIdentifiers();
 
     size_t offset = 0;
     unsigned rawIndex = 0;
@@ -97,13 +101,28 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
         // Wire names are validated lowercase ASCII before they reach this point.
         WTF::StringView nameView(std::span<const Latin1Character>(reinterpret_cast<const Latin1Character*>(nameBytes), nameLen));
 
+        // Recognized names share the VM's cached JSString and Identifier. Any
+        // other name is atomized straight from the wire bytes and its
+        // rawHeaders entry wraps that atom, so the name is copied at most once.
         JSString* nameStr;
+        Identifier ident;
+        bool isStatus = false;
+        bool isCookie = false;
+        bool isSetCookie = false;
+        WebCore::HTTP2PseudoHeaderName pseudoHeaderName;
         WebCore::HTTPHeaderName headerName;
-        if (WebCore::findHTTPHeaderName(nameView, headerName)) {
-            // Interned: no allocation, and the atom's hash is cached.
-            nameStr = jsString(vm, WTF::String(WTF::httpHeaderNameStringImpl(headerName)));
+        if (WebCore::findHTTP2PseudoHeaderName(nameView, pseudoHeaderName)) {
+            nameStr = identifiers.stringFor(globalObject, pseudoHeaderName);
+            ident = identifiers.identifierFor(vm, pseudoHeaderName);
+            isStatus = pseudoHeaderName == WebCore::HTTP2PseudoHeaderName::Status;
+        } else if (WebCore::findHTTPHeaderName(nameView, headerName)) {
+            nameStr = identifiers.stringFor(globalObject, headerName);
+            ident = identifiers.identifierFor(vm, headerName);
+            isCookie = headerName == WebCore::HTTPHeaderName::Cookie;
+            isSetCookie = headerName == WebCore::HTTPHeaderName::SetCookie;
         } else {
-            nameStr = jsString(vm, nameView.toString());
+            ident = Identifier::fromString(vm, nameView.span8());
+            nameStr = jsString(vm, ident.string());
         }
 
         JSString* valueStr = h2ValueToJS(vm, valueBytes, valueLen);
@@ -126,19 +145,14 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
             RETURN_IF_EXCEPTION(scope, {});
         }
 
-        const String nameString = nameStr->getString(globalObject);
-        RETURN_IF_EXCEPTION(scope, {});
-        const auto ident = Identifier::fromString(vm, nameString);
-
         JSValue fieldValue = valueStr;
-        if (nameView == ":status"_s) {
+        if (isStatus) {
             // toHeaderObject: `value |= 0` — exact ToInt32(ToNumber(string)).
             double num = valueStr->toNumber(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             fieldValue = jsNumber(JSC::toInt32(num));
         }
 
-        const bool isSetCookie = nameView == "set-cookie"_s;
         // All-digit header names ("123") are valid HTTP tokens. putDirect()
         // ASSERT(!parseIndex(propertyName)) trips in debug builds; route the
         // index-like case through *Index variants like NodeHTTP.cpp does.
@@ -176,7 +190,7 @@ extern "C" [[ZIG_EXPORT(zero_is_throw)]] JSC::EncodedJSValue Bun__h2__materializ
                 RETURN_IF_EXCEPTION(scope, {});
                 auto valueString = valueStr->getString(globalObject);
                 RETURN_IF_EXCEPTION(scope, {});
-                auto joined = nameView == "cookie"_s
+                auto joined = isCookie
                     ? WTF::makeString(existingString, "; "_s, valueString)
                     : WTF::makeString(existingString, ", "_s, valueString);
                 obj->putDirect(vm, ident, jsString(vm, WTF::move(joined)), 0);

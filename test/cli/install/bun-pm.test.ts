@@ -957,7 +957,9 @@ test.each([
 
   // trust needs a lockfile before it looks at the package names; a file: dependency produces one offline.
   await using install = Bun.spawn({ cmd: [bunExe(), "install"], cwd: dirStr, stdout: "pipe", stderr: "pipe", env });
-  expect(await install.exited).toBe(0);
+  const [installErr, installExit] = await Promise.all([install.stderr.text(), install.exited, install.stdout.text()]);
+  expect(installErr).not.toContain("error:");
+  expect(installExit).toBe(0);
 
   const spawnEnv = { ...env, ...extraEnv };
   {
@@ -968,7 +970,7 @@ test.each([
       stderr: "pipe",
       env: spawnEnv,
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
     expect(stderr).toContain("expected package names(s) or --all");
     expect(exitCode).toBe(1);
   }
@@ -980,7 +982,7 @@ test.each([
       stderr: "pipe",
       env: spawnEnv,
     });
-    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited, proc.stdout.text()]);
     // The "don't exist" listing names exactly the packages given on the command line.
     expect(stderr).toContain("- not-a-dependency");
     expect(stderr).not.toContain("- trust");

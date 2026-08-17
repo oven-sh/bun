@@ -15,6 +15,7 @@ use crate::lockfile::{Lockfile, PackageIndexEntry};
 use crate::npm::{MinimumReleaseAgeExcludes, PackageManifest};
 use crate::package_manager::Options::LogLevel;
 use crate::package_manager::ROOT_PACKAGE_JSON_PATH;
+use crate::package_manager_real::enqueue::keep_locked_if_ahead;
 use crate::package_manager_real::populate_manifest_cache::{self, Packages};
 use crate::package_manager_real::{PackageUpdateInfo, enqueue_dependency_with_main};
 use crate::update_scope::UpdateScope;
@@ -1374,9 +1375,9 @@ fn plan_edges(
     Ok(plan)
 }
 
-type DirectRows = Vec<(DependencyID, bool, KeepLocked, u32)>;
+type DirectRows = Vec<(DependencyID, bool, Option<Semver::Version>, u32)>;
 
-/// Live rows per planned instance: followers move only via the post-resolve redirect; direct rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, keep_locked_if_ahead model, slot it resolves to)` per `should_update`.
+/// Live rows per planned instance: followers move only via the post-resolve redirect; direct rows are the root/workspace rows the differ re-resolves, as `(dep_id, lands on the latest dist-tag, locked version for keep_locked_if_ahead, slot it resolves to)` per `should_update`.
 fn edges_on_instances(
     manager: &mut PackageManager,
     instances: &[Instance],
@@ -1548,31 +1549,26 @@ fn edges_on_instances(
             }
             continue;
         }
-        // Mirrors `latest_for_target` (catalog and overridden rows resolve by their range, never by `latest`); named rows reach plan_edges via the --latest-only path.
-        let overridden = overridden_row(&manager.lockfile, row.dep_id);
+        // Mirrors `latest_for_target` (catalog and overridden rows resolve by their range, never `latest`; `!version_was_replaced`); named rows reach plan_edges via the --latest-only path.
+        let lockfile: &Lockfile = &manager.lockfile;
+        let dep = &lockfile.buffers.dependencies[row.dep_id as usize];
+        let overridden = dedupe::applied_override(lockfile, row.dep_id, dep).is_some();
         let latest = to_latest && (!bare || in_targets) && !row.catalog && !overridden;
-        // `keep_locked_if_ahead` finds a locked version only where its path can: the range's loaded lockfile instance for -r/--filter npm rows, the invoking workspace's rewritten rows otherwise (rows that were dist-tag literals follow their tag).
+        // The locked version `keep_locked_if_ahead` gets: `locked_version_in_lockfile` for -r/--filter npm rows, `locked_version_of_invoking_workspace_row` otherwise (rows that were dist-tag literals follow their tag).
         let keep = if !to_latest || row.catalog || overridden {
-            KeepLocked::No
+            None
         } else if has_targets && in_targets && row.npm {
-            KeepLocked::Range
+            instance_version(lockfile, row.dep_id, |hash, range| {
+                lockfile.package_satisfying(hash, range, |id| id < lockfile.loaded_package_count)
+            })
         } else if !has_targets && !row.npm && !original_literal_is_dist_tag(manager, row.dep_id) {
-            row.locked.map_or(KeepLocked::No, KeepLocked::Version)
+            row.locked
         } else {
-            KeepLocked::No
+            None
         };
         direct[row.inst as usize].push((row.dep_id, latest, keep, row.res_slot));
     }
     (followers, direct)
-}
-
-#[derive(Clone, Copy)]
-enum KeepLocked {
-    No,
-    /// The highest loaded instance the row's range accepts keeps the row when it is ahead.
-    Range,
-    /// The row's own locked version keeps it when ahead of the lookup.
-    Version(Semver::Version),
 }
 
 /// Mirrors `locked_version_of_invoking_workspace_row`'s dist-tag-literal exclusion.
@@ -1644,24 +1640,13 @@ fn named_row_in_scope(manager: &PackageManager, dep_id: DependencyID) -> bool {
     named && UpdateScope::of(manager).contains_dependency(lockfile, dep_id)
 }
 
-/// Overridden rows resolve by the override range, never by `latest` (`!version_was_replaced` in `latest_for_target`).
-fn overridden_row(lockfile: &Lockfile, dep_id: DependencyID) -> bool {
-    let dep = &lockfile.buffers.dependencies[dep_id as usize];
-    !dep.behavior.is_workspace()
-        && !(dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
-        && lockfile
-            .overrides
-            .get(lockfile, dep_id, dep.name_hash)
-            .is_some()
-}
-
-/// The release the differ lands this row on (with whether it lives in the manifest buffer): the patched capture, the keep-locked version, or the lookup (`latest` dist-tag for `--latest` target rows, else the row's own range or tag).
+/// The release the differ lands this row on (with whether it lives in the manifest buffer): the patched capture, or the lookup (`latest` dist-tag for `--latest` target rows, else the row's own range or tag) through `keep_locked_if_ahead`.
 fn direct_row_landing(
     lockfile: &Lockfile,
     manifest: &PackageManifest,
     dep_id: DependencyID,
     latest: bool,
-    keep: KeepLocked,
+    keep: Option<Semver::Version>,
     min_age: Option<f64>,
     excludes: Option<&MinimumReleaseAgeExcludes>,
 ) -> Option<(Semver::Version, bool)> {
@@ -1693,23 +1678,7 @@ fn direct_row_landing(
             _ => return None,
         }
     };
-    let found = found?;
-    // `keep_locked_if_ahead`: a lookup below the row's locked version lands it back on that version, when the manifest still has it.
-    let locked = match keep {
-        KeepLocked::No => None,
-        KeepLocked::Version(locked) => Some(locked),
-        // As `locked_version_in_lockfile`: the highest loaded instance the range accepts.
-        KeepLocked::Range => instance_version(lockfile, dep_id, |hash, range| {
-            lockfile.package_satisfying(hash, range, |id| id < lockfile.loaded_package_count)
-        }),
-    };
-    if let Some(locked) = locked {
-        if found.version.order(locked, &manifest.string_buf, buf) == Ordering::Less
-            && manifest.find_by_version(locked).is_some()
-        {
-            return Some((locked, false));
-        }
-    }
+    let found = keep_locked_if_ahead(manifest, found?, &keep.map(|locked| (locked, buf)));
     Some((found.version, true))
 }
 

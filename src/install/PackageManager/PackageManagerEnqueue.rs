@@ -2950,7 +2950,7 @@ fn resolved_folder_package(
 }
 
 /// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
-fn keep_locked_if_ahead<'m>(
+pub(crate) fn keep_locked_if_ahead<'m>(
     manifest: &'m Npm::PackageManifest,
     found: Npm::FindResult<'m>,
     locked: &Option<(Semver::Version, &[u8])>,

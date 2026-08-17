@@ -133,25 +133,29 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
   const obj = { a: 1, b: [null, true], c: "hi" };
 
   test("object param is JSON for a jsonb column", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const [{ v }] = await db`SELECT ${obj}::jsonb AS v`;
     expect(v).toEqual(obj);
   });
 
   test("object param is JSON for a json column", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const [{ v }] = await db`SELECT ${obj}::json AS v`;
     expect(v).toEqual(obj);
   });
 
   test("object param is JSON text for a text column, not [object Object]", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const [{ v }] = await db`SELECT ${obj}::text AS v`;
     expect(v).toBe(JSON.stringify(obj));
   });
 
   test("array param is JSON for a jsonb column", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const arr = [1, "two", { three: 3 }];
     const [{ v }] = await db`SELECT ${arr}::jsonb AS v`;
     expect(v).toEqual(arr);
@@ -160,7 +164,8 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
   // The prepared path declares OID 25 (text) for a `::text` slot, which is not
   // a binary type, so an object there also used to become "[object Object]".
   test("object param is JSON text for a text column with prepare: true", async () => {
-    await using db = new SQL({ ...options, prepare: true });
+    await container.ready;
+    await using db = new SQL({ ...options(), prepare: true });
     const [{ v }] = await db`SELECT ${obj}::text AS v`;
     expect(v).toBe(JSON.stringify(obj));
   });
@@ -169,7 +174,8 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
   // pre-serialized string, not the SQLArrayParameter wrapper object, so the
   // JSON path above never applies to it.
   test("sql.array inside an UPDATE helper still binds as an array literal", async () => {
-    await using db = new SQL(options);
+    await container.ready;
+    await using db = new SQL(options());
     const t = "prepare_false_arr_" + Date.now();
     await db`CREATE TEMPORARY TABLE ${db(t)} (id SERIAL PRIMARY KEY, name VARCHAR NOT NULL, roles TEXT[])`;
     const [{ id }] =

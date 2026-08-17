@@ -1999,13 +1999,12 @@ mod _async_tasks {
             #[cfg(not(windows))]
             let normdest: &OSPathSliceZ = dest;
 
-            let mkdir_ = nodefs.mkdir_recursive_os_path(normdest, args::Mkdir::DEFAULT_MODE, false);
-            match mkdir_ {
+            match nodefs.cp_mkdir_dest(normdest, args.create_dest_parents) {
                 Err(err) => {
                     this_ref.finish_concurrently(Err(err));
                     return false;
                 }
-                Ok(_) => {
+                Ok(()) => {
                     this_ref.on_copy(src, normdest);
                 }
             }
@@ -4330,6 +4329,8 @@ pub mod args {
         pub(crate) recursive: bool,
         pub(crate) error_on_exist: bool,
         pub(crate) force: bool,
+        /// `fs.cp` creates the missing parents of `dest`; cp(1), and so the shell builtin, does not.
+        pub(crate) create_dest_parents: bool,
     }
 
     pub struct Cp {
@@ -4376,6 +4377,7 @@ pub mod args {
                     recursive,
                     error_on_exist,
                     force,
+                    create_dest_parents: true,
                 },
             })
         }
@@ -8365,10 +8367,7 @@ impl NodeFS {
         };
         let _close = scopeguard::guard(fd, |fd| fd.close());
 
-        match self.mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false) {
-            Err(err) => return Err(err),
-            Ok(_) => {}
-        }
+        self.cp_mkdir_dest(dest, cp_flags.create_dest_parents)?;
 
         // The OSPathBuffer copy below is generic over `OSPathChar`, so on Windows
         // this needs the wide (u16) iterator; the u8 path is correct for POSIX.
@@ -8544,8 +8543,6 @@ impl NodeFS {
         #[cfg(not(windows))] reuse_stat: Option<&sys::Stat>,
         args: &args::Cp,
     ) -> Maybe<ret::CopyFile> {
-        let _ = args; // only the Windows branch consults `args` (shouldIgnoreEbusy)
-
         // TODO: do we need to fchown?
         #[cfg(target_os = "macos")]
         {
@@ -8626,8 +8623,13 @@ impl NodeFS {
                     flags |= sys::O::EXCL;
                 }
 
-                let dest_fd =
-                    Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+                let dest_fd = Self::cp_open_dest(
+                    self,
+                    dest,
+                    flags,
+                    stat_.st_mode as Mode,
+                    args.flags.create_dest_parents,
+                )?;
                 let _close_dest =
                     scopeguard::guard((dest_fd, stat_.st_mode, &wrote), |(fd, m, wrote)| {
                         let _ = Syscall::ftruncate(fd, (wrote.get() & ((1u64 << 63) - 1)) as i64);
@@ -8666,6 +8668,14 @@ impl NodeFS {
             match first_try {
                 None => return Ok(()),
                 Some(err) if err.get_errno() == E::ENOENT => {
+                    if !args.flags.create_dest_parents {
+                        // `src` was stat'd above, so it is `dest`'s parent that is missing.
+                        return Maybe::<ret::CopyFile>::init_err_with_p(
+                            SystemErrno::ENOENT,
+                            sys::Tag::copyfile,
+                            dest.as_bytes(),
+                        );
+                    }
                     let _ = sys::Dir::cwd().make_path(paths::resolve_path::dirname::<
                         paths::platform::Auto,
                     >(dest.as_bytes()));
@@ -8720,7 +8730,13 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd = Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode)?;
+            let dest_fd = Self::cp_open_dest(
+                self,
+                dest,
+                flags,
+                stat_.st_mode as Mode,
+                args.flags.create_dest_parents,
+            )?;
 
             let mut size: usize = stat_.st_size.max(0) as usize;
 
@@ -8891,11 +8907,13 @@ impl NodeFS {
                 flags |= sys::O::EXCL;
             }
 
-            let dest_fd =
-                match Self::cp_open_dest_with_mkdir(self, dest, flags, stat_.st_mode as Mode) {
-                    Ok(fd) => fd,
-                    Err(e) => return Err(e),
-                };
+            let dest_fd = Self::cp_open_dest(
+                self,
+                dest,
+                flags,
+                stat_.st_mode as Mode,
+                args.flags.create_dest_parents,
+            )?;
 
             // No O_TRUNC at open: if src and dest resolve to the same inode,
             // that would zero the file before the first read.
@@ -9034,7 +9052,7 @@ impl NodeFS {
                     let mut err = windows::Win32Error::get();
                     match err {
                         windows::Win32Error::FILE_EXISTS | windows::Win32Error::ALREADY_EXISTS => {}
-                        windows::Win32Error::PATH_NOT_FOUND => {
+                        windows::Win32Error::PATH_NOT_FOUND if args.flags.create_dest_parents => {
                             let _ = sys::make_path::make_path_u16(
                                 &sys::Dir::cwd(),
                                 paths::dirname_w(dest.as_slice()),
@@ -9127,25 +9145,64 @@ impl NodeFS {
             windows
         )))]
         {
-            let _ = (src, dest, mode, reuse_stat);
+            let _ = (src, dest, mode, reuse_stat, args);
             Maybe::<ret::CopyFile>::todo()
         }
     }
 
+    /// Creates the destination of a copied directory; an existing directory there is merged into.
+    fn cp_mkdir_dest(&mut self, dest: &OSPathSliceZ, create_parents: bool) -> Maybe<()> {
+        if create_parents {
+            return self
+                .mkdir_recursive_os_path(dest, args::Mkdir::DEFAULT_MODE, false)
+                .map(|_| ());
+        }
+        let err = match mkdir_os_path(dest, args::Mkdir::DEFAULT_MODE) {
+            Ok(()) => return Ok(()),
+            Err(err) => err,
+        };
+        if matches!(err.get_errno(), E::EEXIST | E::EISDIR)
+            && directory_exists_at_os_path(FD::INVALID, dest).unwrap_or(false)
+        {
+            return Ok(());
+        }
+        #[cfg(windows)]
+        let err = if err.get_errno() == E::ENOENT && Self::cp_dest_parent_is_not_a_directory(dest) {
+            sys::Error::from_code(E::ENOTDIR, sys::Tag::mkdir)
+        } else {
+            err
+        };
+        Err(err.with_path(self.os_path_into_sync_error_buf(dest)))
+    }
+
+    /// `CreateDirectoryW` fails with `PATH_NOT_FOUND` (ENOENT) where POSIX `mkdir` would say ENOTDIR.
+    #[cfg(windows)]
+    fn cp_dest_parent_is_not_a_directory(dest: &OSPathSliceZ) -> bool {
+        let parent = paths::dirname_w(dest.as_slice());
+        let mut buf = paths::os_path_buffer_pool::get();
+        buf[..parent.len()].copy_from_slice(parent);
+        buf[parent.len()] = 0;
+        sys::exists_os_path(OSPathSliceZ::from_buf(&buf[..], parent.len()), true)
+    }
+
     /// Shared `dest_fd:` block from the mac/linux/freebsd branches of
     /// `copy_single_file_sync`.
-    /// Tries `open(dest, flags, mode)`; on ENOENT creates the
-    /// parent directory and retries once. Any other error is annotated with
-    /// `dest` copied into `sync_error_buf`.
+    /// Opens `dest`; with `create_parents`, an ENOENT is retried once after creating its parent.
     #[cfg_attr(windows, allow(dead_code))]
-    fn cp_open_dest_with_mkdir(&mut self, dest: &ZStr, flags: i32, mode: Mode) -> Maybe<FD> {
+    fn cp_open_dest(
+        &mut self,
+        dest: &ZStr,
+        flags: i32,
+        mode: Mode,
+        create_parents: bool,
+    ) -> Maybe<FD> {
         // PORT: extracted from the mac/linux/freebsd arms of `copy_single_file_sync`
         // only — there `OSPathSliceZ == ZStr`. Taking `&ZStr` keeps the body
         // monomorphic (and lets it type-check on Windows where it's dead code).
         match Syscall::open(dest, flags, mode) {
             Ok(result) => Ok(result),
             Err(err) => {
-                if err.get_errno() == E::ENOENT {
+                if create_parents && err.get_errno() == E::ENOENT {
                     // Create the parent directory if it doesn't exist
                     let bytes = dest.as_bytes();
                     let mut len = bytes.len();

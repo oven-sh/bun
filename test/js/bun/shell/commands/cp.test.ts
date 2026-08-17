@@ -1,7 +1,9 @@
 import { $ } from "bun";
 import { shellInternals } from "bun:internal-for-testing";
-import { describe, expect } from "bun:test";
-import { tempDirWithFiles } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, tempDir, tempDirWithFiles } from "harness";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import { bunExe, createTestBuilder } from "../test_builder";
 import { sortedShellOutput } from "../util";
 const { builtinDisabled } = shellInternals;
@@ -170,6 +172,103 @@ describe.if(!builtinDisabled("cp"))("bunshell cp", async () => {
       .fileEquals(TEST_COPY_TO_FOLDER_NEW_FILE, "Hello, World!")
       .testMini({ cwd: mini_tmpdir })
       .runAsTest("cp_recurse");
+  });
+});
+
+// The builtin used to hand the copy to the node:fs cp engine as-is, and fs.cp
+// creates the missing parent directories of its destination. cp(1) does not:
+// it fails with ENOENT (only `cp -R dir new_dir` creates the one directory it
+// was asked for). The builtin is the default only on Windows; on POSIX it is
+// enabled by an env var read once per process, so each cp runs in a child bun
+// whose cwd is the directory holding the operands.
+describe.concurrent("bunshell cp and the destination's directory", () => {
+  const builtinEnv = { ...bunEnv, BUN_ENABLE_EXPERIMENTAL_SHELL_BUILTINS: "1" };
+
+  // Runs the last argv entry as a shell command and prints cp's exit code
+  // followed by whatever it wrote to stderr.
+  const runCp = [
+    `const result = await Bun.$\`\${{ raw: process.argv.at(-1) }}\`.nothrow().quiet();`,
+    `process.stdout.write(result.exitCode + "\\n" + result.stderr.toString());`,
+  ].join("\n");
+
+  async function cp(cwd: string, command: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", runCp, command],
+      cwd,
+      env: builtinEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  function failedWith(message: string, path: string) {
+    return { stdout: `1\ncp: ${message}: ${path}\n`, stderr: "", exitCode: 0 };
+  }
+  const succeeded = { stdout: "0\n", stderr: "", exitCode: 0 };
+
+  test("file -> file in a missing directory fails", async () => {
+    using dir = tempDir("shell-cp-missing-dir", { "a.txt": "A\n" });
+    expect(await cp(String(dir), "cp a.txt missing/out.txt")).toEqual(
+      failedWith("No such file or directory", join(String(dir), "missing", "out.txt")),
+    );
+    expect(existsSync(join(String(dir), "missing"))).toBe(false);
+  });
+
+  // On macOS a file over 128 KB is copied with copyfile() instead of being
+  // opened and written, which is a separate place the directory used to be
+  // created from.
+  test("large file -> file in a missing directory fails", async () => {
+    using dir = tempDir("shell-cp-missing-dir-large", { "big.bin": Buffer.alloc(256 * 1024, "x") });
+    expect(await cp(String(dir), "cp big.bin missing/out.bin")).toEqual(
+      failedWith("No such file or directory", join(String(dir), "missing", "out.bin")),
+    );
+    expect(existsSync(join(String(dir), "missing"))).toBe(false);
+  });
+
+  test("-R dir -> dir in a missing directory fails", async () => {
+    using dir = tempDir("shell-cp-missing-dir-recursive", { "d": { "b.txt": "B\n" } });
+    expect(await cp(String(dir), "cp -R d missing/copy")).toEqual(
+      failedWith("No such file or directory", join(String(dir), "missing", "copy")),
+    );
+    expect(existsSync(join(String(dir), "missing"))).toBe(false);
+  });
+
+  // Windows reports a file in the parent's position the same way as a missing
+  // parent, so this message comes from the builtin telling the two apart.
+  test("-R dir -> file fails as not a directory", async () => {
+    using dir = tempDir("shell-cp-dir-onto-file", { "d": { "b.txt": "B\n" }, "plain.txt": "P\n" });
+    expect(await cp(String(dir), "cp -R d plain.txt")).toEqual(
+      failedWith("Not a directory", join(String(dir), "plain.txt", "d")),
+    );
+    expect(readFileSync(join(String(dir), "plain.txt"), "utf8")).toBe("P\n");
+  });
+
+  test("-R dir -> existing dir holding a file of the same name fails", async () => {
+    using dir = tempDir("shell-cp-dir-onto-file-in-dir", {
+      "d": { "b.txt": "B\n" },
+      "existing": { "d": "not a dir\n" },
+    });
+    expect(await cp(String(dir), "cp -R d existing")).toEqual(
+      failedWith("File exists", join(String(dir), "existing", "d")),
+    );
+    expect(readFileSync(join(String(dir), "existing", "d"), "utf8")).toBe("not a dir\n");
+  });
+
+  test("-R dir -> new dir inside an existing directory still creates it", async () => {
+    using dir = tempDir("shell-cp-new-dir", { "d": { "b.txt": "B\n" }, "existing": {} });
+    expect(await cp(String(dir), "cp -R d existing/copy")).toEqual(succeeded);
+    expect(readFileSync(join(String(dir), "existing", "copy", "b.txt"), "utf8")).toBe("B\n");
+  });
+
+  test("-R dir -> existing dir still copies into it", async () => {
+    using dir = tempDir("shell-cp-into-existing-dir", {
+      "d": { "b.txt": "B\n" },
+      "existing": { "d": { "keep.txt": "K\n" } },
+    });
+    expect(await cp(String(dir), "cp -R d existing")).toEqual(succeeded);
+    expect(readFileSync(join(String(dir), "existing", "d", "b.txt"), "utf8")).toBe("B\n");
+    expect(readFileSync(join(String(dir), "existing", "d", "keep.txt"), "utf8")).toBe("K\n");
   });
 });
 

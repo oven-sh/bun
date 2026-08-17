@@ -84,8 +84,6 @@ export interface Config {
   freebsd: boolean;
   /** linux || darwin || freebsd */
   unix: boolean;
-  /** darwin || freebsd — kqueue-based event loop */
-  kqueue: boolean;
   x64: boolean;
   arm64: boolean;
 
@@ -740,7 +738,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
   const windows = os === "windows";
   const freebsd = os === "freebsd";
   const unix = linux || darwin || freebsd;
-  const kqueue = darwin || freebsd;
   const x64 = arch === "x64";
   const arm64 = arch === "aarch64";
   // Darwin target on a non-darwin host (Linux CI box building macOS
@@ -1183,7 +1180,6 @@ export function resolveConfig(partial: PartialConfig, toolchain: Toolchain): Con
     windows,
     freebsd,
     unix,
-    kqueue,
     x64,
     arm64,
     host,

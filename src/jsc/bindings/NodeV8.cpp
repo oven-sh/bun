@@ -13,6 +13,8 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <wtf/StdLibExtras.h>
 
+extern "C" size_t Bun__Node__MaxOldSpaceSizeBytes;
+
 namespace Bun {
 
 using namespace JSC;
@@ -102,6 +104,9 @@ JSC::JSObject* createNodeV8Binding(JSC::JSGlobalObject* globalObject)
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "startGCProfiler"_s), 0, functionStartGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "stopGCProfiler"_s), 1, functionStopGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
     object->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "discardGCProfiler"_s), 1, functionDiscardGCProfiler, ImplementationVisibility::Public, JSC::NoIntrinsic, 0);
+    // The enforced --max-old-space-size limit in bytes (0 = no limit), read
+    // from the parsed CLI value rather than the mutable process.execArgv.
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "maxOldSpaceSizeBytes"_s), JSC::jsNumber(static_cast<double>(Bun__Node__MaxOldSpaceSizeBytes)), 0);
     return object;
 }
 

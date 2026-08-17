@@ -24,6 +24,19 @@ test.concurrent.each(["--max-old-space-size", "--max_old_space_size"])(
   },
 );
 
+test.concurrent("--max-old-space-size=0 disables the limit", async () => {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "--max-old-space-size=0", "-e", allocateScript(96)],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).not.toContain("JavaScript heap out of memory");
+  expect(stdout).toContain("reached 96MB");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("--max-old-space-size does not abort workloads that fit under the limit", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), "--max-old-space-size=512", "-e", allocateScript(16)],
@@ -92,8 +105,15 @@ test.concurrent("space-separated value of the underscore alias stays in process.
 
 test.concurrent("v8.getHeapStatistics().heap_size_limit reports the configured limit", async () => {
   // npm and friends read heap_size_limit to back off before hitting the cap.
+  // Mutating execArgv first must not change the answer: the limit comes from
+  // the native parsed value, not from re-parsing process.execArgv.
   await using proc = Bun.spawn({
-    cmd: [bunExe(), "--max-old-space-size=256", "-e", "console.log(require('v8').getHeapStatistics().heap_size_limit)"],
+    cmd: [
+      bunExe(),
+      "--max-old-space-size=256",
+      "-e",
+      "process.execArgv = []; console.log(require('v8').getHeapStatistics().heap_size_limit)",
+    ],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

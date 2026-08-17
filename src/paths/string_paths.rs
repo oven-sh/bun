@@ -484,7 +484,7 @@ pub use bun_core::strings::remove_leading_dot_slash;
 
 // Run with `cargo test -p bun_paths` (also the Miri lane,
 // `bun run rust:miri -p bun_paths`). simdutf's C++ implementation is only
-// linked into the full binary, so the two externs the conversion path uses
+// linked into the full binary, so the externs the two conversion paths use
 // are satisfied below with faithful pure-Rust scalar stubs — which is also
 // what keeps these tests runnable under Miri (no foreign code).
 #[cfg(test)]
@@ -589,6 +589,55 @@ mod tests {
                 }
             })
             .sum()
+    }
+
+    /// Scalar `length::utf8::from::utf16::le_with_replacement`: 3 bytes per unpaired surrogate.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__utf8_length_from_utf16le_with_replacement(
+        input: *const u16,
+        length: usize,
+    ) -> usize {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(input, length) };
+        char::decode_utf16(input.iter().copied())
+            .map(|unit| unit.map_or(3, char::len_utf8))
+            .sum()
+    }
+
+    /// Scalar `convert::utf16::to::utf8::with_errors::le`; Miri bounds-checks its writes.
+    #[unsafe(no_mangle)]
+    unsafe extern "C" fn simdutf__convert_utf16le_to_utf8_with_errors(
+        buf: *const u16,
+        len: usize,
+        utf8_output: *mut u8,
+    ) -> SIMDUTFResult {
+        // SAFETY: test stub; callers pass a valid (ptr, len) input pair.
+        let input = unsafe { core::slice::from_raw_parts(buf, len) };
+        let mut read = 0usize;
+        let mut written = 0usize;
+        for unit in char::decode_utf16(input.iter().copied()) {
+            let Ok(c) = unit else {
+                return SIMDUTFResult {
+                    status: Status::SURROGATE,
+                    count: read,
+                };
+            };
+            let mut encoded = [0u8; 4];
+            let encoded = c.encode_utf8(&mut encoded).as_bytes();
+            // SAFETY: test stub mirroring simdutf; sizing the output for the whole
+            // conversion is the caller's job and the property under test.
+            unsafe {
+                utf8_output
+                    .add(written)
+                    .copy_from_nonoverlapping(encoded.as_ptr(), encoded.len());
+            }
+            written += encoded.len();
+            read += c.len_utf16();
+        }
+        SIMDUTFResult {
+            status: Status::SUCCESS,
+            count: written,
+        }
     }
 
     /// The u16 length of the buffer `PathLike::os_path_kernel32` uses on
@@ -720,5 +769,49 @@ mod tests {
         assert!(!fits_in_wide_path_buffer(&vec![0x80u8; 98300]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32758]));
         assert!(fits_in_wide_path_buffer(&vec![0x80u8; 32757]));
+    }
+
+    #[test]
+    fn convert_utf16_to_utf8_in_buffer_exact_fit() {
+        // 1 + 2 + 3 + 4 bytes, under 3 per unit: checked against the exact length.
+        let text = "a\u{E9}\u{4E16}\u{1F600}";
+        let input: Vec<u16> = text.encode_utf16().collect();
+        let mut out = [0u8; 10];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &input),
+            text.as_bytes()
+        );
+    }
+
+    #[test]
+    fn convert_utf16_to_utf8_in_buffer_replaces_unpaired_surrogates() {
+        // The unit after a lone lead survives; the valid-only converter merged the two.
+        let mut out = [0u8; 4];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xD800, 0x61]),
+            b"\xEF\xBF\xBDa"
+        );
+
+        // Lone trail, and a lead as the final unit (used to yield "").
+        let mut out = [0u8; 7];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xDC00, 0x61, 0xD800]),
+            b"\xEF\xBF\xBDa\xEF\xBF\xBD"
+        );
+
+        // The callers' shape: 3 bytes per unit to spare, so no length scan.
+        let mut out = [0u8; 16];
+        assert_eq!(
+            &*bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0x61, 0xD800, 0x62]),
+            b"a\xEF\xBF\xBDb"
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "out too small (3 bytes for 2 code units)")]
+    fn convert_utf16_to_utf8_in_buffer_charges_the_replacement_for_a_lone_surrogate() {
+        // The non-replacing scan (2 + 1) accepted this buffer for a 4-byte conversion.
+        let mut out = [0u8; 3];
+        let _ = bun_core::strings::convert_utf16_to_utf8_in_buffer(&mut out, &[0xD800, 0x61]);
     }
 }

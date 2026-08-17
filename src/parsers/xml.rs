@@ -1267,7 +1267,11 @@ impl<'a, 'log, U: Unit> Scanner<'a, 'log, U> {
             })
             .collect();
         let mut utf8 = vec![0u8; simdutf::length::utf8::from::utf16::le(&units)];
-        let result = simdutf::convert::utf16::to::utf8::with_errors::le(&units, &mut utf8);
+        // SAFETY: `utf8` was sized by simdutf's length scan of `units`, the
+        // bound the wrapper requires (it also covers the prefix written when
+        // the input turns out to be invalid).
+        let result =
+            unsafe { simdutf::convert::utf16::to::utf8::with_errors::le(&units, &mut utf8) };
         if !result.is_successful() {
             return Err(self.err(result.count * 2, "Invalid UTF-16"));
         }

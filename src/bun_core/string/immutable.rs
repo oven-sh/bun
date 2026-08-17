@@ -2457,7 +2457,10 @@ pub fn try_convert_utf8_to_utf16_in_buffer<'a>(
     if input.len() > buf.len() && element_length_utf8_into_utf16(input) > buf.len() {
         return None;
     }
-    let r = simdutf::convert::utf8::to::utf16::with_errors::le(input, buf);
+    // SAFETY: the check above established one of the two bounds the wrapper
+    // requires: `buf` holds `input.len()` code units, or the exact simdutf
+    // length of `input`.
+    let r = unsafe { simdutf::convert::utf8::to::utf16::with_errors::le(input, buf) };
     if r.is_successful() {
         debug_assert!(r.count <= buf.len());
         return Some(&mut buf[..r.count]);

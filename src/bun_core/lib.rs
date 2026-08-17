@@ -2190,27 +2190,16 @@ pub(crate) mod strings_impl {
     }
 
     /// `strings.convertUTF16ToUTF8InBuffer` — write UTF-8 into `out`, return
-    /// the written sub-slice. Infallible. The
-    /// caller is responsible for sizing `out` for the worst case (≤ 3× input
-    /// code units).
-    ///
-    /// We assert the sizing in release too — one extra SIMD length
-    /// scan is cheap, and a panic beats heap corruption if a future caller
-    /// gets the sizing wrong. All current callers (~10, Windows wide-path
-    /// code) size `out` at `3 * utf16.len()` or `MAX_PATH * 3`, so this never
-    /// fires in practice.
+    /// the written sub-slice. Unpaired surrogates become U+FFFD; a too-small `out` panics.
     pub fn convert_utf16_to_utf8_in_buffer<'a>(out: &'a mut [u8], utf16: &[u16]) -> &'a mut [u8] {
-        if utf16.is_empty() {
-            return &mut out[..0];
-        }
-        let need = simdutf::length::utf8::from::utf16::le(utf16);
+        let result = copy_utf16_into_utf8(out, utf16);
         assert!(
-            need <= out.len(),
-            "convert_utf16_to_utf8_in_buffer: out too small (need {need}, have {})",
+            result.read as usize == utf16.len(),
+            "convert_utf16_to_utf8_in_buffer: out too small ({} bytes for {} code units)",
             out.len(),
+            utf16.len(),
         );
-        let result = simdutf::convert::utf16::to::utf8::le(utf16, out);
-        &mut out[..result]
+        &mut out[..result.written as usize]
     }
     // ─── path basename ─────────────────────────────────────────────────────
     // Minimal code-unit trait so the generic basename impls can live at T0

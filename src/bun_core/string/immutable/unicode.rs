@@ -1027,7 +1027,11 @@ fn copy_utf16_into_utf8_with_buffer_impl<const ALLOW_TRUNCATED_UTF8_SEQUENCE: bo
         if crate::FeatureFlags::USE_SIMDUTF {
             crate::scoped_log!(strings, "UTF16 {} -> UTF8 {}", utf16.len(), out_len);
             if remaining.len() >= out_len {
-                let result = simdutf::convert::utf16::to::utf8::with_errors::le(utf16, remaining);
+                // SAFETY: `remaining` is all of `buf`, and `out_len` is either simdutf's
+                // length scan of `utf16` or, when `buf` has 3 bytes per code unit to
+                // spare, `buf.len()` itself (see `copy_utf16_into_utf8_impl`).
+                let result =
+                    unsafe { simdutf::convert::utf16::to::utf8::with_errors::le(utf16, remaining) };
                 if result.status == simdutf::Status::SURROGATE {
                     break 'brk;
                 }

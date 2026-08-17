@@ -23,7 +23,7 @@ import http, {
   validateHeaderValue,
 } from "node:http";
 import https, { createServer as createHttpsServer } from "node:https";
-import type { AddressInfo } from "node:net";
+import type { AddressInfo, Socket } from "node:net";
 import { connect, createServer as createNetServer } from "node:net";
 import { tmpdir } from "node:os";
 import * as path from "node:path";
@@ -4137,5 +4137,280 @@ it("connectionListener hands off Upgrade and CONNECT like Node", async () => {
     await closed;
     expect(requestHandlerRan).toBe(false);
     expect(serverSide.destroyed).toBe(true);
+  }
+});
+
+// Helpers for the closeIdleConnections() tests below: raw TCP connections, one per connection
+// state, with Content-Length framed responses read off them one at a time.
+interface RawConnection {
+  socket: Socket;
+  received: string;
+  consumed: number;
+  /** Settles once the server has closed the connection (FIN or reset). */
+  gone: Promise<"destroyed">;
+}
+
+function dialRaw(port: number): Promise<RawConnection> {
+  const socket = connect({ port, host: "127.0.0.1" });
+  socket.setNoDelay(true);
+  const conn: RawConnection = {
+    socket,
+    received: "",
+    consumed: 0,
+    gone: new Promise(resolve => {
+      socket.on("error", () => resolve("destroyed"));
+      socket.on("close", () => resolve("destroyed"));
+    }),
+  };
+  // Registered before any reader's 'data' listener, so readers see the appended bytes.
+  socket.on("data", chunk => (conn.received += chunk.toString("latin1")));
+  return new Promise((resolve, reject) => {
+    socket.once("connect", () => resolve(conn));
+    socket.once("error", reject);
+  });
+}
+
+// Resolves once `marker` has been received past everything read so far, or rejects if the server
+// closes the connection first.
+function readUntil(conn: RawConnection, marker: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const index = conn.received.indexOf(marker, conn.consumed);
+      if (index === -1) return;
+      conn.consumed = index + marker.length;
+      conn.socket.off("data", check);
+      resolve();
+    };
+    conn.socket.on("data", check);
+    conn.gone.then(() =>
+      reject(
+        new Error(
+          `connection closed while waiting for ${JSON.stringify(marker)}; unread: ${JSON.stringify(conn.received.slice(conn.consumed))}`,
+        ),
+      ),
+    );
+    check();
+  });
+}
+
+// Resolves with the body of the next response on the connection, or rejects if the server closes
+// the connection before one has arrived.
+function readResponse(conn: RawConnection): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const check = () => {
+      const raw = conn.received.slice(conn.consumed);
+      const headersEnd = raw.indexOf("\r\n\r\n");
+      if (headersEnd === -1) return;
+      const contentLength = /\r\ncontent-length: (\d+)/i.exec(raw.slice(0, headersEnd));
+      if (!contentLength) {
+        conn.socket.off("data", check);
+        reject(new Error(`expected a Content-Length framed response, got: ${JSON.stringify(raw)}`));
+        return;
+      }
+      const bodyStart = headersEnd + 4;
+      const bodyEnd = bodyStart + Number(contentLength[1]);
+      if (raw.length < bodyEnd) return;
+      conn.consumed += bodyEnd;
+      conn.socket.off("data", check);
+      resolve(raw.slice(bodyStart, bodyEnd));
+    };
+    conn.socket.on("data", check);
+    conn.gone.then(() =>
+      reject(
+        new Error(
+          `connection closed before a response arrived; unread: ${JSON.stringify(conn.received.slice(conn.consumed))}`,
+        ),
+      ),
+    );
+    check();
+  });
+}
+
+// Takes the connection's next step and reports whether the server still serves it ("served <body>")
+// or has closed it ("destroyed"). Either way the answer is a positive signal, so no timers.
+function outcome(conn: RawConnection, step: () => void): Promise<string> {
+  const served = readResponse(conn).then(
+    body => `served ${body}`,
+    () => conn.gone,
+  );
+  step();
+  return Promise.race([served, conn.gone]);
+}
+
+// Node only considers a connection idle between requests: from accept until its first request has
+// been fully received, and again from the first byte of every later request, it is busy (left to
+// headersTimeout/requestTimeout instead), whether or not its response has already been sent; a
+// received request whose response has not finished keeps it busy as well. For connections accepted
+// by listen(), Bun used to go by "a response has finished and no bytes have arrived since", which
+// destroyed connections still receiving a request body or the head of their next request, and never
+// reclaimed a connection whose body finished arriving after the response.
+it("closeIdleConnections() only destroys accepted connections that are between requests", async () => {
+  const heldResponse = Promise.withResolvers<ServerResponse>();
+  const lateBodyReceived = Promise.withResolvers<void>();
+  const server = createServer({ keepAliveTimeout: 0 }, (req, res) => {
+    switch (req.url) {
+      case "/hold":
+        heldResponse.resolve(res);
+        break;
+      case "/body":
+        // Respond while the request body is still arriving; the rest of it is sent after the sweep.
+        res.end("early");
+        break;
+      case "/bodydone":
+        // Respond while the request body is still arriving; the rest of it arrives before the sweep.
+        res.end("early");
+        req.on("end", () => lateBodyReceived.resolve());
+        req.resume();
+        break;
+      default:
+        res.end(`served ${req.url}`);
+    }
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const names = ["fresh", "partial", "body", "hold", "reused", "idle", "bodydone", "emptyBodySplitHead"] as const;
+  const conns = {} as Record<(typeof names)[number], RawConnection>;
+  try {
+    for (const name of names) conns[name] = await dialRaw(port);
+
+    // Each state is confirmed through something the server does after reaching it (a response, the
+    // held handler, the body's 'end'). A partially sent head that has to be known to have reached the
+    // server is written together with a complete request in front of it, whose response proves it.
+    conns.partial.socket.write("GET /partial HTTP/1.1\r\nHost: x\r\n");
+    conns.body.socket.write("POST /body HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    expect(await readResponse(conns.body)).toBe("early");
+    conns.hold.socket.write("GET /hold HTTP/1.1\r\nHost: x\r\n\r\n");
+    const held = await heldResponse.promise;
+    conns.reused.socket.write("GET /reused-1 HTTP/1.1\r\nHost: x\r\n\r\nGET /reused-2 HTTP/1.1\r\n");
+    expect(await readResponse(conns.reused)).toBe("served /reused-1");
+    conns.idle.socket.write("GET /idle HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await readResponse(conns.idle)).toBe("served /idle");
+    conns.bodydone.socket.write("POST /bodydone HTTP/1.1\r\nHost: x\r\nContent-Length: 10\r\n\r\nabc");
+    expect(await readResponse(conns.bodydone)).toBe("early");
+    conns.bodydone.socket.write("defghij");
+    await lateBodyReceived.promise;
+    // A Content-Length: 0 request whose head is completed out of the bytes buffered from an earlier
+    // read completes its (empty) message on a different parser path than one received in a single
+    // read; it has to end up between requests all the same.
+    conns.emptyBodySplitHead.socket.write(
+      "GET /split-1 HTTP/1.1\r\nHost: x\r\n\r\nPOST /split-2 HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\n",
+    );
+    expect(await readResponse(conns.emptyBodySplitHead)).toBe("served /split-1");
+    conns.emptyBodySplitHead.socket.write("\r\n");
+    expect(await readResponse(conns.emptyBodySplitHead)).toBe("served /split-2");
+
+    server.closeIdleConnections();
+
+    const request = (url: string) => `GET ${url} HTTP/1.1\r\nHost: x\r\n\r\n`;
+    expect({
+      fresh: await outcome(conns.fresh, () => conns.fresh.socket.write(request("/fresh"))),
+      partial: await outcome(conns.partial, () => conns.partial.socket.write("\r\n")),
+      body: await outcome(conns.body, () => conns.body.socket.write("defghij" + request("/body-next"))),
+      hold: await outcome(conns.hold, () => held.end("held")),
+      reused: await outcome(conns.reused, () => conns.reused.socket.write("Host: x\r\n\r\n")),
+      idle: await outcome(conns.idle, () => conns.idle.socket.write(request("/idle-2"))),
+      bodydone: await outcome(conns.bodydone, () => conns.bodydone.socket.write(request("/bodydone-2"))),
+      emptyBodySplitHead: await outcome(conns.emptyBodySplitHead, () =>
+        conns.emptyBodySplitHead.socket.write(request("/split-3")),
+      ),
+    }).toEqual({
+      fresh: "served served /fresh",
+      partial: "served served /partial",
+      body: "served served /body-next",
+      hold: "served held",
+      reused: "served served /reused-2",
+      idle: "destroyed",
+      bodydone: "destroyed",
+      emptyBodySplitHead: "destroyed",
+    });
+
+    // The connections that were kept are between requests now, and close() runs the same sweep.
+    server.close();
+    const kept = ["fresh", "partial", "body", "hold", "reused"] as const;
+    const afterClose: Record<string, string> = {};
+    for (const name of kept) {
+      afterClose[name] = await outcome(conns[name], () => conns[name].socket.write(request("/after-close")));
+    }
+    expect(afterClose).toEqual({
+      fresh: "destroyed",
+      partial: "destroyed",
+      body: "destroyed",
+      hold: "destroyed",
+      reused: "destroyed",
+    });
+  } finally {
+    for (const name of names) conns[name]?.socket.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+// The request handler runs from the parser's headers-complete callback, i.e. while the request is
+// still being received, so "respond, then close the server" inside a handler does not destroy the
+// connection being responded on. As in Node, that connection is left to the keep-alive timeout, or
+// to a later sweep once the request has been fully received.
+it("closeIdleConnections() run from a request handler spares the handler's own connection", async () => {
+  const server = createServer({ keepAliveTimeout: 0 }, (req, res) => {
+    res.end(`served ${req.url}`);
+    if (req.url === "/sweep") server.closeIdleConnections();
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const conn = await dialRaw(port);
+  const request = (url: string) => `GET ${url} HTTP/1.1\r\nHost: x\r\n\r\n`;
+  try {
+    expect(await outcome(conn, () => conn.socket.write(request("/sweep")))).toBe("served served /sweep");
+    expect(await outcome(conn, () => conn.socket.write(request("/next")))).toBe("served served /next");
+    server.closeIdleConnections();
+    expect(await outcome(conn, () => conn.socket.write(request("/late")))).toBe("destroyed");
+  } finally {
+    conn.socket.destroy();
+    server.closeAllConnections();
+    server.close();
+  }
+});
+
+// Connections handed to 'upgrade' or 'connect' have left HTTP (Node frees their parser): the sweep
+// must leave them alone no matter how long they go without traffic.
+it("closeIdleConnections() leaves 'upgrade' and 'connect' tunnels alone", async () => {
+  const server = createServer({ keepAliveTimeout: 0 }, (req, res) => res.end(`served ${req.url}`));
+  const openTunnel = (socket: Socket, head: string) => {
+    socket.write(`${head}\r\n\r\n`);
+    socket.on("data", chunk => socket.write(`echo:${chunk}`));
+    socket.on("error", () => {});
+  };
+  server.on("upgrade", (req, socket) =>
+    openTunnel(socket, "HTTP/1.1 101 Switching Protocols\r\nConnection: Upgrade\r\nUpgrade: echo"),
+  );
+  server.on("connect", (req, socket) => openTunnel(socket, "HTTP/1.1 200 Connection Established"));
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  const { port } = server.address() as AddressInfo;
+  const upgrade = await dialRaw(port);
+  const tunnel = await dialRaw(port);
+  const idle = await dialRaw(port);
+  try {
+    upgrade.socket.write("GET /echo HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: echo\r\n\r\n");
+    await readUntil(upgrade, "\r\n\r\n");
+    tunnel.socket.write("CONNECT example.com:443 HTTP/1.1\r\nHost: example.com:443\r\n\r\n");
+    await readUntil(tunnel, "\r\n\r\n");
+    idle.socket.write("GET /one HTTP/1.1\r\nHost: x\r\n\r\n");
+    expect(await readResponse(idle)).toBe("served /one");
+
+    server.closeIdleConnections();
+
+    upgrade.socket.write("ping");
+    await readUntil(upgrade, "echo:ping");
+    tunnel.socket.write("ping");
+    await readUntil(tunnel, "echo:ping");
+    expect(await outcome(idle, () => idle.socket.write("GET /two HTTP/1.1\r\nHost: x\r\n\r\n"))).toBe("destroyed");
+  } finally {
+    upgrade.socket.destroy();
+    tunnel.socket.destroy();
+    idle.socket.destroy();
+    server.closeAllConnections();
+    server.close();
   }
 });

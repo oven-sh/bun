@@ -1157,6 +1157,77 @@ describe.concurrent("server.stop() drain promise counts open connections", () =>
     });
   });
 
+  test("a connection whose response finished while its request body is still arriving is not idle", async () => {
+    // "Sending a request" includes the body: responding early (without reading
+    // the upload) does not make the connection idle until the upload has been
+    // received. Closing it mid-upload would also reset the connection while the
+    // client is still writing, which can discard the response on the client's
+    // side. Once the body has arrived the connection is idle again, which is
+    // what the close-when-idle mark left by a graceful stop() acts on.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const net = require("net");
+          const server = Bun.serve({
+            port: 0,
+            hostname: "127.0.0.1",
+            idleTimeout: 255,
+            fetch: () => new Response("ok"),
+          });
+          function dial() {
+            const c = net.connect(server.port, "127.0.0.1");
+            const state = { c, buf: "", closed: false };
+            c.on("data", d => (state.buf += d));
+            c.on("close", () => (state.closed = true));
+            c.on("error", () => {});
+            return new Promise((resolve, reject) => {
+              c.on("connect", () => resolve(state));
+              c.on("error", reject);
+            });
+          }
+          const countOks = s => (s.buf.match(/\\r\\nok/g) || []).length;
+          const tick = () => new Promise(r => setImmediate(r));
+          // Two uploads answered after 3 of their 10 body bytes.
+          const a = await dial();
+          a.c.write("POST /upload HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 10\\r\\n\\r\\nabc");
+          while (countOks(a) < 1) await tick();
+          const b = await dial();
+          b.c.write("POST /upload HTTP/1.1\\r\\nHost: x\\r\\nContent-Length: 10\\r\\n\\r\\nabc");
+          while (countOks(b) < 1) await tick();
+
+          const closedWhileUploading = server.closeIdleConnections();
+
+          // a finishes its upload and reuses the connection: the rest of the body
+          // is consumed as body and the request behind it is served.
+          a.c.write("defghijGET /next HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+          while (countOks(a) < 2 && !a.closed) await tick();
+          const aServedAfterSweep = countOks(a) === 2;
+
+          // a is idle now and is closed by the graceful stop() itself; b is still
+          // uploading, so it is only marked, and closes once its body has arrived
+          // (the client never hangs up), which is what lets the drain resolve.
+          const stopped = server.stop(false);
+          b.c.write("defghij");
+          await stopped;
+          const until = Date.now() + 2000;
+          while (!(a.closed && b.closed) && Date.now() < until) await tick();
+          console.log(JSON.stringify({ closedWhileUploading, aServedAfterSweep, aClosed: a.closed, bClosed: b.closed }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, out: JSON.parse(stdout.trim() || "null"), exitCode }).toEqual({
+      stderr: "",
+      out: { closedWhileUploading: 0, aServedAfterSweep: true, aClosed: true, bClosed: true },
+      exitCode: 0,
+    });
+  });
+
   test("websocket-only server: a second stop() returns the still-pending promise", async () => {
     // After upgrade() the filter fires -1, so a websocket-only server has
     // active_connection_count == 0 and only the has_active_web_sockets() term

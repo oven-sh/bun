@@ -217,4 +217,66 @@ describe("node:http server timeout enforcement", () => {
       server.close();
     }
   });
+
+  test("requestTimeout does not fire on an idle connection after a Content-Length: 0 request whose head arrived in two reads", async () => {
+    // Completing a Content-Length: 0 head out of the bytes buffered from an
+    // earlier read takes a different parser path than a single-read request;
+    // it used to leave the request's timeout window open, so the next sweep
+    // answered 408 on a connection that was idle. The second connection stalls
+    // mid-body on purpose: once the sweep has reaped it, the same sweep has
+    // also looked at the first connection, which by then had been (wrongly)
+    // open for longer, so a request on it proves it survived.
+    const server = http.createServer({ connectionsCheckingInterval: 25, keepAliveTimeout: 0 }, (req, res) => {
+      req.resume();
+      res.end("ok");
+    });
+    server.headersTimeout = 100;
+    server.requestTimeout = 100;
+    const port = await listen(server);
+    const idle = net.connect(port, "127.0.0.1");
+    let stalled: net.Socket | undefined;
+    try {
+      let received = "";
+      const { promise: idleClosed, resolve: onIdleClosed } = Promise.withResolvers<string>();
+      idle.setNoDelay(true);
+      idle.on("error", () => {});
+      idle.on("close", () => onIdleClosed("closed by the server"));
+      idle.on("data", chunk => {
+        received += chunk.toString("latin1");
+      });
+      const responses = (count: number) =>
+        new Promise<string>(resolve => {
+          const check = () => {
+            if ((received.match(/\r\n\r\nok/g) ?? []).length >= count) {
+              idle.off("data", check);
+              resolve(`${count} responses`);
+            }
+          };
+          idle.on("data", check);
+          check();
+        });
+      await once(idle, "connect");
+      idle.write("GET /1 HTTP/1.1\r\nHost: a\r\n\r\nPOST /2 HTTP/1.1\r\nHost: a\r\nContent-Length: 0\r\n");
+      await responses(1);
+      idle.write("\r\n");
+      await responses(2);
+
+      stalled = net.connect(port, "127.0.0.1");
+      stalled.setNoDelay(true);
+      stalled.on("error", () => {});
+      stalled.resume();
+      const stalledClosed = once(stalled, "close");
+      await once(stalled, "connect");
+      stalled.write("POST / HTTP/1.1\r\nHost: a\r\nContent-Length: 50\r\n\r\nab");
+      await stalledClosed;
+
+      idle.write("GET /3 HTTP/1.1\r\nHost: a\r\n\r\n");
+      expect(await Promise.race([responses(3), idleClosed])).toBe("3 responses");
+    } finally {
+      idle.destroy();
+      stalled?.destroy();
+      server.closeAllConnections();
+      server.close();
+    }
+  });
 });

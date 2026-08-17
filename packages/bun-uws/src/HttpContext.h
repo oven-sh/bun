@@ -334,11 +334,6 @@ private:
         httpContextData->flags.isParsingHttp = true;
         struct us_socket_t *prevParsingSocket = httpContextData->parsingSocket;
         httpContextData->parsingSocket = s;
-        httpResponseData->isIdle = false;
-
-        /* node:http compat: maintain the headers/request timeout window (see
-         * the requestHandler/dataHandler hooks and the post-parse check). */
-        const bool trackNodeHttpTimings = IsNodeHttp && !httpResponseData->isConnectRequest;
 
         // clients need to know the cursor after http parse, not servers!
         // how far did we read then? we need to know to continue with websocket parsing data? or?
@@ -377,17 +372,20 @@ private:
                 }
             }
 
-            /* node:http compat: the request head has been fully parsed, so only
-             * requestTimeout (not headersTimeout) applies from here on. A
-             * pipelined request whose head sits mid-buffer never went through
-             * onData with an idle connection, so open its window here too. */
+            /* A request message is being received until its body completes (the
+             * dataHandler's fin below), whether or not a response finishes before
+             * then. node:http compat: the head has been fully parsed, so only
+             * requestTimeout (not headersTimeout) applies from here on; a
+             * pipelined request whose head sits mid-buffer never went through the
+             * post-parse check below, so its window opens here. */
             if constexpr (IsNodeHttp) {
                 auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
-                if (nodeHttpResponseData->lastMessageStartMs == 0) {
+                if (nodeHttpResponseData->betweenRequests) {
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                 }
                 nodeHttpResponseData->headersCompleted = true;
             }
+            httpResponseData->betweenRequests = false;
 
             /* Are we not ready for another request yet? Terminate the connection.
              * Important for denying async pipelining until, if ever, we want to support it.
@@ -523,15 +521,14 @@ private:
                 switchToTunnelAfterThisChunk = fin && !httpResponseData->isConnectRequest && (httpResponseData->state & HttpResponseData<SSL>::HTTP_NODE_TUNNEL_AFTER_BODY);
             }
 
-            /* node:http compat: the request message (head + body) has been fully
-             * received - the connection is idle for the headers/request timeout
-             * sweeps until the next message starts. */
-            if constexpr (IsNodeHttp) {
-                if (fin && !httpResponseData->isConnectRequest) {
-                    auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
-                    nodeHttpResponseData->lastMessageStartMs = 0;
-                    nodeHttpResponseData->headersCompleted = false;
-                }
+            /* The request message (head + body) has been fully received: the
+             * connection is between requests until the next one starts arriving
+             * (HttpResponseData::isIdle() for the closeIdle sweeps and
+             * HTTP_CLOSE_WHEN_IDLE; the node:http headers/request timeout sweep).
+             * Set before the chunk is delivered so a response completing from
+             * within the delivery already finds the connection idle. */
+            if (fin) {
+                httpResponseData->betweenRequests = true;
             }
 
             if (httpResponseData->isConnectRequest && httpResponseData->socketData && httpContextData->onSocketData) {
@@ -622,14 +619,16 @@ private:
             /* We don't want open sockets to keep the event loop alive between HTTP requests */
             us_socket_unref((us_socket_t *) returnedData);
 
-            /* node:http compat: a partial request head was left in the fallback
-             * buffer by this read (either fresh bytes on an idle connection or a
-             * pipelined request after the previous message completed) - its
-             * headers timeout window opens now. */
-            if constexpr (IsNodeHttp) {
-                auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
-                if (trackNodeHttpTimings && nodeHttpResponseData->lastMessageStartMs == 0
-                    && httpResponseData->hasBufferedPartialRequestHeaders()) {
+            /* A partial request head was left in the fallback buffer by this read
+             * (either fresh bytes on an idle connection or a pipelined request
+             * behind the message that just completed): the next message has
+             * started arriving, so the connection is not idle, and must not be
+             * closed as such by the gate below or by a closeIdle() sweep.
+             * node:http compat: its headers timeout window opens now. */
+            if (httpResponseData->betweenRequests && httpResponseData->hasBufferedPartialRequestHeaders()) {
+                httpResponseData->betweenRequests = false;
+                if constexpr (IsNodeHttp) {
+                    auto *nodeHttpResponseData = (HttpResponseData<SSL, true> *) httpResponseData;
                     nodeHttpResponseData->lastMessageStartMs = nodeCompatMonotonicMs();
                     nodeHttpResponseData->headersCompleted = false;
                 }

@@ -7,9 +7,8 @@
 // JSC-protocol JSON from the backend connection. Command ids from the client
 // are preserved by giving backend commands their own id space and correlating
 // the responses.
-//
-// The backend side is typed against the protocol snapshot generated from the
-// WebKit Bun links against; the type-only import is erased by the builtin bundler.
+
+// Type-only, so the builtin bundler erases it.
 import type { JSC } from "../../../../packages/bun-inspector-protocol/src/protocol/jsc/index.d.ts";
 
 const { pathToFileURL, fileURLToPath } = require("node:url");
@@ -205,8 +204,7 @@ class InspectorCDPAdapter {
 
   // `clientId` undefined/null marks an adapter-internal command whose response
   // is dropped instead of being forwarded to the client. `onResult` intercepts
-  // the response for adapter-side chaining (e.g. Runtime.evaluate awaitPromise)
-  // and gets `{}` as the result when `error` is set.
+  // the response for adapter-side chaining; on a backend error it gets `{}`.
   #sendToBackend<M extends keyof JSC.RequestMap>(
     method: M,
     params?: JSC.RequestMap[M],

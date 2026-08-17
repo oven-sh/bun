@@ -5618,16 +5618,9 @@ restart:
 
     {
 
-        JSValue iteratingValue = prototypeObject;
+        JSObject* iterating = prototypeObject.getObject();
 
-        while (JSObject* iterating = iteratingValue.getObject()) {
-            if (iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject))
-                break;
-            if (prototypeCount++ >= 5)
-                break;
-
-            JSC::EnsureStillAliveScope ensureIteratingStillAlive(iteratingValue);
-
+        while (iterating && !(iterating == globalObject->objectPrototype() || iterating == globalObject->functionPrototype() || (iterating->inherits<JSGlobalProxy>() && uncheckedDowncast<JSGlobalProxy>(iterating)->target() != globalObject)) && prototypeCount++ < 5) {
             if constexpr (nonIndexedOnly) {
                 iterating->getOwnNonIndexPropertyNames(globalObject, properties, DontEnumPropertiesMode::Include);
             } else {
@@ -5651,7 +5644,8 @@ restart:
 
                 JSC::PropertySlot slot(object, PropertySlot::InternalMethodType::Get);
                 bool hasProperty = object->getPropertySlot(globalObject, property, slot);
-                // Ignore exceptions from "Get" proxy traps.
+                // Ignore exceptions from "Get" proxy traps and throwing lazy property
+                // initializers; both report the property as not found.
                 CLEAR_IF_EXCEPTION(scope);
                 if (!hasProperty)
                     continue;
@@ -5726,11 +5720,12 @@ restart:
                 break;
             if (iterating == globalObject)
                 break;
-            iteratingValue = iterating->getPrototype(globalObject);
+            JSValue prototype = iterating->getPrototype(globalObject);
             // Ignore exceptions from Proxy "getPrototypeOf" trap.
             CLEAR_IF_EXCEPTION(scope);
-            if (!iteratingValue)
+            if (!prototype)
                 break;
+            iterating = prototype.getObject();
         }
     }
 

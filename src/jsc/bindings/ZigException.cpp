@@ -225,7 +225,7 @@ static void populateStackFramePosition(const JSC::StackFrame& stackFrame, BunStr
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::StackFrame& stackFrame,
-    ZigStackFrame& frame, bool is_top, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety)
+    ZigStackFrame& frame, JSC::SourceProvider** referenced_source_provider, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         populateStackFrameMetadata(vm, globalObject, stackFrame, frame, finalizerSafety);
@@ -233,9 +233,9 @@ static void populateStackFrame(JSC::VM& vm, ZigStackTrace& trace, const JSC::Sta
             nullptr,
             0, frame.position, referenced_source_provider, flags);
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        populateStackFramePosition(stackFrame, is_top ? trace.source_lines_ptr : nullptr,
-            is_top ? trace.source_lines_numbers : nullptr,
-            is_top ? trace.source_lines_to_collect : 0, frame.position, referenced_source_provider, flags);
+        populateStackFramePosition(stackFrame, trace.source_lines_ptr,
+            trace.source_lines_numbers,
+            trace.source_lines_to_collect, frame.position, referenced_source_provider, flags);
     }
 }
 
@@ -421,7 +421,11 @@ public:
     }
 };
 
-static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer)
+// OnlyPosition fills `trace.frames_ptr` from `frames`. OnlySourceLines runs
+// later, after Rust has filtered the frames and picked the one whose source
+// to excerpt (`remap_zig_exception`), and collects the source lines of
+// `trace.frames_ptr[source_lines_frame_index]` only.
+static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& frames, ZigStackTrace& trace, JSC::JSGlobalObject* globalObject, PopulateStackTraceFlags flags, FinalizerSafety finalizerSafety = FinalizerSafety::NotInFinalizer, uint8_t source_lines_frame_index = 0)
 {
     if (flags == PopulateStackTraceFlags::OnlyPosition) {
         uint8_t frame_i = 0;
@@ -439,18 +443,19 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
             ZigStackFrame& frame = trace.frames_ptr[frame_i];
             frame.jsc_stack_frame_index = static_cast<int32_t>(stack_frame_i);
-            populateStackFrame(vm, trace, frames[stack_frame_i], frame, frame_i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
+            populateStackFrame(vm, trace, frames[stack_frame_i], frame, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
             stack_frame_i++;
             frame_i++;
         }
         trace.frames_len = frame_i;
     } else if (flags == PopulateStackTraceFlags::OnlySourceLines) {
-        for (uint8_t i = 0; i < trace.frames_len; i++) {
-            ZigStackFrame& frame = trace.frames_ptr[i];
-            if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
-                continue;
-            populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, i == 0, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
-        }
+        if (source_lines_frame_index >= trace.frames_len)
+            return;
+        ZigStackFrame& frame = trace.frames_ptr[source_lines_frame_index];
+        // -1 when the frames were parsed out of an `error.stack` string.
+        if (frame.jsc_stack_frame_index < 0 || static_cast<size_t>(frame.jsc_stack_frame_index) >= frames.size())
+            return;
+        populateStackFrame(vm, trace, frames[frame.jsc_stack_frame_index], frame, &trace.referenced_source_provider, globalObject, flags, finalizerSafety);
     }
 }
 
@@ -866,7 +871,8 @@ extern "C" [[ZIG_EXPORT(check_slow)]] void JSC__JSValue__toZigException(JSC::Enc
     exceptionFromString(*exception, value, global);
 }
 
-extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception)
+// `frame_index` indexes `exception->stack.frames_ptr` (after Rust's frame filtering).
+extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException, JSC::JSGlobalObject* global, ZigException* exception, uint8_t frame_index)
 {
     JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
@@ -878,7 +884,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
         JSValue unwrapped = jscException->value();
 
         if (jscException->stack().size() > 0) {
-            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines);
+            populateStackTrace(global->vm(), jscException->stack(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::NotInFinalizer, frame_index);
         }
 
         exceptionFromString(*exception, unwrapped, global);
@@ -887,7 +893,7 @@ extern "C" void ZigException__collectSourceLines(JSC::EncodedJSValue jsException
 
     if (JSC::ErrorInstance* error = dynamicDowncast<JSC::ErrorInstance>(value)) {
         if (error->stackTrace() != nullptr && error->stackTrace()->size() > 0) {
-            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC);
+            populateStackTrace(global->vm(), *error->stackTrace(), exception->stack, global, PopulateStackTraceFlags::OnlySourceLines, FinalizerSafety::MustNotTriggerGC, frame_index);
         }
         return;
     }

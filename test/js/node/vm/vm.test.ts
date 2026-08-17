@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, normalizeBunSnapshot } from "harness";
+import { EventEmitter } from "node:events";
 import {
   compileFunction,
   constants,
@@ -460,6 +461,118 @@ describe("Script", () => {
     } finally {
       Error.prepareStackTrace = prev;
     }
+  });
+});
+
+// The code frame bun prints above an error is the line of the first frame that
+// is in one of the user's sources. A vm script (like eval and new Function) has
+// no source map, so that line is cut out of the source JSC compiled. When the
+// error is thrown inside a JS builtin or one of bun's own modules, the user's
+// frame is not frame 0; the excerpt used to be cut out of frame 0's source
+// regardless, i.e. it showed the builtin's own text and line number.
+describe("code frame of an error thrown inside a builtin called from a source without a source map", () => {
+  type Expected = {
+    // Names the user's source in the stack; the excerpt has to be its line.
+    filename: string;
+    // The `name: message` line printed under the code frame.
+    header: string;
+    // The text of the line that calls into the builtin.
+    excerpt: string;
+  };
+
+  function expectCodeFrame(printed: string, { filename, header, excerpt }: Expected) {
+    const lines = printed.split("\n");
+    const headerIndex = lines.indexOf(header);
+    expect(headerIndex).toBeGreaterThanOrEqual(2);
+    const userFrame = printed.match(new RegExp(`${RegExp.escape(filename)}:(\\d+):\\d+`));
+    expect(userFrame).not.toBeNull();
+    // Directly above the header are the excerpt and the caret. The excerpt is
+    // labelled with the line the user's frame reports (line 2 of the source
+    // below; for new Function, 2 plus its `function anonymous(\n) {` wrapper).
+    expect(lines.slice(headerIndex - 2, headerIndex)).toEqual([
+      `${userFrame![1]} | ${excerpt}`,
+      expect.stringMatching(/^ +\^$/),
+    ]);
+  }
+
+  // The builtin is called from line 2 so that the excerpt's line number has to
+  // come from the user's frame as well as its text.
+  const source = '"line 1";\n[].reduce((a, b) => a);';
+  const reduce = {
+    excerpt: "[].reduce((a, b) => a);",
+    header: "TypeError: reduce of empty array with no initial value",
+  };
+  // displayErrors: false keeps node:vm from rewriting err.stack; the code frame
+  // under test is the one bun's error printer builds from the error's frames.
+  const displayErrors = false;
+
+  const cases: (Expected & { name: string; run(filename: string): unknown })[] = [
+    {
+      name: "vm.Script",
+      filename: "/virtual/script.js",
+      ...reduce,
+      run: filename => new Script(source, { filename }).runInThisContext({ displayErrors }),
+    },
+    {
+      name: "runInNewContext",
+      filename: "/virtual/new-context.js",
+      ...reduce,
+      run: filename => runInNewContext(source, {}, { filename, displayErrors }),
+    },
+    {
+      name: "eval",
+      filename: "/virtual/eval.js",
+      ...reduce,
+      run: filename => (0, eval)(`${source}\n//# sourceURL=${filename}`),
+    },
+    {
+      name: "new Function",
+      filename: "/virtual/function.js",
+      ...reduce,
+      run: filename => new Function(`${source}\n//# sourceURL=${filename}`)(),
+    },
+    {
+      // emit() with no "error" listener throws from inside bun's node:events,
+      // so the frame on top is a node:events frame rather than a JS builtin's.
+      name: "node: module on top of the stack",
+      filename: "/virtual/events.js",
+      header: "error: Unhandled error. (undefined)",
+      excerpt: 'emitter.emit("error");',
+      run: filename =>
+        runInNewContext(
+          '"line 1";\nemitter.emit("error");',
+          { emitter: new EventEmitter() },
+          { filename, displayErrors },
+        ),
+    },
+  ];
+
+  test.each(cases)("Bun.inspect: $name", testCase => {
+    let thrown: unknown;
+    try {
+      testCase.run(testCase.filename);
+    } catch (e) {
+      thrown = e;
+    }
+    expectCodeFrame(Bun.inspect(thrown), testCase);
+  });
+
+  test("uncaught error", async () => {
+    const filename = "/virtual/uncaught.js";
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("node:vm").runInThisContext(${JSON.stringify(source)}, ${JSON.stringify({ filename, displayErrors })})`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("");
+    expectCodeFrame(stderr, { filename, ...reduce });
+    expect(exitCode).toBe(1);
   });
 });
 

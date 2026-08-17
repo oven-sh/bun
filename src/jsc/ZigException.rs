@@ -12,12 +12,15 @@ use crate::{JSErrorCode, JSGlobalObject, JSRuntimeType, JSValue, ZigStackFrame, 
 
 // SAFETY (safe fn): `JSValue` is a by-value scalar; `JSGlobalObject` is an
 // opaque `UnsafeCell`-backed handle (`&` is ABI-identical to non-null `*mut`);
-// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place.
+// `ZigException` is a `#[repr(C)]` out-param the C++ side fills in-place;
+// `frame_index` is a by-value scalar that C++ bounds-checks against
+// `stack.frames_len`.
 unsafe extern "C" {
     pub(crate) safe fn ZigException__collectSourceLines(
         js_value: JSValue,
         global: &JSGlobalObject,
         exception: &mut ZigException,
+        frame_index: u8,
     );
 }
 
@@ -50,8 +53,18 @@ pub struct ZigException {
 }
 
 impl ZigException {
-    pub(crate) fn collect_source_lines(&mut self, value: JSValue, global: &JSGlobalObject) {
-        ZigException__collectSourceLines(value, global, self);
+    /// Fills `stack.source_lines_*` with the source around
+    /// `stack.frames()[frame_index]`, read from that frame's JSC source
+    /// provider. For sources bun transpiled, `remap_zig_exception` reads the
+    /// original file instead; this is the path for everything else (`node:vm`
+    /// scripts, `eval`, `new Function`).
+    pub(crate) fn collect_source_lines(
+        &mut self,
+        value: JSValue,
+        global: &JSGlobalObject,
+        frame_index: u8,
+    ) {
+        ZigException__collectSourceLines(value, global, self, frame_index);
     }
 
     // Kept as explicit `deinit` (not `Drop`) — this is a #[repr(C)] FFI

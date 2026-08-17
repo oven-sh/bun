@@ -13,7 +13,7 @@ the bun binary stay in `test/internal/` so the Buildkite lanes run them against
 the build under test.
 
 The workflow runs on a bare checkout (no `bun install`), so tests here may
-only import built-ins, relative paths, and `harness` (resolved via
+only import built-ins, relative paths, and `harness` / `_util/*` (resolved via
 `test/tsconfig.json` paths).
 
 The workflow only triggers for the `paths:` listed in it. A lint that reads

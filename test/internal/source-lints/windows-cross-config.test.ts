@@ -14,44 +14,11 @@ import { describe, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
 import { join } from "node:path";
 
-import { resolveConfig, type Config, type PartialConfig, type Toolchain } from "../../../scripts/build/config.ts";
+import { mockToolchain, mockWindowsCrossToolchain } from "_util/mock-toolchain.ts";
+import { resolveConfig, type Config, type PartialConfig } from "../../../scripts/build/config.ts";
 import { webkit } from "../../../scripts/build/deps/webkit.ts";
 import { computeFlags } from "../../../scripts/build/flags.ts";
 import { rustTarget } from "../../../scripts/build/rust.ts";
-
-/** A fully-populated fake toolchain — resolveConfig never spawns any of these. */
-function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
-  return {
-    cc: "/fake/llvm/bin/clang-cl",
-    cxx: "/fake/llvm/bin/clang-cl",
-    clangVersion: "21.1.8",
-    clangResourceDir: "/fake/llvm/lib/clang/21",
-    ar: "/fake/llvm/bin/llvm-lib",
-    ranlib: undefined,
-    ld: "/fake/llvm/bin/lld-link",
-    ld64Lld: undefined,
-    rustLld: undefined,
-    rustLlvmVersion: "22.1.4",
-    rustSysroot: undefined,
-    rustHostTriple: undefined,
-    strip: "/fake/llvm/bin/llvm-strip",
-    llvmStrip: "/fake/llvm/bin/llvm-strip",
-    dsymutil: undefined,
-    bun: "/fake/bin/bun",
-    jsRuntime: "/fake/bin/bun",
-    esbuild: "/fake/bin/esbuild",
-    ccache: undefined,
-    cmake: "/fake/bin/cmake",
-    cargo: undefined,
-    cargoHome: undefined,
-    rustupHome: undefined,
-    msvcLinker: undefined,
-    rc: "/fake/llvm/bin/llvm-rc",
-    mt: undefined,
-    nasm: "/fake/bin/nasm",
-    ...overrides,
-  };
-}
 
 /**
  * Shorthand: resolve a config for a Windows target the way the CI cross lane
@@ -59,7 +26,7 @@ function mockToolchain(overrides: Partial<Toolchain> = {}): Toolchain {
  * the LTO default applies, with an explicit fake sysroot so the local-build
  * "create one with xwin" error never triggers.
  */
-function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockToolchain()): Config {
+function resolveWindowsCross(partial: PartialConfig = {}, toolchain = mockWindowsCrossToolchain()): Config {
   return resolveConfig(
     {
       os: "windows",
@@ -140,7 +107,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     const rustLld = join(String(dir), "gcc-ld", "ld.lld");
     const cfg = resolveWindowsCross(
       { lto: true, baseline: false },
-      mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
+      mockWindowsCrossToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
     );
     expect(cfg.ld).toBe(join(String(dir), "gcc-ld", "lld-link"));
     // Cargo-driven links (bun_shim_impl.exe) must NOT follow the swap: rustc
@@ -150,7 +117,10 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
 
     // Without LTO there's no bitcode skew to work around — keep the host
     // LLVM's lld-link.
-    const plain = resolveWindowsCross({ lto: false }, mockToolchain({ rustLld, rustLlvmVersion: "22.1.4" }));
+    const plain = resolveWindowsCross(
+      { lto: false },
+      mockWindowsCrossToolchain({ rustLld, rustLlvmVersion: "22.1.4" }),
+    );
     expect(plain.ld).toBe("/fake/llvm/bin/lld-link");
 
     // If rustc's gcc-ld/ ever stops shipping lld-link, fall back to the host
@@ -159,7 +129,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
     using bare = tempDir("win-cross-rust-lld-bare", { "gcc-ld/ld.lld": "" });
     const bareCfg = resolveWindowsCross(
       { lto: true, baseline: false },
-      mockToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
+      mockWindowsCrossToolchain({ rustLld: join(String(bare), "gcc-ld", "ld.lld"), rustLlvmVersion: "22.1.4" }),
     );
     expect(bareCfg.ld).toBe("/fake/llvm/bin/lld-link");
   });
@@ -193,7 +163,7 @@ describe.skipIf(isWindows)("Windows cross-compile LTO config (non-windows host)"
   test("linux LTO config uses ThinLTO with WPD and no-split-lto-unit", () => {
     const linux = resolveConfig(
       { os: "linux", arch: "x64", abi: "gnu", buildType: "Release", ci: true, buildkite: false, linuxSysroot: "/fake" },
-      mockToolchain({ cc: "/fake/llvm/bin/clang", cxx: "/fake/llvm/bin/clang++", ld: "/fake/llvm/bin/ld.lld" }),
+      mockToolchain(),
     );
     expect(linux.lto).toBe(true);
     const linuxFlags = computeFlags(linux);

@@ -77,9 +77,8 @@ extern "C" int32_t ReadableStreamTag__taggedStream(JSC::EncodedJSValue value, vo
 
 extern "C" int32_t ReadableStreamTag__tagged(Zig::GlobalObject* globalObject, JSC::EncodedJSValue* possibleReadableStream, void** ptr)
 {
-    *ptr = nullptr;
     JSValue value = JSValue::decode(*possibleReadableStream);
-    if (value.isEmpty() || !value.isCell())
+    if (!value.isCell())
         return -1;
     JSObject* object = value.getObject();
     if (!object)

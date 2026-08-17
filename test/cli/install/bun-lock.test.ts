@@ -2055,6 +2055,19 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     });
   }
 
+  function cacheDir(cwd: string) {
+    return join(cwd, ".bun-cache");
+  }
+
+  // How many manifests the project's installs have written to its cache. The
+  // entries are written by a thread pool task that bun install does not wait
+  // for before exiting (`save_async` in src/install/npm.rs), so the last
+  // manifest an install fetches is occasionally missing. An install that has
+  // to fetch it again writes it again.
+  function cachedManifests(cwd: string) {
+    return Array.from(new Bun.Glob("*.npm").scanSync(cacheDir(cwd))).length;
+  }
+
   it.concurrent("declared by a registry package", async () => {
     using registry = await serveRegistry(manifests);
     using dir = createProject(registry.url, {
@@ -2090,6 +2103,16 @@ describe.each(["hoisted", "isolated"] as const)("peer no published version satis
     ({ err } = await installWithOwnCache(String(dir), "--frozen-lockfile"));
     expect(err).not.toContain("Ignoring lockfile");
     expect(await file(lockfilePath).text()).toBe(lockfile);
+
+    // The resolve below needs both manifests cached. peer-target's was the last
+    // thing the first install fetched, and nothing was left to do after it, so
+    // its entry is the one that is occasionally missing (see cachedManifests);
+    // resolving without the lockfile fetches and writes it again.
+    for (let retries = 5; retries > 0 && cachedManifests(String(dir)) < 2; retries--) {
+      await rm(lockfilePath);
+      await installWithOwnCache(String(dir));
+    }
+    expect(cachedManifests(String(dir))).toBe(2);
 
     // Resolve from scratch again. Both manifests are cached now, so the peer
     // is looked up synchronously instead of through a network task.

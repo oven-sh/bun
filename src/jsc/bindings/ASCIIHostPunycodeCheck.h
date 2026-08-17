@@ -15,7 +15,10 @@
 #else
 // The macOS SDK ships only a subset of the ICU headers; these two entry points are stable C API in libicucore.
 struct UNormalizer2;
-typedef enum { UNORM2_COMPOSE, UNORM2_DECOMPOSE, UNORM2_FCD, UNORM2_COMPOSE_CONTIGUOUS } UNormalization2Mode;
+typedef enum { UNORM2_COMPOSE,
+    UNORM2_DECOMPOSE,
+    UNORM2_FCD,
+    UNORM2_COMPOSE_CONTIGUOUS } UNormalization2Mode;
 extern "C" const UNormalizer2* unorm2_getInstance(const char* packageName, const char* name, UNormalization2Mode, UErrorCode*);
 extern "C" UBool unorm2_isNormalized(const UNormalizer2*, const UChar*, int32_t length, UErrorCode*);
 #endif

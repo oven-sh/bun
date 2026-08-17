@@ -183,7 +183,6 @@ mod node {
 // `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
-use super::MaybeTodo as _;
 use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
@@ -4381,7 +4380,6 @@ pub mod args {
         }
     }
 
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -4553,7 +4551,6 @@ pub mod ret {
     pub(crate) type Symlink = ();
     pub(crate) type Truncate = ();
     pub(crate) type Unlink = ();
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch = JSValue;
     pub(crate) type WatchFile = JSValue;
     pub(crate) type Utimes = ();
@@ -5479,7 +5476,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = args;
-            return Maybe::<ret::Lchmod>::todo();
+            return Err(sys::Error::todo());
         }
         #[cfg(target_os = "android")]
         {
@@ -8097,14 +8094,6 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn unwatch_file(
-        &mut self,
-        _: args::UnwatchFile,
-        _: Flavor,
-    ) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
-    }
-
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
@@ -8686,7 +8675,7 @@ impl NodeFS {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
-                return Maybe::<ret::CopyFile>::todo();
+                return Err(sys::Error::todo());
             }
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
@@ -8982,7 +8971,7 @@ impl NodeFS {
                 // fall back to a non-CoW `CopyFileW`, per
                 // Node.js' documented FICLONE_FORCE contract and matching the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
-                // than `Maybe::todo()` so debug builds do not panic.
+                // than `sys::Error::todo()` so debug builds do not panic.
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
@@ -9129,7 +9118,7 @@ impl NodeFS {
         )))]
         {
             let _ = (src, dest, mode, reuse_stat);
-            Maybe::<ret::CopyFile>::todo()
+            Err(sys::Error::todo())
         }
     }
 

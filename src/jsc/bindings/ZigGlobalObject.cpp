@@ -2017,7 +2017,6 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();
-    m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 
@@ -3347,14 +3346,6 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
     if (pending && !vm.isTerminationException(pending)) [[unlikely]]
         return 2;
     return globalObject->drainMicrotasks();
-}
-extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
-{
-    auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);
-    if (value != nullptr) {
-        return JSValue::encode(value);
-    }
-    return JSValue::encode(JSValue::JSUndefined);
 }
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)

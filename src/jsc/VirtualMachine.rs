@@ -3775,8 +3775,6 @@ impl VirtualMachine {
         if main.is_empty() {
             return;
         }
-        let ext = bun_paths::extension(main);
-        let loader = self.transpiler.options.loader(ext);
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
             // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
@@ -3786,7 +3784,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
         }
     }
 

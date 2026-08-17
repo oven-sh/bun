@@ -208,8 +208,7 @@ pub(crate) fn view(
                         // Parse as semver query and find best version
                         let sliced_literal = Semver::SlicedString::init(version, version);
                         let query = Semver::query::parse(version, sliced_literal)?;
-                        // The query's prerelease/build tags are offsets into `version`, the
-                        // buffer it was parsed from, so that is the buffer to match it with.
+                        // The query's pre/build tags are offsets into `version`, so match with it.
                         if let Some(result) = parsed_manifest.find_best_version(&query, version) {
                             break 'brk2 result.version;
                         }

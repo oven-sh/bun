@@ -199,9 +199,8 @@ impl NetworkTask {
         if self.http_proxy_buf.is_empty() {
             return None;
         }
-        // SAFETY: lifetime extension, same as `url_buf` in `for_manifest` /
-        // `for_tarball` — `run_tasks` drops `unsafe_http_client` before the slot
-        // (and this buffer) goes back to the pool.
+        // SAFETY: same lifetime extension as `url_buf` in `for_manifest`: `run_tasks` drops
+        // `unsafe_http_client` before the slot (and this buffer) goes back to the pool.
         Some(URL::parse(unsafe {
             bun_ptr::detach_lifetime(&self.http_proxy_buf)
         }))

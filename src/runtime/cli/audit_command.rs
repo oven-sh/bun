@@ -1057,8 +1057,7 @@ fn collect_vulnerabilities(
         Err(_) => return Ok(Err(SkipReason::NotJson)),
     };
 
-    // The bulk endpoint answers `{ [package name]: Advisory[] }`; a document of any other shape (a
-    // mirror's `{"error": ...}`, ...) must not pass for a clean audit.
+    // The bulk endpoint answers `{ [package name]: Advisory[] }`; anything else is not a clean audit.
     let ExprData::EObjectJSON(obj) = &parsed.root.data else {
         return Ok(Err(SkipReason::NotAdvisories));
     };

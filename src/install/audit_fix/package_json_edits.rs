@@ -1,4 +1,4 @@
-use bun_ast::{E, Expr, ExprData};
+use bun_ast::{E, Expr};
 use bun_collections::VecExt as _;
 use bun_collections::index_sort;
 use bun_core::strings;
@@ -10,7 +10,9 @@ use crate::bun_fs::FileSystem;
 use crate::lockfile::CatalogMap;
 use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
-use crate::lockfile_real::override_selector::{Selector, parse_package_segment, parse_selector};
+use crate::lockfile_real::override_selector::{
+    PackageSelector, Selector, parse_package_segment, parse_selector,
+};
 use crate::package_manager_real::add_remove_with_filter::{
     WorkspaceTarget, fetch_entry_root, root_package_json_path, store_entry,
 };
@@ -57,20 +59,17 @@ pub struct OverrideSelector {
 
 impl OverrideSelector {
     pub(super) fn from_rule(rule: OverrideRule<'_>, buf: &[u8]) -> OverrideSelector {
-        match rule {
-            OverrideRule::Flat(_) => OverrideSelector {
+        let OverrideRule::Scoped(rule) = rule else {
+            return OverrideSelector {
                 parent: None,
                 target_range: Box::default(),
-            },
-            OverrideRule::Scoped(rule) => OverrideSelector {
-                parent: rule.parent.as_ref().map(|parent| {
-                    (
-                        Box::from(parent.name.slice(buf)),
-                        Box::from(parent.version.literal.slice(buf)),
-                    )
-                }),
-                target_range: Box::from(rule.target_range.literal.slice(buf)),
-            },
+            };
+        };
+        let text = |s: &bun_semver::String| Box::from(s.slice(buf));
+        let parent = rule.parent.as_ref();
+        OverrideSelector {
+            parent: parent.map(|p| (text(&p.name), text(&p.version.literal))),
+            target_range: text(&rule.target_range.literal),
         }
     }
 
@@ -90,16 +89,18 @@ impl OverrideSelector {
         out.into_boxed_slice()
     }
 
-    fn matches(&self, name: &[u8], selector: &Selector<'_>) -> bool {
-        selector.target.name == name
-            && selector.target.range == &*self.target_range
-            && match (&self.parent, &selector.parent) {
-                (None, None) => true,
-                (Some((parent, parent_range)), Some(declared)) => {
-                    declared.name == &**parent && declared.range == &**parent_range
-                }
-                _ => false,
-            }
+    fn matches(
+        &self,
+        name: &[u8],
+        parent: Option<PackageSelector>,
+        target: PackageSelector,
+    ) -> bool {
+        let own_parent = self
+            .parent
+            .as_ref()
+            .map(|(name, range)| (&**name, &**range));
+        (target.name, target.range) == (name, &*self.target_range)
+            && parent.map(|p| (p.name, p.range)) == own_parent
     }
 }
 
@@ -309,12 +310,10 @@ fn for_each_override_value(
     selector: &OverrideSelector,
     mut f: impl FnMut(&mut Option<Expr>),
 ) {
-    let (mut rules, nested) = match root.get(b"overrides") {
-        Some(overrides) => (overrides, true),
-        None => match root.get(b"resolutions") {
-            Some(resolutions) => (resolutions, false),
-            None => return,
-        },
+    let overrides = root.get(b"overrides");
+    let nested = overrides.is_some();
+    let Some(mut rules) = overrides.or_else(|| root.get(b"resolutions")) else {
+        return;
     };
     let Some(object) = rules.data.e_object_mut() else {
         return;
@@ -323,13 +322,8 @@ fn for_each_override_value(
         let Some(key) = prop.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
             continue;
         };
-        let is_group = nested
-            && prop
-                .value
-                .as_ref()
-                .is_some_and(|value| matches!(value.data, ExprData::EObject(_)));
-        if !is_group {
-            if parse_selector(key).is_ok_and(|rule| selector.matches(name, &rule)) {
+        if !(nested && prop.value.as_ref().is_some_and(|value| value.is_object())) {
+            if parse_selector(key).is_ok_and(|r| selector.matches(name, r.parent, r.target)) {
                 f(&mut prop.value);
             }
             continue;
@@ -337,35 +331,22 @@ fn for_each_override_value(
         let Ok(parent) = parse_package_segment(key) else {
             continue;
         };
-        let Some(group) = prop
-            .value
-            .as_mut()
-            .and_then(|value| value.data.e_object_mut())
-        else {
+        let Some(group) = prop.value.as_mut().and_then(|v| v.data.e_object_mut()) else {
             continue;
         };
         for child in group.properties.slice_mut() {
             let Some(child_key) = child.key.as_ref().and_then(Expr::as_utf8_string_literal) else {
                 continue;
             };
-            let rule = if child_key == b"." {
-                Selector {
+            let (rule_parent, target) = match parse_selector(child_key) {
+                _ if child_key == b"." => (None, parent),
+                Ok(Selector {
                     parent: None,
-                    target: parent,
-                }
-            } else {
-                match parse_selector(child_key) {
-                    Ok(Selector {
-                        parent: None,
-                        target,
-                    }) => Selector {
-                        parent: Some(parent),
-                        target,
-                    },
-                    _ => continue,
-                }
+                    target,
+                }) => (Some(parent), target),
+                _ => continue,
             };
-            if selector.matches(name, &rule) {
+            if selector.matches(name, rule_parent, target) {
                 f(&mut child.value);
             }
         }

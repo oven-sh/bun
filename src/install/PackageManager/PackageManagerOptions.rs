@@ -314,16 +314,15 @@ impl Options {
         match request {
             RequestKind::Manifest if !scope.has_credentials() => {
                 let registry = scope.url.url();
-                let slash = if registry.pathname.ends_with(b"/") {
-                    ""
-                } else {
-                    "/"
-                };
+                let path = registry
+                    .pathname
+                    .strip_suffix(b"/")
+                    .unwrap_or(registry.pathname);
                 let _ = write!(
                     note,
-                    "\n  no credentials are configured for this registry; add //{}{}{slash}:_authToken=<token> to .npmrc",
+                    "\n  no credentials are configured for this registry; add //{}{}/:_authToken=<token> to .npmrc",
                     bstr::BStr::new(registry.host),
-                    bstr::BStr::new(registry.pathname),
+                    bstr::BStr::new(path),
                 );
             }
             RequestKind::Tarball(Authorization::AllowAuthorization) => {

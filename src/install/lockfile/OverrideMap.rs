@@ -39,6 +39,23 @@ pub struct ScopedOverride {
     pub(crate) dep: Dependency,
 }
 
+/// The rule `OverrideMap::lookup` chose for one dependency edge.
+#[derive(Clone, Copy)]
+pub(crate) enum OverrideRule<'a> {
+    Flat(&'a Dependency),
+    Scoped(&'a ScopedOverride),
+}
+
+impl<'a> OverrideRule<'a> {
+    #[inline]
+    pub(crate) fn version(self) -> &'a dependency::Version {
+        match self {
+            OverrideRule::Flat(dep) => &dep.version,
+            OverrideRule::Scoped(rule) => &rule.dep.version,
+        }
+    }
+}
+
 impl ScopedOverride {
     #[inline]
     pub(crate) fn parent_has_range(&self) -> bool {
@@ -154,24 +171,34 @@ impl OverrideMap {
         dependency_id: DependencyID,
         name_hash: PackageNameHash,
     ) -> Option<dependency::Version> {
+        self.lookup(lockfile, dependency_id, name_hash)
+            .map(|rule| rule.version().clone())
+    }
+
+    pub(crate) fn lookup(
+        &self,
+        lockfile: &Lockfile,
+        dependency_id: DependencyID,
+        name_hash: PackageNameHash,
+    ) -> Option<OverrideRule<'_>> {
         scoped_log!(OverrideMap, "looking up override for {:x}", name_hash);
         if self.scoped.is_empty() {
             return self.get_flat(name_hash);
         }
         if self.scoped_names.contains(&name_hash) {
             if let Some(rule) = self.scoped_rule_for(lockfile, dependency_id, name_hash) {
-                return Some(rule.dep.version.clone());
+                return Some(OverrideRule::Scoped(rule));
             }
         }
         self.get_flat(name_hash)
     }
 
     #[inline]
-    fn get_flat(&self, name_hash: PackageNameHash) -> Option<dependency::Version> {
+    fn get_flat(&self, name_hash: PackageNameHash) -> Option<OverrideRule<'_>> {
         if self.map.count() == 0 {
             return None;
         }
-        self.map.get(&name_hash).map(|dep| dep.version.clone())
+        self.map.get(&name_hash).map(OverrideRule::Flat)
     }
 
     fn scoped_rule_for<'s>(

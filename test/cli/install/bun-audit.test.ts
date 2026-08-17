@@ -1717,7 +1717,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.4",
         downgrade: false,
         latestFixes: true,
-        blockers: [{ dependent: "package.json", range: "<1.0.4", bundled: false }],
+        blockers: [{ dependent: "package.json", range: "<1.0.4", bundled: false, override: null }],
       },
       {
         name: "no-deps",
@@ -1725,7 +1725,7 @@ describe("`bun audit fix`", () => {
         to: "1.1.0",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false }],
+        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false, override: null }],
       },
     ]);
     expect(json.exitCode).toBe(1);
@@ -1759,7 +1759,7 @@ describe("`bun audit fix`", () => {
 
     const json = await auditFix(dir, "--json");
     expect(JSON.parse(json.stdout).blocked[0].blockers).toStrictEqual([
-      { dependent: "packages/pkg-a/package.json", range: "<1.0.4", bundled: false },
+      { dependent: "packages/pkg-a/package.json", range: "<1.0.4", bundled: false, override: null },
     ]);
     expect(json.exitCode).toBe(1);
   });
@@ -2443,15 +2443,156 @@ describe("`bun audit fix`", () => {
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
 
-  test.concurrent("a version held by an overrides entry is blocked and the override is not rewritten", async () => {
+  test.concurrent("a direct dependency pinned by an overrides entry is fixed by rewriting the override", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setup(server, {
       name: "foo",
       dependencies: { "a-dep": "^1.0.2" },
       overrides: { "a-dep": "1.0.2" },
     });
+    expect(await lock(dir)).toContain('"a-dep@1.0.2"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ a-dep 1.0.2 -> 1.0.4
+          package.json (overrides): 1.0.2 -> 1.0.4
+
+      Fixed 1 vulnerability in 1 package (checked 1)"
+    `);
+    expect(exitCode).toBe(0);
+
+    expect(await pkgJson(dir)).toStrictEqual({
+      name: "foo",
+      dependencies: { "a-dep": "^1.0.2" },
+      overrides: { "a-dep": "1.0.4" },
+    });
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"a-dep@1.0.4"');
+    expect(lockfile).not.toContain('"a-dep@1.0.2"');
+    expect(lockfile).toContain('"a-dep": "1.0.4"');
+    expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
+
+    expectClean(await audit(dir), 1);
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  // one-range-dep and one-range-dep-too both declare no-deps@^1.0.0; only the override holds it at 1.0.0.
+  test.concurrent(
+    "a transitive dependency pinned by an overrides entry is fixed by rewriting the override",
+    async () => {
+      await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+      using dir = await setup(server, {
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "1.0.0" },
+      });
+      expect(await lock(dir)).toContain('"no-deps@1.0.0"');
+
+      const { stdout, stderr, exitCode } = await auditFix(dir);
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ no-deps 1.0.0 -> 1.0.1
+          package.json (overrides): 1.0.0 -> 1.0.1
+
+      Fixed 1 vulnerability in 1 package (checked 3)"
+    `);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(await pkgJson(dir)).toStrictEqual({
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "1.0.1" },
+      });
+      const lockfile = await lock(dir);
+      expect(lockfile).toContain('"no-deps@1.0.1"');
+      expect(lockfile).not.toContain('"no-deps@1.0.0"');
+      expect(lockfile).toContain('"no-deps": "1.0.1"');
+      expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
+
+      expectClean(await audit(dir), 3);
+      await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+    },
+  );
+
+  test.concurrent.each([
+    ["overrides", { "no-deps": "1.0.0" }, "(overrides)", { "no-deps": "1.0.1" }],
+    ["overrides", { "no-deps": { ".": "1.0.0" } }, "(overrides)", { "no-deps": { ".": "1.0.1" } }],
+    ["resolutions", { "**/no-deps": "1.0.0" }, "(overrides)", { "**/no-deps": "1.0.1" }],
+    [
+      "overrides",
+      { "one-range-dep>no-deps": "1.0.0" },
+      "(overrides one-range-dep>no-deps)",
+      { "one-range-dep>no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "one-range-dep": { "no-deps": "1.0.0" } },
+      "(overrides one-range-dep>no-deps)",
+      { "one-range-dep": { "no-deps": "1.0.1" } },
+    ],
+    [
+      "resolutions",
+      { "one-range-dep/no-deps": "1.0.0" },
+      "(overrides one-range-dep>no-deps)",
+      { "one-range-dep/no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "one-range-dep@1>no-deps": "1.0.0" },
+      "(overrides one-range-dep@1>no-deps)",
+      { "one-range-dep@1>no-deps": "1.0.1" },
+    ],
+    ["overrides", { "no-deps@<1.0.1": "1.0.0" }, "(overrides no-deps@<1.0.1)", { "no-deps@<1.0.1": "1.0.1" }],
+    // Two spellings of one rule: the last one is the rule bun applies, and every entry holding the version is rewritten.
+    [
+      "overrides",
+      { "**/no-deps": "1.0.0", "no-deps": "1.0.0" },
+      "(overrides)",
+      { "**/no-deps": "1.0.1", "no-deps": "1.0.1" },
+    ],
+    [
+      "overrides",
+      { "**/no-deps": "1.1.0", "no-deps": "1.0.0" },
+      "(overrides)",
+      { "**/no-deps": "1.1.0", "no-deps": "1.0.1" },
+    ],
+  ])("rewrites the rule in place when %s is written as %j", async (field, rules, label, rewritten) => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, { name: "foo", dependencies: { "one-range-dep": "1.0.0" }, [field]: rules });
+    expect(await lock(dir)).toContain('"no-deps@1.0.0"');
+
+    const { stdout, exitCode } = await auditFix(dir);
+    expect(stdout).toContain(`  ^ no-deps 1.0.0 -> 1.0.1\n    package.json ${label}: 1.0.0 -> 1.0.1\n`);
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
+
+    expect(await pkgJson(dir)).toStrictEqual({
+      name: "foo",
+      dependencies: { "one-range-dep": "1.0.0" },
+      [field]: rewritten,
+    });
+    const lockfile = await lock(dir);
+    expect(lockfile).toContain('"no-deps@1.0.1"');
+    expect(lockfile).not.toContain('"no-deps@1.0.0"');
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  test.concurrent("an override written as a $reference is reported as the blocker and left alone", async () => {
+    await using server = startRegistry({ "no-deps": [adv("<1.0.1")] });
+    using dir = await setup(server, {
+      name: "foo",
+      dependencies: { "no-deps": "1.0.0", "one-range-dep": "1.0.0" },
+      overrides: { "no-deps": "$no-deps" },
+    });
     const lockBefore = await lock(dir);
-    expect(lockBefore).toContain('"a-dep@1.0.2"');
+    expect(lockBefore).toContain('"no-deps@1.0.0"');
     const pkgJsonBefore = await pkgJsonText(dir);
 
     const { stdout, exitCode } = await auditFix(dir);
@@ -2459,15 +2600,15 @@ describe("`bun audit fix`", () => {
       "bun audit fix <version> (<revision>)
 
       blocked by a dependent's range:
-        ^ a-dep 1.0.2 -> 1.0.4
-          package.json depends on a-dep@1.0.2
+        ^ no-deps 1.0.0 -> 1.0.1
+          package.json overrides no-deps@1.0.0
 
-      Fixed 0 of 1 vulnerability (checked 1)
+      Fixed 0 of 1 vulnerability (checked 2)
       1 vulnerability remaining"
     `);
     expect(exitCode).toBe(1);
-    expect(await lock(dir)).toBe(lockBefore);
     expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+    expect(await lock(dir)).toBe(lockBefore);
   });
 
   test.concurrent("a pinned catalog entry is rewritten and the member keeps `catalog:`", async () => {
@@ -3233,7 +3374,9 @@ describe("`bun audit fix`", () => {
           to: "1.0.4",
           downgrade: false,
           newerThanMinimumReleaseAge: false,
-          packageJson: [{ file: "package.json", catalog: null, key: "a-dep", from: "1.0.2", to: "1.0.4" }],
+          packageJson: [
+            { file: "package.json", catalog: null, override: null, key: "a-dep", from: "1.0.2", to: "1.0.4" },
+          ],
         },
       ],
       blocked: [],
@@ -3325,7 +3468,7 @@ describe("`bun audit fix`", () => {
         to: "1.1.0",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false }],
+        blockers: [{ dependent: "one-dep@1.0.0", range: "1.0.1", bundled: false, override: null }],
       },
     ]);
     expect(doc.unmatched).toStrictEqual([{ name: "no-deps", range: ">=9.0.0" }]);
@@ -3468,7 +3611,9 @@ describe("`bun audit fix`", () => {
           to: "1.0.4",
           downgrade: false,
           newerThanMinimumReleaseAge: false,
-          packageJson: [{ file: "package.json", catalog: null, key: "a-dep", from: "1.0.2", to: "1.0.4" }],
+          packageJson: [
+            { file: "package.json", catalog: null, override: null, key: "a-dep", from: "1.0.2", to: "1.0.4" },
+          ],
         },
       ],
       blocked: [],
@@ -3779,7 +3924,7 @@ describe("`bun audit fix`", () => {
         to: "2.0.0",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "package.json", range: "pre-1", bundled: false }],
+        blockers: [{ dependent: "package.json", range: "pre-1", bundled: false, override: null }],
       },
     ]);
     expect(exitCode).toBe(1);
@@ -3993,7 +4138,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.1",
         downgrade: false,
         latestFixes: false,
-        blockers: [{ dependent: "bundled-1@1.0.0", range: "1.0.0", bundled: true }],
+        blockers: [{ dependent: "bundled-1@1.0.0", range: "1.0.0", bundled: true, override: null }],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 0, remaining: 1, fixes: [] });
@@ -4015,7 +4160,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.1",
         downgrade: true,
         latestFixes: true,
-        blockers: [{ dependent: "package.json", range: "^1.1.0", bundled: false }],
+        blockers: [{ dependent: "package.json", range: "^1.1.0", bundled: false, override: null }],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 0, remaining: 1, fixes: [] });
@@ -4044,7 +4189,7 @@ describe("`bun audit fix`", () => {
         to: "1.0.1",
         downgrade: false,
         newerThanMinimumReleaseAge: false,
-        packageJson: [{ file: "package.json", catalog, key: "no-deps", from: "1.0.0", to: "1.0.1" }],
+        packageJson: [{ file: "package.json", catalog, override: null, key: "no-deps", from: "1.0.0", to: "1.0.1" }],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0 });
@@ -4374,7 +4519,9 @@ describe("`bun audit fix --latest`", () => {
         to: "2.0.0",
         downgrade: false,
         newerThanMinimumReleaseAge: false,
-        packageJson: [{ file: "package.json", catalog: null, key: "no-deps", from: "^1.0.0", to: "^2.0.0" }],
+        packageJson: [
+          { file: "package.json", catalog: null, override: null, key: "no-deps", from: "^1.0.0", to: "^2.0.0" },
+        ],
       },
     ]);
     expect(doc).toMatchObject({ dryRun: false, fixed: 1, remaining: 0, blocked: [] });
@@ -4501,24 +4648,137 @@ describe("`bun audit fix --latest`", () => {
     expect(await lock(dir)).toBe(lockBefore);
   });
 
-  test.concurrent("a version held by an overrides entry stays blocked", async () => {
-    await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
+  // Both dependents declare no-deps@^1.0.0, which also rejects 2.0.0; the override is what the user can change, so it alone is reported.
+  test.concurrent(
+    "a range held by an overrides entry is blocked on the override, which --latest rewrites",
+    async () => {
+      await using server = noDeps1x();
+      using dir = await setup(server, {
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "~1.0.0" },
+      });
+      const lockBefore = await lock(dir);
+      expect(lockBefore).toContain('"no-deps@1.0.1"');
+      const pkgJsonBefore = await pkgJsonText(dir);
+
+      const blocked = await auditFix(dir);
+      expect(normalizeBunSnapshot(blocked.stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      blocked by a dependent's range:
+        ^ no-deps 1.0.1 -> 2.0.0
+          package.json overrides no-deps@~1.0.0
+          bun audit fix --latest
+
+      Fixed 0 of 1 vulnerability (checked 3)
+      1 vulnerability remaining"
+    `);
+      expect(blocked.exitCode).toBe(1);
+      expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
+      expect(await lock(dir)).toBe(lockBefore);
+
+      const { stdout, stderr, exitCode } = await auditFix(dir, "--latest");
+      expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
+      "bun audit fix <version> (<revision>)
+
+      fixing:
+        ^ no-deps 1.0.1 -> 2.0.0
+          package.json (overrides): ~1.0.0 -> ~2.0.0
+
+      Fixed 1 vulnerability in 1 package (checked 3)"
+    `);
+      expect(stderr).not.toContain("error:");
+      expect(exitCode).toBe(0);
+
+      expect(await pkgJson(dir)).toStrictEqual({
+        name: "foo",
+        dependencies: { "one-range-dep": "1.0.0", "one-range-dep-too": "1.0.0" },
+        overrides: { "no-deps": "~2.0.0" },
+      });
+      const lockfile = await lock(dir);
+      expect(lockfile).toContain('"no-deps@2.0.0"');
+      expect(lockfile).not.toContain('"no-deps@1.0.1"');
+      expect(lockfile).toContain('"no-deps": "~2.0.0"');
+      expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+
+      expectClean(await audit(dir), 3);
+      await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+    },
+  );
+
+  test.concurrent("a nested override is blocked with its key and rewritten under it", async () => {
+    await using server = noDeps1x();
     using dir = await setup(server, {
       name: "foo",
-      dependencies: { "a-dep": "^1.0.2" },
-      overrides: { "a-dep": "1.0.2" },
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep>no-deps": "~1.0.0" },
     });
-    const lockBefore = await lock(dir);
-    const pkgJsonBefore = await pkgJsonText(dir);
+    expect(await lock(dir)).toContain('"no-deps@1.0.1"');
+
+    const blocked = await auditFix(dir);
+    expect(blocked.stdout).toContain(
+      "    package.json overrides no-deps@~1.0.0 (one-range-dep>no-deps)\n    bun audit fix --latest\n",
+    );
+    expect(blocked.exitCode).toBe(1);
 
     const { stdout, exitCode } = await auditFix(dir, "--latest");
-    expect(stdout).toContain("blocked by a dependent's range:");
-    expect(stdout).toContain("package.json depends on a-dep@1.0.2");
-    expect(stdout).not.toContain("fixing:");
-    expect(stdout).not.toContain("bun audit fix --latest");
-    expect(exitCode).toBe(1);
-    expect(await pkgJsonText(dir)).toBe(pkgJsonBefore);
-    expect(await lock(dir)).toBe(lockBefore);
+    expect(stdout).toContain(
+      "  ^ no-deps 1.0.1 -> 2.0.0\n    package.json (overrides one-range-dep>no-deps): ~1.0.0 -> ~2.0.0\n",
+    );
+    expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
+    expect(exitCode).toBe(0);
+    expect((await pkgJson(dir)).overrides).toStrictEqual({ "one-range-dep>no-deps": "~2.0.0" });
+    expect(await installedVersion(dir, "no-deps")).toBe("2.0.0");
+
+    await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
+  });
+
+  test.concurrent("--json names the overrides rule on the blocker and on the edit that rewrites it", async () => {
+    await using server = noDeps1x();
+    using dir = await setup(server, {
+      name: "foo",
+      dependencies: { "one-range-dep": "1.0.0" },
+      overrides: { "one-range-dep>no-deps": "~1.0.0" },
+    });
+
+    const blocked = await auditFix(dir, "--json");
+    expect(JSON.parse(blocked.stdout).blocked).toStrictEqual([
+      {
+        name: "no-deps",
+        from: "1.0.1",
+        to: "2.0.0",
+        downgrade: false,
+        latestFixes: true,
+        blockers: [{ dependent: "package.json", range: "~1.0.0", bundled: false, override: "one-range-dep>no-deps" }],
+      },
+    ]);
+    expect(blocked.exitCode).toBe(1);
+
+    const { stdout, exitCode } = await auditFix(dir, "--latest", "--dry-run", "--json");
+    const doc = JSON.parse(stdout);
+    expect(doc.fixes).toStrictEqual([
+      {
+        name: "no-deps",
+        from: "1.0.1",
+        to: "2.0.0",
+        downgrade: false,
+        newerThanMinimumReleaseAge: false,
+        packageJson: [
+          {
+            file: "package.json",
+            catalog: null,
+            override: "one-range-dep>no-deps",
+            key: "no-deps",
+            from: "~1.0.0",
+            to: "~2.0.0",
+          },
+        ],
+      },
+    ]);
+    expect(doc).toMatchObject({ dryRun: true, fixed: 1, remaining: 0, blocked: [] });
+    expect(exitCode).toBe(0);
+    expect((await pkgJson(dir)).overrides).toStrictEqual({ "one-range-dep>no-deps": "~1.0.0" });
   });
 
   test.concurrent("a bundled dependency stays blocked without a --latest hint", async () => {

@@ -6,6 +6,7 @@ use bun_collections::bit_set::Range;
 use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::{Global, Output, UnwrapOrOom as _, strings};
 
+use crate::lockfile::override_map::OverrideRule;
 use crate::lockfile::package::PackageColumns as _;
 use crate::lockfile::{LoadResult, Lockfile, Package, PackageIndexEntry};
 use crate::package_manager::Options::{Enable, LogLevel};
@@ -593,21 +594,27 @@ pub(crate) fn effective_npm_range(
         .filter(|version| version.tag == DependencyVersionTag::Npm)
 }
 
+/// The override rule the resolver applies to this edge; `workspace:` and `npm:` alias edges are never overridden (PackageManagerEnqueue.rs).
+pub(crate) fn applied_override<'a>(
+    lockfile: &'a Lockfile,
+    dep_id: DependencyID,
+    dep: &Dependency,
+) -> Option<OverrideRule<'a>> {
+    if dep.behavior.is_workspace()
+        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
+    {
+        return None;
+    }
+    lockfile.overrides.lookup(lockfile, dep_id, dep.name_hash)
+}
+
 pub(crate) fn effective_version(
     lockfile: &Lockfile,
     dep_id: DependencyID,
     dep: &Dependency,
 ) -> Option<dependency::Version> {
-    let mut version = if dep.behavior.is_workspace()
-        || (dep.version.tag == DependencyVersionTag::Npm && dep.version.npm().is_alias)
-    {
-        dep.version.clone()
-    } else {
-        lockfile
-            .overrides
-            .get(lockfile, dep_id, dep.name_hash)
-            .unwrap_or_else(|| dep.version.clone())
-    };
+    let mut version = applied_override(lockfile, dep_id, dep)
+        .map_or_else(|| dep.version.clone(), |rule| rule.version().clone());
     if version.tag == DependencyVersionTag::Catalog {
         version = lockfile
             .catalogs

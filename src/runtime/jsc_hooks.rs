@@ -4032,6 +4032,7 @@ export default db;
                         core::ptr::null_mut()
                     },
                     bytecode_cache_size: bytecode_len,
+                    bytecode_source_hash: file.bytecode_source_hash,
                     module_info: if module_info_len > 0 {
                         bun_bundler::analyze_transpiled_module::ModuleInfoDeserialized
                             ::create_from_cached_record(&*file.module_info)

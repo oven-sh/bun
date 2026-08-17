@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isLinux, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -1156,6 +1156,106 @@ const server = serve({
     expect(exeStderr).toMatch(/\[Disk Cache\].*Cache hit/i);
     expect(exeExitCode).toBe(0);
   }, 30_000);
+
+  // The executable embeds JSC's hash of each module's source next to its
+  // bytecode, so loading a module from the bytecode cache never has to read the
+  // source text. Otherwise building the cache key hashes the whole source
+  // string, which faults every page of the embedded source into memory for a
+  // module that is never parsed.
+  //
+  // Linux only: the embedded module graph is part of the executable's writable
+  // PT_LOAD segment, so the Rss of the executable's writable mappings in
+  // /proc/self/smaps measures how much of it has been touched. CommonJS because
+  // debug builds re-parse ESM modules to cross-check the embedded module info,
+  // which reads the source regardless of the cache key.
+  test.skipIf(!isLinux)(
+    "bytecode modules are loaded without reading their embedded source",
+    async () => {
+      const sourceSize = 8 * 1024 * 1024;
+      using dir = tempDir("compile-bytecode-source-hash", {
+        "entry.js": /* js */ `
+          const { readFileSync } = require("fs");
+
+          function executableDataRssKB() {
+            let total = 0;
+            let counting = false;
+            for (const line of readFileSync("/proc/self/smaps", "utf8").split("\\n")) {
+              // Mapping header: "start-end perms offset dev inode pathname"; the
+              // lines that follow it describe that mapping. Only writable
+              // mappings: read-only ones hold code, and require() itself runs
+              // code for the first time.
+              if (/^[0-9a-f]+-[0-9a-f]+ /.test(line)) {
+                const fields = line.split(/\\s+/);
+                counting = fields[1].startsWith("rw") && fields.slice(5).join(" ") === process.execPath;
+              } else if (counting && line.startsWith("Rss:")) {
+                total += parseInt(line.slice(4), 10);
+              }
+            }
+            return total;
+          }
+
+          // Computed specifier so big.js is loaded from the embedded module
+          // graph at runtime instead of being bundled into this entry point.
+          const specifier = "./big" + ".js";
+          const before = executableDataRssKB();
+          const big = require(specifier);
+          const after = executableDataRssKB();
+          console.log(JSON.stringify({ before, after, loaded: typeof big }));
+        `,
+        // Never called, so nothing reads the string through either the source
+        // text or the bytecode (JSC decodes a function's bytecode on first call).
+        "big.js": `module.exports = function unused() { return "${Buffer.alloc(sourceSize, "x").toString()}"; };\n`,
+      });
+
+      await using build = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "build",
+          "--compile",
+          "--bytecode",
+          "--format=cjs",
+          "./entry.js",
+          "./big.js",
+          "--outfile",
+          "app",
+        ],
+        cwd: String(dir),
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [, buildStderr, buildExitCode] = await Promise.all([
+        build.stdout.text(),
+        build.stderr.text(),
+        build.exited,
+      ]);
+      expect(buildStderr).toBe("");
+      expect(buildExitCode).toBe(0);
+
+      await using exe = Bun.spawn({
+        cmd: [join(String(dir), "app")],
+        env: { ...bunEnv, BUN_JSC_verboseDiskCache: "1" },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [exeStdout, exeStderr, exeExitCode] = await Promise.all([exe.stdout.text(), exe.stderr.text(), exe.exited]);
+
+      const { before, after, loaded } = JSON.parse(exeStdout);
+      expect(loaded).toBe("function");
+      // The mapping was found at all (bun's own data lives there too).
+      expect(before).toBeGreaterThan(0);
+      // Loading big.js touched at most a few pages of the module graph, not the
+      // 8 MiB of source. Without the embedded hash this is >= sourceSize.
+      expect(after - before).toBeLessThan(sourceSize / 1024 / 2);
+      // entry.js and big.js both loaded from bytecode, which also proves the
+      // embedded hash matches the key JSC stored in the bytecode.
+      expect(exeStderr.split("\n").filter(line => line.includes("[Disk Cache] Cache hit for sourceCode"))).toHaveLength(
+        2,
+      );
+      expect(exeExitCode).toBe(0);
+    },
+    30_000,
+  );
 
   // When compiling with 8+ entry points, the main entry point should still run correctly.
   test("compile with 8+ entry points runs main entry correctly", async () => {

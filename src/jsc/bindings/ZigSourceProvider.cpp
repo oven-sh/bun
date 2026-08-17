@@ -126,6 +126,7 @@ Ref<SourceProvider> SourceProvider::create(
                 sourceURLString.impl(), TextPosition(),
                 sourceType));
             provider->m_cachedBytecode = WTF::move(bytecode);
+            provider->m_hash = resolvedSource.bytecode_source_hash;
             return provider;
         }
 
@@ -196,7 +197,7 @@ static JSC::VM& getVMForBytecodeCache()
     return *vmForBytecodeCache;
 }
 
-extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, unsigned* outputSourceHash, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
     JSC::SourceCode sourceCode = JSC::makeSource(WTF::String(sourceCodeSpan), toSourceOrigin(sourceProviderURL->toWTFString(), false), JSC::SourceTaintedOrigin::Untainted);
@@ -227,11 +228,12 @@ extern "C" bool generateCachedModuleByteCodeFromSourceCode(BunString* sourceProv
     *cachedBytecodePtr = cachedBytecode.get();
     *outputByteCode = cachedBytecode->span().data();
     *outputByteCodeSize = cachedBytecode->span().size();
+    *outputSourceHash = sourceCode.provider()->hash();
 
     return true;
 }
 
-extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, JSC::CachedBytecode** cachedBytecodePtr)
+extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* sourceProviderURL, const Latin1Character* inputSourceCode, size_t inputSourceCodeSize, const uint8_t** outputByteCode, size_t* outputByteCodeSize, unsigned* outputSourceHash, JSC::CachedBytecode** cachedBytecodePtr)
 {
     std::span<const Latin1Character> sourceCodeSpan(inputSourceCode, inputSourceCodeSize);
 
@@ -262,12 +264,17 @@ extern "C" bool generateCachedCommonJSProgramByteCodeFromSourceCode(BunString* s
     *cachedBytecodePtr = cachedBytecode.get();
     *outputByteCode = cachedBytecode->span().data();
     *outputByteCodeSize = cachedBytecode->span().size();
+    *outputSourceHash = sourceCode.provider()->hash();
 
     return true;
 }
 
 unsigned SourceProvider::hash() const
 {
+    // m_hash is only set when the bytecode cache carried the hash computed at
+    // build time. Falling through to StringImpl::hash() walks the entire source,
+    // which for a compiled executable faults in every page of the embedded
+    // source even though the bytecode cache means it is never parsed.
     if (m_hash) {
         return m_hash;
     }

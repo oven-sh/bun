@@ -1070,7 +1070,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         let mut source_provider_url =
                             bun_core::OwnedString::new(source_provider_url);
 
-                        if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
+                        if let Some(crate::bundle_v2::dispatch::GeneratedBytecode {
+                            bytes: bytecode,
+                            source_hash,
+                        }) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                             c.options.output_format,
                             &code_result.buffer,
                             &mut source_provider_url,
@@ -1105,6 +1108,7 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                                     None
                                 },
                                 output_kind: options::OutputKind::Bytecode,
+                                bytecode_source_hash: source_hash,
                                 loader: Loader::File,
                                 size: Some(bytecode.len()),
                                 display_size: bytecode.len() as u32,

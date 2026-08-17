@@ -51,6 +51,13 @@ pub struct ResolvedSource {
     /// was used at build time. If empty, the origin is derived from source_url.
     /// This is converted to a file:// URL on the C++ side.
     pub bytecode_origin_path: BunString,
+    /// `JSC::SourceProvider::hash()` of `source_code`, recorded when
+    /// `bytecode_cache` was generated. The C++ side installs it on the
+    /// `SourceProvider` so building the bytecode cache key does not have to
+    /// read `source_code` (for a compiled executable that would fault in every
+    /// page of the embedded source). 0 when unknown; WTF string hashes are
+    /// never 0, so 0 unambiguously means "compute it from the source".
+    pub bytecode_source_hash: u32,
 }
 
 impl Default for ResolvedSource {
@@ -70,6 +77,7 @@ impl Default for ResolvedSource {
             bytecode_cache_size: 0,
             module_info: core::ptr::null_mut(),
             bytecode_origin_path: BunString::empty(),
+            bytecode_source_hash: 0,
         }
     }
 }

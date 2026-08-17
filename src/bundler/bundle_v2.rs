@@ -1365,6 +1365,16 @@ pub mod bv2_impl {
             }
         }
 
+        /// A chunk's generated JSC bytecode cache.
+        pub struct GeneratedBytecode {
+            pub bytes: Box<[u8]>,
+            /// `JSC::SourceProvider::hash()` of the source the bytecode was
+            /// generated from; part of the cache key JSC checks before using
+            /// `bytes`. Recording it lets the runtime build the key without
+            /// reading the source text. Never 0.
+            pub source_hash: u32,
+        }
+
         unsafe extern "Rust" {
             /// Defined `#[no_mangle]` in `bun_jsc::cached_bytecode`. Generic
             /// "generate JSC bytecode off the main JS thread" helper — marks the
@@ -1376,7 +1386,7 @@ pub mod bv2_impl {
                 format: crate::options_impl::Format,
                 source: &[u8],
                 source_provider_url: &mut bun_core::String,
-            ) -> Option<Box<[u8]>>;
+            ) -> Option<GeneratedBytecode>;
         }
 
         unsafe extern "Rust" {
@@ -1414,7 +1424,7 @@ pub mod bv2_impl {
             format: crate::options_impl::Format,
             source: &[u8],
             source_provider_url: &mut bun_core::String,
-        ) -> Option<Box<[u8]>> {
+        ) -> Option<GeneratedBytecode> {
             __bun_jsc_generate_cached_bytecode(format, source, source_provider_url)
         }
 

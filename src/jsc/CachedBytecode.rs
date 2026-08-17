@@ -1,5 +1,6 @@
 use core::ptr::NonNull;
 
+use bun_bundler::dispatch::GeneratedBytecode;
 use bun_core::String as BunString;
 use bun_options_types::Format;
 
@@ -15,6 +16,7 @@ unsafe extern "C" {
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
+        output_source_hash: *mut u32,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
     ) -> bool;
 
@@ -24,6 +26,7 @@ unsafe extern "C" {
         input_source_code_size: usize,
         output_byte_code: *mut Option<NonNull<u8>>,
         output_byte_code_size: *mut usize,
+        output_source_hash: *mut u32,
         cached_bytecode: *mut Option<NonNull<CachedBytecode>>,
     ) -> bool;
 
@@ -33,18 +36,28 @@ unsafe extern "C" {
     safe fn CachedBytecode__deref(this: &mut CachedBytecode);
 }
 
+/// Output of [`CachedBytecode::generate`].
+///
+/// SAFETY CONTRACT: `bytes` actually borrows from `handle` and is invalidated
+/// when `CachedBytecode__deref` is called on it. Callers own the handle and
+/// must deref it to free.
+pub(crate) struct Generated {
+    pub bytes: &'static [u8],
+    /// See [`GeneratedBytecode::source_hash`].
+    pub source_hash: u32,
+    pub handle: NonNull<CachedBytecode>,
+}
+
 impl CachedBytecode {
-    // SAFETY CONTRACT: the returned `&'static [u8]` actually borrows from the
-    // `CachedBytecode` handle and is invalidated when `deref()` is called. Callers own
-    // the handle and must call `deref()` (or drop via `allocator()`) to free.
     pub(crate) fn generate_for_esm(
         source_provider_url: &mut BunString,
         input: &[u8],
-    ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
+    ) -> Option<Generated> {
         let mut this: Option<NonNull<CachedBytecode>> = None;
 
         let mut input_code_size: usize = 0;
         let mut input_code_ptr: Option<NonNull<u8>> = None;
+        let mut source_hash: u32 = 0;
         // SAFETY: out-params are valid for write; input slice valid for read.
         let ok = unsafe {
             generateCachedModuleByteCodeFromSourceCode(
@@ -53,6 +66,7 @@ impl CachedBytecode {
                 input.len(),
                 &raw mut input_code_ptr,
                 &raw mut input_code_size,
+                &raw mut source_hash,
                 &raw mut this,
             )
         };
@@ -61,7 +75,11 @@ impl CachedBytecode {
             // and the slice is valid for `input_code_size` bytes until deref().
             let slice =
                 unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
-            return Some((slice, this.unwrap()));
+            return Some(Generated {
+                bytes: slice,
+                source_hash,
+                handle: this.unwrap(),
+            });
         }
 
         None
@@ -70,10 +88,11 @@ impl CachedBytecode {
     pub(crate) fn generate_for_cjs(
         source_provider_url: &mut BunString,
         input: &[u8],
-    ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
+    ) -> Option<Generated> {
         let mut this: Option<NonNull<CachedBytecode>> = None;
         let mut input_code_size: usize = 0;
         let mut input_code_ptr: Option<NonNull<u8>> = None;
+        let mut source_hash: u32 = 0;
         // SAFETY: out-params are valid for write; input slice valid for read.
         let ok = unsafe {
             generateCachedCommonJSProgramByteCodeFromSourceCode(
@@ -82,6 +101,7 @@ impl CachedBytecode {
                 input.len(),
                 &raw mut input_code_ptr,
                 &raw mut input_code_size,
+                &raw mut source_hash,
                 &raw mut this,
             )
         };
@@ -90,7 +110,11 @@ impl CachedBytecode {
             // and the slice is valid for `input_code_size` bytes until deref().
             let slice =
                 unsafe { bun_core::ffi::slice(input_code_ptr.unwrap().as_ptr(), input_code_size) };
-            return Some((slice, this.unwrap()));
+            return Some(Generated {
+                bytes: slice,
+                source_hash,
+                handle: this.unwrap(),
+            });
         }
 
         None
@@ -100,7 +124,7 @@ impl CachedBytecode {
         format: Format,
         input: &[u8],
         source_provider_url: &mut BunString,
-    ) -> Option<(&'static [u8], NonNull<CachedBytecode>)> {
+    ) -> Option<Generated> {
         match format {
             Format::Esm => Self::generate_for_esm(source_provider_url, input),
             Format::Cjs => Self::generate_for_cjs(source_provider_url, input),
@@ -133,14 +157,21 @@ pub(crate) fn __bun_jsc_generate_cached_bytecode(
     format: Format,
     source: &[u8],
     source_provider_url: &mut BunString,
-) -> Option<Box<[u8]>> {
+) -> Option<GeneratedBytecode> {
     crate::virtual_machine::IS_BUNDLER_THREAD_FOR_BYTECODE_CACHE.set(true);
     crate::initialize(false);
-    let (bytes, handle) = CachedBytecode::generate(format, source, source_provider_url)?;
+    let Generated {
+        bytes,
+        source_hash,
+        handle,
+    } = CachedBytecode::generate(format, source, source_provider_url)?;
     let owned = Box::<[u8]>::from(bytes);
     // `handle` was just produced by C++ and is valid until deref;
     // `CachedBytecode` is an opaque ZST handle so `opaque_mut` is the
     // centralised zero-byte deref proof.
     CachedBytecode__deref(CachedBytecode::opaque_mut(handle.as_ptr()));
-    Some(owned)
+    Some(GeneratedBytecode {
+        bytes: owned,
+        source_hash,
+    })
 }

@@ -887,7 +887,7 @@ fn generate_bytecode(format: Format, code: &[u8], url: &[u8]) -> Option<Box<[u8]
                             job.format, &job.code, &mut url,
                         );
                         url.deref();
-                        let _ = job.resp.send(result);
+                        let _ = job.resp.send(result.map(|generated| generated.bytes));
                     }
                 });
             match spawned {

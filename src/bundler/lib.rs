@@ -382,6 +382,7 @@ impl Default for output_file::Options {
             source_map_index: None,
             bytecode_index: None,
             module_info_index: None,
+            bytecode_source_hash: 0,
             output_path: Box::default(),
             source_index: output_file::IndexOptional::NONE,
             size: None,

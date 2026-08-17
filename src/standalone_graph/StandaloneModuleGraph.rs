@@ -329,6 +329,11 @@ pub(crate) struct CompiledModuleGraphFile {
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: StringPointer,
+    /// JSC's hash of `contents`, recorded when `bytecode` was generated, so the
+    /// runtime can build the bytecode cache key without reading `contents`
+    /// (which would fault in every page of the embedded source). 0 when not
+    /// recorded; JSC string hashes are never 0.
+    pub bytecode_source_hash: u32,
     pub encoding: Encoding,
     pub loader: Loader,
     pub module_format: ModuleFormat,
@@ -478,6 +483,10 @@ pub struct File {
     /// The file path used when generating bytecode (e.g., "B:/~BUN/root/app.js").
     /// Must match exactly at runtime for bytecode cache hits.
     pub bytecode_origin_path: &'static [u8],
+    /// See `CompiledModuleGraphFile::bytecode_source_hash`. Only ever non-zero
+    /// when `encoding` is `Latin1`, i.e. when `to_wtf_string()` hands JSC the
+    /// exact bytes this hash was computed over.
+    pub bytecode_source_hash: u32,
     pub module_format: ModuleFormat,
     pub side: FileSide,
 }
@@ -729,6 +738,7 @@ impl StandaloneModuleGraph {
                     } else {
                         b""
                     },
+                    bytecode_source_hash: module.bytecode_source_hash,
                     module_format: module.module_format,
                     side: module.side,
                     cached_blob: None,
@@ -1017,14 +1027,36 @@ pub(crate) fn to_bytes(
             }
         }
 
+        // Latin1 lets the runtime wrap the mmapped section bytes in a
+        // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
+        // server-side JS, but `--banner`/`--footer`/hashbang and
+        // client-side (target=browser) chunks are concatenated verbatim
+        // as UTF-8, so verify the final bytes before committing to Latin1.
+        let encoding = match output_file.loader {
+            Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
+                if strings::first_non_ascii(buf_bytes).is_none() =>
+            {
+                Encoding::Latin1
+            }
+            _ => Encoding::Binary,
+        };
+
         // When there's bytecode, store the bytecode output file's path as bytecode_origin_path.
         // This path was used to generate the bytecode cache and must match at runtime.
-        let bytecode_origin_path: StringPointer = if output_file.bytecode_index != u32::MAX {
-            string_builder
-                .append_count_z(&output_files[output_file.bytecode_index as usize].dest_path)
-        } else {
-            StringPointer::default()
-        };
+        let mut bytecode_origin_path = StringPointer::default();
+        let mut bytecode_source_hash: u32 = 0;
+        if output_file.bytecode_index != u32::MAX {
+            let bytecode_file = &output_files[output_file.bytecode_index as usize];
+            bytecode_origin_path = string_builder.append_count_z(&bytecode_file.dest_path);
+            // The bytecode was keyed on `buf_bytes` read as Latin1, which is
+            // exactly the string the runtime builds for `Encoding::Latin1`. A
+            // `Binary` module is decoded as UTF-8 into a different string, so
+            // the recorded hash would not describe it; leave it 0 and let the
+            // runtime hash whatever it ends up with.
+            if encoding == Encoding::Latin1 {
+                bytecode_source_hash = bytecode_file.bytecode_source_hash;
+            }
+        }
 
         let mut module = CompiledModuleGraphFile {
             name: string_builder.fmt_append_count_z(format_args!(
@@ -1034,19 +1066,7 @@ pub(crate) fn to_bytes(
             )),
             loader: output_file.loader,
             contents: string_builder.append_count_z(buf_bytes),
-            // Latin1 lets the runtime wrap the mmapped section bytes in a
-            // zero-copy ExternalStringImpl. The printer escapes non-ASCII for
-            // server-side JS, but `--banner`/`--footer`/hashbang and
-            // client-side (target=browser) chunks are concatenated verbatim
-            // as UTF-8, so verify the final bytes before committing to Latin1.
-            encoding: match output_file.loader {
-                Loader::Js | Loader::Jsx | Loader::Ts | Loader::Tsx
-                    if strings::first_non_ascii(buf_bytes).is_none() =>
-                {
-                    Encoding::Latin1
-                }
-                _ => Encoding::Binary,
-            },
+            encoding,
             module_format: if output_file.loader.is_javascript_like() {
                 match output_format {
                     Format::Cjs => ModuleFormat::Cjs,
@@ -1059,6 +1079,7 @@ pub(crate) fn to_bytes(
             bytecode,
             module_info,
             bytecode_origin_path,
+            bytecode_source_hash,
             side: match output_file.side.unwrap_or(options::Side::Server) {
                 options::Side::Server => FileSide::Server,
                 options::Side::Client => FileSide::Client,

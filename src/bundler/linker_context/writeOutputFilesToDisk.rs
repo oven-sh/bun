@@ -160,6 +160,7 @@ pub(crate) fn write_output_files_to_disk(
                             source_map_index: None,
                             bytecode_index: None,
                             module_info_index: None,
+                            bytecode_source_hash: 0,
                             display_size: 0,
                             referenced_css_chunks: Box::default(),
                             source_index: IndexOptional::NONE,
@@ -184,6 +185,7 @@ pub(crate) fn write_output_files_to_disk(
                 source_map_index,
                 bytecode_index: None,
                 module_info_index: None,
+                bytecode_source_hash: 0,
                 side: Some(options::Side::Client),
                 entry_point_index: None,
                 referenced_css_chunks: Box::default(),
@@ -356,6 +358,7 @@ pub(crate) fn write_output_files_to_disk(
                     source_map_index: None,
                     bytecode_index: None,
                     module_info_index: None,
+                    bytecode_source_hash: 0,
                     display_size: 0,
                     referenced_css_chunks: Box::default(),
                     source_index: IndexOptional::NONE,
@@ -408,7 +411,10 @@ pub(crate) fn write_output_files_to_disk(
                     // `defer source_provider_url.deref()` handled by Drop on OwnedString.
                     let mut source_provider_url = bun_core::OwnedString::new(source_provider_url);
 
-                    if let Some(bytecode) = crate::bundle_v2::dispatch::generate_cached_bytecode(
+                    if let Some(crate::bundle_v2::dispatch::GeneratedBytecode {
+                        bytes: bytecode,
+                        source_hash,
+                    }) = crate::bundle_v2::dispatch::generate_cached_bytecode(
                         c.options.output_format,
                         &code_result.buffer,
                         &mut source_provider_url,
@@ -478,6 +484,7 @@ pub(crate) fn write_output_files_to_disk(
                                 None
                             },
                             output_kind: options::OutputKind::Bytecode,
+                            bytecode_source_hash: source_hash,
                             loader: Loader::File,
                             size: Some(bytecode.len()),
                             display_size: bytecode.len() as u32,
@@ -560,6 +567,7 @@ pub(crate) fn write_output_files_to_disk(
             source_map_index,
             bytecode_index,
             module_info_index: None,
+            bytecode_source_hash: 0,
             size: Some(code_result.buffer.len()),
             display_size: display_size as u32,
             is_executable: chunk.flags.contains(ChunkFlags::IS_EXECUTABLE),

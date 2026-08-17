@@ -24,6 +24,10 @@ pub struct OutputFile {
     pub source_map_index: u32,
     pub bytecode_index: u32,
     pub module_info_index: u32,
+    /// Only set on `OutputKind::Bytecode` files: the JSC source hash the
+    /// bytecode was keyed with (`dispatch::GeneratedBytecode::source_hash`),
+    /// embedded next to the bytecode by `bun build --compile`. 0 otherwise.
+    pub bytecode_source_hash: u32,
     pub output_kind: OutputKind,
     /// Relative
     pub dest_path: Box<[u8]>,
@@ -52,6 +56,7 @@ impl OutputFile {
             source_map_index: u32::MAX,
             bytecode_index: u32::MAX,
             module_info_index: u32::MAX,
+            bytecode_source_hash: 0,
             output_kind: OutputKind::Chunk,
             dest_path: Box::default(),
             side: None,
@@ -91,6 +96,7 @@ impl Clone for OutputFile {
             source_map_index: self.source_map_index,
             bytecode_index: self.bytecode_index,
             module_info_index: self.module_info_index,
+            bytecode_source_hash: self.bytecode_source_hash,
             output_kind: self.output_kind,
             dest_path: self.dest_path.clone(),
             side: self.side,
@@ -198,6 +204,7 @@ pub struct Options {
     pub(crate) source_map_index: Option<u32>,
     pub(crate) bytecode_index: Option<u32>,
     pub(crate) module_info_index: Option<u32>,
+    pub(crate) bytecode_source_hash: u32,
     pub(crate) output_path: Box<[u8]>,
     pub(crate) source_index: IndexOptional,
     pub(crate) size: Option<usize>,
@@ -235,6 +242,7 @@ impl OutputFile {
             output_kind: options.output_kind,
             bytecode_index: options.bytecode_index.unwrap_or(u32::MAX),
             module_info_index: options.module_info_index.unwrap_or(u32::MAX),
+            bytecode_source_hash: options.bytecode_source_hash,
             source_map_index: options.source_map_index.unwrap_or(u32::MAX),
             is_executable: options.is_executable,
             value: match options.data {

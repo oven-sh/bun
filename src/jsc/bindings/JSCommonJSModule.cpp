@@ -1419,6 +1419,8 @@ void JSCommonJSModule::evaluate(
                 string.substring(trimStart, string.length() - trimStart - 4),
                 wrapperEnd));
             source.needsDeref = true;
+            // The source no longer matches what the bytecode was built from.
+            source.bytecode_source_hash = 0;
         }
     }
 
@@ -1539,6 +1541,8 @@ std::optional<JSC::SourceCode> createCommonJSModule(
                 globalObject->m_moduleWrapperEnd);
             source.source_code.deref();
             source.source_code = Bun::toStringRef(concat);
+            // The source no longer matches what the bytecode was built from.
+            source.bytecode_source_hash = 0;
         }
 
         auto sourceProvider = Zig::SourceProvider::create(globalObject, source, JSC::SourceProviderSourceType::Program, isBuiltIn);

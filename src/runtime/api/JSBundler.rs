@@ -1459,24 +1459,35 @@ pub mod js_bundler {
         {
             resolve.value = ResolveValue::NoMatch;
         } else {
-            let global = bv2_plugin(resolve.bv2).global_object();
+            let plugin = bv2_plugin(resolve.bv2);
+            let global = plugin.global_object();
             // `to_slice_clone` already heap-allocates; `into_vec` moves that
             // buffer out instead of allocating a second copy.
-            let path = path_value
-                .to_slice_clone(global)
-                .expect("Unexpected: path is not a string")
-                .into_vec()
-                .into_boxed_slice();
-            let namespace = namespace_value
-                .to_slice_clone(global)
-                .expect("Unexpected: namespace is not a string")
-                .into_vec()
-                .into_boxed_slice();
-            resolve.value = ResolveValue::Success(ResolveSuccess {
-                path,
-                namespace,
-                external: external_value.to_boolean(),
+            let strings = path_value.to_slice_clone(global).and_then(|path| {
+                let namespace = namespace_value.to_slice_clone(global)?;
+                Ok((path, namespace))
             });
+            resolve.value = match strings {
+                Ok((path, namespace)) => ResolveValue::Success(ResolveSuccess {
+                    path: path.into_vec().into_boxed_slice(),
+                    namespace: namespace.into_vec().into_boxed_slice(),
+                    external: external_value.to_boolean(),
+                }),
+                // Both values are strings (BundlerPlugin.ts checked), but
+                // flattening one can still throw. The exception has to be taken
+                // here: left pending, it rejects `runOnResolvePlugins`, whose
+                // rejection handler calls `JSBundlerPlugin__addError` and
+                // answers this same request a second time. Report it the way
+                // `addError` would have instead.
+                Err(err) => {
+                    let exception = global.take_exception(err);
+                    ResolveValue::Err(plugin_msg_from_js(
+                        plugin,
+                        &resolve.import_record.source_file,
+                        exception,
+                    ))
+                }
+            };
         }
 
         bv2_mut(resolve.bv2).on_resolve_async(resolve);

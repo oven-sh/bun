@@ -599,7 +599,10 @@ impl JSGlobalObject {
         let actual_type = if value.js_type().is_array() {
             bun_core::ZigString::static_(b"array")
         } else {
-            value.js_type_string(self).get_zig_string(self)
+            match value.js_type_string(self).get_zig_string(self) {
+                Ok(s) => s,
+                Err(e) => return e,
+            }
         };
         self.err(
             JscError::INVALID_ARG_TYPE,
@@ -644,7 +647,10 @@ impl JSGlobalObject {
     ) -> JsError {
         // `ZigStringSlice` is RAII: `Owned` frees
         // its `Vec<u8>`, `WTF` derefs the backing `WTFStringImpl` in `Drop`.
-        let ty_str = value.js_type_string(self).to_slice(self);
+        let ty_str = match value.js_type_string(self).to_slice(self) {
+            Ok(s) => s,
+            Err(e) => return e,
+        };
         self.err(
             JscError::INVALID_ARG_TYPE,
             format_args!(

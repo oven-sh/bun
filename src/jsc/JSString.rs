@@ -33,8 +33,18 @@ impl JSString {
         JSValue::from_cell(self)
     }
 
-    pub(crate) fn to_zig_string(&self, global: &JSGlobalObject, zig_str: &mut ZigString) {
-        JSC__JSString__toZigString(self, global, zig_str)
+    /// Flattening a rope can throw (JSC throws its "Out of memory" `RangeError`
+    /// when the flat buffer cannot be allocated). The C++ shim returns an empty
+    /// string in that case and leaves the exception on the VM, so it is observed
+    /// here, the same way `JSValue::to_zig_string` does.
+    pub(crate) fn to_zig_string(
+        &self,
+        global: &JSGlobalObject,
+        zig_str: &mut ZigString,
+    ) -> JsResult<()> {
+        crate::from_js_host_call_generic(global, || {
+            JSC__JSString__toZigString(self, global, zig_str)
+        })
     }
 
     pub fn ensure_still_alive(&self) {
@@ -42,22 +52,20 @@ impl JSString {
         core::hint::black_box(std::ptr::from_ref::<Self>(self));
     }
 
-    pub fn get_zig_string(&self, global: &JSGlobalObject) -> ZigString {
+    pub fn get_zig_string(&self, global: &JSGlobalObject) -> JsResult<ZigString> {
         let mut out = ZigString::init(b"");
-        self.to_zig_string(global, &mut out);
-        out
+        self.to_zig_string(global, &mut out)?;
+        Ok(out)
     }
 
     #[inline]
-    pub fn view(&self, global: &JSGlobalObject) -> ZigString {
+    pub fn view(&self, global: &JSGlobalObject) -> JsResult<ZigString> {
         self.get_zig_string(global)
     }
 
     /// doesn't always allocate
-    pub fn to_slice(&self, global: &JSGlobalObject) -> ZigStringSlice {
-        let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
-        str.to_slice()
+    pub fn to_slice(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
+        Ok(self.get_zig_string(global)?.to_slice())
     }
 
     // `to_slice_clone` always allocates
@@ -66,9 +74,7 @@ impl JSString {
     // callers a use-after-free once the cell is collected.
 
     pub fn to_slice_clone(&self, global: &JSGlobalObject) -> JsResult<ZigStringSlice> {
-        let mut str = ZigString::init(b"");
-        self.to_zig_string(global, &mut str);
-        Ok(str.to_slice_clone())
+        Ok(self.get_zig_string(global)?.to_slice_clone())
     }
 
     // `to_slice_z` guarantees a trailing NUL

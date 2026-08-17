@@ -235,6 +235,49 @@ describe("bundler", () => {
     },
   });
 
+  // A 16-bit rope string of the maximum length (2^31 - 1 chars). Building it
+  // only allocates rope nodes, but a flat 16-bit buffer of that length fails
+  // WTF::StringImpl::isValidLength, so the first thing to read the string gets
+  // JSC's "Out of memory" RangeError without any allocation being attempted.
+  // Returned from onResolve with `external: true`, nothing on the JS side reads
+  // it, so the first read is the bundler converting the result to bytes. That
+  // used to leave the exception pending and answer the resolve with an empty
+  // string.
+  function unflattenableString() {
+    let str = "\u0100";
+    for (let i = 0; i < 30; i++) str = str + str + "\u0100";
+    expect(str.length).toBe(2 ** 31 - 1);
+    return str;
+  }
+  itBundled("plugin/ResolvePathStringConversionThrows", {
+    files: resolveFixture,
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, () => {
+        return { path: unflattenableString(), external: true };
+      });
+    },
+    bundleErrors: {
+      "/index.ts": [`Out of memory`],
+    },
+    onAfterApiBundle(build) {
+      expect(build.success).toBe(false);
+    },
+  });
+  itBundled("plugin/ResolveNamespaceStringConversionThrows", {
+    files: resolveFixture,
+    plugins(builder) {
+      builder.onResolve({ filter: /\.magic$/ }, () => {
+        return { path: "foo", namespace: unflattenableString(), external: true };
+      });
+    },
+    bundleErrors: {
+      "/index.ts": [`Out of memory`],
+    },
+    onAfterApiBundle(build) {
+      expect(build.success).toBe(false);
+    },
+  });
+
   //
   itBundled("plugin/ResolvePrefix", ({ root }) => {
     let onResolveCount = 0;

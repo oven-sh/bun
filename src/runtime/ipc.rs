@@ -2014,7 +2014,13 @@ fn import_windows_socket_payload(global: &JSGlobalObject, msg_data: JSValue) -> 
             return None;
         }
     };
-    let hex = jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global);
+    let hex = match jsc::JSString::opaque_ref(info_value.as_string()).to_slice(global) {
+        Ok(hex) => hex,
+        Err(_) => {
+            global.clear_exception();
+            return None;
+        }
+    };
     let expected = bun_uws::socket_transfer::bsd_socket_export_size() as usize;
     let mut info = vec![0u8; expected];
     let decoded = strings::decode_hex_to_bytes_truncate(&mut info, hex.slice());

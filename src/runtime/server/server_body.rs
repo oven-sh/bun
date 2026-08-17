@@ -1720,7 +1720,7 @@ where
 
         {
             let js_string = message_value.to_js_string(global)?;
-            let view = js_string.view(global);
+            let view = js_string.view(global)?;
             let slice = view.to_slice();
             // Keep `js_string` alive, not `message_value`:
             // when the input was not already a JSString, `to_js_string` allocates

@@ -237,7 +237,7 @@ pub(crate) fn parse_env(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<
 
     // `validate_string` accepts StringObject, so coerce to a primitive JSString
     // before slicing.
-    let str = content.to_js_string(global)?.to_slice(global);
+    let str = content.to_js_string(global)?.to_slice(global)?;
 
     let mut p = envloader::Loader::init();
     p.load_from_string::<true, false>(str.slice())?;

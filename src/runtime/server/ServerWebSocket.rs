@@ -875,7 +875,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
+            let view = js_string.view(global_this)?;
             let slice = view.to_slice();
 
             let ret = self.do_publish(
@@ -927,7 +927,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
+        let view = js_string.view(global_this)?;
         let slice = view.to_slice();
 
         let ret = self.do_publish(
@@ -1100,7 +1100,7 @@ impl ServerWebSocket {
 
         {
             let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
+            let view = js_string.view(global_this)?;
             let slice = view.to_slice();
 
             let buffer = slice.slice();
@@ -1145,7 +1145,7 @@ impl ServerWebSocket {
         }
 
         let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
+        let view = js_string.view(global_this)?;
         let slice = view.to_slice();
 
         let buffer = slice.slice();
@@ -1266,7 +1266,7 @@ impl ServerWebSocket {
                     return Ok(ret);
                 } else if value.is_string() {
                     // SAFETY: to_js_string returns a non-null *mut JSString on the Ok path.
-                    let string_value = value.to_js_string(global_this)?.to_slice(global_this);
+                    let string_value = value.to_js_string(global_this)?.to_slice(global_this)?;
                     let buffer = string_value.slice();
                     if buffer.len() > MAX_CONTROL_FRAME_PAYLOAD {
                         return Err(throw_control_frame_too_large(global_this, buffer.len()));

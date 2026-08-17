@@ -8068,7 +8068,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_str.to_slice(global_object)?;
                     let value = value_slice.slice();
 
                     if let Some(ret) = handle_encode(this, value, never_index)? {
@@ -8102,7 +8102,7 @@ impl H2FrameParser {
                     }
                 };
 
-                let value_slice = value_str.to_slice(global_object);
+                let value_slice = value_str.to_slice(global_object)?;
                 let value = value_slice.slice();
                 bun_output::scoped_log!(
                     H2FrameParser,
@@ -8471,7 +8471,7 @@ impl H2FrameParser {
                 };
                 let mut encode_value = |item: JSValue| -> JsResult<Option<JSValue>> {
                     let value_str = item.to_js_string(global_object)?;
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_str.to_slice(global_object)?;
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object
@@ -8876,7 +8876,7 @@ impl H2FrameParser {
                     }
 
                     let name_str = name_js.to_js_string(global_object)?;
-                    let name_slice = name_str.to_slice(global_object);
+                    let name_slice = name_str.to_slice(global_object)?;
                     let name = name_slice.slice();
                     if name.is_empty() {
                         continue;
@@ -8944,7 +8944,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_str.to_slice(global_object)?;
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object
@@ -9111,7 +9111,7 @@ impl H2FrameParser {
                             }
                         };
 
-                        let value_slice = value_str.to_slice(global_object);
+                        let value_slice = value_str.to_slice(global_object)?;
                         let value = value_slice.slice();
                         if !is_valid_header_value(value) {
                             return Err(global_object
@@ -9181,7 +9181,7 @@ impl H2FrameParser {
                         }
                     };
 
-                    let value_slice = value_str.to_slice(global_object);
+                    let value_slice = value_str.to_slice(global_object)?;
                     let value = value_slice.slice();
                     if !is_valid_header_value(value) {
                         return Err(global_object

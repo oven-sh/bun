@@ -1040,6 +1040,38 @@ describe("`bun audit --omit`", () => {
   });
 });
 
+describe("`bun audit --help`", () => {
+  test.concurrent("lists the flags bun audit and bun audit fix act on", async () => {
+    using dir = tempDir("audit-help-", {});
+
+    const { stdout, stderr, exitCode } = await audit(dir, "--help");
+    expect(stdout).toContain("Usage: bun audit [flags]");
+    const out = normalizeBunSnapshot(stdout).split("\n");
+    const flagsStart = out.indexOf("Flags:") + 1;
+    expect(flagsStart).toBeGreaterThan(0);
+    const flagLines = out.slice(flagsStart, out.indexOf("", flagsStart));
+    expect(flagLines.map(line => line.match(/--[\w-]+/)![0])).toStrictEqual([
+      "--audit-level",
+      "--production",
+      "--omit",
+      "--ignore",
+      "--json",
+      "--dry-run",
+      "--latest",
+      "--cwd",
+      "--help",
+    ]);
+    expect(flagLines.find(line => line.includes("--production"))).toStartWith("  -p, --production");
+    expect(flagLines.find(line => line.includes("--production"))).toContain("(alias: --prod)");
+    expect(flagLines.find(line => line.includes("--omit"))).toContain("dev, optional, or peer");
+    expect(flagLines.find(line => line.includes("--dry-run"))).toContain("bun audit fix");
+    expect(flagLines.find(line => line.includes("--latest"))).toStartWith("  -L, --latest");
+    expect(flagLines.find(line => line.includes("--help"))).toStartWith("  -h, --help");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("`bun audit` report", () => {
   test.concurrent("an unknown severity is counted and filtered as moderate", async () => {
     await using server = startRegistry({ "a-dep": [{ ...adv("<1.0.4"), severity: "info" }] });

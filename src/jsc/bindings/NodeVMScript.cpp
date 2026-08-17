@@ -103,14 +103,12 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     }
 
     JSValue optionsArg = args.at(1);
-    ScriptOptions options(""_s);
+    ScriptOptions options;
     JSValue importer;
 
     if (optionsArg.isString()) {
         options.filename = optionsArg.toWTFString(globalObject);
         RETURN_IF_EXCEPTION(scope, {});
-        // `new Script(src, "name")` is a provided filename, "" included.
-        options.filenameProvided = true;
     } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
@@ -149,10 +147,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         RETURN_IF_EXCEPTION(scope, {});
         // Node always attaches the arrow header to compile-time SyntaxErrors
         // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
-        // An absent filename becomes evalmachine.<anonymous>; an explicitly
-        // provided one — including "" — is used verbatim.
-        String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, options.filename, parseError, options.lineOffset);
         throwException(globalObject, scope, exception);
         return {};
     }

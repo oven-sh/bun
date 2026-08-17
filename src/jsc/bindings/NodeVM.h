@@ -30,8 +30,7 @@ bool extractCachedData(JSValue cachedDataValue, WTF::Vector<uint8_t>& outCachedD
 String stringifyAnonymousFunction(JSGlobalObject* globalObject, const ArgList& args, ThrowScope& scope, int* outOffset);
 JSC::EncodedJSValue createCachedData(JSGlobalObject* globalObject, const JSC::SourceCode& source);
 bool handleException(JSGlobalObject* globalObject, VM& vm, NakedPtr<JSC::Exception> exception, ThrowScope& throwScope);
-// `url` must be caller-resolved: `new Script` falls back to evalmachine.<anonymous>
-// when no filename was provided; compileFunction has no such default.
+// `url` is the caller's (already defaulted) filename; an explicit "" renders as ":<line>".
 void decorateParseErrorStack(JSGlobalObject* globalObject, VM& vm, JSObject* error, StringView sourceString, const String& url, const JSC::ParserError& parseError, OrdinalNumber lineOffset);
 void getNodeVMContextOptions(JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSValue optionsArg, NodeVMContextOptions& outOptions, ASCIILiteral codeGenerationKey, JSValue* importer);
 NodeVMGlobalObject* getGlobalObjectFromContext(JSGlobalObject* globalObject, JSValue contextValue, bool canThrow);
@@ -51,12 +50,11 @@ public:
     OrdinalNumber lineOffset = OrdinalNumber::fromZeroBasedInt(0);
     OrdinalNumber columnOffset = OrdinalNumber::fromZeroBasedInt(0);
     bool failed = false;
-    bool filenameProvided = false;
 
     BaseVMOptions() = default;
     BaseVMOptions(String filename);
-    BaseVMOptions(String filename, OrdinalNumber lineOffset, OrdinalNumber columnOffset);
 
+    // Leaves `filename` at the constructor's default unless options.filename is a string.
     bool fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSC::JSValue optionsArg);
     bool validateProduceCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, bool& outProduceCachedData);
     bool validateCachedData(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::ThrowScope& scope, JSObject* options, WTF::Vector<uint8_t>& outCachedData);

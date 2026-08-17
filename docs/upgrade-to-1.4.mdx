@@ -22,7 +22,7 @@ bun upgrade
 | Area                  | Change                                                           | Action                                                                  |
 | --------------------- | ---------------------------------------------------------------- | ----------------------------------------------------------------------- |
 | `bun install`         | New lockfiles are written as `lockfileVersion: 2`                | Upgrade CI and teammates to Bun ≥ 1.4, or keep your existing `bun.lock` |
-| `bun install`         | Some existing lockfiles are rewritten once on first install      | Run `bun install` once and commit before relying on `--frozen-lockfile` |
+| `bun install`         | Nested overrides now apply; their `bun.lock` becomes version 3   | Run `bun install` once and commit `bun.lock` before upgrading CI        |
 | `bunfig.toml` / TOML  | Strict TOML parsing; unquoted string values are rejected         | Quote string values                                                     |
 | JSX                   | `"jsx": "react-jsx"` now emits the production runtime            | Use `"jsx": "react-jsxdev"` for development output                      |
 | TypeScript            | `useDefineForClassFields: false` is now honored                  | Remove the option to keep 1.3 class-field output                        |
@@ -36,7 +36,7 @@ bun upgrade
 | `Temporal`            | Enabled by default                                               | Drop polyfill guards; `BUN_JSC_useTemporal=0` to disable                |
 | Node.js compat        | `process.versions.node` is `26.3.0`                              | Rebuild non-N-API native addons                                         |
 | `node:dns`            | `dns.lookup()` uses the system resolver on Linux                 | Use `dns.resolve*()` if you need `dns.setServers()` to apply            |
-| `trustedDependencies` | Matches the resolved package name, not the alias                 | List the real package name                                              |
+| `trustedDependencies` | `npm:` aliases are matched by the resolved name, not the alias   | List the real package name                                              |
 | Distribution          | Single x64 build (no separate AVX2 build)                        | None; `-baseline` names still resolve                                   |
 
 ---
@@ -45,32 +45,70 @@ bun upgrade
 
 ### `bun.lock` is written as `lockfileVersion: 2`
 
-When Bun 1.4 creates a **new** lockfile (a fresh `bun install`, or a migration from `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb`), it writes `"lockfileVersion": 2`. Bun 1.3 and earlier cannot read version 2 lockfiles and will fail with:
+When Bun 1.4 creates a **new** lockfile (a fresh `bun install`, or a migration from `package-lock.json` / `yarn.lock` / `pnpm-lock.yaml` / `bun.lockb`), it writes `"lockfileVersion": 2`. Bun 1.3 and earlier cannot read version 2 lockfiles and report:
 
 ```
 error: Unknown lockfile version
     at bun.lock:2:22
 ```
 
-Existing `bun.lock` files are **not** upgraded to version 2 in place. A version 1 lockfile stays at version 1 when Bun 1.4 rewrites it (a version 0 lockfile is bumped to version 1, which Bun 1.3 also reads), so committing your existing lockfile keeps the repo installable by older Bun releases.
+On Bun 1.3, `bun install --frozen-lockfile` and `bun ci` then exit with `lockfile had changes, but lockfile is frozen`, while a plain `bun install` prints `warn: Ignoring lockfile`, resolves everything again from `package.json`, and overwrites `bun.lock` with a version 1 lockfile, so a teammate still on 1.3 can unintentionally commit a re-resolved lockfile. The same applies to version 3 lockfiles (next section).
+
+Existing `bun.lock` files are **not** upgraded to version 2 in place. A version 1 lockfile stays at version 1 when Bun 1.4 rewrites it (a version 0 lockfile is bumped to version 1, which Bun 1.3 also reads), so committing your existing lockfile keeps the repo installable by older Bun releases. The exception is a project whose `package.json` contains nested or version-scoped `overrides` / `resolutions`: Bun 1.4 applies those rules and rewrites the lockfile as version 3, see the next section.
 
 Bun 1.4 can read all previous lockfile versions.
 
 **What to do:** if every machine that runs `bun install` (CI, Docker images, teammates) is on Bun 1.4 or newer, no action is needed. If you need to support Bun 1.3 for a transition period, keep your existing `bun.lock` checked in and avoid deleting it; a regenerated lockfile will be version 2.
 
+### Nested and version-scoped overrides now apply, and write `lockfileVersion: 3`
+
+Bun 1.3 ignored `overrides` / `resolutions` rules that are scoped to a parent package (npm's nested object form, Yarn's `"parent/child"` path form, pnpm's `"parent>child"` form) or to a version selector (`"semver@<7.5.2"`). The object and path forms produced `warn: Bun currently does not support nested "overrides"` (or `"resolutions"`); the other forms were skipped silently. Bun 1.4 [applies these rules](/pm/overrides#nested-overrides). A project that already has such rules in its `package.json` is affected on upgrade without any change to the project:
+
+- `bun install --frozen-lockfile` (and `bun ci`) fails with `error: lockfile had changes, but lockfile is frozen` followed by `note: overrides in package.json changed since bun.lock was saved`, because the lockfile written by 1.3 does not record the rules.
+- A plain `bun install` applies the rules, which can change the resolved versions of the packages they target, and writes the lockfile as `"lockfileVersion": 3`, which Bun 1.3 rejects with the `Unknown lockfile version` error above. Bun 1.4 only writes version 3 when such rules are present; projects with only top-level overrides keep their current lockfile version.
+
+For example, with a dependency `a` that declares `"c": "^0.6.0"`:
+
+```json package.json icon="file-json"
+{
+  "dependencies": { "a": "1.0.0" },
+  "overrides": {
+    "a": { "c": "0.7.1" }
+  }
+}
+```
+
+```sh terminal icon="terminal"
+# Bun 1.3: the rule is ignored, bun.lock is lockfileVersion 1 and resolves c@0.6.x
+bun install
+
+# Bun 1.4, same project and lockfile:
+bun install --frozen-lockfile   # error: lockfile had changes, but lockfile is frozen
+bun install                     # resolves c@0.7.1, rewrites bun.lock as lockfileVersion 3
+
+# Bun 1.3 again, with the rewritten lockfile:
+bun install --frozen-lockfile   # error: Unknown lockfile version
+```
+
+**What to do:** run `bun install` once on Bun 1.4, review the lockfile diff (the rules take effect for the first time), and commit `bun.lock` before upgrading CI. From then on the project needs Bun 1.4 to install, and tools that parse `bun.lock` themselves (such as `turbo prune`) need a release that understands version 3. If Bun 1.3 has to keep installing from the same lockfile for a while, remove the nested rules from `package.json` instead (they had no effect on 1.3): the 1.3 lockfile then passes `--frozen-lockfile` on 1.4 and keeps its version.
+
 ### Some existing lockfiles are rewritten once
 
-Packages that were only kept in `bun.lock` by an **optional peer dependency** slot are now dropped once nothing else depends on them. If your lockfile contains such entries, the first `bun install` on Bun 1.4 rewrites it without any change to `package.json`, and a CI job running `bun install --frozen-lockfile` (or `bun ci`) fails with `lockfile had changes, but lockfile is frozen` until the rewritten lockfile is committed.
+Packages that were only kept in `bun.lock` by an **optional peer dependency** slot (for example, a package you removed while another dependency still listed it as an optional peer) are dropped the next time Bun 1.4 saves the lockfile, typically when you next add, remove, or update a dependency; for some projects (for example workspaces whose members have lifecycle scripts) the first plain `bun install` on 1.4 saves it too. `bun install --frozen-lockfile` and `bun ci` still accept a lockfile that contains such entries, so this does not fail CI; it shows up as a `bun.lock` diff. The rewritten lockfile keeps its `lockfileVersion`.
 
-**What to do:** run `bun install` locally once after upgrading and commit the resulting `bun.lock` before upgrading CI. Lockfiles without stale optional-peer entries are left unchanged.
+**What to do:** commit the rewritten `bun.lock` when it appears. Lockfiles without such entries are left unchanged.
 
 Separately, a dependency declared as `npm:<target>` inside a package is no longer redirected to a same-named alias declared in your root `package.json` (for example, `"typescript": "npm:@typescript/typescript6"` at the root no longer hijacks a nested `npm:typescript@^6`). Existing lockfile entries are kept as-is; the corrected resolution is picked up the next time that dependency is re-resolved (`bun update`, or adding / removing the dependency).
 
-`bun update <name>` now also re-resolves every occurrence of `<name>` in the lockfile (workspace members and transitive dependencies, within their declared ranges) rather than only the current package's direct dependency, so expect larger lockfile diffs from `bun update` than in 1.3.
+### `bun update` also moves transitive dependencies
+
+A plain `bun update` now re-resolves transitive dependencies too, moving each one to the newest version its dependents' declared ranges allow; 1.3 only re-resolved your direct dependencies and left the rest of the lockfile as it was. Expect larger lockfile diffs from `bun update` than before.
+
+`bun update <name>` now updates every occurrence of `<name>` in the lockfile in place (transitive dependencies and, when run from a workspace root, workspace members' dependencies, each within its declared range). In 1.3, `bun update <name>` for a package that was not one of your direct dependencies added it to `package.json` like `bun add`; 1.4 updates the existing entries instead, and exits 1 with `error: "<name>" is not in bun.lock` when the package is not installed at all. Use `bun add <name>` to add a package.
 
 ### `trustedDependencies` matches the resolved package name
 
-[`trustedDependencies`](/pm/lifecycle) and the built-in default trust list are now compared against the **resolved** package name, not the dependency alias, and the built-in list additionally requires the tarball URL to match the configured registry's canonical URL.
+For packages installed from a registry, [`trustedDependencies`](/pm/lifecycle) and the built-in default trust list are now compared against the name of the package that was actually **resolved**, not the alias it is installed under. This matters for `npm:` aliases:
 
 ```jsonc package.json icon="file-json"
 {
@@ -82,9 +120,13 @@ Separately, a dependency declared as `npm:<target>` inside a package is no longe
 }
 ```
 
+For an alias this moves the check rather than narrowing it: an entry naming the alias (`"esbuild"` above) allowed the fork's scripts in 1.3 and no longer does, and an entry naming the real package (`"my-esbuild-fork"`), which 1.3 ignored, now allows them. Dependencies that do not come from a registry (`file:`, `link:`, git, tarball URLs) continue to be matched by the alias, that is, the key in `package.json`.
+
+The built-in default list is narrower in two further ways. It no longer applies to a package installed under a default-listed alias (`"esbuild": "npm:my-esbuild-fork@1.0.0"` ran the fork's scripts in 1.3 because the alias is on the list). And it only applies when the package's tarball URL is the standard `<registry>/<name>/-/<unscoped-name>-<version>.tgz` location on the registry configured for that package, so a default-listed package served from a mirror that rewrites tarball URLs, or from a registry other than the configured one, no longer runs its scripts. An explicit `trustedDependencies` entry is not subject to the URL check.
+
 Trust entries that were only stored as a hash in a legacy binary `bun.lockb` no longer match. Re-run `bun install` so the entries are persisted by name in `bun.lock`, or re-run `bun pm trust <name>`.
 
-These changes are a strict narrowing: nothing that was previously blocked will now run. Packages whose scripts previously ran may now be listed under "blocked scripts" at the end of `bun install` output; add them explicitly with `bun pm trust <name>` or in `"trustedDependencies"`.
+Packages whose scripts previously ran may now be listed under "blocked scripts" at the end of `bun install` output. Add them to `"trustedDependencies"` under their real package name and reinstall them (for example `bun install --force`) so their scripts run.
 
 ---
 

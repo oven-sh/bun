@@ -82,7 +82,7 @@ static bool call(JSGlobalObject* globalObject, JSValue timerObject, JSValue call
 extern "C" bool Bun__JSTimeout__call(JSGlobalObject* globalObject, EncodedJSValue timerObject, EncodedJSValue callbackValue, EncodedJSValue argumentsValue)
 {
     auto& vm = globalObject->vm();
-    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isJSExecutionForbidden(vm)) [[unlikely]] {
+    if (vm.hasPendingTerminationException() || WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         return true;
     }
 

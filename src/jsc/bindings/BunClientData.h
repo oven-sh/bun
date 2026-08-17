@@ -178,8 +178,9 @@ public:
     // vmHandle's state byte (Bun__VmHandle__stateAddress): the per-callback "may run script" test is one load.
     const unsigned char* vmHandleState { nullptr };
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
-    // No script may be entered on this VM: its stop has been requested (any thread) or carried out (this one).
-    ALWAYS_INLINE bool isJSExecutionForbidden(const JSC::VM& vm) const { return vm.executionForbidden() || !scriptAllowed(); }
+    // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
+    // this thread and JSC forbids execution. Either way no script may be entered on this VM.
+    ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Linked list of StrongRootBlock cells backing bun_jsc::Strong handles

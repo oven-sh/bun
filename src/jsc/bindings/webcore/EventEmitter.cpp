@@ -247,7 +247,7 @@ bool EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
 
         if (!jsFunction) [[unlikely]]
             continue;
-        if (WebCore::clientData(vm)->isJSExecutionForbidden(vm)) [[unlikely]]
+        if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]]
             break;
 
         JSC::JSGlobalObject* lexicalGlobalObject = jsFunction->globalObject();

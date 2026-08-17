@@ -260,10 +260,8 @@ fn report_migrated(
         log.reset();
     }
     Output::print_elapsed(timer.elapsed().as_nanos() as f64 / 1_000_000.0);
-    bun_core::pretty_errorln!(
-        " <d>migrated lockfile from <r><green>{}<r>",
-        bstr::BStr::new(lockfile_name.as_bytes())
-    );
+    let lockfile_name = bstr::BStr::new(lockfile_name.as_bytes());
+    bun_core::pretty_errorln!(" <d>migrated lockfile from <r><green>{}<r>", lockfile_name);
     Output::flush();
 }
 

@@ -45,5 +45,7 @@ include!(concat!(env!("BUN_CODEGEN_DIR"), "/cpp.rs"));
 #[inline]
 pub fn raw_throw_termination_exception(global: &crate::JSGlobalObject) {
     // SAFETY: opaque-ZST handle valid for the call.
-    unsafe { raw::JSC__JSGlobalObject__throwTerminationException(core::ptr::from_ref(global).cast_mut()) }
+    unsafe {
+        raw::JSC__JSGlobalObject__throwTerminationException(core::ptr::from_ref(global).cast_mut())
+    }
 }

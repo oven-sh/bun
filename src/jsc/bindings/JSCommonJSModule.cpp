@@ -745,10 +745,7 @@ JSC_DEFINE_HOST_FUNCTION(functionJSCommonJSModule_compile, (JSGlobalObject * glo
             sourceString,
             zigGlobalObject->m_moduleWrapperEnd);
     } else {
-        wrappedString = makeString(
-            "(function(exports,require,module,__filename,__dirname){"_s,
-            sourceString,
-            "\n})"_s);
+        wrappedString = makeString(commonJSDefaultWrapperStart, sourceString, "\n"_s, commonJSDefaultWrapperEnd);
     }
 
     moduleObject->sourceCode = makeSource(

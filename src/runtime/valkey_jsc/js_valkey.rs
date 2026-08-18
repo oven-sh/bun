@@ -84,22 +84,30 @@ impl SubscriptionCtx {
 /// ref, refcount) lives on the client: `SubscriptionCtx` itself is three flags,
 /// and a `&SubscriptionCtx` carries no right to reach the client around it.
 impl JSValkeyClient {
-    fn subscription_callback_map(&self) -> &mut JSMap {
-        let parent_this = self.this_value.get().try_get().expect("unreachable");
+    /// `None` while the wrapper is dead but unswept: `finalize()` has not run, socket callbacks still do.
+    fn try_subscription_callback_map(&self) -> Option<&mut JSMap> {
+        let parent_this = self.this_value.get().try_get()?;
         let value_js = Js::subscription_callback_map_get_cached(parent_this).unwrap();
         // `JSMap` is an `opaque_ffi!` ZST — `opaque_mut` is the safe deref.
         // `from_js` returns a non-null heap cell when the slot was set by
         // `init()`; single JS thread.
-        JSMap::opaque_mut(JSMap::from_js(value_js).unwrap().as_ptr())
+        let map = JSMap::from_js(value_js).unwrap();
+        Some(JSMap::opaque_mut(map.as_ptr()))
     }
 
-    /// Get the total number of channels that this subscription context is subscribed to.
+    /// For callers that know the wrapper is alive: their `this`, or it has handlers and so is held.
+    fn subscription_callback_map(&self) -> &mut JSMap {
+        self.try_subscription_callback_map().expect("unreachable")
+    }
+
+    /// Zero once the wrapper is gone: the handlers live on it.
     pub(crate) fn channels_subscribed_to_count(&self) -> u32 {
-        self.subscription_callback_map().size()
+        self.try_subscription_callback_map()
+            .map_or(0, |map| map.size())
     }
 
-    /// Test whether this context has any subscriptions. It is mandatory to
-    /// guard deinit with this function.
+    /// Whether any subscription handler is registered. Reads the JS wrapper,
+    /// so it is false once the wrapper is dead or finalized.
     pub(crate) fn has_subscriptions(&self) -> bool {
         self.channels_subscribed_to_count() > 0
     }
@@ -273,25 +281,6 @@ impl JSValkeyClient {
                 .run_callback(callback, global_object, JSValue::UNDEFINED, args);
         }
         Ok(())
-    }
-
-    fn subscription_ctx_is_deletable(&self) -> bool {
-        // The user may request .close(), in which case we can dispose of the subscription object.
-        // If that is the case, finalized will be true. Otherwise, we should treat the object as
-        // disposable if there are no active subscriptions.
-        self.client.get().flags.finalized || !self.has_subscriptions()
-    }
-
-    pub fn close_subscription_ctx(&self, global_object: &JSGlobalObject) {
-        debug_assert!(self.subscription_ctx_is_deletable());
-
-        if let Some(parent_this) = self.this_value.get().try_get() {
-            Js::subscription_callback_map_set_cached(
-                parent_this,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-        }
     }
 }
 
@@ -758,8 +747,8 @@ impl JSValkeyClient {
                 protocol: uri,
                 username,
                 password,
-                in_flight: command::promise_pair::Queue::init(),
-                queue: command::entry::Queue::init(),
+                in_flight: command::promise_pair::Queue::new(),
+                queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
                 connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
@@ -867,8 +856,8 @@ impl JSValkeyClient {
                 protocol: client.protocol,
                 username,
                 password,
-                in_flight: command::promise_pair::Queue::init(),
-                queue: command::entry::Queue::init(),
+                in_flight: command::promise_pair::Queue::new(),
+                queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
                 connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {
@@ -1610,13 +1599,12 @@ impl JSValkeyClient {
         memory_cost += client.read_buffer.byte_list.capacity() as usize;
 
         // Add queue sizes
-        memory_cost += client.in_flight.readable_length()
-            * core::mem::size_of::<super::valkey_command::PromisePair>();
-        for command in client.queue.readable_slice(0) {
+        memory_cost +=
+            client.in_flight.len() * core::mem::size_of::<super::valkey_command::PromisePair>();
+        for command in client.queue.iter() {
             memory_cost += command.serialized_data.len();
         }
-        memory_cost +=
-            client.queue.readable_length() * core::mem::size_of::<super::valkey_command::Entry>();
+        memory_cost += client.queue.len() * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
     }
 
@@ -1651,9 +1639,7 @@ impl JSValkeyClient {
         drop(unsafe { bun_core::heap::take(this) });
     }
 
-    /// Keep the event loop alive, or don't keep it alive
-    ///
-    /// This requires this_value to be alive.
+    /// Keep the event loop alive, or don't keep it alive. Also valid once the JS wrapper is dead.
     pub(crate) fn update_poll_ref(&self) {
         // TODO(markovejnovic): This function is such a crazy cop out. We really
         // should be treating valkey as a state machine, with well-defined
@@ -1661,15 +1647,9 @@ impl JSValkeyClient {
         // This is a mess beyond belief and it is incredibly fragile.
         let has_pending_commands = self.client.get().has_any_pending_commands();
 
-        // Once the JS wrapper has been finalized, the subscription callback map
-        // (stored on the JS object) is gone. Reading it would hit `unreachable`
-        // in `subscriptionCallbackMap()` because `this_value.tryGet()` returns
-        // null for a finalized ref. Short-circuit here: a finalized client has
-        // no subscriptions by definition.
-        let subs_deletable: bool = self.client.get().flags.finalized || !self.has_subscriptions();
-
-        let has_activity =
-            has_pending_commands || !subs_deletable || self.client.get().flags.is_reconnecting;
+        let has_activity = has_pending_commands
+            || self.has_subscriptions()
+            || self.client.get().flags.is_reconnecting;
 
         // There's a couple cases to handle here:
         if has_activity || self.client.get().status == valkey::Status::Connecting {

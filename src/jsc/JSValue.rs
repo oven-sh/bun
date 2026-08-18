@@ -629,13 +629,13 @@ impl JSValue {
         })
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
-    /// range in a Node `Buffer`, transferring ownership to JS. `free(ctx, ptr)`
-    /// runs when the Buffer's backing store is collected.
+    /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
+    /// runs exactly once: when the Buffer's backing store is collected, or
+    /// before this returns `Err`.
     ///
     /// # Safety
     /// `bytes` must describe a valid allocation whose ownership transfers to
-    /// JSC; `ctx` is forwarded to `free` on collection and must remain valid
-    /// until then.
+    /// JSC; `ctx` must remain valid until `free` runs.
     pub unsafe fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,
@@ -2328,9 +2328,9 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `JSValue.getPrototype`.
-    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
-        JSC__JSValue__getPrototype(self, global)
+    /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__getPrototype(self, global))
     }
 
     // ── Reflection / naming. ───────────────

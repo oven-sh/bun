@@ -380,16 +380,30 @@ public:
 
 }
 
+bool Bun::rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const void* bytes, size_t length, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+{
+    if (length <= MAX_ARRAY_BUFFER_SIZE) [[likely]]
+        return false;
+
+    if (deallocator)
+        deallocator(const_cast<void*>(bytes), deallocatorContext);
+    JSC::throwOutOfMemoryError(globalObject, scope);
+    return true;
+}
+
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
     JSC::JSUint8Array* uint8Array = nullptr;
 
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(lexicalGlobalObject->vm());
+    auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
 
     if (length > 0) [[likely]] {
         ASSERT(bytesDeallocator);
+        if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(lexicalGlobalObject, scope, ptr, length, bytesDeallocator, ctx)) [[unlikely]]
+            return {};
+
         auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([=](void* p) {
             bytesDeallocator(p, ctx);
         }));
@@ -2585,19 +2599,29 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
+static void unmapBufferBytes(void* mapping, void* lengthAsContext)
+{
+#if !OS(WINDOWS)
+    munmap(mapping, reinterpret_cast<size_t>(lengthAsContext));
+#else
+    UNUSED_PARAM(lengthAsContext);
+    UnmapViewOfFile(mapping);
+#endif
+}
+
 extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObject, void* ptr, size_t length)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    void* lengthAsContext = reinterpret_cast<void*>(length);
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, length, unmapBufferBytes, lengthAsContext)) [[unlikely]]
+        return {};
+
     auto* structure = globalObject->JSBufferSubclassStructure();
 
-    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([length](void* p) {
-#if !OS(WINDOWS)
-        munmap(p, length);
-#else
-        UnmapViewOfFile(p);
-#endif
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([lengthAsContext](void* p) {
+        unmapBufferBytes(p, lengthAsContext);
     }));
 
     auto* view = JSC::JSUint8Array::create(globalObject, structure, WTF::move(buffer), 0, length);

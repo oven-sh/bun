@@ -836,17 +836,16 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some(ctx) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0.0));
-        };
-
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
             return Err(global_this.throw(format_args!("publish requires a topic string")));
         }
 
-        let topic_slice = topic_value.to_slice(global_this)?;
+        // ToString on either argument can run user JS that stops the server or
+        // triggers GC, so both are converted (and their JSStrings held) before
+        // the handler state is read.
+        let topic_string = topic_value.to_js_string(global_this)?;
+        let topic_slice = topic_string.view(global_this).to_slice();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publish requires a non-empty topic")));
         }
@@ -862,32 +861,32 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires a non-empty message")));
         }
 
-        if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
-            let buffer = array_buffer.slice();
-            return Ok(self.do_publish(ctx, topic_slice.slice(), buffer, Opcode::Binary, compress));
-        }
+        let array_buffer = message_value.as_array_buffer(global_this);
+        let mut message_string = None;
+        let message_slice;
+        let (buffer, opcode): (&[u8], Opcode) = if let Some(array_buffer) = &array_buffer {
+            (array_buffer.slice(), Opcode::Binary)
+        } else if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
+            (slice, Opcode::Binary)
+        } else {
+            let string = message_value.to_js_string(global_this)?;
+            message_slice = string.view(global_this).to_slice();
+            message_string = Some(string);
+            (message_slice.slice(), Opcode::Text)
+        };
 
-        if let Some(slice) = blob_payload(global_this, "publish", message_value)? {
-            let ret = self.do_publish(ctx, topic_slice.slice(), slice, Opcode::Binary, compress);
-            message_value.ensure_still_alive();
-            return Ok(ret);
-        }
+        let Some(ctx) = self.publish_ctx() else {
+            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            return Ok(JSValue::js_number(0.0));
+        };
 
-        {
-            let js_string = message_value.to_js_string(global_this)?;
-            let view = js_string.view(global_this);
-            let slice = view.to_slice();
-
-            let ret = self.do_publish(
-                ctx,
-                topic_slice.slice(),
-                slice.slice(),
-                Opcode::Text,
-                compress,
-            );
-            js_string.ensure_still_alive();
-            Ok(ret)
+        let ret = self.do_publish(ctx, topic_slice.slice(), buffer, opcode, compress);
+        topic_string.ensure_still_alive();
+        message_value.ensure_still_alive();
+        if let Some(message_string) = message_string {
+            message_string.ensure_still_alive();
         }
+        Ok(ret)
     }
 
     #[bun_jsc::host_fn(method)]
@@ -903,17 +902,13 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publish requires at least 1 argument")));
         }
 
-        let Some(ctx) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0.0));
-        };
-
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publish() topic invalid");
             return Err(global_this.throw(format_args!("publishText requires a topic string")));
         }
 
-        let topic_slice = topic_value.to_slice(global_this)?;
+        let topic_string = topic_value.to_js_string(global_this)?;
+        let topic_slice = topic_string.view(global_this).to_slice();
 
         let compress = Self::parse_compress_arg(
             global_this,
@@ -926,18 +921,23 @@ impl ServerWebSocket {
             return Err(global_this.throw(format_args!("publishText requires a non-empty message")));
         }
 
-        let js_string = message_value.to_js_string(global_this)?;
-        let view = js_string.view(global_this);
-        let slice = view.to_slice();
+        let message_string = message_value.to_js_string(global_this)?;
+        let message_slice = message_string.view(global_this).to_slice();
+
+        let Some(ctx) = self.publish_ctx() else {
+            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            return Ok(JSValue::js_number(0.0));
+        };
 
         let ret = self.do_publish(
             ctx,
             topic_slice.slice(),
-            slice.slice(),
+            message_slice.slice(),
             Opcode::Text,
             compress,
         );
-        js_string.ensure_still_alive();
+        topic_string.ensure_still_alive();
+        message_string.ensure_still_alive();
         Ok(ret)
     }
 
@@ -956,17 +956,13 @@ impl ServerWebSocket {
             );
         }
 
-        let Some(ctx) = self.publish_ctx() else {
-            bun_output::scoped_log!(WebSocketServer, "publish() closed");
-            return Ok(JSValue::js_number(0.0));
-        };
-
         if topic_value.is_empty_or_undefined_or_null() || !topic_value.is_string() {
             bun_output::scoped_log!(WebSocketServer, "publishBinary() topic invalid");
             return Err(global_this.throw(format_args!("publishBinary requires a topic string")));
         }
 
-        let topic_slice = topic_value.to_slice(global_this)?;
+        let topic_string = topic_value.to_js_string(global_this)?;
+        let topic_slice = topic_string.view(global_this).to_slice();
         if topic_slice.slice().is_empty() {
             return Err(global_this.throw(format_args!("publishBinary requires a non-empty topic")));
         }
@@ -984,23 +980,26 @@ impl ServerWebSocket {
             );
         }
 
-        if let Some(array_buffer) = message_value.as_array_buffer(global_this) {
-            return Ok(self.do_publish(
-                ctx,
-                topic_slice.slice(),
-                array_buffer.slice(),
-                Opcode::Binary,
-                compress,
-            ));
-        }
+        let array_buffer = message_value.as_array_buffer(global_this);
+        let buffer: &[u8] = if let Some(array_buffer) = &array_buffer {
+            array_buffer.slice()
+        } else if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
+            slice
+        } else {
+            return Err(
+                global_this.throw(format_args!("publishBinary expects a Blob or BufferSource"))
+            );
+        };
 
-        if let Some(slice) = blob_payload(global_this, "publishBinary", message_value)? {
-            let ret = self.do_publish(ctx, topic_slice.slice(), slice, Opcode::Binary, compress);
-            message_value.ensure_still_alive();
-            return Ok(ret);
-        }
+        let Some(ctx) = self.publish_ctx() else {
+            bun_output::scoped_log!(WebSocketServer, "publish() closed");
+            return Ok(JSValue::js_number(0.0));
+        };
 
-        Err(global_this.throw(format_args!("publishBinary expects a Blob or BufferSource")))
+        let ret = self.do_publish(ctx, topic_slice.slice(), buffer, Opcode::Binary, compress);
+        topic_string.ensure_still_alive();
+        message_value.ensure_still_alive();
+        Ok(ret)
     }
 
     // `passThis: true` in server.classes.ts — wrapper is emitted by

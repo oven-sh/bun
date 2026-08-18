@@ -59,9 +59,13 @@ pub enum FlushValue {
     Trees = 6,
 }
 
-// zlib typedefs `uLong` as `unsigned long`, so these `c_ulong`-based
-// definitions are ABI-correct on both LP64 (8-byte) and LLP64 (4-byte)
-// targets; one definition serves every platform.
+// ---------------------------------------------------------------------------
+// z_stream — single source of truth for both POSIX and Windows.
+//
+// zlib (and zlib-ng compat) typedef `uLong` as `unsigned long`, so one
+// `c_ulong`-based definition is ABI-correct on LP64 (8-byte) *and* LLP64
+// (4-byte) targets.
+// ---------------------------------------------------------------------------
 use core::ffi::{c_char, c_uint, c_ulong, c_void};
 
 // typedef voidpf (*alloc_func)(voidpf opaque, uInt items, uInt size);
@@ -69,7 +73,13 @@ use core::ffi::{c_char, c_uint, c_ulong, c_void};
 pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
 pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
 
-// zconf.h scalar typedefs.
+// ---------------------------------------------------------------------------
+// zconf.h scalar typedefs — single source of truth.
+//
+// All resolve to ABI-identical primitives on every
+// target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
+// Unix) for the same reason zStream_struct above uses `c_ulong` directly.
+// ---------------------------------------------------------------------------
 pub type Bytef = u8;
 pub type uInt = c_uint;
 pub type uLong = c_ulong;

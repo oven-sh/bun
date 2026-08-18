@@ -1175,7 +1175,9 @@ where
     /// (`us_internal_free_closed_sockets`) or recycled it onto the next
     /// keep-alive request. Release the handle without dereferencing it. The
     /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
-    /// `detach_response()` would make are already covered by `markDone()`.
+    /// `detach_response()` would make are already covered by `markDone()`,
+    /// which is also why a later `server.stop(true)` cannot reach `on_abort`:
+    /// callers come here even once the server is terminated.
     ///
     /// HTTP/3 must never reach this. `Http3Response::markDone()` deliberately
     /// leaves `onAborted` armed so `on_stream_close` can notify the holder,
@@ -1513,7 +1515,7 @@ where
     /// Forward uWS's drain notification to the streaming response sink so it
     /// can resend any `try_end` tail and signal the JS writer to resume.
     ///
-    /// Registered once in `do_render_stream` (pending-promise branch) for the
+    /// Registered once in `do_render_stream` (before assign_to_stream) for the
     /// lifetime of the streaming response, so the sink itself never touches
     /// uWS callback registration — it only tracks `has_backpressure`. uWS only
     /// invokes the handler once its own send buffer has fully drained, so an
@@ -1913,6 +1915,38 @@ where
         );
     }
 
+    /// `on_abort` ran from inside the user code `do_render_stream` invoked
+    /// (`server.stop(true)` in `pull()`): it aborted the sink, detached `resp`
+    /// and took over the base ref, leaving only the sink and stream to drop.
+    /// Keyed on `resp` being gone, not on `is_aborted_or_ended()`: a stop that
+    /// found the response already complete never reaches `on_abort`, and that
+    /// request still owns its ref, which the regular arms release.
+    fn discard_stream_after_abort(
+        &self,
+        stream: &WebCore::ReadableStream,
+        global_this: &JSGlobalObject,
+    ) {
+        stream_log!("aborted while attaching the stream");
+        let mut readable_ref = self
+            .response_body_readable_stream_ref
+            .replace(readable_stream::Strong::default());
+        if let Some(wrapper_ptr) = self.sink.take() {
+            // SAFETY: this context is the sink's sole owner until `destroy_sink`
+            // below (see the `sink` field); `on_abort` leaves it allocated.
+            let wrapper = unsafe { &mut *wrapper_ptr.as_ptr() };
+            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
+                &mut wrapper.sink.source,
+                global_this,
+            );
+            crate::dispatch::fold(stream.cancel(global_this));
+            wrapper.sink.mark_done();
+            wrapper.sink.on_first_write = None;
+            wrapper.sink.finalize();
+            Self::destroy_sink(wrapper_ptr);
+        }
+        readable_ref.deinit();
+    }
+
     fn do_render_stream(pair: *mut StreamPair<'_, ThisServer, SSL_ENABLED, DEBUG_MODE, HTTP3>) {
         ctx_log!("doRenderStream");
         // SAFETY: pair is a stack local threaded through cork user-data.
@@ -1954,6 +1988,16 @@ where
             this.render_metadata();
         }
 
+        // Before `pull()` runs, not in `to_async()`: a `server.stop(true)` inside
+        // `pull()` has to reach `on_abort`, and once the stream has completed the
+        // response, uWS `markDone()` must have dropped these for good (the flag
+        // makes the later `to_async()` a no-op); see `end_already_responded_stream`.
+        this.set_abort_handler();
+        resp.on_writable(
+            |this, off, resp| Self::on_writable_response_stream(this, off, resp),
+            this.as_ctx_ptr(),
+        );
+
         // We are already corked!
         let assignment_result: JSValue =
             ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::assign_to_stream(
@@ -1967,13 +2011,18 @@ where
         // assignToStream stored the controller in `sink.source`; a sync-finished stream's
         // `__controllerDetached` may already have cleared it again (handled below).
 
+        let aborted = this.flags.aborted() || response_stream.sink.is_aborted();
+        this.flags.set_aborted(aborted);
+
+        if this.resp.get().is_none() {
+            this.discard_stream_after_abort(stream, global_this);
+            return;
+        }
+
         #[cfg(debug_assertions)]
         if resp.has_responded() {
             stream_log!("responded");
         }
-
-        let aborted = this.flags.aborted() || response_stream.sink.is_aborted();
-        this.flags.set_aborted(aborted);
 
         if let Some(err_value) = assignment_result.to_error() {
             stream_log!("returned an error");
@@ -2006,8 +2055,8 @@ where
         // hits transport backpressure (common on QUIC right after the
         // HEADERS frame), the sink parks a pending_flush promise, but
         // assignToStream() itself returns undefined. Surface that promise
-        // here so the request waits for the drain (the Pending branch below
-        // arms on_writable) instead of falling through to the cancel path.
+        // here so the request waits for the drain (the on_writable armed
+        // above resolves it) instead of falling through to the cancel path.
         let mut effective_result = assignment_result;
         if effective_result.is_empty_or_undefined_or_null() {
             if let Some(flush) = response_stream.sink.pending_flush {
@@ -2022,6 +2071,11 @@ where
             if let Some(promise) = effective_result.as_any_promise() {
                 stream_log!("returned a promise");
                 if this.drain_microtasks().is_err() {
+                    return;
+                }
+                // The drain ran user code too (same as right after assign_to_stream).
+                if this.resp.get().is_none() {
+                    this.discard_stream_after_abort(stream, global_this);
                     return;
                 }
 
@@ -2042,15 +2096,6 @@ where
                             response_stream.sink.ctx = None;
                             this.render_metadata();
                         }
-
-                        // The sink only tracks `has_backpressure`; the
-                        // on_writable registration lives here so it is armed
-                        // once for the response's lifetime instead of toggled
-                        // on every write — see `on_writable_response_stream`.
-                        resp.on_writable(
-                            |this, off, resp| Self::on_writable_response_stream(this, off, resp),
-                            this.as_ctx_ptr(),
-                        );
 
                         // TODO: should this timeout?
                         let body_value = this.response_mut().unwrap().get_body_value();
@@ -2113,25 +2158,6 @@ where
             }
         }
 
-        if this.is_aborted_or_ended() {
-            ResponseStreamJSSink::<SSL_ENABLED, HTTP3>::detach(
-                &mut response_stream.sink.source,
-                global_this,
-            );
-            crate::dispatch::fold(stream.cancel(global_this));
-            let mut readable_ref = this
-                .response_body_readable_stream_ref
-                .replace(readable_stream::Strong::default());
-
-            response_stream.sink.mark_done();
-            response_stream.sink.on_first_write = None;
-
-            response_stream.sink.finalize();
-            this.sink.set(None);
-            Self::destroy_sink(response_stream_ptr);
-            readable_ref.deinit();
-            return;
-        }
         let mut readable_ref = this
             .response_body_readable_stream_ref
             .replace(readable_stream::Strong::default());
@@ -2687,20 +2713,12 @@ where
                 // flush_promise) is armed on `resp`. With no response the flush
                 // can never settle, so taking a ref and attaching here would
                 // leak the ref and hang the request; fall through to teardown.
-                if let (Some(flush), Some(resp)) = (wrapper.sink.pending_flush, self.resp.get()) {
+                if let Some(flush) = wrapper.sink.pending_flush
+                    && self.resp.get().is_some()
+                {
                     stream_log!("handleResolveStream: waiting for pending flush");
                     debug_assert!(self.server.get().is_some());
                     let global_this = self.server().global_this();
-                    // The sink no longer registers its own drain callback;
-                    // RequestContext owns it (see on_writable_response_stream).
-                    // do_render_stream only arms it on the Pending branch, but
-                    // a fulfilled pull() reaches here directly, so arm it now
-                    // or the parked flush never drains. Re-arming with the same
-                    // handler is idempotent in uWS.
-                    resp.on_writable(
-                        |this, off, resp| Self::on_writable_response_stream(this, off, resp),
-                        self.as_ctx_ptr(),
-                    );
                     self.ref_();
                     let cell = NativePromiseContext::create(global_this, self.as_ctx_ptr());
                     // S008: `JSPromise` is an `opaque_ffi!` ZST — safe `*const → &` deref.
@@ -2762,6 +2780,10 @@ where
         }
 
         if self.is_aborted_or_ended() {
+            // Still ours to release after a stop; see `end_already_responded_stream`.
+            if !HTTP3 && ended_response {
+                self.end_already_responded_stream();
+            }
             return;
         }
 
@@ -2868,6 +2890,10 @@ where
 
         // aborted so call finalizeForAbort
         if self.is_aborted_or_ended() {
+            // Still ours to release after a stop; see `end_already_responded_stream`.
+            if !HTTP3 && ended_response {
+                self.end_already_responded_stream();
+            }
             return;
         }
 
@@ -4132,24 +4158,24 @@ where
         }
         ctx_log!("resumeRequestBodySocket");
         self.flags.set_request_body_paused(false);
-        if self.resp_may_be_freed() {
-            return;
-        }
-        if let Some(resp) = self.resp.get() {
+        if let Some(resp) = self.live_resp() {
             resp.resume();
         }
     }
 
-    /// After a streaming-response sink has set `ended_response`, `markDone()`
-    /// dropped `onAborted` and `resp` may point at a freed `us_socket_t` (see
-    /// `end_already_responded_stream`). The sink already resumed the socket.
+    /// `resp` for everything outside the end/abort paths (`server.requestIP()`,
+    /// `server.timeout()`, request-body resume): `None` once a streaming sink
+    /// has set `ended_response`, after which `resp` may point at a freed
+    /// `us_socket_t` (see `end_already_responded_stream`; the sink resumed it).
     #[inline]
-    fn resp_may_be_freed(&self) -> bool {
+    fn live_resp(&self) -> Option<uws::AnyResponse> {
         if let Some(sink) = self.sink.get() {
             // SAFETY: `sink` is owned by this context and freed in `handle_resolve_stream`/`deinit`.
-            return unsafe { (*sink.as_ptr()).sink.ended_response };
+            if unsafe { (*sink.as_ptr()).sink.ended_response } {
+                return None;
+            }
         }
-        false
+        self.resp.get()
     }
 
     /// Detach the body ByteStream's producer back-pointer (the stream can outlive this ctx in JS).
@@ -4177,10 +4203,7 @@ where
         {
             return;
         }
-        if this.resp_may_be_freed() {
-            return;
-        }
-        if let Some(resp) = this.resp.get() {
+        if let Some(resp) = this.live_resp() {
             resp.resume();
         }
     }
@@ -4273,7 +4296,7 @@ where
     }
 
     pub(crate) fn get_remote_socket_info(&self) -> Option<uws::SocketAddress> {
-        let resp = self.resp.get()?;
+        let resp = self.live_resp()?;
         // `AnyResponse::get_remote_socket_info` returns the uws_sys
         // variant; convert to the owned `bun_uws::SocketAddress`.
         // SAFETY: FFI handle
@@ -4286,7 +4309,7 @@ where
     }
 
     pub(crate) fn set_timeout(&self, seconds: c_uint) -> bool {
-        if let Some(resp) = self.resp.get() {
+        if let Some(resp) = self.live_resp() {
             // SAFETY: FFI handle
             resp.timeout(seconds.min(255) as u8);
             if seconds == 0 {

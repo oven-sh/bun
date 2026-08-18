@@ -894,6 +894,10 @@ pub fn is_stdout_tty() -> bool {
 pub fn is_stdin_tty() -> bool {
     stdio_tty_flag(0)
 }
+#[inline]
+pub fn is_stderr_tty() -> bool {
+    stdio_tty_flag(2)
+}
 
 pub fn is_github_action() -> bool {
     if env_var::GITHUB_ACTIONS.get().unwrap_or(false) {
@@ -1373,6 +1377,11 @@ macro_rules! debug {
 #[inline]
 pub fn print(args: fmt::Arguments<'_>) {
     print_to(Destination::Stdout, args);
+}
+
+/// Bytes to stdout exactly as given (no UTF-8 replacement), through the same writer `print` uses.
+pub fn print_bytes(bytes: &[u8]) {
+    write_bytes(Destination::Stdout, bytes);
 }
 
 /// `bun.Output.println(fmt, args)` — `print()` with a trailing newline.

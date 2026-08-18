@@ -1564,6 +1564,7 @@ pub fn init(
     // Step 1. Find the nearest package.json directory
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
+    let mut no_project = false;
     let root_package_json_file = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
@@ -1646,6 +1647,12 @@ pub fn init(
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
             }
+            if cli.no_project_ok {
+                // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
+                this_cwd = original_cwd;
+                no_project = true;
+                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+            }
             return Err(crate::Error::MissingPackageJSON);
         };
 
@@ -1667,7 +1674,7 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            if !created_package_json {
+            if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = PathBuffer::uninit();

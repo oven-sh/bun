@@ -494,36 +494,95 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
-it("a custom inspect function throws when node:util cannot be loaded, and works once it can", async () => {
-  // The native formatter loads util.inspect (and, with colors, its stylize helper) the first
-  // time a custom inspect function runs. A load failure used to abort the process; it has to
-  // throw instead, and a later call has to retry the load. Run in a child because the
-  // unfixed binary aborts.
-  const code = `
-    const obj = { [Bun.inspect.custom]() { return "custom"; } };
-    const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
-    const RealSymbol = Symbol;
-    globalThis.Symbol = 0;
-    try {
-      console.log(Bun.inspect(styled, { colors: true }));
-    } catch {
-      console.log("threw");
-    }
-    globalThis.Symbol = RealSymbol;
-    console.log(Bun.inspect(obj));
-    console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
-    // Both functions are cached on the global object now; they have to survive a full GC.
-    Bun.gc(true);
-    console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
-  `;
-  await using proc = Bun.spawn({
-    cmd: [bunExe(), "-e", code],
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
+// The native formatter loads util.inspect (and, with colors, its stylize helper) the first time a
+// custom inspect function runs. When that load throws (a global that node:util reads while it
+// loads has been replaced, the stack is nearly exhausted, util.inspect has been replaced with a
+// non-function), the error has to reach the caller and the next call has to load again. It used
+// to abort the process. Each case runs in a fresh child so that nothing has loaded util.inspect
+// for the formatter yet.
+describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
+  async function inspectInChild(code) {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = { [Bun.inspect.custom]() { return "custom"; } };
+          const styled = { [Bun.inspect.custom](depth, options) { return options.stylize("x", "number"); } };
+          ${code}
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  it("throws while a global that node:util reads is replaced, and works once it is restored", async () => {
+    const result = await inspectInChild(`
+      const RealSymbol = Symbol;
+      globalThis.Symbol = 0;
+      try {
+        console.log(Bun.inspect(styled, { colors: true }));
+      } catch {
+        console.log("threw");
+      }
+      globalThis.Symbol = RealSymbol;
+      console.log(Bun.inspect(obj));
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+      // Both functions are cached on the global object now; they have to survive a full GC.
+      Bun.gc(true);
+      console.log(Bun.inspect(styled, { colors: true }) === "\\u001b[33mx\\u001b[39m");
+    `);
+    expect(result).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
   });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "threw\ncustom\ntrue\ntrue\n", stderr: "", exitCode: 0 });
+
+  it.each([
+    ["without colors", "Bun.inspect(obj)", '"custom"'],
+    ["with colors", "Bun.inspect(styled, { colors: true })", '"\\u001b[33mx\\u001b[39m"'],
+  ])("throws the RangeError when the stack is exhausted, and works afterwards, %s", async (_, call, expected) => {
+    const result = await inspectInChild(`
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          // Only the frame whose call overflowed gets here.
+          try {
+            deep = ${call};
+          } catch (e) {
+            deep = e;
+          }
+        }
+      }
+      recurse();
+      console.log(String(deep));
+      console.log(JSON.stringify(${call}));
+    `);
+    expect(result).toEqual({
+      stdout: `RangeError: Maximum call stack size exceeded.\n${expected}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  it("throws a TypeError while util.inspect is not a function, and works once it is restored", async () => {
+    const result = await inspectInChild(`
+      const util = require("node:util");
+      const realInspect = util.inspect;
+      util.inspect = 42;
+      try {
+        console.log(Bun.inspect(obj));
+      } catch (e) {
+        console.log(String(e));
+      }
+      util.inspect = realInspect;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "TypeError: util.inspect is not a function\ncustom\n", stderr: "", exitCode: 0 });
+  });
 });
 
 describe("Functions with names", () => {

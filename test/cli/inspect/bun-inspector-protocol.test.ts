@@ -275,7 +275,7 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
       console.log("hello");
       reportError(new Error("reported"));
       debugger;
-      setInterval(() => {}, 60_000);
+      debugger;
     `,
     "dep.cjs": `module.exports = 1;`,
   });
@@ -401,9 +401,15 @@ test("the protocol snapshot in packages/bun-inspector-protocol matches what bun 
     await send("Debugger.evaluateOnCallFrame", { callFrameId: callFrames[0].callFrameId, expression: "globalThis" });
     await send("LifecycleReporter.getModuleGraph");
 
+    // The reported error makes bun exit (with code 1) as soon as the module finishes evaluating, and
+    // that exit races the delivery of whatever the inspector sent last. So the fixture's second
+    // debugger statement stops it again right after it resumes: everything sent in between is
+    // delivered while it sits in that pause, and the session ends (ws.close below) while it is paused.
     const resumed = waitForEvent("Debugger.resumed");
+    const pausedAgain = waitForEvent("Debugger.paused");
     await send("Debugger.resume");
     await resumed;
+    await pausedAgain;
   } finally {
     ws.close();
   }

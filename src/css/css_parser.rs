@@ -291,13 +291,9 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
 /// closing token was found, `false` if the end of input was reached first
 /// (the block is unclosed).
 ///
-/// This is not an error path: `parse_nested_block` calls it on every block
-/// exit, where the tokenizer is usually already at the closing token. So the
-/// common case must not touch the heap. `outer` only receives the blocks that
-/// a skipped region opens, and that region is not bounded by
-/// `MAX_NESTING_DEPTH`, so it still spills to the heap past 16 levels.
-/// `inline(never)` keeps the loop out of the many `parse_nested_block`
-/// instantiations.
+/// Hot: `parse_nested_block` calls this on every block exit, so the common
+/// case (already at the closing token) must not allocate. `inline(never)`
+/// keeps one copy of it instead of one per `parse_nested_block` instantiation.
 #[inline(never)]
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) -> bool {
     let mut innermost = block_type;

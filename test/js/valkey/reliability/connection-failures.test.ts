@@ -461,6 +461,16 @@ describe("Valkey: connect() error identity", () => {
     });
   });
 
+  test("a hostname that does not resolve rejects connect() with the resolver error", async () => {
+    // A 64 byte DNS label is illegal (RFC 1035 section 2.3.4), so the lookup
+    // fails locally without a query leaving the machine.
+    const host = Buffer.alloc(64, "a").toString() + ".com";
+    expect(await failure(`redis://${host}:6379`, { autoReconnect: false })).toEqual({
+      code: "ERR_REDIS_CONNECTION_CLOSED",
+      message: `getaddrinfo ENOTFOUND ${host}`,
+    });
+  });
+
   test("a certificate the client does not trust rejects connect() with the verify error", async () => {
     const server = tls.createServer({ key: tlsCert.key, cert: tlsCert.cert }, socket => {
       socket.on("error", () => {});

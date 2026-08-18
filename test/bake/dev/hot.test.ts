@@ -703,6 +703,48 @@ devTest("server: an import() that lands while a dispose promise is pending evalu
     expect(await command("load").json()).toStrictEqual({ value: "v2", evaluations: 2 });
   },
 });
+function slowVersion(version: string) {
+  return `
+    (globalThis.bodies ??= []).push("${version}");
+    await globalThis.gates?.["${version}"].promise;
+    export const value = "${version}";
+  `;
+}
+devTest("server: a second update while the first is parked on top-level await ends with the second version", {
+  framework: minimalFramework,
+  files: {
+    "slow.ts": slowVersion("v1"),
+    // "arm" makes the v2 and v3 bodies wait, "release <version>" lets one finish, "bodies" lists the versions evaluated so far, anything else imports `slow`.
+    "routes/index.ts": `
+      export default async function (req) {
+        const [op, version] = req.headers.get("x-command").split(" ");
+        if (op === "arm") {
+          globalThis.gates = { v2: Promise.withResolvers(), v3: Promise.withResolvers() };
+          return new Response("armed");
+        }
+        if (op === "release") {
+          globalThis.gates[version].resolve();
+          return new Response("released");
+        }
+        if (op === "bodies") return Response.json(globalThis.bodies);
+        const { value } = await import("../slow");
+        return Response.json({ value, bodies: globalThis.bodies });
+      }
+    `,
+  },
+  async test(dev) {
+    const command = (line: string) => dev.fetch("/", { headers: { "x-command": line } });
+    expect(await command("load").json()).toStrictEqual({ value: "v1", bodies: ["v1"] });
+    await command("arm").equals("armed");
+    await dev.write("slow.ts", slowVersion("v2"));
+    await dev.write("slow.ts", slowVersion("v3"));
+    expect(await command("bodies").json()).toStrictEqual(["v1", "v2", "v3"]);
+    // The superseded v2 body finishes last; what it exports must not be served.
+    await command("release v3").equals("released");
+    await command("release v2").equals("released");
+    expect(await command("load").json()).toStrictEqual({ value: "v3", bodies: ["v1", "v2", "v3"] });
+  },
+});
 devTest("server: a sync throw during an update with a reload in flight leaves no unhandled rejection", {
   framework: minimalFramework,
   files: {

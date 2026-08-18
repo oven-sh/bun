@@ -548,7 +548,7 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
-    /* node:worker_threads worker: the process.stdout / process.stderr the native console writes through */ \
+    /* node:worker_threads worker: the process.stdout / process.stderr the native console writes through */  \
     /* (bound once at bootstrap, as Node's Console is bound to its streams). */                              \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerConsoleStdout)                                            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerConsoleStderr)                                            \

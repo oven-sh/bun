@@ -40,7 +40,6 @@ public:
 private:
     struct Run {
         uint32_t start;
-        JSC::Strong<JSC::Unknown> savedActiveSlot; // tuple field 1 at entry
         std::optional<JSC::Strong<JSC::Unknown>> savedContext; // tuple field 0 when the loop phase began
     };
     Vector<Run, 4> m_runs;

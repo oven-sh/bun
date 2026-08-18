@@ -2017,6 +2017,10 @@ void GlobalObject::finishCreation(VM& vm)
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
 
+    // Field 1 of the async context tuple is the active domain run's start epoch
+    // (EventLoopDomain.h); process.nextTick reads it on every call, so keep it an int32.
+    m_asyncContextData.get()->putInternalField(vm, 1, jsNumber(0));
+
     m_commonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();

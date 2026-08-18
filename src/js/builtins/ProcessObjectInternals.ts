@@ -358,9 +358,12 @@ export function initializeNextTickQueue(
       var tock;
       do {
         while ((tock = queue.shift()) !== null) {
-          if (activeRun && (tock.birth <= 1 || (tock.birth - activeRun) << 1 < 0)) {
-            (parked ??= []).push(tock);
-            continue;
+          if (activeRun) {
+            const birth = tock.birth | 0;
+            if (birth <= 1 || (birth - activeRun) << 1 < 0) {
+              (parked ??= []).push(tock);
+              continue;
+            }
           }
           var frame = tock.frame;
           var callback = tock.callback;
@@ -423,8 +426,8 @@ export function initializeNextTickQueue(
       // a waste of memory and Array.prototype.slice shows up in profiling.
       args: $argumentCount() > 1 ? args : undefined,
       frame: $getInternalField($asyncContext, 0),
-      // The domain run this tick is born in, if any (see processTicksAndRejections).
-      birth: $getInternalField($asyncContext, 1) | 0,
+      // The domain run this tick is born in (0 = none; see processTicksAndRejections).
+      birth: $getInternalField($asyncContext, 1),
     };
     if (tickInitHooks.length !== 0) {
       // node fires one TickObject init per process.nextTick() call, at

@@ -152,8 +152,13 @@ pub unsafe fn turn(
         // own; the queues hold outer work and are left untouched.)
         // SAFETY: as above.
         unsafe {
+            let had_immediates = !(*el).immediate_tasks.is_empty();
             (*el).tick_immediate_tasks(vm);
-            let _ = (*el).drain_microtasks();
+            // Beneath an entered frame (a nested wait) `EventLoop::exit` does not
+            // drain after each immediate; their microtasks may be what `done` waits for.
+            if had_immediates && (*el).entered_event_loop_count > 0 {
+                let _ = (*el).drain_microtasks();
+            }
         }
         if done() {
             return deadline_passed();

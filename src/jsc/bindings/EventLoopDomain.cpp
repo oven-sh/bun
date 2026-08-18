@@ -25,9 +25,10 @@ void EventLoopDomains::enter(JSGlobalObject* globalObject, uint32_t start)
     // The run may await an import(), so it keeps module-loader jobs.
     vm.defaultMicrotaskQueue().beginDrainScope(/* admitLoaderJobs */ true);
     auto* tuple = asyncContextData(globalObject);
-    m_runs.append(Run { start, Strong<Unknown>(vm, tuple->getInternalField(1)), std::nullopt });
-    // Field 1 tells nextTick which run is active: ticks it queues from now on are
-    // born in this run; older ones wait for it.
+    m_runs.append(Run { start, std::nullopt });
+    // Field 1 tells nextTick which run is active (0 = none, set in GlobalObject::finishCreation):
+    // ticks it queues from now on are born in this run; older ones wait for it.
+    ASSERT(tuple->getInternalField(1).isInt32());
     tuple->putInternalField(vm, 1, jsNumber(start));
 }
 
@@ -46,7 +47,7 @@ void EventLoopDomains::exit(JSGlobalObject* globalObject)
     ++m_exits;
     vm.defaultMicrotaskQueue().endDrainScope();
     auto* tuple = asyncContextData(globalObject);
-    tuple->putInternalField(vm, 1, run.savedActiveSlot.get());
+    tuple->putInternalField(vm, 1, jsNumber(active()));
     if (run.savedContext)
         tuple->putInternalField(vm, 0, run.savedContext->get());
 }

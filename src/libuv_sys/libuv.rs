@@ -845,9 +845,7 @@ pub trait StreamReader: Sized {
     fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8];
     /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
     /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
-    /// `this` is raw for the same reason as in [`on_read`](Self::on_read): implementors report
-    /// the error to their owner, which can re-enter `*this` (through JS), so no
-    /// `&mut Self` may be live across the call.
+    /// `this` is raw because implementors may re-enter `*this` while reporting the error.
     ///
     /// # Safety
     /// `this` is the live context passed to [`UvStream::read_start_ctx`].

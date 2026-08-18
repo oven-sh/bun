@@ -1112,8 +1112,7 @@ impl SendQueue {
                 }
                 #[cfg(not(windows))]
                 {
-                    // `close()` runs `on_close` synchronously. Recording the close first makes that
-                    // a no-op, so `socket_closed` only ever sees closes uSockets made on its own.
+                    // Recorded before `close()`, which runs `on_close` (`socket_closed`) synchronously.
                     self.socket_closed_notify(from != CloseFrom::Deinit);
                     s.close(match reason {
                         CloseReason::Normal => bun_uws::CloseCode::Normal,
@@ -1128,10 +1127,8 @@ impl SendQueue {
         let _ = reason; // suppress unused on windows
     }
 
-    /// uSockets' `on_close`. Closes we ask for are recorded by `close_socket` before uSockets
-    /// runs this, so the socket is still open here only when uSockets closed it on its own: the
-    /// peer went away with a read error (ECONNRESET when it died with our data unread), or the
-    /// loop is being torn down.
+    /// uSockets' `on_close`. Still open here means uSockets closed the socket itself (peer read
+    /// error such as ECONNRESET, or loop teardown); `close_socket` records our own closes first.
     fn socket_closed(&self) {
         if !self.socket_is_open() {
             return;
@@ -1140,24 +1137,17 @@ impl SendQueue {
         self.deliver_close_event_now();
     }
 
-    /// The peer's end of the channel is gone (EOF, or a read error on Windows), observed from the
-    /// channel's own read dispatch.
+    /// The peer closed its end (EOF; a read error on Windows).
     fn peer_closed(&self) {
         self.close_socket(CloseReason::Failure, CloseFrom::User);
         self.deliver_close_event_now();
     }
 
-    /// Delivers the close event `socket_closed_notify` just queued before returning to the poll
-    /// loop, rather than from the deferred task, which only runs once the whole batch of ready
-    /// polls has been dispatched. A peer that closed on us is usually an exiting child: its exit
-    /// is dispatched later in the same batch (a process's descriptors close before it can be
-    /// reaped) and reported to JS right from that dispatch, so a close left to the task would be
-    /// observed after the exit. Node orders the two the same way, by draining nextTicks right
-    /// after the channel's EOF read. Closes we initiate ourselves (`disconnect()`, send failures,
-    /// the exit path, deinit) stay on the task so that no callback runs inside their caller.
-    ///
-    /// The task still runs afterwards and finds nothing to do. Its ref is what keeps `self` alive
-    /// across the JS run here: the owner may drop its own ref once it has observed the close.
+    /// Peer-initiated closes are delivered from the read dispatch itself: the peer's exit is
+    /// usually dispatched later in the same poll batch and reported to JS right away, so the
+    /// deferred task (which runs after the batch, and which our own closes keep using) would
+    /// report the close after the exit. Node orders the two the same way. The task still runs,
+    /// finds nothing to do, and its ref keeps `self` alive across the JS run here.
     fn deliver_close_event_now(&self) {
         if !self.pending_after_close.get() {
             return;

@@ -1840,38 +1840,20 @@ impl JSValkeyClient {
         let _guard = this.ref_scope();
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
+        let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
 
-        // The channel names are held from the argument walk until they are in
-        // the handler map. An index getter on the channel array can hand out a
-        // fresh string, and the getter for the next index can run a GC. A `Vec`
-        // is not a GC root, so every name is rooted in the buffer as well.
-        jsc::MarkedArgumentBuffer::new(|rooted| {
-            Self::subscribe_rooted(
-                this,
-                global,
-                frame.this(),
-                channel_or_many,
-                handler_callback,
-                rooted,
-            )
-        })
-    }
-
-    fn subscribe_rooted(
-        this: &Self,
-        global: &JSGlobalObject,
-        this_js: JSValue,
-        channel_or_many: JSValue,
-        handler_callback: JSValue,
-        rooted: &mut jsc::MarkedArgumentBuffer,
-    ) -> JsResult<JSValue> {
-        let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
-        // Mirrors `rooted`, which cannot be read back.
-        let mut channel_names: Vec<JSValue> = Vec::with_capacity(1);
+        // The walk below stores each listener as it goes. A client that would
+        // reject the SUBSCRIBE outright must not keep the listeners either: a
+        // listener with no subscription behind it pins the event loop and the
+        // client, and cannot be removed with unsubscribe().
+        if let Some(message) = this.client.get().send_rejection() {
+            let error = valkey::ValkeyClient::send_rejection_error(global, message);
+            return Ok(JSPromise::rejected_promise(global, error).to_js());
+        }
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
@@ -1884,7 +1866,6 @@ impl JSValkeyClient {
 
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
-                rooted.append(channel_arg);
                 let Some(channel) = from_js(global, channel_arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         "subscribe",
@@ -1893,16 +1874,23 @@ impl JSValkeyClient {
                     ));
                 };
                 redis_channels.push(channel);
-                channel_names.push(channel_arg);
+
+                // What we do here is add our receive handler. Notice that this doesn't really do anything until the
+                // "SUBSCRIBE" command is sent to redis and we get a response.
+                //
+                // This is less-than-ideal, still, because this assumes a happy path. What happens if
+                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
+                // handler.
+                this.upsert_receive_handler(global, channel_arg, handler_callback)?;
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
-            rooted.append(channel_or_many);
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
-            channel_names.push(channel_or_many);
+
+            this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
         } else {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
@@ -1911,41 +1899,21 @@ impl JSValkeyClient {
             ));
         }
 
-        // A client that cannot take the SUBSCRIBE must not keep the handlers
-        // either: an orphaned handler pins the event loop and the client.
-        if let Some(message) = this.client.get().send_rejection() {
-            let error = valkey::ValkeyClient::send_rejection_error(global, message);
-            return Ok(JSPromise::rejected_promise(global, error).to_js());
-        }
-
-        // The handlers only start receiving once redis has answered the
-        // SUBSCRIBE sent below.
-        for &channel_name in &channel_names {
-            this.upsert_receive_handler(global, channel_name, handler_callback)?;
-        }
-
         let command = Command {
             command: b"SUBSCRIBE",
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
-        let sent = this.send(global, this_js, &command);
-
-        // A first dial is made inside `send()`. When it fails outright (no TLS
-        // context, for example) the client is failed by the time the SUBSCRIBE
-        // is looked at, and the promise comes back already rejected. Roll back
-        // only the handlers added above.
-        if sent.is_err() || this.client.get().send_rejection().is_some() {
-            for &channel_name in &channel_names {
-                this.remove_last_receive_handler(global, channel_name, handler_callback)?;
+        let promise = match this.send(global, frame.this(), &command) {
+            Ok(p) => p,
+            Err(err) => {
+                // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
+                this.clear_all_receive_handlers(global)?;
+                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
-            this.update_poll_ref();
-        }
+        };
 
-        match sent {
-            Ok(promise) => Ok(promise_to_js(promise)),
-            Err(err) => send_err_to_js(global, "Failed to send SUBSCRIBE command", &err),
-        }
+        Ok(promise_to_js(promise))
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.

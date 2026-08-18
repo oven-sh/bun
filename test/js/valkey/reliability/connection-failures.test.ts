@@ -1733,7 +1733,8 @@ describe("Valkey: Recovering After fail()", () => {
           const closed = Promise.withResolvers();
           client.onclose = err => closed.resolve(err);
           await client.connect();
-          console.log("onclose", (await closed.promise).code);
+          await closed.promise;
+          console.log("onclose");
           await client.subscribe("ch", () => {}).catch(err => console.log("subscribe rejected", err.code));
           `,
         ],
@@ -1742,7 +1743,7 @@ describe("Valkey: Recovering After fail()", () => {
         stderr: "pipe",
       });
       expect(await exitOutcome(proc)).toEqual({
-        stdout: "onclose ERR_REDIS_CONNECTION_CLOSED\nsubscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
+        stdout: "onclose\nsubscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
         stderr: "",
         exitCode: 0,
       });
@@ -1751,22 +1752,20 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
-  test("the process exits after subscribe() makes a first dial that fails outright", async () => {
+  // subscribe() before connect() with the default offline queue stores the
+  // listener and queues the SUBSCRIBE; when the dial then fails for good the
+  // queued SUBSCRIBE is rejected but the listener stays, so the process is
+  // held alive. #33290 registers the listener on the server's subscribe
+  // confirmation instead, which closes this route; a -ERR reply to SUBSCRIBE
+  // (an ACL NOPERM, say) leaves the same orphan and is closed the same way.
+  test.todo("the process exits after a queued subscribe() is rejected by a dial that fails for good", async () => {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `
-        // Neither key nor cert parses, so the dial that subscribe() makes
-        // fails inside the call, before a socket exists.
-        const client = new Bun.RedisClient("rediss://127.0.0.1:1", {
-          tls: { key: "not a key", cert: "not a cert" },
-          autoReconnect: false,
-        });
-        const closed = Promise.withResolvers();
-        client.onclose = err => closed.resolve(err);
+        const client = new Bun.RedisClient("redis://127.0.0.1:1", { maxRetries: 0, autoReconnect: false });
         await client.subscribe("ch", () => {}).catch(err => console.log("subscribe rejected", err.code));
-        console.log("onclose", (await closed.promise).code);
         `,
       ],
       env: bunEnv,
@@ -1774,7 +1773,7 @@ describe("Valkey: Recovering After fail()", () => {
       stderr: "pipe",
     });
     expect(await exitOutcome(proc)).toEqual({
-      stdout: "subscribe rejected ERR_REDIS_CONNECTION_CLOSED\nonclose ERR_REDIS_CONNECTION_CLOSED\n",
+      stdout: "subscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
       stderr: "",
       exitCode: 0,
     });

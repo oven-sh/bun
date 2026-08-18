@@ -123,7 +123,7 @@ pub mod ast {
         pub args: CondExprArgList<'arena>,
     }
 
-    pub(crate) type CondExprArgList<'arena> = SmolList<Atom<'arena>, 2>;
+    pub(crate) type CondExprArgList<'arena> = SmolList<'arena, Atom<'arena>, 2>;
 
     impl<'arena> CondExpr<'arena> {
         pub(crate) fn to_expr(
@@ -327,8 +327,8 @@ pub mod ast {
 
     /// TODO: If we know cond/then/elif/else is just a single command we don't need to store the stmt
     pub struct If<'arena> {
-        pub cond: SmolList<Stmt<'arena>, 1>,
-        pub then: SmolList<Stmt<'arena>, 1>,
+        pub cond: SmolList<'arena, Stmt<'arena>, 1>,
+        pub then: SmolList<'arena, Stmt<'arena>, 1>,
         /// From the spec:
         ///
         /// else_part        : Elif compound_list Then else_part
@@ -339,7 +339,7 @@ pub mod ast {
         /// - 1                                   => just else
         /// - 2n (n is # of elif/then branches)   => n elif/then branches
         /// - 2n + 1                              => n elif/then branches and an else branch
-        pub else_parts: SmolList<SmolList<Stmt<'arena>, 1>, 1>,
+        pub else_parts: SmolList<'arena, SmolList<'arena, Stmt<'arena>, 1>, 1>,
     }
 
     impl<'arena> Default for If<'arena> {
@@ -1176,8 +1176,8 @@ impl<'bump> Parser<'bump> {
     fn parse_if_body(
         &mut self,
         until: &[IfClauseTok],
-    ) -> ParseResult<SmolList<ast::Stmt<'bump>, 1>> {
-        let mut ret: SmolList<ast::Stmt<'bump>, 1> = SmolList::zeroes();
+    ) -> ParseResult<SmolList<'bump, ast::Stmt<'bump>, 1>> {
+        let mut ret: SmolList<'bump, ast::Stmt<'bump>, 1> = SmolList::zeroes();
         while if self.inside_subshell.is_none() {
             !self.peek_any_comptime_ifclausetok(until) && !self.peek_any_comptime(&[TokenTag::Eof])
         } else {
@@ -1213,7 +1213,8 @@ impl<'bump> Parser<'bump> {
 
         let then = self.parse_if_body(&[IfClauseTok::Else, IfClauseTok::Elif, IfClauseTok::Fi])?;
 
-        let mut else_parts: SmolList<SmolList<ast::Stmt<'bump>, 1>, 1> = SmolList::zeroes();
+        let mut else_parts: SmolList<'bump, SmolList<'bump, ast::Stmt<'bump>, 1>, 1> =
+            SmolList::zeroes();
 
         let if_clause_tok = match IfClauseTok::from_tok(self, self.peek()) {
             Some(t) => t,
@@ -4117,71 +4118,13 @@ pub fn is_if_clause_keyword_bunstr(bunstr: BunString) -> bool {
 
 // ───────────────────────────── SmolList ─────────────────────────────
 
-/// `Allocator` routing `SmolList::Heap` through the parser arena. Must not outlive the arena.
-#[derive(Clone, Copy)]
-pub struct SmolListAlloc(core::ptr::NonNull<Bump>);
-
-// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
-unsafe impl Send for SmolListAlloc {}
-// SAFETY: just a pointer to a `Send + Sync` `MimallocArena`.
-unsafe impl Sync for SmolListAlloc {}
-
-impl SmolListAlloc {
-    #[inline]
-    fn new(bump: &Bump) -> Self {
-        Self(core::ptr::NonNull::from(bump))
-    }
-    #[inline]
-    fn arena(&self) -> &Bump {
-        // SAFETY: the arena outlives `self`.
-        unsafe { self.0.as_ref() }
-    }
-}
-
-// SAFETY: forwards every method to `&Bump`'s `Allocator` impl; clones hold the
-// same arena pointer, so blocks stay valid across clones until the arena drops.
-unsafe impl core::alloc::Allocator for SmolListAlloc {
-    #[inline]
-    fn allocate(
-        &self,
-        layout: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        core::alloc::Allocator::allocate(&self.arena(), layout)
-    }
-    #[inline]
-    unsafe fn deallocate(&self, ptr: core::ptr::NonNull<u8>, layout: core::alloc::Layout) {
-        // SAFETY: caller upholds `deallocate`'s contract; `ptr`/`layout` came from this arena.
-        unsafe { core::alloc::Allocator::deallocate(&self.arena(), ptr, layout) }
-    }
-    #[inline]
-    unsafe fn grow(
-        &self,
-        ptr: core::ptr::NonNull<u8>,
-        old: core::alloc::Layout,
-        new: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        // SAFETY: caller upholds `grow`'s contract; `ptr`/`old` came from this arena.
-        unsafe { core::alloc::Allocator::grow(&self.arena(), ptr, old, new) }
-    }
-    #[inline]
-    unsafe fn shrink(
-        &self,
-        ptr: core::ptr::NonNull<u8>,
-        old: core::alloc::Layout,
-        new: core::alloc::Layout,
-    ) -> Result<core::ptr::NonNull<[u8]>, core::alloc::AllocError> {
-        // SAFETY: caller upholds `shrink`'s contract; `ptr`/`old` came from this arena.
-        unsafe { core::alloc::Allocator::shrink(&self.arena(), ptr, old, new) }
-    }
-}
-
-pub(crate) type SmolListHeap<T> = Vec<T, SmolListAlloc>;
+pub(crate) type SmolListHeap<'a, T> = Vec<T, &'a Bump>;
 
 /// A list that can store its items inlined, and promote itself to an
 /// arena-backed heap list.
-pub enum SmolList<T, const INLINED_MAX: usize> {
+pub enum SmolList<'a, T, const INLINED_MAX: usize> {
     Inlined(SmolListInlined<T, INLINED_MAX>),
-    Heap(SmolListHeap<T>),
+    Heap(SmolListHeap<'a, T>),
 }
 
 pub struct SmolListInlined<T, const INLINED_MAX: usize> {
@@ -4213,8 +4156,8 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
         }
     }
 
-    fn promote(&mut self, n: usize, new: T, bump: &Bump) -> SmolListHeap<T> {
-        let mut list = Vec::with_capacity_in(n + 1, SmolListAlloc::new(bump));
+    fn promote<'a>(&mut self, n: usize, new: T, bump: &'a Bump) -> SmolListHeap<'a, T> {
+        let mut list = Vec::with_capacity_in(n + 1, bump);
         for i in 0..INLINED_MAX {
             // SAFETY: all INLINED_MAX slots are initialized when promote is called (len == INLINED_MAX)
             let v = unsafe { self.items[i].assume_init_read() };
@@ -4226,7 +4169,7 @@ impl<T, const INLINED_MAX: usize> SmolListInlined<T, INLINED_MAX> {
     }
 }
 
-impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
+impl<'a, T, const INLINED_MAX: usize> SmolList<'a, T, INLINED_MAX> {
     pub(crate) fn zeroes() -> Self {
         SmolList::Inlined(SmolListInlined::default())
     }
@@ -4238,7 +4181,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         SmolList::Inlined(inlined)
     }
 
-    pub(crate) fn init_with_slice(vals: &[T], bump: &Bump) -> Self
+    pub(crate) fn init_with_slice(vals: &[T], bump: &'a Bump) -> Self
     where
         T: Clone,
     {
@@ -4251,7 +4194,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
             inlined.len = u32::try_from(vals.len()).expect("int cast");
             return SmolList::Inlined(inlined);
         }
-        let mut heap = Vec::with_capacity_in(vals.len(), SmolListAlloc::new(bump));
+        let mut heap = Vec::with_capacity_in(vals.len(), bump);
         heap.extend_from_slice(vals);
         SmolList::Heap(heap)
     }
@@ -4290,7 +4233,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
         &self.slice()[idx]
     }
 
-    pub(crate) fn append(&mut self, new: T, bump: &Bump) {
+    pub(crate) fn append(&mut self, new: T, bump: &'a Bump) {
         match self {
             SmolList::Inlined(inlined) => {
                 if inlined.len as usize == INLINED_MAX {
@@ -4308,7 +4251,7 @@ impl<T, const INLINED_MAX: usize> SmolList<T, INLINED_MAX> {
     }
 }
 
-impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
+impl<'a, T, const N: usize> core::ops::Index<usize> for SmolList<'a, T, N> {
     type Output = T;
     #[inline]
     fn index(&self, idx: usize) -> &T {
@@ -4316,7 +4259,7 @@ impl<T, const N: usize> core::ops::Index<usize> for SmolList<T, N> {
     }
 }
 
-impl<T, const N: usize> Drop for SmolList<T, N> {
+impl<'a, T, const N: usize> Drop for SmolList<'a, T, N> {
     fn drop(&mut self) {
         // Heap: the Vec drops itself.
         // Inlined: drop the initialized prefix so `T: Drop` elements are not
@@ -4331,7 +4274,7 @@ impl<T, const N: usize> Drop for SmolList<T, N> {
     }
 }
 
-impl<T: fmt::Debug, const N: usize> fmt::Display for SmolList<T, N> {
+impl<'a, T: fmt::Debug, const N: usize> fmt::Display for SmolList<'a, T, N> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "{:?}", self.slice())
     }

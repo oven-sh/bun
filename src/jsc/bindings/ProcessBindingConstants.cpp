@@ -1,6 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
+#include "JSConstantsObject.h"
 #include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
@@ -48,1160 +49,1162 @@
 namespace Bun {
 using namespace JSC;
 
-struct ConstantEntry {
-    ASCIILiteral name;
-    double value;
-};
+// Every object below is a JSConstantsObject over one of these tables, so a
+// constant is only materialized when something reads it. Rows are in node's
+// order; that is the order the properties enumerate in.
 
-static NEVER_INLINE void putConstants(VM& vm, JSObject* object, std::span<const ConstantEntry> entries)
+// Row for a constant whose property name is the macro's own name.
+#define CONSTANT(constant) constantInteger(#constant##_s, constant)
+
+template<const ClassInfo& classInfo>
+static JSValue createConstantsObject(VM& vm, JSObject* owner)
 {
-    for (const auto& entry : entries)
-        object->putDirect(vm, Identifier::fromString(vm, entry.name), jsNumber(entry.value));
+    return JSConstantsObject::create(vm, owner->globalObject(), &classInfo);
 }
 
-static JSValue processBindingConstantsGetOs(VM& vm, JSObject* bindingObject)
-{
-    static constexpr ConstantEntry errnoConstants[] = {
+static constexpr HashTableValue errnoTableValues[] = {
 #ifdef E2BIG
-        { "E2BIG"_s, E2BIG },
+    CONSTANT(E2BIG),
 #endif
 #ifdef EACCES
-        { "EACCES"_s, EACCES },
+    CONSTANT(EACCES),
 #endif
 #ifdef EADDRINUSE
-        { "EADDRINUSE"_s, EADDRINUSE },
+    CONSTANT(EADDRINUSE),
 #endif
 #ifdef EADDRNOTAVAIL
-        { "EADDRNOTAVAIL"_s, EADDRNOTAVAIL },
+    CONSTANT(EADDRNOTAVAIL),
 #endif
 #ifdef EAFNOSUPPORT
-        { "EAFNOSUPPORT"_s, EAFNOSUPPORT },
+    CONSTANT(EAFNOSUPPORT),
 #endif
 #ifdef EAGAIN
-        { "EAGAIN"_s, EAGAIN },
+    CONSTANT(EAGAIN),
 #endif
 #ifdef EALREADY
-        { "EALREADY"_s, EALREADY },
+    CONSTANT(EALREADY),
 #endif
 #ifdef EBADF
-        { "EBADF"_s, EBADF },
+    CONSTANT(EBADF),
 #endif
 #ifdef EBADMSG
-        { "EBADMSG"_s, EBADMSG },
+    CONSTANT(EBADMSG),
 #endif
 #ifdef EBUSY
-        { "EBUSY"_s, EBUSY },
+    CONSTANT(EBUSY),
 #endif
 #ifdef ECANCELED
-        { "ECANCELED"_s, ECANCELED },
+    CONSTANT(ECANCELED),
 #endif
 #ifdef ECHILD
-        { "ECHILD"_s, ECHILD },
+    CONSTANT(ECHILD),
 #endif
 #ifdef ECONNABORTED
-        { "ECONNABORTED"_s, ECONNABORTED },
+    CONSTANT(ECONNABORTED),
 #endif
 #ifdef ECONNREFUSED
-        { "ECONNREFUSED"_s, ECONNREFUSED },
+    CONSTANT(ECONNREFUSED),
 #endif
 #ifdef ECONNRESET
-        { "ECONNRESET"_s, ECONNRESET },
+    CONSTANT(ECONNRESET),
 #endif
 #ifdef EDEADLK
-        { "EDEADLK"_s, EDEADLK },
+    CONSTANT(EDEADLK),
 #endif
 #ifdef EDESTADDRREQ
-        { "EDESTADDRREQ"_s, EDESTADDRREQ },
+    CONSTANT(EDESTADDRREQ),
 #endif
 #ifdef EDOM
-        { "EDOM"_s, EDOM },
+    CONSTANT(EDOM),
 #endif
 #ifdef EDQUOT
-        { "EDQUOT"_s, EDQUOT },
+    CONSTANT(EDQUOT),
 #endif
 #ifdef EEXIST
-        { "EEXIST"_s, EEXIST },
+    CONSTANT(EEXIST),
 #endif
 #ifdef EFAULT
-        { "EFAULT"_s, EFAULT },
+    CONSTANT(EFAULT),
 #endif
 #ifdef EFBIG
-        { "EFBIG"_s, EFBIG },
+    CONSTANT(EFBIG),
 #endif
 #ifdef EHOSTUNREACH
-        { "EHOSTUNREACH"_s, EHOSTUNREACH },
+    CONSTANT(EHOSTUNREACH),
 #endif
 #ifdef EIDRM
-        { "EIDRM"_s, EIDRM },
+    CONSTANT(EIDRM),
 #endif
 #ifdef EILSEQ
-        { "EILSEQ"_s, EILSEQ },
+    CONSTANT(EILSEQ),
 #endif
 #ifdef EINPROGRESS
-        { "EINPROGRESS"_s, EINPROGRESS },
+    CONSTANT(EINPROGRESS),
 #endif
 #ifdef EINTR
-        { "EINTR"_s, EINTR },
+    CONSTANT(EINTR),
 #endif
 #ifdef EINVAL
-        { "EINVAL"_s, EINVAL },
+    CONSTANT(EINVAL),
 #endif
 #ifdef EIO
-        { "EIO"_s, EIO },
+    CONSTANT(EIO),
 #endif
 #ifdef EISCONN
-        { "EISCONN"_s, EISCONN },
+    CONSTANT(EISCONN),
 #endif
 #ifdef EISDIR
-        { "EISDIR"_s, EISDIR },
+    CONSTANT(EISDIR),
 #endif
 #ifdef ELOOP
-        { "ELOOP"_s, ELOOP },
+    CONSTANT(ELOOP),
 #endif
 #ifdef EMFILE
-        { "EMFILE"_s, EMFILE },
+    CONSTANT(EMFILE),
 #endif
 #ifdef EMLINK
-        { "EMLINK"_s, EMLINK },
+    CONSTANT(EMLINK),
 #endif
 #ifdef EMSGSIZE
-        { "EMSGSIZE"_s, EMSGSIZE },
+    CONSTANT(EMSGSIZE),
 #endif
 #ifdef EMULTIHOP
-        { "EMULTIHOP"_s, EMULTIHOP },
+    CONSTANT(EMULTIHOP),
 #endif
 #ifdef ENAMETOOLONG
-        { "ENAMETOOLONG"_s, ENAMETOOLONG },
+    CONSTANT(ENAMETOOLONG),
 #endif
 #ifdef ENETDOWN
-        { "ENETDOWN"_s, ENETDOWN },
+    CONSTANT(ENETDOWN),
 #endif
 #ifdef ENETRESET
-        { "ENETRESET"_s, ENETRESET },
+    CONSTANT(ENETRESET),
 #endif
 #ifdef ENETUNREACH
-        { "ENETUNREACH"_s, ENETUNREACH },
+    CONSTANT(ENETUNREACH),
 #endif
 #ifdef ENFILE
-        { "ENFILE"_s, ENFILE },
+    CONSTANT(ENFILE),
 #endif
 #ifdef ENOBUFS
-        { "ENOBUFS"_s, ENOBUFS },
+    CONSTANT(ENOBUFS),
 #endif
 #ifdef ENODATA
-        { "ENODATA"_s, ENODATA },
+    CONSTANT(ENODATA),
 #endif
 #ifdef ENODEV
-        { "ENODEV"_s, ENODEV },
+    CONSTANT(ENODEV),
 #endif
 #ifdef ENOENT
-        { "ENOENT"_s, ENOENT },
+    CONSTANT(ENOENT),
 #endif
 #ifdef ENOEXEC
-        { "ENOEXEC"_s, ENOEXEC },
+    CONSTANT(ENOEXEC),
 #endif
 #ifdef ENOLCK
-        { "ENOLCK"_s, ENOLCK },
+    CONSTANT(ENOLCK),
 #endif
 #ifdef ENOLINK
-        { "ENOLINK"_s, ENOLINK },
+    CONSTANT(ENOLINK),
 #endif
 #ifdef ENOMEM
-        { "ENOMEM"_s, ENOMEM },
+    CONSTANT(ENOMEM),
 #endif
 #ifdef ENOMSG
-        { "ENOMSG"_s, ENOMSG },
+    CONSTANT(ENOMSG),
 #endif
 #ifdef ENOPROTOOPT
-        { "ENOPROTOOPT"_s, ENOPROTOOPT },
+    CONSTANT(ENOPROTOOPT),
 #endif
 #ifdef ENOSPC
-        { "ENOSPC"_s, ENOSPC },
+    CONSTANT(ENOSPC),
 #endif
 #ifdef ENOSR
-        { "ENOSR"_s, ENOSR },
+    CONSTANT(ENOSR),
 #endif
 #ifdef ENOSTR
-        { "ENOSTR"_s, ENOSTR },
+    CONSTANT(ENOSTR),
 #endif
 #ifdef ENOSYS
-        { "ENOSYS"_s, ENOSYS },
+    CONSTANT(ENOSYS),
 #endif
 #ifdef ENOTCONN
-        { "ENOTCONN"_s, ENOTCONN },
+    CONSTANT(ENOTCONN),
 #endif
 #ifdef ENOTDIR
-        { "ENOTDIR"_s, ENOTDIR },
+    CONSTANT(ENOTDIR),
 #endif
 #ifdef ENOTEMPTY
-        { "ENOTEMPTY"_s, ENOTEMPTY },
+    CONSTANT(ENOTEMPTY),
 #endif
 #ifdef ENOTSOCK
-        { "ENOTSOCK"_s, ENOTSOCK },
+    CONSTANT(ENOTSOCK),
 #endif
 #ifdef ENOTSUP
-        { "ENOTSUP"_s, ENOTSUP },
+    CONSTANT(ENOTSUP),
 #endif
 #ifdef ENOTTY
-        { "ENOTTY"_s, ENOTTY },
+    CONSTANT(ENOTTY),
 #endif
 #ifdef ENXIO
-        { "ENXIO"_s, ENXIO },
+    CONSTANT(ENXIO),
 #endif
 #ifdef EOPNOTSUPP
-        { "EOPNOTSUPP"_s, EOPNOTSUPP },
+    CONSTANT(EOPNOTSUPP),
 #endif
 #ifdef EOVERFLOW
-        { "EOVERFLOW"_s, EOVERFLOW },
+    CONSTANT(EOVERFLOW),
 #endif
 #ifdef EPERM
-        { "EPERM"_s, EPERM },
+    CONSTANT(EPERM),
 #endif
 #ifdef EPIPE
-        { "EPIPE"_s, EPIPE },
+    CONSTANT(EPIPE),
 #endif
 #ifdef EPROTO
-        { "EPROTO"_s, EPROTO },
+    CONSTANT(EPROTO),
 #endif
 #ifdef EPROTONOSUPPORT
-        { "EPROTONOSUPPORT"_s, EPROTONOSUPPORT },
+    CONSTANT(EPROTONOSUPPORT),
 #endif
 #ifdef EPROTOTYPE
-        { "EPROTOTYPE"_s, EPROTOTYPE },
+    CONSTANT(EPROTOTYPE),
 #endif
 #ifdef ERANGE
-        { "ERANGE"_s, ERANGE },
+    CONSTANT(ERANGE),
 #endif
 #ifdef EROFS
-        { "EROFS"_s, EROFS },
+    CONSTANT(EROFS),
 #endif
 #ifdef ESPIPE
-        { "ESPIPE"_s, ESPIPE },
+    CONSTANT(ESPIPE),
 #endif
 #ifdef ESRCH
-        { "ESRCH"_s, ESRCH },
+    CONSTANT(ESRCH),
 #endif
 #ifdef ESTALE
-        { "ESTALE"_s, ESTALE },
+    CONSTANT(ESTALE),
 #endif
 #ifdef ETIME
-        { "ETIME"_s, ETIME },
+    CONSTANT(ETIME),
 #endif
 #ifdef ETIMEDOUT
-        { "ETIMEDOUT"_s, ETIMEDOUT },
+    CONSTANT(ETIMEDOUT),
 #endif
 #ifdef ETXTBSY
-        { "ETXTBSY"_s, ETXTBSY },
+    CONSTANT(ETXTBSY),
 #endif
 #ifdef EWOULDBLOCK
-        { "EWOULDBLOCK"_s, EWOULDBLOCK },
+    CONSTANT(EWOULDBLOCK),
 #endif
 #ifdef EXDEV
-        { "EXDEV"_s, EXDEV },
+    CONSTANT(EXDEV),
 #endif
 #ifdef WSAEINTR
-        { "WSAEINTR"_s, WSAEINTR },
+    CONSTANT(WSAEINTR),
 #endif
 #ifdef WSAEBADF
-        { "WSAEBADF"_s, WSAEBADF },
+    CONSTANT(WSAEBADF),
 #endif
 #ifdef WSAEACCES
-        { "WSAEACCES"_s, WSAEACCES },
+    CONSTANT(WSAEACCES),
 #endif
 #ifdef WSAEFAULT
-        { "WSAEFAULT"_s, WSAEFAULT },
+    CONSTANT(WSAEFAULT),
 #endif
 #ifdef WSAEINVAL
-        { "WSAEINVAL"_s, WSAEINVAL },
+    CONSTANT(WSAEINVAL),
 #endif
 #ifdef WSAEMFILE
-        { "WSAEMFILE"_s, WSAEMFILE },
+    CONSTANT(WSAEMFILE),
 #endif
 #ifdef WSAEWOULDBLOCK
-        { "WSAEWOULDBLOCK"_s, WSAEWOULDBLOCK },
+    CONSTANT(WSAEWOULDBLOCK),
 #endif
 #ifdef WSAEINPROGRESS
-        { "WSAEINPROGRESS"_s, WSAEINPROGRESS },
+    CONSTANT(WSAEINPROGRESS),
 #endif
 #ifdef WSAEALREADY
-        { "WSAEALREADY"_s, WSAEALREADY },
+    CONSTANT(WSAEALREADY),
 #endif
 #ifdef WSAENOTSOCK
-        { "WSAENOTSOCK"_s, WSAENOTSOCK },
+    CONSTANT(WSAENOTSOCK),
 #endif
 #ifdef WSAEDESTADDRREQ
-        { "WSAEDESTADDRREQ"_s, WSAEDESTADDRREQ },
+    CONSTANT(WSAEDESTADDRREQ),
 #endif
 #ifdef WSAEMSGSIZE
-        { "WSAEMSGSIZE"_s, WSAEMSGSIZE },
+    CONSTANT(WSAEMSGSIZE),
 #endif
 #ifdef WSAEPROTOTYPE
-        { "WSAEPROTOTYPE"_s, WSAEPROTOTYPE },
+    CONSTANT(WSAEPROTOTYPE),
 #endif
 #ifdef WSAENOPROTOOPT
-        { "WSAENOPROTOOPT"_s, WSAENOPROTOOPT },
+    CONSTANT(WSAENOPROTOOPT),
 #endif
 #ifdef WSAEPROTONOSUPPORT
-        { "WSAEPROTONOSUPPORT"_s, WSAEPROTONOSUPPORT },
+    CONSTANT(WSAEPROTONOSUPPORT),
 #endif
 #ifdef WSAESOCKTNOSUPPORT
-        { "WSAESOCKTNOSUPPORT"_s, WSAESOCKTNOSUPPORT },
+    CONSTANT(WSAESOCKTNOSUPPORT),
 #endif
 #ifdef WSAEOPNOTSUPP
-        { "WSAEOPNOTSUPP"_s, WSAEOPNOTSUPP },
+    CONSTANT(WSAEOPNOTSUPP),
 #endif
 #ifdef WSAEPFNOSUPPORT
-        { "WSAEPFNOSUPPORT"_s, WSAEPFNOSUPPORT },
+    CONSTANT(WSAEPFNOSUPPORT),
 #endif
 #ifdef WSAEAFNOSUPPORT
-        { "WSAEAFNOSUPPORT"_s, WSAEAFNOSUPPORT },
+    CONSTANT(WSAEAFNOSUPPORT),
 #endif
 #ifdef WSAEADDRINUSE
-        { "WSAEADDRINUSE"_s, WSAEADDRINUSE },
+    CONSTANT(WSAEADDRINUSE),
 #endif
 #ifdef WSAEADDRNOTAVAIL
-        { "WSAEADDRNOTAVAIL"_s, WSAEADDRNOTAVAIL },
+    CONSTANT(WSAEADDRNOTAVAIL),
 #endif
 #ifdef WSAENETDOWN
-        { "WSAENETDOWN"_s, WSAENETDOWN },
+    CONSTANT(WSAENETDOWN),
 #endif
 #ifdef WSAENETUNREACH
-        { "WSAENETUNREACH"_s, WSAENETUNREACH },
+    CONSTANT(WSAENETUNREACH),
 #endif
 #ifdef WSAENETRESET
-        { "WSAENETRESET"_s, WSAENETRESET },
+    CONSTANT(WSAENETRESET),
 #endif
 #ifdef WSAECONNABORTED
-        { "WSAECONNABORTED"_s, WSAECONNABORTED },
+    CONSTANT(WSAECONNABORTED),
 #endif
 #ifdef WSAECONNRESET
-        { "WSAECONNRESET"_s, WSAECONNRESET },
+    CONSTANT(WSAECONNRESET),
 #endif
 #ifdef WSAENOBUFS
-        { "WSAENOBUFS"_s, WSAENOBUFS },
+    CONSTANT(WSAENOBUFS),
 #endif
 #ifdef WSAEISCONN
-        { "WSAEISCONN"_s, WSAEISCONN },
+    CONSTANT(WSAEISCONN),
 #endif
 #ifdef WSAENOTCONN
-        { "WSAENOTCONN"_s, WSAENOTCONN },
+    CONSTANT(WSAENOTCONN),
 #endif
 #ifdef WSAESHUTDOWN
-        { "WSAESHUTDOWN"_s, WSAESHUTDOWN },
+    CONSTANT(WSAESHUTDOWN),
 #endif
 #ifdef WSAETOOMANYREFS
-        { "WSAETOOMANYREFS"_s, WSAETOOMANYREFS },
+    CONSTANT(WSAETOOMANYREFS),
 #endif
 #ifdef WSAETIMEDOUT
-        { "WSAETIMEDOUT"_s, WSAETIMEDOUT },
+    CONSTANT(WSAETIMEDOUT),
 #endif
 #ifdef WSAECONNREFUSED
-        { "WSAECONNREFUSED"_s, WSAECONNREFUSED },
+    CONSTANT(WSAECONNREFUSED),
 #endif
 #ifdef WSAELOOP
-        { "WSAELOOP"_s, WSAELOOP },
+    CONSTANT(WSAELOOP),
 #endif
 #ifdef WSAENAMETOOLONG
-        { "WSAENAMETOOLONG"_s, WSAENAMETOOLONG },
+    CONSTANT(WSAENAMETOOLONG),
 #endif
 #ifdef WSAEHOSTDOWN
-        { "WSAEHOSTDOWN"_s, WSAEHOSTDOWN },
+    CONSTANT(WSAEHOSTDOWN),
 #endif
 #ifdef WSAEHOSTUNREACH
-        { "WSAEHOSTUNREACH"_s, WSAEHOSTUNREACH },
+    CONSTANT(WSAEHOSTUNREACH),
 #endif
 #ifdef WSAENOTEMPTY
-        { "WSAENOTEMPTY"_s, WSAENOTEMPTY },
+    CONSTANT(WSAENOTEMPTY),
 #endif
 #ifdef WSAEPROCLIM
-        { "WSAEPROCLIM"_s, WSAEPROCLIM },
+    CONSTANT(WSAEPROCLIM),
 #endif
 #ifdef WSAEUSERS
-        { "WSAEUSERS"_s, WSAEUSERS },
+    CONSTANT(WSAEUSERS),
 #endif
 #ifdef WSAEDQUOT
-        { "WSAEDQUOT"_s, WSAEDQUOT },
+    CONSTANT(WSAEDQUOT),
 #endif
 #ifdef WSAESTALE
-        { "WSAESTALE"_s, WSAESTALE },
+    CONSTANT(WSAESTALE),
 #endif
 #ifdef WSAEREMOTE
-        { "WSAEREMOTE"_s, WSAEREMOTE },
+    CONSTANT(WSAEREMOTE),
 #endif
 #ifdef WSASYSNOTREADY
-        { "WSASYSNOTREADY"_s, WSASYSNOTREADY },
+    CONSTANT(WSASYSNOTREADY),
 #endif
 #ifdef WSAVERNOTSUPPORTED
-        { "WSAVERNOTSUPPORTED"_s, WSAVERNOTSUPPORTED },
+    CONSTANT(WSAVERNOTSUPPORTED),
 #endif
 #ifdef WSANOTINITIALISED
-        { "WSANOTINITIALISED"_s, WSANOTINITIALISED },
+    CONSTANT(WSANOTINITIALISED),
 #endif
 #ifdef WSAEDISCON
-        { "WSAEDISCON"_s, WSAEDISCON },
+    CONSTANT(WSAEDISCON),
 #endif
 #ifdef WSAENOMORE
-        { "WSAENOMORE"_s, WSAENOMORE },
+    CONSTANT(WSAENOMORE),
 #endif
 #ifdef WSAECANCELLED
-        { "WSAECANCELLED"_s, WSAECANCELLED },
+    CONSTANT(WSAECANCELLED),
 #endif
 #ifdef WSAEINVALIDPROCTABLE
-        { "WSAEINVALIDPROCTABLE"_s, WSAEINVALIDPROCTABLE },
+    CONSTANT(WSAEINVALIDPROCTABLE),
 #endif
 #ifdef WSAEINVALIDPROVIDER
-        { "WSAEINVALIDPROVIDER"_s, WSAEINVALIDPROVIDER },
+    CONSTANT(WSAEINVALIDPROVIDER),
 #endif
 #ifdef WSAEPROVIDERFAILEDINIT
-        { "WSAEPROVIDERFAILEDINIT"_s, WSAEPROVIDERFAILEDINIT },
+    CONSTANT(WSAEPROVIDERFAILEDINIT),
 #endif
 #ifdef WSASYSCALLFAILURE
-        { "WSASYSCALLFAILURE"_s, WSASYSCALLFAILURE },
+    CONSTANT(WSASYSCALLFAILURE),
 #endif
 #ifdef WSASERVICE_NOT_FOUND
-        { "WSASERVICE_NOT_FOUND"_s, WSASERVICE_NOT_FOUND },
+    CONSTANT(WSASERVICE_NOT_FOUND),
 #endif
 #ifdef WSATYPE_NOT_FOUND
-        { "WSATYPE_NOT_FOUND"_s, WSATYPE_NOT_FOUND },
+    CONSTANT(WSATYPE_NOT_FOUND),
 #endif
 #ifdef WSA_E_NO_MORE
-        { "WSA_E_NO_MORE"_s, WSA_E_NO_MORE },
+    CONSTANT(WSA_E_NO_MORE),
 #endif
 #ifdef WSA_E_CANCELLED
-        { "WSA_E_CANCELLED"_s, WSA_E_CANCELLED },
+    CONSTANT(WSA_E_CANCELLED),
 #endif
 #ifdef WSAEREFUSED
-        { "WSAEREFUSED"_s, WSAEREFUSED },
+    CONSTANT(WSAEREFUSED),
 #endif
-    };
-    static constexpr ConstantEntry signalConstants[] = {
+};
+static constexpr ClassInfo errnoClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<errnoTableValues>::table);
+
+static constexpr HashTableValue signalsTableValues[] = {
 #ifdef SIGHUP
-        { "SIGHUP"_s, SIGHUP },
+    CONSTANT(SIGHUP),
 #endif
 #ifdef SIGINT
-        { "SIGINT"_s, SIGINT },
+    CONSTANT(SIGINT),
 #endif
 #ifdef SIGQUIT
-        { "SIGQUIT"_s, SIGQUIT },
+    CONSTANT(SIGQUIT),
 #endif
 #ifdef SIGILL
-        { "SIGILL"_s, SIGILL },
+    CONSTANT(SIGILL),
 #endif
 #ifdef SIGTRAP
-        { "SIGTRAP"_s, SIGTRAP },
+    CONSTANT(SIGTRAP),
 #endif
 #ifdef SIGABRT
-        { "SIGABRT"_s, SIGABRT },
+    CONSTANT(SIGABRT),
 #endif
 #ifdef SIGIOT
-        { "SIGIOT"_s, SIGIOT },
+    CONSTANT(SIGIOT),
 #endif
 #ifdef SIGBUS
-        { "SIGBUS"_s, SIGBUS },
+    CONSTANT(SIGBUS),
 #endif
 #ifdef SIGFPE
-        { "SIGFPE"_s, SIGFPE },
+    CONSTANT(SIGFPE),
 #endif
 #ifdef SIGKILL
-        { "SIGKILL"_s, SIGKILL },
+    CONSTANT(SIGKILL),
 #endif
 #ifdef SIGUSR1
-        { "SIGUSR1"_s, SIGUSR1 },
+    CONSTANT(SIGUSR1),
 #endif
 #ifdef SIGSEGV
-        { "SIGSEGV"_s, SIGSEGV },
+    CONSTANT(SIGSEGV),
 #endif
 #ifdef SIGUSR2
-        { "SIGUSR2"_s, SIGUSR2 },
+    CONSTANT(SIGUSR2),
 #endif
 #ifdef SIGPIPE
-        { "SIGPIPE"_s, SIGPIPE },
+    CONSTANT(SIGPIPE),
 #endif
 #ifdef SIGALRM
-        { "SIGALRM"_s, SIGALRM },
+    CONSTANT(SIGALRM),
 #endif
 #ifdef SIGTERM
-        { "SIGTERM"_s, SIGTERM },
+    CONSTANT(SIGTERM),
 #endif
 #ifdef SIGCHLD
-        { "SIGCHLD"_s, SIGCHLD },
+    CONSTANT(SIGCHLD),
 #endif
 #ifdef SIGSTKFLT
-        { "SIGSTKFLT"_s, SIGSTKFLT },
+    CONSTANT(SIGSTKFLT),
 #endif
 #ifdef SIGCONT
-        { "SIGCONT"_s, SIGCONT },
+    CONSTANT(SIGCONT),
 #endif
 #ifdef SIGSTOP
-        { "SIGSTOP"_s, SIGSTOP },
+    CONSTANT(SIGSTOP),
 #endif
 #ifdef SIGTSTP
-        { "SIGTSTP"_s, SIGTSTP },
+    CONSTANT(SIGTSTP),
 #endif
 #ifdef SIGBREAK
-        { "SIGBREAK"_s, SIGBREAK },
+    CONSTANT(SIGBREAK),
 #endif
 #ifdef SIGTTIN
-        { "SIGTTIN"_s, SIGTTIN },
+    CONSTANT(SIGTTIN),
 #endif
 #ifdef SIGTTOU
-        { "SIGTTOU"_s, SIGTTOU },
+    CONSTANT(SIGTTOU),
 #endif
 #ifdef SIGURG
-        { "SIGURG"_s, SIGURG },
+    CONSTANT(SIGURG),
 #endif
 #ifdef SIGXCPU
-        { "SIGXCPU"_s, SIGXCPU },
+    CONSTANT(SIGXCPU),
 #endif
 #ifdef SIGXFSZ
-        { "SIGXFSZ"_s, SIGXFSZ },
+    CONSTANT(SIGXFSZ),
 #endif
 #ifdef SIGVTALRM
-        { "SIGVTALRM"_s, SIGVTALRM },
+    CONSTANT(SIGVTALRM),
 #endif
 #ifdef SIGPROF
-        { "SIGPROF"_s, SIGPROF },
+    CONSTANT(SIGPROF),
 #endif
 #ifdef SIGWINCH
-        { "SIGWINCH"_s, SIGWINCH },
+    CONSTANT(SIGWINCH),
 #endif
 #ifdef SIGIO
-        { "SIGIO"_s, SIGIO },
+    CONSTANT(SIGIO),
 #endif
 #ifdef SIGPOLL
-        { "SIGPOLL"_s, SIGPOLL },
+    CONSTANT(SIGPOLL),
 #endif
 #ifdef SIGLOST
-        { "SIGLOST"_s, SIGLOST },
+    CONSTANT(SIGLOST),
 #endif
 #ifdef SIGPWR
-        { "SIGPWR"_s, SIGPWR },
+    CONSTANT(SIGPWR),
 #endif
 #ifdef SIGINFO
-        { "SIGINFO"_s, SIGINFO },
+    CONSTANT(SIGINFO),
 #endif
 #ifdef SIGSYS
-        { "SIGSYS"_s, SIGSYS },
+    CONSTANT(SIGSYS),
 #endif
 #ifdef SIGUNUSED
-        { "SIGUNUSED"_s, SIGUNUSED },
+    CONSTANT(SIGUNUSED),
 #endif
-    };
-    static constexpr ConstantEntry priorityConstants[] = {
-        { "PRIORITY_LOW"_s, 19 },
-        { "PRIORITY_BELOW_NORMAL"_s, 10 },
-        { "PRIORITY_NORMAL"_s, 0 },
-        { "PRIORITY_ABOVE_NORMAL"_s, -7 },
-        { "PRIORITY_HIGH"_s, -14 },
-        { "PRIORITY_HIGHEST"_s, -20 },
-    };
-    auto globalObject = bindingObject->globalObject();
-    auto osObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    auto dlopenObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    auto errnoObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    auto signalsObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    auto priorityObj = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    osObj->putDirect(vm, Identifier::fromString(vm, "UV_UDP_REUSEADDR"_s), jsNumber(4));
-    osObj->putDirect(vm, Identifier::fromString(vm, "dlopen"_s), dlopenObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "errno"_s), errnoObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "signals"_s), signalsObj);
-    osObj->putDirect(vm, Identifier::fromString(vm, "priority"_s), priorityObj);
-    putConstants(vm, errnoObj, errnoConstants);
-    putConstants(vm, signalsObj, signalConstants);
-    putConstants(vm, priorityObj, priorityConstants);
+};
+static constexpr ClassInfo signalsClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<signalsTableValues>::table);
+
+static constexpr HashTableValue priorityTableValues[] = {
+    constantInteger("PRIORITY_LOW"_s, 19),
+    constantInteger("PRIORITY_BELOW_NORMAL"_s, 10),
+    constantInteger("PRIORITY_NORMAL"_s, 0),
+    constantInteger("PRIORITY_ABOVE_NORMAL"_s, -7),
+    constantInteger("PRIORITY_HIGH"_s, -14),
+    constantInteger("PRIORITY_HIGHEST"_s, -20),
+};
+static constexpr ClassInfo priorityClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<priorityTableValues>::table);
+
+#if OS(WINDOWS)
+// No dlfcn.h: node exposes an empty object.
+static JSValue createDlopenConstants(VM& vm, JSObject* owner)
+{
+    return constructEmptyObject(vm, owner->globalObject()->nullPrototypeObjectStructure());
+}
+#else
+static constexpr HashTableValue dlopenTableValues[] = {
 #ifdef RTLD_LAZY
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_LAZY"_s), jsNumber(RTLD_LAZY));
+    CONSTANT(RTLD_LAZY),
 #endif
 #ifdef RTLD_NOW
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_NOW"_s), jsNumber(RTLD_NOW));
+    CONSTANT(RTLD_NOW),
 #endif
 #ifdef RTLD_GLOBAL
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_GLOBAL"_s), jsNumber(RTLD_GLOBAL));
+    CONSTANT(RTLD_GLOBAL),
 #endif
 #ifdef RTLD_LOCAL
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_LOCAL"_s), jsNumber(RTLD_LOCAL));
+    CONSTANT(RTLD_LOCAL),
 #endif
 #ifdef RTLD_DEEPBIND
-    dlopenObj->putDirect(vm, Identifier::fromString(vm, "RTLD_DEEPBIND"_s), jsNumber(RTLD_DEEPBIND));
+    CONSTANT(RTLD_DEEPBIND),
 #endif
-    return osObj;
-}
+};
+static constexpr ClassInfo dlopenClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<dlopenTableValues>::table);
+static constexpr LazyPropertyCallback createDlopenConstants = createConstantsObject<dlopenClassInfo>;
+#endif
 
-static JSValue processBindingConstantsGetTrace(VM& vm, JSObject* bindingObject)
-{
-    static constexpr ConstantEntry traceConstants[] = {
-        { "TRACE_EVENT_PHASE_BEGIN"_s, 66 },
-        { "TRACE_EVENT_PHASE_END"_s, 69 },
-        { "TRACE_EVENT_PHASE_COMPLETE"_s, 88 },
-        { "TRACE_EVENT_PHASE_INSTANT"_s, 73 },
-        { "TRACE_EVENT_PHASE_ASYNC_BEGIN"_s, 83 },
-        { "TRACE_EVENT_PHASE_ASYNC_STEP_INTO"_s, 84 },
-        { "TRACE_EVENT_PHASE_ASYNC_STEP_PAST"_s, 112 },
-        { "TRACE_EVENT_PHASE_ASYNC_END"_s, 70 },
-        { "TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN"_s, 98 },
-        { "TRACE_EVENT_PHASE_NESTABLE_ASYNC_END"_s, 101 },
-        { "TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT"_s, 110 },
-        { "TRACE_EVENT_PHASE_FLOW_BEGIN"_s, 115 },
-        { "TRACE_EVENT_PHASE_FLOW_STEP"_s, 116 },
-        { "TRACE_EVENT_PHASE_FLOW_END"_s, 102 },
-        { "TRACE_EVENT_PHASE_METADATA"_s, 77 },
-        { "TRACE_EVENT_PHASE_COUNTER"_s, 67 },
-        { "TRACE_EVENT_PHASE_SAMPLE"_s, 80 },
-        { "TRACE_EVENT_PHASE_CREATE_OBJECT"_s, 78 },
-        { "TRACE_EVENT_PHASE_SNAPSHOT_OBJECT"_s, 79 },
-        { "TRACE_EVENT_PHASE_DELETE_OBJECT"_s, 68 },
-        { "TRACE_EVENT_PHASE_MEMORY_DUMP"_s, 118 },
-        { "TRACE_EVENT_PHASE_MARK"_s, 82 },
-        { "TRACE_EVENT_PHASE_CLOCK_SYNC"_s, 99 },
-        { "TRACE_EVENT_PHASE_ENTER_CONTEXT"_s, 40 },
-        { "TRACE_EVENT_PHASE_LEAVE_CONTEXT"_s, 41 },
-        { "TRACE_EVENT_PHASE_LINK_IDS"_s, 61 },
-    };
-    auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    putConstants(vm, object, traceConstants);
-    return object;
-}
+static constexpr HashTableValue osTableValues[] = {
+    constantInteger("UV_UDP_REUSEADDR"_s, 4),
+    propertyCallback("dlopen"_s, createDlopenConstants),
+    propertyCallback("errno"_s, createConstantsObject<errnoClassInfo>),
+    propertyCallback("signals"_s, createConstantsObject<signalsClassInfo>),
+    propertyCallback("priority"_s, createConstantsObject<priorityClassInfo>),
+};
+static constexpr ClassInfo osClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<osTableValues>::table);
 
-static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
-{
-    static constexpr ConstantEntry fsConstants[] = {
-        { "UV_FS_SYMLINK_DIR"_s, 1 },
-        { "UV_FS_SYMLINK_JUNCTION"_s, 2 },
-        { "O_RDONLY"_s, O_RDONLY },
-        { "O_WRONLY"_s, O_WRONLY },
-        { "O_RDWR"_s, O_RDWR },
+static constexpr HashTableValue traceTableValues[] = {
+    constantInteger("TRACE_EVENT_PHASE_BEGIN"_s, 66),
+    constantInteger("TRACE_EVENT_PHASE_END"_s, 69),
+    constantInteger("TRACE_EVENT_PHASE_COMPLETE"_s, 88),
+    constantInteger("TRACE_EVENT_PHASE_INSTANT"_s, 73),
+    constantInteger("TRACE_EVENT_PHASE_ASYNC_BEGIN"_s, 83),
+    constantInteger("TRACE_EVENT_PHASE_ASYNC_STEP_INTO"_s, 84),
+    constantInteger("TRACE_EVENT_PHASE_ASYNC_STEP_PAST"_s, 112),
+    constantInteger("TRACE_EVENT_PHASE_ASYNC_END"_s, 70),
+    constantInteger("TRACE_EVENT_PHASE_NESTABLE_ASYNC_BEGIN"_s, 98),
+    constantInteger("TRACE_EVENT_PHASE_NESTABLE_ASYNC_END"_s, 101),
+    constantInteger("TRACE_EVENT_PHASE_NESTABLE_ASYNC_INSTANT"_s, 110),
+    constantInteger("TRACE_EVENT_PHASE_FLOW_BEGIN"_s, 115),
+    constantInteger("TRACE_EVENT_PHASE_FLOW_STEP"_s, 116),
+    constantInteger("TRACE_EVENT_PHASE_FLOW_END"_s, 102),
+    constantInteger("TRACE_EVENT_PHASE_METADATA"_s, 77),
+    constantInteger("TRACE_EVENT_PHASE_COUNTER"_s, 67),
+    constantInteger("TRACE_EVENT_PHASE_SAMPLE"_s, 80),
+    constantInteger("TRACE_EVENT_PHASE_CREATE_OBJECT"_s, 78),
+    constantInteger("TRACE_EVENT_PHASE_SNAPSHOT_OBJECT"_s, 79),
+    constantInteger("TRACE_EVENT_PHASE_DELETE_OBJECT"_s, 68),
+    constantInteger("TRACE_EVENT_PHASE_MEMORY_DUMP"_s, 118),
+    constantInteger("TRACE_EVENT_PHASE_MARK"_s, 82),
+    constantInteger("TRACE_EVENT_PHASE_CLOCK_SYNC"_s, 99),
+    constantInteger("TRACE_EVENT_PHASE_ENTER_CONTEXT"_s, 40),
+    constantInteger("TRACE_EVENT_PHASE_LEAVE_CONTEXT"_s, 41),
+    constantInteger("TRACE_EVENT_PHASE_LINK_IDS"_s, 61),
+};
+static constexpr ClassInfo traceClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<traceTableValues>::table);
 
-        { "UV_DIRENT_UNKNOWN"_s, 0 },
-        { "UV_DIRENT_FILE"_s, 1 },
-        { "UV_DIRENT_DIR"_s, 2 },
-        { "UV_DIRENT_LINK"_s, 3 },
-        { "UV_DIRENT_FIFO"_s, 4 },
-        { "UV_DIRENT_SOCKET"_s, 5 },
-        { "UV_DIRENT_CHAR"_s, 6 },
-        { "UV_DIRENT_BLOCK"_s, 7 },
+static constexpr HashTableValue fsTableValues[] = {
+    constantInteger("UV_FS_SYMLINK_DIR"_s, 1),
+    constantInteger("UV_FS_SYMLINK_JUNCTION"_s, 2),
+    CONSTANT(O_RDONLY),
+    CONSTANT(O_WRONLY),
+    CONSTANT(O_RDWR),
 
-        { "S_IFMT"_s, S_IFMT },
-        { "S_IFREG"_s, S_IFREG },
-        { "S_IFDIR"_s, S_IFDIR },
-        { "S_IFCHR"_s, S_IFCHR },
+    constantInteger("UV_DIRENT_UNKNOWN"_s, 0),
+    constantInteger("UV_DIRENT_FILE"_s, 1),
+    constantInteger("UV_DIRENT_DIR"_s, 2),
+    constantInteger("UV_DIRENT_LINK"_s, 3),
+    constantInteger("UV_DIRENT_FIFO"_s, 4),
+    constantInteger("UV_DIRENT_SOCKET"_s, 5),
+    constantInteger("UV_DIRENT_CHAR"_s, 6),
+    constantInteger("UV_DIRENT_BLOCK"_s, 7),
+
+    CONSTANT(S_IFMT),
+    CONSTANT(S_IFREG),
+    CONSTANT(S_IFDIR),
+    CONSTANT(S_IFCHR),
 #ifdef S_IFBLK
-        { "S_IFBLK"_s, S_IFBLK },
+    CONSTANT(S_IFBLK),
 #endif
 #ifdef S_IFIFO
-        { "S_IFIFO"_s, S_IFIFO },
+    CONSTANT(S_IFIFO),
 #endif
 #ifdef S_IFLNK
-        { "S_IFLNK"_s, S_IFLNK },
+    CONSTANT(S_IFLNK),
 #endif
 #ifdef S_IFSOCK
-        { "S_IFSOCK"_s, S_IFSOCK },
+    CONSTANT(S_IFSOCK),
 #endif
 #ifdef O_CREAT
-        { "O_CREAT"_s, O_CREAT },
+    CONSTANT(O_CREAT),
 #endif
 #ifdef O_EXCL
-        { "O_EXCL"_s, O_EXCL },
+    CONSTANT(O_EXCL),
 #endif
 #if OS(WINDOWS)
-        { "UV_FS_O_FILEMAP"_s, 536870912 },
+    constantInteger("UV_FS_O_FILEMAP"_s, 536870912),
 #else
-        { "UV_FS_O_FILEMAP"_s, 0 },
+    constantInteger("UV_FS_O_FILEMAP"_s, 0),
 #endif
 #ifdef O_NOCTTY
-        { "O_NOCTTY"_s, O_NOCTTY },
+    CONSTANT(O_NOCTTY),
 #endif
 #ifdef O_TRUNC
-        { "O_TRUNC"_s, O_TRUNC },
+    CONSTANT(O_TRUNC),
 #endif
 #ifdef O_APPEND
-        { "O_APPEND"_s, O_APPEND },
+    CONSTANT(O_APPEND),
 #endif
 #ifdef O_DIRECTORY
-        { "O_DIRECTORY"_s, O_DIRECTORY },
+    CONSTANT(O_DIRECTORY),
 #endif
 #ifdef O_NOATIME
-        { "O_NOATIME"_s, O_NOATIME },
+    CONSTANT(O_NOATIME),
 #endif
 #ifdef O_NOFOLLOW
-        { "O_NOFOLLOW"_s, O_NOFOLLOW },
+    CONSTANT(O_NOFOLLOW),
 #endif
 #ifdef O_SYNC
-        { "O_SYNC"_s, O_SYNC },
+    CONSTANT(O_SYNC),
 #endif
 #ifdef O_DSYNC
-        { "O_DSYNC"_s, O_DSYNC },
+    CONSTANT(O_DSYNC),
 #endif
 #ifdef O_SYMLINK
-        { "O_SYMLINK"_s, O_SYMLINK },
+    CONSTANT(O_SYMLINK),
 #endif
 #ifdef O_DIRECT
-        { "O_DIRECT"_s, O_DIRECT },
+    CONSTANT(O_DIRECT),
 #endif
 #ifdef O_NONBLOCK
-        { "O_NONBLOCK"_s, O_NONBLOCK },
+    CONSTANT(O_NONBLOCK),
 #endif
 #ifdef S_IRWXU
-        { "S_IRWXU"_s, S_IRWXU },
+    CONSTANT(S_IRWXU),
 #endif
 #ifdef S_IRUSR
-        { "S_IRUSR"_s, S_IRUSR },
+    CONSTANT(S_IRUSR),
 #endif
 #ifdef S_IWUSR
-        { "S_IWUSR"_s, S_IWUSR },
+    CONSTANT(S_IWUSR),
 #endif
 #ifdef S_IXUSR
-        { "S_IXUSR"_s, S_IXUSR },
+    CONSTANT(S_IXUSR),
 #endif
 #ifdef S_IRWXG
-        { "S_IRWXG"_s, S_IRWXG },
+    CONSTANT(S_IRWXG),
 #endif
 #ifdef S_IRGRP
-        { "S_IRGRP"_s, S_IRGRP },
+    CONSTANT(S_IRGRP),
 #endif
 #ifdef S_IWGRP
-        { "S_IWGRP"_s, S_IWGRP },
+    CONSTANT(S_IWGRP),
 #endif
 #ifdef S_IXGRP
-        { "S_IXGRP"_s, S_IXGRP },
+    CONSTANT(S_IXGRP),
 #endif
 #ifdef S_IRWXO
-        { "S_IRWXO"_s, S_IRWXO },
+    CONSTANT(S_IRWXO),
 #endif
 #ifdef S_IROTH
-        { "S_IROTH"_s, S_IROTH },
+    CONSTANT(S_IROTH),
 #endif
 #ifdef S_IWOTH
-        { "S_IWOTH"_s, S_IWOTH },
+    CONSTANT(S_IWOTH),
 #endif
 #ifdef S_IXOTH
-        { "S_IXOTH"_s, S_IXOTH },
+    CONSTANT(S_IXOTH),
 #endif
 #ifdef F_OK
-        { "F_OK"_s, F_OK },
+    CONSTANT(F_OK),
 #endif
 #ifdef R_OK
-        { "R_OK"_s, R_OK },
+    CONSTANT(R_OK),
 #endif
 #ifdef W_OK
-        { "W_OK"_s, W_OK },
+    CONSTANT(W_OK),
 #endif
 #ifdef X_OK
-        { "X_OK"_s, X_OK },
+    CONSTANT(X_OK),
 #endif
-        { "UV_FS_COPYFILE_EXCL"_s, 1 },
-        { "COPYFILE_EXCL"_s, 1 },
-        { "UV_FS_COPYFILE_FICLONE"_s, 2 },
-        { "COPYFILE_FICLONE"_s, 2 },
-        { "UV_FS_COPYFILE_FICLONE_FORCE"_s, 4 },
-        { "COPYFILE_FICLONE_FORCE"_s, 4 },
+    constantInteger("UV_FS_COPYFILE_EXCL"_s, 1),
+    constantInteger("COPYFILE_EXCL"_s, 1),
+    constantInteger("UV_FS_COPYFILE_FICLONE"_s, 2),
+    constantInteger("COPYFILE_FICLONE"_s, 2),
+    constantInteger("UV_FS_COPYFILE_FICLONE_FORCE"_s, 4),
+    constantInteger("COPYFILE_FICLONE_FORCE"_s, 4),
 
-        { "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s, 0 },
-        { "EXTENSIONLESS_FORMAT_WASM"_s, 1 },
+    constantInteger("EXTENSIONLESS_FORMAT_JAVASCRIPT"_s, 0),
+    constantInteger("EXTENSIONLESS_FORMAT_WASM"_s, 1),
+};
+static constexpr ClassInfo fsClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<fsTableValues>::table);
 
-    };
-    auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    putConstants(vm, object, fsConstants);
-    return object;
+static constexpr ASCIILiteral defaultCipherList = "TLS_AES_256_GCM_SHA384:"
+                                                  "TLS_CHACHA20_POLY1305_SHA256:"
+                                                  "TLS_AES_128_GCM_SHA256:"
+                                                  "ECDHE-RSA-AES128-GCM-SHA256:"
+                                                  "ECDHE-ECDSA-AES128-GCM-SHA256:"
+                                                  "ECDHE-RSA-AES256-GCM-SHA384:"
+                                                  "ECDHE-ECDSA-AES256-GCM-SHA384:"
+                                                  "DHE-RSA-AES128-GCM-SHA256:"
+                                                  "ECDHE-RSA-AES128-SHA256:"
+                                                  "DHE-RSA-AES128-SHA256:"
+                                                  "ECDHE-RSA-AES256-SHA384:"
+                                                  "DHE-RSA-AES256-SHA384:"
+                                                  "ECDHE-RSA-AES256-SHA256:"
+                                                  "DHE-RSA-AES256-SHA256:"
+                                                  "HIGH:"
+                                                  "!aNULL:"
+                                                  "!eNULL:"
+                                                  "!EXPORT:"
+                                                  "!DES:"
+                                                  "!RC4:"
+                                                  "!MD5:"
+                                                  "!PSK:"
+                                                  "!SRP:"
+                                                  "!CAMELLIA"_s;
+
+static JSValue createDefaultCipherList(VM& vm, JSObject*)
+{
+    return jsString(vm, String(defaultCipherList));
 }
 
-static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
-{
-    static constexpr ConstantEntry cryptoConstants[] = {
+static constexpr HashTableValue cryptoTableValues[] = {
 #ifdef OPENSSL_VERSION_NUMBER
-        { "OPENSSL_VERSION_NUMBER"_s, OPENSSL_VERSION_NUMBER },
+    CONSTANT(OPENSSL_VERSION_NUMBER),
 #endif
 #ifdef SSL_OP_ALL
-        { "SSL_OP_ALL"_s, SSL_OP_ALL },
+    CONSTANT(SSL_OP_ALL),
 #endif
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX
-        { "SSL_OP_ALLOW_NO_DHE_KEX"_s, SSL_OP_ALLOW_NO_DHE_KEX },
+    CONSTANT(SSL_OP_ALLOW_NO_DHE_KEX),
 #else
-        { "SSL_OP_ALLOW_NO_DHE_KEX"_s, 0 },
+    constantInteger("SSL_OP_ALLOW_NO_DHE_KEX"_s, 0),
 #endif
 #ifdef SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
-        { "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s, SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION },
+    CONSTANT(SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION),
 #endif
 #ifdef SSL_OP_CIPHER_SERVER_PREFERENCE
-        { "SSL_OP_CIPHER_SERVER_PREFERENCE"_s, SSL_OP_CIPHER_SERVER_PREFERENCE },
+    CONSTANT(SSL_OP_CIPHER_SERVER_PREFERENCE),
 #endif
 #ifdef SSL_OP_CISCO_ANYCONNECT
-        { "SSL_OP_CISCO_ANYCONNECT"_s, SSL_OP_CISCO_ANYCONNECT },
+    CONSTANT(SSL_OP_CISCO_ANYCONNECT),
 #else
-        { "SSL_OP_CISCO_ANYCONNECT"_s, 0 },
+    constantInteger("SSL_OP_CISCO_ANYCONNECT"_s, 0),
 #endif
 #ifdef SSL_OP_COOKIE_EXCHANGE
-        { "SSL_OP_COOKIE_EXCHANGE"_s, SSL_OP_COOKIE_EXCHANGE },
+    CONSTANT(SSL_OP_COOKIE_EXCHANGE),
 #else
-        { "SSL_OP_COOKIE_EXCHANGE"_s, 0 },
+    constantInteger("SSL_OP_COOKIE_EXCHANGE"_s, 0),
 #endif
 #ifdef SSL_OP_CRYPTOPRO_TLSEXT_BUG
-        { "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s, SSL_OP_CRYPTOPRO_TLSEXT_BUG },
+    CONSTANT(SSL_OP_CRYPTOPRO_TLSEXT_BUG),
 #else
-        { "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s, 0 },
+    constantInteger("SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s, 0),
 #endif
 #ifdef SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS
-        { "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s, SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS },
+    CONSTANT(SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS),
 #endif
 #ifdef SSL_OP_LEGACY_SERVER_CONNECT
-        { "SSL_OP_LEGACY_SERVER_CONNECT"_s, SSL_OP_LEGACY_SERVER_CONNECT },
+    CONSTANT(SSL_OP_LEGACY_SERVER_CONNECT),
 #endif
 #ifdef SSL_OP_NO_COMPRESSION
-        { "SSL_OP_NO_COMPRESSION"_s, SSL_OP_NO_COMPRESSION },
+    CONSTANT(SSL_OP_NO_COMPRESSION),
 #endif
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC
-        { "SSL_OP_NO_ENCRYPT_THEN_MAC"_s, SSL_OP_NO_ENCRYPT_THEN_MAC },
+    CONSTANT(SSL_OP_NO_ENCRYPT_THEN_MAC),
 #else
-        { "SSL_OP_NO_ENCRYPT_THEN_MAC"_s, 0 },
+    constantInteger("SSL_OP_NO_ENCRYPT_THEN_MAC"_s, 0),
 #endif
 #ifdef SSL_OP_NO_QUERY_MTU
-        { "SSL_OP_NO_QUERY_MTU"_s, SSL_OP_NO_QUERY_MTU },
+    CONSTANT(SSL_OP_NO_QUERY_MTU),
 #endif
 #ifdef SSL_OP_NO_RENEGOTIATION
-        { "SSL_OP_NO_RENEGOTIATION"_s, SSL_OP_NO_RENEGOTIATION },
+    CONSTANT(SSL_OP_NO_RENEGOTIATION),
 #endif
 #ifdef SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION
-        { "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION"_s, SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION },
+    CONSTANT(SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION),
 #endif
 #ifdef SSL_OP_NO_SSLv2
-        { "SSL_OP_NO_SSLv2"_s, SSL_OP_NO_SSLv2 },
+    CONSTANT(SSL_OP_NO_SSLv2),
 #endif
 #ifdef SSL_OP_NO_SSLv3
-        { "SSL_OP_NO_SSLv3"_s, SSL_OP_NO_SSLv3 },
+    CONSTANT(SSL_OP_NO_SSLv3),
 #endif
 #ifdef SSL_OP_NO_TICKET
-        { "SSL_OP_NO_TICKET"_s, SSL_OP_NO_TICKET },
+    CONSTANT(SSL_OP_NO_TICKET),
 #endif
 #ifdef SSL_OP_NO_TLSv1
-        { "SSL_OP_NO_TLSv1"_s, SSL_OP_NO_TLSv1 },
+    CONSTANT(SSL_OP_NO_TLSv1),
 #endif
 #ifdef SSL_OP_NO_TLSv1_1
-        { "SSL_OP_NO_TLSv1_1"_s, SSL_OP_NO_TLSv1_1 },
+    CONSTANT(SSL_OP_NO_TLSv1_1),
 #endif
 #ifdef SSL_OP_NO_TLSv1_2
-        { "SSL_OP_NO_TLSv1_2"_s, SSL_OP_NO_TLSv1_2 },
+    CONSTANT(SSL_OP_NO_TLSv1_2),
 #endif
 #ifdef SSL_OP_NO_TLSv1_3
-        { "SSL_OP_NO_TLSv1_3"_s, SSL_OP_NO_TLSv1_3 },
+    CONSTANT(SSL_OP_NO_TLSv1_3),
 #endif
 #ifdef SSL_OP_PRIORITIZE_CHACHA
-        { "SSL_OP_PRIORITIZE_CHACHA"_s, SSL_OP_PRIORITIZE_CHACHA },
+    CONSTANT(SSL_OP_PRIORITIZE_CHACHA),
 #else
-        { "SSL_OP_PRIORITIZE_CHACHA"_s, 0 },
+    constantInteger("SSL_OP_PRIORITIZE_CHACHA"_s, 0),
 #endif
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
-        { "SSL_OP_TLS_ROLLBACK_BUG"_s, SSL_OP_TLS_ROLLBACK_BUG },
+    CONSTANT(SSL_OP_TLS_ROLLBACK_BUG),
 #endif
-        // OBSOLETE OPTIONS retained for compatibility
-        { "SSL_OP_MICROSOFT_SESS_ID_BUG"_s, 0 },
-        { "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s, 0 },
-        { "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s, 0 },
-        { "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s, 0 },
-        { "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s, 0 },
-        { "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s, 0 },
-        { "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s, 0 },
-        { "SSL_OP_TLS_D5_BUG"_s, 0 },
-        { "SSL_OP_TLS_BLOCK_PADDING_BUG"_s, 0 },
-        { "SSL_OP_SINGLE_ECDH_USE"_s, 0 },
-        { "SSL_OP_SINGLE_DH_USE"_s, 0 },
-        { "SSL_OP_EPHEMERAL_RSA"_s, 0 },
-        { "SSL_OP_NO_SSLv2"_s, 0 },
-        { "SSL_OP_PKCS1_CHECK_1"_s, 0 },
-        { "SSL_OP_PKCS1_CHECK_2"_s, 0 },
-        { "SSL_OP_NETSCAPE_CA_DN_BUG"_s, 0 },
-        { "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s, 0 },
-        // BoringSSL does not define engine constants in openssl/engine.h
-        { "ENGINE_METHOD_RSA"_s, 0x0001 },
-        { "ENGINE_METHOD_DSA"_s, 0x0002 },
-        { "ENGINE_METHOD_DH"_s, 0x0004 },
-        { "ENGINE_METHOD_RAND"_s, 0x0008 },
-        { "ENGINE_METHOD_CIPHERS"_s, 0x0040 },
-        { "ENGINE_METHOD_DIGESTS"_s, 0x0080 },
-        { "ENGINE_METHOD_PKEY_METHS"_s, 0x0200 },
-        { "ENGINE_METHOD_PKEY_ASN1_METHS"_s, 0x0400 },
-        { "ENGINE_METHOD_EC"_s, 0x0800 },
-        { "ENGINE_METHOD_ALL"_s, 0xFFFF },
-        { "ENGINE_METHOD_NONE"_s, 0x0000 },
+    // OBSOLETE OPTIONS retained for compatibility
+    constantInteger("SSL_OP_MICROSOFT_SESS_ID_BUG"_s, 0),
+    constantInteger("SSL_OP_NETSCAPE_CHALLENGE_BUG"_s, 0),
+    constantInteger("SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s, 0),
+    constantInteger("SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s, 0),
+    constantInteger("SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s, 0),
+    constantInteger("SSL_OP_MSIE_SSLV2_RSA_PADDING"_s, 0),
+    constantInteger("SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s, 0),
+    constantInteger("SSL_OP_TLS_D5_BUG"_s, 0),
+    constantInteger("SSL_OP_TLS_BLOCK_PADDING_BUG"_s, 0),
+    constantInteger("SSL_OP_SINGLE_ECDH_USE"_s, 0),
+    constantInteger("SSL_OP_SINGLE_DH_USE"_s, 0),
+    constantInteger("SSL_OP_EPHEMERAL_RSA"_s, 0),
+#ifndef SSL_OP_NO_SSLv2
+    constantInteger("SSL_OP_NO_SSLv2"_s, 0),
+#endif
+    constantInteger("SSL_OP_PKCS1_CHECK_1"_s, 0),
+    constantInteger("SSL_OP_PKCS1_CHECK_2"_s, 0),
+    constantInteger("SSL_OP_NETSCAPE_CA_DN_BUG"_s, 0),
+    constantInteger("SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s, 0),
+    // BoringSSL does not define engine constants in openssl/engine.h
+    constantInteger("ENGINE_METHOD_RSA"_s, 0x0001),
+    constantInteger("ENGINE_METHOD_DSA"_s, 0x0002),
+    constantInteger("ENGINE_METHOD_DH"_s, 0x0004),
+    constantInteger("ENGINE_METHOD_RAND"_s, 0x0008),
+    constantInteger("ENGINE_METHOD_CIPHERS"_s, 0x0040),
+    constantInteger("ENGINE_METHOD_DIGESTS"_s, 0x0080),
+    constantInteger("ENGINE_METHOD_PKEY_METHS"_s, 0x0200),
+    constantInteger("ENGINE_METHOD_PKEY_ASN1_METHS"_s, 0x0400),
+    constantInteger("ENGINE_METHOD_EC"_s, 0x0800),
+    constantInteger("ENGINE_METHOD_ALL"_s, 0xFFFF),
+    constantInteger("ENGINE_METHOD_NONE"_s, 0x0000),
 #ifdef DH_CHECK_P_NOT_SAFE_PRIME
-        { "DH_CHECK_P_NOT_SAFE_PRIME"_s, DH_CHECK_P_NOT_SAFE_PRIME },
+    CONSTANT(DH_CHECK_P_NOT_SAFE_PRIME),
 #endif
 #ifdef DH_CHECK_P_NOT_PRIME
-        { "DH_CHECK_P_NOT_PRIME"_s, DH_CHECK_P_NOT_PRIME },
+    CONSTANT(DH_CHECK_P_NOT_PRIME),
 #endif
 #ifdef DH_UNABLE_TO_CHECK_GENERATOR
-        { "DH_UNABLE_TO_CHECK_GENERATOR"_s, DH_UNABLE_TO_CHECK_GENERATOR },
+    CONSTANT(DH_UNABLE_TO_CHECK_GENERATOR),
 #endif
 #ifdef DH_NOT_SUITABLE_GENERATOR
-        { "DH_NOT_SUITABLE_GENERATOR"_s, DH_NOT_SUITABLE_GENERATOR },
+    CONSTANT(DH_NOT_SUITABLE_GENERATOR),
 #endif
 #ifdef RSA_PKCS1_PADDING
-        { "RSA_PKCS1_PADDING"_s, RSA_PKCS1_PADDING },
+    CONSTANT(RSA_PKCS1_PADDING),
 #endif
 #ifdef RSA_SSLV23_PADDING
-        { "RSA_SSLV23_PADDING"_s, RSA_SSLV23_PADDING },
+    CONSTANT(RSA_SSLV23_PADDING),
 #endif
 #ifdef RSA_NO_PADDING
-        { "RSA_NO_PADDING"_s, RSA_NO_PADDING },
+    CONSTANT(RSA_NO_PADDING),
 #endif
 #ifdef RSA_PKCS1_OAEP_PADDING
-        { "RSA_PKCS1_OAEP_PADDING"_s, RSA_PKCS1_OAEP_PADDING },
+    CONSTANT(RSA_PKCS1_OAEP_PADDING),
 #endif
 #ifdef RSA_X931_PADDING
-        { "RSA_X931_PADDING"_s, RSA_X931_PADDING },
+    CONSTANT(RSA_X931_PADDING),
 #else
-        { "RSA_X931_PADDING"_s, 5 },
+    constantInteger("RSA_X931_PADDING"_s, 5),
 #endif
 #ifdef RSA_PKCS1_PSS_PADDING
-        { "RSA_PKCS1_PSS_PADDING"_s, RSA_PKCS1_PSS_PADDING },
+    CONSTANT(RSA_PKCS1_PSS_PADDING),
 #endif
 #ifdef RSA_PSS_SALTLEN_DIGEST
-        { "RSA_PSS_SALTLEN_DIGEST"_s, RSA_PSS_SALTLEN_DIGEST },
+    CONSTANT(RSA_PSS_SALTLEN_DIGEST),
 #else
-        { "RSA_PSS_SALTLEN_DIGEST"_s, -1 },
+    constantInteger("RSA_PSS_SALTLEN_DIGEST"_s, -1),
 #endif
 #ifdef RSA_PSS_SALTLEN_MAX_SIGN
-        { "RSA_PSS_SALTLEN_MAX_SIGN"_s, RSA_PSS_SALTLEN_MAX_SIGN },
+    CONSTANT(RSA_PSS_SALTLEN_MAX_SIGN),
 #else
-        { "RSA_PSS_SALTLEN_MAX_SIGN"_s, -2 },
+    constantInteger("RSA_PSS_SALTLEN_MAX_SIGN"_s, -2),
 #endif
 #ifdef RSA_PSS_SALTLEN_AUTO
-        { "RSA_PSS_SALTLEN_AUTO"_s, RSA_PSS_SALTLEN_AUTO },
+    CONSTANT(RSA_PSS_SALTLEN_AUTO),
 #else
-        { "RSA_PSS_SALTLEN_AUTO"_s, -2 },
+    constantInteger("RSA_PSS_SALTLEN_AUTO"_s, -2),
 #endif
-    };
-    static constexpr ConstantEntry tlsConstants[] = {
-        { "TLS1_VERSION"_s, TLS1_VERSION },
-        { "TLS1_1_VERSION"_s, TLS1_1_VERSION },
-        { "TLS1_2_VERSION"_s, TLS1_2_VERSION },
-        { "TLS1_3_VERSION"_s, TLS1_3_VERSION },
-        { "POINT_CONVERSION_COMPRESSED"_s, POINT_CONVERSION_COMPRESSED },
-        { "POINT_CONVERSION_UNCOMPRESSED"_s, POINT_CONVERSION_UNCOMPRESSED },
-        { "POINT_CONVERSION_HYBRID"_s, POINT_CONVERSION_HYBRID },
-    };
-    auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    putConstants(vm, object, cryptoConstants);
-    auto cipherList = String("TLS_AES_256_GCM_SHA384:"
-                             "TLS_CHACHA20_POLY1305_SHA256:"
-                             "TLS_AES_128_GCM_SHA256:"
-                             "ECDHE-RSA-AES128-GCM-SHA256:"
-                             "ECDHE-ECDSA-AES128-GCM-SHA256:"
-                             "ECDHE-RSA-AES256-GCM-SHA384:"
-                             "ECDHE-ECDSA-AES256-GCM-SHA384:"
-                             "DHE-RSA-AES128-GCM-SHA256:"
-                             "ECDHE-RSA-AES128-SHA256:"
-                             "DHE-RSA-AES128-SHA256:"
-                             "ECDHE-RSA-AES256-SHA384:"
-                             "DHE-RSA-AES256-SHA384:"
-                             "ECDHE-RSA-AES256-SHA256:"
-                             "DHE-RSA-AES256-SHA256:"
-                             "HIGH:"
-                             "!aNULL:"
-                             "!eNULL:"
-                             "!EXPORT:"
-                             "!DES:"
-                             "!RC4:"
-                             "!MD5:"
-                             "!PSK:"
-                             "!SRP:"
-                             "!CAMELLIA"_s);
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "defaultCoreCipherList"_s)),
-        jsString(vm, cipherList));
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "defaultCipherList"_s)),
-        jsString(vm, cipherList));
-    putConstants(vm, object, tlsConstants);
-    return object;
-}
+    propertyCallback("defaultCoreCipherList"_s, createDefaultCipherList),
+    propertyCallback("defaultCipherList"_s, createDefaultCipherList),
+    CONSTANT(TLS1_VERSION),
+    CONSTANT(TLS1_1_VERSION),
+    CONSTANT(TLS1_2_VERSION),
+    CONSTANT(TLS1_3_VERSION),
+    CONSTANT(POINT_CONVERSION_COMPRESSED),
+    CONSTANT(POINT_CONVERSION_UNCOMPRESSED),
+    CONSTANT(POINT_CONVERSION_HYBRID),
+};
+static constexpr ClassInfo cryptoClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<cryptoTableValues>::table);
 
-static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
+// Z_MAX_CHUNK is Infinity, the one value in these tables that is not an integer.
+static JSValue zlibMaxChunk(VM&, JSObject*)
 {
-    static constexpr ConstantEntry zlibConstants[] = {
-        { "Z_NO_FLUSH"_s, Z_NO_FLUSH },
-        { "Z_PARTIAL_FLUSH"_s, Z_PARTIAL_FLUSH },
-        { "Z_SYNC_FLUSH"_s, Z_SYNC_FLUSH },
-        { "Z_FULL_FLUSH"_s, Z_FULL_FLUSH },
-        { "Z_FINISH"_s, Z_FINISH },
-        { "Z_BLOCK"_s, Z_BLOCK },
-
-        { "Z_OK"_s, Z_OK },
-        { "Z_STREAM_END"_s, Z_STREAM_END },
-        { "Z_NEED_DICT"_s, Z_NEED_DICT },
-        { "Z_ERRNO"_s, Z_ERRNO },
-        { "Z_STREAM_ERROR"_s, Z_STREAM_ERROR },
-        { "Z_DATA_ERROR"_s, Z_DATA_ERROR },
-        { "Z_MEM_ERROR"_s, Z_MEM_ERROR },
-        { "Z_BUF_ERROR"_s, Z_BUF_ERROR },
-        { "Z_VERSION_ERROR"_s, Z_VERSION_ERROR },
-
-        { "Z_NO_COMPRESSION"_s, Z_NO_COMPRESSION },
-        { "Z_BEST_SPEED"_s, Z_BEST_SPEED },
-        { "Z_BEST_COMPRESSION"_s, Z_BEST_COMPRESSION },
-        { "Z_DEFAULT_COMPRESSION"_s, Z_DEFAULT_COMPRESSION },
-        { "Z_FILTERED"_s, Z_FILTERED },
-        { "Z_HUFFMAN_ONLY"_s, Z_HUFFMAN_ONLY },
-        { "Z_RLE"_s, Z_RLE },
-        { "Z_FIXED"_s, Z_FIXED },
-        { "Z_DEFAULT_STRATEGY"_s, Z_DEFAULT_STRATEGY },
-        { "ZLIB_VERNUM"_s, ZLIB_VERNUM },
-
-        { "DEFLATE"_s, 1 },
-        { "INFLATE"_s, 2 },
-        { "GZIP"_s, 3 },
-        { "GUNZIP"_s, 4 },
-        { "DEFLATERAW"_s, 5 },
-        { "INFLATERAW"_s, 6 },
-        { "UNZIP"_s, 7 },
-        { "BROTLI_DECODE"_s, 8 },
-        { "BROTLI_ENCODE"_s, 9 },
-        { "ZSTD_COMPRESS"_s, 10 },
-        { "ZSTD_DECOMPRESS"_s, 11 },
-
-        { "Z_MIN_WINDOWBITS"_s, 8 },
-        { "Z_MAX_WINDOWBITS"_s, 15 },
-        { "Z_DEFAULT_WINDOWBITS"_s, 15 },
-        { "Z_MIN_CHUNK"_s, 64 },
-        { "Z_MAX_CHUNK"_s, std::numeric_limits<double>::infinity() },
-        { "Z_DEFAULT_CHUNK"_s, 16 * 1024 },
-        { "Z_MIN_MEMLEVEL"_s, 1 },
-        { "Z_MAX_MEMLEVEL"_s, 9 },
-        { "Z_DEFAULT_MEMLEVEL"_s, 8 },
-        { "Z_MIN_LEVEL"_s, -1 },
-        { "Z_MAX_LEVEL"_s, 9 },
-        { "Z_DEFAULT_LEVEL"_s, Z_DEFAULT_COMPRESSION },
-
-        { "BROTLI_OPERATION_PROCESS"_s, BROTLI_OPERATION_PROCESS },
-        { "BROTLI_OPERATION_FLUSH"_s, BROTLI_OPERATION_FLUSH },
-        { "BROTLI_OPERATION_FINISH"_s, BROTLI_OPERATION_FINISH },
-        { "BROTLI_OPERATION_EMIT_METADATA"_s, BROTLI_OPERATION_EMIT_METADATA },
-        { "BROTLI_PARAM_MODE"_s, BROTLI_PARAM_MODE },
-        { "BROTLI_MODE_GENERIC"_s, BROTLI_MODE_GENERIC },
-        { "BROTLI_MODE_TEXT"_s, BROTLI_MODE_TEXT },
-        { "BROTLI_MODE_FONT"_s, BROTLI_MODE_FONT },
-        { "BROTLI_DEFAULT_MODE"_s, BROTLI_DEFAULT_MODE },
-        { "BROTLI_PARAM_QUALITY"_s, BROTLI_PARAM_QUALITY },
-        { "BROTLI_MIN_QUALITY"_s, BROTLI_MIN_QUALITY },
-        { "BROTLI_MAX_QUALITY"_s, BROTLI_MAX_QUALITY },
-        { "BROTLI_DEFAULT_QUALITY"_s, BROTLI_DEFAULT_QUALITY },
-        { "BROTLI_PARAM_LGWIN"_s, BROTLI_PARAM_LGWIN },
-        { "BROTLI_MIN_WINDOW_BITS"_s, BROTLI_MIN_WINDOW_BITS },
-        { "BROTLI_MAX_WINDOW_BITS"_s, BROTLI_MAX_WINDOW_BITS },
-        { "BROTLI_LARGE_MAX_WINDOW_BITS"_s, BROTLI_LARGE_MAX_WINDOW_BITS },
-        { "BROTLI_DEFAULT_WINDOW"_s, BROTLI_DEFAULT_WINDOW },
-        { "BROTLI_PARAM_LGBLOCK"_s, BROTLI_PARAM_LGBLOCK },
-        { "BROTLI_MIN_INPUT_BLOCK_BITS"_s, BROTLI_MIN_INPUT_BLOCK_BITS },
-        { "BROTLI_MAX_INPUT_BLOCK_BITS"_s, BROTLI_MAX_INPUT_BLOCK_BITS },
-        { "BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING"_s, BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING },
-        { "BROTLI_PARAM_SIZE_HINT"_s, BROTLI_PARAM_SIZE_HINT },
-        { "BROTLI_PARAM_LARGE_WINDOW"_s, BROTLI_PARAM_LARGE_WINDOW },
-        { "BROTLI_PARAM_NPOSTFIX"_s, BROTLI_PARAM_NPOSTFIX },
-        { "BROTLI_PARAM_NDIRECT"_s, BROTLI_PARAM_NDIRECT },
-        { "BROTLI_DECODER_RESULT_ERROR"_s, BROTLI_DECODER_RESULT_ERROR },
-        { "BROTLI_DECODER_RESULT_SUCCESS"_s, BROTLI_DECODER_RESULT_SUCCESS },
-        { "BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT"_s, BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT },
-        { "BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT"_s, BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT },
-        { "BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION"_s, BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION },
-        { "BROTLI_DECODER_PARAM_LARGE_WINDOW"_s, BROTLI_DECODER_PARAM_LARGE_WINDOW },
-        { "BROTLI_DECODER_NO_ERROR"_s, BROTLI_DECODER_NO_ERROR },
-        { "BROTLI_DECODER_SUCCESS"_s, BROTLI_DECODER_SUCCESS },
-        { "BROTLI_DECODER_NEEDS_MORE_INPUT"_s, BROTLI_DECODER_NEEDS_MORE_INPUT },
-        { "BROTLI_DECODER_NEEDS_MORE_OUTPUT"_s, BROTLI_DECODER_NEEDS_MORE_OUTPUT },
-        { "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE"_s, BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE },
-        { "BROTLI_DECODER_ERROR_FORMAT_RESERVED"_s, BROTLI_DECODER_ERROR_FORMAT_RESERVED },
-        { "BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE"_s, BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE },
-        { "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET"_s, BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET },
-        { "BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME"_s, BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME },
-        { "BROTLI_DECODER_ERROR_FORMAT_CL_SPACE"_s, BROTLI_DECODER_ERROR_FORMAT_CL_SPACE },
-        { "BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE"_s, BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE },
-        { "BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT"_s, BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT },
-        { "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1"_s, BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1 },
-        { "BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2"_s, BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2 },
-        { "BROTLI_DECODER_ERROR_FORMAT_TRANSFORM"_s, BROTLI_DECODER_ERROR_FORMAT_TRANSFORM },
-        { "BROTLI_DECODER_ERROR_FORMAT_DICTIONARY"_s, BROTLI_DECODER_ERROR_FORMAT_DICTIONARY },
-        { "BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS"_s, BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS },
-        { "BROTLI_DECODER_ERROR_FORMAT_PADDING_1"_s, BROTLI_DECODER_ERROR_FORMAT_PADDING_1 },
-        { "BROTLI_DECODER_ERROR_FORMAT_PADDING_2"_s, BROTLI_DECODER_ERROR_FORMAT_PADDING_2 },
-        { "BROTLI_DECODER_ERROR_FORMAT_DISTANCE"_s, BROTLI_DECODER_ERROR_FORMAT_DISTANCE },
-        { "BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET"_s, BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET },
-        { "BROTLI_DECODER_ERROR_INVALID_ARGUMENTS"_s, BROTLI_DECODER_ERROR_INVALID_ARGUMENTS },
-        { "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES"_s, BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES },
-        { "BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS"_s, BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS },
-        { "BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP"_s, BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP },
-        { "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1"_s, BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1 },
-        { "BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2"_s, BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2 },
-        { "BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES"_s, BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES },
-        { "BROTLI_DECODER_ERROR_UNREACHABLE"_s, BROTLI_DECODER_ERROR_UNREACHABLE },
-
-        { "ZSTD_e_continue"_s, ZSTD_e_continue },
-        { "ZSTD_e_flush"_s, ZSTD_e_flush },
-        { "ZSTD_e_end"_s, ZSTD_e_end },
-        { "ZSTD_fast"_s, ZSTD_fast },
-        { "ZSTD_dfast"_s, ZSTD_dfast },
-        { "ZSTD_greedy"_s, ZSTD_greedy },
-        { "ZSTD_lazy"_s, ZSTD_lazy },
-        { "ZSTD_lazy2"_s, ZSTD_lazy2 },
-        { "ZSTD_btlazy2"_s, ZSTD_btlazy2 },
-        { "ZSTD_btopt"_s, ZSTD_btopt },
-        { "ZSTD_btultra"_s, ZSTD_btultra },
-        { "ZSTD_btultra2"_s, ZSTD_btultra2 },
-        { "ZSTD_c_compressionLevel"_s, ZSTD_c_compressionLevel },
-        { "ZSTD_c_windowLog"_s, ZSTD_c_windowLog },
-        { "ZSTD_c_hashLog"_s, ZSTD_c_hashLog },
-        { "ZSTD_c_chainLog"_s, ZSTD_c_chainLog },
-        { "ZSTD_c_searchLog"_s, ZSTD_c_searchLog },
-        { "ZSTD_c_minMatch"_s, ZSTD_c_minMatch },
-        { "ZSTD_c_targetLength"_s, ZSTD_c_targetLength },
-        { "ZSTD_c_strategy"_s, ZSTD_c_strategy },
-        { "ZSTD_c_enableLongDistanceMatching"_s, ZSTD_c_enableLongDistanceMatching },
-        { "ZSTD_c_ldmHashLog"_s, ZSTD_c_ldmHashLog },
-        { "ZSTD_c_ldmMinMatch"_s, ZSTD_c_ldmMinMatch },
-        { "ZSTD_c_ldmBucketSizeLog"_s, ZSTD_c_ldmBucketSizeLog },
-        { "ZSTD_c_ldmHashRateLog"_s, ZSTD_c_ldmHashRateLog },
-        { "ZSTD_c_contentSizeFlag"_s, ZSTD_c_contentSizeFlag },
-        { "ZSTD_c_checksumFlag"_s, ZSTD_c_checksumFlag },
-        { "ZSTD_c_dictIDFlag"_s, ZSTD_c_dictIDFlag },
-        { "ZSTD_c_nbWorkers"_s, ZSTD_c_nbWorkers },
-        { "ZSTD_c_jobSize"_s, ZSTD_c_jobSize },
-        { "ZSTD_c_overlapLog"_s, ZSTD_c_overlapLog },
-        { "ZSTD_d_windowLogMax"_s, ZSTD_d_windowLogMax },
-        { "ZSTD_CLEVEL_DEFAULT"_s, ZSTD_CLEVEL_DEFAULT },
-
-        { "ZSTD_error_no_error"_s, ZSTD_error_no_error },
-        { "ZSTD_error_GENERIC"_s, ZSTD_error_GENERIC },
-        { "ZSTD_error_prefix_unknown"_s, ZSTD_error_prefix_unknown },
-        { "ZSTD_error_version_unsupported"_s, ZSTD_error_version_unsupported },
-        { "ZSTD_error_frameParameter_unsupported"_s, ZSTD_error_frameParameter_unsupported },
-        { "ZSTD_error_frameParameter_windowTooLarge"_s, ZSTD_error_frameParameter_windowTooLarge },
-        { "ZSTD_error_corruption_detected"_s, ZSTD_error_corruption_detected },
-        { "ZSTD_error_checksum_wrong"_s, ZSTD_error_checksum_wrong },
-        { "ZSTD_error_literals_headerWrong"_s, ZSTD_error_literals_headerWrong },
-        { "ZSTD_error_dictionary_corrupted"_s, ZSTD_error_dictionary_corrupted },
-        { "ZSTD_error_dictionary_wrong"_s, ZSTD_error_dictionary_wrong },
-        { "ZSTD_error_dictionaryCreation_failed"_s, ZSTD_error_dictionaryCreation_failed },
-        { "ZSTD_error_parameter_unsupported"_s, ZSTD_error_parameter_unsupported },
-        { "ZSTD_error_parameter_combination_unsupported"_s, ZSTD_error_parameter_combination_unsupported },
-        { "ZSTD_error_parameter_outOfBound"_s, ZSTD_error_parameter_outOfBound },
-        { "ZSTD_error_tableLog_tooLarge"_s, ZSTD_error_tableLog_tooLarge },
-        { "ZSTD_error_maxSymbolValue_tooLarge"_s, ZSTD_error_maxSymbolValue_tooLarge },
-        { "ZSTD_error_maxSymbolValue_tooSmall"_s, ZSTD_error_maxSymbolValue_tooSmall },
-        { "ZSTD_error_stabilityCondition_notRespected"_s, ZSTD_error_stabilityCondition_notRespected },
-        { "ZSTD_error_stage_wrong"_s, ZSTD_error_stage_wrong },
-        { "ZSTD_error_init_missing"_s, ZSTD_error_init_missing },
-        { "ZSTD_error_memory_allocation"_s, ZSTD_error_memory_allocation },
-        { "ZSTD_error_workSpace_tooSmall"_s, ZSTD_error_workSpace_tooSmall },
-        { "ZSTD_error_dstSize_tooSmall"_s, ZSTD_error_dstSize_tooSmall },
-        { "ZSTD_error_srcSize_wrong"_s, ZSTD_error_srcSize_wrong },
-        { "ZSTD_error_dstBuffer_null"_s, ZSTD_error_dstBuffer_null },
-        { "ZSTD_error_noForwardProgress_destFull"_s, ZSTD_error_noForwardProgress_destFull },
-        { "ZSTD_error_noForwardProgress_inputEmpty"_s, ZSTD_error_noForwardProgress_inputEmpty },
-
-    };
-    auto globalObject = bindingObject->globalObject();
-    auto object = JSC::constructEmptyObject(vm, globalObject->nullPrototypeObjectStructure());
-    putConstants(vm, object, zlibConstants);
-    return object;
+    return jsNumber(std::numeric_limits<double>::infinity());
 }
+
+static constexpr HashTableValue zlibTableValues[] = {
+    CONSTANT(Z_NO_FLUSH),
+    CONSTANT(Z_PARTIAL_FLUSH),
+    CONSTANT(Z_SYNC_FLUSH),
+    CONSTANT(Z_FULL_FLUSH),
+    CONSTANT(Z_FINISH),
+    CONSTANT(Z_BLOCK),
+
+    CONSTANT(Z_OK),
+    CONSTANT(Z_STREAM_END),
+    CONSTANT(Z_NEED_DICT),
+    CONSTANT(Z_ERRNO),
+    CONSTANT(Z_STREAM_ERROR),
+    CONSTANT(Z_DATA_ERROR),
+    CONSTANT(Z_MEM_ERROR),
+    CONSTANT(Z_BUF_ERROR),
+    CONSTANT(Z_VERSION_ERROR),
+
+    CONSTANT(Z_NO_COMPRESSION),
+    CONSTANT(Z_BEST_SPEED),
+    CONSTANT(Z_BEST_COMPRESSION),
+    CONSTANT(Z_DEFAULT_COMPRESSION),
+    CONSTANT(Z_FILTERED),
+    CONSTANT(Z_HUFFMAN_ONLY),
+    CONSTANT(Z_RLE),
+    CONSTANT(Z_FIXED),
+    CONSTANT(Z_DEFAULT_STRATEGY),
+    CONSTANT(ZLIB_VERNUM),
+
+    constantInteger("DEFLATE"_s, 1),
+    constantInteger("INFLATE"_s, 2),
+    constantInteger("GZIP"_s, 3),
+    constantInteger("GUNZIP"_s, 4),
+    constantInteger("DEFLATERAW"_s, 5),
+    constantInteger("INFLATERAW"_s, 6),
+    constantInteger("UNZIP"_s, 7),
+    constantInteger("BROTLI_DECODE"_s, 8),
+    constantInteger("BROTLI_ENCODE"_s, 9),
+    constantInteger("ZSTD_COMPRESS"_s, 10),
+    constantInteger("ZSTD_DECOMPRESS"_s, 11),
+
+    constantInteger("Z_MIN_WINDOWBITS"_s, 8),
+    constantInteger("Z_MAX_WINDOWBITS"_s, 15),
+    constantInteger("Z_DEFAULT_WINDOWBITS"_s, 15),
+    constantInteger("Z_MIN_CHUNK"_s, 64),
+    propertyCallback("Z_MAX_CHUNK"_s, zlibMaxChunk),
+    constantInteger("Z_DEFAULT_CHUNK"_s, 16 * 1024),
+    constantInteger("Z_MIN_MEMLEVEL"_s, 1),
+    constantInteger("Z_MAX_MEMLEVEL"_s, 9),
+    constantInteger("Z_DEFAULT_MEMLEVEL"_s, 8),
+    constantInteger("Z_MIN_LEVEL"_s, -1),
+    constantInteger("Z_MAX_LEVEL"_s, 9),
+    constantInteger("Z_DEFAULT_LEVEL"_s, Z_DEFAULT_COMPRESSION),
+
+    CONSTANT(BROTLI_OPERATION_PROCESS),
+    CONSTANT(BROTLI_OPERATION_FLUSH),
+    CONSTANT(BROTLI_OPERATION_FINISH),
+    CONSTANT(BROTLI_OPERATION_EMIT_METADATA),
+    CONSTANT(BROTLI_PARAM_MODE),
+    CONSTANT(BROTLI_MODE_GENERIC),
+    CONSTANT(BROTLI_MODE_TEXT),
+    CONSTANT(BROTLI_MODE_FONT),
+    CONSTANT(BROTLI_DEFAULT_MODE),
+    CONSTANT(BROTLI_PARAM_QUALITY),
+    CONSTANT(BROTLI_MIN_QUALITY),
+    CONSTANT(BROTLI_MAX_QUALITY),
+    CONSTANT(BROTLI_DEFAULT_QUALITY),
+    CONSTANT(BROTLI_PARAM_LGWIN),
+    CONSTANT(BROTLI_MIN_WINDOW_BITS),
+    CONSTANT(BROTLI_MAX_WINDOW_BITS),
+    CONSTANT(BROTLI_LARGE_MAX_WINDOW_BITS),
+    CONSTANT(BROTLI_DEFAULT_WINDOW),
+    CONSTANT(BROTLI_PARAM_LGBLOCK),
+    CONSTANT(BROTLI_MIN_INPUT_BLOCK_BITS),
+    CONSTANT(BROTLI_MAX_INPUT_BLOCK_BITS),
+    CONSTANT(BROTLI_PARAM_DISABLE_LITERAL_CONTEXT_MODELING),
+    CONSTANT(BROTLI_PARAM_SIZE_HINT),
+    CONSTANT(BROTLI_PARAM_LARGE_WINDOW),
+    CONSTANT(BROTLI_PARAM_NPOSTFIX),
+    CONSTANT(BROTLI_PARAM_NDIRECT),
+    CONSTANT(BROTLI_DECODER_RESULT_ERROR),
+    CONSTANT(BROTLI_DECODER_RESULT_SUCCESS),
+    CONSTANT(BROTLI_DECODER_RESULT_NEEDS_MORE_INPUT),
+    CONSTANT(BROTLI_DECODER_RESULT_NEEDS_MORE_OUTPUT),
+    CONSTANT(BROTLI_DECODER_PARAM_DISABLE_RING_BUFFER_REALLOCATION),
+    CONSTANT(BROTLI_DECODER_PARAM_LARGE_WINDOW),
+    CONSTANT(BROTLI_DECODER_NO_ERROR),
+    CONSTANT(BROTLI_DECODER_SUCCESS),
+    CONSTANT(BROTLI_DECODER_NEEDS_MORE_INPUT),
+    CONSTANT(BROTLI_DECODER_NEEDS_MORE_OUTPUT),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_NIBBLE),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_RESERVED),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_EXUBERANT_META_NIBBLE),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_ALPHABET),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_SIMPLE_HUFFMAN_SAME),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_CL_SPACE),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_HUFFMAN_SPACE),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_CONTEXT_MAP_REPEAT),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_1),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_BLOCK_LENGTH_2),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_TRANSFORM),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_DICTIONARY),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_WINDOW_BITS),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_PADDING_1),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_PADDING_2),
+    CONSTANT(BROTLI_DECODER_ERROR_FORMAT_DISTANCE),
+    CONSTANT(BROTLI_DECODER_ERROR_DICTIONARY_NOT_SET),
+    CONSTANT(BROTLI_DECODER_ERROR_INVALID_ARGUMENTS),
+    CONSTANT(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MODES),
+    CONSTANT(BROTLI_DECODER_ERROR_ALLOC_TREE_GROUPS),
+    CONSTANT(BROTLI_DECODER_ERROR_ALLOC_CONTEXT_MAP),
+    CONSTANT(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_1),
+    CONSTANT(BROTLI_DECODER_ERROR_ALLOC_RING_BUFFER_2),
+    CONSTANT(BROTLI_DECODER_ERROR_ALLOC_BLOCK_TYPE_TREES),
+    CONSTANT(BROTLI_DECODER_ERROR_UNREACHABLE),
+
+    CONSTANT(ZSTD_e_continue),
+    CONSTANT(ZSTD_e_flush),
+    CONSTANT(ZSTD_e_end),
+    CONSTANT(ZSTD_fast),
+    CONSTANT(ZSTD_dfast),
+    CONSTANT(ZSTD_greedy),
+    CONSTANT(ZSTD_lazy),
+    CONSTANT(ZSTD_lazy2),
+    CONSTANT(ZSTD_btlazy2),
+    CONSTANT(ZSTD_btopt),
+    CONSTANT(ZSTD_btultra),
+    CONSTANT(ZSTD_btultra2),
+    CONSTANT(ZSTD_c_compressionLevel),
+    CONSTANT(ZSTD_c_windowLog),
+    CONSTANT(ZSTD_c_hashLog),
+    CONSTANT(ZSTD_c_chainLog),
+    CONSTANT(ZSTD_c_searchLog),
+    CONSTANT(ZSTD_c_minMatch),
+    CONSTANT(ZSTD_c_targetLength),
+    CONSTANT(ZSTD_c_strategy),
+    CONSTANT(ZSTD_c_enableLongDistanceMatching),
+    CONSTANT(ZSTD_c_ldmHashLog),
+    CONSTANT(ZSTD_c_ldmMinMatch),
+    CONSTANT(ZSTD_c_ldmBucketSizeLog),
+    CONSTANT(ZSTD_c_ldmHashRateLog),
+    CONSTANT(ZSTD_c_contentSizeFlag),
+    CONSTANT(ZSTD_c_checksumFlag),
+    CONSTANT(ZSTD_c_dictIDFlag),
+    CONSTANT(ZSTD_c_nbWorkers),
+    CONSTANT(ZSTD_c_jobSize),
+    CONSTANT(ZSTD_c_overlapLog),
+    CONSTANT(ZSTD_d_windowLogMax),
+    CONSTANT(ZSTD_CLEVEL_DEFAULT),
+
+    CONSTANT(ZSTD_error_no_error),
+    CONSTANT(ZSTD_error_GENERIC),
+    CONSTANT(ZSTD_error_prefix_unknown),
+    CONSTANT(ZSTD_error_version_unsupported),
+    CONSTANT(ZSTD_error_frameParameter_unsupported),
+    CONSTANT(ZSTD_error_frameParameter_windowTooLarge),
+    CONSTANT(ZSTD_error_corruption_detected),
+    CONSTANT(ZSTD_error_checksum_wrong),
+    CONSTANT(ZSTD_error_literals_headerWrong),
+    CONSTANT(ZSTD_error_dictionary_corrupted),
+    CONSTANT(ZSTD_error_dictionary_wrong),
+    CONSTANT(ZSTD_error_dictionaryCreation_failed),
+    CONSTANT(ZSTD_error_parameter_unsupported),
+    CONSTANT(ZSTD_error_parameter_combination_unsupported),
+    CONSTANT(ZSTD_error_parameter_outOfBound),
+    CONSTANT(ZSTD_error_tableLog_tooLarge),
+    CONSTANT(ZSTD_error_maxSymbolValue_tooLarge),
+    CONSTANT(ZSTD_error_maxSymbolValue_tooSmall),
+    CONSTANT(ZSTD_error_stabilityCondition_notRespected),
+    CONSTANT(ZSTD_error_stage_wrong),
+    CONSTANT(ZSTD_error_init_missing),
+    CONSTANT(ZSTD_error_memory_allocation),
+    CONSTANT(ZSTD_error_workSpace_tooSmall),
+    CONSTANT(ZSTD_error_dstSize_tooSmall),
+    CONSTANT(ZSTD_error_srcSize_wrong),
+    CONSTANT(ZSTD_error_dstBuffer_null),
+    CONSTANT(ZSTD_error_noForwardProgress_destFull),
+    CONSTANT(ZSTD_error_noForwardProgress_inputEmpty),
+};
+static constexpr ClassInfo zlibClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<zlibTableValues>::table);
+
+#undef CONSTANT
+
+static constexpr LazyPropertyCallback processBindingConstantsGetOs = createConstantsObject<osClassInfo>;
+static constexpr LazyPropertyCallback processBindingConstantsGetFs = createConstantsObject<fsClassInfo>;
+static constexpr LazyPropertyCallback processBindingConstantsGetCrypto = createConstantsObject<cryptoClassInfo>;
+static constexpr LazyPropertyCallback processBindingConstantsGetZlib = createConstantsObject<zlibClassInfo>;
+static constexpr LazyPropertyCallback processBindingConstantsGetTrace = createConstantsObject<traceClassInfo>;
 
 /* Source for ProcessBindingConstants.lut.h
 @begin processBindingConstantsTable

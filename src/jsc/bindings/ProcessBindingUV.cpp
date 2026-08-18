@@ -1,5 +1,6 @@
 #include "ProcessBindingUV.h"
 #include "BunProcess.h"
+#include "JSConstantsObject.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -114,12 +115,11 @@ namespace ProcessBindingUV {
 struct UVError {
     int code;
     ASCIILiteral name;
-    ASCIILiteral uvName;
     ASCIILiteral description;
 };
 
 static constexpr UVError uvErrors[] = {
-#define ROW(name, desc) { UV_##name, #name##_s, "UV_" #name##_s, desc##_s },
+#define ROW(name, desc) { UV_##name, #name##_s, desc##_s },
     BUN_UV_ERRNO_MAP(ROW)
 #undef ROW
 };
@@ -178,21 +178,20 @@ JSC_DEFINE_HOST_FUNCTION(jsGetErrorMap, (JSGlobalObject * globalObject, JSC::Cal
     return JSValue::encode(map);
 }
 
+// clang-format off
+static constexpr HashTableValue bindingTableValues[] = {
+    nativeFunction("errname"_s, jsErrname, 1),
+#define ROW(name, desc) constantInteger("UV_" #name##_s, UV_##name),
+    BUN_UV_ERRNO_MAP(ROW)
+#undef ROW
+    nativeFunction("getErrorMap"_s, jsGetErrorMap, 0),
+};
+// clang-format on
+static constexpr ClassInfo bindingClassInfo = JSConstantsObject::classInfoFor(&StaticHashTable<bindingTableValues>::table);
+
 JSObject* create(VM& vm, JSGlobalObject* globalObject)
 {
-    // Non-zero inline capacity: a zero-capacity object trips the
-    // hasInlineStorage() assertion in JSObject::inlineStorage when JS
-    // spreads it ({...process.binding("uv")} in internal/test/binding.ts).
-    auto bindingObject = JSC::constructEmptyObject(globalObject);
-    EnsureStillAliveScope ensureStillAlive(bindingObject);
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "errname"_s), JSC::JSFunction::create(vm, globalObject, 1, "errname"_s, jsErrname, ImplementationVisibility::Public));
-
-    for (const auto& error : uvErrors)
-        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, error.uvName), JSC::jsNumber(error.code));
-
-    bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, "getErrorMap"_s), JSC::JSFunction::create(vm, globalObject, 0, "getErrorMap"_s, jsGetErrorMap, ImplementationVisibility::Public));
-
-    return bindingObject;
+    return JSConstantsObject::create(vm, globalObject, &bindingClassInfo, globalObject->objectPrototype());
 }
 
 } // namespace ProcessBindingUV

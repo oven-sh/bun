@@ -90,6 +90,7 @@
 
 #include "ZigGlobalObject.h"
 #include "JSEnvironmentVariableMap.h"
+#include "JSConstantsObject.h"
 #include "blob.h"
 #include "ZigGeneratedClasses.h"
 #include "JSX509Certificate.h"
@@ -2082,9 +2083,10 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (!startObject(inObject))
                 break;
             // All supported objects other than plain Object have been handled; throw
-            // DataCloneError otherwise. NapiPrototype, ObjectPrototype, and process.env
-            // are allowed (Node supports structuredClone(process.env) as a plain object).
-            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()))
+            // DataCloneError otherwise. NapiPrototype, ObjectPrototype, process.env and
+            // the constants objects (os.constants, fs.constants, ...) are allowed: node
+            // has plain objects there, so structuredClone of them works.
+            if (inObject->classInfo() != JSFinalObject::info() && inObject->classInfo() != Zig::NapiPrototype::info() && inObject->classInfo() != JSC::ObjectPrototype::info() && !Bun::isProcessEnvClassInfo(inObject->classInfo()) && !Bun::isConstantsObjectClassInfo(inObject->classInfo()))
                 return SerializationReturnCode::DataCloneError;
             inputObjectStack.append(inObject);
             indexStack.append(0);

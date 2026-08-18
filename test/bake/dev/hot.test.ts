@@ -552,6 +552,65 @@ devTest("server: the route module is evaluated again so its module-level state m
     await dev.fetch("/").equals("v3 banner(v3)");
   },
 });
+devTest("a self-accepting module in an import cycle with the changed module reloads the page", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+    `,
+    "b.ts": `
+      import { x } from "./x";
+      export const b = "b(" + x + ")";
+      console.log("b " + b);
+      import.meta.hot.accept();
+    `,
+    // The back-edge to `b` is only read lazily: on a cold load `b` has not finished evaluating yet.
+    "x.ts": `
+      import { b } from "./b";
+      export const x = "x1";
+      export const readB = () => b;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b b(x1)", "index b(x1)");
+    // No evaluation order gives `b` the new `x` and `x` the new `b`; like Vite, the page reloads.
+    await c.expectReload(async () => {
+      await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+    });
+    await c.expectMessage("b b(x2)", "index b(x2)");
+  },
+});
+devTest("server: a self-accepting module in an import cycle with the changed module is evaluated first", {
+  framework: minimalFramework,
+  files: {
+    "b.ts": `
+      import { x } from "./x";
+      export const b = "b(" + x + ")";
+      import.meta.hot.accept();
+    `,
+    "x.ts": `
+      import { b } from "./b";
+      export const x = "x1";
+      export const readB = () => b;
+    `,
+    "routes/index.ts": `
+      import { b } from "../b";
+      import { readB } from "../x";
+      export default function () {
+        return new Response(b + " " + readB());
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("b(x1) b(x1)");
+    // The server has no page to reload: it warns and evaluates `b` first, so `b` sees the new `x` and `x` is patched to the new `b`.
+    await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+    await dev.output.waitForLine(/import cycle/);
+    await dev.fetch("/").equals("b(x2) b(x2)");
+  },
+});
 devTest("server: modules an update never got to evaluate keep their hooks for the next update", {
   framework: minimalFramework,
   files: {

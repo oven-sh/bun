@@ -458,10 +458,9 @@ impl JSMySQLConnection {
         else {
             return Ok(JSValue::ZERO);
         };
-        // Covers `try arguments[8].toBunString()` and the null-byte rejection
-        // below. Ownership passes to `MySQLConnection.init` once `Box::new`
-        // succeeds — we null the locals at that point so the connect-fail path
-        // (which `deref()`s the connection) doesn't double-free.
+        // Releases `secure` / `tls_config` on every early return below (the
+        // `arguments[8]` conversion and the null-byte checks); disarmed with
+        // `into_inner` once they move into the connection.
         let tls_guard = connection_ctor_args::guard_tls(args.secure, args.tls_config);
 
         let path_str = bun_core::OwnedString::new(arguments[8].to_bun_string(global_object)?);

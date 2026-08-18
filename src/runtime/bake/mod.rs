@@ -238,7 +238,8 @@ impl Framework {
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
-        out.options.root_dir = bun_core::strings::without_trailing_slash(root).into();
+        out.options.root_dir =
+            bun_paths::string_paths::without_trailing_slash_windows_path(root).into();
 
         out.options.react_fast_refresh = mode == Mode::Development
             && renderer == Graph::Client

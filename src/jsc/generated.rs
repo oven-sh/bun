@@ -96,8 +96,7 @@ pub type GenString = bun_core::String;
 /// `release_gen_val_array_buffer` in the owning containers' `Drop` impls.
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
-/// Adopted `*mut webcore::Blob` (the codegen `m_ctx` payload), erased because
-/// `Blob` lives in `bun_runtime`, which depends on this crate.
+/// The codegen `m_ctx` `*mut webcore::Blob`, erased: `Blob` lives in `bun_runtime`.
 pub type GenBlob = *mut core::ffi::c_void;
 
 // ──────────────────────────────────────────────────────────────────────────

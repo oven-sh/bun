@@ -118,7 +118,19 @@ impl Report {
 
 pub mod text {
     use super::*;
-    use bun_core::output::pretty_fmt_rt;
+
+    // Local front for `bun_core::pretty_fmt!` that accepts a runtime bool. The
+    // proc-macro only matches `true`/`false` literals, so branch here. Both
+    // arms yield `&'static str`.
+    macro_rules! pfmt {
+        ($fmt:expr, $colors:expr) => {
+            if $colors {
+                ::bun_core::pretty_fmt!($fmt, true)
+            } else {
+                ::bun_core::pretty_fmt!($fmt, false)
+            }
+        };
+    }
 
     pub fn write_format_with_values(
         filename: &[u8],
@@ -132,9 +144,9 @@ pub mod text {
     ) -> bun_io::Result<()> {
         if enable_colors {
             if failed {
-                writer.write_all(&pretty_fmt_rt("<r><b><red>", true))?;
+                writer.write_all(bun_core::pretty_fmt!("<r><b><red>", true).as_bytes())?;
             } else {
-                writer.write_all(&pretty_fmt_rt("<r><b><green>", true))?;
+                writer.write_all(bun_core::pretty_fmt!("<r><b><green>", true).as_bytes())?;
             }
         }
 
@@ -147,13 +159,13 @@ pub mod text {
             b' ',
             max_filename_length - filename.len() + usize::from(!indent_name),
         )?;
-        writer.write_all(&pretty_fmt_rt("<r><d> | <r>", enable_colors))?;
+        writer.write_all(pfmt!("<r><d> | <r>", enable_colors).as_bytes())?;
 
         if enable_colors {
             if vals.functions < failing.functions {
-                writer.write_all(&pretty_fmt_rt("<b><red>", true))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><red>", true).as_bytes())?;
             } else {
-                writer.write_all(&pretty_fmt_rt("<b><green>", true))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><green>", true).as_bytes())?;
             }
         }
 
@@ -167,13 +179,13 @@ pub mod text {
         //     // }
         // }
         // write!(writer, "{:>8.2}", vals.stmts * 100.0)?;
-        writer.write_all(&pretty_fmt_rt("<r><d> | <r>", enable_colors))?;
+        writer.write_all(pfmt!("<r><d> | <r>", enable_colors).as_bytes())?;
 
         if enable_colors {
             if vals.lines < failing.lines {
-                writer.write_all(&pretty_fmt_rt("<b><red>", true))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><red>", true).as_bytes())?;
             } else {
-                writer.write_all(&pretty_fmt_rt("<b><green>", true))?;
+                writer.write_all(bun_core::pretty_fmt!("<b><green>", true).as_bytes())?;
             }
         }
 
@@ -216,7 +228,7 @@ pub mod text {
             enable_colors,
         )?;
 
-        writer.write_all(&pretty_fmt_rt("<r><d> | <r>", enable_colors))?;
+        writer.write_all(pfmt!("<r><d> | <r>", enable_colors).as_bytes())?;
 
         let mut executable_lines_that_havent_been_executed = report
             .lines_which_have_executed
@@ -232,8 +244,8 @@ pub mod text {
         let mut prev_line: usize = 0;
         let mut is_first = true;
 
-        let red = pretty_fmt_rt("<red>", enable_colors);
-        let comma = pretty_fmt_rt("<r><d>,<r>", enable_colors);
+        let red = pfmt!("<red>", enable_colors).as_bytes();
+        let comma = pfmt!("<r><d>,<r>", enable_colors).as_bytes();
 
         while let Some(next_line) = iter.next() {
             if next_line == (prev_line + 1) {
@@ -248,14 +260,14 @@ pub mod text {
             if is_first {
                 is_first = false;
             } else {
-                writer.write_all(&comma)?;
+                writer.write_all(comma)?;
             }
 
             if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
+                writer.write_all(red)?;
                 write!(writer, "{}", start_of_line_range + 1)?;
             } else {
-                writer.write_all(&red)?;
+                writer.write_all(red)?;
                 write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
             }
 
@@ -266,14 +278,14 @@ pub mod text {
         if prev_line != start_of_line_range {
             if is_first {
             } else {
-                writer.write_all(&comma)?;
+                writer.write_all(comma)?;
             }
 
             if start_of_line_range == prev_line {
-                writer.write_all(&red)?;
+                writer.write_all(red)?;
                 write!(writer, "{}", start_of_line_range + 1)?;
             } else {
-                writer.write_all(&red)?;
+                writer.write_all(red)?;
                 write!(writer, "{}-{}", start_of_line_range + 1, prev_line + 1)?;
             }
         }

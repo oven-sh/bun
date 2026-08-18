@@ -358,8 +358,9 @@ export function loadModuleSync(id: Id, isUserDynamic: boolean, importer: HMRModu
       load(mod);
     } catch (e) {
       throwLoadFailure(mod, generation, e);
+    } finally {
+      mod.imports = depsList;
     }
-    mod.imports = depsList;
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
     mod.state = State.Loaded;
@@ -505,8 +506,12 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
-    const p = load(mod);
-    mod.imports = modules;
+    let p;
+    try {
+      p = load(mod);
+    } finally {
+      mod.imports = modules;
+    }
     if (p) {
       return p.then(
         () => {

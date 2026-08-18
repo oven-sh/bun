@@ -7,6 +7,10 @@
     {
       "target_name": "no_entrypoint",
       "sources": ["no_entrypoint.cpp"],
+    },
+    {
+      "target_name": "context_aware_initializer",
+      "sources": ["context_aware_initializer.cpp"],
     }
   ]
 }

@@ -212,12 +212,6 @@ pub mod feature_flag {
     // during teardown" paths run deterministically (bun_jsc::vm_handle::test_gate).
     new_feature_flag!(pub BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE, "BUN_DEBUG_TEST_WORKER_TEARDOWN_GATE", {});
 
-    // Test suite only, builds with debug assertions: a node:worker_threads worker's
-    // bootstrap throws instead of loading node:worker_threads, so the test suite can
-    // check that a bootstrap failure is reported and the thread exits like an entry
-    // point that throws (bun_jsc::web_worker::spin).
-    new_feature_flag!(pub BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS, "BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS", {});
-
     // Disable "nativeDependencies"
     new_feature_flag!(pub BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER, "BUN_FEATURE_FLAG_DISABLE_NATIVE_DEPENDENCY_LINKER", {});
 

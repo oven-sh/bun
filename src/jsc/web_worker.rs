@@ -853,19 +853,9 @@ impl WebWorker {
         // ahead of user code; ours is node:worker_threads' module body.
         if self.is_node_worker {
             let global = vm.global();
-            let loaded = if cfg!(debug_assertions)
-                && bun_core::env_var::feature_flag::BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS::get()
-                    .unwrap_or(false)
-            {
-                Err(global.throw(format_args!(
-                    "node:worker_threads bootstrap failed (BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS)"
-                )))
-            } else {
-                jsc::host_fn::from_js_host_call_generic(global, || {
-                    Bun__Worker__loadNodeWorkerThreadsModule(global)
-                })
-            };
-            if let Err(err) = loaded {
+            if let Err(err) = jsc::host_fn::from_js_host_call_generic(global, || {
+                Bun__Worker__loadNodeWorkerThreadsModule(global)
+            }) {
                 let exception = global.take_exception(err);
                 let _ = vm.as_mut().uncaught_exception(global, exception, false);
                 if !self.exit_called.load(Ordering::Relaxed) {

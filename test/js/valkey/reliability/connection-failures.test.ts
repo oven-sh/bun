@@ -2,7 +2,7 @@ import { RedisClient } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "net";
 import path from "path";
 import tls from "tls";
@@ -510,10 +510,13 @@ describe("Valkey: Recovering After fail()", () => {
       .join("");
 
   // A process that a client keeps alive never exits on its own; report that
-  // as the exit code after 3 s instead of waiting for the test to time out.
+  // as the exit code instead of waiting for the test to time out. The payload
+  // runs in well under a second on a debug build; the exit itself is what an
+  // ASAN build makes slow.
   async function exitOutcome(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
     const output = Promise.all([proc.stdout.text(), proc.stderr.text()]);
-    const exitCode = await Promise.race([proc.exited, delay(3000).then(() => "still running" as const)]);
+    const budget = isASAN || isDebug ? 15_000 : 3_000;
+    const exitCode = await Promise.race([proc.exited, delay(budget).then(() => "still running" as const)]);
     if (exitCode === "still running") proc.kill();
     const [stdout, stderr] = await output;
     return { stdout, stderr, exitCode };
@@ -1715,6 +1718,45 @@ describe("Valkey: Recovering After fail()", () => {
       // delivery of m0 would be in `delivered` by now.
       await client.ping();
       expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 2 });
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("subscribe() on a fresh client with the offline queue off dials, rejects and registers no handler", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { enableOfflineQueue: false });
+    try {
+      const connected = Promise.withResolvers<void>();
+      client.onconnect = () => connected.resolve();
+      const delivered: string[] = [];
+      const firstDelivered = Promise.withResolvers<void>();
+      const listener = (message: string) => {
+        delivered.push(message);
+        firstDelivered.resolve();
+      };
+      // The rejection is the one get() gets on this client: the dial has been
+      // started, and the SUBSCRIBE cannot wait for it.
+      await expect(client.subscribe("ch", listener)).rejects.toMatchObject({
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        message: "Connection is closed and offline queue is disabled",
+      });
+      expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
+
+      // That dial completes on its own.
+      await connected.promise;
+      const connection = fake.sockets[0];
+      connection.on("data", chunk => {
+        if (chunk.toString("latin1").includes("SUBSCRIBE")) {
+          connection.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
+        }
+      });
+      await client.subscribe("ch", listener);
+      await firstDelivered.promise;
+      await client.ping();
+      expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 1 });
     } finally {
       client.close();
       fake.server.close();

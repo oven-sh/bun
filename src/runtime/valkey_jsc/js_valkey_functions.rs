@@ -1849,7 +1849,10 @@ impl JSValkeyClient {
         // The walk below stores each listener as it goes. A client that would
         // reject the SUBSCRIBE outright must not keep the listeners either: a
         // listener with no subscription behind it pins the event loop and the
-        // client, and cannot be removed with unsubscribe().
+        // client, and cannot be removed with unsubscribe(). The dial comes
+        // first, as in `send()`, so a fresh client with the offline queue off
+        // is rejected the way get() is: connecting, not never connected.
+        this.ensure_dialing();
         if let Some(message) = this.client.get().send_rejection() {
             let error = valkey::ValkeyClient::send_rejection_error(global, message);
             return Ok(JSPromise::rejected_promise(global, error).to_js());

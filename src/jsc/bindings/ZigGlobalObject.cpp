@@ -1431,8 +1431,7 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
 // Windows doesn't have mmap
 // This code should pretty much only be called on Linux.
 #if !OS(WINDOWS)
-    // An empty result makes the caller fall back to a copying allocation, which
-    // throws for this length. createFromBytes below would RELEASE_ASSERT instead.
+    // Empty makes the caller fall back to the copying path, which throws for this length.
     if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
         return JSC::JSValue::encode(JSC::JSValue {});
     }

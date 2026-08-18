@@ -2599,8 +2599,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeBody(JSC::JSGlobalObje
     RELEASE_AND_RETURN(scope, writeToBuffer(lexicalGlobalObject, castedThis, str, offset, length, encoding));
 }
 
-// The mapping's length travels in the deallocator context, which is the shape
-// rejectBytesNoCopyAboveArrayBufferLimit and the collection path share.
 static void unmapBufferBytes(void* mapping, void* lengthAsContext)
 {
 #if !OS(WINDOWS)

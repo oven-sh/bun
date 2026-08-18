@@ -387,11 +387,8 @@ impl ArrayBuffer {
         }
     }
 
-    /// The length is not range-checked here. The C++ side that adopts the bytes
-    /// (`Bun__make*WithBytesNoCopy` behind `to_js*`,
-    /// `JSBuffer__bufferFromPointerAndLengthAndDeinit` behind
-    /// `MarkedArrayBuffer::to_node_buffer`) throws a RangeError for anything
-    /// above JSC's `MAX_ARRAY_BUFFER_SIZE` (2^32 bytes on 64-bit targets).
+    /// Any length is accepted here; the C++ side that adopts the bytes throws a
+    /// RangeError above JSC's `MAX_ARRAY_BUFFER_SIZE`.
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
             len: bytes.len(),
@@ -523,11 +520,9 @@ impl ArrayBuffer {
     }
 
     /// Hand this descriptor's bytes to JSC with a caller-supplied finalizer:
-    /// `callback(self.ptr, deallocator)` runs on the JS thread when the
-    /// returned object is collected, or before this returns `Err` (never, if
-    /// `callback` is `None`). Fails like [`make_array_buffer_with_bytes_no_copy`]
-    /// when `self.byte_len` is above JSC's limit: the bytes are consumed either
-    /// way, so the caller must not release them again on `Err`.
+    /// `callback(self.ptr, deallocator)` runs exactly once on the JS thread,
+    /// when the returned object is collected or before this returns `Err`
+    /// (never, if `callback` is `None`).
     ///
     /// # Safety
     ///
@@ -535,8 +530,8 @@ impl ArrayBuffer {
     /// bytes and stay valid (including for writes) for the returned object's
     /// entire lifetime: until `callback` runs, or indefinitely when
     /// `callback` is `None`. `callback`, if `Some`, must be sound to invoke
-    /// exactly once with `(self.ptr, deallocator)`, either at GC time or when
-    /// this call fails, and `deallocator` must remain valid until then.
+    /// once with `(self.ptr, deallocator)`, and `deallocator` must remain
+    /// valid until then.
     pub unsafe fn to_js_with_context(
         self,
         ctx: &JSGlobalObject,
@@ -951,13 +946,10 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 
 /// Wrap caller-provided bytes in a JS `ArrayBuffer` without copying. JSC
 /// adopts `ptr..ptr+len` as the backing store of the returned object and
-/// calls `deallocator(ptr, deallocator_context)` on the JS thread when it is
-/// collected (never, if `deallocator` is `None`).
-///
-/// Fails with a RangeError when `len` is above JSC's `MAX_ARRAY_BUFFER_SIZE`
-/// (2^32 bytes on 64-bit targets). The bytes are still consumed: the
-/// deallocator runs before the error is returned, so the caller must not
-/// release them again on `Err`.
+/// calls `deallocator(ptr, deallocator_context)` exactly once on the JS
+/// thread: when the object is collected, or before this returns `Err`
+/// (a `len` above `MAX_ARRAY_BUFFER_SIZE` is a RangeError). Never, if
+/// `deallocator` is `None`.
 ///
 /// # Safety
 ///
@@ -965,10 +957,9 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 ///   both through the returned object) for the returned object's entire
 ///   lifetime: until the deallocator runs, or indefinitely when `deallocator`
 ///   is `None`. `ptr` may be null only when `len == 0`.
-/// - `deallocator`, if `Some`, must be sound to call exactly once with
-///   `(ptr, deallocator_context)` on the JS thread, either at GC time or
-///   when this call fails, and `deallocator_context` must remain valid
-///   until then.
+/// - `deallocator`, if `Some`, must be sound to call once with
+///   `(ptr, deallocator_context)` on the JS thread, and `deallocator_context`
+///   must remain valid until then.
 pub(crate) unsafe fn make_array_buffer_with_bytes_no_copy(
     global: &JSGlobalObject,
     ptr: *mut c_void,

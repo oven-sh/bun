@@ -630,14 +630,12 @@ impl JSValue {
     }
     /// `JSValue.createBufferWithCtx` — wrap a foreign-owned byte
     /// range in a Node `Buffer`, transferring ownership to JS. `free(ptr, ctx)`
-    /// runs when the Buffer's backing store is collected, or before this
-    /// returns `Err` (a length above JSC's limit, for example), so the caller
-    /// must not release the bytes again on `Err`.
+    /// runs exactly once: when the Buffer's backing store is collected, or
+    /// before this returns `Err`.
     ///
     /// # Safety
     /// `bytes` must describe a valid allocation whose ownership transfers to
-    /// JSC; `ctx` is forwarded to `free`, on collection or on failure, and must
-    /// remain valid until then.
+    /// JSC; `ctx` must remain valid until `free` runs.
     pub unsafe fn create_buffer_with_ctx(
         global: &JSGlobalObject,
         bytes: core::ptr::NonNull<[u8]>,

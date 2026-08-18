@@ -40,12 +40,9 @@ namespace Bun {
 
 std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding);
 
-// For the functions that adopt caller-owned bytes as the backing store of a new
-// ArrayBuffer or view. JSC::ArrayBuffer::createFromBytes RELEASE_ASSERTs above
-// MAX_ARRAY_BUFFER_SIZE, so such a length has to become the RangeError that
-// `new ArrayBuffer(length)` throws before the bytes reach it. The caller already
-// gave the bytes up, so they are released through the deallocator here, the same
-// as when the object would have been collected. Returns true once it has thrown.
+// ArrayBuffer::createFromBytes RELEASE_ASSERTs above MAX_ARRAY_BUFFER_SIZE. Above
+// it, this releases the adopted bytes through the deallocator, throws the
+// RangeError `new ArrayBuffer(length)` would throw, and returns true.
 bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
 namespace Buffer {

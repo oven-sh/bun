@@ -276,6 +276,7 @@ impl GraphTraceState {
         self.server_bits
             .resize(0, false)
             .expect("freeing memory can not fail");
+        self.failures = Vec::new();
     }
 }
 

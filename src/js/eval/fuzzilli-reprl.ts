@@ -6,6 +6,15 @@ const REPRL_CRFD = 100; // Control read FD
 const REPRL_CWFD = 101; // Control write FD
 const REPRL_DRFD = 102; // Data read FD
 
+// A fuzzed script can evaluate this file again, e.g. new Worker(Bun.main) or
+// require(Bun.main + "?x"). A second copy would write its own HELO to REPRL_CWFD,
+// which fuzzilli then reads as the exit status of whatever script runs next.
+const REPRL_RUNNING = Symbol.for("bun.fuzzilli.reprl");
+if (!Bun.isMainThread || globalThis[REPRL_RUNNING]) {
+  throw new Error("fuzzilli-reprl: the REPRL loop is already running in this process");
+}
+globalThis[REPRL_RUNNING] = true;
+
 const fs = require("node:fs");
 
 // Make common Node modules available

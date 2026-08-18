@@ -570,19 +570,19 @@ impl LazySourceMap {
                         .collect();
                 for i in 0..source_files_count {
                     // SAFETY: `serialized.bytes` is a 'static read-only sourcemap subrange
-                    // (disjoint from bytecode); StringPointer offsets were serialized by
-                    // `to_bytes` and are in-bounds.
-                    file_names.push(Box::from(
-                        unsafe {
-                            slice_to(
-                                serialized.bytes.as_ptr(),
-                                serialized.bytes.len(),
-                                serialized.source_file_name(i),
-                                Corruption::ModuleSourceMap,
-                            )
-                        }
-                        .ok()?,
-                    ));
+                    // (disjoint from bytecode); `slice_to` checks the name pointer against it.
+                    let Ok(name) = (unsafe {
+                        slice_to(
+                            serialized.bytes.as_ptr(),
+                            serialized.bytes.len(),
+                            serialized.source_file_name(i),
+                            Corruption::ModuleSourceMap,
+                        )
+                    }) else {
+                        *self = LazySourceMap::None;
+                        return None;
+                    };
+                    file_names.push(Box::from(name));
                 }
 
                 let data = Box::new(SerializedSourceMapLoaded {

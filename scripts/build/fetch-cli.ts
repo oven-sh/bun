@@ -22,7 +22,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { downloadWithRetry, extractTarGz, fetchPrebuilt } from "./download.ts";
@@ -128,30 +128,14 @@ directly — run ninja targets instead.
 // check-undefined: no object of a dep may still reference the given symbols
 // ───────────────────────────────────────────────────────────────────────────
 
-export interface UndefinedReference {
-  object: string;
-  symbol: string;
-}
-
 /**
- * The references to `symbols` in `llvm-nm -u -A` output, which has one
- * `<object>: [<value>] U <name>` line per undefined symbol. A Mach-O name is
- * matched with its leading underscore removed, so one symbol list covers
- * ELF, COFF, Mach-O and the bitcode objects an LTO build produces.
+ * `llvm-nm -A` prints one `<object>: <value> <type> <name>` line per symbol,
+ * with a blank value and type U (w or v when weak) for an undefined one, in
+ * the same shape for ELF, COFF, Mach-O and the bitcode objects of an LTO
+ * build. Not `-u`: for Mach-O that switches to printing bare names, which
+ * would match nothing here and pass the check without checking anything.
  */
-export function forbiddenUndefined(nmOutput: string, symbols: readonly string[]): UndefinedReference[] {
-  const forbidden = new Set(symbols);
-  const references: UndefinedReference[] = [];
-  for (const line of nmOutput.split("\n")) {
-    const match = /^(.*): +(?:[0-9A-Fa-f]+ +)?U +(\S+)\s*$/.exec(line);
-    if (match === null) continue;
-    const symbol = match[2]!;
-    if (forbidden.has(symbol) || (symbol.startsWith("_") && forbidden.has(symbol.slice(1)))) {
-      references.push({ object: match[1]!, symbol });
-    }
-  }
-  return references;
-}
+const UNDEFINED_SYMBOL_LINE = /^(.*): +[Uwv] +(\S+)\s*$/;
 
 /** Windows' command line tops out at 32K characters; keep each nm invocation well inside it. */
 const NM_ARGV_BUDGET = 16_000;
@@ -163,7 +147,11 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
     .filter(line => line.length > 0);
   assert(objects.length > 0, `check-undefined ${name}: ${rspfile} lists no objects`);
 
-  const references: UndefinedReference[] = [];
+  // A Mach-O name carries a leading underscore, so one symbol list serves
+  // every format by also matching with it removed.
+  const forbidden = new Set(symbols);
+  let undefinedSymbols = 0;
+  const offenders: string[] = [];
   for (let start = 0; start < objects.length; ) {
     let end = start;
     let length = 0;
@@ -171,20 +159,35 @@ function checkUndefined(name: string, nm: string, rspfile: string, stamp: string
       length += objects[end]!.length + 1;
       end++;
     } while (end < objects.length && length + objects[end]!.length < NM_ARGV_BUDGET);
-    const result = spawnSync(nm, ["-u", "-A", ...objects.slice(start, end)], { encoding: "utf8", maxBuffer: 1 << 28 });
+    const result = spawnSync(nm, ["-A", ...objects.slice(start, end)], { encoding: "utf8", maxBuffer: 1 << 28 });
     if (result.error) throw new BuildError(`check-undefined ${name}: failed to run ${nm}`, { cause: result.error });
     if (result.status !== 0) throw new BuildError(`check-undefined ${name}: ${nm} failed:\n${result.stderr}`);
-    references.push(...forbiddenUndefined(result.stdout, symbols));
+    for (const line of result.stdout.split("\n")) {
+      const match = UNDEFINED_SYMBOL_LINE.exec(line);
+      if (match === null) continue;
+      undefinedSymbols++;
+      const symbol = match[2]!;
+      if (forbidden.has(symbol) || (symbol.startsWith("_") && forbidden.has(symbol.slice(1)))) {
+        offenders.push(`  ${match[1]}: ${symbol}`);
+      }
+    }
     start = end;
   }
 
-  if (references.length > 0) {
-    const listing = references.map(r => `  ${r.object}: ${r.symbol}`).join("\n");
-    throw new BuildError(`${name}: objects reference symbols its build forbids:\n${listing}`, {
+  // The objects of any dep call each other, libc and the OS, so parsing no
+  // undefined symbols at all means nm's output is not in the shape parsed
+  // above, and passing would be meaningless.
+  assert(
+    undefinedSymbols > 0,
+    `check-undefined ${name}: no undefined symbols parsed from ${nm} output for ${objects.length} objects`,
+  );
+  if (offenders.length > 0) {
+    throw new BuildError(`${name}: objects reference symbols its build forbids:\n${offenders.join("\n")}`, {
       hint: `The symbols and the objects allowed to use them are declared by forbidUndefined in scripts/build/deps/${name}.ts; the comment there says what the references have to go through instead.`,
     });
   }
-  writeFileSync(stamp, "");
+  // dep_check_undefined is restat=1: an existing stamp keeps its mtime.
+  writeIfChanged(stamp, "");
 }
 
 // ───────────────────────────────────────────────────────────────────────────

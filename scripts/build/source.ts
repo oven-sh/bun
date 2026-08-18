@@ -254,7 +254,7 @@ export interface DirectBuild {
   codegen?: DirectCodegen;
   /**
    * Fail the build if any object of this dep still has an undefined
-   * reference to one of `symbols` (`llvm-nm -u` over the objects, once they
+   * reference to one of `symbols` (llvm-nm over the objects, once they
    * exist). `except` lists sources, as spelled in `sources`, that may
    * reference them. Names are matched with and without the Mach-O leading
    * underscore. The use so far: deps whose allocations bun routes to
@@ -697,12 +697,14 @@ export function registerDepRules(n: Ninja, cfg: Config): void {
 
   // DirectBuild.forbidUndefined: llvm-nm over the dep's objects, listed in a
   // response file like the ar rule's (boringssl alone has ~330 of them).
-  // The stamp is only written when nothing is referenced.
+  // The stamp is only written when nothing is referenced, and (restat) left
+  // alone when it already exists.
   n.rule("dep_check_undefined", {
     command: `${cfg.jsRuntime} ${fetchCli} check-undefined $name $nm $out.rsp $out $symbols`,
     description: "check undefined symbols in $name",
     rspfile: "$out.rsp",
     rspfile_content: "$in_newline",
+    restat: true,
   });
 
   // The `dep` pool: depth-4 balances two concerns. Each nested cmake/cargo

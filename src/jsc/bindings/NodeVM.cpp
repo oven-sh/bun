@@ -51,7 +51,6 @@
 #include "AsyncContextFrame.h"
 #include "JavaScriptCore/JSCInlines.h"
 #include "JavaScriptCore/JSPromise.h"
-#include "JavaScriptCore/JSNativeStdFunction.h"
 #include "JavaScriptCore/BytecodeCacheError.h"
 #include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/FunctionCodeBlock.h"

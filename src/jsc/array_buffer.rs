@@ -277,8 +277,7 @@ impl ArrayBuffer {
 
         match result {
             bun_sys::Result::Ok(buf) => {
-                // `buf` is a fresh mmap region whose ownership transfers to JSC, which
-                // also unmaps it when it refuses the length (above `MAX_ARRAY_BUFFER_SIZE`).
+                // `buf` is a fresh mmap region whose ownership transfers to JSC (on `Err` too).
                 crate::host_fn::from_js_host_call(global, || {
                     JSBuffer__fromMmap(global, buf.cast(), map_len)
                 })

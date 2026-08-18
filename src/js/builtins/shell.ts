@@ -131,9 +131,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        // The interpreter calls this when it cannot build the output buffers
-        // (an output larger than a Buffer can hold, or an allocation failure).
-        // Exit codes go through `resolve`.
+        // Only for a failure to build the output buffers; exit codes go through `resolve`.
         reject = error => {
           potentialError = undefined;
           rej(error);

@@ -1224,8 +1224,6 @@ impl Interpreter {
                             ],
                         ),
                         Err(err) if !global_this.has_pending_termination_exception() => {
-                            // `reject` is called directly, so it needs the thrown
-                            // value, not the `JSC::Exception` that carries it.
                             let error = global_this.take_error(err);
                             if let Some(reject) =
                                 JSShellInterpreter::reject_get_cached(this_jsvalue)

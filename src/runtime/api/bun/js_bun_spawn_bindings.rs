@@ -2038,9 +2038,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
 
     let signal_code = SubprocessT::get_signal_code(subprocess, global_this);
     let exit_code = SubprocessT::get_exit_code(subprocess, global_this);
-    // `to_buffered_value` throws when an output does not fit in a Buffer (or on
-    // OOM). `finalize` runs either way, so that path does not leak the subprocess
-    // and what it still owns (the other stream's buffer, the abort signal ref).
+    // Propagated after `finalize`, which must run even when building the output throws.
     let output = subprocess
         .stdout
         .with_mut(|s| s.to_buffered_value(global_this))

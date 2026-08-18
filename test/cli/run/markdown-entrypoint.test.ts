@@ -41,6 +41,10 @@ describe("bun <file.md>", () => {
     expect(await runMd("**bold** *italic* ~~strike~~ `code` regular\n")).toMatchSnapshot();
   });
 
+  test("renders underline and math spans (enabled by the terminal preset)", async () => {
+    expect(await runMd("_under_ and $x$\n")).toBe("\x1b[4munder\x1b[24m and \x1b[35m$x$\x1b[39m\x1b[0m\n");
+  });
+
   test("renders ordered, unordered, and task lists", async () => {
     expect(
       await runMd(

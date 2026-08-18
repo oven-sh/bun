@@ -274,25 +274,6 @@ impl JSValkeyClient {
         }
         Ok(())
     }
-
-    fn subscription_ctx_is_deletable(&self) -> bool {
-        // The user may request .close(), in which case we can dispose of the subscription object.
-        // If that is the case, finalized will be true. Otherwise, we should treat the object as
-        // disposable if there are no active subscriptions.
-        self.client.get().flags.finalized || !self.has_subscriptions()
-    }
-
-    pub fn close_subscription_ctx(&self, global_object: &JSGlobalObject) {
-        debug_assert!(self.subscription_ctx_is_deletable());
-
-        if let Some(parent_this) = self.this_value.get().try_get() {
-            Js::subscription_callback_map_set_cached(
-                parent_this,
-                global_object,
-                JSValue::UNDEFINED,
-            );
-        }
-    }
 }
 
 // ───────────────────────────────────────────────────────────────────────────

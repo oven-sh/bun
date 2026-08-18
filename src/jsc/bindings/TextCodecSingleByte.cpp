@@ -28,13 +28,10 @@
 // config.h removed - not needed in Bun
 #include "TextCodecSingleByte.h"
 
-#include "EncodingTables.h"
 #include <array>
-#include <mutex>
 #include <wtf/IteratorRange.h>
 #include <wtf/NeverDestroyed.h>
 #include <wtf/TZoneMallocInlines.h>
-#include <wtf/text/CodePointIterator.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/CharacterNames.h>
 
@@ -74,8 +71,6 @@ enum class TextCodecSingleByte::Encoding : uint8_t {
 };
 
 using SingleByteDecodeTable = std::array<char16_t, 128>;
-using SingleByteEncodeTableEntry = std::pair<char16_t, uint8_t>;
-using SingleByteEncodeTable = std::span<const SingleByteEncodeTableEntry>;
 
 // From https://encoding.spec.whatwg.org/index-iso-8859-3.txt with 0xFFFD filling the gaps
 static constexpr SingleByteDecodeTable iso88593 {
@@ -388,87 +383,6 @@ static constexpr SingleByteDecodeTable xMacCyrillic {
     0x0440, 0x0441, 0x0442, 0x0443, 0x0444, 0x0445, 0x0446, 0x0447, 0x0448, 0x0449, 0x044A, 0x044B, 0x044C, 0x044D, 0x044E, 0x20AC
 };
 
-template<const SingleByteDecodeTable& decodeTable> SingleByteEncodeTable tableForEncoding()
-{
-    // Allocate this at runtime because building it at compile time would make the binary much larger and this is often not used.
-    static constexpr auto size = std::size(decodeTable) - std::count(std::begin(decodeTable), std::end(decodeTable), replacementCharacter);
-    static const std::array<SingleByteEncodeTableEntry, size>* entries;
-    static std::once_flag once;
-    std::call_once(once, [&] {
-        auto* mutableEntries = new std::array<SingleByteEncodeTableEntry, size>();
-        size_t j = 0;
-        for (size_t i = 0; i < std::size(decodeTable); ++i) {
-            if (decodeTable[i] != replacementCharacter)
-                (*mutableEntries)[j++] = { decodeTable[i], i + 0x80 };
-        }
-        ASSERT(j == size);
-        auto collection = std::span { *mutableEntries };
-        sortByFirst(collection);
-        ASSERT(sortedFirstsAreUnique(collection));
-        entries = mutableEntries;
-    });
-    return std::span { *entries };
-}
-
-static SingleByteEncodeTable tableForEncoding(TextCodecSingleByte::Encoding encoding)
-{
-    switch (encoding) {
-    case TextCodecSingleByte::Encoding::ISO_8859_3:
-        return tableForEncoding<iso88593>();
-    case TextCodecSingleByte::Encoding::ISO_8859_6:
-        return tableForEncoding<iso88596>();
-    case TextCodecSingleByte::Encoding::ISO_8859_7:
-        return tableForEncoding<iso88597>();
-    case TextCodecSingleByte::Encoding::ISO_8859_8:
-        return tableForEncoding<iso88598>();
-    case TextCodecSingleByte::Encoding::Windows_874:
-        return tableForEncoding<windows874>();
-    case TextCodecSingleByte::Encoding::Windows_1253:
-        return tableForEncoding<windows1253>();
-    case TextCodecSingleByte::Encoding::Windows_1255:
-        return tableForEncoding<windows1255>();
-    case TextCodecSingleByte::Encoding::Windows_1257:
-        return tableForEncoding<windows1257>();
-    case TextCodecSingleByte::Encoding::IBM866:
-        return tableForEncoding<ibm866>();
-    case TextCodecSingleByte::Encoding::KOI8U:
-        return tableForEncoding<koi8u>();
-    case TextCodecSingleByte::Encoding::ISO_8859_2:
-        return tableForEncoding<iso88592>();
-    case TextCodecSingleByte::Encoding::ISO_8859_4:
-        return tableForEncoding<iso88594>();
-    case TextCodecSingleByte::Encoding::ISO_8859_5:
-        return tableForEncoding<iso88595>();
-    case TextCodecSingleByte::Encoding::ISO_8859_10:
-        return tableForEncoding<iso885910>();
-    case TextCodecSingleByte::Encoding::ISO_8859_13:
-        return tableForEncoding<iso885913>();
-    case TextCodecSingleByte::Encoding::ISO_8859_14:
-        return tableForEncoding<iso885914>();
-    case TextCodecSingleByte::Encoding::ISO_8859_15:
-        return tableForEncoding<iso885915>();
-    case TextCodecSingleByte::Encoding::ISO_8859_16:
-        return tableForEncoding<iso885916>();
-    case TextCodecSingleByte::Encoding::KOI8R:
-        return tableForEncoding<koi8r>();
-    case TextCodecSingleByte::Encoding::Macintosh:
-        return tableForEncoding<macintosh>();
-    case TextCodecSingleByte::Encoding::Windows_1250:
-        return tableForEncoding<windows1250>();
-    case TextCodecSingleByte::Encoding::Windows_1251:
-        return tableForEncoding<windows1251>();
-    case TextCodecSingleByte::Encoding::Windows_1254:
-        return tableForEncoding<windows1254>();
-    case TextCodecSingleByte::Encoding::Windows_1256:
-        return tableForEncoding<windows1256>();
-    case TextCodecSingleByte::Encoding::Windows_1258:
-        return tableForEncoding<windows1258>();
-    case TextCodecSingleByte::Encoding::XMacCyrillic:
-        return tableForEncoding<xMacCyrillic>();
-    }
-    RELEASE_ASSERT_NOT_REACHED();
-}
-
 static const SingleByteDecodeTable& tableForDecoding(TextCodecSingleByte::Encoding encoding)
 {
     switch (encoding) {
@@ -528,27 +442,6 @@ static const SingleByteDecodeTable& tableForDecoding(TextCodecSingleByte::Encodi
     RELEASE_ASSERT_NOT_REACHED();
 }
 
-// https://encoding.spec.whatwg.org/#single-byte-encoder
-static Vector<uint8_t> encode(const SingleByteEncodeTable& table, StringView string, Function<void(char32_t, Vector<uint8_t>&)>&& unencodableHandler)
-{
-    // FIXME: Consider adding an ASCII fast path like the one in TextCodecLatin1::decode.
-    Vector<uint8_t> result;
-    result.reserveInitialCapacity(string.length());
-    for (auto codePoint : string.codePoints()) {
-        if (isASCII(codePoint)) {
-            result.append(codePoint);
-            continue;
-        }
-        auto byte = findFirstInSortedPairs(table, codePoint);
-        if (!byte) {
-            unencodableHandler(codePoint, result);
-            continue;
-        }
-        result.append(*byte);
-    }
-    return result;
-}
-
 // https://encoding.spec.whatwg.org/#single-byte-decoder
 static String decode(const SingleByteDecodeTable& table, std::span<const uint8_t> bytes, bool, bool stopOnError, bool& sawError)
 {
@@ -575,11 +468,6 @@ static String decode(const SingleByteDecodeTable& table, std::span<const uint8_t
             parseByte(byte);
     }
     return result.toString();
-}
-
-Vector<uint8_t> TextCodecSingleByte::encode(StringView string, UnencodableHandling handling) const
-{
-    return PAL::encode(tableForEncoding(m_encoding), string, unencodableHandler(handling));
 }
 
 String TextCodecSingleByte::decode(std::span<const uint8_t> bytes, bool flush, bool stopOnError, bool& sawError)

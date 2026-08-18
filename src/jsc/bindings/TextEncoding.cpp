@@ -30,49 +30,14 @@
 // config.h removed - not needed in Bun
 #include "TextEncoding.h"
 
-#include "TextCodec.h"
 #include "TextEncodingRegistry.h"
-#include <wtf/StdLibExtras.h>
 #include <wtf/text/StringView.h>
 
 namespace PAL {
 
-TextEncoding::TextEncoding(ASCIILiteral name)
-    : m_name(atomCanonicalTextEncodingName(name))
-    , m_backslashAsCurrencySymbol(backslashAsCurrencySymbol())
-{
-}
-
 TextEncoding::TextEncoding(StringView name)
     : m_name(atomCanonicalTextEncodingName(name))
-    , m_backslashAsCurrencySymbol(backslashAsCurrencySymbol())
 {
-}
-
-String TextEncoding::decode(std::span<const uint8_t> data, bool stopOnError, bool& sawError) const
-{
-    if (m_name.isNull())
-        return String();
-
-    return newTextCodec(*this)->decode(data, true, stopOnError, sawError);
-}
-
-Vector<uint8_t> TextEncoding::encode(StringView string, PAL::UnencodableHandling handling, NFCNormalize normalize) const
-{
-    if (m_name.isNull() || string.isEmpty())
-        return {};
-
-    // FIXME: What's the right place to do normalization?
-    // It's a little strange to do it inside the encode function.
-    // Perhaps normalization should be an explicit step done before calling encode.
-    if (normalize == NFCNormalize::Yes)
-        return newTextCodec(*this)->encode(normalizedNFC(string).view, handling);
-    return newTextCodec(*this)->encode(string, handling);
-}
-
-char16_t TextEncoding::backslashAsCurrencySymbol() const
-{
-    return shouldShowBackslashAsCurrencySymbolIn(m_name) ? 0x00A5 : '\\';
 }
 
 } // namespace PAL

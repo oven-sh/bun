@@ -506,11 +506,6 @@ impl TextDecoder {
                             // Fallback to empty string if codec creation fails
                             return Ok(ZigString::init(b"").to_js(global_this));
                         };
-                        if !self.ignore_bom {
-                            // `TextCodec` is an opaque ZST FFI handle (S008);
-                            // `ptr` is live — safe via `opaque_deref_mut`.
-                            bun_opaque::opaque_deref_mut(ptr.as_ptr()).strip_bom();
-                        }
                         self.codec.set(Some(ptr));
                         ptr
                     }

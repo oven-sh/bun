@@ -44,12 +44,9 @@ void checkEncodingTableInvariants();
 
 // Functions for using sorted arrays of pairs as a map.
 // FIXME: Consider moving these functions to StdLibExtras.h for uses other than encoding tables.
-template<typename CollectionType> void sortByFirst(CollectionType&);
-template<typename CollectionType> void stableSortByFirst(CollectionType&);
 template<typename CollectionType> bool isSortedByFirst(const CollectionType&);
 template<typename CollectionType> bool sortedFirstsAreUnique(const CollectionType&);
 template<typename CollectionType, typename KeyType> static auto findFirstInSortedPairs(const CollectionType& sortedPairsCollection, const KeyType&) -> std::optional<decltype(std::begin(sortedPairsCollection)->second)>;
-template<typename CollectionType, typename KeyType> static auto findInSortedPairs(const CollectionType& sortedPairsCollection, const KeyType&) -> std::span<std::remove_reference_t<decltype(*std::begin(sortedPairsCollection))>>;
 
 #if !ASSERT_ENABLED
 inline void checkEncodingTableInvariants() {}
@@ -73,37 +70,12 @@ struct EqualFirst {
     }
 };
 
-struct CompareSecond {
-    template<typename TypeA, typename TypeB> bool operator()(const TypeA& a, const TypeB& b)
-    {
-        return a.second < b.second;
-    }
-};
-
 template<typename T> struct FirstAdapter {
     const T& first;
 };
 template<typename T> FirstAdapter<T> makeFirstAdapter(const T& value)
 {
     return { value };
-}
-
-template<typename T> struct SecondAdapter {
-    const T& second;
-};
-template<typename T> SecondAdapter<T> makeSecondAdapter(const T& value)
-{
-    return { value };
-}
-
-template<typename CollectionType> void sortByFirst(CollectionType& collection)
-{
-    std::sort(std::begin(collection), std::end(collection), CompareFirst {});
-}
-
-template<typename CollectionType> void stableSortByFirst(CollectionType& collection)
-{
-    std::stable_sort(std::begin(collection), std::end(collection), CompareFirst {});
 }
 
 template<typename CollectionType> bool isSortedByFirst(const CollectionType& collection)
@@ -126,15 +98,6 @@ template<typename CollectionType, typename KeyType> static auto findFirstInSorte
     if (iterator == std::end(collection) || key < iterator->first)
         return std::nullopt;
     return iterator->second;
-}
-
-template<typename CollectionType, typename KeyType> static auto findInSortedPairs(const CollectionType& collection, const KeyType& key) -> std::span<std::remove_reference_t<decltype(*std::begin(collection))>>
-{
-    if constexpr (std::is_integral_v<KeyType>) {
-        if (key != decltype(std::begin(collection)->first)(key))
-            return {};
-    }
-    return std::ranges::equal_range(collection, makeFirstAdapter(key), CompareFirst {});
 }
 #pragma clang diagnostic pop
 

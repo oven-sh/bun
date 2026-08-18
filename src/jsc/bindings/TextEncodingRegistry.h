@@ -37,13 +37,9 @@ namespace PAL {
 class TextCodec;
 class TextEncoding;
 
-// Use TextResourceDecoder::decode to decode resources, since it handles BOMs.
-// Use TextEncoding::encode to encode, since it takes care of normalization.
 PAL_EXPORT std::unique_ptr<TextCodec> newTextCodec(const TextEncoding&);
 
-// Only TextEncoding should use the following functions directly.
-ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral alias);
+// Only TextEncoding should use the following function directly.
 ASCIILiteral atomCanonicalTextEncodingName(StringView);
-bool shouldShowBackslashAsCurrencySymbolIn(ASCIILiteral canonicalEncodingName);
 
 } // namespace PAL

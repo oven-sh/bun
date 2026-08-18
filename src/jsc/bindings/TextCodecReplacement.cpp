@@ -64,12 +64,4 @@ String TextCodecReplacement::decode(std::span<const uint8_t>, bool, bool, bool& 
     return span(replacementCharacter);
 }
 
-Vector<uint8_t> TextCodecReplacement::encode(StringView string, UnencodableHandling) const
-{
-    // Replacement encoding always fails to encode
-    // Return empty vector as encoding is not supported
-    UNUSED_PARAM(string);
-    return Vector<uint8_t>();
-}
-
 } // namespace PAL

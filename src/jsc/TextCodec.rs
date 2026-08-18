@@ -17,9 +17,6 @@ unsafe extern "C" {
         out_saw_error: *mut bool,
     ) -> BunString;
     fn Bun__deleteTextCodec(codec: *mut TextCodec);
-    // safe: `TextCodec` is an `opaque_ffi!` ZST handle; `&mut` is ABI-identical
-    // to a non-null `*mut` and C++ mutating codec state is interior to the cell.
-    safe fn Bun__stripBOMFromTextCodec(codec: &mut TextCodec);
 }
 
 bun_opaque::opaque_ffi! {
@@ -64,10 +61,5 @@ impl TextCodec {
         };
 
         DecodeResult { result, saw_error }
-    }
-
-    pub fn strip_bom(&mut self) {
-        mark_binding!();
-        Bun__stripBOMFromTextCodec(self)
     }
 }

@@ -42,11 +42,11 @@
 #include "TextCodecSingleByte.h"
 #include "TextCodecUserDefined.h"
 #include "TextEncoding.h"
+#include <array>
 #include <mutex>
 #include <wtf/ASCIICType.h>
 #include <wtf/CheckedArithmetic.h>
 #include <wtf/HashMap.h>
-#include <wtf/HashSet.h>
 #include <wtf/Lock.h>
 #include <wtf/MainThread.h>
 #include <wtf/NeverDestroyed.h>
@@ -132,12 +132,6 @@ static TextCodecMap& textCodecMap() WTF_REQUIRES_LOCK(encodingRegistryLock)
 }
 static bool didExtendTextCodecMaps;
 
-static HashSet<ASCIILiteral>& nonBackslashEncodings()
-{
-    static NeverDestroyed<HashSet<ASCIILiteral>> nonBackslashEncodings;
-    return nonBackslashEncodings;
-}
-
 static constexpr ASCIILiteral textEncodingNameBlocklist[] = { "UTF-7"_s, "BOCU-1"_s, "SCSU"_s };
 
 static bool isUndesiredAlias(ASCIILiteral alias)
@@ -209,35 +203,6 @@ static void buildBaseTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     TextCodecUserDefined::registerCodecs(addToTextCodecMap);
 }
 
-static void addEncodingName(HashSet<ASCIILiteral>& set, ASCIILiteral name) WTF_REQUIRES_LOCK(encodingRegistryLock)
-{
-    // We must not use atomCanonicalTextEncodingName() because this function is called in it.
-    ASCIILiteral atomName = textEncodingNameMap().get(name);
-    if (!atomName.isNull())
-        set.add(atomName);
-}
-
-static void buildQuirksSets() WTF_REQUIRES_LOCK(encodingRegistryLock)
-{
-    auto& nonBackslashEncodings = PAL::nonBackslashEncodings();
-
-    ASSERT(nonBackslashEncodings.isEmpty());
-
-    // The text encodings below treat backslash as a currency symbol for IE compatibility.
-    // See http://blogs.msdn.com/michkap/archive/2005/09/17/469941.aspx for more information.
-    addEncodingName(nonBackslashEncodings, "x-mac-japanese"_s);
-    addEncodingName(nonBackslashEncodings, "ISO-2022-JP"_s);
-    addEncodingName(nonBackslashEncodings, "EUC-JP"_s);
-    // Shift_JIS_X0213-2000 is not the same encoding as Shift_JIS on Mac. We need to register both of them.
-    addEncodingName(nonBackslashEncodings, "Shift_JIS"_s);
-    addEncodingName(nonBackslashEncodings, "Shift_JIS_X0213-2000"_s);
-}
-
-bool shouldShowBackslashAsCurrencySymbolIn(ASCIILiteral canonicalEncodingName)
-{
-    return !canonicalEncodingName.isNull() && nonBackslashEncodings().contains(canonicalEncodingName);
-}
-
 static void extendTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
 {
     TextCodecReplacement::registerEncodingNames(addToTextEncodingNameMap);
@@ -254,7 +219,6 @@ static void extendTextCodecMaps() WTF_REQUIRES_LOCK(encodingRegistryLock)
     TextCodecSingleByte::registerCodecs(addToTextCodecMap);
 
     pruneBlocklistedCodecs();
-    buildQuirksSets();
 }
 
 std::unique_ptr<TextCodec> newTextCodec(const TextEncoding& encoding)
@@ -310,11 +274,6 @@ static ASCIILiteral atomCanonicalTextEncodingName(std::span<const char16_t> char
         buffer[i] = characters[i];
 
     return atomCanonicalTextEncodingName(std::span { buffer }.first(characters.size()));
-}
-
-ASCIILiteral atomCanonicalTextEncodingName(ASCIILiteral name)
-{
-    return atomCanonicalTextEncodingName(name.span8());
 }
 
 ASCIILiteral atomCanonicalTextEncodingName(StringView alias)

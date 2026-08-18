@@ -25,8 +25,7 @@
 
 #pragma once
 
-#include "UnencodableHandling.h"
-#include <wtf/URL.h>
+#include <wtf/text/ASCIILiteral.h>
 #include <wtf/text/StringView.h>
 
 #ifndef PAL_EXPORT
@@ -35,34 +34,16 @@
 
 namespace PAL {
 
-enum class NFCNormalize : bool { No,
-    Yes };
-
-class TextEncoding : public WTF::URLTextEncoding {
+class TextEncoding {
 public:
     TextEncoding() = default;
-    PAL_EXPORT TextEncoding(ASCIILiteral name);
     PAL_EXPORT TextEncoding(StringView name);
 
     bool isValid() const { return !m_name.isNull(); }
     ASCIILiteral name() const { return m_name; }
 
-    PAL_EXPORT String decode(std::span<const uint8_t>, bool stopOnError, bool& sawError) const;
-    String decode(std::span<const uint8_t>) const;
-    PAL_EXPORT Vector<uint8_t> encode(StringView, PAL::UnencodableHandling, NFCNormalize = NFCNormalize::Yes) const;
-    Vector<uint8_t> encodeForURLParsing(StringView string) const final { return encode(string, PAL::UnencodableHandling::URLEncodedEntities, NFCNormalize::No); }
-
-    char16_t backslashAsCurrencySymbol() const;
-
 private:
     ASCIILiteral m_name;
-    char16_t m_backslashAsCurrencySymbol;
 };
-
-inline String TextEncoding::decode(std::span<const uint8_t> characters) const
-{
-    bool ignored;
-    return decode(characters, false, ignored);
-}
 
 } // namespace PAL

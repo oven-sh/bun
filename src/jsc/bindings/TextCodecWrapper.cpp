@@ -70,13 +70,4 @@ void Bun__deleteTextCodec(void* codecPtr)
     }
 }
 
-// Strip BOM from codec
-void Bun__stripBOMFromTextCodec(void* codecPtr)
-{
-    if (codecPtr) {
-        TextCodec* codec = static_cast<TextCodec*>(codecPtr);
-        codec->stripByteOrderMark();
-    }
-}
-
 } // extern "C"

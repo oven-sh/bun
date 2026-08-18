@@ -28,7 +28,6 @@
 // config.h removed - not needed in Bun
 #include "TextCodecUserDefined.h"
 
-#include <array>
 #include <wtf/TZoneMallocInlines.h>
 #include <wtf/text/CString.h>
 #include <wtf/text/StringBuilder.h>
@@ -63,45 +62,6 @@ String TextCodecUserDefined::decode(std::span<const uint8_t> bytes, bool, bool, 
             result.append(static_cast<char16_t>(0xF700 | byte));
     }
     return result.toString();
-}
-
-static Vector<uint8_t> encodeComplexUserDefined(StringView string, UnencodableHandling handling)
-{
-    Vector<uint8_t> result;
-
-    for (auto character : string.codePoints()) {
-        int8_t signedByte = character;
-        if ((signedByte & 0xF7FF) == character)
-            result.append(signedByte);
-        else {
-            // No way to encode this character with x-user-defined.
-            UnencodableReplacementArray replacement;
-            result.append(TextCodec::getUnencodableReplacement(character, handling, replacement));
-        }
-    }
-
-    return result;
-}
-
-Vector<uint8_t> TextCodecUserDefined::encode(StringView string, UnencodableHandling handling) const
-{
-    {
-        Vector<uint8_t> result(string.length());
-        size_t index = 0;
-
-        // Convert and simultaneously do a check to see if it's all ASCII.
-        char16_t ored = 0;
-        for (auto character : string.codeUnits()) {
-            result[index++] = character;
-            ored |= character;
-        }
-
-        if (!(ored & 0xFF80))
-            return result;
-    }
-
-    // If it wasn't all ASCII, call the function that handles more-complex cases.
-    return encodeComplexUserDefined(string, handling);
 }
 
 } // namespace PAL

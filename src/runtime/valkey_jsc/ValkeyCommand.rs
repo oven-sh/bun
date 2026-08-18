@@ -22,27 +22,11 @@ pub struct Command<'a> {
     pub(crate) meta: Meta,
 }
 
-impl<'a> Default for Command<'a> {
-    fn default() -> Self {
-        Self {
-            command: b"",
-            args: Args::default(),
-            meta: Meta::default(),
-        }
-    }
-}
-
 #[derive(Copy, Clone)]
 pub enum Args<'a> {
     Slices(&'a [Slice]),
     Args(&'a [BlobOrStringOrBuffer]),
     Raw(&'a [&'a [u8]]),
-}
-
-impl<'a> Default for Args<'a> {
-    fn default() -> Self {
-        Args::Raw(&[])
-    }
 }
 
 impl<'a> Args<'a> {

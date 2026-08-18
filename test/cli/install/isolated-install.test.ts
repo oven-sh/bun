@@ -2105,6 +2105,67 @@ test("tarball URL with query string resolves at runtime", async () => {
   expect(exitCode).toBe(0);
 });
 
+// With a lockfile present, the store installer itself downloads the tarballs
+// missing from the cache. A failed download reaches it through
+// `on_package_download_error` (src/install/isolated_install/Installer.rs),
+// which fails the store entries waiting on that tarball; without it the
+// pending task count never reaches zero. A download that fails during
+// resolution (no lockfile yet) is reported as `GET <url> - 404` by the package
+// manager's log instead, which is why the first install below has to succeed.
+test("tarball download failure is reported by the store installer", async () => {
+  const tarball = file(join(import.meta.dir, "registry", "packages", "no-deps", "no-deps-1.0.0.tgz"));
+  let serveTarball = true;
+  using server = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const { pathname } = new URL(req.url);
+      if (pathname === "/no-deps") {
+        return Response.json({
+          "name": "no-deps",
+          "dist-tags": { latest: "1.0.0" },
+          "versions": {
+            "1.0.0": {
+              name: "no-deps",
+              version: "1.0.0",
+              dist: { tarball: `http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz` },
+            },
+          },
+        });
+      }
+      if (pathname === "/no-deps/-/no-deps-1.0.0.tgz" && serveTarball) {
+        return new Response(tarball, { headers: { "Content-Type": "application/octet-stream" } });
+      }
+      return new Response("Not found", { status: 404 });
+    },
+  });
+
+  using packageDir = tempDir("isolated-tarball-404-", {
+    "bunfig.toml": `[install]\nlinker = "isolated"\nregistry = "http://localhost:${server.port}/"\n`,
+    "package.json": JSON.stringify({
+      name: "test-tarball-404",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    }),
+  });
+  const cacheDir = join(String(packageDir), ".bun-cache");
+  const env = { ...bunEnv, BUN_INSTALL_CACHE_DIR: cacheDir };
+
+  await runBunInstall(env, String(packageDir));
+
+  serveTarball = false;
+  await rm(cacheDir, { recursive: true, force: true });
+  await rm(join(String(packageDir), "node_modules"), { recursive: true, force: true });
+
+  const { err } = await runBunInstall(env, String(packageDir), {
+    allowErrors: true,
+    expectedExitCode: 1,
+    savesLockfile: false,
+  });
+  expect(err).toContain("failed to download no-deps@1.0.0: 404 Not Found");
+  expect(err).toContain(`http://localhost:${server.port}/no-deps/-/no-deps-1.0.0.tgz`);
+});
+
 // The resolution part of a store entry name (`<name>@<resolution>`) embeds
 // folder paths, tarball URLs and git URLs verbatim. `write_resolution` in
 // src/install/isolated_install/Store.rs bounds it: a resolution longer than

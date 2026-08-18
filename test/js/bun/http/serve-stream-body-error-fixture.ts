@@ -145,29 +145,40 @@ function rewriterResponse(element: () => void | Promise<void>): Response {
     .transform(new Response(rewriterInput(), { headers: { "content-type": "text/html" } }));
 }
 
-// Upstream for the proxied variant: answers with one chunk, then drops the
-// connection once that chunk has made it through the proxy to the client.
-let upstream: net.Server | undefined;
-async function proxiedResponse(): Promise<Response> {
-  if (!upstream) {
-    upstream = net.createServer(sock => {
-      sock.once("data", () => {
-        const reached = chunkReachedClient();
-        sock.write("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n7\r\nchunk-a\r\n");
-        reached.then(() => sock.destroy());
-      });
-    });
-    await new Promise<void>(resolve => upstream!.listen(0, "127.0.0.1", resolve));
-  }
+// Upstream for the proxied variants: a scratch server for one request that
+// answers with `firstWrite` (announcing more body than it will ever send), so
+// the fetch() body fails deterministically when `fail()` closes the connection.
+async function fetchFromFailingUpstream(firstWrite: string) {
+  const sockets: net.Socket[] = [];
+  const upstream = net.createServer(socket => {
+    sockets.push(socket);
+    socket.resume();
+    socket.on("error", () => {});
+    socket.write(firstWrite);
+  });
+  await new Promise<void>(resolve => upstream.listen(0, "127.0.0.1", resolve));
+  // Must never be what keeps the process alive if fail() is not reached.
+  upstream.unref();
   const { port } = upstream.address() as net.AddressInfo;
-  return fetch(`http://127.0.0.1:${port}/`);
+  const res = await fetch(`http://127.0.0.1:${port}/`);
+  return {
+    res,
+    fail() {
+      for (const socket of sockets) socket.end();
+      upstream.close();
+    },
+  };
 }
 
-// Bodies Bun.serve streams natively (no JS ReadableStream pump) that fail
-// after their first chunk is already on the wire. The status cannot be taken
-// back, so the contract is the same as for "mid-stream-reject": the connection
-// is closed without the terminating chunk, error() is not invoked, and in
-// development mode the failure is reported on stderr.
+// Set by the after-status variant: called as soon as anything of the response
+// is on the client's wire, i.e. once Bun.serve has committed the status line.
+let statusOnWire: (() => void) | undefined;
+
+// Bodies Bun.serve streams natively (no JS ReadableStream pump) whose producer
+// fails after the status line is committed. error() can no longer answer, so
+// the contract is that of "mid-stream-reject": the body is terminated (without
+// the terminating chunk once body bytes went out) and, in development mode, the
+// failure is reported on stderr.
 const nativeBodies: Record<string, () => Response | Promise<Response>> = {
   "rewriter-mid-stream-throw": () =>
     rewriterResponse(() => {
@@ -178,7 +189,23 @@ const nativeBodies: Record<string, () => Response | Promise<Response>> = {
       await Bun.sleep(0);
       throw new Error("boom");
     }),
-  "proxied-fetch-mid-stream": proxiedResponse,
+  // `return fetch(...)` whose upstream dies once its first chunk has made it
+  // through to our client.
+  "proxied-fetch-mid-stream": async () => {
+    const reached = chunkReachedClient();
+    const { res, fail } = await fetchFromFailingUpstream("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\nchunk-a");
+    reached.then(fail);
+    return res;
+  },
+  // Same, but the upstream dies before producing a single body byte. Bun.serve
+  // commits the status as soon as it attaches to a fetch() body, so the error
+  // still arrives after the status; with nothing written there is nothing to
+  // force-close and the body is ended empty.
+  "proxied-fetch-after-status": async () => {
+    const { res, fail } = await fetchFromFailingUpstream("HTTP/1.1 200 OK\r\nContent-Length: 100\r\n\r\n");
+    statusOnWire = fail;
+    return res;
+  },
 };
 
 const source = sources[variant];
@@ -213,7 +240,7 @@ await using server = Bun.serve({
 // Sends one request over a raw socket and returns everything received before
 // the server closed the connection, so the test can assert on the HTTP
 // framing. A forced close (ECONNRESET) is an expected, asserted-on outcome
-// for the mid-stream variant, so socket errors are not fatal.
+// for the mid-stream variants, so socket errors are not fatal.
 function rawRequest(abort: boolean): Promise<string> {
   const chunks: Buffer[] = [];
   return new Promise(resolve => {
@@ -222,6 +249,8 @@ function rawRequest(abort: boolean): Promise<string> {
     });
     sock.on("data", d => {
       chunks.push(d);
+      statusOnWire?.();
+      statusOnWire = undefined;
       if (Buffer.concat(chunks).includes("chunk-a")) {
         midStreamResolve?.();
         // The cancel variants tear down the socket once a body chunk has
@@ -245,7 +274,6 @@ const secondWire = await rawRequest(clientAborts);
 // Cycle the event loop so any stray rejected promise reaches the
 // unhandledRejection reporter before we declare success.
 for (let i = 0; i < 10; i++) await Bun.sleep(0);
-upstream?.close();
 
 console.log(
   JSON.stringify({

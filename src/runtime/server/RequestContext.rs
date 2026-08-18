@@ -962,12 +962,7 @@ where
             {
                 server.vm().as_mut().run_error_handler(value, None);
             }
-            let state = resp.state();
-            if state.is_http_write_called() && state.is_response_pending() {
-                self.force_close();
-            } else {
-                self.end_stream(self.should_close_connection());
-            }
+            self.close_failed_body();
             return;
         }
 
@@ -2896,17 +2891,21 @@ where
         self.close_failed_body();
     }
 
-    /// The body failed after the status and headers went out, so the server's
-    /// `error()` hook can no longer answer the request. In development mode,
-    /// print the error like an uncaught exception so it does not vanish;
-    /// under a bake dev server, while `resp` may still be written to, also
-    /// render the error page as the rest of the body and end the response,
-    /// returning `true`. Production mode stays quiet. On `false` the caller
-    /// still owns the response and terminates it ([`Self::close_failed_body`]).
+    /// The body's producer failed after the status and headers went out, so
+    /// the server's `error()` hook can no longer answer the request. In
+    /// development mode, print the error like an uncaught exception so it does
+    /// not vanish; under a bake dev server, while `resp` may still be written
+    /// to, also render the error page as the rest of the body and end the
+    /// response, returning `true`. Production mode stays quiet. On `false` the
+    /// caller still owns the response and terminates it with
+    /// [`Self::close_failed_body`].
     ///
-    /// Shared by JS `ReadableStream` bodies (`handle_reject_stream`) and
-    /// native `ByteStream` bodies such as a proxied `fetch()` or an
-    /// `HTMLRewriter` transform (`end_chunk`).
+    /// This is the policy for failures that arrive from the body later, from a
+    /// JS `ReadableStream` (`handle_reject_stream`) or a native `ByteStream`
+    /// such as a proxied `fetch()` or an `HTMLRewriter` transform
+    /// (`end_chunk`). A body that fails synchronously while the handler's
+    /// Response is still being rendered is reported in both modes instead
+    /// (`handle_reject`, `do_render_stream`).
     fn report_committed_body_error(&self, err: JSValue, resp_writable: bool) -> bool {
         if !DEBUG_MODE || err.is_empty_or_undefined_or_null() {
             return false;
@@ -2939,10 +2938,11 @@ where
         true
     }
 
-    /// Terminate a response whose body failed after the status went out. Once
-    /// body bytes were written, close without the terminating chunk (RFC 9112
-    /// section 7) so the client sees an incomplete message rather than a
-    /// truncated body that looks complete; otherwise end it normally.
+    /// Terminate a response whose body failed after the status went out
+    /// (`handle_reject`, `handle_reject_stream`, `end_chunk`). Once body bytes
+    /// were written, close without the terminating chunk (RFC 9112 section 7)
+    /// so the client sees an incomplete message rather than a truncated body
+    /// that looks complete; otherwise end it normally.
     fn close_failed_body(&self) {
         if let Some(resp) = self.resp.get() {
             let state = resp.state();

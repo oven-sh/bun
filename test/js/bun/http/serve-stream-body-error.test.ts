@@ -123,24 +123,29 @@ test.concurrent("mid-stream error in development mode: reported and not terminat
 // Bodies that Bun.serve streams natively (an HTMLRewriter transform, a proxied
 // fetch() Response) reach the server through RequestContext::end_chunk rather
 // than handle_reject_stream. Once the status is on the wire, error() cannot
-// answer any more, so the failure has to be reported the way the JS stream
-// above is: force-closed without the terminating chunk and, in development
-// mode, printed. Before the fix end_chunk force-closed and dropped the error,
-// so a handler that threw after the first byte left no trace anywhere.
+// answer any more, so the failure gets the treatment the JS stream above gets:
+// the body is terminated (force-closed without the terminating chunk once body
+// bytes went out, ended empty otherwise) and, in development mode, the error is
+// printed. Before the fix end_chunk terminated the body and dropped the error,
+// so a rewriter handler that threw after the first byte left no trace anywhere.
+//
+// [variant, body bytes on the wire, ends with the clean terminator, what the
+// development-mode report must name]
 const nativeBodies = [
-  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n", "boom"],
-  ["rewriter-mid-stream-reject", "e\r\n<b>chunk-a</b>\r\n", "boom"],
-  ["proxied-fetch-mid-stream", "7\r\nchunk-a\r\n", "ECONNRESET"],
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n", false, "boom"],
+  ["rewriter-mid-stream-reject", "e\r\n<b>chunk-a</b>\r\n", false, "boom"],
+  ["proxied-fetch-mid-stream", "7\r\nchunk-a\r\n", false, "ECONNRESET"],
+  ["proxied-fetch-after-status", "0\r\n\r\n", true, "ECONNRESET"],
 ] as const;
 
 test.concurrent.each(nativeBodies)(
-  "%s in development mode: reported and not terminated as complete",
-  async (variant, body, reported) => {
+  "%s in development mode: reported, and the body is terminated",
+  async (variant, body, cleanChunkedTerminator, reported) => {
     const { stdout, stderr, exitCode } = await runFixture(variant, "development");
     expect({ result: JSON.parse(stdout), exitCode }).toEqual({
       result: {
         statusLine: "HTTP/1.1 200 OK",
-        cleanChunkedTerminator: false,
+        cleanChunkedTerminator,
         body,
         errorCb: 0,
         unhandled: 0,
@@ -152,20 +157,21 @@ test.concurrent.each(nativeBodies)(
   },
 );
 
-// `development: false` stays quiet on this path too, exactly like
-// "mid-stream-reject" above; only the wire contract applies.
-test.concurrent.each(nativeBodies)("%s: the chunked body is not terminated as complete", async (variant, body) => {
-  const { stdout, stderr, exitCode } = await runFixture(variant);
-  expect({ result: JSON.parse(stdout), stderr, exitCode }).toEqual({
+// The same wire contract with `development: false`. As for "mid-stream-reject"
+// above, stderr is deliberately not asserted: whether production mode should
+// also report a body that fails after the status is committed is one question
+// for the JS and native paths alike, and these tests do not take a position.
+test.concurrent.each(nativeBodies)("%s: the body is terminated", async (variant, body, cleanChunkedTerminator) => {
+  const { stdout, exitCode } = await runFixture(variant);
+  expect({ result: JSON.parse(stdout), exitCode }).toEqual({
     result: {
       statusLine: "HTTP/1.1 200 OK",
-      cleanChunkedTerminator: false,
+      cleanChunkedTerminator,
       body,
       errorCb: 0,
       unhandled: 0,
       secondStatusLine: "HTTP/1.1 200 OK",
     },
-    stderr: "",
     exitCode: 0,
   });
 });

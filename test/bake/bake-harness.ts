@@ -315,10 +315,10 @@ export class Dev extends EventEmitter {
     this.on("watch_synchronization", onEvent);
     try {
       await change();
-      await firstMessage.promise;
+      await this.#rejectOnExit(firstMessage.promise, "the first watch synchronization message");
       // The batch-start ack is ordered after everything published while handling `change`, so the list is complete once it arrives.
       this.socket!.send("H");
-      await batchStarted.promise;
+      await this.#rejectOnExit(batchStarted.promise, "the batch-start watch synchronization ack");
     } finally {
       this.off("watch_synchronization", onEvent);
     }
@@ -832,7 +832,7 @@ class DevFetchPromise extends Promise<Response> {
         const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
         if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
         const payload = JSON.parse(match[1]);
-        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
+        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toStrictEqual(messages);
         expect(res.status).toBe(500);
       } catch (err) {
         if (this.dev.panicked) {
@@ -1202,7 +1202,7 @@ export class Client extends EventEmitter {
         await maybeWaitInteractive("expectErrorOverlay");
         throw new Error("Expected errors, but none found");
       }
-      expect(await this.#overlayErrors()).toEqual([...errors].sort());
+      expect(await this.#overlayErrors()).toStrictEqual([...errors].sort());
     });
   }
 

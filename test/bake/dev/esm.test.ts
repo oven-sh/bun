@@ -222,10 +222,7 @@ devTest("server module throwing while it is hot reloaded is reported and fixed b
   async test(dev) {
     await dev.fetch("/").equals("v1");
 
-    // The new version of the module throws while the server runtime evaluates
-    // it during the update. Before the fix this was an unhandled rejection in
-    // the dev server process, which exited; every `dev.write` below then
-    // failed because nothing was listening any more.
+    // The new version throws while the server evaluates it during the update; this used to be an unhandled rejection that exited the dev server.
     await dev.write(
       "config.ts",
       `
@@ -234,16 +231,12 @@ devTest("server module throwing while it is hot reloaded is reported and fixed b
       `,
     );
     await dev.output.waitForLine(/config boom sync/);
-    // The route keeps being served from the modules evaluated before the failed
-    // update (the route module is a root and is not re-evaluated by it), and
-    // saving the file again replaces the module whatever state the failed
-    // evaluation left it in.
+    // The route (a root, not re-evaluated) keeps serving the modules from before the failed update, and saving again replaces the module regardless.
     await dev.fetch("/").equals("v1");
     await dev.write("config.ts", `export const value = "v3";`);
     await dev.fetch("/").equals("v3");
 
-    // Same thing when the module fails asynchronously: with top-level await the
-    // update is applied through a promise that rejects instead of a throw.
+    // Same when the module fails asynchronously: with top-level await the update rejects instead of throwing.
     await dev.write(
       "config.ts",
       `
@@ -420,13 +413,10 @@ devTest("cannot require a module with top level await", {
   },
 });
 devTest("import() and require() probes: options forwarding, rejection instead of throwing, require-of-TLA error", {
-  // Every import() in a dev server module is lowered to hmr.dynamicImport(),
-  // and require() to hmr.require(). One server, one route per concern.
+  // Every import() in a dev server module is lowered to hmr.dynamicImport(), require() to hmr.require(). One server, one route per concern.
   framework: minimalFramework,
   files: {
-    // /import-options: modules the dev server did not bundle (builtins,
-    // externals, absolute paths) fall through to a real import(), which must
-    // receive the options and whose promise must be handed back to the caller.
+    // /import-options: modules the dev server did not bundle fall through to a real import() that must receive the options and hand back its promise.
     "import-options/dep.ts": `
       export const x = 1;
     `,
@@ -435,8 +425,7 @@ devTest("import() and require() probes: options forwarding, rejection instead of
       import * as path from "node:path";
       export default async function (req, meta) {
         const builtinWithOptions = import("node:path", { with: {} });
-        // Computed, so the bundler cannot resolve it; type: "text" is only
-        // honored if the options object reaches the real import().
+        // Computed, so the bundler cannot resolve it; type: "text" is only honored if the options object reaches the real import().
         const dataFile = path.join(process.cwd(), "import-options/data.json");
         const computedWithOptions = import(dataFile, { with: { type: "text" } });
         const bundledWithOptions = import("../import-options/dep", { with: {} });
@@ -447,8 +436,7 @@ devTest("import() and require() probes: options forwarding, rejection instead of
         });
       }
     `,
-    // /rejects: like a native import(), hmr.dynamicImport() must always hand
-    // back a promise: load failures reject it rather than escape synchronously.
+    // /rejects: like a native import(), hmr.dynamicImport() always hands back a promise; load failures reject it rather than escape synchronously.
     "rejects/ok.ts": `
       export const value = "ok";
     `,
@@ -514,9 +502,7 @@ devTest("import() and require() probes: options forwarding, rejection instead of
         return Response.json(results);
       }
     `,
-    // /require-tla: require() used to produce its message by rewriting, in
-    // place, the error the loader threw, so every enclosing require() the error
-    // propagated through renamed it again (including a recorded failure).
+    // /require-tla: require() used to rewrite the loader's error in place, so every enclosing require() renamed it again (including a recorded failure).
     "require-tla/tla.ts": `
       await 1;
       export const value = "tla";
@@ -576,8 +562,7 @@ devTest("import() and require() probes: options forwarding, rejection instead of
       // First import evaluates the module; the second one hits its recorded failure.
       esm: "rejected: boom esm",
       esmAgain: "rejected: boom esm",
-      // CommonJS failures are not recorded: the module is marked stale and the
-      // second import runs its body again, which throws again.
+      // CommonJS failures are not recorded: the module is marked stale and the second import runs its body again, which throws again.
       cjs: "rejected: boom cjs",
       cjsAgain: "rejected: boom cjs",
       dep: "rejected: boom dep",
@@ -595,11 +580,9 @@ devTest("import() and require() probes: options forwarding, rejection instead of
       // The required module, or one of its static imports, has top-level await.
       requireTla: cannotRequire("tla.ts", "tla.ts"),
       requireImportsTla: cannotRequire("imports-tla.ts", "tla.ts"),
-      // The call that failed is the require("./tla") in inner.ts; its error
-      // propagates out of the two enclosing require() calls unchanged.
+      // The failing call is the require("./tla") in inner.ts; its error propagates out of the two enclosing require() calls unchanged.
       requireOuter: cannotRequire("tla.ts", "tla.ts"),
-      // The import() records the error on requires-tla.ts; the require() calls
-      // rethrow that recorded error as-is, and so does the second import().
+      // The import() records the error on requires-tla.ts; the require() calls and the second import() rethrow that recorded error as-is.
       importRequiresTla: cannotRequire("tla.ts", "tla.ts"),
       requireRequiresTla: cannotRequire("tla.ts", "tla.ts"),
       requireImportsRequiresTla: cannotRequire("tla.ts", "tla.ts"),
@@ -812,9 +795,7 @@ devTest("html routes reject requests whose host header does not match the dev se
   },
 });
 
-// Loading an entry point discovers its whole graph synchronously. "tla" starts
-// evaluating, and suspends at its await, while "a" is being visited, so any
-// module visited after "a" finds "tla" and "a" still in flight.
+// Loading an entry point discovers its whole graph synchronously: "tla" suspends at its await while "a" is visited, so later modules find both in flight.
 const tlaAndFirstImporter = (dir: string) => ({
   [`${dir}/tla.ts`]: `
     await 1;
@@ -825,9 +806,7 @@ const tlaAndFirstImporter = (dir: string) => ({
     export const a = "a:" + v;
   `,
 });
-// "b" and "c" must wait instead of being evaluated against a namespace that
-// does not exist yet ("TypeError: null is not an object (evaluating
-// 'import_tla.v')" thrown from b.ts).
+// "b" and "c" must wait instead of being evaluated against a namespace that does not exist yet ("null is not an object (evaluating 'import_tla.v')").
 const inFlightDiamond = (dir: string) => ({
   ...tlaAndFirstImporter(dir),
   // Second importer of a module that itself uses top-level await.
@@ -854,8 +833,7 @@ devTest("modules found while another module's top-level await is in flight wait 
         return new Response(a + " " + b + " " + c);
       }
     `,
-    // "probes" has no static dependencies, so it is evaluated synchronously
-    // while "tla" (started by "a" just before) is still suspended at its await.
+    // "probes" has no static dependencies, so it is evaluated synchronously while "tla" (started by "a" just before) is still suspended.
     ...tlaAndFirstImporter("probes"),
     "probes/probes.ts": `
       function tryRequire(load) {
@@ -881,10 +859,7 @@ devTest("modules found while another module's top-level await is in flight wait 
         return Response.json({ a, duringLoad, requireAfterLoad: require("../probes/tla").v });
       }
     `,
-    // "a" and "b" both wait on "tla", whose load rejects. Each of them, and the
-    // route, must fail with that error. (When "b" was instead evaluated right
-    // away, the rejection "a" was waiting on ended up unhandled and took the
-    // whole dev server process down.)
+    // "a", "b" and the route all wait on "tla", whose load rejects; evaluating "b" right away left the rejection "a" waited on unhandled.
     "rejects/tla.ts": `
       await 1;
       throw new Error("boom tla");
@@ -910,14 +885,7 @@ devTest("modules found while another module's top-level await is in flight wait 
         return new Response("other route still works");
       }
     `,
-    // Version 1 of each module never finishes loading. Replacing it with a
-    // version that loads synchronously must make the module usable again: the
-    // pending load is forgotten when the reload starts, whether the reload is
-    // started by the update itself (x, y; y also switches to CommonJS) or by a
-    // require() that arrives while the update is parked on a dispose callback
-    // (z). w is like z but stays asynchronous: require() keeps refusing it and
-    // must not consume the stale mark the parked update left, so that the
-    // import() after it evaluates the new version.
+    // Version 1 of each module never finishes loading; the pending load is forgotten when a reload starts (by the update: x, y; by a require() parked on dispose: z; w stays async and must not consume the stale mark).
     "supersede/x.ts": `
       await new Promise(() => {});
       export const version = "unreachable";
@@ -987,9 +955,7 @@ devTest("modules found while another module's top-level await is in flight wait 
       a: "a:tla",
       duringLoad: {
         dynamicImport: "resolved to v=tla",
-        // Same errors as requiring them before anything started loading: the
-        // module that contains the await is the one named, whether it is the
-        // required module itself or a dependency it is waiting on.
+        // Same errors as before anything started loading: the module containing the await is named, whether the required one or a dependency.
         requireTla: `threw: Cannot require "probes/tla.ts" because "probes/tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
         requireA: `threw: Cannot require "probes/a.ts" because "probes/tla.ts" uses top-level await, but 'require' is a synchronous operation.`,
       },
@@ -1003,8 +969,7 @@ devTest("modules found while another module's top-level await is in flight wait 
 
     const refused = (id: string) =>
       `threw: Cannot require "supersede/${id}" because "supersede/${id}" uses top-level await, but 'require' is a synchronous operation.`;
-    // Nothing has started loading z or w yet, so this is the plain refusal (and
-    // it gets these routes bundled before the updates below).
+    // Nothing has started loading z or w yet, so this is the plain refusal (and it gets these routes bundled before the updates below).
     expect(await dev.fetch("/supersede-z").json()).toStrictEqual([refused("z.ts"), refused("z.ts")]);
     // Now every version 1 is in flight.
     expect(await dev.fetch("/supersede").json()).toStrictEqual({
@@ -1016,9 +981,7 @@ devTest("modules found while another module's top-level await is in flight wait 
 
     await dev.write("supersede/x.ts", `export const version = "x2";`);
     await dev.write("supersede/y.ts", `module.exports = { version: "y2" };`);
-    // z and w self-accept and their dispose callbacks never settle, so these
-    // updates mark them stale and then stay parked; the first require() below
-    // performs z's reload, the second one sees the reloaded module.
+    // z and w self-accept with dispose callbacks that never settle, so these updates mark them stale and park; the first require() reloads z.
     await dev.write("supersede/z.ts", `export const version = "z2";`);
     await dev.write(
       "supersede/w.ts",
@@ -1060,19 +1023,14 @@ devTest("modules found while another module's top-level await is in flight wait 
   },
 });
 devTest("route loader waits for a layout whose load the page already started", {
-  // The server runtime loads the page module and then its layouts. The page
-  // imports the layout, so by the time the layout itself is requested its
-  // top-level await is in flight, and the loader must hand back that pending
-  // load rather than the module's unfinished namespace.
+  // The page imports the layout, so when the layout is requested its top-level await is in flight and the loader must hand back that pending load.
   framework: {
     ...minimalFramework,
     fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes![0], layouts: true }],
   },
   files: {
     "routes/_layout.ts": `
-      // A module handed out without waiting has its namespace read one
-      // microtask later. \`await 1\` would have resumed within that window; a
-      // timer keeps this module suspended across it.
+      // A module handed out without waiting has its namespace read one microtask later; a timer keeps this module suspended across it.
       await new Promise(resolve => setTimeout(resolve, 0));
       export const name = "layout";
     `,
@@ -1090,13 +1048,7 @@ devTest("route loader waits for a layout whose load the page already started", {
 });
 
 devTest("a module that failed to load fails the same way when it is loaded again", {
-  // A failed ESM module must be recorded as failed by every loader path.
-  // Otherwise it stays half-initialized in the registry and the next
-  // `import()` or `require()` of it silently gets a namespace that is `null`
-  // (or empty, through `require`) instead of the error. The modules that fail
-  // on their own number their evaluations in the error message, so these
-  // assertions also tell a recorded failure apart from a second evaluation
-  // that happens to fail the same way.
+  // A failed ESM module must be recorded as failed by every loader path, or later import()/require() get a null/empty namespace instead of the error; evaluations are numbered in the message.
   framework: minimalFramework,
   files: {
     "a.ts": `
@@ -1194,8 +1146,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
       export const value = "unreachable";
     `,
     "routes/index.ts": `
-      // A synchronous throw and a rejection produce the same result, so this
-      // does not depend on which of the two import() reports a failure with.
+      // A synchronous throw and a rejection produce the same result, so this does not depend on which of the two import() reports with.
       async function attempt(load) {
         try {
           return "resolved: " + JSON.stringify(await load());
@@ -1263,9 +1214,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
         return Response.json(results);
       }
     `,
-    // The server runtime loads a route's modules again for each request. A
-    // route left half-initialized by a failed dependency used to report the
-    // real error once and then "null is not an object" for every later request.
+    // A route left half-initialized by a failed dependency used to report the real error once and then "null is not an object" for every later request.
     "throwing-dep.ts": `
       export const value = "unreachable";
       throw new Error("dep threw");
@@ -1293,9 +1242,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
       importChain: ["threw: e-dep threw", "threw: e-dep threw", "threw: e-dep threw"],
       // The module's own body throws synchronously during require().
       requireThrowingModule: ["threw: f threw #1", "threw: f threw #1"],
-      // Refusing to require() a module with an async dependency is not an
-      // evaluation failure: it keeps failing under require() and still loads
-      // through import().
+      // Refusing to require() a module with an async dependency is not an evaluation failure: it keeps failing under require() and still loads through import().
       requireWithAsyncDep: [
         cannotRequire("g.ts", "g-dep.ts"),
         cannotRequire("g.ts", "g-dep.ts"),
@@ -1304,9 +1251,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
       // These two paths already recorded the failure; the ones above now match them.
       importThrowingModule: ["threw: h threw #1", "threw: h threw #1"],
       importWithRejectingDep: ["threw: i-dep rejected", "threw: i-dep rejected"],
-      // Here the dependency's body itself called require() on an async module,
-      // so the same kind of error is a real evaluation failure this time and
-      // import() must fail as well.
+      // Here the dependency's body itself called require() on an async module, so the same error is a real evaluation failure and import() must fail too.
       requireWithDepThatFailedToRequire: [
         cannotRequire("j-async.ts", "j-async.ts"),
         cannotRequire("j-async.ts", "j-async.ts"),
@@ -1320,9 +1265,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
         kLoaded,
         kLoaded,
       ],
-      // Like j, but the dependency is CommonJS. The CommonJS module itself is
-      // not recorded as failed (it is evaluated again on its next load), but
-      // its ESM importer is, and the recorded error names the require() that failed.
+      // Like j, but with a CommonJS dependency: it is not recorded as failed, but its ESM importer is, and the recorded error names the require() that failed.
       requireWithCommonJSDepThatFailedToRequire: [
         cannotRequire("l-async.ts", "l-async.ts"),
         cannotRequire("l-async.ts", "l-async.ts"),
@@ -1374,9 +1317,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
       await 1;
       throw new Error("c rejected");
     `,
-    // import() with an options object: a computed specifier is left to the
-    // runtime's own import(), which must receive the options and whose promise
-    // must be handed back (a literal data: URL would be bundled like any other module).
+    // import() with options: a computed specifier is left to the runtime's own import(), which must receive the options and hand back its promise.
     "import-options.html": emptyHtmlFile({
       scripts: ["import-options.ts"],
     }),
@@ -1412,9 +1353,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
   },
 });
 
-// Modules whose top-level await the test settles through the route, so that a
-// module can be hot-updated while an evaluation of it (or of a module importing
-// it) is still waiting.
+// Modules whose top-level await the test settles through the route, so a module can be hot-updated while an evaluation of it is still waiting.
 function settledThroughRoute(name: string) {
   return `
     const version = "v1";
@@ -1428,10 +1367,7 @@ function settledThroughRoute(name: string) {
   `;
 }
 devTest("an evaluation superseded by a hot update does not publish its outcome", {
-  // Saving a module while its top-level await is still pending starts a second
-  // evaluation of the same registry entry. When the first one settles later,
-  // it must neither record its failure over the new version nor push its
-  // namespace to the importers of the new one.
+  // Saving a module while its top-level await is pending starts a second evaluation; the first settling later must neither record its failure nor patch importers.
   framework: minimalFramework,
   files: {
     "slow-1.ts": settledThroughRoute("slow-1"),
@@ -1451,9 +1387,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       import "./slow-b";
       export const value = "imports-slow-b v1";
     `,
-    // "start <module>", "resolve <module> <version>", "reject <module> <version>"
-    // or "load <module>". (Sent as a header because static framework routes
-    // currently 404 on query strings in development.)
+    // "start <module>", "resolve <module> <version>", "reject <module> <version>" or "load <module>" (a header: static framework routes 404 on query strings in dev).
     "routes/index.ts": `
       const loaders = {
         "slow-1": () => import("../slow-1"),
@@ -1513,9 +1447,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       again: 'resolved: {"value":"slow-2 v2"}',
     });
 
-    // Same, except that the new version of the module is CommonJS, which the
-    // loaders evaluate on a different path. The old evaluation settling must
-    // neither mark the CommonJS module as failed nor tear down its module object.
+    // Same, with the new version being CommonJS: the old evaluation settling must neither mark it as failed nor tear down its module object.
     await command("start slow-3").equals("started");
     await command("start slow-4").equals("started");
     await dev.write("slow-3.ts", `module.exports = { value: "slow-3 cjs" };`);
@@ -1533,10 +1465,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       again: 'resolved: {"value":"slow-4 cjs"}',
     });
 
-    // While an importer waits for a dependency with top-level await, the
-    // importer itself is saved without that import. Once the dependency
-    // settles, the superseded evaluation must neither run the old body nor
-    // record the dependency's failure over the new version.
+    // The importer is saved without the import while waiting on the dependency; the superseded evaluation must neither run the old body nor record the failure.
     await command("start imports-slow-a").equals("started");
     await command("start imports-slow-b").equals("started");
     await dev.write("imports-slow-a.ts", `export const value = "imports-slow-a v2";`);
@@ -1557,11 +1486,7 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
 });
 
 devTest("modules that failed because of a dependency are evaluated again once the dependency is fixed", {
-  // A failed module rethrows its failure on every later load. Fixing the
-  // dependency only replaces the dependency; the modules that failed with it,
-  // whose bodies never ran, have no import bindings to patch and have to be
-  // evaluated again. One server; each case has its own module graph under a
-  // directory of the same name.
+  // A failed module rethrows its failure on every load; fixing the dependency must re-evaluate the modules that failed with it. One server, one directory per case.
   framework: minimalFramework,
   files: {
     // The route fails together with its rejecting dependency.
@@ -1576,8 +1501,7 @@ devTest("modules that failed because of a dependency are evaluated again once th
         return new Response("value: " + value);
       }
     `,
-    // `async-mod` fails along with `dep`. require() refuses it (it has
-    // top-level await); import() evaluates it.
+    // `async-mod` fails along with `dep`. require() refuses it (it has top-level await); import() evaluates it.
     "async-mod/dep.ts": `
       await 1;
       export const value = "unreachable";
@@ -1615,10 +1539,7 @@ devTest("modules that failed because of a dependency are evaluated again once th
         return new Response("port: " + port);
       }
     `,
-    // `dep` is imported by one route directly and by the other one through
-    // `shared`. Discovering the failed modules must walk all of `dep`'s
-    // importers, including the ones behind a root that does not accept the
-    // update, rather than stopping at the first such root.
+    // `dep` is imported by one route directly and by the other through `shared`; discovery must walk all importers, not stop at the first non-accepting root.
     "shared/dep.ts": `
       export const value = "broken";
     `,
@@ -1639,9 +1560,7 @@ devTest("modules that failed because of a dependency are evaluated again once th
         return new Response("other: " + value);
       }
     `,
-    // `dep` is already recorded as failed (by /failed-first) when /failed loads
-    // it. Loading a failed module rethrows its failure right away; the route
-    // still has to be recorded as one of its importers, or fixing `dep` cannot find it.
+    // `dep` is already recorded as failed when /failed loads it; the route must still be recorded as an importer, or fixing `dep` cannot find it.
     "failed/dep.ts": `
       export const value = "unreachable";
       throw new Error("dep threw");
@@ -1680,16 +1599,14 @@ devTest("modules that failed because of a dependency are evaluated again once th
         export const value = "fixed";
       `,
     );
-    // The update evaluated async-mod again (it sits between the fixed
-    // dependency and the route), so it is loaded by the time the route runs.
+    // The update evaluated async-mod again (between the fixed dependency and the route), so it is loaded by the time the route runs.
     expect(await dev.fetch("/async-mod").json()).toStrictEqual([
       "require: async-mod: fixed",
       "import: async-mod: fixed",
     ]);
 
     await dev.fetch("/port").expectErrorPage("invalid port: not a number");
-    // Still broken: the route is evaluated against the new dependency and
-    // reports the new failure, not the remembered one.
+    // Still broken: the route is evaluated against the new dependency and reports the new failure, not the remembered one.
     await dev.write("port/config.ts", `export const port = "still not a number";`);
     await dev.fetch("/port").expectErrorPage("invalid port: still not a number");
     await dev.write("port/config.ts", `export const port = 3000;`);
@@ -1713,9 +1630,7 @@ devTest("modules that failed because of a dependency are evaluated again once th
 });
 
 devTest("a module that failed because its dependency rejected is loaded again once the dependency is fixed (client)", {
-  // Same as the server test above, in the browser runtime. The failure is
-  // reached through import() so that it does not take the page down; the
-  // entry point accepts the update so that it is applied without a reload.
+  // Same as the server test above, in the browser: the failure is reached through import() and the entry point accepts the update.
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -1756,5 +1671,39 @@ devTest("a module that failed because its dependency rejected is loaded again on
     // The self-accepting entry point is evaluated again by the update.
     await c.expectMessage("ready");
     expect(await c.js`loadLazy()`).toBe("fixed");
+  },
+});
+
+devTest("a sync throw after a dependency with pending top-level await leaves no unhandled rejection", {
+  framework: minimalFramework,
+  files: {
+    // The route lists `slow` before `sync`: `slow` comes back as a promise that later rejects, then `sync` throws right away.
+    "slow.ts": `
+      await 1;
+      export const slow = "unreachable";
+      throw new Error("slow rejected");
+    `,
+    "sync.ts": `
+      export const sync = "unreachable";
+      throw new Error("sync threw");
+    `,
+    "routes/index.ts": `
+      import { slow } from "../slow";
+      import { sync } from "../sync";
+      export default function () {
+        return new Response(slow + sync);
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other route still works");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expectErrorPage("sync threw");
+    // An unhandled rejection from `slow` would have taken the dev server down before this request is answered.
+    await dev.fetch("/other").equals("other route still works");
+    await dev.fetch("/").expectErrorPage("sync threw");
   },
 });

@@ -556,6 +556,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         parent.state = State.Stale;
         throw e;
       }
+      for (const p of list) if (p instanceof Promise) p.catch(() => {});
       throwLoadFailure(parent, parent.generation, e);
     }
     list.push(promiseOrModule);
@@ -656,6 +657,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   type ToAccept = {
     cb: HotAccept;
     key: Id;
+    importer: HMRModule;
   };
   /** Every module this update replaces with a new copy: disposed of, then evaluated again. */
   const toReload = new Set<HMRModule>();
@@ -723,7 +725,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         if (cb) {
           if (accepted.has(cb)) continue;
           accepted.add(cb);
-          toAccept.push({ cb, key });
+          toAccept.push({ cb, key, importer });
         } else if (propagates) {
           if (visited.has(importer)) continue;
           visited.add(importer);
@@ -813,28 +815,40 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
   const promises: Promise<HMRModule>[] = [];
   const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];
-  for (const [mod, selfAccept] of selfAccepts) {
-    const modOrPromise = loadModuleAsync(mod.id, false, null);
-    if (modOrPromise !== mod) {
-      DEBUG.ASSERT(modOrPromise instanceof Promise);
-      promises.push(
-        (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) {
-            selfAccept(getEsmExports(mod));
-          }
-          return mod;
-        }),
-      );
-    } else if (selfAccept) {
-      if (mod.state === State.Loaded) {
-        selfAccept(getEsmExports(mod));
-      } else {
-        acceptsAfterLoad.push([mod, selfAccept]);
+  let syncError: { error: unknown } | null = null;
+  try {
+    for (const [mod, selfAccept] of selfAccepts) {
+      const modOrPromise = loadModuleAsync(mod.id, false, null);
+      if (modOrPromise !== mod) {
+        DEBUG.ASSERT(modOrPromise instanceof Promise);
+        promises.push(
+          (modOrPromise as Promise<HMRModule>).then(mod => {
+            if (selfAccept) {
+              selfAccept(getEsmExports(mod));
+            }
+            return mod;
+          }),
+        );
+      } else if (selfAccept) {
+        if (mod.state === State.Loaded) {
+          selfAccept(getEsmExports(mod));
+        } else {
+          acceptsAfterLoad.push([mod, selfAccept]);
+        }
       }
     }
+  } catch (error) {
+    syncError = { error };
   }
   if (promises.length > 0) {
-    await Promise.all(promises);
+    // A sync throw above must not leave the in-flight loads unobserved.
+    const settled = await Promise.allSettled(promises);
+    if (syncError) throw syncError.error;
+    for (const r of settled) {
+      if (r.status === "rejected") throw r.reason;
+    }
+  } else if (syncError) {
+    throw syncError.error;
   }
   for (const [mod, selfAccept] of acceptsAfterLoad) {
     if (mod.state === State.Loaded) {
@@ -848,7 +862,9 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Call all accept callbacks
-  for (const { cb: cbEntry, key } of toAccept) {
+  for (const { cb: cbEntry, key, importer } of toAccept) {
+    // The importer was itself re-evaluated in this update, so its old callback is stale.
+    if (toReload.has(importer)) continue;
     const { cb: cbFn, modules, single } = cbEntry;
     cbFn(single ? getEsmExports(registry.get(key)!) : createAcceptArray(modules, key));
   }

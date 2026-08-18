@@ -1,19 +1,5 @@
-// Fault-injection test: requires a server that drops an established connection
-// with queries in flight, which a healthy container will not do on demand.
-// DO NOT COPY THIS PATTERN — anything a real server can produce belongs in
-// describeWithContainer. All wire-protocol bytes come from ./wire-frames.ts.
-//
-// A server-side disconnect (pg_terminate_backend / KILL <id> / wait_timeout,
-// server restart, LB idle kill) while N queries are bound to a pool slot used to
-// leave that slot's queryCount at -N: #finishClose() zeroed the counter, but each
-// bound query's paired release still ran one microtask later and decremented it.
-// A negative queryCount let connect(reserved=true) hand the slot out as "idle"
-// while flushConcurrentQueries had already distributed other queries to it, and
-// each of those queries' release() crossed zero and handed the still-open
-// transaction's socket to the next reservedQueue waiter. Concurrent sql.begin()
-// callers then interleaved BEGIN/COMMIT/ROLLBACK on one socket and all resolved
-// successfully. The pool machinery lives in src/js/internal/sql/shared.ts and is
-// shared by the postgres and mysql adapters, so both are exercised here.
+// Fault-injection test: the mock server drops the socket mid-query, which a real
+// container will not do on demand. Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
 import type net from "node:net";
@@ -30,8 +16,6 @@ import {
 type Received = { conn: number; sql: string };
 type MockServer = (received: Received[]) => Promise<{ port: number; server: net.Server }>;
 
-// Postgres FE/BE framing: startup packet has no type byte; later frontend
-// messages are Byte1(type) Int32(len) body[len-4] and may span data events.
 // Query text containing "KILL" destroys the socket without answering.
 const pgMockServer: MockServer = received => {
   let nextConn = 0;
@@ -55,7 +39,7 @@ const pgMockServer: MockServer = received => {
         if (buffered.length < 1 + len) return;
         const body = buffered.subarray(5, 1 + len);
         buffered = buffered.subarray(1 + len);
-        if (type !== "Q") continue; // ignore Flush ('H'), Terminate ('X')
+        if (type !== "Q") continue;
         const sql = body.subarray(0, body.indexOf(0)).toString("utf8");
         received.push({ conn: connId, sql });
         if (sql.includes("KILL")) {
@@ -69,9 +53,6 @@ const pgMockServer: MockServer = received => {
   });
 };
 
-// MySQL text-protocol mock: handshake, accept HandshakeResponse41, then answer
-// every COM_QUERY (0x03) with an OK packet and record its text. "KILL" destroys
-// the socket; COM_QUIT (0x01) ends it.
 const mysqlMockServer: MockServer = received => {
   const COM_QUIT = 0x01;
   const COM_QUERY = 0x03;
@@ -105,9 +86,7 @@ const mysqlMockServer: MockServer = received => {
   });
 };
 
-// Per connection: every BEGIN/START TRANSACTION must be closed by one
-// COMMIT/ROLLBACK before the next, and no COMMIT/ROLLBACK outside a BEGIN.
-// Returns the first violation, or null.
+// Returns the first nested BEGIN or unmatched COMMIT/ROLLBACK per connection, or null.
 function firstInterleaving(received: Received[]): string | null {
   const depth = new Map<number, number>();
   for (const { conn, sql } of received) {
@@ -149,8 +128,7 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
     try {
       await sql.unsafe("SELECT 'warm'");
 
-      // Poison: two queries bound to the slot (queryCount=2) when the server
-      // drops it; only the first reaches the wire. #finishClose() rejects both.
+      // Two queries are bound to the slot when the server drops it.
       const die1 = sql.unsafe("SELECT 'KILL'").execute();
       const die2 = sql.unsafe("SELECT 'never sent'").execute();
       const [e1, e2] = await Promise.all([
@@ -166,11 +144,8 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
       expect(e1).toBeInstanceOf(Error);
       expect(e2).toBeInstanceOf(Error);
 
-      // Revive the slot; nothing resets the negative counter.
       await sql.unsafe("SELECT 'revive'");
 
-      // Two plain queries (dispatched synchronously via .execute()) plus three
-      // concurrent sql.begin().
       const pa = sql.unsafe("SELECT 'Pa'").execute();
       const pb = sql.unsafe("SELECT 'Pb'").execute();
       const t1 = sql.begin(async tx => {
@@ -190,13 +165,11 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
 
       const results = await Promise.allSettled([pa, pb, t1, t2, t3]);
 
-      // The transactions must resolve/reject as requested.
       expect(results[2]).toEqual({ status: "fulfilled", value: "t1" });
       expect(results[3].status).toBe("rejected");
       expect((results[3] as PromiseRejectedResult).reason?.message).toBe("t2-app-error");
       expect(results[4]).toEqual({ status: "fulfilled", value: "t3" });
 
-      // Before the fix the server saw two BEGINs back to back here.
       expect(firstInterleaving(received)).toBeNull();
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
@@ -209,8 +182,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
     const { port, server } = await mockServer(received);
     const sql = new SQL(options(port));
     try {
-      // Poison: the slot dies while reserve() owns it. The reservation's paired
-      // release must still reach the pool exactly once so queryCount returns to 0.
       const err = await (async () => {
         await using r = await sql.reserve();
         await r.unsafe("SELECT 'KILL'");
@@ -220,8 +191,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
       );
       expect(err).toBeInstanceOf(Error);
 
-      // The slot must be reusable: a stale queryCount=1 would make the next
-      // reserved connect() wait forever on reservedQueue.
       await sql.unsafe("SELECT 'revive'");
       const t1 = await sql.begin(async tx => {
         await tx.unsafe("SELECT 'T1a'");
@@ -244,7 +213,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
       await r.unsafe("SELECT 'inside'");
       await r.close();
 
-      // The slot reconnects; a stale queryCount=1 would make connect() wait forever.
       const t1 = await sql.begin(async tx => {
         await tx.unsafe("SELECT 'T1a'");
         return "t1";
@@ -263,8 +231,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
     try {
       await sql.unsafe("SELECT 'warm'");
 
-      // Poison via a reserved connection: the slot dies while a transaction owns it.
-      // Before the fix the transaction's finally{} release drove queryCount to -1.
       const err = await sql
         .begin(async tx => {
           await tx.unsafe("SELECT 'KILL'");
@@ -274,7 +240,6 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
 
       await sql.unsafe("SELECT 'revive'");
 
-      // One plain query so release() crosses zero once mid-transaction.
       const pa = sql.unsafe("SELECT 'Pa'").execute();
       const t1 = sql.begin(async tx => {
         await tx.unsafe("SELECT 'T1a'");

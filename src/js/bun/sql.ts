@@ -18,7 +18,6 @@ type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<an
 enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
-  /// the reservation's single paired pool.release() has fired
   released = 1 << 2,
 }
 
@@ -255,9 +254,6 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    // connect(reserved=true) incremented queryCount once; this is the single
-    // paired decrement. Both close paths (explicit release() and the
-    // connection's onClose) call it, so it must be idempotent.
     function releaseReservation() {
       if (state.connectionState & ReservedConnectionState.released) return;
       state.connectionState |= ReservedConnectionState.released;

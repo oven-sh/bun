@@ -213,6 +213,29 @@ function validateOrderOption(options) {
   }
 }
 
+// Node validates rrtype case-sensitively: only the exact uppercase names are valid.
+const validResolveRRTypes = {
+  __proto__: null,
+  A: true,
+  AAAA: true,
+  ANY: true,
+  CAA: true,
+  CNAME: true,
+  MX: true,
+  NAPTR: true,
+  NS: true,
+  PTR: true,
+  SOA: true,
+  SRV: true,
+  TXT: true,
+};
+
+function validateRRType(rrtype) {
+  if (!validResolveRRTypes[rrtype]) {
+    throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype, "is invalid");
+  }
+}
+
 // Validates and returns the callback wrapped by guardCallback.
 // Callers must use the return value, not the argument.
 function validateResolve(hostname, callback) {
@@ -408,6 +431,8 @@ var InternalResolver = class Resolver {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+    } else {
+      validateRRType(rrtype);
     }
 
     callback = validateResolve(hostname, callback);
@@ -416,9 +441,9 @@ var InternalResolver = class Resolver {
       .resolve(hostname, rrtype)
       .then(
         results => {
-          switch (rrtype?.toLowerCase()) {
-            case "a":
-            case "aaaa":
+          switch (rrtype) {
+            case "A":
+            case "AAAA":
               callback(null, results.map(mapResolveX));
               break;
             default:
@@ -837,11 +862,13 @@ const promises = {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+    } else {
+      validateRRType(rrtype);
     }
 
-    switch (rrtype?.toLowerCase()) {
-      case "a":
-      case "aaaa":
+    switch (rrtype) {
+      case "A":
+      case "AAAA":
         return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
       default:
         return translateErrorCode(dns.resolve(hostname, rrtype));
@@ -913,11 +940,13 @@ const promises = {
       if (typeof rrtype === "undefined") {
         rrtype = "A";
       } else if (typeof rrtype !== "string") {
-        rrtype = null;
+        throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+      } else {
+        validateRRType(rrtype);
       }
-      switch (rrtype?.toLowerCase()) {
-        case "a":
-        case "aaaa":
+      switch (rrtype) {
+        case "A":
+        case "AAAA":
           return translateErrorCode(
             Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
           );

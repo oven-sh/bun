@@ -128,6 +128,11 @@ pub mod fs {
                     // SAFETY: see `append_slice`; the singleton is `'static`.
                     unsafe { &*$backing() }.as_interned(value)
                 }
+                /// Number of strings interned so far (the store never shrinks).
+                pub fn count(&self) -> usize {
+                    // SAFETY: see `append_slice`.
+                    unsafe { bun_alloc::BSSStringList::count($backing()) }
+                }
             }
         };
     }

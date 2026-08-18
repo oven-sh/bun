@@ -558,9 +558,9 @@ describe("Valkey: Recovering After fail()", () => {
     const fake = helloServer({}, { secure });
     const port = await fake.listen();
     const closed = Promise.withResolvers<{ err: Error & { code: string }; connectedInsideOnclose: boolean }>();
-    // Today the timer armed by connect() carries connectionTimeout and turns
-    // into the idle timeout once the handshake is done; whichever way it gets
-    // armed, what is pinned here is what happens when it fires on an idle
+    // The timer armed by connect() carries connectionTimeout; the accepted
+    // HELLO re-arms it with idleTimeout and every chunk from the server re-arms
+    // it again. What is pinned here is what happens when it fires on an idle
     // connection. 500ms leaves a debug build ample room to finish connecting.
     const client = new RedisClient(`${scheme}://127.0.0.1:${port}`, {
       idleTimeout: 50,

@@ -686,7 +686,7 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
 // subclass, as jest-runtime does) is not an override.
 static void setModuleWrapper(Zig::GlobalObject* global, String&& start, String&& end)
 {
-    global->hasOverriddenModuleWrapper = start != "(function(exports,require,module,__filename,__dirname){"_s || end != "})"_s;
+    global->hasOverriddenModuleWrapper = start != commonJSDefaultWrapperStart || end != commonJSDefaultWrapperEnd;
     global->m_moduleWrapperStart = WTF::move(start);
     global->m_moduleWrapperEnd = WTF::move(end);
 }
@@ -720,6 +720,8 @@ JSC_DEFINE_CUSTOM_GETTER(nodeModuleWrapper,
         vm, global, 1, "onMutate"_s,
         jsFunctionSetCJSWrapperItem, JSC::ImplementationVisibility::Public,
         JSC::NoIntrinsic));
+    args.append(jsString(vm, String(commonJSDefaultWrapperStart)));
+    args.append(jsString(vm, String(commonJSDefaultWrapperEnd)));
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     NakedPtr<JSC::Exception> returnedException = nullptr;

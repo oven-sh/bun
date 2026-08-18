@@ -1446,6 +1446,11 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       first: 'resolved: {"value":"slow-2 v2"}',
       again: 'resolved: {"value":"slow-2 v2"}',
     });
+    // v1 settled after v2 had loaded: its `hmr.exports` write must not have replaced v2's namespace.
+    expect(await command("load slow-2").json()).toStrictEqual({
+      first: 'resolved: {"value":"slow-2 v2"}',
+      again: 'resolved: {"value":"slow-2 v2"}',
+    });
 
     // Same, with the new version being CommonJS: the old evaluation settling must neither mark it as failed nor tear down its module object.
     await command("start slow-3").equals("started");

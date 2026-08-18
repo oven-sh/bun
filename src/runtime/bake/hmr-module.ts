@@ -474,13 +474,14 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
     // not a performance optimization but a behavioral correctness issue.
     const result = hasAsyncDep
       ? Promise.all(list).then(
-          list => finishLoadModuleAsync(mod, generation, load, list),
+          list => finishLoadModuleAsync(mod, generation, load, isAsync, list),
           e => throwLoadFailure(mod, generation, e),
         )
       : finishLoadModuleAsync(
           mod,
           generation,
           load,
+          isAsync,
           list as HMRModule[], // no promises as by assert above
         );
     if (result instanceof Promise) {
@@ -508,22 +509,28 @@ function clearHooks(mod: HMRModule) {
   mod.usesData = false;
 }
 
-function finishLoadModuleAsync(mod: HMRModule, generation: number, load: UnloadedESM[3], modules: HMRModule[]) {
-  if (mod.generation !== generation) return mod;
+function finishLoadModuleAsync(
+  mod: HMRModule,
+  generation: number,
+  load: UnloadedESM[3],
+  isAsync: boolean,
+  modules: HMRModule[],
+): HMRModule | Promise<HMRModule> {
+  if (mod.generation !== generation) return settleSuperseded(mod);
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
     clearHooks(mod);
     let p;
     try {
-      p = load(mod);
+      p = load(isAsync ? evaluationView(mod, generation) : mod);
     } finally {
       mod.imports = modules;
     }
     if (p) {
       return p.then(
         () => {
-          if (mod.generation !== generation) return mod;
+          if (mod.generation !== generation) return settleSuperseded(mod);
           if (mod.exports === exportsBefore) mod.exports = {};
           mod.cjs = null;
           mod.state = State.Loaded;
@@ -543,6 +550,27 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
   } catch (e) {
     throwLoadFailure(mod, generation, e);
   }
+}
+
+/** A superseded evaluation's awaiters get the module as the evaluation that replaced it leaves it. */
+function settleSuperseded(mod: HMRModule): HMRModule | Promise<HMRModule> {
+  if (mod.loading) return mod.loading.promise;
+  if (mod.state === State.Error) throw mod.failure;
+  return mod;
+}
+
+/** What a body with top-level await sees as `hmr`: its `hmr.exports = ...` after the await does not land once a newer evaluation has begun. */
+function evaluationView(mod: HMRModule, generation: number): HMRModule {
+  return new Proxy(mod, {
+    get(target, prop) {
+      const value = target[prop];
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+    set(target, prop, value) {
+      if (prop !== "exports" || target.generation === generation) target[prop] = value;
+      return true;
+    },
+  });
 }
 
 /** Records the failure unless a newer evaluation of `mod` has started since. */

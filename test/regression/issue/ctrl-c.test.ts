@@ -35,7 +35,7 @@ test.skipIf(isWindows)("verify that we can call sigint 4096 times", () => {
   });
 
   const result = Bun.spawnSync({
-    cmd: [bunExe(), join(dir, "index.js")],
+    cmd: [bunExe(), join(String(dir), "index.js")],
     cwd: dir,
     env: bunEnv,
     stdout: "inherit",

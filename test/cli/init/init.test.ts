@@ -39,9 +39,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await exited).toBe(0);
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    const pkg = JSON.parse(fs.readFileSync(path.join(String(temp), "package.json"), "utf8"));
     expect(pkg).toEqual({
-      "name": path.basename(temp).toLowerCase().replaceAll(" ", "-"),
+      "name": path.basename(String(temp)).toLowerCase().replaceAll(" ", "-"),
       "module": "index.ts",
       "type": "module",
       "private": true,
@@ -52,15 +52,15 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
         "typescript": "^7",
       },
     });
-    const readme = fs.readFileSync(path.join(temp, "README.md"), "utf8");
-    expect(readme).toStartWith("# " + path.basename(temp).toLowerCase().replaceAll(" ", "-") + "\n");
+    const readme = fs.readFileSync(path.join(String(temp), "README.md"), "utf8");
+    expect(readme).toStartWith("# " + path.basename(String(temp)).toLowerCase().replaceAll(" ", "-") + "\n");
     expect(readme).toInclude("v" + Bun.version.replaceAll("-debug", ""));
     expect(readme).toInclude("index.ts");
 
-    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), ".gitignore"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "node_modules"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "tsconfig.json"))).toBe(true);
   }, 30_000);
 
   test("bun init falls back to --yes when stdin is not a TTY", async () => {
@@ -85,9 +85,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(stderr).not.toContain("\x1b[");
     expect(exitCode).toBe(0);
 
-    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "tsconfig.json"))).toBe(true);
   }, 30_000);
 
   test("bun init in folder", async () => {
@@ -108,7 +108,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
-    expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    expect(readdirSync(path.join(String(temp), "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
       "README.md",
@@ -133,7 +133,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     expect(await exited).not.toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
-    expect(await Bun.file(path.join(temp, "mydir")).text()).toBe("don't delete me!!!");
+    expect(await Bun.file(path.join(String(temp), "mydir")).text()).toBe("don't delete me!!!");
   });
 
   test("bun init utf-8", async () => {
@@ -146,8 +146,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["u t f ∞™"]);
-    expect(readdirSync(path.join(temp, "u t f ∞™")).sort()).toEqual(["subpath"]);
-    expect(readdirSync(path.join(temp, "u t f ∞™/subpath")).sort()).toMatchInlineSnapshot(`
+    expect(readdirSync(path.join(String(temp), "u t f ∞™")).sort()).toEqual(["subpath"]);
+    expect(readdirSync(path.join(String(temp), "u t f ∞™/subpath")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
       "README.md",
@@ -170,7 +170,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     });
     expect(await exited).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
-    expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    expect(readdirSync(path.join(String(temp), "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
       "README.md",
@@ -181,17 +181,17 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "tsconfig.json",
     ]
   `);
-    await Bun.write(path.join(temp, "mydir/index.ts"), "my edited index.ts");
-    await Bun.write(path.join(temp, "mydir/README.md"), "my edited README.md");
-    await Bun.write(path.join(temp, "mydir/.gitignore"), "my edited .gitignore");
+    await Bun.write(path.join(String(temp), "mydir/index.ts"), "my edited index.ts");
+    await Bun.write(path.join(String(temp), "mydir/README.md"), "my edited README.md");
+    await Bun.write(path.join(String(temp), "mydir/.gitignore"), "my edited .gitignore");
     await Bun.write(
-      path.join(temp, "mydir/package.json"),
+      path.join(String(temp), "mydir/package.json"),
       JSON.stringify({
-        ...(await Bun.file(path.join(temp, "mydir/package.json")).json()),
+        ...(await Bun.file(path.join(String(temp), "mydir/package.json")).json()),
         name: "my edited package.json",
       }),
     );
-    await Bun.write(path.join(temp, "mydir/tsconfig.json"), `my edited tsconfig.json`);
+    await Bun.write(path.join(String(temp), "mydir/tsconfig.json"), `my edited tsconfig.json`);
     const { exited: exited2, stderr } = Bun.spawn({
       cmd: [bunExe(), "init", "mydir"],
       cwd: temp,
@@ -204,7 +204,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(await stderr.text()).toMatchInlineSnapshot(`""`);
     expect(await exited2).toBe(0);
     expect(readdirSync(temp).sort()).toEqual(["mydir"]);
-    expect(readdirSync(path.join(temp, "mydir")).sort()).toMatchInlineSnapshot(`
+    expect(readdirSync(path.join(String(temp), "mydir")).sort()).toMatchInlineSnapshot(`
     [
       ".gitignore",
       "README.md",
@@ -215,10 +215,16 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "tsconfig.json",
     ]
   `);
-    expect(await Bun.file(path.join(temp, "mydir/index.ts")).text()).toMatchInlineSnapshot(`"my edited index.ts"`);
-    expect(await Bun.file(path.join(temp, "mydir/README.md")).text()).toMatchInlineSnapshot(`"my edited README.md"`);
-    expect(await Bun.file(path.join(temp, "mydir/.gitignore")).text()).toMatchInlineSnapshot(`"my edited .gitignore"`);
-    expect(await Bun.file(path.join(temp, "mydir/package.json")).json()).toMatchInlineSnapshot(`
+    expect(await Bun.file(path.join(String(temp), "mydir/index.ts")).text()).toMatchInlineSnapshot(
+      `"my edited index.ts"`,
+    );
+    expect(await Bun.file(path.join(String(temp), "mydir/README.md")).text()).toMatchInlineSnapshot(
+      `"my edited README.md"`,
+    );
+    expect(await Bun.file(path.join(String(temp), "mydir/.gitignore")).text()).toMatchInlineSnapshot(
+      `"my edited .gitignore"`,
+    );
+    expect(await Bun.file(path.join(String(temp), "mydir/package.json")).json()).toMatchInlineSnapshot(`
     {
       "devDependencies": {
         "@types/bun": "latest",
@@ -232,7 +238,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       "type": "module",
     }
   `);
-    expect(await Bun.file(path.join(temp, "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(
+    expect(await Bun.file(path.join(String(temp), "mydir/tsconfig.json")).text()).toMatchInlineSnapshot(
       `"my edited tsconfig.json"`,
     );
   });
@@ -249,16 +255,16 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await exited).toBe(0);
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    const pkg = JSON.parse(fs.readFileSync(path.join(String(temp), "package.json"), "utf8"));
     expect(pkg).toHaveProperty("dependencies.react");
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("devDependencies.@types/react");
     expect(pkg).toHaveProperty("devDependencies.@types/react-dom");
     expect(pkg.peerDependencies).toEqual({ typescript: "^7" });
 
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src/index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "tsconfig.json"))).toBe(true);
   }, 30_000);
 
   test("bun init --react=tailwind works", async () => {
@@ -273,7 +279,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await exited).toBe(0);
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    const pkg = JSON.parse(fs.readFileSync(path.join(String(temp), "package.json"), "utf8"));
     expect(pkg).toHaveProperty("dependencies.react");
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("devDependencies.@types/react");
@@ -281,8 +287,8 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
     expect(pkg.peerDependencies).toEqual({ typescript: "^7" });
 
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src/index.ts"))).toBe(true);
   }, 30_000);
 
   test("bun init --react=shadcn works", async () => {
@@ -297,7 +303,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
 
     expect(await exited).toBe(0);
 
-    const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+    const pkg = JSON.parse(fs.readFileSync(path.join(String(temp), "package.json"), "utf8"));
     expect(pkg).toHaveProperty("dependencies.react");
     expect(pkg).toHaveProperty("dependencies.react-dom");
     expect(pkg).toHaveProperty("dependencies.@radix-ui/react-slot");
@@ -306,10 +312,10 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(pkg).toHaveProperty("dependencies.bun-plugin-tailwind");
     expect(pkg.peerDependencies).toEqual({ typescript: "^7" });
 
-    expect(fs.existsSync(path.join(temp, "src"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/index.ts"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/components"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "src/components/ui"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src/index.ts"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src/components"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "src/components/ui"))).toBe(true);
   }, 30_000);
 
   // Every template declares `typescript: "^7"`, so the `bun install` that
@@ -333,7 +339,9 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       ]);
       expect({ initStdout, initStderr, initExited }).toMatchObject({ initExited: 0 });
 
-      const tsPkg = JSON.parse(fs.readFileSync(path.join(temp, "node_modules/typescript/package.json"), "utf8"));
+      const tsPkg = JSON.parse(
+        fs.readFileSync(path.join(String(temp), "node_modules/typescript/package.json"), "utf8"),
+      );
       expect(tsPkg.version).toStartWith("7.");
 
       // TypeScript 7's bin/tsc is a small ESM shim that execs the native
@@ -353,7 +361,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
       // bun-plugin-tailwind's `bun` peer dep links a node_modules/.bin/bun that
       // would otherwise shadow bunExe() in the nested `bun run build.ts`, so
       // pass --bun.
-      const pkg = JSON.parse(fs.readFileSync(path.join(temp, "package.json"), "utf8"));
+      const pkg = JSON.parse(fs.readFileSync(path.join(String(temp), "package.json"), "utf8"));
       if (pkg.scripts?.build) {
         await using build = Bun.spawn({
           cmd: [bunExe(), "--bun", "run", "build"],
@@ -394,7 +402,7 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     // proves the child's stdout reached us.
     expect(stdout).toContain("bun install");
     expect(stdout).toMatch(/\bpackages? installed\b/);
-    expect(fs.existsSync(path.join(temp, "node_modules"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "node_modules"))).toBe(true);
     expect(exitCode).toBe(0);
   }, 30_000);
 
@@ -417,14 +425,14 @@ const initEnv = { ...bunEnv, BUN_AGENT_RULE_DISABLED: "1" };
     expect(await exited).toBe(0);
 
     // Should create package.json and tsconfig.json
-    expect(fs.existsSync(path.join(temp, "package.json"))).toBe(true);
-    expect(fs.existsSync(path.join(temp, "tsconfig.json"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "package.json"))).toBe(true);
+    expect(fs.existsSync(path.join(String(temp), "tsconfig.json"))).toBe(true);
 
     // Should NOT create these extra files with --minimal
-    expect(fs.existsSync(path.join(temp, "index.ts"))).toBe(false);
-    expect(fs.existsSync(path.join(temp, ".gitignore"))).toBe(false);
-    expect(fs.existsSync(path.join(temp, "README.md"))).toBe(false);
-    expect(fs.existsSync(path.join(temp, "CLAUDE.md"))).toBe(false);
-    expect(fs.existsSync(path.join(temp, ".cursor"))).toBe(false);
+    expect(fs.existsSync(path.join(String(temp), "index.ts"))).toBe(false);
+    expect(fs.existsSync(path.join(String(temp), ".gitignore"))).toBe(false);
+    expect(fs.existsSync(path.join(String(temp), "README.md"))).toBe(false);
+    expect(fs.existsSync(path.join(String(temp), "CLAUDE.md"))).toBe(false);
+    expect(fs.existsSync(path.join(String(temp), ".cursor"))).toBe(false);
   });
 });

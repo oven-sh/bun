@@ -35,7 +35,7 @@ describe("bun run --tsconfig-override", () => {
     });
 
     await using failProc = Bun.spawn({
-      cmd: [bunExe(), "run", path.join(dir, "index.ts")],
+      cmd: [bunExe(), "run", path.join(String(dir), "index.ts")],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",
@@ -48,7 +48,13 @@ describe("bun run --tsconfig-override", () => {
     expect(failExitCode).not.toBe(0);
 
     await using successProc = Bun.spawn({
-      cmd: [bunExe(), "run", "--tsconfig-override", path.join(dir, "custom-tsconfig.json"), path.join(dir, "index.ts")],
+      cmd: [
+        bunExe(),
+        "run",
+        "--tsconfig-override",
+        path.join(String(dir), "custom-tsconfig.json"),
+        path.join(String(dir), "index.ts"),
+      ],
       env: bunEnv,
       cwd: dir,
       stdout: "pipe",

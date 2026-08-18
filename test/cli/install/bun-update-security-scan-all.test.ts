@@ -55,7 +55,7 @@ module.exports = {
     });
 
     // First install to create lockfile (temporarily disable scanner)
-    const bunfigPath = join(dir, "bunfig.toml");
+    const bunfigPath = join(String(dir), "bunfig.toml");
     const bunfigContent = await Bun.file(bunfigPath).text();
     await Bun.write(bunfigPath, ""); // Remove scanner config
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
@@ -136,7 +136,7 @@ module.exports = {
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       `
 [install.security]
 scanner = "./scanner.js"
@@ -235,7 +235,7 @@ module.exports = {
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       `
 [install.security]
 scanner = "./scanner.js"
@@ -363,7 +363,7 @@ module.exports = {
     await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
 
     await Bun.write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       `
 [install.security]
 scanner = "./scanner.js"

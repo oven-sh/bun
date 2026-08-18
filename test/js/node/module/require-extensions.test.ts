@@ -186,7 +186,7 @@ test("mutating extensions is banned by some files", () => {
 
   let n = 0;
   for (const file of files) {
-    require(path.join(fixture, file));
+    require(path.join(String(fixture), file));
     n++;
     expect(globalThis.pass).toBe(n);
   }

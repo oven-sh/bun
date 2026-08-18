@@ -6,7 +6,7 @@ test("dev server html route: non-GET/HEAD requests complete without hanging", as
   await using dir = tempDir("html-route-405", {
     "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body>hi</body></html>`,
   });
-  const { default: html } = await import(join(dir, "index.html"));
+  const { default: html } = await import(join(String(dir), "index.html"));
 
   using server = Bun.serve({
     port: 0,
@@ -70,7 +70,7 @@ test.skipIf(!isASAN || isWindows)(
           await (await fetch(server.url)).text();
           server.stop(true);
         `,
-        join(dir, "index.html"),
+        join(String(dir), "index.html"),
       ],
       env: {
         ...bunEnv,

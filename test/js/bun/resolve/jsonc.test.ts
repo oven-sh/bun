@@ -9,7 +9,7 @@ test.concurrent("empty jsonc - package.json", async () => {
     if (JSON.stringify(pkg) !== '{}') throw new Error('package.json should be empty');
     `,
   });
-  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+  expect(await bunRun(join(String(dir), "index.ts"))).toSpawn();
 });
 
 test.concurrent("empty jsonc - tsconfig.json", async () => {
@@ -20,7 +20,7 @@ test.concurrent("empty jsonc - tsconfig.json", async () => {
     if (JSON.stringify(tsconfig) !== '{}') throw new Error('tsconfig.json should be empty');
     `,
   });
-  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+  expect(await bunRun(join(String(dir), "index.ts"))).toSpawn();
 });
 
 test.concurrent("import anything.jsonc as json", async () => {
@@ -36,7 +36,7 @@ test.concurrent("import anything.jsonc as json", async () => {
     if (!Bun.deepEquals(file, _file)) throw new Error('anything.jsonc wasnt imported as jsonc');
     `,
   });
-  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+  expect(await bunRun(join(String(dir), "index.ts"))).toSpawn();
 });
 
 test.concurrent("imported JSON strings match JSON.parse exactly (escapes, lone surrogates, non-ASCII)", async () => {
@@ -55,5 +55,5 @@ test.concurrent("imported JSON strings match JSON.parse exactly (escapes, lone s
     if (units(Bun.JSONC.parse(file)) !== units(expected)) throw new Error("Bun.JSONC.parse != JSON.parse");
     `,
   });
-  expect(await bunRun(join(dir, "index.ts"))).toSpawn();
+  expect(await bunRun(join(String(dir), "index.ts"))).toSpawn();
 });

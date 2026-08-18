@@ -52,9 +52,9 @@ export class Y {
   });
   expect(result.exitCode).toBe(0);
   expect(result.signalCode).toBeUndefined();
-  expect(normalizeBunSnapshot(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8"), dir)).toMatchSnapshot(
-    "lcov-coverage-reporter-output",
-  );
+  expect(
+    normalizeBunSnapshot(readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8"), dir),
+  ).toMatchSnapshot("lcov-coverage-reporter-output");
 });
 
 test("coverage excludes node_modules directory", () => {
@@ -376,7 +376,7 @@ test("should call both functions", () => {
     stdio: [null, null, "pipe"],
   });
 
-  let lcovContent = readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8");
+  let lcovContent = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
   // Normalize LCOV content for cross-platform consistency
   lcovContent = normalizeBunSnapshot(lcovContent, dir);
 

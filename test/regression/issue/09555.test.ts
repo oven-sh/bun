@@ -130,8 +130,8 @@ describe("#09555", () => {
     await using dir = tempDir("09555", {
       "/file.blob": full,
     });
-    await Bun.write(join(dir, "file.blob"), full);
-    const web = Bun.file(join(dir, "file.blob")).stream();
+    await Bun.write(join(String(dir), "file.blob"), full);
+    const web = Bun.file(join(String(dir), "file.blob")).stream();
     const stream = Readable.fromWeb(web);
 
     const chunks = [];

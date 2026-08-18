@@ -113,7 +113,7 @@ for (const testCase of testCases) {
 process.exit(allPassed ? 0 : 1);
 `;
 
-    await fs.writeFile(join(testDir, "test-env-parsing.js"), testScript);
+    await fs.writeFile(join(String(testDir), "test-env-parsing.js"), testScript);
 
     const proc = Bun.spawn({
       cmd: [bunExe(), "test-env-parsing.js"],

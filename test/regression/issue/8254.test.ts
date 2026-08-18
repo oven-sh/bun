@@ -12,7 +12,7 @@ test("Bun.write() should write past 2GB boundary without corruption", async () =
   const CHUNK_SIZE = 1024 * 1024; // 1MB
   // Force a second write iteration by crossing the 2GB boundary
   const NUM_CHUNKS = Math.floor(TWO_GB / CHUNK_SIZE) + 1;
-  const path = join(tmpbase, "large-file.bin");
+  const path = join(String(tmpbase), "large-file.bin");
 
   // Only 256 distinct fill values exist, so back the >2GB part list with 256
   // shared 1MB buffers instead of 2049 distinct ones. The blob is still >2GB

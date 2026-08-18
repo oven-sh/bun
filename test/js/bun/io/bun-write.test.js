@@ -23,15 +23,15 @@ const IS_UV_FS_COPYFILE_DISABLED =
   it("Bun.write blob", async () => {
     using tmpbase = tempDir("bun-write-blob", {});
     await Bun.write(
-      Bun.file(join(tmpbase, "response-file.test.txt")),
+      Bun.file(join(String(tmpbase), "response-file.test.txt")),
       Bun.file(path.resolve(import.meta.dir, "fetch.js.txt")),
     );
     await gcTick();
-    await Bun.write(Bun.file(join(tmpbase, "response-file.test.txt")), "blah blah blha");
+    await Bun.write(Bun.file(join(String(tmpbase), "response-file.test.txt")), "blah blah blha");
     await gcTick();
-    await Bun.write(Bun.file(join(tmpbase, "response-file.test.txt")), new Uint32Array(1024));
+    await Bun.write(Bun.file(join(String(tmpbase), "response-file.test.txt")), new Uint32Array(1024));
     await gcTick();
-    await Bun.write(join(tmpbase, "response-file.test.txt"), new Uint32Array(1024));
+    await Bun.write(join(String(tmpbase), "response-file.test.txt"), new Uint32Array(1024));
     await gcTick();
     expect(await Bun.write(new TextEncoder().encode(tmpbase + "response-file.test.txt"), new Uint32Array(1024))).toBe(
       new Uint32Array(1024).byteLength,
@@ -105,8 +105,8 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write file not found returns ENOENT, issue#6336", async () => {
     using tmpbase = tempDir("bun-write-enoent", {});
-    const dst = Bun.file(path.join(tmpbase, join("does", "not", "exist.txt")));
-    fs.rmSync(join(tmpbase, "does"), { force: true, recursive: true });
+    const dst = Bun.file(path.join(String(tmpbase), join("does", "not", "exist.txt")));
+    fs.rmSync(join(String(tmpbase), "does"), { force: true, recursive: true });
 
     try {
       await gcTick();
@@ -120,7 +120,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
       }
     }
 
-    const src = Bun.file(path.join(tmpbase, `test-bun-write-${Date.now()}.txt`));
+    const src = Bun.file(path.join(String(tmpbase), `test-bun-write-${Date.now()}.txt`));
 
     await Bun.write(src, "");
     try {
@@ -218,7 +218,7 @@ const IS_UV_FS_COPYFILE_DISABLED =
 
   it("Bun.write('out.txt', 'string')", async () => {
     using tmpbase = tempDir("bun-write-string", {});
-    const outpath = path.join(tmpbase, "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");
+    const outpath = path.join(String(tmpbase), "out." + ((Math.random() * 102400) | 0).toString(32) + "txt");
     for (let erase of [true, false]) {
       if (erase) {
         try {
@@ -240,11 +240,11 @@ const IS_UV_FS_COPYFILE_DISABLED =
   it("Bun.file -> Bun.file", async () => {
     using tmpbase = tempDir("bun-file-to-file", {});
     try {
-      fs.unlinkSync(path.join(tmpbase, "fetch.js.in"));
+      fs.unlinkSync(path.join(String(tmpbase), "fetch.js.in"));
     } catch (e) {}
     await gcTick();
     try {
-      fs.unlinkSync(path.join(tmpbase, "fetch.js.out"));
+      fs.unlinkSync(path.join(String(tmpbase), "fetch.js.out"));
     } catch (e) {}
     await gcTick();
 

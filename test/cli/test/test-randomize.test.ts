@@ -84,7 +84,7 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
   const seen = new Map<number, number>();
   const mask = 0xffffffffn;
   for (let i = 0; i < 400_000; i++) {
-    const h = Number(Bun.hash(join(tmpRoot, `f${i}.test.ts`)) & mask);
+    const h = Number(Bun.hash(join(String(tmpRoot), `f${i}.test.ts`)) & mask);
     if (seen.has(h)) {
       aIdx = seen.get(h)!;
       bIdx = i;
@@ -103,8 +103,8 @@ test("--randomize: files whose u32-truncated path hashes collide get distinct pe
         (word) => { console.log("RUN ${tag} " + word); expect(typeof word).toBe("string"); },
       );
     `;
-  await Bun.write(join(tmpRoot, `f${aIdx}.test.ts`), body("A"));
-  await Bun.write(join(tmpRoot, `f${bIdx}.test.ts`), body("B"));
+  await Bun.write(join(String(tmpRoot), `f${aIdx}.test.ts`), body("A"));
+  await Bun.write(join(String(tmpRoot), `f${bIdx}.test.ts`), body("B"));
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "test", "--randomize", "--seed=42"],

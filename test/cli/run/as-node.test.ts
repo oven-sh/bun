@@ -7,7 +7,7 @@ describe("fake node cli", () => {
     using temp = tempDir("fake-node", {
       "index.ts": "console.log(Bun.version)",
     });
-    expect(fakeNodeRun(temp, join(temp, "index.ts")).stdout).toBe(Bun.version);
+    expect(fakeNodeRun(temp, join(String(temp), "index.ts")).stdout).toBe(Bun.version);
   });
   test("doesnt resolve bins", () => {
     using temp = tempDir("fake-node", {
@@ -93,7 +93,7 @@ describe("fake node cli", () => {
     });
     expect(fakeNodeRun(temp, ["index", "a", "b", "c"]).stdout).toBe(
       // note: no extension here is INTENTIONAL
-      JSON.stringify([join(temp, "index"), "a", "b", "c"]),
+      JSON.stringify([join(String(temp), "index"), "a", "b", "c"]),
     );
   });
 

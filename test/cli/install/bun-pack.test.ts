@@ -1416,7 +1416,7 @@ describe("files", () => {
 
     const { out } = await pack(dir, bunEnv);
     expect(out).toContain("Total files: 2");
-    const tarball = readTarball(join(dir, "pack-excluded-entries-from-files-1.0.0.tgz"));
+    const tarball = readTarball(join(String(dir), "pack-excluded-entries-from-files-1.0.0.tgz"));
     expect(tarball.entries).toMatchObject([
       { "pathname": "package/package.json" },
       { "pathname": "package/src/index.ts" },

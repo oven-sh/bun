@@ -100,7 +100,7 @@ describe.concurrent("require.cache", () => {
       });
       console.log({ dir });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+        cmd: [bunExe(), "run", "--smol", join(String(dir), "require-cache-bug-leak-fixture.js")],
         env: bunEnv,
         stdio: ["inherit", "inherit", "inherit"],
       });
@@ -153,7 +153,7 @@ describe.concurrent("require.cache", () => {
         `,
       });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+        cmd: [bunExe(), "run", "--smol", join(String(dir), "require-cache-bug-leak-fixture.js")],
         env: bunEnv,
         stdio: ["inherit", "inherit", "inherit"],
       });
@@ -204,7 +204,7 @@ describe.concurrent("require.cache", () => {
       });
       console.log({ dir });
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+        cmd: [bunExe(), "run", "--smol", join(String(dir), "require-cache-bug-leak-fixture.js")],
         env: bunEnv,
         stdio: ["inherit", "inherit", "inherit"],
       });
@@ -269,7 +269,7 @@ describe.concurrent("require.cache", () => {
         `,
         });
         await using proc = Bun.spawn({
-          cmd: [bunExe(), "run", "--smol", join(dir, "require-cache-bug-leak-fixture.js")],
+          cmd: [bunExe(), "run", "--smol", join(String(dir), "require-cache-bug-leak-fixture.js")],
           env: bunEnv,
           stdio: ["inherit", "inherit", "inherit"],
         });

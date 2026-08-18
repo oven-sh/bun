@@ -690,7 +690,7 @@ describe("bun", () => {
     });
     // "junction" so the link is creatable on unprivileged Windows; the type is
     // ignored on POSIX.
-    symlinkSync(join(dir, "packages", "cyc"), join(dir, "packages", "cyc", "loop"), "junction");
+    symlinkSync(join(String(dir), "packages", "cyc"), join(String(dir), "packages", "cyc", "loop"), "junction");
 
     const { exitCode, stdout, stderr } = spawnSync({
       cwd: dir,

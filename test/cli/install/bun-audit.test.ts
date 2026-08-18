@@ -195,10 +195,10 @@ function writeBunfig(
   install: Record<string, unknown> = {},
 ) {
   return write(
-    join(dir, "bunfig.toml"),
+    join(String(dir), "bunfig.toml"),
     Bun.TOML.stringify({
       install: {
-        cache: join(dir, ".bun-cache"),
+        cache: join(String(dir), ".bun-cache"),
         registry: typeof server === "string" ? server : server.url.href,
         saveTextLockfile: true,
         ...(scopes && { scopes }),
@@ -218,7 +218,7 @@ async function deadRegistryHref() {
 
 // The CI runner exports one BUN_INSTALL_CACHE_DIR per file, which overrides the bunfig cache the concurrent cases rely on.
 function installEnv(dir: string) {
-  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(dir, ".bun-cache") };
+  return { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(dir), ".bun-cache") };
 }
 
 async function setup(
@@ -235,15 +235,15 @@ async function setup(
 }
 
 function pkgJson(dir: string, ...segments: string[]) {
-  return file(join(dir, ...segments, "package.json")).json();
+  return file(join(String(dir), ...segments, "package.json")).json();
 }
 
 function pkgJsonText(dir: string, ...segments: string[]) {
-  return file(join(dir, ...segments, "package.json")).text();
+  return file(join(String(dir), ...segments, "package.json")).text();
 }
 
 async function reinstall(dir: string, pkgJson: object) {
-  await write(join(dir, "package.json"), JSON.stringify(pkgJson));
+  await write(join(String(dir), "package.json"), JSON.stringify(pkgJson));
   await runBunInstall(installEnv(dir), dir);
 }
 
@@ -296,16 +296,16 @@ function audit(dir: string, ...args: string[]) {
 }
 
 function lock(dir: string) {
-  return file(join(dir, "bun.lock")).text();
+  return file(join(String(dir), "bun.lock")).text();
 }
 
 async function installedVersion(dir: string, ...segments: string[]) {
-  return (await file(join(dir, "node_modules", ...segments, "package.json")).json()).version;
+  return (await file(join(String(dir), "node_modules", ...segments, "package.json")).json()).version;
 }
 
 // The version `dependent` resolves `name` to under the hoisted layout: its nested copy, else the root one.
 async function resolvedVersion(dir: string, dependent: string, name: string) {
-  if (await exists(join(dir, "node_modules", dependent, "node_modules", name))) {
+  if (await exists(join(String(dir), "node_modules", dependent, "node_modules", name))) {
     return installedVersion(dir, dependent, "node_modules", name);
   }
   return installedVersion(dir, name);
@@ -320,7 +320,7 @@ async function expectInstall(dir: string, ...args: string[]) {
 // Written after `setup` so the initial install runs without it; records the `name@version`s it was sent in scanned.json and flags the listed ones as fatal.
 async function configureScanner(dir: string, server: Registry, fatal: string[] = []) {
   await write(
-    join(dir, "scanner.ts"),
+    join(String(dir), "scanner.ts"),
     `import { writeFileSync } from "node:fs";
      import { join } from "node:path";
      export const scanner = {
@@ -339,7 +339,7 @@ async function configureScanner(dir: string, server: Registry, fatal: string[] =
 }
 
 function scanned(dir: string): Promise<string[]> {
-  return file(join(dir, "scanned.json")).json();
+  return file(join(String(dir), "scanned.json")).json();
 }
 
 // a-dep@1.0.2 stays installed after the range is widened because the still-satisfied edge is not re-resolved.
@@ -998,15 +998,15 @@ describe("`bun audit --omit`", () => {
     expect(fromRootOmit.stdout).toBe(fromRoot.stdout);
     expect(fromRootOmit.exitCode).toBe(1);
 
-    expectClean(await run(join(dir, "packages", "a"), ["audit", "--prod"], dir), 0);
+    expectClean(await run(join(String(dir), "packages", "a"), ["audit", "--prod"], dir), 0);
 
-    const fromB = await run(join(dir, "packages", "b"), ["audit", "--prod"], dir);
+    const fromB = await run(join(String(dir), "packages", "b"), ["audit", "--prod"], dir);
     expect(fromB.stdout).toContain("a-dep");
     expect(fromB.stdout).not.toContain("no-deps");
     expect(fromB.stdout).toContain("1 vulnerability (1 high)");
     expect(fromB.exitCode).toBe(1);
 
-    const fromAAll = await run(join(dir, "packages", "a"), ["audit"], dir);
+    const fromAAll = await run(join(String(dir), "packages", "a"), ["audit"], dir);
     expect(fromAAll.stdout).toContain("a-dep");
     expect(fromAAll.stdout).toContain("no-deps");
     expect(fromAAll.stdout).toContain("2 vulnerabilities (2 high)");
@@ -1304,7 +1304,7 @@ describe("`bun audit fix`", () => {
   test.concurrent("fixes a direct dependency to the lowest safe version, not the newest", async () => {
     await using server = startRegistry({ "a-dep": [adv("<1.0.4")] });
     using dir = await setupVulnerableADep(server);
-    const pkgJsonBefore = await file(join(dir, "package.json")).text();
+    const pkgJsonBefore = await file(join(String(dir), "package.json")).text();
 
     const { stdout, stderr, exitCode } = await auditFix(dir);
     expect(normalizeBunSnapshot(stdout)).toMatchInlineSnapshot(`
@@ -1326,7 +1326,7 @@ describe("`bun audit fix`", () => {
     expect(lockfile).not.toContain('"a-dep@1.0.2"');
     expect(lockfile).not.toContain('"a-dep@1.0.10"');
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
-    expect(await file(join(dir, "package.json")).text()).toBe(pkgJsonBefore);
+    expect(await file(join(String(dir), "package.json")).text()).toBe(pkgJsonBefore);
 
     const recheck = await audit(dir);
     expectClean(recheck, 1);
@@ -1486,7 +1486,7 @@ describe("`bun audit fix`", () => {
     expect(stdout).toContain("Would fix 1 vulnerability in 1 package");
     expect(stdout).not.toContain("FATAL");
     expect(exitCode).toBe(0);
-    expect(await exists(join(dir, "scanned.json"))).toBe(false);
+    expect(await exists(join(String(dir), "scanned.json"))).toBe(false);
     expect(await lock(dir)).toBe(lockBefore);
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
   });
@@ -1688,7 +1688,7 @@ describe("`bun audit fix`", () => {
     using dir = await setupVulnerableADep(server);
     const lockBefore = await lock(dir);
     const stale = JSON.stringify({ name: "foo", dependencies: { "a-dep": "^1.0.2", "no-deps": "1.0.0" } });
-    await write(join(dir, "package.json"), stale);
+    await write(join(String(dir), "package.json"), stale);
 
     const { stdout, stderr, exitCode } = await auditFix(dir);
     expect(normalizeBunSnapshot(stderr)).toMatchInlineSnapshot(`
@@ -1700,7 +1700,7 @@ describe("`bun audit fix`", () => {
     expect(await lock(dir)).toBe(lockBefore);
     expect(await pkgJsonText(dir)).toBe(stale);
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.2");
-    expect(await exists(join(dir, "node_modules", "no-deps"))).toBe(false);
+    expect(await exists(join(String(dir), "node_modules", "no-deps"))).toBe(false);
 
     const dryRun = await auditFix(dir, "--dry-run");
     expect(dryRun.stderr).toContain("error: bun.lock does not match package.json, nothing to fix");
@@ -1769,8 +1769,8 @@ describe("`bun audit fix`", () => {
       "packages/a/package.json": workspace("a", "1.0.0"),
       "packages/b/package.json": workspace("b", "1.0.1"),
     });
-    await write(join(dir, "packages", "a", "package.json"), workspace("a", "1.0.0 || >=1.1.0"));
-    await write(join(dir, "packages", "b", "package.json"), workspace("b", "^1.0.1"));
+    await write(join(String(dir), "packages", "a", "package.json"), workspace("a", "1.0.0 || >=1.1.0"));
+    await write(join(String(dir), "packages", "b", "package.json"), workspace("b", "^1.0.1"));
     await runBunInstall(installEnv(dir), dir);
     let lockfile = await lock(dir);
     expect(lockfile).toContain('"no-deps@1.0.0"');
@@ -2417,7 +2417,7 @@ describe("`bun audit fix`", () => {
     using dir = tempDir("audit-fix-", { "package.json": rootPkgJson("1.0.1") });
     await writeBunfig(dir, server);
     await expectInstall(dir);
-    await write(join(dir, "package.json"), rootPkgJson("^1.0.0"));
+    await write(join(String(dir), "package.json"), rootPkgJson("^1.0.0"));
     await expectInstall(dir);
     expect(await lock(dir)).toContain('"no-deps@1.0.1"');
 
@@ -2460,20 +2460,24 @@ describe("`bun audit fix`", () => {
     using dir = tempDir("audit-fix-", { "package.json": rootPkgJson, "packages/a/package.json": member("1.0.2") });
     await writeBunfig(dir, server);
     await expectInstall(dir, "--linker", "hoisted");
-    await write(join(dir, "packages", "a", "package.json"), member("^1.0.2"));
+    await write(join(String(dir), "packages", "a", "package.json"), member("^1.0.2"));
     await expectInstall(dir, "--linker", "hoisted");
     expect(await lock(dir)).toContain('"a-dep@1.0.2"');
 
-    const { stdout, exitCode } = await run(join(dir, "packages", "a"), ["audit", "fix", "--linker", "hoisted"], dir);
+    const { stdout, exitCode } = await run(
+      join(String(dir), "packages", "a"),
+      ["audit", "fix", "--linker", "hoisted"],
+      dir,
+    );
     expect(stdout).toContain("  ^ a-dep 1.0.2 -> 1.0.4");
     expect(exitCode).toBe(0);
 
     const lockfile = await lock(dir);
     expect(lockfile).toContain('"a-dep@1.0.4"');
     expect(lockfile).not.toContain('"a-dep@1.0.2"');
-    expect(await exists(join(dir, "packages", "a", "bun.lock"))).toBeFalse();
-    expect(await file(join(dir, "package.json")).text()).toBe(rootPkgJson);
-    expect(await file(join(dir, "packages", "a", "package.json")).text()).toBe(member("^1.0.2"));
+    expect(await exists(join(String(dir), "packages", "a", "bun.lock"))).toBeFalse();
+    expect(await file(join(String(dir), "package.json")).text()).toBe(rootPkgJson);
+    expect(await file(join(String(dir), "packages", "a", "package.json")).text()).toBe(member("^1.0.2"));
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
 
     const frozen = await run(dir, ["install", "--frozen-lockfile", "--linker", "hoisted"]);
@@ -2488,17 +2492,20 @@ describe("`bun audit fix`", () => {
     });
     await writeBunfig(dir, server);
     await expectInstall(dir, "--linker", "isolated");
-    await write(join(dir, "package.json"), JSON.stringify({ name: "foo", dependencies: { "a-dep": "^1.0.2" } }));
+    await write(
+      join(String(dir), "package.json"),
+      JSON.stringify({ name: "foo", dependencies: { "a-dep": "^1.0.2" } }),
+    );
     await expectInstall(dir, "--linker", "isolated");
     expect(await lock(dir)).toContain('"a-dep@1.0.2"');
-    expect(await readlink(join(dir, "node_modules", "a-dep"))).toContain("a-dep@1.0.2");
+    expect(await readlink(join(String(dir), "node_modules", "a-dep"))).toContain("a-dep@1.0.2");
 
     const { stdout, exitCode } = await auditFix(dir, "--linker", "isolated");
     expect(stdout).toContain("Fixed 1 vulnerability in 1 package");
     expect(exitCode).toBe(0);
 
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
-    expect(await readlink(join(dir, "node_modules", "a-dep"))).toContain("a-dep@1.0.4");
+    expect(await readlink(join(String(dir), "node_modules", "a-dep"))).toContain("a-dep@1.0.4");
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
 
     const frozen = await run(dir, ["install", "--frozen-lockfile", "--linker", "isolated"]);
@@ -2648,7 +2655,7 @@ describe("`bun audit fix`", () => {
     expect(normalizeBunSnapshot(stderr)).toBe(MISSING_LOCKFILE);
     expect(normalizeBunSnapshot(stdout)).toBe("bun audit fix <version> (<revision>)");
     expect(exitCode).toBe(1);
-    expect(await exists(join(dir, "bun.lock"))).toBeFalse();
+    expect(await exists(join(String(dir), "bun.lock"))).toBeFalse();
   });
 
   test.concurrent("refuses --no-save before contacting the registry", async () => {
@@ -2807,7 +2814,7 @@ describe("`bun audit fix`", () => {
     expect(lockfile).toContain('"a-dep@1.0.4"');
     expect(lockfile).toContain('"a-dep": "1.0.4"');
     expect(lockfile).not.toContain("a-dep@1.0.2");
-    expect(await exists(join(dir, "packages", "a", "bun.lock"))).toBeFalse();
+    expect(await exists(join(String(dir), "packages", "a", "bun.lock"))).toBeFalse();
 
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });
@@ -2823,13 +2830,17 @@ describe("`bun audit fix`", () => {
     await expectInstall(dir, "--linker", "hoisted");
     expect(await lock(dir)).toContain('"a-dep@1.0.2"');
 
-    const { stdout, exitCode } = await run(join(dir, "packages", "a"), ["audit", "fix", "--linker", "hoisted"], dir);
+    const { stdout, exitCode } = await run(
+      join(String(dir), "packages", "a"),
+      ["audit", "fix", "--linker", "hoisted"],
+      dir,
+    );
     expect(stdout).toContain("  ^ a-dep 1.0.2 -> 1.0.4\n    packages/a/package.json: 1.0.2 -> 1.0.4\n");
     expect(exitCode).toBe(0);
 
     expect((await pkgJson(dir, "packages", "a")).dependencies).toStrictEqual({ "a-dep": "1.0.4" });
     expect(await pkgJsonText(dir)).toBe(rootPkgJson);
-    expect(await exists(join(dir, "packages", "a", "bun.lock"))).toBeFalse();
+    expect(await exists(join(String(dir), "packages", "a", "bun.lock"))).toBeFalse();
     expect(await lock(dir)).toContain('"a-dep@1.0.4"');
     expect(await installedVersion(dir, "a-dep")).toBe("1.0.4");
 
@@ -2909,7 +2920,7 @@ describe("`bun audit fix`", () => {
     const lockfile = await lock(dir);
     expect(lockfile).not.toContain('"no-deps@1.1.0"');
     expect(lockfile).not.toContain('"one-range-dep/no-deps"');
-    expect(await exists(join(dir, "node_modules", "one-range-dep", "node_modules", "no-deps"))).toBe(false);
+    expect(await exists(join(String(dir), "node_modules", "one-range-dep", "node_modules", "no-deps"))).toBe(false);
     expect(await resolvedVersion(dir, "one-range-dep", "no-deps")).toBe("1.0.1");
     expect(await installedVersion(dir, "no-deps")).toBe("1.0.1");
 
@@ -2927,7 +2938,7 @@ describe("`bun audit fix`", () => {
     });
     await writeBunfig(dir, server);
     await expectInstall(dir, "--linker", "isolated");
-    await write(join(dir, "package.json"), rootPkgJson({ "one-range-dep": "1.0.0", "one-fixed-dep": "1.0.0" }));
+    await write(join(String(dir), "package.json"), rootPkgJson({ "one-range-dep": "1.0.0", "one-fixed-dep": "1.0.0" }));
     await expectInstall(dir, "--linker", "isolated");
     const lockBefore = await lock(dir);
     expect(lockBefore).toContain('"no-deps@1.0.0"');
@@ -4142,9 +4153,14 @@ describe("`bun audit fix --latest`", () => {
     await using server = noDeps1x();
     using dir = await setup(server, { name: "foo", dependencies: { "no-deps": "^1.0.0" } });
     await write(
-      join(dir, "bunfig.toml"),
+      join(String(dir), "bunfig.toml"),
       Bun.TOML.stringify({
-        install: { cache: join(dir, ".bun-cache"), registry: server.url.href, saveTextLockfile: true, exact: true },
+        install: {
+          cache: join(String(dir), ".bun-cache"),
+          registry: server.url.href,
+          saveTextLockfile: true,
+          exact: true,
+        },
       }),
     );
 
@@ -4181,7 +4197,7 @@ describe("`bun audit fix --latest`", () => {
     expect(lockfile).toContain('"no-deps@2.0.0"');
     expect(lockfile).toContain('"no-deps": "^2.0.0"');
     expect(lockfile).not.toContain('"no-deps@1.1.0"');
-    expect(await exists(join(dir, "packages", "a", "bun.lock"))).toBeFalse();
+    expect(await exists(join(String(dir), "packages", "a", "bun.lock"))).toBeFalse();
 
     await runBunInstall(installEnv(dir), dir, { frozenLockfile: true });
   });

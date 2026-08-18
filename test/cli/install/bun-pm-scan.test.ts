@@ -135,7 +135,7 @@ describe("bun pm scan", () => {
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
 
       // Add config after install
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -177,7 +177,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -220,7 +220,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -285,7 +285,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -368,7 +368,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -414,7 +414,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -457,7 +457,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -493,7 +493,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -531,7 +531,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -578,7 +578,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -616,7 +616,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],
@@ -657,7 +657,7 @@ describe("bun pm scan", () => {
       });
 
       await Bun.$`${bunExe()} install`.cwd(dir).env(bunEnv).quiet();
-      await Bun.write(join(dir, "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
+      await Bun.write(join(String(dir), "bunfig.toml"), `[install.security]\nscanner = "./scanner.js"`);
 
       const proc = Bun.spawn({
         cmd: [bunExe(), "pm", "scan"],

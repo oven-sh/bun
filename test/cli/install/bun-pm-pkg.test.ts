@@ -22,7 +22,7 @@ async function runPmPkg(args: string[], cwd: string, expectSuccess = true) {
   return { output: stdout, error: stderr, code: exitCode };
 }
 
-const readPkg = (dir: string) => Bun.file(join(dir, "package.json")).json();
+const readPkg = (dir: string) => Bun.file(join(String(dir), "package.json")).json();
 
 function createTestPackageJson(overrides = {}) {
   return JSON.stringify(
@@ -291,7 +291,7 @@ describe.concurrent("bun pm pkg", () => {
       using dir = makeTestDir();
       await runPmPkg(["set", "version=1.0.1"], dir);
 
-      const modifiedContent = await Bun.file(join(dir, "package.json")).text();
+      const modifiedContent = await Bun.file(join(String(dir), "package.json")).text();
       expect(modifiedContent).toContain('  "version": "1.0.1"');
       expect(JSON.parse(modifiedContent).version).toBe("1.0.1");
     });
@@ -467,7 +467,7 @@ describe.concurrent("bun pm pkg", () => {
         }),
       });
 
-      const pkgDir = join(workspaceDir, "packages", "pkg-a");
+      const pkgDir = join(String(workspaceDir), "packages", "pkg-a");
       const { output, code } = await runPmPkg(["get", "name"], pkgDir);
       expect(output.trim()).toBe('"@workspace/pkg-a"');
       expect(code).toBe(0);
@@ -488,7 +488,7 @@ describe.concurrent("bun pm pkg", () => {
         }),
       });
 
-      const pkgDir = join(workspaceDir, "packages", "pkg-a");
+      const pkgDir = join(String(workspaceDir), "packages", "pkg-a");
       const { code } = await runPmPkg(["set", "description=Updated Package A"], pkgDir);
       expect(code).toBe(0);
 
@@ -517,8 +517,8 @@ describe.concurrent("bun pm pkg", () => {
       expect(code).toBe(0);
 
       expect((await readPkg(workspaceDir)).version).toBe("1.0.1");
-      expect((await readPkg(join(workspaceDir, "packages", "pkg-a"))).version).toBe("1.0.0");
-      expect((await readPkg(join(workspaceDir, "packages", "pkg-b"))).version).toBe("2.0.0");
+      expect((await readPkg(join(String(workspaceDir), "packages", "pkg-a"))).version).toBe("1.0.0");
+      expect((await readPkg(join(String(workspaceDir), "packages", "pkg-b"))).version).toBe("2.0.0");
     });
   });
 
@@ -528,7 +528,7 @@ describe.concurrent("bun pm pkg", () => {
         "package.json": JSON.stringify({ name: "root-package", version: "1.0.0" }, null, 2),
       });
 
-      const deepPath = join(dir, "src", "components", "ui", "buttons", "primary");
+      const deepPath = join(String(dir), "src", "components", "ui", "buttons", "primary");
       mkdirSync(deepPath, { recursive: true });
 
       const { output, code } = await runPmPkg(["get", "name"], deepPath);
@@ -541,7 +541,7 @@ describe.concurrent("bun pm pkg", () => {
         "package.json": JSON.stringify({ name: "root-package", version: "1.0.0" }, null, 2),
       });
 
-      const uiDir = join(dir, "packages", "ui");
+      const uiDir = join(String(dir), "packages", "ui");
       mkdirSync(uiDir, { recursive: true });
       writeFileSync(join(uiDir, "package.json"), JSON.stringify({ name: "ui-package", version: "2.0.0" }, null, 2));
 
@@ -567,7 +567,7 @@ describe.concurrent("bun pm pkg", () => {
         "package.json": JSON.stringify({ name: "my-project", version: "1.0.0", scripts: { test: "jest" } }, null, 2),
       });
 
-      const deepDir = join(dir, "src", "utils", "helpers", "string");
+      const deepDir = join(String(dir), "src", "utils", "helpers", "string");
       mkdirSync(deepDir, { recursive: true });
 
       const { code: setCode } = await runPmPkg(["set", "scripts.build=webpack"], deepDir);
@@ -816,10 +816,10 @@ describe.concurrent("bun pm pkg", () => {
         ),
       });
 
-      const beforeContent = await Bun.file(join(goodDir, "package.json")).text();
+      const beforeContent = await Bun.file(join(String(goodDir), "package.json")).text();
       const { code } = await runPmPkg(["fix"], goodDir);
       expect(code).toBe(0);
-      expect(await Bun.file(join(goodDir, "package.json")).text()).toBe(beforeContent);
+      expect(await Bun.file(join(String(goodDir), "package.json")).text()).toBe(beforeContent);
     });
 
     it("should handle package.json with existing bin files", async () => {

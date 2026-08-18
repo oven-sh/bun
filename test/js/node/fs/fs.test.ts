@@ -294,7 +294,7 @@ it("fs.readv returns object", async done => {
 
 it("fs.writev returns object", async done => {
   await using outpath = tempDir("fswritevtest", { "a.txt": "b" });
-  const fd = await promisify(fs.open)(join(outpath, "b.txt"), "w");
+  const fd = await promisify(fs.open)(join(String(outpath), "b.txt"), "w");
   const buffers = [Buffer.alloc(10), Buffer.alloc(10)];
   fs.writev(fd, buffers, 0, (err, bytesWritten, output) => {
     promisify(fs.close)(fd);

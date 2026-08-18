@@ -18,7 +18,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
       "outer/project/index.js": `console.log("XONLY-OK", require("./dep.js"));`,
       "outer/project/dep.js": `module.exports = 42;`,
     });
-    const outer = join(dir, "outer");
+    const outer = join(String(dir), "outer");
     chmodSync(outer, 0o111);
     try {
       const proc = Bun.spawnSync({
@@ -39,7 +39,7 @@ describe.skipIf(isWindows || process.getuid?.() === 0)("resolver with unreadable
     using dir = tempDir("unreadable-cwd", {
       "project/package.json": JSON.stringify({ name: "p", scripts: { start: "echo should-not-run" } }),
     });
-    const project = join(dir, "project");
+    const project = join(String(dir), "project");
     // Execute-only: chdir succeeds, but `bun run` must read the requested
     // directory for script discovery, which is denied -- unlike ancestors,
     // this stays fatal ("error loading current directory").

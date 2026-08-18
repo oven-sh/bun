@@ -161,6 +161,12 @@ pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
 impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     /// `init` for `.Static`.
     pub fn init() -> Self {
+        const {
+            assert!(
+                !mem::needs_drop::<T>(),
+                "LinearFifo does not drop its items; use VecDeque for types with drop glue"
+            )
+        };
         Self {
             buf: StaticBuffer([const { MaybeUninit::uninit() }; N]),
             head: 0,
@@ -173,6 +179,12 @@ impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
 impl<T> LinearFifo<T, DynamicBuffer<T>> {
     /// `init` for `.Dynamic`.
     pub fn init() -> Self {
+        const {
+            assert!(
+                !mem::needs_drop::<T>(),
+                "LinearFifo does not drop its items; use VecDeque for types with drop glue"
+            )
+        };
         Self {
             buf: DynamicBuffer(Box::new([])),
             head: 0,
@@ -182,8 +194,11 @@ impl<T> LinearFifo<T, DynamicBuffer<T>> {
     }
 }
 
-// `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static/Slice are
-// no-ops. Field drop glue covers it; no explicit impl needed.
+// `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static is a
+// no-op. Items are never dropped: the ring is for POD/pointer payloads only,
+// and the `!needs_drop::<T>()` const assert in each `init` enforces it, so
+// e.g. `LinearFifo::<Box<u8>, DynamicBuffer<_>>::init()` fails to compile at
+// monomorphization.
 
 impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     #[inline]

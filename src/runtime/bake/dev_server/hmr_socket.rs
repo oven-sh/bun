@@ -146,10 +146,7 @@ impl HmrSocket {
                                 _ => {}
                             }
                         }
-                    } else if new_bits.contains(bit) && !self.subscriptions.contains(bit) {
-                        // Note: this `else if` condition is identical to the `if`
-                        // above and is therefore unreachable; likely a bug
-                        // (intended: `!new && old` → unsubscribe).
+                    } else if !new_bits.contains(bit) && self.subscriptions.contains(bit) {
                         let _ = ws.unsubscribe(&field.uws_topic());
                     }
                 }
@@ -309,7 +306,7 @@ impl HmrSocket {
             }
             if field.contains(HmrTopic::MemoryVisualizer.as_bit()) {
                 dev.emit_memory_visualizer_events -= 1;
-                if dev.emit_incremental_visualizer_events == 0
+                if dev.emit_memory_visualizer_events == 0
                     && dev.memory_visualizer_timer.state == EventLoopTimerState::ACTIVE
                 {
                     // Note (jsc/runtime crate cycle): `vm.timer` is `()` on the low-tier

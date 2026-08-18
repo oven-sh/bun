@@ -831,7 +831,7 @@ pub fn crash() -> ! {
     exit(1);
 }
 
-// `BunInfo` (struct + `generate()`) lives at `bun_runtime::server::BunInfo`
+// `BunInfo` (struct + `generate()`) lives in `bun_runtime`'s server module
 // because it depends on analytics/js_parser/interchange — all higher-tier. Only the version constants below
 // are needed at this tier.
 

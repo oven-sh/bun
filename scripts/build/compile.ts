@@ -485,15 +485,18 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 }
 
 /**
- * Create a static library. Returns absolute path to output.
+ * Create a static library. Returns absolute path to output. `implicitInputs`
+ * are waited for but not archived (the forbidUndefined stamps of the dep
+ * objects going in).
  */
-export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): string {
+export function ar(n: Ninja, cfg: Config, out: string, objects: string[], implicitInputs: string[] = []): string {
   const absOut = resolve(cfg.buildDir, out);
 
   n.build({
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
+    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
   });
 
   return absOut;

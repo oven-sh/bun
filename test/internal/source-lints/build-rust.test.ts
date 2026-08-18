@@ -52,6 +52,7 @@ const mockToolchain: Toolchain = {
   rustHostTriple: undefined,
   strip: "/fake/bin/strip",
   llvmStrip: "/fake/llvm/bin/llvm-strip",
+  nm: "/fake/llvm/bin/llvm-nm",
   dsymutil: "/fake/llvm/bin/dsymutil",
   bun: "/fake/bin/bun",
   jsRuntime: "/fake/bin/bun",

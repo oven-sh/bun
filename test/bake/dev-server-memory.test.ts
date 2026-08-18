@@ -50,15 +50,22 @@ test("rebuilding a module does not leak the bundle's allocations", async () => {
   });
 
   // The dev server prints "Reloaded in <n>ms" once per completed rebuild.
+  const RELOADED = "Reloaded in ";
   let stderr = "";
   let reloads = 0;
+  let scanPos = 0;
   let exited: Error | undefined;
   let waiter: { target: number; resolve(): void; reject(err: Error): void } | undefined;
   const stderrClosed = (async () => {
     const decoder = new TextDecoder();
     for await (const chunk of proc.stderr) {
       stderr += decoder.decode(chunk, { stream: true });
-      reloads = stderr.match(/Reloaded in /g)?.length ?? 0;
+      for (let i = stderr.indexOf(RELOADED, scanPos); i !== -1; i = stderr.indexOf(RELOADED, scanPos)) {
+        reloads++;
+        scanPos = i + RELOADED.length;
+      }
+      // Leave a partial marker at the end of the buffer for the next chunk.
+      scanPos = Math.max(scanPos, stderr.length - RELOADED.length + 1);
       if (waiter && reloads >= waiter.target) {
         waiter.resolve();
         waiter = undefined;

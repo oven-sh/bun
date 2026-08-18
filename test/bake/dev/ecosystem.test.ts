@@ -5,7 +5,7 @@
 import { expect } from "bun:test";
 import { Client, Dev, devTest } from "../bake-harness";
 
-/** The document served for `/`, with the generated asset hash and route id replaced and adjacent tags split onto lines. */
+/** The document served for `/`, with the generated asset hash, route id and svelte scope classes replaced and adjacent tags split onto lines. */
 async function servedDocument(dev: Dev) {
   const response = await dev.fetch("/");
   const html = await response.text();
@@ -14,7 +14,8 @@ async function servedDocument(dev: Dev) {
   return html
     .replaceAll("><", ">\n<")
     .replace(/\/_bun\/asset\/[0-9a-f]+\./, "/_bun/asset/<hash>.")
-    .replace(/\/_bun\/client\/route-[0-9a-f]+\./, "/_bun/client/route-<id>.");
+    .replace(/\/_bun\/client\/route-[0-9a-f]+\./, "/_bun/client/route-<id>.")
+    .replaceAll(/svelte-[0-9a-z]+/g, "svelte-<hash>");
 }
 
 /** What the fixture serves for `/` while its two components contain the given text. */
@@ -28,10 +29,10 @@ function expectedDocument({ server, island }: { server: string; island: string }
     "</head>",
     "<body>",
     "<!--[-->",
-    '<main class="svelte-1f5jrvn">',
-    `<h1 class="svelte-1f5jrvn">hello</h1> <p id="server_text">${server}</p> <p>Bun v${Bun.version}</p> <bake-island id="I:0">`,
-    '<div class="svelte-lmhtl6">',
-    `<p id="counter_text" class="svelte-lmhtl6">${island}</p> <button>Clicked 5 times</button>`,
+    '<main class="svelte-<hash>">',
+    `<h1 class="svelte-<hash>">hello</h1> <p id="server_text">${server}</p> <p>Bun v${Bun.version}</p> <bake-island id="I:0">`,
+    '<div class="svelte-<hash>">',
+    `<p id="counter_text" class="svelte-<hash>">${island}</p> <button>Clicked 5 times</button>`,
     "</div>",
     "</bake-island>",
     "<!---->",

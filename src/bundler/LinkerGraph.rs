@@ -210,6 +210,23 @@ pub use js_meta::{
     ExportData, ImportData, JSMeta, RefImportData, ResolvedExports, TopLevelSymbolToParts,
 };
 
+pub(crate) struct PerEntryPointPartLiveness {
+    pub(crate) part_offsets: Box<[usize]>,
+    pub(crate) parts_live: Vec<BitSet>,
+}
+
+impl PerEntryPointPartLiveness {
+    #[inline]
+    pub(crate) fn is_live(
+        &self,
+        entry_point_id: usize,
+        source_index: usize,
+        part_index: usize,
+    ) -> bool {
+        self.parts_live[entry_point_id].is_set(self.part_offsets[source_index] + part_index)
+    }
+}
+
 pub struct LinkerGraph<'a> {
     pub files: FileList,
     pub(crate) files_live: BitSet,
@@ -221,6 +238,9 @@ pub struct LinkerGraph<'a> {
     /// tree-shaking visited-check doesn't pull a full 272-byte `Part` into
     /// cache for a 1-bit answer.
     pub(crate) parts_live: Vec<AutoBitSet>,
+    /// Transposed part liveness for independent multi-entry builds. Keeping one
+    /// flat bitset per entry point avoids a heap allocation for every part.
+    pub(crate) parts_live_per_entry_point: Option<PerEntryPointPartLiveness>,
     pub(crate) entry_points: entry_point::List,
     pub(crate) symbols: symbol::Map,
 
@@ -306,6 +326,7 @@ impl Default for LinkerGraph<'_> {
             files: FileList::default(),
             files_live: BitSet::default(),
             parts_live: Vec::new(),
+            parts_live_per_entry_point: None,
             entry_points: entry_point::List::default(),
             symbols: symbol::Map::default(),
             // Note: `bump` is a backref assigned in `init`/`LinkerContext::load`;

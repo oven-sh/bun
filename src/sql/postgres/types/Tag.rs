@@ -179,8 +179,7 @@ pg_tags! {
 }
 
 impl Tag {
-    /// Parse declared no type (OID 0), so the server infers one. `Signature::generate` declares
-    /// non-numeric parameters this way, and Bind still sees it on unnamed statements.
+    /// OID 0 in Parse: the server infers the type. Bind still sees it on unnamed statements.
     pub fn is_unspecified(self) -> bool {
         self.0 == 0
     }

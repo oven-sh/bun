@@ -63,7 +63,7 @@ describe("%j title memory", () => {
   // The %j/%o title formatter used to leak one WTFStringImpl copy of the
   // stringified JSON per registered test (jest.rs format_label).
   it("does not retain a second copy of each stringified title", async () => {
-    const fixture = new URL("./jest-each-json-title-leak-fixture.ts", import.meta.url).pathname;
+    const fixture = import.meta.dir + "/jest-each-json-title-leak-fixture.ts";
 
     async function rssWithRows(rows: number): Promise<number> {
       await using proc = Bun.spawn({
@@ -72,8 +72,9 @@ describe("%j title memory", () => {
           ...bunEnv,
           LEAK_FIXTURE_ROWS: String(rows),
           // ASAN's quarantine keeps freed allocations in RSS; without this
-          // the fixed build measures the same as the leaky one.
-          ASAN_OPTIONS: ["quarantine_size_mb=0", "thread_local_quarantine_size_kb=0", bunEnv.ASAN_OPTIONS]
+          // the fixed build measures the same as the leaky one. The override
+          // comes last because ASAN's option parsing is last-wins.
+          ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "quarantine_size_mb=0", "thread_local_quarantine_size_kb=0"]
             .filter(Boolean)
             .join(":"),
         },
@@ -82,7 +83,14 @@ describe("%j title memory", () => {
       });
       const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const match = (out + err).match(/RSS_BYTES:(\d+)/);
-      expect(match).not.toBeNull();
+      if (!match) {
+        // Keep the diff readable: err is ~70MB of 512KB titles on a healthy run.
+        expect({ out, errTail: err.slice(-2000), code }).toEqual({
+          out: expect.stringMatching(/RSS_BYTES:\d+/),
+          errTail: expect.any(String),
+          code: 0,
+        });
+      }
       expect(code).toBe(0);
       return Number(match![1]);
     }

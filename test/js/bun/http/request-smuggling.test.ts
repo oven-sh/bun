@@ -1732,7 +1732,11 @@ describe("Host header field values in request.url", () => {
   test.each([
     ["/caf\xC3\xA9?q=\xE2\x9C\x93", "example.com", "http://example.com/caf%C3%A9?q=%E2%9C%93"],
     ["/\xFF", "example.com", "http://example.com/%EF%BF%BD"],
-    ["/" + "a".repeat(200) + "\xC3\xA9", "example.com", "http://example.com/" + "a".repeat(200) + "%C3%A9"],
+    [
+      "/" + Buffer.alloc(200, "a").toString() + "\xC3\xA9",
+      "example.com",
+      "http://example.com/" + Buffer.alloc(200, "a").toString() + "%C3%A9",
+    ],
     // A Host inside the byte set that the URL parser still rejects: the bare
     // target, decoded the same way.
     ["/\xFF", "example.com:abc", "/\uFFFD"],

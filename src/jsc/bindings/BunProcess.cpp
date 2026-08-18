@@ -5014,7 +5014,7 @@ void Process::finishCreation(JSC::VM& vm)
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {
         auto* globalObject = this->globalObject();
         for (ASCIILiteral name : { "_debugEnd"_s, "_debugProcess"_s, "_startProfilerIdleNotifier"_s, "_stopProfilerIdleNotifier"_s })
-            putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, name), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, PropertyAttribute::Function | 0);
+            putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, name), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
     }
     // Node's addReadOnlyProcessAlias: read-only so `process.noDeprecation = false`
     // is ignored, but a per-Process property — a Worker must not flip the main

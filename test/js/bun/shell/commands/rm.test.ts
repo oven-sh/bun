@@ -299,6 +299,8 @@ test.skipIf(process.platform === "win32")(
 test.skipIf(process.platform === "win32")(
   "recursive rm reports an entry deeper than PATH_MAX instead of crashing",
   async () => {
+    // Linux PATH_MAX is 4096, every other POSIX platform Bun runs on has 1024.
+    const PATH_MAX = process.platform === "linux" ? 4096 : 1024;
     using base = tempDir("rm-deep-walk", {});
     const fixture = /* ts */ `
       import { $ } from "bun";
@@ -307,13 +309,15 @@ test.skipIf(process.platform === "win32")(
       $.nothrow();
 
       const base = process.env.BASE!;
-      const component = Buffer.alloc(200, "d").toString();
-      // <base>/<tag>/ddd.../ddd... with an absolute path of about 4060 bytes:
-      // it still fits a path buffer, an entry inside it no longer does.
+      // Long enough that a 100 byte entry inside the directory is past
+      // PATH_MAX, short enough that the directory itself is still well inside.
+      const deepLength = Number(process.env.PATH_MAX) - 64;
+      const component = Buffer.alloc(100, "d").toString();
+      // <base>/<tag>/ddd.../ddd... with an absolute path of deepLength bytes.
       function deepDir(tag: string): string {
         let dir = join(base, tag);
-        while (dir.length + 1 + component.length <= 4060) dir = join(dir, component);
-        const rest = 4060 - dir.length - 1;
+        while (dir.length + 1 + component.length <= deepLength) dir = join(dir, component);
+        const rest = deepLength - dir.length - 1;
         if (rest > 0) dir = join(dir, Buffer.alloc(rest, "e").toString());
         mkdirSync(dir, { recursive: true });
         return dir;
@@ -348,7 +352,7 @@ test.skipIf(process.platform === "win32")(
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", fixture],
-      env: { ...bunEnv, BASE: String(base) },
+      env: { ...bunEnv, BASE: String(base), PATH_MAX: String(PATH_MAX) },
       cwd: String(base),
       stdout: "pipe",
       stderr: "pipe",
@@ -356,10 +360,10 @@ test.skipIf(process.platform === "win32")(
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     const results = JSON.parse(stdout);
-    // The entries are what rm could not remove, and they are the reason: each
-    // of their paths is longer than PATH_MAX.
-    expect(results.file.entry.length).toBeGreaterThan(4095);
-    expect(results.dir.entry.length).toBeGreaterThan(4095);
+    // The entries are what rm could not remove, and this is why: a path of
+    // PATH_MAX bytes has no room left for its NUL.
+    expect(results.file.entry.length).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(results.dir.entry.length).toBeGreaterThanOrEqual(PATH_MAX);
     expect(results).toEqual({
       file: {
         exitCode: 1,

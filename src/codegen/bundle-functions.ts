@@ -464,13 +464,8 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
     return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
   };
-  // DECLARE_BUILTIN_NAMES (header) declares m_<fn> and m_<fn>PrivateName.
-  // DEFINE_BUILTIN_EXECUTABLES passes m_<fn> to createBuiltinExecutable, where it
-  // becomes the function's `name` unless $overriddenName is set, so it must be
-  // initialized for every function. m_<fn>PrivateName is only used for @internal
-  // files (as the key of the `$<fn>` global in JSBuiltinInternalFunctions::initialize
-  // and in exportNames()) and must be the symbol BunBuiltinNames created, since
-  // that is what `$<fn>` in other builtins resolves to.
+  // m_<fn> becomes the executable's name (fn.name). m_<fn>PrivateName keys the
+  // `$<fn>` global of @internal files, so it must be the symbol BunBuiltinNames owns.
   const initializeNames = (fn: BundledBuiltin, internal: boolean) => {
     if (internal) {
       return [`m_${fn.name}(builtinNames.${fn.name}PublicName())`, `m_${fn.name}PrivateName(${privateName(fn.name)})`];

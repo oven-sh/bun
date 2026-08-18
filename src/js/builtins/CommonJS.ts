@@ -143,8 +143,7 @@ export function overridableRequire(this: JSCommonJSModule, originalId: string, o
   return mod.exports;
 }
 
-// Installed as RequireFunctionPrototype.resolve; the bound copies on each require
-// function are named "resolve" by JSCommonJSModule.cpp.
+// Exposed as require.resolve
 $overriddenName = "resolve";
 $visibility = "Private";
 export function requireResolve(

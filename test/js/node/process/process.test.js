@@ -2808,24 +2808,24 @@ describe.concurrent("lazy process properties whose builder throws", () => {
   });
 
   it("a builder failure during bulk reification throws from the operation that triggered it", async () => {
-    // Deleting a property of process makes JSC build all of its remaining lazy properties first.
-    // The ones after the failing builder stay lazy and are built by the next such operation.
-    // The stdio builders load modules, which may need Set themselves, so they are built up front
-    // to make allowedNodeEnvironmentFlags the one builder that fails.
+    // Spreading process (like deleting one of its properties) makes JSC build all of its remaining
+    // lazy properties first. The ones after the failing builder stay lazy and are built by the
+    // next such operation. The stdio builders load modules, which may need Set themselves, so
+    // they are built up front to make allowedNodeEnvironmentFlags the one builder that fails.
     const { stdout, stderr, exitCode } = await run(`
       process.stdout; process.stderr; process.stdin; process.nextTick;
       const RealSet = Set;
       globalThis.Set = undefined;
-      let brokenDelete;
+      let brokenSpread;
       try {
-        brokenDelete = "deleted: " + delete process._debugProcess;
+        brokenSpread = "copied " + typeof { ...process }.allowedNodeEnvironmentFlags;
       } catch (e) {
-        brokenDelete = "threw " + e.constructor.name;
+        brokenSpread = "threw " + e.constructor.name;
       }
       globalThis.Set = RealSet;
       console.log(JSON.stringify({
-        brokenDelete,
-        deleteAfterwards: delete process._debugEnd,
+        brokenSpread,
+        spreadAfterwards: typeof { ...process }.allowedNodeEnvironmentFlags,
         flags: process.allowedNodeEnvironmentFlags.has("--no-warnings"),
         finalization: typeof process.finalization.register,
       }));
@@ -2833,8 +2833,8 @@ describe.concurrent("lazy process properties whose builder throws", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(
       JSON.stringify({
-        brokenDelete: "threw TypeError",
-        deleteAfterwards: true,
+        brokenSpread: "threw TypeError",
+        spreadAfterwards: "object",
         flags: true,
         finalization: "function",
       }) + "\n",

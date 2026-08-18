@@ -1221,11 +1221,9 @@ impl SendQueue {
         }
     }
 
-    /// The peer process has exited. Closes whatever is left of the channel and reports the close
-    /// right away, so that the owner reports it before the exit, as node does. Left to the deferred
-    /// task, it would come after the exit whenever the loop picked up the exit in the same batch as
-    /// the channel's EOF, or as a task (waiter thread) before even reading it. The task still runs
-    /// afterwards and finds nothing to do.
+    /// The peer process has exited: closes what is left of the channel and reports the close now,
+    /// for the owner to report before the exit (node's order). The deferred task, which may also
+    /// have been scheduled for it, runs later and finds nothing to do.
     pub fn close_after_peer_exit(&self) {
         log!("SendQueue#closeAfterPeerExit");
         if self.socket_is_open() {

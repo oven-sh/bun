@@ -945,9 +945,7 @@ impl Subprocess<'_> {
         let is_sync = self.flags.get().contains(Flags::IS_SYNC);
         self.clear_abort_signal();
 
-        // `deref()` runs at the tail of this body.
-        // R-2: now that it takes `&self`, scopeguard would no longer alias —
-        // kept explicit at the tail for now (no early returns in this body).
+        // `deref()` runs at the tail of this body (no early returns).
 
         if self.event_loop_timer.get().state == EventLoopTimerState::ACTIVE {
             Self::timer_all().remove(self.event_loop_timer.as_ptr());

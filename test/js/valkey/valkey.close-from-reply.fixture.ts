@@ -4,6 +4,16 @@
 // wrapper is dead but not finalized yet. Prints one line per round that
 // survives that, and throws if a round never got the wrapper collected inside
 // the read, so a run that misses the window fails instead of passing vacuously.
+//
+// The collector scans the native stack conservatively, so a stale copy of the
+// wrapper's address anywhere between the collector's frame and the stack base
+// keeps it alive. Every native call that receives the wrapper (constructor,
+// connect, get, close) can spill it into its frame, and later frames of the
+// socket read and the collector then sit on top of that memory without
+// overwriting all of it. scrub() overwrites the stack below the calling frame
+// right after each of those calls. With that, release, profile and debug
+// builds all reach the window on every round; without it, release builds only
+// reached it on the first round.
 import { RedisClient } from "bun";
 import { jscInternals } from "bun:internal-for-testing";
 
@@ -31,6 +41,27 @@ using server = Bun.listen({
 // some time after the collection.
 const lowerTier = Array.from({ length: 8 }, () => new RedisClient("redis://127.0.0.1:1", { autoReconnect: false }));
 
+// Runs a recursion whose frames initialise all their locals, so the stack below
+// the caller holds no stale copy of the wrapper. A fresh function each time:
+// JSC would otherwise tier the recursion up to the optimising JIT after a few
+// thousand calls, and that tier keeps the locals in registers and writes
+// nothing to the stack. Not a tail call, so the recursion is not collapsed
+// into one frame.
+function scrub(depth: number): number {
+  const fresh = new Function(
+    "depth",
+    `const self = n => {
+       let a0 = 0, a1 = 0, a2 = 0, a3 = 0, a4 = 0, a5 = 0, a6 = 0, a7 = 0;
+       let a8 = 0, a9 = 0, a10 = 0, a11 = 0, a12 = 0, a13 = 0, a14 = 0, a15 = 0;
+       if (n === 0) return a0;
+       const below = self(n - 1);
+       return below + a1 + a2 + a3 + a4 + a5 + a6 + a7 + a8 + a9 + a10 + a11 + a12 + a13 + a14 + a15;
+     };
+     return self(depth);`,
+  );
+  return fresh(depth);
+}
+
 let address: bigint;
 
 async function useAndCloseClient() {
@@ -38,10 +69,15 @@ async function useAndCloseClient() {
     autoReconnect: false,
   });
   address = jscInternals.rawCellAddress(client);
-  await client.connect();
-  await client.get("k");
+  const connected = client.connect();
+  scrub(256);
+  await connected;
+  const reply = client.get("k");
+  scrub(256);
+  await reply;
   // Still inside the socket read that delivered the GET reply.
   client.close();
+  scrub(256);
   // A suspended async function keeps its locals in a heap frame that is only
   // rewritten for variables still live at the next await, so clear the
   // variable and keep it live across one more suspension.
@@ -55,12 +91,15 @@ async function hop() {
 }
 
 for (let round = 0; round < 3; round++) {
-  await useAndCloseClient();
+  const done = useAndCloseClient();
+  scrub(256);
+  await done;
   // Resuming other async functions overwrites the stack slots that still point
   // at useAndCloseClient's frame; until then the collector still sees the client.
   await hop();
   await hop();
   await hop();
+  scrub(256);
   const nextTick = new Promise<void>(resolve => setTimeout(resolve, 0));
   // Synchronous collection without a sweep: the wrapper is dead and not
   // finalized when this microtask drain returns into the socket read.

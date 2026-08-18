@@ -123,6 +123,19 @@ impl JSGlobalObject {
         JSValue::ZERO
     }
 
+    /// `ERR_STRING_TOO_LONG`: a string would exceed [`bun_core::String::max_length`].
+    #[cold]
+    pub fn throw_string_too_long(&self) -> JsError {
+        self.err(
+            JscError::STRING_TOO_LONG,
+            format_args!(
+                "Cannot create a string longer than {} characters",
+                BunString::max_length()
+            ),
+        )
+        .throw()
+    }
+
     #[allow(clippy::too_many_arguments)]
     fn gregorian_date_time_to_ms_impl(
         &self,

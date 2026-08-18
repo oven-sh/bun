@@ -1,3 +1,4 @@
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import assert from "node:assert";
@@ -143,6 +144,62 @@ describe("path long inputs", () => {
     expect(() => path.posix.resolve("/abs", 1, "x")).toThrow('The "paths[1]" argument must be of type string');
     expect(path.win32.resolve(1, "C:\\abs", "x")).toBe("C:\\abs\\x");
     expect(() => path.win32.resolve(1, "\\abs", "x")).toThrow('The "paths[0]" argument must be of type string');
+  });
+
+  // The limit is lowered (its floor is 1 MiB) so that the inputs stay small. It applies to
+  // the strings the implementation builds, not to inputs it slices or hands back unchanged.
+  // The assertions run after the limit is restored so that a failure can be rendered.
+  test("results past the string length limit throw ERR_STRING_TOO_LONG", () => {
+    const limit = 2 * 1024 * 1024;
+    const root = "/c/" + Buffer.alloc(limit - 6, "a").toString(); // limit - 3 characters
+    const over = root + "/bcd"; // limit + 1 characters
+    const outcome = fn => {
+      let result;
+      try {
+        result = fn();
+      } catch (e) {
+        return `${e.code}: ${e.message}`;
+      }
+      if (result === root) return "equal to root";
+      if (result === over) return "equal to over";
+      return result.length > 100 ? `some other string of ${result.length} characters` : result;
+    };
+    const results = {};
+    const previousLimit = setSyntheticAllocationLimitForTesting(limit);
+    try {
+      for (const name of ["posix", "win32"]) {
+        const ns = path[name];
+        results[name] = {
+          join: outcome(() => ns.join(root, "bcd")),
+          resolve: outcome(() => ns.resolve(root, "bcd")),
+          relative: outcome(() => ns.relative("/c/x/y/z", root)), // "../../.." followed by the a's
+          normalize: outcome(() => ns.normalize(over)),
+          dirname: outcome(() => ns.dirname(over)),
+          basename: outcome(() => ns.basename(over)),
+        };
+      }
+    } finally {
+      setSyntheticAllocationLimitForTesting(previousLimit);
+    }
+    const tooLong = `ERR_STRING_TOO_LONG: Cannot create a string longer than ${limit} characters`;
+    expect(results).toEqual({
+      posix: {
+        join: tooLong,
+        resolve: tooLong,
+        relative: tooLong,
+        normalize: "equal to over",
+        dirname: "equal to root",
+        basename: "bcd",
+      },
+      win32: {
+        join: tooLong,
+        resolve: tooLong,
+        relative: tooLong,
+        normalize: tooLong, // the separators change, so a new string is needed
+        dirname: "equal to root",
+        basename: "bcd",
+      },
+    });
   });
 });
 

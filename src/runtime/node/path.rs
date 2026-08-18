@@ -20,9 +20,7 @@ use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
 use bun_paths::PathChar;
 
-use crate::jsc::{
-    self, CallFrame, ErrorCode, JSFunction, JSGlobalObject, JSString, JSValue, JsError, JsResult,
-};
+use crate::jsc::{self, CallFrame, JSFunction, JSGlobalObject, JSString, JSValue, JsResult};
 
 // ───────────────────────────── code units ──────────────────────────────
 
@@ -418,19 +416,6 @@ fn substring(global: &JSGlobalObject, input: &Input<'_>, start: Index, end: Inde
 /// A result exceeded the maximum JS string length.
 struct TooLong;
 
-#[cold]
-fn throw_too_long(global: &JSGlobalObject) -> JsError {
-    global
-        .err(
-            ErrorCode::STRING_TOO_LONG,
-            format_args!(
-                "Cannot create a string longer than {} characters",
-                bun_core::String::max_length()
-            ),
-        )
-        .throw()
-}
-
 /// Guards a total computed from several argument lengths before it is used to
 /// size a buffer; anything past the JS string limit could never be returned.
 #[inline]
@@ -442,14 +427,14 @@ fn check_length(len: usize) -> Result<usize, TooLong> {
     }
 }
 
-/// A new JSString with the given characters.
+/// A new JSString with the given characters (`ERR_STRING_TOO_LONG` past the
+/// string limit).
 fn to_js<C: Unit>(global: &JSGlobalObject, chars: &[C]) -> JsResult<JSValue> {
-    check_length(chars.len()).map_err(|_| throw_too_long(global))?;
-    Ok(if C::IS_U16 {
+    if C::IS_U16 {
         JSValue::from_utf16(global, bytemuck::cast_slice(chars))
     } else {
         JSValue::from_latin1(global, bytemuck::cast_slice(chars))
-    })
+    }
 }
 
 /// When the result turns out to be identical to an input, hand back that cell
@@ -467,12 +452,12 @@ fn to_js_reusing<C: Unit>(
 
 #[inline]
 fn dot_string(global: &JSGlobalObject) -> JSValue {
-    JSValue::from_latin1(global, b".")
+    JSValue::js_single_character_string(global, CHAR_DOT)
 }
 
 #[inline]
 fn empty_string(global: &JSGlobalObject) -> JSValue {
-    JSValue::from_latin1(global, b"")
+    JSValue::js_empty_string(global)
 }
 
 // ────────────────────────────── buffers ─────────────────────────────────
@@ -979,9 +964,10 @@ mod posix {
         // Trim leading forward slashes.
         let mut from_buf: Buf<C> = Buf::new();
         let mut to_buf: Buf<C> = Buf::new();
-        let from =
-            resolve1::<C>(from_in, cwd, &mut from_buf).map_err(|_| throw_too_long(global))?;
-        let to = resolve1::<C>(to_in, cwd, &mut to_buf).map_err(|_| throw_too_long(global))?;
+        let from = resolve1::<C>(from_in, cwd, &mut from_buf)
+            .map_err(|_| global.throw_string_too_long())?;
+        let to =
+            resolve1::<C>(to_in, cwd, &mut to_buf).map_err(|_| global.throw_string_too_long())?;
 
         if from == to {
             return Ok(empty_string(global));
@@ -1772,7 +1758,7 @@ mod win32 {
                 Chars::Utf16(s) => Chars::Utf16(returned_cwd(s, out16)),
             });
         }
-        let too_long = |_| throw_too_long(global);
+        let too_long = |_| global.throw_string_too_long();
         Ok(if st.all_8bit {
             Chars::Latin1(resolve_build::<u8>(&st, out8).map_err(too_long)?)
         } else {
@@ -2607,7 +2593,7 @@ fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
             ($C:ty) => {{
                 let mut out: Buf<$C> = Buf::new();
                 match posix::resolve::<$C>(&parts, &mut out) {
-                    Err(TooLong) => Err(throw_too_long(global)),
+                    Err(TooLong) => Err(global.throw_string_too_long()),
                     Ok(result) if stack.len() == 1 => to_js_reusing(global, result, &stack[0]),
                     Ok(result) => to_js(global, result),
                 }
@@ -2637,7 +2623,7 @@ fn resolve<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRes
             &mut cwd,
             &mut cwd_storage,
         )?;
-        let too_long = |_| throw_too_long(global);
+        let too_long = |_| global.throw_string_too_long();
         let result = if let Some(returned) = st.return_cwd {
             with_chars!(returned.chars, |s| {
                 if cfg!(windows) || index_of(s, CHAR_FORWARD_SLASH, 0) == -1 {
@@ -2718,7 +2704,7 @@ fn join<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsResult
             } else {
                 posix::join::<$C>(&paths, &mut joined, &mut out)
             };
-            let result = result.map_err(|_| throw_too_long(global))?;
+            let result = result.map_err(|_| global.throw_string_too_long())?;
             if paths.len() == 1 {
                 return to_js_reusing(global, result, &single);
             }
@@ -2784,7 +2770,7 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
             Some(cwd) => cwd.is_8bit(),
             None => st.all_8bit,
         };
-        let too_long = |_| throw_too_long(global);
+        let too_long = |_| global.throw_string_too_long();
         macro_rules! finish {
             ($C:ty) => {{
                 let mut from_out: Buf<$C> = Buf::new();

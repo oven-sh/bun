@@ -3284,16 +3284,24 @@ static JSC::EncodedJSValue toJSStringCopyingSpan(JSC::VM& vm, std::span<const Ch
 }
 }
 
-// A new JSString with a copy of the given Latin-1 characters. `length <= String::MaxLength`.
+// A new JSString with a copy of the given Latin-1 characters. The Rust caller
+// (JSValue::from_latin1) has already checked `length` against the string limit.
 extern "C" JSC::EncodedJSValue JSC__JSValue__fromLatin1(JSC::JSGlobalObject* globalObject, const Latin1Character* characters, size_t length)
 {
     return toJSStringCopyingSpan(globalObject->vm(), std::span { characters, length });
 }
 
-// A new JSString with a copy of the given UTF-16 code units. `length <= String::MaxLength`.
+// A new JSString with a copy of the given UTF-16 code units. The Rust caller
+// (JSValue::from_utf16) has already checked `length` against the string limit.
 extern "C" JSC::EncodedJSValue JSC__JSValue__fromUTF16(JSC::JSGlobalObject* globalObject, const char16_t* characters, size_t length)
 {
     return toJSStringCopyingSpan(globalObject->vm(), std::span { characters, length });
+}
+
+// The VM's shared one-character string; never allocates.
+extern "C" JSC::EncodedJSValue JSC__JSValue__jsSingleCharacterString(JSC::JSGlobalObject* globalObject, Latin1Character character)
+{
+    return JSC::JSValue::encode(JSC::jsSingleCharacterString(globalObject->vm(), character));
 }
 
 bool JSC__JSString__is8Bit(const JSC::JSString* arg0) { return arg0->is8Bit(); };

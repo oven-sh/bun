@@ -1135,6 +1135,37 @@ describe("importModuleDynamically", () => {
     expect(exitCode).toBe(0);
   });
 
+  test("a thenable or a Promise subclass returned by the callback is settled too", async () => {
+    const mod = await synthetic({ v: "settled" });
+    expect(await importV(() => ({ then: (resolve: (value: unknown) => void) => resolve(mod) }))).toBe("settled");
+    class Sub extends Promise<unknown> {
+      static get [Symbol.species]() {
+        return Promise;
+      }
+    }
+    expect(await importV(() => Sub.resolve(mod))).toBe("settled");
+  });
+
+  test("a status, error, or namespace getter that throws rejects the import() with that error", async () => {
+    for (const property of ["status", "namespace"]) {
+      const mod = await synthetic({ v: 1 });
+      Object.defineProperty(mod, property, {
+        get() {
+          throw new RangeError(`${property} getter`);
+        },
+      });
+      await expect(importV(() => mod)).rejects.toThrow(`${property} getter`);
+    }
+    const mod = await synthetic({ v: 1 });
+    Object.defineProperty(mod, "status", { value: "errored" });
+    Object.defineProperty(mod, "error", {
+      get() {
+        throw new RangeError("error getter");
+      },
+    });
+    await expect(importV(() => mod)).rejects.toThrow("error getter");
+  });
+
   test("callback exceptions and rejections reject the import()", async () => {
     await expect(
       importV(() => {

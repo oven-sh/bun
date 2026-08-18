@@ -57,6 +57,12 @@ test("base64 module containing a '.' keeps its named exports", async () => {
   expect(mod.f.m).toBe(1);
 });
 
+test("raw unencoded module containing a '.' keeps its named exports", async () => {
+  const mod = await import("data:text/javascript,export const value = Math.max(1, 2);");
+  expect(Object.keys(mod)).toEqual(["value"]);
+  expect(mod.value).toBe(2);
+});
+
 test.each([
   "text/javascript",
   "text/javascript;charset=utf-8",

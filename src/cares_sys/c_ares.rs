@@ -1524,7 +1524,6 @@ unsafe extern "C" {
     ) -> c_int;
     pub fn ares_free_hostent(host: *mut struct_hostent);
     pub fn ares_free_data(dataptr: *mut c_void);
-    pub safe fn ares_strerror(code: c_int) -> *const u8;
 }
 
 #[repr(C)]

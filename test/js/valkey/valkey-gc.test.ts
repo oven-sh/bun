@@ -158,7 +158,10 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
 
   // close() during the retry delay has no socket close event to run through:
   // it disarms the retry timer and runs the close path by hand, so it must
-  // take no ref of its own for that path to release.
+  // take no ref of its own for that path to release. After close() nothing
+  // else keeps the worker alive, and terminate() on a worker that has already
+  // exited reports that exit instead; the timer keeps it running until
+  // terminate() ends it like the other cases.
   test.concurrent(
     "worker.terminate(): after close() during the retry delay",
     () =>
@@ -168,6 +171,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
           client.incr("k").catch(() => {});
           while (client.connected) await Bun.sleep(1);
           client.close();
+          setTimeout(() => {}, 1 << 30);
           parentPort.postMessage("closed");
         });`,
         true,

@@ -1616,8 +1616,10 @@ describe("Valkey: Recovering After fail()", () => {
         socket: { data() {}, open() {}, close() {}, error() {} },
       });
       try {
-        // connect() arms the connect timer before it returns; the deadline
-        // measured from here is at or after the real one.
+        // connect() arms the connect timer before it returns, so the real
+        // deadline is at or shortly after the one computed from here: a dial
+        // before this one is before the real one too, and the callback sleeps
+        // 100ms past it to be past the real one as well.
         const armedAt = performance.now();
         const attempt = client.connect().then(
           () => "connected",

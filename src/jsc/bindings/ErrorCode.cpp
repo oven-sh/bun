@@ -1806,6 +1806,9 @@ JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, co
 
 JSC::JSObject* Bun::createInvalidThisError(JSC::JSGlobalObject* globalObject, JSC::JSValue thisValue, const ASCIILiteral typeName)
 {
+    if (!thisValue.isEmpty())
+        thisValue = thisValue.toThis(globalObject, JSC::ECMAMode::strict());
+
     if (thisValue.isEmpty() || thisValue.isUndefined()) {
         return Bun::createError(globalObject, Bun::ErrorCode::ERR_INVALID_THIS, makeString("Expected this to be instanceof "_s, typeName));
     }

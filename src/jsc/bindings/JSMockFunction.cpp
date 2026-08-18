@@ -810,7 +810,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionCall, (JSGlobalObject * lexicalGlobalObje
     }
 
     JSC::ArgList args = JSC::ArgList(callframe);
-    JSValue thisValue = callframe->thisValue();
+    JSValue thisValue = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
     JSC::JSArray* argumentsArray = nullptr;
     {
         JSC::ObjectInitializationScope object(vm);
@@ -1248,7 +1248,7 @@ JSC_DEFINE_HOST_FUNCTION(jsMockFunctionGetter_mockGetLastCall, (JSC::JSGlobalObj
 {
     auto& vm = JSC::getVM(globalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSValue thisObject = callframe->thisValue();
+    JSValue thisObject = callframe->thisValue().toThis(globalObject, ECMAMode::strict());
     if (!thisObject.isObject()) [[unlikely]] {
         return JSValue::encode(jsUndefined());
     }

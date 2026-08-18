@@ -1006,9 +1006,8 @@ test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR q
     const received = once(socket, "message");
     const promise = resolver.resolve("naptr.example.test", rrtype);
     const [query] = await received;
-    let off = 12;
-    while (query[off] !== 0) off += query[off] + 1;
-    expect(query.readUInt16BE(off + 1)).toBe(35);
+    // QNAME ends at the first zero byte after the 12-byte header; QTYPE follows it.
+    expect(query.readUInt16BE(query.indexOf(0, 12) + 1)).toBe(35);
     resolver.cancel();
     expect(await promise.catch(err => err)).toMatchObject({ code: "ECANCELLED", syscall: "queryNaptr" });
   } finally {

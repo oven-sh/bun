@@ -597,6 +597,66 @@ describe("Valkey: Recovering After fail()", () => {
       fake.server.close();
     }
   });
+
+  test("a connection that stays silent after the handshake is closed by its idle timeout", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    // The timer is armed with connectionTimeout when the socket is dialed, and
+    // accepting HELLO is what switches it to idleTimeout. With connectionTimeout
+    // off, the idle timeout is the only thing that can close this connection.
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, {
+      connectionTimeout: 0,
+      idleTimeout: 50,
+      autoReconnect: false,
+    });
+    try {
+      // Once for a first connection, once for the one connect() dials after it.
+      for (const connection of [1, 2]) {
+        const closed = Promise.withResolvers<Error>();
+        client.onclose = err => closed.resolve(err);
+        await client.connect();
+        expect(client.connected).toBe(true);
+        expect(await closed.promise).toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+        expect(client.connected).toBe(false);
+        expect(fake.connections).toBe(connection);
+      }
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("data from the server restarts the idle timeout", async () => {
+    let pushes = 0;
+    const fake = helloServer({
+      // PING is answered with 30 pushes 20ms apart, at least 600ms of traffic,
+      // and never with PONG. A client that is not subscribed discards them, so
+      // restarting its idle timer is all they can do.
+      PING: (_, socket) => {
+        const timer = setInterval(() => {
+          socket.write(">2\r\n$7\r\nmessage\r\n$2\r\nhi\r\n");
+          if (++pushes === 30) clearInterval(timer);
+        }, 20);
+        socket.on("close", () => clearInterval(timer));
+        return null;
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { idleTimeout: 400, autoReconnect: false });
+    try {
+      await client.connect();
+      // Every push restarts the 400ms idle timer armed by the handshake, so it
+      // runs out, rejecting PING, 400ms after the last push, not in the middle
+      // of them.
+      await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_IDLE_TIMEOUT" });
+      expect(pushes).toBe(30);
+      expect(client.connected).toBe(false);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
   test("connected reads false inside onclose when the server drops an established connection", async () => {
     // Connection 1 is dropped by the server right after it answers PING.
     const fake = helloServer({

@@ -243,7 +243,7 @@ test("matchesGlob compiles patterns per platform", () => {
 // lib/path.js calls process.cwd(), so replacing it (e.g. with a test double) is
 // observable through resolve()/relative().
 test("path.resolve() and path.relative() use an overridden process.cwd()", () => {
-  const originalCwd = process.cwd;
+  const originalDescriptor = Object.getOwnPropertyDescriptor(process, "cwd");
   try {
     const fake = process.platform === "win32" ? "C:\\fake\\dir" : "/fake/dir";
     process.cwd = () => fake;
@@ -256,8 +256,25 @@ test("path.resolve() and path.relative() use an overridden process.cwd()", () =>
     expect(path.posix.resolve()).toBe(".");
     expect(path.posix.resolve("a/..", "b")).toBe("b");
     expect(path.win32.resolve("a", "..")).toBe(".");
+
+    // It is called exactly as often as lib/path.js calls it: posix.resolve() with nothing but
+    // '' or '.' reads it for the fast path and, when that does not yield an absolute path, again.
+    let calls = 0;
+    let answer = "/abs";
+    process.cwd = () => (calls++, answer);
+    expect([path.posix.resolve(), calls]).toEqual(["/abs", 1]);
+    [answer, calls] = ["", 0];
+    expect([path.posix.resolve("."), calls]).toEqual([".", 2]);
+    calls = 0;
+    expect([path.posix.resolve("a"), calls]).toEqual(["a", 1]);
+
+    // lib/path.js reads process.cwd as an ordinary property, so an accessor works as well.
+    Object.defineProperty(process, "cwd", { get: () => () => "/from/getter", configurable: true });
+    expect(path.posix.resolve("x")).toBe("/from/getter/x");
+    Object.defineProperty(process, "cwd", { get: () => "not callable", configurable: true });
+    expect(() => path.posix.resolve("x")).toThrow(TypeError);
   } finally {
-    process.cwd = originalCwd;
+    Object.defineProperty(process, "cwd", originalDescriptor);
   }
   expect(path.resolve()).toBe(process.cwd());
 });

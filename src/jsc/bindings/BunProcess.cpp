@@ -4647,10 +4647,15 @@ extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexica
     auto& vm = JSC::getVM(globalObject);
     auto* process = globalObject->processObject();
     // The static-table property is only materialized once it has been read or written.
-    if (JSValue custom = process->getDirect(vm, builtinNames(vm).cwdPublicName())) [[unlikely]] {
-        auto* function = dynamicDowncast<JSFunction>(custom);
+    const auto& name = builtinNames(vm).cwdPublicName();
+    if (JSValue direct = process->getDirect(vm, name)) [[unlikely]] {
+        auto* function = dynamicDowncast<JSFunction>(direct);
         if (!function || !function->isHostFunction() || function->nativeFunction() != Process_functionCwd) {
             auto scope = DECLARE_THROW_SCOPE(vm);
+            // `direct` is the raw slot, i.e. a GetterSetter when `cwd` was redefined as an
+            // accessor; `process.cwd` in lib/path.js is a [[Get]], so do the same.
+            JSValue custom = process->get(globalObject, name);
+            RETURN_IF_EXCEPTION(scope, {});
             auto callData = JSC::getCallData(custom);
             if (callData.type == CallData::Type::None) [[unlikely]] {
                 JSC::throwTypeError(globalObject, scope, "process.cwd is not a function"_s);

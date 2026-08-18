@@ -1848,9 +1848,9 @@ pub mod command {
                 "The \"react\" template has been deprecated.\n\
 It is recommended to use \"react-app\" or \"vite\" instead.\n\n\
 To create a project using Create React App, run\n\n\
-  <d>bun create react-app<r>\n\n\
+\x20 <d>bun create react-app<r>\n\n\
 To create a React project using Vite, run\n\n\
-  <d>bun create vite<r>\n\n\
+\x20 <d>bun create vite<r>\n\n\
 Then select \"React\" from the list of frameworks.\n"
             );
             Global::exit(1);
@@ -1861,7 +1861,7 @@ Then select \"React\" from the list of frameworks.\n"
             pretty_errorln!(
                 "<yellow>warn: No template <b>create-next<r> found.\n\
 To create a project with the official Next.js scaffolding tool, run\n\
-  <b>bun create next-app <cyan>[destination]<r>"
+\x20 <b>bun create next-app <cyan>[destination]<r>"
             );
             Global::exit(1);
         }
@@ -2187,27 +2187,7 @@ Execute a shell script directly from Bun.
                 pm_print_help(PmSubcommand::Prune);
             }
             Tag::InfoCommand => {
-                pretty!(
-                    "\
-<b>Usage<r>: <b><green>bun info<r> <cyan>[flags]<r> <blue>\\<package\\><r><d>\\<@version\\><r> <blue>[property path]<r>
-  Display package metadata from the registry.
-
-<b>Examples:<r>
-  <d>View basic information about a package<r>
-  <b><green>bun info<r> <blue>react<r>
-
-  <d>View specific version<r>
-  <b><green>bun info<r> <blue>react@18.0.0<r>
-
-  <d>View specific property<r>
-  <b><green>bun info<r> <blue>react<r> version
-  <b><green>bun info<r> <blue>react<r> dependencies
-  <b><green>bun info<r> <blue>react<r> versions
-
-Full documentation is available at <magenta>https://bun.com/docs/cli/info<r>
-"
-                );
-                Output::flush();
+                pm_print_help(PmSubcommand::Info);
             }
             Tag::WhyCommand => {
                 pretty!(

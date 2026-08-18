@@ -22,36 +22,6 @@ afterAll(async () => {
 });
 
 describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
-  async function setupTestWithDependencies() {
-    const testDir = tempDirWithFiles(`why-${i++}`, {
-      "package.json": JSON.stringify(
-        {
-          name: "test-package",
-          version: "1.0.0",
-          dependencies: {
-            "lodash": "^4.17.21",
-            "react": "^18.0.0",
-          },
-          devDependencies: {
-            "@types/react": "^18.0.0",
-          },
-        },
-        null,
-        2,
-      ),
-    });
-
-    const install = spawn({
-      cmd: [bunExe(), "install", "--lockfile-only"],
-      cwd: testDir,
-      env: bunEnv,
-    });
-
-    expect(await install.exited).toBe(0);
-
-    return testDir;
-  }
-
   async function setupComplexDependencyTree() {
     const testDir = tempDirWithFiles(`why-complex-${i++}`, {
       "package.json": JSON.stringify(
@@ -87,17 +57,36 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
   }
 
   it("should show help when no package is specified", async () => {
-    const testDir = await setupTestWithDependencies();
+    using testDir = tempDir(`why-usage-${i++}`, {
+      "package.json": JSON.stringify({ name: "test-package", version: "1.0.0" }),
+    });
 
     const { stdout, exited } = spawn({
       cmd: [bunExe(), ...cmd.split(" ")],
-      cwd: testDir,
+      cwd: String(testDir),
       env: bunEnv,
       stdout: "pipe",
       stderr: "pipe",
     });
 
-    expect(await stdout.text()).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
+    const [banner, ...usage] = (await stdout.text()).replaceAll("\r\n", "\n").split("\n");
+    expect(banner).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
+    expect(usage).toEqual([
+      "Explain why a package is installed",
+      "",
+      "Arguments:",
+      "  <package>     The package name to explain (supports glob patterns like '@org/*')",
+      "",
+      "Options:",
+      "  --top         Show only the top dependency tree instead of nested ones",
+      "  --depth <NUM> Maximum depth of the dependency tree to display",
+      "",
+      "Examples:",
+      "  $ bun why react",
+      '  $ bun why "@types/*" --depth 2',
+      '  $ bun why "*-lodash" --top',
+      "",
+    ]);
     expect(await exited).toBe(1);
   });
 

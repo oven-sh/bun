@@ -38,6 +38,48 @@ describe("should not crash", async () => {
   }
 });
 
+describe.concurrent("retired template names point at the replacement command", () => {
+  const cases: [string, string][] = [
+    [
+      "react",
+      `The "react" template has been deprecated.
+It is recommended to use "react-app" or "vite" instead.
+
+To create a project using Create React App, run
+
+  bun create react-app
+
+To create a React project using Vite, run
+
+  bun create vite
+
+Then select "React" from the list of frameworks.
+`,
+    ],
+    [
+      "next",
+      `warn: No template create-next found.
+To create a project with the official Next.js scaffolding tool, run
+  bun create next-app [destination]
+`,
+    ],
+  ];
+  it.each(cases)("bun create %s", async (template, expected) => {
+    using dir = tempDir("create-retired-template", {});
+    await using proc = spawn({
+      cmd: [bunExe(), "create", template],
+      cwd: String(dir),
+      env,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr.replaceAll("\r\n", "\n")).toBe(expected);
+    expect(stdout).toBe("");
+    expect(exitCode).toBe(1);
+  });
+});
+
 it("should create selected template with @ prefix", async () => {
   const { stderr, exited } = spawn({
     cmd: [bunExe(), "create", "@quick-start/some-template"],

@@ -724,8 +724,7 @@ impl ValkeyClient {
                         // After draining, check if the *new* head is pipelineable and schedule flush if needed.
                         // This covers sequences like NON_PIPE -> PIPE -> PIPE ...
                         if self.queue.front().is_some_and(|head| {
-                            head.meta
-                                .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+                            head.meta.contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
                         }) {
                             self.register_auto_flusher(self.vm);
                         }
@@ -1123,10 +1122,11 @@ impl ValkeyClient {
                     | protocol::SubscriptionPushMessage::Unsubscribe,
                 ) => {
                     // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                    if !self.in_flight.front().is_some_and(|pair| {
-                        pair.meta
-                            .contains(command::Meta::SUBSCRIPTION_REQUEST)
-                    }) {
+                    if !self
+                        .in_flight
+                        .front()
+                        .is_some_and(|pair| pair.meta.contains(command::Meta::SUBSCRIPTION_REQUEST))
+                    {
                         should_consume_promise_pair = false;
                     }
                 }
@@ -1324,9 +1324,7 @@ impl ValkeyClient {
         // doesn't support pipelining, we should wait for in-flight commands to complete
         if !self.in_flight.is_empty()
             && let Some(head) = self.queue.front()
-            && !head
-                .meta
-                .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+            && !head.meta.contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
         {
             return false;
         }

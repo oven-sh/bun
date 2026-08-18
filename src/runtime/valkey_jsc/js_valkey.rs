@@ -1610,13 +1610,12 @@ impl JSValkeyClient {
         memory_cost += client.read_buffer.byte_list.capacity() as usize;
 
         // Add queue sizes
-        memory_cost += client.in_flight.len()
-            * core::mem::size_of::<super::valkey_command::PromisePair>();
+        memory_cost +=
+            client.in_flight.len() * core::mem::size_of::<super::valkey_command::PromisePair>();
         for command in client.queue.iter() {
             memory_cost += command.serialized_data.len();
         }
-        memory_cost +=
-            client.queue.len() * core::mem::size_of::<super::valkey_command::Entry>();
+        memory_cost += client.queue.len() * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
     }
 

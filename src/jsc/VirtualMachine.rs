@@ -4489,6 +4489,10 @@ impl VirtualMachine {
             }
         };
 
+        if result.rejects_bare_root_query(normalized_specifier, query_string) {
+            return Err(crate::CrateError::ModuleNotFound);
+        }
+
         if !self.macro_mode {
             self.has_any_macro_remappings =
                 self.has_any_macro_remappings || self.transpiler.options.macro_remap.count() > 0;

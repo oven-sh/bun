@@ -1,6 +1,6 @@
 // DevServer debugging features (canary and debug builds): the visualizer pages under `/_bun/`, the incremental graph feed behind them, and the `.bake-debug` source dumps.
 import { describe, expect } from "bun:test";
-import { isDebug } from "harness";
+import { isDebug, isWindows } from "harness";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import path from "node:path";
 import { Dev, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
@@ -373,7 +373,8 @@ function stripDumpHeader(dump: string, fileName: string, graph: "client" | "serv
   return dump.slice(header![0].length);
 }
 
-describe.skipIf(!hasBakeDebuggingFeatures)(".bake-debug dumps", () => {
+// On Windows the dump files fail to open with EINVAL (relative sub-path joining in dump_bundle); tracked in #39488.
+describe.skipIf(!hasBakeDebuggingFeatures || isWindows)(".bake-debug dumps", () => {
   devTest("client bundles are dumped to .bake-debug", {
     env: { BUN_BAKE_DUMP_SOURCES: "1" },
     files: {

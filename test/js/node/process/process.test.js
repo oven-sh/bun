@@ -1333,15 +1333,17 @@ describe.concurrent(() => {
          const before = list.length;
          require("node:zlib");
          if (process.moduleLoadList !== list) throw new Error("identity");
-         console.log(JSON.stringify({ hadZlib: list.slice(0, before).includes("NativeModule zlib"), last: list.at(-1), grew: list.length > before }));`,
+         const afterRequire = { hadZlib: list.slice(0, before).includes("NativeModule zlib"), last: list.at(-1), grew: list.length > before };
+         // A native module reached through the ES module loader is listed too.
+         await import("node:buffer");
+         console.log(JSON.stringify({ ...afterRequire, buffer: list.includes("Internal Binding buffer") }));`,
       ],
       env: bunEnv,
       stderr: "inherit",
     });
-    expect(await proc.stdout.text()).toBe(
-      JSON.stringify({ hadZlib: false, last: "NativeModule zlib", grew: true }) + "\n",
-    );
-    expect(await proc.exited).toBe(0);
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(JSON.stringify({ hadZlib: false, last: "NativeModule zlib", grew: true, buffer: true }) + "\n");
+    expect(exitCode).toBe(0);
   });
 
   it("dlopen args parsing", () => {

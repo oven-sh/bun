@@ -60,12 +60,14 @@ public:
     // named like Node ("NativeModule fs", "Internal Binding buffer"). The array is
     // created on first access and appended to on later loads.
     JSArray* moduleLoadList(JSGlobalObject* globalObject);
+    // Appends `id` to the load list. requireId()/createInternalModuleById do this;
+    // the ES module loader calls it for native modules it instantiates directly.
+    void recordLoad(JSGlobalObject* globalObject, VM& vm, Field id);
 
 private:
     JS_EXPORT_PRIVATE InternalModuleRegistry(VM&, Structure*);
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
     JSValue createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id);
-    void didLoad(JSGlobalObject* globalObject, VM& vm, Field id);
     void finishCreation(VM&);
 
     WriteBarrier<JSArray> m_moduleLoadList;

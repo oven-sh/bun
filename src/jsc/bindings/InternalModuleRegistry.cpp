@@ -178,7 +178,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
         value = createInternalModuleById(globalObject, vm, id);
         RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
-        didLoad(globalObject, vm, id);
+        recordLoad(globalObject, vm, id);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     return value;
@@ -187,10 +187,11 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 #include "InternalModuleRegistry+createInternalModuleById.h"
 #include "InternalModuleRegistry+names.h"
 
-void InternalModuleRegistry::didLoad(JSGlobalObject* globalObject, VM& vm, Field id)
+void InternalModuleRegistry::recordLoad(JSGlobalObject* globalObject, VM& vm, Field id)
 {
-    // Each id loads once, so this cannot overflow unless a builtin require cycle
-    // re-enters createInternalModuleById for an id that is still evaluating.
+    // Bounded: an id normally loads once, but a native module can be instantiated by
+    // both the ES module loader and require(), and a builtin require cycle could
+    // re-enter createInternalModuleById for an id that is still evaluating.
     if (m_loadCount < BUN_INTERNAL_MODULE_COUNT)
         m_loadOrder[m_loadCount++] = static_cast<uint8_t>(id);
     // putDirectIndex, not push: appending must not run Array.prototype setters or
@@ -226,7 +227,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);
-    registry->didLoad(lexicalGlobalObject, vm, static_cast<Field>(id));
+    registry->recordLoad(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(mod);
 }

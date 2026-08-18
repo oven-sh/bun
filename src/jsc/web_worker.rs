@@ -163,6 +163,8 @@ unsafe extern "C" {
     /// Loads node:worker_threads on a node:worker_threads worker (no-op for a
     /// Web Worker). `false` = it threw; the exception has been reported.
     safe fn Bun__NodeWorker__bootstrap(global: &JSGlobalObject) -> bool;
+    /// Serialize the builtin modules this thread parsed so sibling/child workers decode them.
+    safe fn Bun__publishBuiltinBytecodeForWorkers(global: &JSGlobalObject);
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
@@ -877,6 +879,7 @@ impl WebWorker {
         // so buffered postMessageToThread deliveries drain and the sender's
         // Atomics.waitAsync settles. WebWorker__entrySettled re-calls it as a no-op.
         WebWorker__entrySettled(vm.global());
+        Bun__publishBuiltinBytecodeForWorkers(vm.global());
 
         // The entry's evaluation outcome is checked once now and then after every
         // loop turn: a rejection (immediate, or a top-level await rejecting
@@ -1022,6 +1025,11 @@ impl WebWorker {
             vm.is_shutting_down = true;
             vm.on_exit();
             exit_code = i32::from(vm.exit_handler.exit_code);
+            // Everything this thread parsed while it ran is what the next worker
+            // is likely to need; hand it over before the VM goes away.
+            if !vm.global.is_null() {
+                Bun__publishBuiltinBytecodeForWorkers(vm.global());
+            }
             log!(
                 "[{}] shutdown: exit handlers done",
                 self.execution_context_id

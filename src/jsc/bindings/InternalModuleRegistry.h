@@ -5,6 +5,8 @@
 #include "BunClientData.h"
 #include "InternalModuleRegistry+numberOfModules.h"
 #include "_NativeModule.h"
+#include <JavaScriptCore/UnlinkedFunctionExecutable.h>
+#include <JavaScriptCore/SourceProvider.h>
 
 namespace Bun {
 using namespace JSC;
@@ -56,6 +58,12 @@ public:
 
     static JSC_DECLARE_HOST_FUNCTION(jsCreateInternalModuleById);
 
+    // Called on the thread that is about to spawn a Worker: serializes the JS builtin
+    // modules this VM has already loaded (as parsed so far) into the process-wide store
+    // that worker VMs decode from instead of parsing. No-op for modules already there.
+    void publishBytecodeForWorkers(JSGlobalObject*);
+    void rememberModuleExecutable(VM&, Field, UnlinkedFunctionExecutable*);
+
     // process.moduleLoadList: the modules this global has loaded, in load order,
     // named like Node ("NativeModule node:fs", "Internal Binding ..."). The array
     // is created on first access and appended to on later loads.
@@ -69,6 +77,10 @@ private:
     void finishCreation(VM&);
 
     WriteBarrier<JSArray> m_moduleLoadList;
+    // Root executable of each JS builtin this VM parsed itself (not decoded), kept so
+    // publishBytecodeForWorkers() can serialize it later.
+    WriteBarrier<UnlinkedFunctionExecutable> m_parsedExecutables[BUN_INTERNAL_MODULE_COUNT];
+    bool m_hasParsedExecutables { false };
     uint16_t m_loadCount { 0 };
     uint8_t m_loadOrder[BUN_INTERNAL_MODULE_COUNT];
 };

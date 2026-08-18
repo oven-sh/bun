@@ -90,11 +90,9 @@ static String pathFor(unsigned id)
 // Immortal bytes for `id`, or an empty span.
 static std::span<uint8_t> lookup(unsigned id)
 {
-    if (!directory())
-        return {};
     auto& st = store();
     Locker locker { st.lock };
-    if (!st.probed[id]) {
+    if (!st.probed[id] && directory()) {
         st.probed[id] = true;
         auto mapped = FileSystem::mapFile(pathFor(id), FileSystem::MappedFileMode::Private);
         if (mapped) {
@@ -105,18 +103,29 @@ static std::span<uint8_t> lookup(unsigned id)
     return st.payloads[id];
 }
 
+static size_t publishedSize(unsigned id)
+{
+    auto& st = store();
+    Locker locker { st.lock };
+    return st.payloads[id].size();
+}
+
 static void publish(unsigned id, std::span<const uint8_t> bytes)
 {
     auto& st = store();
     {
         Locker locker { st.lock };
-        if (!st.payloads[id].empty())
+        // Keep whichever encoding carries the most generated code. A replaced payload is
+        // left alive: decoders on other threads may still be reading it.
+        if (st.payloads[id].size() >= bytes.size())
             return;
         auto* copy = static_cast<uint8_t*>(fastMalloc(bytes.size()));
         memcpy(copy, bytes.data(), bytes.size());
         st.payloads[id] = { copy, bytes.size() };
         st.probed[id] = true;
     }
+    if (!directory() || !shouldGenerate())
+        return;
     auto path = pathFor(id);
     auto handle = FileSystem::openFile(path, FileSystem::FileOpenMode::Truncate);
     if (handle) {
@@ -127,7 +136,7 @@ static void publish(unsigned id, std::span<const uint8_t> bytes)
 
 } // namespace BuiltinBytecode
 
-static UnlinkedFunctionExecutable* createModuleExecutable(JSC::VM& vm, const SourceCode& source, const String& moduleName, unsigned id)
+static UnlinkedFunctionExecutable* createModuleExecutable(InternalModuleRegistry* registry, JSC::VM& vm, const SourceCode& source, const String& moduleName, unsigned id)
 {
     MonotonicTime before;
     if (BuiltinBytecode::verbose()) [[unlikely]]
@@ -152,10 +161,12 @@ static UnlinkedFunctionExecutable* createModuleExecutable(JSC::VM& vm, const Sou
         ConstructAbility::CannotConstruct,
         InlineAttribute::None);
 
+    registry->rememberModuleExecutable(vm, static_cast<InternalModuleRegistry::Field>(id), executable);
+
     if (BuiltinBytecode::shouldGenerate()) [[unlikely]] {
         BytecodeCacheError error;
         auto encodeStart = MonotonicTime::now();
-        RefPtr<CachedBytecode> cached = encodeFunctionExecutable(vm, executable, source, error);
+        RefPtr<CachedBytecode> cached = encodeFunctionExecutable(vm, executable, source, NestedCodeBlocks::GenerateAll, error);
         if (cached && !error.isValid()) {
             BuiltinBytecode::publish(id, cached->span());
             if (BuiltinBytecode::verbose())
@@ -187,7 +198,7 @@ static void generateAllBuiltinBytecode(JSC::VM& vm)
                 SourceOrigin(WTF::URL(makeString("builtin://"_s, name))), JSC::SourceTaintedOrigin::Untainted, name);
             UnlinkedFunctionExecutable* executable = createBuiltinExecutable(vm, source, Identifier::fromString(vm, name), ImplementationVisibility::Public, ConstructorKind::None, ConstructAbility::CannotConstruct, InlineAttribute::None);
             BytecodeCacheError error;
-            RefPtr<CachedBytecode> cached = encodeFunctionExecutable(vm, executable, source, error);
+            RefPtr<CachedBytecode> cached = encodeFunctionExecutable(vm, executable, source, NestedCodeBlocks::GenerateAll, error);
             if (!cached || error.isValid()) {
                 dataLogLn("[builtin-bytecode] FAILED ", name, error.isValid() ? makeString(": "_s, error.message()) : String());
                 continue;
@@ -214,7 +225,7 @@ JSC::JSValue generateModule(JSC::JSGlobalObject* globalObject, JSC::VM& vm, cons
     JSFunction* func
         = JSFunction::create(
             vm, globalObject,
-            createModuleExecutable(vm, source, moduleName, id)->link(vm, nullptr, source),
+            createModuleExecutable(uncheckedDowncast<Zig::GlobalObject>(globalObject)->internalModuleRegistry(), vm, source, moduleName, id)->link(vm, nullptr, source),
             static_cast<JSC::JSGlobalObject*>(globalObject));
 
     RETURN_IF_EXCEPTION(throwScope, {});
@@ -312,6 +323,10 @@ void InternalModuleRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_moduleLoadList);
+    if (thisObject->m_hasParsedExecutables) {
+        for (auto& slot : thisObject->m_parsedExecutables)
+            visitor.append(slot);
+    }
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalModuleRegistry);
@@ -357,6 +372,47 @@ void InternalModuleRegistry::didLoad(JSGlobalObject* globalObject, VM& vm, Field
     m_loadOrder[m_loadCount++] = static_cast<uint8_t>(id);
     if (auto* list = m_moduleLoadList.get())
         list->push(globalObject, jsString(vm, String(internalModuleNames[static_cast<uint8_t>(id)])));
+}
+
+void InternalModuleRegistry::rememberModuleExecutable(VM& vm, Field id, UnlinkedFunctionExecutable* executable)
+{
+    m_hasParsedExecutables = true;
+    m_parsedExecutables[static_cast<uint8_t>(id)].set(vm, this, executable);
+}
+
+void InternalModuleRegistry::publishBytecodeForWorkers(JSGlobalObject* globalObject)
+{
+    if (!m_hasParsedExecutables)
+        return;
+    VM& vm = globalObject->vm();
+    MonotonicTime start;
+    unsigned count = 0;
+    size_t bytes = 0;
+    if (BuiltinBytecode::verbose()) [[unlikely]]
+        start = MonotonicTime::now();
+    // AsIs encoding never touches the parent source; nested functions carry their own ranges.
+    SourceCode unusedSource;
+    for (unsigned id = 0; id < BUN_INTERNAL_MODULE_COUNT; id++) {
+        UnlinkedFunctionExecutable* executable = m_parsedExecutables[id].get();
+        if (!executable)
+            continue;
+        BytecodeCacheError error;
+        if (RefPtr<CachedBytecode> cached = encodeFunctionExecutable(vm, executable, unusedSource, NestedCodeBlocks::AsIs, error); cached && !error.isValid()) {
+            if (cached->span().size() > BuiltinBytecode::publishedSize(id)) {
+                BuiltinBytecode::publish(id, cached->span());
+                count++;
+                bytes += cached->span().size();
+            }
+        }
+    }
+    m_hasParsedExecutables = true;
+    if (BuiltinBytecode::verbose() && count) [[unlikely]]
+        dataLogLn("[builtin-bytecode] published ", count, " modules (", bytes, " bytes) for workers in ", (MonotonicTime::now() - start).milliseconds(), " ms");
+}
+
+extern "C" void Bun__publishBuiltinBytecodeForWorkers(Zig::GlobalObject* globalObject)
+{
+    globalObject->internalModuleRegistry()->publishBytecodeForWorkers(globalObject);
 }
 
 JSArray* InternalModuleRegistry::moduleLoadList(JSGlobalObject* globalObject)

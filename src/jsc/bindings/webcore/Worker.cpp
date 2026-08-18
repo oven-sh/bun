@@ -76,6 +76,11 @@ ExceptionOr<Ref<Worker>> Worker::create(ScriptExecutionContext& context, const S
         url = urlObject.fileSystemPath();
     }
 
+    // Let the new thread decode the builtin modules this thread already parsed
+    // instead of parsing them again.
+    if (auto* zigGlobal = dynamicDowncast<Zig::GlobalObject>(context.jsGlobalObject()))
+        zigGlobal->internalModuleRegistry()->publishBytecodeForWorkers(zigGlobal);
+
     auto worker = adoptRef(*new Worker(context, WTF::move(options)));
     worker->suspendIfNeeded();
 

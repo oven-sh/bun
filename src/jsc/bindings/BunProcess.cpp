@@ -4640,7 +4640,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
 
 // `process.cwd()` as node's lib/ code calls it: the cached JSString, unless the `cwd`
 // property has been replaced (e.g. by a test double), in which case that is called like
-// Node would. Returns {} with an exception pending on failure.
+// Node would and its result converted to a JSString. undefined and null are returned as
+// they are: what lib/path.js does with those depends on the call site (src/runtime/node/path.rs).
+// Returns {} with an exception pending on failure.
 extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -4663,11 +4665,8 @@ extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexica
             }
             JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, custom, callData, process, JSC::MarkedArgumentBuffer());
             RETURN_IF_EXCEPTION(scope, {});
-            // lib/path.js indexes into whatever came back, which throws for these two and
-            // stringifies anything else.
             if (result.isUndefinedOrNull()) [[unlikely]] {
-                JSC::throwTypeError(globalObject, scope, result.isNull() ? "process.cwd() returned null"_s : "process.cwd() returned undefined"_s);
-                return {};
+                return JSValue::encode(result);
             }
             auto* string = result.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});

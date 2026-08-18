@@ -286,9 +286,29 @@ test("path.resolve() and path.relative() use an overridden process.cwd()", () =>
     for (const value of [undefined, null]) {
       process.cwd = () => value;
       expect(() => path.posix.resolve("x")).toThrow(TypeError);
-      expect(() => path.win32.resolve()).toThrow(TypeError);
+      expect(() => path.win32.resolve("x")).toThrow(TypeError);
       expect(() => path.posix.relative("a", "b")).toThrow(TypeError);
     }
+    // The one exception: resolving a drive-relative path falls back to the drive's root when
+    // there is no cwd (undefined) at all, as it does when the cwd is on another drive.
+    // (Q: rather than C: because on Windows a `=C:` environment variable, the drive's own
+    // cwd, would take precedence over process.cwd().)
+    process.cwd = () => "C:\\elsewhere";
+    expect(path.win32.resolve("Q:foo")).toBe("Q:\\foo");
+    process.cwd = () => "Q:\\here";
+    expect(path.win32.resolve("Q:foo")).toBe("Q:\\here\\foo");
+    process.cwd = () => undefined;
+    expect([
+      path.win32.resolve("Q:foo"),
+      path.win32.resolve("q:", "foo"),
+      path.win32.resolve("Q:"),
+      path.win32.relative("Q:a", "Q:b"),
+      path.win32.toNamespacedPath("Q:foo"),
+    ]).toEqual(["Q:\\foo", "q:\\foo", "Q:\\", "..\\b", "\\\\?\\Q:\\foo"]);
+    process.cwd = () => null;
+    expect(() => path.win32.resolve("Q:foo")).toThrow(TypeError);
+    expect(() => path.win32.relative("Q:a", "Q:b")).toThrow(TypeError);
+    expect(() => path.win32.toNamespacedPath("Q:foo")).toThrow(TypeError);
 
     // lib/path.js reads process.cwd as an ordinary property, so an accessor works as well.
     Object.defineProperty(process, "cwd", { get: () => () => "/from/getter", configurable: true });

@@ -20,7 +20,9 @@ use bun_collections::smallvec::SmallVec;
 use bun_core::strings;
 use bun_paths::PathChar;
 
-use crate::jsc::{self, CallFrame, JSFunction, JSGlobalObject, JSString, JSValue, JsResult};
+use crate::jsc::{
+    self, CallFrame, JSFunction, JSGlobalObject, JSString, JSValue, JsError, JsResult,
+};
 
 // ───────────────────────────── code units ──────────────────────────────
 
@@ -346,7 +348,9 @@ impl<'a> Input<'a> {
 }
 
 unsafe extern "C" {
-    /// `process.cwd()` as its cached JSString (src/jsc/bindings/BunProcess.cpp).
+    /// `process.cwd()` as lib/path.js calls it (src/jsc/bindings/BunProcess.cpp): the cached
+    /// JSString or, once user code has replaced `process.cwd`, its result as a JSString, except
+    /// that undefined and null come back as they are.
     safe fn Bun__Process__getCachedCwd(global: &JSGlobalObject) -> JSValue;
     /// The parse() result object with its cached structure (src/jsc/bindings/ZigGlobalObject.cpp).
     fn PathParsedObject__create(
@@ -384,12 +388,35 @@ fn view_of<'a>(global: &JSGlobalObject, value: JSValue) -> JsResult<Input<'a>> {
     })
 }
 
-/// `process.cwd()`: the process object's cached string or, when user code has
-/// replaced `process.cwd`, whatever that returns (lib/path.js calls it too).
+/// `process.cwd()`, with `None` for the undefined a replaced `process.cwd` may
+/// return. lib/path.js indexes into the cwd, which throws for undefined and
+/// null alike, except in the drive-relative branch of win32.resolve()
+/// ([`win32::drive_cwd`]), which substitutes the drive's root for undefined
+/// (but still throws for null, as this does).
+#[inline]
+fn get_cwd_or_undefined<'a>(global: &JSGlobalObject) -> JsResult<Option<Input<'a>>> {
+    let value = jsc::call_zero_is_throw(global, || Bun__Process__getCachedCwd(global))?;
+    if value.is_undefined_or_null() {
+        if value.is_undefined() {
+            return Ok(None);
+        }
+        return Err(throw_nullish_cwd(global, "null"));
+    }
+    view_of(global, value).map(Some)
+}
+
+/// `process.cwd()` everywhere lib/path.js goes on to index into it.
 #[inline]
 fn get_cwd<'a>(global: &JSGlobalObject) -> JsResult<Input<'a>> {
-    let string = jsc::call_zero_is_throw(global, || Bun__Process__getCachedCwd(global))?;
-    view_of(global, string)
+    match get_cwd_or_undefined(global)? {
+        Some(cwd) => Ok(cwd),
+        None => Err(throw_nullish_cwd(global, "undefined")),
+    }
+}
+
+#[cold]
+fn throw_nullish_cwd(global: &JSGlobalObject, which: &str) -> JsError {
+    global.throw_type_error(format_args!("process.cwd() returned {which}"))
 }
 
 /// `validateString(value, name)`.
@@ -1508,70 +1535,56 @@ mod win32 {
             key.extend_from_slice(resolved_device);
             key.push(0);
             if let Some(value) = bun_sys::windows::getenv_w(&key).filter(|v| !v.is_empty()) {
-                // Verify that a cwd was found and that it actually points
-                // to our drive. If not, default to the drive's root.
+                // Verify that it actually points to our drive. If not, default to the
+                // drive's root.
                 let other_drive = value.len() > 2
                     && value[2] == CHAR_BACKWARD_SLASH as u16
                     && !equals_case_folded(&value[..2], resolved_device);
-                let p = if other_drive {
-                    let p = reserve(storage, resolved_device.len() + 1);
-                    p[..resolved_device.len()].copy_from_slice(resolved_device);
-                    p[resolved_device.len()] = CHAR_BACKWARD_SLASH as u16;
-                    p
-                } else {
-                    let p = reserve(storage, value.len());
-                    p.copy_from_slice(&value);
-                    p
-                };
-                let len = p.len();
+                if other_drive {
+                    return Ok(drive_root(resolved_device, storage));
+                }
+                reserve(storage, value.len()).copy_from_slice(&value);
                 let storage: &'a Buf<u16> = storage;
                 return Ok(Input {
                     string: JSValue::ZERO,
-                    chars: Chars::Utf16(&storage[..len]),
+                    chars: Chars::Utf16(&storage[..]),
                 });
             }
         }
-        let out = shared_cwd(global, cwd)?;
 
         // Verify that a cwd was found and that it actually points
         // to our drive. If not, default to the drive's root.
+        let Some(out) = get_cwd_or_undefined(global)? else {
+            return Ok(drive_root(resolved_device, storage));
+        };
+        *cwd = Some(out);
         let other_drive = with_chars!(out.chars, |p| {
             p.len() > 2
                 && p[2].as_u32() == CHAR_BACKWARD_SLASH as u32
                 && !equals_case_folded(js_slice(p, 0, 2), resolved_device)
         });
         if other_drive {
-            {
-                let p = reserve(storage, resolved_device.len() + 1);
-                p[..resolved_device.len()].copy_from_slice(resolved_device);
-                p[resolved_device.len()] = CHAR_BACKWARD_SLASH as u16;
-            }
-            let storage: &'a Buf<u16> = storage;
-            return Ok(Input {
-                string: JSValue::ZERO,
-                chars: Chars::Utf16(&storage[..]),
-            });
+            return Ok(drive_root(resolved_device, storage));
         }
         Ok(out)
     }
 
-    /// The one `process.cwd()` read of a resolve(), recorded in `cwd` so the caller can keep
-    /// it alive until the result has been built.
-    #[inline]
-    pub(super) fn shared_cwd<'a>(
-        global: &JSGlobalObject,
-        cwd: &mut Option<Input<'a>>,
-    ) -> JsResult<Input<'a>> {
-        if let Some(c) = cwd {
-            return Ok(*c);
+    /// `${resolvedDevice}\`, built in `storage`.
+    fn drive_root<'a>(resolved_device: &[u16], storage: &'a mut Buf<u16>) -> Input<'a> {
+        let p = reserve(storage, resolved_device.len() + 1);
+        p[..resolved_device.len()].copy_from_slice(resolved_device);
+        p[resolved_device.len()] = CHAR_BACKWARD_SLASH as u16;
+        let storage: &'a Buf<u16> = storage;
+        Input {
+            string: JSValue::ZERO,
+            chars: Chars::Utf16(&storage[..]),
         }
-        let c = get_cwd(global)?;
-        *cwd = Some(c);
-        Ok(c)
     }
 
     /// The argument-scanning half of `win32.resolve()`. `get_arg(i)` produces
-    /// argument `i` (running validateString for the JS entry point).
+    /// argument `i` (running validateString for the JS entry point). The
+    /// `process.cwd()` string, if one was read, is recorded in `cwd` so the
+    /// caller can keep it alive until the result has been built.
     pub(super) fn resolve_scan<'a>(
         global: &JSGlobalObject,
         arg_count: Index,
@@ -1596,7 +1609,8 @@ mod win32 {
                     continue;
                 }
             } else if st.device.is_empty() {
-                path = shared_cwd(global, cwd)?;
+                path = get_cwd(global)?;
+                *cwd = Some(path);
                 // Fast path for current directory
                 if arg_count == 0
                     || (arg_count == 1 && path.len() > 0 && is_path_separator::<W>(path.at(0)))

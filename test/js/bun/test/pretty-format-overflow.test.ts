@@ -66,7 +66,10 @@ describe.concurrent("pretty_format on a value deeper than the native stack", () 
   const depth = 100_000;
   const shapes = {
     array: `let v = []; for (let i = 0; i < ${depth}; i++) v = [v];`,
-    object: `let v = {}; for (let i = 0; i < ${depth}; i++) v = { k: v };`,
+    // The second key matters for the snapshot cases below: the property walk formats "k" and then
+    // goes on to "x", and it does not carry an exception thrown while formatting "k" back out, so
+    // refusing the snapshot must not rely on one.
+    object: `let v = {}; for (let i = 0; i < ${depth}; i++) v = { k: v, x: 1 };`,
     // React elements are formatted by their own arm (Tag::JSX), not the object one.
     "React element": `
       let v = "x";
@@ -111,21 +114,25 @@ describe.concurrent("pretty_format on a value deeper than the native stack", () 
     });
   }
 
-  test("toMatchSnapshot on a deep object throws instead of writing a truncated snapshot", async () => {
+  // The formatter throws the stack overflow RangeError; the snapshot matchers currently report it
+  // as "Failed to pretty format value" (#37334 changes them to rethrow the error itself).
+  const formattingFailed = /Maximum call stack size exceeded|Failed to pretty format value/;
+
+  test("toMatchSnapshot on a deep object fails instead of writing a truncated snapshot", async () => {
     const { stderr, exitCode, snapshotFileWritten } = await runDeepTest(
       `${shapes.object}\nexpect(v).toMatchSnapshot();`,
     );
-    expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
+    expect(stderr).toMatch(formattingFailed);
     expect(stderr).toContain("1 fail");
     expect(snapshotFileWritten).toBe(false);
     expect(exitCode).toBe(1);
   });
 
-  test("toMatchInlineSnapshot on a deep object throws instead of writing a truncated snapshot", async () => {
+  test("toMatchInlineSnapshot on a deep object fails instead of writing a truncated snapshot", async () => {
     const { stderr, exitCode, testFileRewritten } = await runDeepTest(
       `${shapes.object}\nexpect(v).toMatchInlineSnapshot();`,
     );
-    expect(stderr).toContain("RangeError: Maximum call stack size exceeded");
+    expect(stderr).toMatch(formattingFailed);
     expect(stderr).toContain("1 fail");
     expect(testFileRewritten).toBe(false);
     expect(exitCode).toBe(1);

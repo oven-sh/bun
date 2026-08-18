@@ -115,6 +115,21 @@ describe.concurrent("pretty_format and the native stack limit", () => {
     });
   }
 
+  // Asymmetric matchers are rendered through a separate entry point that used to wrap the writer
+  // once per level, so every write from deep inside the chain went through one extra frame per
+  // level below the stack check, and a release build still crashed after the check was added.
+  test("failing toEqual against a deep expect.objectContaining chain still prints a diff", async () => {
+    const { stderr, exitCode } = await runDeepTest(`
+      let v = expect.objectContaining({ leaf: 1 });
+      for (let i = 0; i < 50_000; i++) v = expect.objectContaining({ k: v });
+      expect({ k: 2 }).toEqual(v);
+    `);
+    expect(stderr).toContain("expect(received).toEqual(expected)");
+    expect(stderr).toContain('"k": ObjectContaining {');
+    expect(stderr).toContain("1 fail");
+    expect(exitCode).toBe(1);
+  });
+
   // The formatter throws the stack overflow RangeError; the snapshot matchers currently report it
   // as "Failed to pretty format value" (#37334 changes them to rethrow the error itself).
   const formattingFailed = /Maximum call stack size exceeded|Failed to pretty format value/;

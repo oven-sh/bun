@@ -129,13 +129,22 @@ test("native error printer handles lone surrogates in message and stack frame na
 // a Proxy through its target (a tag the formatter does not track for circular
 // references), error.cause through the error printer itself.
 describe("native error printer survives a deeply nested uncaught value", () => {
+  // Depths are sized so that an unfixed printer overflows on every platform,
+  // including the 18 MB main thread stack of the macOS and Windows builds (Linux
+  // has 8 MB): a release build spends at least about 175 bytes of stack per
+  // array or Proxy level, so 18 MB holds at most about 105k of them, and
+  // several KB per error level. A fixed printer stops at the stack limit, so
+  // the depth does not change how much it prints.
   const cases: [name: string, src: string][] = [
-    ["throw array", "let a = []; for (let i = 0; i < 50000; i++) a = [a]; throw a;"],
-    ["reject with array", "let a = []; for (let i = 0; i < 50000; i++) a = [a]; Promise.reject(a);"],
-    ["throw Proxy chain", "let a = {}; for (let i = 0; i < 50000; i++) a = new Proxy(a, {}); throw a;"],
+    ["throw array", "let a = []; for (let i = 0; i < 150_000; i++) a = [a]; throw a;"],
+    ["reject with array", "let a = []; for (let i = 0; i < 150_000; i++) a = [a]; Promise.reject(a);"],
+    [
+      "throw Proxy chain",
+      "const handler = {}; let a = {}; for (let i = 0; i < 150_000; i++) a = new Proxy(a, handler); throw a;",
+    ],
     [
       "throw error.cause chain",
-      "let e = new Error('root'); for (let i = 0; i < 10000; i++) e = new Error('wrap', { cause: e }); throw e;",
+      "let e = new Error('root'); for (let i = 0; i < 10_000; i++) e = new Error('wrap', { cause: e }); throw e;",
     ],
   ];
 

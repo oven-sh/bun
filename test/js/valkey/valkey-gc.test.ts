@@ -627,8 +627,7 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
 // after each collection whether the wrapper is really dead, and exits non-zero
 // unless at least one round reached that state and came back from the read.
 test.concurrent("a client closed and collected from within its own reply does not crash the socket read", async () => {
-  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
-  expect(stdout).toMatch(/^[1-9]\d* rounds? reached the window$/m);
-  expect(stderr).not.toContain("panic");
-  expect(exitCode).toBe(0);
+  const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
+  expect(result).toSpawn();
+  expect(result.stdout).toMatch(/^[1-9]\d* rounds? reached the window$/m);
 });

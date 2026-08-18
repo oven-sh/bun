@@ -25,7 +25,8 @@ enum ReservedConnectionState {
 
 interface TransactionState {
   connectionState: ReservedConnectionState;
-  reject: (err: Error) => void;
+  /// null once resolved: the rejecter retains the promise, whose value is the reserved client.
+  reject: ((err: Error) => void) | null;
   storedError?: Error | null | undefined;
   queries: Set<Query<any, any>>;
 }
@@ -48,6 +49,54 @@ function settleReservedTransaction(
   reservedTransaction.delete(finished.promise);
   finished.resolve();
   settle(value);
+}
+
+function onTransactionDisconnected(this: TransactionState, err: Error) {
+  const reject = this.reject;
+  this.connectionState |= ReservedConnectionState.closed;
+
+  for (const query of this.queries) {
+    query.reject(err);
+  }
+
+  if (err && reject !== null) {
+    return reject(err);
+  }
+}
+
+/// The pool side of one reserve(): what the connection's close handler and the
+/// collection callback need. Held by the pooled connection and by
+/// reservationRegistry, so it must not reference the client itself.
+interface Reservation {
+  pool: ReturnType<typeof adapterFromOptions>;
+  pooledConnection: any;
+  state: TransactionState;
+  onClose: ((err: Error) => void) | null;
+}
+
+function releaseReservation(reservation: Reservation) {
+  const state = reservation.state;
+  if (state.connectionState & ReservedConnectionState.released) return;
+  state.connectionState |= ReservedConnectionState.released;
+  reservation.pool.release(reservation.pooledConnection);
+}
+
+function onReservedConnectionClosed(this: Reservation, err: Error) {
+  onTransactionDisconnected.$call(this.state, err);
+  releaseReservation(this);
+}
+
+/// Releases clients that were garbage collected without release()/close().
+let reservationRegistry: FinalizationRegistry<Reservation> | undefined;
+function onReservationCollected(reservation: Reservation) {
+  const { pool, pooledConnection, state } = reservation;
+  if (state.connectionState & ReservedConnectionState.released) return;
+  state.connectionState |= ReservedConnectionState.closed;
+  state.connectionState &= ~ReservedConnectionState.acceptQueries;
+  if (pool.detachConnectionCloseHandler) {
+    pool.detachConnectionCloseHandler(pooledConnection, reservation.onClose!);
+  }
+  releaseReservation(reservation);
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -247,19 +296,6 @@ const SQL: typeof Bun.SQL = function SQL(
     }
   }
 
-  function onTransactionDisconnected(this: TransactionState, err: Error) {
-    const reject = this.reject;
-    this.connectionState |= ReservedConnectionState.closed;
-
-    for (const query of this.queries) {
-      query.reject(err);
-    }
-
-    if (err) {
-      return reject(err);
-    }
-  }
-
   const listenable = "listen" in pool ? pool : null;
   function validateChannel(channel: unknown): asserts channel is string {
     if (typeof channel !== "string" || channel.length === 0) {
@@ -338,19 +374,10 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    function releaseReservation() {
-      if (state.connectionState & ReservedConnectionState.released) return;
-      state.connectionState |= ReservedConnectionState.released;
-      pool.release(pooledConnection);
-    }
-
-    const onDisconnected = onTransactionDisconnected.bind(state);
-    function onClose(err: Error) {
-      onDisconnected(err);
-      releaseReservation();
-    }
+    const reservation: Reservation = { pool, pooledConnection, state, onClose: null };
+    reservation.onClose = onReservedConnectionClosed.bind(reservation);
     if (pooledConnection.onClose) {
-      pooledConnection.onClose(onClose);
+      pooledConnection.onClose(reservation.onClose);
     }
 
     function reserved_sql(strings: string | TemplateStringsArray | SQLHelper<any> | Query<any, any>, ...values: any[]) {
@@ -471,6 +498,7 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      reservationRegistry!.unregister(state);
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);
@@ -516,11 +544,12 @@ const SQL: typeof Bun.SQL = function SQL(
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
+      reservationRegistry!.unregister(state);
       // Use adapter method to detach connection close handler
       if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+        pool.detachConnectionCloseHandler(pooledConnection, reservation.onClose!);
       }
-      releaseReservation();
+      releaseReservation(reservation);
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions
@@ -532,6 +561,12 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
+    state.reject = null;
+    (reservationRegistry ??= new FinalizationRegistry(onReservationCollected)).register(
+      reserved_sql,
+      reservation,
+      state,
+    );
   }
 
   function onReserveConnectedWithSignal(this: ReserveAbortState, err: Error | null, pooledConnection) {

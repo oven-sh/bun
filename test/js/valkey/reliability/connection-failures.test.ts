@@ -1395,19 +1395,17 @@ describe("Valkey: Offline Queue", () => {
     // of the queue before the wrap point writes two GETs there and the other
     // three on a later, unrelated wake. The stub records how many GETs the
     // first read carrying a GET held, and holds the GET replies until it has
-    // all five so no reply can wake the child in between. The deadline only
-    // bounds the failure.
+    // all five so no reply can wake the child in between. It then answers all
+    // five, so the child exits and the count is asserted however the GETs
+    // arrived.
     let getsSeen = 0;
     let getsInFirstRead = 0;
-    const sockets: Bun.Socket<{ buffer: Buffer }>[] = [];
-    const allGetsSeen = Promise.withResolvers<void>();
     const server = Bun.listen<{ buffer: Buffer }>({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
         open(socket) {
           socket.data = { buffer: Buffer.alloc(0) };
-          sockets.push(socket);
         },
         error() {},
         close() {},
@@ -1426,13 +1424,11 @@ describe("Valkey: Offline Queue", () => {
           }
           if (replies) socket.write(replies);
           if (gets > 0 && getsSeen === 0) getsInFirstRead = gets;
+          const getsSeenBefore = getsSeen;
           getsSeen += gets;
-          if (getsSeen >= 5) allGetsSeen.resolve();
+          if (getsSeenBefore < 5 && getsSeen >= 5) socket.write("$1\r\nv\r\n".repeat(getsSeen));
         },
       },
-    });
-    const releaseReplies = Promise.race([allGetsSeen.promise, Bun.sleep(2000)]).then(() => {
-      for (const socket of sockets) socket.write("$1\r\nv\r\n".repeat(getsSeen));
     });
     try {
       await using proc = Bun.spawn({
@@ -1454,7 +1450,6 @@ describe("Valkey: Offline Queue", () => {
         stderr: "pipe",
       });
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      await releaseReplies;
       expect({ getsInFirstRead, stdout, stderr, exitCode }).toEqual({
         getsInFirstRead: 5,
         stdout: "5 replies\n",

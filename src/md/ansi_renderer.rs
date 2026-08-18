@@ -2524,7 +2524,7 @@ fn probe_background_luminance() -> Option<f32> {
                 break;
             }
             len += bun_sys::read(bun_sys::Fd::stdin(), &mut buf[len..]).ok()?;
-            if buf[..len].contains(&0x07)
+            if strings::contains_char(&buf[..len], 0x07)
                 || strings::index_of(&buf[..len], b"\x1b\\").is_some()
                 || len == buf.len()
             {

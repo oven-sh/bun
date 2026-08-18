@@ -590,6 +590,8 @@ fn read_dir_tree(root: &[u8]) -> Result<Tree, crate::Error> {
                 if !files_ok {
                     break 'package;
                 }
+                // pack's own error paths crash without unwinding: no status line to print over.
+                Status::clear();
                 let dir = bun_sys::Dir::from_fd(root_fd);
                 let (queue, _bins) = crate::cli::pack_command::published_files(
                     &dir,
@@ -789,7 +791,7 @@ fn fetch_registry_tree(
         }
         let tags: Vec<String> = manifest
             .dist_tags()
-            .map(|(t, v)| format!("{}: {}", BStr::new(t), v.fmt(&manifest.string_buf)))
+            .map(|(t, v)| format!("{}: {}", BStr::new(&defang(t)), v.fmt(&manifest.string_buf)))
             .collect();
         if !tags.is_empty() {
             bun_core::pretty_errorln!("<d>tags:<r> {}", tags.join(", "));

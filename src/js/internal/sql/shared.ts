@@ -64,9 +64,7 @@ type ArrayType =
   | "PG_DATABASE"
   | (string & {});
 export type { ArrayType, SQLArrayParameter, SQLResultArray };
-// Only the tagged-template path unwraps this (adapter.bindParam); the insert/update/in helpers and
-// sql.unsafe bind the object itself. Native binds string-like values as text and JSON-serializes
-// other objects, so this has to look like a string to reach the server as an array literal.
+// Helpers and sql.unsafe bind this object itself (only bindParam unwraps it). Native binds a String object as text.
 class SQLArrayParameter extends PublicString {
   serializedValues: string;
   arrayType: ArrayType;

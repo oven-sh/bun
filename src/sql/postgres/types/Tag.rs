@@ -179,6 +179,16 @@ pg_tags! {
 }
 
 impl Tag {
+    /// OID 0: Parse left the parameter type unspecified and the server infers it.
+    /// `Signature::generate` declares every non-numeric parameter this way. Bind
+    /// still sees this tag when it is written before the server's
+    /// ParameterDescription arrives, which is always the case for unnamed
+    /// statements (`prepare: false`). Such a parameter is sent as text, and the
+    /// server parses that text as whatever type it inferred.
+    pub fn is_unspecified(self) -> bool {
+        self.0 == 0
+    }
+
     pub fn is_binary_format_supported(self) -> bool {
         match self {
             // TODO: .int2_array, .float8_array,

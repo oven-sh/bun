@@ -4638,11 +4638,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCwd, (JSC::JSGlobalObject * globalObjec
     return JSValue::encode(getCachedCwd(globalObject));
 }
 
-// `process.cwd()` as node's lib/ code calls it: the cached JSString, unless the `cwd`
-// property has been replaced (e.g. by a test double), in which case that is called like
-// Node would and its result converted to a JSString. undefined and null are returned as
-// they are: what lib/path.js does with those depends on the call site (src/runtime/node/path.rs).
-// Returns {} with an exception pending on failure.
+// `process.cwd()` as node's lib/ code calls it. Normally this is the cached JSString. If user
+// code has replaced the `cwd` property (e.g. with a test double), the replacement is called
+// instead and its result is converted to a JSString, except that undefined and null are
+// returned unchanged: what lib/path.js does with those depends on the call site
+// (src/runtime/node/path.rs). Returns {} with an exception pending on failure.
 extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);

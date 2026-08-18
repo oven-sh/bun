@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN } from "harness";
 import net from "node:net";
+import { join } from "node:path";
 
 // Fuzzer found a heap-use-after-free: connect()'s tls_ctx_failed branch
 // called on_valkey_close() before the socket keep-alive ref was taken, so
@@ -617,4 +618,15 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
   expect(stdout.trim()).toBe("OK");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// Closing a client from the continuation of its last reply and collecting
+// before the socket read returns used to panic ("unreachable" in
+// subscription_callback_map): the collector had found the wrapper dead but
+// finalize() had not run yet. The fixture sets that up deterministically and
+// fails on its own if the wrapper survives the collection.
+test.concurrent("a client closed and collected from within its own reply does not crash the socket read", async () => {
+  expect(await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"))).toSpawn(
+    ["round 0 survived", "round 1 survived", "round 2 survived"].join("\n"),
+  );
 });

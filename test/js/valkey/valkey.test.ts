@@ -7579,16 +7579,3 @@ describe("RedisClient command methods", () => {
     expect(typeof RedisClient.prototype[name]).toBe("function");
   });
 });
-
-describe("RedisClient lifecycle", () => {
-  // The tests above close their client from the continuation of its last
-  // reply; with the test runner collecting after every expect() that used to
-  // panic ("unreachable" in subscription_callback_map) once the collector had
-  // found the wrapper dead before the socket read returned. The fixture sets
-  // that up deterministically.
-  test("a client closed and collected from within its own reply does not crash the socket read", async () => {
-    expect(await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"))).toSpawn(
-      ["round 0 survived", "round 1 survived", "round 2 survived"].join("\n"),
-    );
-  });
-});

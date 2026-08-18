@@ -2,9 +2,10 @@
 // last reference to it and collects, all before the socket read that delivered
 // the reply has returned. The read then finishes up on a client whose JS
 // wrapper is dead but not finalized yet. Prints one line per round that
-// survives that.
+// survives that, and throws if a round never got the wrapper collected inside
+// the read, so a run that misses the window fails instead of passing vacuously.
 import { RedisClient } from "bun";
-import { fullGC } from "bun:jsc";
+import { jscInternals } from "bun:internal-for-testing";
 
 const CRLF = "\r\n";
 const bulk = (s: string) => `$${Buffer.byteLength(s)}${CRLF}${s}${CRLF}`;
@@ -30,12 +31,23 @@ using server = Bun.listen({
 // some time after the collection.
 const lowerTier = Array.from({ length: 8 }, () => new RedisClient("redis://127.0.0.1:1", { autoReconnect: false }));
 
+let address: bigint;
+
 async function useAndCloseClient() {
-  const client = new RedisClient(`redis://127.0.0.1:${server.port}`, { autoReconnect: false });
+  let client: RedisClient | undefined = new RedisClient(`redis://127.0.0.1:${server.port}`, {
+    autoReconnect: false,
+  });
+  address = jscInternals.rawCellAddress(client);
   await client.connect();
   await client.get("k");
   // Still inside the socket read that delivered the GET reply.
   client.close();
+  // A suspended async function keeps its locals in a heap frame that is only
+  // rewritten for variables still live at the next await, so clear the
+  // variable and keep it live across one more suspension.
+  client = undefined;
+  await null;
+  return client;
 }
 
 async function hop() {
@@ -52,7 +64,10 @@ for (let round = 0; round < 3; round++) {
   const nextTick = new Promise<void>(resolve => setTimeout(resolve, 0));
   // Synchronous collection without a sweep: the wrapper is dead and not
   // finalized when this microtask drain returns into the socket read.
-  fullGC();
+  jscInternals.collectSyncWithoutSweep();
+  if (jscInternals.isLiveCellAtRawAddress(address!)) {
+    throw new Error(`round ${round}: the wrapper survived the collection, the window was not reached`);
+  }
   // Return into the socket read before anything else happens.
   await nextTick;
   console.log(`round ${round} survived`);

@@ -5236,6 +5236,21 @@ impl DevServer {
 
         let _g = self.graph_safety_lock.guard();
 
+        // `server.reload()` re-registers known html files; reuse their bundles.
+        if let route_bundle::UnresolvedIndex::Html(html) = route {
+            // SAFETY: the caller keeps `html` alive; this runs on the JS thread.
+            let html_ref = unsafe { &*html };
+            if let Some(existing) = self
+                .client_graph
+                .bundled_files
+                .get(&html_ref.bundle.path)
+                .and_then(|file| file.html_route_bundle_index)
+            {
+                html_ref.dev_server_id.set(Some(existing));
+                return Ok(existing);
+            }
+        }
+
         let bundle_index =
             route_bundle::Index::init(u32::try_from(self.route_bundles.len()).expect("int cast"));
 

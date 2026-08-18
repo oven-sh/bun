@@ -155,13 +155,9 @@ function applyHandlers(handlers, emitter, args) {
 }
 
 function addCatch(emitter, thenable, type, args) {
-  // `emit` is swapped per-instance (and on the prototype by the static
-  // `captureRejections` setter), so an emitter can reach here with capture
-  // turned off for it specifically. Re-read the flag the way node does.
+  // The prototype may hold the capturing emit while this instance opted out.
   if (!emitter[kCapture]) return;
-  // Any thenable counts, not just a real Promise. Per Promises/A+ `then` may be
-  // a getter, and reading it exactly once is observable, so cache it and let a
-  // throwing getter surface as an 'error' event.
+  // Promises/A+: `then` may be a getter, so read it once; a throw is an 'error' event.
   try {
     const then = thenable.then;
     if (typeof then === "function") {
@@ -277,8 +273,6 @@ const emitWithRejectionCapture = function emit(type, ...args) {
         result = handler.$apply(this, args);
         break;
     }
-    // Not just promises: any thenable the handler returns participates in
-    // rejection capture. `addCatch` duck-types `then`.
     if (result !== undefined && result !== null) {
       addCatch(this, result, type, args);
     }
@@ -970,9 +964,8 @@ Object.defineProperties(EventEmitter, {
       validateBoolean(value, "EventEmitter.captureRejections");
 
       EventEmitterPrototype[kCapture] = value;
-      // Emitters whose constructor never ran (`inherits()` without a super call) have
-      // no own `emit`, so the capturing variant reaches them through the prototype.
-      // Only swap our own function: a userland `emit` patch has to survive a toggle.
+      // Reaches emitters with no own `emit` (constructor never ran). Swap only our own
+      // function so a userland `emit` patch survives a toggle.
       const emit = EventEmitterPrototype.emit;
       if (emit === emitWithoutRejectionCapture || emit === emitWithRejectionCapture) {
         EventEmitterPrototype.emit = value ? emitWithRejectionCapture : emitWithoutRejectionCapture;

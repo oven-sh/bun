@@ -1660,6 +1660,7 @@ dependencies = [
  "bun_zstd",
  "bytemuck",
  "const_format",
+ "encoding_rs",
  "enum-map",
  "enumset",
  "getrandom",

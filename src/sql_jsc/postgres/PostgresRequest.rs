@@ -165,23 +165,16 @@ pub(crate) fn write_bind<Context: WriterContext>(
             tag
         };
 
-        // OID 0 is what Signature::generate declared for every non-numeric
-        // value (the server infers the type). It is still the tag here when
-        // Bind is written before the server's ParameterDescription arrives,
-        // which is always the case on the unnamed-statement (prepare: false)
-        // path. Such parameters are sent in text format either way, so send
-        // the text form of the type Signature inferred instead of the generic
-        // toString() below: the server rejects "[object Object]" for json and
-        // Date.prototype.toString() output for timestamps.
-        if effective_tag == types::Tag(0) {
+        if effective_tag.is_unspecified() {
+            // Send the text form of the type Signature inferred for the value.
+            // The toString() output of the generic arm is not valid json or timestamp input.
             match crate::postgres::types::tag_jsc::from_js(global, value)
                 .map_err(js_error_to_postgres)?
             {
                 types::Tag::json => effective_tag = types::Tag::json,
                 types::Tag::timestamptz => {
                     let mut buf = [0u8; 64];
-                    // None for an invalid Date, which falls through to
-                    // toString() and is rejected by the server.
+                    // An invalid Date has no ISO form and falls through to toString().
                     if let Some(iso) = value.to_iso_string(global, &mut buf) {
                         let l = writer.length()?;
                         writer.write(iso)?;

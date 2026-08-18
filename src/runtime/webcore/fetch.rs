@@ -34,6 +34,10 @@ pub(crate) fn fetch_type_error_string(value: bun_jsc::JSValue) -> &'static str {
 #[path = "fetch/FetchTasklet.rs"]
 pub mod fetch_tasklet;
 
+#[path = "fetch/FetchRequestBodySink.rs"]
+pub mod fetch_request_body_sink;
+pub use self::fetch_request_body_sink::FetchRequestBodySink;
+
 #[path = "fetch/compress_body.rs"]
 pub mod compress_body;
 
@@ -78,8 +82,8 @@ use bun_s3_signing::{SignOptions, SignResult};
 use bun_url::PercentEncoding;
 use bun_url::URL as ZigURL;
 
-pub use self::fetch_tasklet::FetchTasklet;
 use self::fetch_tasklet::{FetchOptions, HTTPRequestBody};
+pub use self::fetch_tasklet::{FetchTasklet, FetchTaskletDeinitHop};
 
 // ──────────────────────────────────────────────────────────────────────────
 // Local extension shims (upstream methods not yet ported / not in scope)
@@ -345,10 +349,15 @@ fn reject_on_exception(
 ) -> JsResult<JSValue> {
     let err = match result {
         Ok(v) if !v.is_empty() => return Ok(v),
-        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Err(jsc::JsError::OutOfMemory) => global_this.create_out_of_memory_error(),
+        // A terminated worker gets no rejected promise: its termination keeps unwinding.
+        Ok(_) | Err(jsc::JsError::Thrown | jsc::JsError::Terminated)
+            if global_this.has_pending_termination_exception() =>
+        {
+            return Err(jsc::JsError::Thrown);
+        }
+        Err(jsc::JsError::Terminated) => return Err(jsc::JsError::Terminated),
         Ok(_) | Err(jsc::JsError::Thrown) => match global_this.try_take_exception() {
-            Some(exc) if exc.is_termination_exception() => return Err(jsc::JsError::Terminated),
             Some(exc) => exc.to_error().unwrap_or(exc),
             None => {
                 // `fetch_impl` only returns Ok(ZERO)/Err(Thrown) with an exception
@@ -392,9 +401,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     let vm = VirtualMachine::get().as_mut();
 
     let mut upgraded_connection = false;
-    let mut force_http2 = false;
-    let mut force_http3 = false;
-    let mut force_http1 = false;
+    let mut forced_protocol: Option<http::Protocol> = None;
 
     if callframe.arguments_count() == 0 {
         let err = ctx.to_type_error(
@@ -641,8 +648,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "decompress: boolean"
     disable_decompression = 'extract_disable_decompression: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -671,8 +678,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "compress: boolean | string | { encoding, level? }"
     'extract_compress: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -698,8 +705,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "maxRedirects: number"
     'extract_max_redirects: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -736,8 +743,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // "tls: TLSConfig"
     ssl_config = 'extract_ssl_config: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -793,8 +800,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // unix: string | undefined
     unix_socket_path = 'extract_unix_socket_path: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -820,8 +827,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // protocol: "http2" | "h2" | "http1.1" | "h1" | undefined.
     'extract_protocol: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -830,11 +837,11 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         let str =
                             bun_core::OwnedString::new(protocol_val.to_bun_string(global_this)?);
                         if str.eql_comptime(b"http2") || str.eql_comptime(b"h2") {
-                            force_http2 = true;
+                            forced_protocol = Some(http::Protocol::Http2);
                         } else if str.eql_comptime(b"http3") || str.eql_comptime(b"h3") {
-                            force_http3 = true;
+                            forced_protocol = Some(http::Protocol::Http3);
                         } else if str.eql_comptime(b"http1.1") || str.eql_comptime(b"h1") {
-                            force_http1 = true;
+                            forced_protocol = Some(http::Protocol::Http1_1);
                         } else {
                             return Err(global_this.throw_invalid_arguments(
                                 format_args!("fetch: 'protocol' must be \"http2\", \"h2\", \"http3\", \"h3\", \"http1.1\", or \"h1\""),
@@ -850,8 +857,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // timeout: false | number | undefined
     disable_timeout = 'extract_disable_timeout: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -901,8 +908,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
         // Then check options/init objects which can override the Request's redirect
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -929,8 +936,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // keepalive: boolean | undefined;
     disable_keepalive = 'extract_disable_keepalive: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -959,8 +966,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // verbose: boolean | "curl" | undefined;
     verbose = 'extract_verbose: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
 
         for obj in objects_to_try {
@@ -992,8 +999,8 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     // `defer if (proxy_headers) |*hdrs| hdrs.deinit();` → Headers impls Drop.
     url_proxy_buffer = 'extract_proxy: {
         let objects_to_try = [
-            options_object.unwrap_or(JSValue::ZERO),
-            request_init_object.unwrap_or(JSValue::ZERO),
+            options_object.unwrap_or_default(),
+            request_init_object.unwrap_or_default(),
         ];
         for obj in objects_to_try {
             if !obj.is_empty() {
@@ -1155,7 +1162,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         }
 
         if let Some(req) = request_mut!() {
-            if let Some(signal_) = req.signal.get() {
+            if let Some(signal_) = req.abort_signal() {
                 break 'extract_signal NonNull::new(signal_.ref_());
             }
             break 'extract_signal None;
@@ -1236,7 +1243,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if matches!(*body_value, BodyValue::Locked(_)) {
-                if let Some(readable) = req.get_body_readable_stream(global_this) {
+                if let Some(readable) = req.get_body_readable_stream() {
                     if readable.is_disturbed(global_this) || readable.is_locked(global_this) {
                         return Err(global_this
                             .err(
@@ -1254,7 +1261,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                     if locked.readable.has() {
                         break 'extract_body Some(HTTPRequestBody::ReadableStream(
                             readable_stream::Strong::init(
-                                locked.readable.get(global_this).unwrap(),
+                                locked.readable.get().unwrap(),
                                 global_this,
                             ),
                         ));
@@ -1266,7 +1273,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         if locked.readable.has() {
                             break 'extract_body Some(HTTPRequestBody::ReadableStream(
                                 readable_stream::Strong::init(
-                                    locked.readable.get(global_this).unwrap(),
+                                    locked.readable.get().unwrap(),
                                     global_this,
                                 ),
                             ));
@@ -1386,10 +1393,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             }
 
             if let Some(upgrade_) = headers_ref.fast_get(HTTPHeaderName::Upgrade) {
-                let upgrade = upgrade_.to_slice();
-                // `defer upgrade.deinit()` → Drop.
-                let slice = upgrade.slice();
-                if slice != b"h2" && slice != b"h2c" {
+                if http::upgrade_header_is_not_h2(upgrade_.to_slice().slice()) {
                     upgraded_connection = true;
                 }
             }
@@ -1625,12 +1629,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
     if let Some(sig) = signal.0 {
         let sig = bun_ptr::BackRef::from(sig);
         if sig.aborted() {
-            // `abort_reason()` is the stored `m_reason` (same object as
-            // `signal.reason`), not a reconstructed DOMException.
-            let reason = sig.abort_reason();
+            let reason = sig.js_reason(global_this);
             if let HTTPRequestBody::ReadableStream(stream_ref) = &body {
-                if let Some(stream) = stream_ref.get(global_this) {
-                    stream.cancel_with_reason(global_this, reason);
+                if let Some(stream) = stream_ref.get() {
+                    stream.cancel_with_reason(global_this, reason)?;
                 }
             }
             body.detach();
@@ -1749,11 +1751,6 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
 
                     let original_size = body.any_blob().blob().size.get();
                     let stat_size = blob::SizeType::try_from(stat.st_size).expect("int cast");
-                    let blob_size = if bun_sys::S::ISREG(stat.st_mode as u32) {
-                        stat_size
-                    } else {
-                        original_size.min(stat_size)
-                    };
                     let blob_offset = body.any_blob().blob().offset.get();
 
                     // `http::SendFile` fields are `usize`; blob sizes/offsets
@@ -1762,7 +1759,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                         fd: opened_fd,
                         remain: (blob_offset + original_size) as usize,
                         offset: blob_offset as usize,
-                        content_size: blob_size as usize,
+                        content_size: original_size.min(stat_size) as usize,
                     };
 
                     if bun_sys::S::ISREG(stat.st_mode as u32) {
@@ -1773,6 +1770,9 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
                             .max(sf.offset)
                             .min(stat_size_usize)
                             .saturating_sub(sf.offset);
+                        // `remain` is now the exact byte count we will send (the slice
+                        // window clamped to the file); that is the Content-Length.
+                        sf.content_size = sf.remain;
                     }
                     body.detach();
                     body = HTTPRequestBody::Sendfile(sf);
@@ -1954,7 +1954,7 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
             let _ = s3::upload_stream(
                 credentials_with_options.credentials.dupe(),
                 s3_path,
-                readable_stream.get(global_this).unwrap(),
+                readable_stream.get().unwrap(),
                 global_this,
                 credentials_with_options.options,
                 credentials_with_options.acl,
@@ -2087,13 +2087,10 @@ fn fetch_impl<const ALLOW_GET_BODY: bool>(
         proxy_headers: proxy_headers.take(),
         url_proxy_buffer: url_proxy_boxed,
         signal: signal.take(),
-        global_this: Some(global_this.into()),
         ssl_config: ssl_config.take(),
         hostname: hostname.take(),
         upgraded_connection,
-        force_http2,
-        force_http3,
-        force_http1,
+        forced_protocol,
         is_node_http_client: ALLOW_GET_BODY,
         compress,
         check_server_identity: if check_server_identity.is_empty_or_undefined_or_null() {
@@ -2133,7 +2130,7 @@ struct S3StreamWrapper<'a> {
 }
 
 impl<'a> S3StreamWrapper<'a> {
-    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> Result<(), bun_jsc::JsTerminated> {
+    fn resolve(result: s3::S3UploadResult, self_: *mut Self) -> JsResult<()> {
         // SAFETY: self_ was created via heap::alloc in fetch_impl; we reclaim
         // ownership here exactly once on the resolve callback.
         let mut self_ = unsafe { bun_core::heap::take(self_) };

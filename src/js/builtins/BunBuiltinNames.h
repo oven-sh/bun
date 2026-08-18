@@ -33,7 +33,6 @@ using namespace JSC;
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
-    macro(TextEncoderStreamEncoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
     macro(WritableStream) \
@@ -57,13 +56,11 @@ using namespace JSC;
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
     macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
     macro(checkBufferRead) \
     macro(checks) \
-    macro(cloneArrayBuffer) \
     macro(close) \
     macro(cmd) \
     macro(code) \
@@ -78,10 +75,8 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
     macro(drain) \
-    macro(encode) \
     macro(encoding) \
     macro(end) \
     macro(errno) \
@@ -111,6 +106,8 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
@@ -175,7 +172,7 @@ using namespace JSC;
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(setHandlers) \
+    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
@@ -187,7 +184,6 @@ using namespace JSC;
     macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
     macro(text) \
     macro(textDecoder) \

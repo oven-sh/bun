@@ -99,6 +99,12 @@ impl StandaloneModuleGraph {
         INSTANCE.get().map(|cell| cell.0.get())
     }
 
+    /// Read-only lookups. Use `get()` when mutating per-`File` lazy caches.
+    pub fn get_ref() -> Option<&'static StandaloneModuleGraph> {
+        // SAFETY: `Instance` is `Sync`; the `&self` methods touch only the immutable tables.
+        INSTANCE.get().map(|cell| unsafe { &*cell.0.get() })
+    }
+
     pub fn set(instance: StandaloneModuleGraph) -> *mut StandaloneModuleGraph {
         let _ = INSTANCE.set(Instance(core::cell::UnsafeCell::new(instance)));
         INSTANCE.get().unwrap().0.get()
@@ -160,11 +166,32 @@ impl StandaloneModuleGraph {
         self.find_assume_standalone_path(name)
     }
 
-    pub fn stat(&mut self, name: &[u8]) -> Option<Stat> {
+    fn lookup_file(&self, name: &[u8]) -> Option<&File> {
+        #[cfg(windows)]
+        {
+            let mut buf = PathBuffer::uninit();
+            return self.files.get(normalize_file_key(name, &mut buf));
+        }
+        #[cfg(not(windows))]
+        self.files.get(name)
+    }
+
+    pub fn find_ref(&self, name: &[u8]) -> Option<&File> {
         if !is_bun_standalone_file_path(name) {
             return None;
         }
-        if let Some(file) = self.find_assume_standalone_path(name) {
+        self.lookup_file(name)
+    }
+
+    pub fn contains_file(&self, name: &[u8]) -> bool {
+        self.find_ref(name).is_some()
+    }
+
+    pub fn stat(&self, name: &[u8]) -> Option<Stat> {
+        if !is_bun_standalone_file_path(name) {
+            return None;
+        }
+        if let Some(file) = self.lookup_file(name) {
             return Some(file.stat());
         }
         if self.find_dir(name) {
@@ -175,10 +202,7 @@ impl StandaloneModuleGraph {
 
     fn normalize_dir_path<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
         #[cfg(windows)]
-        let name = {
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            &*path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
-        };
+        let name = normalize_file_key(name, buf);
         #[cfg(not(windows))]
         let _ = buf;
         let mut name = name;
@@ -242,17 +266,18 @@ impl StandaloneModuleGraph {
     pub fn find_assume_standalone_path(&mut self, name: &[u8]) -> Option<&mut File> {
         #[cfg(windows)]
         {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            return self.files.get_mut(normalized);
+            let mut buf = PathBuffer::uninit();
+            return self.files.get_mut(normalize_file_key(name, &mut buf));
         }
         #[cfg(not(windows))]
-        {
-            self.files.get_mut(name)
-        }
+        self.files.get_mut(name)
     }
+}
+
+#[cfg(windows)]
+fn normalize_file_key<'a>(name: &'a [u8], buf: &'a mut PathBuffer) -> &'a [u8] {
+    let input = strings::paths::without_nt_prefix::<u8>(name);
+    path::resolve_path::platform_to_posix_buf::<u8>(input, buf)
 }
 
 // SAFETY: the graph is the process-global INSTANCE singleton (set once at
@@ -277,24 +302,11 @@ unsafe impl Sync for StandaloneModuleGraph {}
 /// blob/sourcemap caching path.
 impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
     fn find_assume_standalone_path(&self, name: &[u8]) -> Option<&[u8]> {
-        #[cfg(windows)]
-        let file = {
-            let mut normalized_buf = PathBuffer::uninit();
-            let input = strings::paths::without_nt_prefix::<u8>(name);
-            let normalized =
-                path::resolve_path::platform_to_posix_buf::<u8>(input, &mut normalized_buf);
-            self.files.get(normalized)
-        };
-        #[cfg(not(windows))]
-        let file = self.files.get(name);
-        file.map(|f| f.name)
+        self.lookup_file(name).map(|f| f.name)
     }
 
     fn find(&self, name: &[u8]) -> Option<&[u8]> {
-        if !is_bun_standalone_file_path(name) {
-            return None;
-        }
-        <Self as bun_resolver::StandaloneModuleGraph>::find_assume_standalone_path(self, name)
+        self.find_ref(name).map(|f| f.name)
     }
 
     fn base_public_path_with_default_suffix(&self) -> &'static [u8] {
@@ -430,12 +442,17 @@ mod elf {
         if vaddr == 0 {
             return None;
         }
-        // BUN_COMPILED.size holds the virtual address of the appended data.
-        // The kernel mapped it via PT_LOAD, so we can dereference directly.
+        // BUN_COMPILED.size holds the link-time virtual address of the
+        // appended data. For a PIE executable (mandatory on Android) the
+        // kernel maps every PT_LOAD at that vaddr plus a load bias, which is
+        // `dlpi_addr` of the object containing BUN_COMPILED itself; for
+        // non-PIE it is 0.
         // Format at target: [u64 payload_len][payload bytes]
         // Synthesize a `*mut u8` directly so the provenance carries write
         // permission for the in-place bytecode mutation done by JSC.
-        let target = vaddr as *mut u8;
+        let load_bias =
+            bun_sys::elf::find_loaded_module(vaddr_ptr as usize).map_or(0, |m| m.base_address);
+        let target = (vaddr as usize).wrapping_add(load_bias) as *mut u8;
         // SAFETY: target points to 8-byte little-endian length prefix.
         let payload_len =
             u64::from_le_bytes(unsafe { core::ptr::read_unaligned(target.cast::<[u8; 8]>()) });
@@ -471,8 +488,7 @@ impl File {
     }
 
     pub fn stat(&self) -> Stat {
-        // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-        let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+        let mut result: Stat = bun_core::ffi::zeroed();
         result.st_size = self.contents.len() as _;
         // `Stat` is `libc::stat` (POSIX) / `uv_stat_t` (Windows, `st_mode: u64`).
         result.st_mode = (libc::S_IFREG | 0o644) as _;
@@ -503,8 +519,7 @@ impl File {
 }
 
 fn dir_stat() -> Stat {
-    // SAFETY: all-zero is a valid `libc::stat` (POD `#[repr(C)]`).
-    let mut result: Stat = unsafe { bun_core::ffi::zeroed_unchecked() };
+    let mut result: Stat = bun_core::ffi::zeroed();
     result.st_mode = (libc::S_IFDIR | 0o755) as _;
     result
 }
@@ -1083,7 +1098,7 @@ pub(crate) fn to_bytes(
         flags,
     };
 
-    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `sliceAsBytes` rationale as above.
+    // SAFETY: `Offsets` is `#[repr(C)]` POD; same `modules_as_bytes` rationale as above.
     let offsets_as_bytes: &[u8] = unsafe {
         core::slice::from_raw_parts((&raw const offsets).cast::<u8>(), size_of::<Offsets>())
     };
@@ -1164,12 +1179,50 @@ impl CompileResult {
     }
 }
 
-pub(crate) fn inject(
+/// The temp copy of the executable that `inject` wrote the module graph into:
+/// its open fd plus the absolute path it was created at, which the caller
+/// renames into place (an fd cannot be mapped back to a path on every
+/// filesystem).
+pub(crate) struct Injected<'a> {
+    pub fd: Fd,
+    pub temp_path: &'a ZStr,
+}
+
+impl<'a> Injected<'a> {
+    /// `zname` was opened relative to `cwd` (or is already absolute); pin it in
+    /// `temp_path_buf` so a later `chdir` cannot retarget the rename/unlink.
+    fn new(fd: Fd, cwd: &[u8], zname: &ZStr, temp_path_buf: &'a mut PathBuffer) -> Injected<'a> {
+        let len = path::resolve_path::join_abs_string_buf_z::<path::platform::Auto>(
+            cwd,
+            &mut temp_path_buf[..],
+            &[zname.as_bytes()],
+        )
+        .len();
+        Injected {
+            fd,
+            temp_path: ZStr::from_buf(&temp_path_buf[..], len),
+        }
+    }
+}
+
+pub(crate) fn inject<'a>(
     bytes: &[u8],
     self_exe: &ZStr,
     inject_options: &InjectOptions,
     target: &CompileTarget,
-) -> Fd {
+    temp_path_buf: &'a mut PathBuffer,
+) -> Option<Injected<'a>> {
+    let mut cwd_buf = bun_paths::path_buffer_pool::get();
+    let cwd: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
+        Ok(len) => &cwd_buf[..len],
+        Err(err) => {
+            bun_core::pretty_errorln!(
+                "<r><red>error<r><d>:<r> failed to get the current directory\n{}",
+                err
+            );
+            return None;
+        }
+    };
     let mut buf = PathBuffer::uninit();
     // Note: `tmpname` borrows `buf` mutably for the &ZStr it returns. The
     // tmpdir-fallback retry below may need to repoint `zname` at a heap-owned
@@ -1191,7 +1244,7 @@ pub(crate) fn inject(
                 "<r><red>error<r><d>:<r> failed to get temporary file name: {}",
                 bstr::BStr::new(e.name())
             );
-            return Fd::INVALID;
+            return None;
         }
     };
 
@@ -1231,7 +1284,7 @@ pub(crate) fn inject(
                     e.to_system_errno()
                         .unwrap_or(bun_sys::SystemErrno::EUNKNOWN)
                 );
-                return Fd::invalid();
+                return None;
             }
             let out = &out_buf[..zname.len()];
             let file = match Syscall::open_file_at_windows(
@@ -1250,7 +1303,7 @@ pub(crate) fn inject(
                         "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
                         e
                     );
-                    return Fd::invalid();
+                    return None;
                 }
             };
 
@@ -1324,9 +1377,14 @@ pub(crate) fn inject(
                                 bun_sys::E::EPERM | bun_sys::E::EAGAIN | bun_sys::E::EBUSY => {
                                     continue;
                                 }
-                                _ => break,
+                                _ => {}
                             }
                         }
+                        bun_core::pretty_errorln!(
+                            "<r><red>error<r><d>:<r> failed to open temporary file to copy bun into\n{}",
+                            err
+                        );
+                        return None;
                     }
                 }
             }
@@ -1353,7 +1411,7 @@ pub(crate) fn inject(
                             err
                         );
                         cleanup(zname, fd);
-                        return Fd::INVALID;
+                        return None;
                     }
                 }
             }
@@ -1371,7 +1429,7 @@ pub(crate) fn inject(
                     e
                 );
                 cleanup(zname, fd);
-                return Fd::INVALID;
+                return None;
             }
 
             break 'brk fd;
@@ -1386,7 +1444,7 @@ pub(crate) fn inject(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             let mut macho_file = match bun_macho::MachoFile::init(&input_bytes, bytes.len()) {
@@ -1394,20 +1452,20 @@ pub(crate) fn inject(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing standalone module graph: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             if let Err(e) = macho_file.write_section(bytes) {
                 bun_core::pretty_errorln!("Error writing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             let mut buffered_writer = std::io::BufWriter::with_capacity(
@@ -1420,19 +1478,24 @@ pub(crate) fn inject(
                     bstr::BStr::new(e.name())
                 );
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             if let Err(e) = std::io::Write::flush(&mut buffered_writer) {
                 bun_core::pretty_errorln!("Error flushing standalone module graph: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             #[cfg(not(windows))]
             {
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Windows => {
             let input_bytes = match bun_sys::File::borrow(&cloned_executable_fd).read_to_end() {
@@ -1440,7 +1503,7 @@ pub(crate) fn inject(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading standalone module graph: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             let mut pe_file = match bun_pe::PEFile::init(&input_bytes) {
@@ -1448,35 +1511,35 @@ pub(crate) fn inject(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing PE file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
             if inject_options.hide_console {
                 if let Err(e) = pe_file.set_subsystem(bun_pe::IMAGE_SUBSYSTEM_WINDOWS_GUI) {
                     bun_core::pretty_errorln!("Error setting PE subsystem: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             }
             // Always strip authenticode when adding .bun section for --compile
             if let Err(e) = pe_file.add_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error adding Bun section to PE file: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             drop(input_bytes);
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             let mut writer = bun_sys::FileWriter(cloned_executable_fd);
             if let Err(e) = pe_file.write(&mut writer) {
                 bun_core::pretty_errorln!("Error writing PE file: {}", bstr::BStr::new(e.name()));
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Truncate to the in-memory PE size; Authenticode strip can make it shorter than the base.
             if let Err(err) = Syscall::ftruncate(
@@ -1485,7 +1548,7 @@ pub(crate) fn inject(
             ) {
                 bun_core::pretty_errorln!("Error truncating PE file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Set executable permissions when running on POSIX hosts, even for Windows targets
             #[cfg(not(windows))]
@@ -1493,7 +1556,12 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         CompileTargetOs::Linux | CompileTargetOs::Freebsd => {
             // ELF section approach: find .bun section and expand it
@@ -1502,7 +1570,7 @@ pub(crate) fn inject(
                 Err(err) => {
                     bun_core::pretty_errorln!("Error reading executable: {}", err);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
 
@@ -1511,7 +1579,7 @@ pub(crate) fn inject(
                 Err(e) => {
                     bun_core::pretty_errorln!("Error initializing ELF file: {}", e);
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             };
 
@@ -1520,13 +1588,13 @@ pub(crate) fn inject(
             if let Err(e) = elf_file.write_bun_section(bytes) {
                 bun_core::pretty_errorln!("Error writing .bun section to ELF: {}", e);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             if let Err(err) = Syscall::set_file_offset(cloned_executable_fd, 0) {
                 bun_core::pretty_errorln!("Error seeking to start of temporary file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             // Write the modified ELF data back to the file
@@ -1534,7 +1602,7 @@ pub(crate) fn inject(
             if let Err(err) = write_file.write_all(&elf_file.data) {
                 bun_core::pretty_errorln!("Error writing ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
             // Truncate the file to the exact size of the modified ELF
             if let Err(err) = Syscall::ftruncate(
@@ -1543,7 +1611,7 @@ pub(crate) fn inject(
             ) {
                 bun_core::pretty_errorln!("Error truncating ELF file: {}", err);
                 cleanup(zname, cloned_executable_fd);
-                return Fd::INVALID;
+                return None;
             }
 
             #[cfg(not(windows))]
@@ -1551,7 +1619,12 @@ pub(crate) fn inject(
                 // SAFETY: libc fchmod on a valid native fd.
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
         _ => {
             let total_byte_count: usize;
@@ -1567,7 +1640,7 @@ pub(crate) fn inject(
                                 e
                             );
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::invalid();
+                            return None;
                         }
                     };
             }
@@ -1579,7 +1652,7 @@ pub(crate) fn inject(
                         Err(err) => {
                             bun_core::pretty_errorln!("{}", err);
                             cleanup(zname, cloned_executable_fd);
-                            return Fd::INVALID;
+                            return None;
                         }
                     };
                     break 'brk fstat.st_size.max(0);
@@ -1603,7 +1676,7 @@ pub(crate) fn inject(
                         seek_position
                     );
                     cleanup(zname, cloned_executable_fd);
-                    return Fd::INVALID;
+                    return None;
                 }
             }
 
@@ -1617,7 +1690,7 @@ pub(crate) fn inject(
                             err
                         );
                         cleanup(zname, cloned_executable_fd);
-                        return Fd::INVALID;
+                        return None;
                     }
                 }
             }
@@ -1630,7 +1703,12 @@ pub(crate) fn inject(
                 unsafe { bun_sys::c::fchmod(cloned_executable_fd.native(), 0o755) };
             }
 
-            return cloned_executable_fd;
+            return Some(Injected::new(
+                cloned_executable_fd,
+                cwd,
+                zname,
+                temp_path_buf,
+            ));
         }
     }
 }
@@ -1682,7 +1760,6 @@ pub(crate) fn download_to_path(
                 url,
                 Default::default(),
                 b"",
-                &raw mut *compressed_archive_bytes,
                 b"",
                 http_proxy,
                 None,
@@ -1691,7 +1768,7 @@ pub(crate) fn download_to_path(
             async_http.client.progress_node =
                 core::ptr::NonNull::new(core::ptr::from_mut(progress));
             async_http.client.flags.reject_unauthorized = reject_unauthorized;
-            let send_result = async_http.send_sync();
+            let send_result = async_http.send_sync(&mut compressed_archive_bytes);
 
             progress.end();
             let status_code = send_result?.status_code() as u16;
@@ -1882,10 +1959,6 @@ pub fn to_executable(
                         "Failed to extract executable for '{}'. The download may be incomplete.",
                         target
                     )),
-                    crate::Error::UnsupportedTarget => CompileResult::fail_fmt(format_args!(
-                        "Target '{}' is not supported",
-                        target
-                    )),
                     _ => CompileResult::fail_fmt(format_args!(
                         "Failed to download '{}': {}",
                         target,
@@ -1898,11 +1971,23 @@ pub fn to_executable(
         bun_core::ZBox::from_vec_with_nul(dest_z.as_bytes().to_vec())
     };
 
-    let fd = inject(&bytes, &self_exe, windows_options, target);
-    // Note: a scopeguard closure capturing `fd` by value would not observe
-    // later reassignments; capturing by `&mut` conflicts with later uses. Explicit
-    // `if fd != Fd::INVALID { fd.close(); }` calls are inserted at every return below
-    // (both error and success paths).
+    let mut temp_path_buf = bun_paths::path_buffer_pool::get();
+    let Some(injected) = inject(
+        &bytes,
+        &self_exe,
+        windows_options,
+        target,
+        &mut temp_path_buf,
+    ) else {
+        // inject() has already printed the specific error.
+        return Ok(CompileResult::fail_fmt(format_args!(
+            "failed to write compiled executable {}",
+            bstr::BStr::new(outfile)
+        )));
+    };
+    let fd = injected.fd;
+    // Closed explicitly at every return below rather than by a guard: on Windows
+    // the handle has to be closed mid-function, before `MoveFileExW`.
     debug_assert!(fd.kind() == bun_sys::FdKind::System);
 
     #[cfg(unix)]
@@ -1913,20 +1998,7 @@ pub fn to_executable(
 
     #[cfg(windows)]
     {
-        // Get the current path of the temp file
-        let mut temp_buf = PathBuffer::uninit();
-        let temp_path = match bun_sys::get_fd_path(fd, &mut temp_buf) {
-            Ok(p) => p,
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "Failed to get temp file path: {}",
-                    bstr::BStr::new(e.name())
-                )));
-            }
-        };
+        let temp_path: &[u8] = injected.temp_path.as_bytes();
 
         // Build the absolute destination path
         // On Windows, we need an absolute path for MoveFileExW
@@ -1935,9 +2007,7 @@ pub fn to_executable(
         let cwd_path: &[u8] = match bun_sys::getcwd(&mut cwd_buf) {
             Ok(len) => &cwd_buf[..len],
             Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
+                fd.close();
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "Failed to get current directory: {}",
                     bstr::BStr::new(e.name())
@@ -1983,6 +2053,7 @@ pub fn to_executable(
         } == windows::FALSE
         {
             let werr = windows::Win32Error::get();
+            let _ = Syscall::unlink(injected.temp_path);
             if let Some(sys_err) = werr.to_system_errno() {
                 if sys_err == bun_sys::SystemErrno::EISDIR {
                     return Ok(CompileResult::fail_fmt(format_args!(
@@ -2035,24 +2106,7 @@ pub fn to_executable(
 
     #[cfg(not(windows))]
     {
-        let mut buf2 = PathBuffer::uninit();
-        // Note: borrowck — `get_fd_path` returns `&mut [u8]` borrowing `buf2`;
-        // copy it into an owned buffer so `temp_posix_buf` can also borrow `buf2`'s
-        // sibling without overlap.
-        let temp_location: Vec<u8> = match bun_sys::get_fd_path(fd, &mut buf2) {
-            Ok(p) => p.to_vec(),
-            Err(e) => {
-                if fd != Fd::INVALID {
-                    fd.close();
-                }
-                return Ok(CompileResult::fail_fmt(format_args!(
-                    "failed to get path for fd: {}",
-                    e
-                )));
-            }
-        };
-        let mut temp_posix_buf = PathBuffer::uninit();
-        let temp_posix = path::resolve_path::z(&temp_location, &mut temp_posix_buf);
+        let temp_posix = injected.temp_path;
         let outfile_basename = bun_paths::basename(outfile);
         let mut outfile_posix_buf = PathBuffer::uninit();
         let outfile_posix = path::resolve_path::z(outfile_basename, &mut outfile_posix_buf);
@@ -2072,16 +2126,14 @@ pub fn to_executable(
             } else {
                 return Ok(CompileResult::fail_fmt(format_args!(
                     "failed to rename {} to {}: {}",
-                    bstr::BStr::new(&temp_location),
+                    bstr::BStr::new(temp_posix.as_bytes()),
                     bstr::BStr::new(outfile),
                     bstr::BStr::new(e.name())
                 )));
             }
         }
 
-        if fd != Fd::INVALID {
-            fd.close();
-        }
+        fd.close();
         Ok(CompileResult::Success)
     }
 }
@@ -2188,7 +2240,8 @@ impl StandaloneModuleGraph {
     /// The pages are clean file-backed COW, so any later read (lazy require,
     /// stack-trace source lookup) faults back in transparently from the
     /// executable on disk. Only applies when running as a compiled
-    /// standalone binary.
+    /// standalone binary; `BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE=1`
+    /// skips the hint.
     pub fn hint_source_pages_dont_need() {
         #[cfg(windows)]
         {
@@ -2220,7 +2273,11 @@ impl StandaloneModuleGraph {
 
             #[cfg(any(target_os = "macos", target_os = "linux", target_os = "android"))]
             {
-                if len == 0 {
+                if len == 0
+                    || bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_STANDALONE_MADVISE
+                        .get()
+                        .unwrap_or(false)
+                {
                     return;
                 }
 

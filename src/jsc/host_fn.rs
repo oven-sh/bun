@@ -70,6 +70,63 @@ macro_rules! jsc_host_abi {
     };
 }
 
+/// Re-exported for [`jsc_promise_handler!`] expansions so callers need no
+/// direct `bun_opaque` dep. Not public API.
+#[doc(hidden)]
+pub use bun_opaque::opaque_deref as __opaque_deref;
+
+/// Define a `JsHostFn`-shaped promise-reaction shim that forwards to a safe
+/// `fn(&JSGlobalObject, &CallFrame) -> JsResult<JSValue>` body.
+///
+/// Expands to a [`jsc_host_abi!`] `extern fn` whose signature matches
+/// [`JsHostFn`] (so the fn item coerces to the `JSValue::then`/`then2`
+/// callback slot and to `Zig::GlobalObject::promiseHandlerID`'s address
+/// comparison). The `*mut → &` derefs and `JsResult → JSValue` mapping are
+/// centralised here so the caller spells zero `unsafe`.
+///
+/// Two forms:
+///
+/// ```ignore
+/// // `#[unsafe(export_name = "Link__Symbol")]` on a locally-named shim:
+/// bun_jsc::jsc_promise_handler!(
+///     pub(crate) fn on_resolve_shim = "Link__Symbol" => on_resolve
+/// );
+///
+/// // `#[unsafe(no_mangle)]` — the shim ident IS the link symbol:
+/// bun_jsc::jsc_promise_handler!(
+///     pub fn Link__Symbol => on_resolve
+/// );
+/// ```
+#[macro_export]
+macro_rules! jsc_promise_handler {
+    ($vis:vis fn $shim:ident = $link:literal => $body:path) => {
+        $crate::jsc_host_abi! {
+            #[unsafe(export_name = $link)]
+            $vis unsafe fn $shim(
+                g: *mut $crate::JSGlobalObject,
+                cf: *mut $crate::CallFrame,
+            ) -> $crate::JSValue {
+                let g = $crate::host_fn::__opaque_deref(g);
+                let cf = $crate::host_fn::__opaque_deref(cf);
+                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
+            }
+        }
+    };
+    ($vis:vis fn $shim:ident => $body:path) => {
+        $crate::jsc_host_abi! {
+            #[unsafe(no_mangle)]
+            $vis unsafe fn $shim(
+                g: *mut $crate::JSGlobalObject,
+                cf: *mut $crate::CallFrame,
+            ) -> $crate::JSValue {
+                let g = $crate::host_fn::__opaque_deref(g);
+                let cf = $crate::host_fn::__opaque_deref(cf);
+                $crate::host_fn::to_js_host_fn_result(g, $body(g, cf))
+            }
+        }
+    };
+}
+
 // Capitalized re-exports — enough call sites (and the crate-root re-export in
 // lib.rs) use the acronym-caps `JSHostFn*` spelling that both must resolve.
 pub use {JsHostFn as JSHostFn, JsHostFnZig as JSHostFnZig};
@@ -84,7 +141,7 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
             Ok(v) => v,
             Err(JsError::Thrown) => JSValue::ZERO,
             Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-            Err(JsError::Terminated) => JSValue::ZERO,
+            Err(JsError::Terminated) => terminated_beneath_script(global_this),
         };
         debug_exception_assertion(global_this, value, "_unknown_");
         return value;
@@ -93,7 +150,20 @@ pub fn to_js_host_fn_result(global_this: &JSGlobalObject, result: JsResult<JSVal
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => JSValue::ZERO,
+        Err(JsError::Terminated) => terminated_beneath_script(global_this),
+    }
+}
+
+/// `Terminated` reached a host-function trampoline (code shared with loop-level callers took the VM's
+/// termination beneath us). Beneath script JSC still needs an exception to unwind what is above:
+/// rethrow the VM's and return empty. With no script above (a trampoline C++ drives from the loop —
+/// `AnyPromise::wrap` from a work-pool completion) there is nothing to unwind and nothing may be pending:
+/// hand back `undefined`; whoever called stands down on the stopped VM.
+#[cold]
+fn terminated_beneath_script(global_this: &JSGlobalObject) -> JSValue {
+    match crate::Stopped.throw(global_this) {
+        JsError::Terminated => JSValue::UNDEFINED,
+        _ => JSValue::ZERO,
     }
 }
 
@@ -118,7 +188,10 @@ fn debug_exception_assertion(global_this: &JSGlobalObject, value: JSValue, func:
         }
     }
     let _ = func;
-    assert!(value.is_empty() == global_this.has_exception(), "host fn return/exception state mismatch");
+    assert!(
+        value.is_empty() == global_this.has_exception(),
+        "host fn return/exception state mismatch"
+    );
 }
 
 pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsResult<()>) -> bool {
@@ -128,7 +201,7 @@ pub(crate) fn to_js_host_setter_value(global_this: &JSGlobalObject, value: JsRes
             let _ = global_this.throw_out_of_memory_value();
             false
         }
-        Err(JsError::Terminated) => false,
+        Err(JsError::Terminated) => !terminated_beneath_script(global_this).is_empty(),
         Ok(()) => true,
     }
 }
@@ -151,11 +224,15 @@ pub trait IntoHostFnReturn {
 }
 impl IntoHostFnReturn for JSValue {
     #[inline]
-    fn into_host_fn_return(self) -> JsResult<JSValue> { Ok(self) }
+    fn into_host_fn_return(self) -> JsResult<JSValue> {
+        Ok(self)
+    }
 }
 impl IntoHostFnReturn for JsResult<JSValue> {
     #[inline]
-    fn into_host_fn_return(self) -> JsResult<JSValue> { self }
+    fn into_host_fn_return(self) -> JsResult<JSValue> {
+        self
+    }
 }
 
 /// Normalize a setter body's return type to `JsResult<()>`. Setter bodies
@@ -165,11 +242,15 @@ pub trait IntoHostSetterReturn {
 }
 impl IntoHostSetterReturn for () {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { Ok(()) }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        Ok(())
+    }
 }
 impl IntoHostSetterReturn for JsResult<()> {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { self }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        self
+    }
 }
 // Some setters return `bool` directly (e.g. `Image.setBackend`): at the ABI,
 // `false` is the signal for "exception already thrown". The Rust thunk wraps in an
@@ -185,7 +266,9 @@ impl IntoHostSetterReturn for bool {
 }
 impl IntoHostSetterReturn for JsResult<bool> {
     #[inline]
-    fn into_host_setter_return(self) -> JsResult<()> { self.map(|_| ()) }
+    fn into_host_setter_return(self) -> JsResult<()> {
+        self.map(|_| ())
+    }
 }
 
 /// Normalize a constructor body's return type to a nullable `*mut c_void`.
@@ -194,7 +277,9 @@ pub trait IntoHostConstructReturn {
 }
 impl<T> IntoHostConstructReturn for *mut T {
     #[inline]
-    fn into_host_construct_return(self) -> JsResult<*mut c_void> { Ok(self.cast()) }
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
+        Ok(self.cast())
+    }
 }
 impl<T> IntoHostConstructReturn for Box<T> {
     #[inline]
@@ -204,7 +289,9 @@ impl<T> IntoHostConstructReturn for Box<T> {
 }
 impl<T> IntoHostConstructReturn for JsResult<*mut T> {
     #[inline]
-    fn into_host_construct_return(self) -> JsResult<*mut c_void> { self.map(|p| p.cast()) }
+    fn into_host_construct_return(self) -> JsResult<*mut c_void> {
+        self.map(|p| p.cast())
+    }
 }
 impl<T> IntoHostConstructReturn for JsResult<Box<T>> {
     #[inline]
@@ -277,7 +364,6 @@ pub fn host_fn_getter<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global))
 }
 
-
 /// Prototype setter: `fn(&mut self, &JSGlobalObject, JSValue) -> R`.
 #[track_caller]
 #[inline]
@@ -289,7 +375,6 @@ pub fn host_fn_setter<T, R: IntoHostSetterReturn>(
 ) -> bool {
     host_setter_result(global, || f(this, global, value))
 }
-
 
 /// Static / class method or `call`: `fn(&JSGlobalObject, &CallFrame) -> R`.
 #[track_caller]
@@ -338,8 +423,12 @@ pub unsafe fn host_fn_static_raw<R: IntoHostFnReturn>(
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> R,
 ) -> JSValue {
     // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) =
-        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+    let (global, callframe) = unsafe {
+        (
+            JSGlobalObject::opaque_ref_nn(global),
+            CallFrame::opaque_ref_nn(callframe),
+        )
+    };
     host_fn_static(global, callframe, f)
 }
 
@@ -356,8 +445,12 @@ pub unsafe fn host_fn_static_passthrough_raw(
     f: impl FnOnce(&JSGlobalObject, &CallFrame) -> JSValue,
 ) -> JSValue {
     // SAFETY: JSC host-function ABI — `global`/`callframe` are always non-null.
-    let (global, callframe) =
-        unsafe { (JSGlobalObject::opaque_ref_nn(global), CallFrame::opaque_ref_nn(callframe)) };
+    let (global, callframe) = unsafe {
+        (
+            JSGlobalObject::opaque_ref_nn(global),
+            CallFrame::opaque_ref_nn(callframe),
+        )
+    };
     host_fn_static_passthrough(global, callframe, f)
 }
 
@@ -430,9 +523,6 @@ pub fn host_fn_construct_this<R: IntoHostConstructReturn>(
     host_construct_result(global, || f(global, callframe, this_value))
 }
 
-
-
-
 // ──────────────────────────────────────────────────────────────────────────
 // `_shared` siblings — `&T` receiver instead of `&mut T`.
 //
@@ -485,7 +575,6 @@ pub fn host_fn_getter_shared<T, R: IntoHostFnReturn>(
     host_fn_result(global, || f(this, global))
 }
 
-
 /// Prototype getter (`sharedThis`, this: true):
 /// `fn(&self, JSValue, &JSGlobalObject) -> R`.
 #[track_caller]
@@ -511,7 +600,6 @@ pub fn host_fn_setter_shared<T, R: IntoHostSetterReturn>(
     host_setter_result(global, || f(this, global, value))
 }
 
-
 /// Prototype setter (`sharedThis`, this: true):
 /// `fn(&self, JSValue, &JSGlobalObject, JSValue) -> R`.
 #[track_caller]
@@ -525,7 +613,6 @@ pub fn host_fn_setter_this_shared<T, R: IntoHostSetterReturn>(
 ) -> bool {
     host_setter_result(global, || f(this, this_value, global, value))
 }
-
 
 /// Finalizer: `fn(Box<T>)`. The user impl receives owned `Box<Self>` —
 /// ownership is transferred from the C++ JSCell wrapper's `m_ctx` slot.
@@ -584,7 +671,11 @@ pub fn host_construct_result<R: IntoHostConstructReturn>(
             let _ = global.throw_out_of_memory_value();
             core::ptr::null_mut()
         }
-        Err(_) => core::ptr::null_mut(),
+        Err(JsError::Terminated) => {
+            let _ = terminated_beneath_script(global);
+            core::ptr::null_mut()
+        }
+        Err(JsError::Thrown) => core::ptr::null_mut(),
     };
     scope.assert_exception_presence_matches(ptr.is_null());
     ptr
@@ -609,7 +700,7 @@ pub fn to_js_host_call(
         Ok(v) => v,
         Err(JsError::Thrown) => JSValue::ZERO,
         Err(JsError::OutOfMemory) => global_this.throw_out_of_memory_value(),
-        Err(JsError::Terminated) => JSValue::ZERO,
+        Err(JsError::Terminated) => terminated_beneath_script(global_this),
     };
     scope.assert_exception_presence_matches(normal.is_empty());
     normal

@@ -31,7 +31,6 @@ struct BakeAdditionsToGlobalObject {
     {
         this->m_JSBakeResponseClassStructure.visit(visitor);
         this->m_DevServerFrameworkRequestArgsClassStructure.visit(visitor);
-        visitor.append(this->m_wrapComponent);
         visitor.append(this->m_asyncLocalStorageInstance);
 
         this->m_bakeGetAsyncLocalStorage.visit(visitor);
@@ -98,8 +97,6 @@ struct BakeAdditionsToGlobalObject {
         return m_asyncLocalStorageInstance.get();
     }
 
-    JSC::JSFunction* wrapComponent(JSGlobalObject*);
-
     template<typename T>
     using LazyPropertyOfGlobalObject = LazyProperty<JSGlobalObject, T>;
 
@@ -122,8 +119,6 @@ struct BakeAdditionsToGlobalObject {
     LazyClassStructure m_DevServerFrameworkRequestArgsClassStructure;
 
 private:
-    WriteBarrier<JSFunction> m_wrapComponent;
-
     WriteBarrier<Unknown> m_asyncLocalStorageInstance;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeGetAsyncLocalStorage;
     LazyProperty<JSGlobalObject, JSFunction> m_bakeEnsureAsyncLocalStorage;

@@ -29,23 +29,6 @@ namespace WebCore {
 using namespace JSC;
 using namespace Bun::WebStreams;
 
-// Null-safe tee-branch controller recovery: Bun's native-sink pumps clear a consumed
-// stream's controller slot in their finally step, so a tee reaction queued before that
-// teardown can see a branch with no controller. A torn-down branch is terminal; skip it.
-static JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch)
-{
-    if (branch->m_controllerKind != ControllerKind::Default)
-        return nullptr;
-    return uncheckedDowncast<JSReadableStreamDefaultController>(branch->m_controller.get());
-}
-
-static JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch)
-{
-    if (branch->m_controllerKind != ControllerKind::Byte)
-        return nullptr;
-    return uncheckedDowncast<JSReadableByteStreamController>(branch->m_controller.get());
-}
-
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
 static void queueReactionJob(JSC::VM& vm, JSGlobalObject* globalObject, JSFunction* handler, JSValue value, JSValue context)
@@ -132,8 +115,6 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, m_context.get());
     case ReadRequestKind::ReadStreamIntoSink:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkChunk(), chunk, m_context.get());
-    case ReadRequestKind::ResumableSinkPump:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onResumableSinkChunk(), chunk, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* promise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
@@ -206,8 +187,6 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     }
     case ReadRequestKind::ReadStreamIntoSink:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkClose(), jsUndefined(), m_context.get());
-    case ReadRequestKind::ResumableSinkPump:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onResumableSinkClose(), jsUndefined(), m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -241,8 +220,6 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         return;
     case ReadRequestKind::ReadStreamIntoSink:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkRejected(), error, m_context.get());
-    case ReadRequestKind::ResumableSinkPump:
-        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onResumableSinkReadRejected(), error, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));

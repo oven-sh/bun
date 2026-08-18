@@ -323,20 +323,7 @@ impl Stdio {
     }
 
     pub fn borrows_caller_fd(&self) -> bool {
-        match self {
-            Self::Fd(_) => true,
-            Self::Blob(blob) => {
-                blob.needs_to_read_file()
-                    && matches!(
-                        blob.store(),
-                        Some(store) if matches!(
-                            store.data,
-                            StoreData::File(ref file) if matches!(file.pathlike, PathOrFileDescriptor::Fd(_))
-                        )
-                    )
-            }
-            _ => false,
-        }
+        matches!(self, Self::Fd(_))
     }
 
     fn extract_body_value(

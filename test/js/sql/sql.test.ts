@@ -473,15 +473,22 @@ if (isDockerEnabled()) {
         (NULL, NULL)
     `;
 
-          // Query the data
+          // Query the data. The bound parameter makes Bind request binary
+          // results (a parameterless statement is prepared and executed in one
+          // round trip and gets text), which is what routes `time` through the
+          // binary decoder this test is about; the float4 sentinel proves the
+          // rows really arrived in binary (text "0.1" would decode to 0.1).
           const result = await db`
       SELECT
         id,
         regular_time,
-        time_with_tz
+        time_with_tz,
+        0.1::real AS fmt
       FROM bun_time_test
+      WHERE id >= ${0}
       ORDER BY id
     `;
+          expect(result[0].fmt).toBe(Math.fround(0.1));
 
           // Verify that time values are returned as strings, not binary data
           expect(result[0].regular_time).toBe("09:00:00");
@@ -12772,6 +12779,14 @@ test("data row that omits columns declared in the row description yields nulls f
   // existing duplicate-column-name behavior).
   expect(stdout).toContain('EMPTY_ROW {"c":null}');
   expect(stdout).toContain('FULL_ROW {"c":"v61"}');
+  // A short DataRow against a mixed named + digit-named RowDescription must
+  // still surface both keys: the indexed column "7" is not silently dropped.
+  expect(stdout).toContain('MIXED_EMPTY {"7":null,"a":null}');
+  expect(stdout).toContain('MIXED_FULL {"7":"v7","a":"va"}');
+  // Two named columns interleaved with an indexed one: each named value lands
+  // on its own key (the slow path visits cells in RowDescription order).
+  expect(stdout).toContain('INTERLEAVED_SHORT {"5":null,"foo":"vfoo","bar":null}');
+  expect(stdout).toContain('INTERLEAVED {"5":"v5","foo":"vfoo","bar":"vbar"}');
   expect(stdout).toContain("FIXTURE_DONE");
   expect(filteredStderr).toBe("");
   expect(exitCode).toBe(0);

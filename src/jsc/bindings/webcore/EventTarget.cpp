@@ -74,21 +74,6 @@ EventTarget::~EventTarget()
         data->clear();
 }
 
-bool EventTarget::isNode() const
-{
-    return false;
-}
-
-bool EventTarget::isContextStopped() const
-{
-    return !scriptExecutionContext();
-}
-
-bool EventTarget::isPaymentRequest() const
-{
-    return false;
-}
-
 bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
 #if ASSERT_ENABLED
@@ -201,7 +186,7 @@ JSEventListener* EventTarget::attributeEventListener(const AtomString& eventType
             continue;
 
         auto& jsListener = downcast<JSEventListener>(listener);
-        if (jsListener.isAttribute() && &jsListener.isolatedWorld() == &isolatedWorld)
+        if (jsListener.isAttribute() && jsListener.isolatedWorld() == &isolatedWorld)
             return &jsListener;
     }
 
@@ -242,7 +227,6 @@ void EventTarget::dispatchEvent(Event& event)
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
-    event.resetBeforeDispatch();
     event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);
@@ -251,12 +235,6 @@ void EventTarget::dispatchEvent(Event& event)
 
 void EventTarget::uncaughtExceptionInEventHandler()
 {
-}
-
-static const AtomString& legacyType(const Event& event)
-{
-
-    return nullAtom();
 }
 
 // https://dom.spec.whatwg.org/#concept-event-listener-invoke
@@ -270,24 +248,8 @@ void EventTarget::fireEventListeners(Event& event, EventInvokePhase phase)
 
     SetForScope firingEventListenersScope(data->isFiringEventListeners, true);
 
-    if (auto* listenersVector = data->eventListenerMap.find(event.type())) {
+    if (auto* listenersVector = data->eventListenerMap.find(event.type()))
         innerInvokeEventListeners(event, *listenersVector, phase);
-        return;
-    }
-
-    // Only fall back to legacy types for trusted events.
-    if (!event.isTrusted())
-        return;
-
-    const AtomString& legacyTypeName = legacyType(event);
-    if (!legacyTypeName.isNull()) {
-        if (auto* legacyListenersVector = data->eventListenerMap.find(legacyTypeName)) {
-            AtomString typeName = event.type();
-            event.setType(legacyTypeName);
-            innerInvokeEventListeners(event, *legacyListenersVector, phase);
-            event.setType(typeName);
-        }
-    }
 }
 
 // Intentionally creates a copy of the listeners vector to avoid event listeners added after this point from being run.

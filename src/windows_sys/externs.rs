@@ -19,11 +19,10 @@ pub type BOOL = c_int;
 pub type BOOLEAN = u8;
 pub type WORD = c_ushort;
 pub type DWORD = c_ulong;
-pub type DWORD_PTR = usize;
+type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
 pub type LONG = c_long;
-pub type ULONGLONG = u64;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
@@ -243,7 +242,7 @@ pub struct UNICODE_STRING {
 }
 
 /// `ACCESS_MASK` (`winnt.h`).
-pub type ACCESS_MASK = DWORD;
+type ACCESS_MASK = DWORD;
 
 /// `OBJECT_ATTRIBUTES` (`ntdef.h`) — passed to `NtCreateFile` / `NtOpenFile`.
 #[repr(C)]
@@ -270,7 +269,6 @@ pub const PATH_MAX_WIDE: usize = 32767;
 
 // `SetFilePointer` move methods.
 pub const FILE_BEGIN: DWORD = 0;
-pub const FILE_CURRENT: DWORD = 1;
 pub const FILE_END: DWORD = 2;
 
 // `DuplicateHandle` options.
@@ -284,17 +282,10 @@ pub const FILE_SHARE_DELETE: ULONG = 0x0000_0004;
 // File attribute flags (`winnt.h`).
 pub const FILE_ATTRIBUTE_READONLY: DWORD = 0x0000_0001;
 pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x0000_0002;
-pub const FILE_ATTRIBUTE_SYSTEM: DWORD = 0x0000_0004;
 pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x0000_0010;
-pub const FILE_ATTRIBUTE_ARCHIVE: DWORD = 0x0000_0020;
-pub const FILE_ATTRIBUTE_DEVICE: DWORD = 0x0000_0040;
 pub const FILE_ATTRIBUTE_NORMAL: DWORD = 0x0000_0080;
 pub const FILE_ATTRIBUTE_TEMPORARY: DWORD = 0x0000_0100;
-pub const FILE_ATTRIBUTE_SPARSE_FILE: DWORD = 0x0000_0200;
 pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x0000_0400;
-pub const FILE_ATTRIBUTE_COMPRESSED: DWORD = 0x0000_0800;
-pub const FILE_ATTRIBUTE_OFFLINE: DWORD = 0x0000_1000;
-pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: DWORD = 0x0000_2000;
 
 // `NtCreateFile` CreateDisposition (`ntifs.h`).
 pub const FILE_OPEN: ULONG = 1;
@@ -305,8 +296,6 @@ pub const FILE_OVERWRITE_IF: ULONG = 5;
 
 // `NtCreateFile` CreateOptions (`ntifs.h`).
 pub const FILE_DIRECTORY_FILE: ULONG = 0x0000_0001;
-pub const FILE_WRITE_THROUGH: ULONG = 0x0000_0002;
-pub const FILE_SEQUENTIAL_ONLY: ULONG = 0x0000_0004;
 pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
 pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
 pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
@@ -345,7 +334,6 @@ pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
 pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
-pub const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
 pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_WAIT: DWORD = 0x0000_0000;
@@ -834,7 +822,6 @@ pub mod kernel32 {
         pub Type: u32,
     }
     pub const MEM_COMMIT: u32 = 0x1000;
-    pub const MEM_FREE: u32 = 0x10000;
 
     pub const PAGE_NOACCESS: u32 = 0x01;
     pub const PAGE_READONLY: u32 = 0x02;
@@ -999,23 +986,6 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[cfg_attr(windows, link(name = "kernel32"))]
-unsafe extern "system" {
-    #[link_name = "WaitForSingleObject"]
-    fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-}
-/// SAFETY: `handle` must be a valid waitable kernel object.
-pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
-    // SAFETY: caller contract guarantees `handle` is a valid waitable kernel
-    // object; `ms` is a by-value DWORD with no pointer preconditions.
-    let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
-    if rc == WAIT_FAILED {
-        Err(Win32Error::get())
-    } else {
-        Ok(rc)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // NTSTATUS — a transparent newtype so unmapped codes round-trip.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1062,10 +1032,6 @@ impl NTSTATUS {
     pub const fn from_raw(raw: u32) -> Self {
         NTSTATUS(raw)
     }
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
 }
 
 #[inline]
@@ -1078,7 +1044,6 @@ pub const fn NT_SUCCESS(status: NTSTATUS) -> bool {
 pub const fn NT_ERROR(status: NTSTATUS) -> bool {
     (status.0 >> 30) == 3
 }
-pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
 #[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
@@ -1193,114 +1158,6 @@ pub mod ws2_32 {
     #[derive(Copy, Clone)]
     pub struct in6_addr {
         pub s6_addr: [u8; 16],
-    }
-
-    /// Winsock error codes — `WSAE*` (`WSABASEERR` = 10000).
-    /// Newtype so `bun_sys::windows::win_sock_error_to_zig_error` can `match` on
-    /// associated consts. Values from `winsock2.h`.
-    #[repr(transparent)]
-    #[derive(Copy, Clone, PartialEq, Eq, Debug)]
-    pub struct WinsockError(pub(crate) u16);
-    impl WinsockError {
-        #[inline]
-        pub const fn raw(self) -> u16 {
-            self.0
-        }
-        pub const WSA_INVALID_HANDLE: Self = Self(6);
-        pub const WSA_NOT_ENOUGH_MEMORY: Self = Self(8);
-        pub const WSA_INVALID_PARAMETER: Self = Self(87);
-        pub const WSA_OPERATION_ABORTED: Self = Self(995);
-        pub const WSA_IO_INCOMPLETE: Self = Self(996);
-        pub const WSA_IO_PENDING: Self = Self(997);
-        pub const WSAEINTR: Self = Self(10004);
-        pub const WSAEBADF: Self = Self(10009);
-        pub const WSAEACCES: Self = Self(10013);
-        pub const WSAEFAULT: Self = Self(10014);
-        pub const WSAEINVAL: Self = Self(10022);
-        pub const WSAEMFILE: Self = Self(10024);
-        pub const WSAEWOULDBLOCK: Self = Self(10035);
-        pub const WSAEINPROGRESS: Self = Self(10036);
-        pub const WSAEALREADY: Self = Self(10037);
-        pub const WSAENOTSOCK: Self = Self(10038);
-        pub const WSAEDESTADDRREQ: Self = Self(10039);
-        pub const WSAEMSGSIZE: Self = Self(10040);
-        pub const WSAEPROTOTYPE: Self = Self(10041);
-        pub const WSAENOPROTOOPT: Self = Self(10042);
-        pub const WSAEPROTONOSUPPORT: Self = Self(10043);
-        pub const WSAESOCKTNOSUPPORT: Self = Self(10044);
-        pub const WSAEOPNOTSUPP: Self = Self(10045);
-        pub const WSAEPFNOSUPPORT: Self = Self(10046);
-        pub const WSAEAFNOSUPPORT: Self = Self(10047);
-        pub const WSAEADDRINUSE: Self = Self(10048);
-        pub const WSAEADDRNOTAVAIL: Self = Self(10049);
-        pub const WSAENETDOWN: Self = Self(10050);
-        pub const WSAENETUNREACH: Self = Self(10051);
-        pub const WSAENETRESET: Self = Self(10052);
-        pub const WSAECONNABORTED: Self = Self(10053);
-        pub const WSAECONNRESET: Self = Self(10054);
-        pub const WSAENOBUFS: Self = Self(10055);
-        pub const WSAEISCONN: Self = Self(10056);
-        pub const WSAENOTCONN: Self = Self(10057);
-        pub const WSAESHUTDOWN: Self = Self(10058);
-        pub const WSAETOOMANYREFS: Self = Self(10059);
-        pub const WSAETIMEDOUT: Self = Self(10060);
-        pub const WSAECONNREFUSED: Self = Self(10061);
-        pub const WSAELOOP: Self = Self(10062);
-        pub const WSAENAMETOOLONG: Self = Self(10063);
-        pub const WSAEHOSTDOWN: Self = Self(10064);
-        pub const WSAEHOSTUNREACH: Self = Self(10065);
-        pub const WSAENOTEMPTY: Self = Self(10066);
-        pub const WSAEPROCLIM: Self = Self(10067);
-        pub const WSAEUSERS: Self = Self(10068);
-        pub const WSAEDQUOT: Self = Self(10069);
-        pub const WSAESTALE: Self = Self(10070);
-        pub const WSAEREMOTE: Self = Self(10071);
-        pub const WSASYSNOTREADY: Self = Self(10091);
-        pub const WSAVERNOTSUPPORTED: Self = Self(10092);
-        pub const WSANOTINITIALISED: Self = Self(10093);
-        pub const WSAEDISCON: Self = Self(10101);
-        pub const WSAENOMORE: Self = Self(10102);
-        pub const WSAECANCELLED: Self = Self(10103);
-        pub const WSAEINVALIDPROCTABLE: Self = Self(10104);
-        pub const WSAEINVALIDPROVIDER: Self = Self(10105);
-        pub const WSAEPROVIDERFAILEDINIT: Self = Self(10106);
-        pub const WSASYSCALLFAILURE: Self = Self(10107);
-        pub const WSASERVICE_NOT_FOUND: Self = Self(10108);
-        pub const WSATYPE_NOT_FOUND: Self = Self(10109);
-        pub const WSA_E_NO_MORE: Self = Self(10110);
-        pub const WSA_E_CANCELLED: Self = Self(10111);
-        pub const WSAEREFUSED: Self = Self(10112);
-        pub const WSAHOST_NOT_FOUND: Self = Self(11001);
-        pub const WSATRY_AGAIN: Self = Self(11002);
-        pub const WSANO_RECOVERY: Self = Self(11003);
-        pub const WSANO_DATA: Self = Self(11004);
-        pub const WSA_QOS_RECEIVERS: Self = Self(11005);
-        pub const WSA_QOS_SENDERS: Self = Self(11006);
-        pub const WSA_QOS_NO_SENDERS: Self = Self(11007);
-        pub const WSA_QOS_NO_RECEIVERS: Self = Self(11008);
-        pub const WSA_QOS_REQUEST_CONFIRMED: Self = Self(11009);
-        pub const WSA_QOS_ADMISSION_FAILURE: Self = Self(11010);
-        pub const WSA_QOS_POLICY_FAILURE: Self = Self(11011);
-        pub const WSA_QOS_BAD_STYLE: Self = Self(11012);
-        pub const WSA_QOS_BAD_OBJECT: Self = Self(11013);
-        pub const WSA_QOS_TRAFFIC_CTRL_ERROR: Self = Self(11014);
-        pub const WSA_QOS_GENERIC_ERROR: Self = Self(11015);
-        pub const WSA_QOS_ESERVICETYPE: Self = Self(11016);
-        pub const WSA_QOS_EFLOWSPEC: Self = Self(11017);
-        pub const WSA_QOS_EPROVSPECBUF: Self = Self(11018);
-        pub const WSA_QOS_EFILTERSTYLE: Self = Self(11019);
-        pub const WSA_QOS_EFILTERTYPE: Self = Self(11020);
-        pub const WSA_QOS_EFILTERCOUNT: Self = Self(11021);
-        pub const WSA_QOS_EOBJLENGTH: Self = Self(11022);
-        pub const WSA_QOS_EFLOWCOUNT: Self = Self(11023);
-        pub const WSA_QOS_EUNKOWNPSOBJ: Self = Self(11024);
-        pub const WSA_QOS_EPOLICYOBJ: Self = Self(11025);
-        pub const WSA_QOS_EFLOWDESC: Self = Self(11026);
-        pub const WSA_QOS_EPSFLOWSPEC: Self = Self(11027);
-        pub const WSA_QOS_EPSFILTERSPEC: Self = Self(11028);
-        pub const WSA_QOS_ESDMODEOBJ: Self = Self(11029);
-        pub const WSA_QOS_ESHAPERATEOBJ: Self = Self(11030);
-        pub const WSA_QOS_RESERVED_PETYPE: Self = Self(11031);
     }
 
     #[cfg_attr(windows, link(name = "ws2_32"))]
@@ -1503,8 +1360,6 @@ unsafe extern "system" {
         lpFileInformation: *mut BY_HANDLE_FILE_INFORMATION,
     ) -> BOOL;
 
-    pub fn GetBinaryTypeW(lpApplicationName: LPCWSTR, lpBinaryType: LPDWORD) -> BOOL;
-
     pub fn FindFirstFileW(lpFileName: LPCWSTR, lpFindFileData: *mut WIN32_FIND_DATAW) -> HANDLE;
 
     pub fn FindClose(hFindFile: HANDLE) -> BOOL;
@@ -1594,13 +1449,6 @@ unsafe extern "system" {
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
-    pub fn SetFileInformationByHandle(
-        file: HANDLE,
-        fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
-        fileInformation: LPVOID,
-        bufferSize: DWORD,
-    ) -> BOOL;
-
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
     pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
@@ -1620,20 +1468,12 @@ unsafe extern "system" {
         hProcess: HANDLE, // [in]
     ) -> BOOL;
 
-    pub fn ResumeThread(hJob: HANDLE, // [in]
-    ) -> DWORD;
-
     pub fn SetInformationJobObject(
         hJob: HANDLE,
         JobObjectInformationClass: DWORD,
         lpJobObjectInformation: LPVOID,
         cbJobObjectInformationLength: DWORD,
     ) -> BOOL;
-
-    pub fn CreateJobObjectW(
-        lpJobAttributes: *mut c_void, // *mut SECURITY_ATTRIBUTES
-        lpName: LPCWSTR,
-    ) -> HANDLE;
 
     pub fn OpenProcess(dwDesiredAccess: DWORD, bInheritHandle: BOOL, dwProcessId: DWORD) -> HANDLE;
 }
@@ -1782,8 +1622,6 @@ pub struct CURDIR {
     pub DosPath: UNICODE_STRING,
     pub Handle: HANDLE,
 }
-/// CamelCase alias (`bun_core` callers).
-pub type Curdir = CURDIR;
 
 /// `RTL_USER_PROCESS_PARAMETERS` (`winternl.h`) — minimal view.
 #[repr(C)]
@@ -1832,8 +1670,6 @@ pub struct PEB {
     // reference would assert false immutability to the optimizer (UB).
     pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
 }
-/// Legacy alias (former `bun_core::windows_sys` name).
-pub type PebView = PEB;
 
 /// `TEB` (`winternl.h`) — minimal view; only `ProcessEnvironmentBlock` is read.
 #[repr(C)]
@@ -1911,8 +1747,6 @@ pub fn peb() -> *const PEB {
 pub const CTRL_C_EVENT: DWORD = 0;
 pub const CTRL_BREAK_EVENT: DWORD = 1;
 pub const CTRL_CLOSE_EVENT: DWORD = 2;
-pub const CTRL_LOGOFF_EVENT: DWORD = 5;
-pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {

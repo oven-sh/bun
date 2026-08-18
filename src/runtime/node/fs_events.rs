@@ -93,11 +93,9 @@ const K_FS_EVENTS_RENAMED: c_int = K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_CREATED
     | K_FS_EVENT_STREAM_EVENT_FLAG_ITEM_RENAMED;
 
 static FSEVENTS_DEFAULT_LOOP_MUTEX: Mutex = Mutex::new();
-#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
 static FSEVENTS_DEFAULT_LOOP: std::sync::OnceLock<&'static FSEventsLoop> =
     std::sync::OnceLock::new();
 
-#[cfg(unix)]
 fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     const { assert!(core::mem::size_of::<T>() == core::mem::size_of::<*mut c_void>()) };
     // SAFETY: handle is a valid dlopen handle; symbol is NUL-terminated
@@ -112,13 +110,6 @@ fn dlsym<T>(handle: *mut c_void, symbol: &core::ffi::CStr) -> Option<T> {
     // case so the resulting fn pointer is always non-null. Not expressible via
     // bytemuck/as: fn pointers are not Pod and `as` can't cast data→fn pointers.
     Some(unsafe { core::mem::transmute_copy::<*mut c_void, T>(&ptr) })
-}
-#[cfg(not(unix))]
-fn dlsym<T>(_handle: *mut c_void, _symbol: &core::ffi::CStr) -> Option<T> {
-    // FSEvents is macOS-only; CoreFoundation/CoreServices loaders below are
-    // gated behind `target_os = "macos"`, so this body is unreachable on
-    // Windows but must still type-check.
-    None
 }
 
 // Clone/Copy: bitwise OK — resolved fn pointers plus a framework-static
@@ -399,12 +390,17 @@ impl FSEventsLoop {
             if task.is_null() {
                 break;
             }
-            // SAFETY: task is a valid *mut ConcurrentTask from the queue
-            let task = unsafe { &mut *task };
-            task.task.run();
-            if task.auto_delete {
-                // SAFETY: was heap-allocated in enqueue_task_concurrent
-                drop(unsafe { bun_core::heap::take(std::ptr::from_mut::<ConcurrentTask>(task)) });
+            // SAFETY: task is a valid *mut ConcurrentTask from the queue; this
+            // thread owns it exclusively once popped. Scoped accesses so no
+            // reference is live when the node is freed below.
+            let auto_delete = unsafe {
+                (*task).task.run();
+                (*task).auto_delete
+            };
+            if auto_delete {
+                // SAFETY: was heap-allocated in enqueue_task_concurrent; freed
+                // through the queue pointer (allocation provenance).
+                drop(unsafe { bun_core::heap::take(task) });
             }
         }
     }
@@ -811,7 +807,6 @@ impl FSEventsLoop {
         unsafe { (cf.run_loop_stop)(self.loop_.load(Ordering::Relaxed)) };
     }
 
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn shutdown(&'static self) {
         // SAFETY: `thread` is only touched here and in `init()`, always on the JS thread under `FSEVENTS_DEFAULT_LOOP_MUTEX`.
         let Some(thread) = (unsafe { (*self.thread.get()).take() }) else {
@@ -867,7 +862,6 @@ pub type Callback = fn(ctx: *mut c_void, event: Event, is_file: bool);
 pub(crate) type UpdateEndCallback = fn(ctx: *mut c_void);
 
 impl FSEventsWatcher {
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     fn init(
         loop_: &'static FSEventsLoop,
         path: &[u8],
@@ -938,7 +932,6 @@ extern "C" fn close_and_wait_on_exit() {
 }
 
 fn close_and_wait() {
-    #[cfg(target_os = "macos")]
     if let Some(&loop_) = FSEVENTS_DEFAULT_LOOP.get() {
         let _guard = FSEVENTS_DEFAULT_LOOP_MUTEX.lock_guard();
         loop_.shutdown();

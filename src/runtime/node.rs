@@ -7,10 +7,6 @@
 // link time.
 
 // ─── compiling submodules ─────────────────────────────────────────────────
-#[path = "node/nodejs_error_code.rs"]
-pub mod nodejs_error_code;
-pub(crate) use nodejs_error_code::Code as ErrorCode;
-
 #[path = "node/assert/myers_diff.rs"]
 pub mod myers_diff_impl;
 pub mod assert {
@@ -20,8 +16,8 @@ pub mod assert {
 #[path = "node/types.rs"]
 pub mod types;
 pub use types::{
-    BlobOrStringOrBuffer, Dirent, Encoding, FileSystemFlags, PathLike, PathOrBlob,
-    PathOrFileDescriptor, StringOrBuffer, Valid, VectorArrayBuffer, mode_from_js,
+    BlobOrStringOrBuffer, Dirent, Encoding, FileBlobs, Flavor, PathLike, PathOrBlob,
+    PathOrFileDescriptor, StringObjects, StringOrBuffer, mode_from_js,
 };
 
 pub use bun_jsc::MarkedArrayBuffer as Buffer;
@@ -140,9 +136,6 @@ pub mod node_assert;
 #[path = "node/node_assert_binding.rs"]
 pub mod node_assert_binding;
 
-#[path = "node/node_error_binding.rs"]
-pub mod node_error_binding;
-
 #[path = "node/node_zlib_binding.rs"]
 pub mod node_zlib_binding;
 
@@ -193,19 +186,5 @@ impl<R, E> MaybeExt<R, E> for Maybe<R, E> {
     #[inline]
     fn as_err(&self) -> Option<&E> {
         self.as_ref().err()
-    }
-}
-
-/// Extension surface providing `Maybe::todo()` on `bun_sys::Maybe<T>`
-/// (= `core::result::Result<T, bun_sys::Error>`), the type-alias form of
-/// `Maybe` used throughout `node/`.
-pub trait MaybeTodo: Sized {
-    fn todo() -> Self;
-}
-
-impl<T> MaybeTodo for core::result::Result<T, bun_sys::Error> {
-    #[inline]
-    fn todo() -> Self {
-        Err(bun_sys::Error::todo())
     }
 }

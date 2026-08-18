@@ -20,7 +20,9 @@ export const BREAKING_CHANGES_BUN_1_2 = false;
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isFreeBSD = process.platform === "freebsd";
-export const isPosix = isMacOS || isLinux || isFreeBSD;
+/** Bun (like Node) reports `"android"` on Android; it is not folded into `isLinux`. */
+export const isAndroid = process.platform === "android";
+export const isPosix = isMacOS || isLinux || isFreeBSD || isAndroid;
 export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isArm64 = process.arch === "arm64";
@@ -74,6 +76,9 @@ export const bunEnv: NodeJS.Dict<string> = {
   CI: "1",
   BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  // The `bun install` "Slow filesystem detected" warning is timing-dependent
+  // and flakes stderr assertions on slow CI filesystems.
+  BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
   // Tests drive `bun update --interactive` by writing keystrokes to a pipe;
   // the real command refuses on non-TTY stdin. Bypass that gate under test.
   BUN_INTERNAL_INTERACTIVE_ASSUME_TTY: "1",
@@ -311,6 +316,34 @@ export async function expectMaxObjectTypeCount(
     gc();
   }
   expect(heapStats().objectTypeCounts[type] ?? 0).toBeLessThanOrEqual(count);
+}
+
+/**
+ * Peak RSS of a bun process that runs `fixture`, whose only stdout line is
+ * the JSON `expected` (the transfer's completion result), and the peak RSS of
+ * an empty bun process to subtract as the baseline. Compared as a delta so
+ * the assertion is about the payload, not the runtime's fixed footprint.
+ */
+export async function runFixtureMaxRSS(fixture: string, expected: unknown) {
+  await using proc = Bun.spawn({ cmd: [bunExe(), "-e", fixture], env: bunEnv, stdout: "pipe", stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout.trim())).toEqual(expected);
+  expect(exitCode).toBe(0);
+  const maxRSS = proc.resourceUsage()!.maxRSS;
+  // Guard the unit: any bun process peaks well above 1 MiB in bytes but under
+  // 1_048_576 in kB; a failure here means maxRSS regressed to kB and every
+  // bounded-memory assertion below is vacuous.
+  expect(maxRSS).toBeGreaterThan(1024 * 1024);
+  return maxRSS;
+}
+let emptyBunMaxRSS: Promise<number> | undefined;
+export function emptyProcessMaxRSS() {
+  return (emptyBunMaxRSS ??= (async () => {
+    await using proc = Bun.spawn({ cmd: [bunExe(), "-e", ""], env: bunEnv });
+    await proc.exited;
+    return proc.resourceUsage()!.maxRSS;
+  })());
 }
 
 // we must ensure that finalizers are run
@@ -1140,6 +1173,7 @@ export async function describeWithContainer(
     "mysql_plain": 3306,
     "mysql_native_password": 3306,
     "mysql_tls": 3306,
+    "mariadb_plain": 3306,
     "mysql:8": 3306, // Map mysql:8 to mysql_plain
     "mysql:9": 3306, // Map mysql:9 to mysql_native_password
     "redis_plain": 6379,
@@ -1467,7 +1501,7 @@ export async function runBunInstall(
   });
   expect(stdout).toBeDefined();
   expect(stderr).toBeDefined();
-  let err: string = stderrForInstall(await stderr.text());
+  const [err, out, exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
   expect(err).not.toContain("panic:");
   if (!options?.allowErrors) {
     expect(err).not.toContain("error:");
@@ -1478,14 +1512,8 @@ export async function runBunInstall(
   if ((options?.savesLockfile ?? true) && !production && !options?.frozenLockfile) {
     expect(err).toContain("Saved lockfile");
   }
-  let out: string = await stdout.text();
-  expect(await exited).toBe(options?.expectedExitCode ?? 0);
+  expect(exitCode).toBe(options?.expectedExitCode ?? 0);
   return { out, err, exited };
-}
-
-// stderr with `slow filesystem` warning removed
-export function stderrForInstall(err: string) {
-  return err.replace(/warn: Slow filesystem.*/g, "");
 }
 
 export async function runBunUpdate(
@@ -1817,8 +1845,12 @@ export function libcPathForDlopen() {
       }
     case "darwin":
       return "libc.dylib";
+    case "android":
+      return "libc.so";
+    case "freebsd":
+      return "libc.so.7";
     default:
-      throw new Error("TODO");
+      throw new Error(`libcPathForDlopen: unsupported platform ${process.platform}`);
   }
 }
 
@@ -1947,11 +1979,12 @@ export class VerdaccioRegistry {
 
   async authBunfig(user: string) {
     const authToken = await this.generateUser(user, user);
-    return `
-        [install]
-        cache = false
-        registry = { url = "http://localhost:${this.port}/", token = "${authToken}" }
-        `;
+    return Bun.TOML.stringify({
+      install: {
+        cache: false,
+        registry: { url: `http://localhost:${this.port}/`, token: authToken },
+      },
+    });
   }
 
   async createTestDir(
@@ -1970,31 +2003,21 @@ export class VerdaccioRegistry {
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {
-    let bunfig = `
-[install]
-cache = "${join(dir, ".bun-cache").replaceAll("\\", "\\\\")}"
-`;
-    if ("saveTextLockfile" in opts) {
-      bunfig += `saveTextLockfile = ${opts.saveTextLockfile}
-`;
-    }
-    if (!opts.npm) {
-      bunfig += `registry = "${this.registryUrl()}"\n`;
-    }
-    if (opts.linker) {
-      bunfig += `linker = "${opts.linker}"\n`;
-    }
-    if (opts.globalStore !== undefined) {
-      bunfig += `globalStore = ${opts.globalStore}\n`;
-    }
-    if (opts.publicHoistPattern) {
-      if (typeof opts.publicHoistPattern === "string") {
-        bunfig += `publicHoistPattern = "${opts.publicHoistPattern}"`;
-      } else {
-        bunfig += `publicHoistPattern = [${opts.publicHoistPattern.map(p => `"${p}"`).join(", ")}]`;
-      }
-    }
-    await write(join(dir, "bunfig.toml"), bunfig);
+    await write(
+      join(dir, "bunfig.toml"),
+      Bun.TOML.stringify({
+        install: {
+          cache: join(dir, ".bun-cache"),
+          saveTextLockfile: opts.saveTextLockfile,
+          registry: opts.npm ? undefined : this.registryUrl(),
+          linker: opts.linker,
+          globalStore: opts.globalStore,
+          publicHoistPattern: opts.publicHoistPattern,
+          hoistPattern: opts.hoistPattern,
+          hoist: opts.hoist,
+        },
+      }),
+    );
   }
 }
 
@@ -2004,6 +2027,8 @@ type BunfigOpts = {
   linker?: "isolated" | "hoisted";
   globalStore?: boolean;
   publicHoistPattern?: string | string[];
+  hoistPattern?: string | string[];
+  hoist?: boolean;
 };
 
 export async function readdirSorted(path: string): Promise<string[]> {
@@ -2101,10 +2126,10 @@ export function exampleSite(protocol: "https" | "http" = "https") {
     ca: protocol === "https" ? tls.cert : undefined,
     server,
     stop() {
-      return server.stop();
+      return server.stop(true);
     },
     async [Symbol.asyncDispose]() {
-      await server.stop();
+      await server.stop(true);
     },
   };
 }

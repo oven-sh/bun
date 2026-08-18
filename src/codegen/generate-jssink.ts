@@ -7,6 +7,8 @@ const classes = [
   "HTTPSResponseSink",
   "H3ResponseSink",
   "NetworkSink",
+  "FetchRequestBodySink",
+  "HTMLRewriterSink",
 ];
 
 function names(name) {
@@ -17,14 +19,12 @@ function names(name) {
     controllerName: `Readable${name}Controller`,
     prototypeName: `JS${name}Prototype`,
     controllerPrototypeName: `JSReadable${name}ControllerPrototype`,
-    writableStreamSourcePrototype: `JSWritableStreamSource${name}Prototype`,
-    writableStreamName: `JSWritableStreamSource${name}`,
   };
 }
 
 function header() {
   function classTemplate(name) {
-    const { constructor, className, controller, writableStreamName } = names(name);
+    const { constructor, className, controller } = names(name);
 
     return `class ${constructor} final : public JSC::InternalFunction {                                                                                                     
         public:                                                                                                                                                                     
@@ -129,59 +129,48 @@ function header() {
 
      
 
-        class ${controller} final : public JSC::JSDestructibleObject {                                                                                                              
-            public:                                                                                                                                                                     
-                using Base = JSC::JSDestructibleObject;                                                                                                                                 
-                static ${controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy);       
-                static constexpr SinkID Sink = SinkID::${name};                                          
-                                                                                                                                                                                        
-                DECLARE_EXPORT_INFO;                                                                                                                                                    
-                template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)                                                                
-                {                                                                                                                                                                       
-                    if constexpr (mode == JSC::SubspaceAccess::Concurrently)                                                                                                            
-                        return nullptr;                                                                                                                                                 
-                    return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(                                                                                 
-                        vm,                                                                                                                                                             
-                        [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },                                                                                            
-                        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },                                                                          
-                        [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },                                                                                                  
-                        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });                                                                               
-                }                                                                                                                                                                       
-                                                                                                                                                                                        
-                static void destroy(JSC::JSCell*);                                                                                                                                      
-                static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)                                                          
-                {                                                                                                                                                                       
-                    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());                                                 
+        class ${controller} final : public JSReadableSinkControllerBase {
+            public:
+                using Base = JSReadableSinkControllerBase;
+                static ${controller}* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy);
+                static constexpr SinkID Sink = SinkID::${name};
+
+                DECLARE_EXPORT_INFO;
+                template<typename, JSC::SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+                {
+                    if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+                        return nullptr;
+                    return WebCore::subspaceForImpl<${controller}, WebCore::UseCustomHeapCellType::No>(
+                        vm,
+                        [](auto& spaces) { return spaces.m_clientSubspaceForJSSinkController.get(); },
+                        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSinkController = std::forward<decltype(space)>(space); },
+                        [](auto& spaces) { return spaces.m_subspaceForJSSinkController.get(); },
+                        [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSinkController = std::forward<decltype(space)>(space); });
+                }
+
+                static void destroy(JSC::JSCell*);
+                static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
+                {
+                    return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
                 }
                 static JSObject* createPrototype(VM& vm, JSDOMGlobalObject& globalObject);
-                                                                                                                                                                                        
-                ~${controller}();                                                                                                                                                       
 
+                ~${controller}();
 
-                void* wrapped() const { return m_sinkPtr; }    
                 void detach();
 
                 void start(JSC::JSGlobalObject *globalObject, JSC::JSValue readableStream, JSC::JSValue onPull, JSC::JSValue onClose);
                 DECLARE_VISIT_CHILDREN;
-                                                                                                                                                                                        
+
                 static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
                 static size_t estimatedSize(JSCell* cell, JSC::VM& vm);
                 static size_t memoryCost(void* sinkPtr);
 
-                void* m_sinkPtr;
-                mutable WriteBarrier<JSC::JSObject> m_onPull;
-                mutable WriteBarrier<JSC::JSObject> m_onClose;
-                mutable JSC::Weak<JSObject> m_weakReadableStream;
-
-                uintptr_t m_onDestroy { 0 };
-                                                                                                                                                                                        
                 ${controller}(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, uintptr_t onDestroy)
-                    : Base(vm, structure)
+                    : Base(vm, structure, sinkPtr, SinkID::${name}, onDestroy)
                 {
-                    m_sinkPtr = sinkPtr;
-                    m_onDestroy = onDestroy;
                 }
-                                                                                                                                                                                        
+
                 void finishCreation(JSC::VM&);
             };
 
@@ -207,6 +196,37 @@ extern "C" bool JSSink_isSink(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 
 namespace WebCore {
 using namespace JSC;
+
+// Shared field layout for every JSReadable*SinkController so the generic
+// JSSinkController__onReady/onClose externs can read m_onPull / m_onClose /
+// m_weakReadableStream without a per-sink symbol. JSCell is non-polymorphic,
+// so this base must stay non-virtual: a vtable pointer here would displace the
+// cell header.
+class JSReadableSinkControllerBase : public JSC::JSDestructibleObject {
+public:
+    using Base = JSC::JSDestructibleObject;
+
+    DECLARE_INFO;
+
+    void* wrapped() const { return m_sinkPtr; }
+    SinkID sinkId() const { return m_sinkId; }
+
+    void* m_sinkPtr;
+    SinkID m_sinkId;
+    mutable WriteBarrier<JSC::JSObject> m_onPull;
+    mutable WriteBarrier<JSC::JSObject> m_onClose;
+    mutable JSC::Weak<JSObject> m_weakReadableStream;
+    uintptr_t m_onDestroy { 0 };
+
+protected:
+    JSReadableSinkControllerBase(JSC::VM& vm, JSC::Structure* structure, void* sinkPtr, SinkID sinkId, uintptr_t onDestroy)
+        : Base(vm, structure)
+    {
+        m_sinkPtr = sinkPtr;
+        m_sinkId = sinkId;
+        m_onDestroy = onDestroy;
+    }
+};
 
 `;
 
@@ -284,22 +304,13 @@ using namespace JSC;
 
 ${classes.map(name => `extern "C" size_t ${name}__memoryCost(void* sinkPtr);`).join("\n")}
 ${classes.map(name => `extern "C" void ${name}__controllerDetached(void* sinkPtr, JSC::EncodedJSValue controllerValue);`).join("\n")}
+
+const ClassInfo JSReadableSinkControllerBase::s_info = { "ReadableSinkController"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableSinkControllerBase) };
 `;
   var templ = head;
 
   for (let name of classes) {
-    const {
-      className,
-      controller,
-      prototypeName,
-      controllerName,
-      controllerPrototypeName,
-      constructor,
-      writableStreamName,
-      writableStreamSourcePrototype,
-    } = names(name);
-    const protopad = `${controller}__close`.length;
-    const padding = `${name}__doClose`.length;
+    const { className, controller, prototypeName, controllerName, controllerPrototypeName, constructor } = names(name);
     templ += `
 
   void ${className}::ref() {
@@ -510,8 +521,15 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
     }
 
     sink->detach();
-    RETURN_IF_EXCEPTION(scope, {});
     ${name}__close(lexicalGlobalObject, ptr);
+    // detach() nulled m_sinkPtr so ~${className} won't finalize ptr; do the
+    // destructor's teardown (onDestroy first so Subprocess clears its weak
+    // back-pointer, then __finalize) here instead, even if __close threw.
+    if (auto destroy = std::exchange(sink->m_onDestroy, 0)) {
+        Bun__onSinkDestroyed(destroy, ptr);
+    }
+    ${name}__finalize(ptr);
+    RETURN_IF_EXCEPTION(scope, {});
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -941,34 +959,23 @@ extern "C" void* ${name}__fromJS(JSC::EncodedJSValue value)
     return (void*)1;
 }
 
-extern "C" void ${name}__detachPtr(JSC::EncodedJSValue JSValue0)
-{
-    if (auto* sink = dynamicDowncast<WebCore::JS${name}>(JSC::JSValue::decode(JSValue0))) {
-        sink->detach();
-        return;
-    }
-        
-
-    if (auto* controller = dynamicDowncast<WebCore::${controller}>(JSC::JSValue::decode(JSValue0))) {
-        controller->detach();
-        return;
-    }
-}
-
-extern "C" JSC::EncodedJSValue ${name}__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, void* sinkPtr, void **controllerValue)
+// JSSink::assign_to_stream (Sink.rs): records the controller as the sink's source, then pumps via JSSinkController__assignToStream.
+extern "C" JSC::EncodedJSValue ${name}__createController(JSC::JSGlobalObject* arg0, void* sinkPtr)
 {
     auto& vm = arg0->vm();
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
 
     JSC::Structure* structure = WebCore::getDOMStructure<WebCore::${controller}>(vm, *globalObject);
-    WebCore::${controller} *controller = WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0);
-    *controllerValue = reinterpret_cast<void*>(JSC::JSValue::encode(controller));
-    return globalObject->assignToStream(JSC::JSValue::decode(stream), controller);
+    return JSC::JSValue::encode(WebCore::${controller}::create(vm, globalObject, structure, sinkPtr, 0));
 }
 
-extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)
+`;
+  }
+
+  templ += `
+extern "C" void JSSinkController__onReady(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue amt, JSC::EncodedJSValue offset)
 {
-    WebCore::${controller}* controller = uncheckedDowncast<WebCore::${controller}>(JSC::JSValue::decode(controllerValue).getObject());
+    auto* controller = static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(controllerValue).getObject());
 
     JSC::JSValue function = controller->m_onPull.get();
     if (!function)
@@ -988,14 +995,9 @@ extern "C" void ${name}__onReady(JSC::EncodedJSValue controllerValue, JSC::Encod
     RELEASE_AND_RETURN(scope, void());
 }
 
-extern "C" void ${name}__onStart(JSC::EncodedJSValue controllerValue)
+extern "C" void JSSinkController__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
 {
-
-}
-
-extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::EncodedJSValue reason)
-{
-    WebCore::${controller}* controller = uncheckedDowncast<WebCore::${controller}>(JSC::JSValue::decode(controllerValue).getObject());
+    auto* controller = static_cast<WebCore::JSReadableSinkControllerBase*>(JSC::JSValue::decode(controllerValue).getObject());
 
     JSC::JSValue function = controller->m_onClose.get();
     if (!function)
@@ -1017,8 +1019,23 @@ extern "C" void ${name}__onClose(JSC::EncodedJSValue controllerValue, JSC::Encod
     RELEASE_AND_RETURN(scope, void());
 }
 
+extern "C" JSC::EncodedJSValue JSSinkController__assignToStream(JSC::JSGlobalObject* arg0, JSC::EncodedJSValue stream, JSC::EncodedJSValue controllerValue)
+{
+    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(arg0);
+    return globalObject->assignToStream(JSC::JSValue::decode(stream), JSC::JSValue::decode(controllerValue));
+}
+
+extern "C" void JSSinkController__detachPtr(JSC::EncodedJSValue controllerValue)
+{
+    JSC::JSValue value = JSC::JSValue::decode(controllerValue);
+${classes
+  .map(
+    name =>
+      `    if (auto* controller = dynamicDowncast<WebCore::${names(name).controller}>(value)) { controller->detach(); return; }`,
+  )
+  .join("\n")}
+}
 `;
-  }
   return templ;
 }
 
@@ -1043,6 +1060,8 @@ function rustSink() {
     HTTPSResponseSink: "crate::webcore::streams::HTTPSResponseSink",
     H3ResponseSink: "crate::webcore::streams::H3ResponseSink",
     NetworkSink: "crate::webcore::streams::NetworkSink",
+    FetchRequestBodySink: "crate::webcore::fetch::fetch_request_body_sink::FetchRequestBodySink",
+    HTMLRewriterSink: "crate::api::html_rewriter::RewriterPipe",
   };
 
   const symbols: string[] = [];
@@ -1052,7 +1071,8 @@ function rustSink() {
   // `&`/`&mut ${name}` directly (ABI-identical to `void*` for non-null inputs;
   // every JSSink.cpp call site null-checks `m_sinkPtr`/`wrapped()` before
   // calling). The SYSV-ABI thunks are `unsafe fn` (mandated by `jsc_host_abi!`;
-  // bodies remain safe — only C++ calls these); the plain-C thunks stay safe.
+  // bodies remain safe — only C++ calls these); the plain-C thunks stay safe,
+  // except `__finalize`, which may free the sink and so takes `*mut` (below).
   let templ = `// Auto-generated by src/codegen/generate-jssink.ts — DO NOT EDIT.
 //
 // Per-sink \`#[unsafe(no_mangle)]\` thunks satisfying the externs declared by
@@ -1066,6 +1086,7 @@ function rustSink() {
 //
 // Safe-body: \`m_sinkPtr\` params are typed \`&\`/\`&mut\` (every C++ caller
 // null-checks first); host fns route through \`bun_jsc::host_fn::host_fn_static\`.
+// \`__finalize\` is the exception: it may free the sink, so it keeps \`*mut\`.
 
 #[allow(dead_code, unreachable_pub, unused)]
 use bun_jsc::{self, host_fn, CallFrame, JSGlobalObject, JSValue};
@@ -1123,13 +1144,16 @@ pub extern "C" fn ${name}__memoryCost(this: &${name}) -> usize {
 
 `;
 
-    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from JS${name}::~JS${name}.
-    // C++ caller null-checks `m_sinkPtr` before calling.
+    // ZIG_DECL void ${name}__finalize(void* sinkPtr) — called from
+    // JS${name}::~JS${name}, ~JSReadable${name}Controller and ${name}__doClose.
+    // C++ caller null-checks `m_sinkPtr` / `ptr` before calling. `*mut`, not
+    // `&mut`: this call may free the sink (see `JsSinkType::finalize`).
     symbols.push(`${name}__finalize`);
     templ += `#[allow(dead_code, unreachable_pub, unused)]
 #[unsafe(no_mangle)]
-pub extern "C" fn ${name}__finalize(this: &mut ${name}) {
-    ${JSSinkT}::js_finalize(this)
+pub unsafe extern "C" fn ${name}__finalize(this: *mut ${name}) {
+    // SAFETY: C++ hands over its live \`m_sinkPtr\` once and never uses it again.
+    unsafe { ${JSSinkT}::js_finalize(this) }
 }
 
 `;

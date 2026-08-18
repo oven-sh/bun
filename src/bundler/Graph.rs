@@ -1,5 +1,3 @@
-use core::ptr::NonNull;
-
 use crate::BundledAst as JSAst;
 use bun_alloc::Arena as ThreadLocalArena;
 use bun_alloc::{AstAlloc, AstVec};
@@ -23,7 +21,7 @@ pub struct Graph<'a> {
     // (sibling field). `BackRef` (not raw `NonNull`) so the read accessor `pool()` is
     // safe — the BACKREF invariant (pointee outlives holder) holds for the entire
     // bundle pass.
-    pub pool: bun_ptr::BackRef<ThreadPool>,
+    pub pool: bun_ptr::BackRef<ThreadPool, bun_ptr::Mut>,
     pub(crate) heap: &'a ThreadLocalArena,
 
     /// Mapping user-specified entry points to their Source Index
@@ -57,6 +55,13 @@ pub struct Graph<'a> {
     /// When `pending_items` hits zero and there are deferred pending tasks, those
     /// tasks will be run, and the count is "moved" back to `pending_items`
     pub(crate) deferred_pending: u32,
+
+    /// Which deferred batch is being collected: bumped each time `drain_deferred_tasks` moves the parked
+    /// units back, so a `Load` can tell whether its own unit is still parked. Bundle thread only.
+    pub(crate) defer_epoch: u32,
+    /// The VM that owns the plugins is shutting down: `dispatch()` hands it nothing further (what it
+    /// holds comes back answered as cancelled) and the pass fails at its next checkpoint.
+    pub(crate) cancelled: bool,
 
     /// A map of build targets to their corresponding module graphs.
     pub build_graphs: EnumMap<options::Target, PathToSourceIndexMap>,
@@ -154,7 +159,7 @@ impl<'a> Graph<'a> {
         Self {
             // Self-referential arena pointer; real value wired in
             // `BundleV2::init` before any use.
-            pool: bun_ptr::BackRef::from(NonNull::<ThreadPool>::dangling()),
+            pool: bun_ptr::BackRef::dangling(),
             heap,
             entry_points: Vec::new(),
             entry_point_original_names: IndexStringMap::default(),
@@ -162,6 +167,8 @@ impl<'a> Graph<'a> {
             ast: MultiArrayList::default(),
             pending_items: 0,
             deferred_pending: 0,
+            defer_epoch: 0,
+            cancelled: false,
             build_graphs: EnumMap::default(),
             server_component_boundaries: server_component_boundary::List::default(),
             html_imports: HtmlImports::default(),
@@ -221,10 +228,12 @@ impl<'a> Graph<'a> {
         transpiler.thread_lock.assert_locked();
 
         if self.deferred_pending > 0 {
-            self.pending_items += self.deferred_pending;
+            // Their units are back in `pending_items` (a new epoch: those loads' own units are no longer
+            // parked), plus one for the hop itself: the pass is not done until it is back (see
+            // `DeferredBatchTask`).
+            self.pending_items += self.deferred_pending + 1;
             self.deferred_pending = 0;
-
-            transpiler.drain_defer_task.init();
+            self.defer_epoch += 1;
             transpiler.drain_defer_task.schedule();
 
             return true;

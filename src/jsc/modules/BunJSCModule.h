@@ -38,6 +38,7 @@
 #include <wtf/text/WTFString.h>
 
 #include "BunProcess.h"
+#include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
 #include <JavaScriptCore/RemoteInspectorServer.h>
@@ -667,8 +668,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject, Ca
             makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
         return {};
     }
-    WTF::timeZoneDidChange();
-    vm.dateCache.clearForTimeZoneChange();
+    Bun::resetDateCachesAfterTimeZoneChange(vm);
     WTF::Vector<char16_t, 32> buffer;
     WTF::getTimeZoneOverride(buffer);
     WTF::String timeZoneString(buffer.span());
@@ -698,8 +698,6 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         throwException(globalObject, throwScope, createTypeError(globalObject, "First argument must be a function."_s));
         return JSValue::encode(JSValue {});
     }
-
-    JSC::JSFunction* function = uncheckedDowncast<JSC::JSFunction>(callbackValue);
 
     if (sampleValue.isNumber()) {
         unsigned sampleInterval = sampleValue.toUInt32(globalObject);
@@ -751,11 +749,11 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject, Ca
         return {};
     };
 
-    JSC::CallData callData = JSC::getCallData(function);
+    JSC::CallData callData = JSC::getCallData(callbackValue);
 
     samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
     samplingProfiler.start();
-    JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, function, callData, JSC::jsUndefined(), args);
+    JSValue returnValue = JSC::profiledCall(globalObject, ProfilingReason::API, callbackValue, callData, JSC::jsUndefined(), args);
 
     if (returnValue.isEmpty() || throwScope.exception()) {
         return JSValue::encode(reportFailure(vm));
@@ -1017,7 +1015,7 @@ JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(36);
+    INIT_NATIVE_MODULE(BunJSC, 36);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

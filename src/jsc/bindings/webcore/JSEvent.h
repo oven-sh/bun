@@ -22,7 +22,6 @@
 
 #include "Event.h"
 #include "JSDOMWrapper.h"
-#include <JavaScriptCore/Snippet.h>
 #include <wtf/NeverDestroyed.h>
 
 namespace WebCore {
@@ -80,19 +79,11 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, Event*)
     return &owner.get();
 }
 
-inline void* wrapperKey(Event* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, Event&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, Event* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<Event>&&);
 inline JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, RefPtr<Event>&& impl) { return impl ? toJSNewlyCreated(lexicalGlobalObject, globalObject, impl.releaseNonNull()) : JSC::jsNull(); }
 
-// #if ENABLE(JIT)
-// Ref<JSC::Snippet> checkSubClassSnippetForJSEvent();
-// #endif
 template<> struct JSDOMWrapperConverterTraits<Event> {
     using WrapperClass = JSEvent;
     using ToWrappedReturnType = Event*;

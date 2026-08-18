@@ -323,12 +323,6 @@ it.skipIf(!isPosix)(
 // run_pending, so a backpressured write()'s promise was left pending forever
 // while close() threw. Now close() routes the error to that promise and
 // returns undefined.
-//
-// Runs in a subprocess because sink.close() on a Blob-created FileSink
-// currently leaks the native FileSink (doClose detaches m_sinkPtr so the
-// wrapper's +1 never reaches finalize); running it in-process would abort the
-// whole file under detect_leaks=1. That leak is pre-existing on main and
-// tracked separately.
 it.skipIf(!isPosix)(
   "close() after a backpressured write() with the reader gone rejects the write's promise with EPIPE",
   async () => {
@@ -348,12 +342,7 @@ it.skipIf(!isPosix)(
     `;
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", src],
-      env: {
-        ...bunEnv,
-        // Pre-existing leak in sink.close() (see comment above); don't let the
-        // child's LSAN abort hide the actual assertion we're testing.
-        ASAN_OPTIONS: "allow_user_segv_handler=1:disable_coredump=0:detect_leaks=0",
-      },
+      env: bunEnv,
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
@@ -524,6 +513,49 @@ it.skipIf(!isPosix)("does not leak native FileSink when a pending write fails (E
   expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
 });
 
+// The generated ${name}__doClose detached m_sinkPtr and then called __close,
+// so the wrapper's destructor skipped __finalize and the wrapper's +1 on the
+// native FileSink was never released.
+it("close() does not leak the native FileSink", async () => {
+  const dir = tmpdirSync();
+  const baseline = fileSinkInternals.liveCount();
+  const iterations = 8;
+  for (let i = 0; i < iterations; i++) {
+    const writer = Bun.file(join(dir, `close-leak-${i}.txt`)).writer();
+    writer.write("hi");
+    writer.close();
+  }
+  for (let i = 0; i < 50; i++) {
+    Bun.gc(true);
+    if (fileSinkInternals.liveCount() <= baseline) break;
+    await Bun.sleep(10);
+  }
+  expect(fileSinkInternals.liveCount()).toBeLessThanOrEqual(baseline + 1);
+});
+
+// Now that __doClose runs finalize(), finalize() must not tear down state an
+// in-flight write still needs: clearing `pending` here would drop the
+// backpressure promise's Strong before on_write can settle it.
+it.skipIf(isWindows)("close() while a write() promise is pending still settles it", async () => {
+  await using child = Bun.spawn({
+    cmd: [bunExe(), "-e", "for await (const _ of process.stdin) {}"],
+    env: bunEnv,
+    stdin: "pipe",
+    stdout: "ignore",
+    stderr: "pipe",
+  });
+  const writer = child.stdin;
+  // 4 MiB overflows the default pipe capacity on Linux/macOS so write()
+  // returns a promise.
+  const p = writer.write(Buffer.alloc(4 * 1024 * 1024, 0x61));
+  expect(p).toBeInstanceOf(Promise);
+  writer.close();
+  await expect(p).resolves.toBeGreaterThanOrEqual(0);
+  const [stderr, exitCode] = await Promise.all([child.stderr.text(), child.exited]);
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
+});
+
 it("start() without path/fd on an already-open writer does not crash", async () => {
   const path = join(tmpdirSync(), "filesink-restart.txt");
   const writer = Bun.file(path).writer();
@@ -532,6 +564,38 @@ it("start() without path/fd on an already-open writer does not crash", async () 
   writer.write("hello");
   await writer.end();
   expect(await Bun.file(path).text()).toBe("hello");
+});
+
+it("start() with a path/fd getter that closes the writer throws instead of crashing", async () => {
+  const dir = tmpdirSync();
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+      const { join } = require("node:path");
+      for (const key of ["path", "fd"]) {
+        const p = join(process.argv[1], "start-reentrant-" + key + ".txt");
+        const w = Bun.file(p).writer();
+        w.write("hello");
+        let err;
+        try {
+          w.start({ get [key]() { w.close(); return key === "path" ? p : 1; } });
+        } catch (e) { err = e; }
+        console.log(key, /already been closed/.test(err?.message));
+        try { w.write("x"); console.log("write ok"); } catch (e) { console.log("write", /already been closed/.test(e.message)); }
+      }
+      `,
+      dir,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout).toBe("path true\nwrite true\nfd true\nwrite true\n");
+  if (exitCode !== 0) expect(stderr).toBe("");
+  expect(exitCode).toBe(0);
 });
 
 it.skipIf(!isPosix)("writing after end() fails during flush does not crash", async () => {
@@ -642,6 +706,142 @@ describe.skipIf(isWindows)("FileSink buffered data is flushed on process exit", 
   it.concurrent("write inside 'exit' listener", () =>
     check(`process.on("exit", () => { w.write(${JSON.stringify(line)}); }); process.exit(0);`, line + line),
   );
+});
+
+// On a pipe or socket, a small write() parks the bytes in the sink's buffer and
+// marks the event loop alive until they are flushed; the deferred auto-flush
+// clears that once it has drained them. An explicit flush() that drained them
+// itself (console.write is write()+flush()) used to leave the mark in place
+// until that deferred task ran. 'beforeExit' is where this shows: it is
+// re-emitted whenever a listener left the loop alive, so a listener doing
+// write()+flush() got it a second time, and one writing on every emit kept the
+// process alive forever. The fixtures below write on the first emit only and
+// report on stderr, from 'exit', how many emits they saw.
+describe("FileSink flush() from a 'beforeExit' listener", () => {
+  const marker = "from beforeExit\n";
+
+  function fixture(stream: "stdout" | "stderr") {
+    return `
+      let count = 0;
+      let code = null;
+      process.on("beforeExit", () => {
+        count++;
+        if (count !== 1) return;
+        const sink = Bun.${stream}.writer();
+        sink.write(${JSON.stringify(marker)});
+        try {
+          sink.flush();
+        } catch (e) {
+          code = e.code;
+        }
+      });
+      process.on("exit", () => console.error(JSON.stringify({ count, code })));
+    `;
+  }
+
+  // `stdio` replaces the child's stdin/stdout with raw fds; stdout is then not
+  // captured and comes back as null.
+  async function run(script: string, stdio: { stdin?: number; stdout?: number } = {}) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", script],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+      ...stdio,
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      stdio.stdout === undefined ? (proc.stdout as ReadableStream).text() : null,
+      (proc.stderr as ReadableStream).text(),
+      proc.exited,
+    ]);
+    return { stdout, stderr, exitCode };
+  }
+
+  const once = JSON.stringify({ count: 1, code: null }) + "\n";
+
+  it.concurrent("Bun.stdout.writer() write()+flush() on a pipe emits 'beforeExit' once", async () => {
+    expect(await run(fixture("stdout"))).toEqual({ stdout: marker, stderr: once, exitCode: 0 });
+  });
+
+  it.concurrent("Bun.stderr.writer() write()+flush() on a pipe emits 'beforeExit' once", async () => {
+    expect(await run(fixture("stderr"))).toEqual({ stdout: "", stderr: marker + once, exitCode: 0 });
+  });
+
+  // flush() can also fail outright: the writer drops the buffered bytes and
+  // flush() throws. Nothing is pending after that either, so this path must not
+  // leave the loop marked alive any more than the success path does. The
+  // child's stdout is a socket whose peer is already closed.
+  it.concurrent.skipIf(!isPosix)("a flush() that fails with EPIPE emits 'beforeExit' once", async () => {
+    const [readFd, writeFd] = createSocketPair();
+    fs.closeSync(readFd);
+    try {
+      expect(await run(fixture("stdout"), { stdout: writeFd })).toEqual({
+        stdout: null,
+        stderr: JSON.stringify({ count: 1, code: "EPIPE" }) + "\n",
+        exitCode: 0,
+      });
+    } finally {
+      fs.closeSync(writeFd);
+    }
+  });
+
+  // The other direction has to keep working: when flush() cannot drain the
+  // buffer, the bytes are still pending and the process has to stay alive until
+  // they go out. The child's stdout is a socket whose send buffer is already
+  // full; its stdin is the other end. The unref'd timer that drains it does not
+  // hold the process open by itself, it only gets to run because the pending
+  // bytes do, so releasing the loop on this path would exit the child before
+  // the timer fires and before flush()'s promise settles.
+  it.concurrent.skipIf(!isPosix)("a flush() that could not drain keeps the process alive until it does", async () => {
+    const [readFd, writeFd] = createSocketPair();
+    try {
+      // createSocketPair() hands out non-blocking fds: write until the kernel
+      // refuses more.
+      const filler = Buffer.alloc(64 * 1024, 0x61);
+      let filled = 0;
+      try {
+        while (true) filled += fs.writeSync(writeFd, filler);
+      } catch (e: any) {
+        if (e.code !== "EAGAIN") throw e;
+      }
+
+      const result = await run(
+        `
+          const fs = require("node:fs");
+          const sink = Bun.stdout.writer();
+          const wrote = sink.write(${JSON.stringify(marker)});
+          const flushed = sink.flush();
+          let settled = "pending";
+          Promise.resolve(flushed).then(
+            () => { settled = "resolved"; },
+            e => { settled = "rejected: " + e.code; },
+          );
+
+          setTimeout(() => {
+            const buf = Buffer.alloc(64 * 1024);
+            let drained = 0;
+            while (drained < ${filled}) drained += fs.readSync(0, buf);
+          }, 0).unref();
+
+          let count = 0;
+          process.on("beforeExit", () => { count++; });
+          process.on("exit", () =>
+            console.error(JSON.stringify({ wrote, flushReturnedPromise: flushed instanceof Promise, settled, count })),
+          );
+        `,
+        { stdin: readFd, stdout: writeFd },
+      );
+      expect(result).toEqual({
+        stdout: null,
+        stderr:
+          JSON.stringify({ wrote: marker.length, flushReturnedPromise: true, settled: "resolved", count: 1 }) + "\n",
+        exitCode: 0,
+      });
+    } finally {
+      fs.closeSync(readFd);
+      fs.closeSync(writeFd);
+    }
+  });
 });
 
 it("fs.promises.writeFile with iterables under GC pressure does not crash", async () => {

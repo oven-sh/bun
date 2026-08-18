@@ -20,15 +20,26 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 
 #[repr(i32)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
+/// Which of the three codes a close uses decides whether the close callback
+/// has run by the time `close()` returns. Only `failure` guarantees that: for
+/// the other two, `us_internal_ssl_close` (crypto/openssl.c) keeps a TLS
+/// socket open while it still owns the loop's ciphertext spill, i.e. when the
+/// last batch flush hit a full kernel buffer, and finishes the close from the
+/// next writable event or the peer's FIN, which a peer that stopped reading
+/// never produces.
 pub enum CloseCode {
     /// TLS: send close_notify and defer fd close until peer replies. TCP: FIN.
     normal = 0,
-    /// TLS: fast-shutdown (no wait). TCP: SO_LINGER{1,0} → RST, dropping any
-    /// unflushed send buffer. Only for `terminate()` / GC abort.
+    /// Closes now, whatever the peer does: TLS fast-shutdown with no spill
+    /// deferral; TCP SO_LINGER{1,0} → RST, dropping any unflushed send buffer.
+    /// For `terminate()` / GC abort, and for a protocol client that has given
+    /// up on the connection and rejected everything on it (the valkey client's
+    /// `fail()`), whose callers rely on the close callback having run.
     failure = 1,
-    /// TLS: fast-shutdown (no wait). TCP: FIN. For `_handle.close()` where
-    /// the JS wrapper detaches immediately so `.normal`'s deferral would
-    /// orphan the `us_socket_t`, but already-written data must still drain.
+    /// TLS: fast-shutdown, but still deferred while a spill is pending. TCP:
+    /// FIN. For `_handle.close()` where the JS wrapper detaches immediately so
+    /// `.normal`'s deferral would orphan the `us_socket_t`, but already-written
+    /// data must still drain.
     fast_shutdown = 2,
 }
 
@@ -658,17 +669,16 @@ impl us_socket_stream_buffer_t {
     /// Explicit teardown — this struct is `#[repr(C)]` and freed via the
     /// exported `us_socket_free_stream_buffer`, so no `Drop` impl.
     ///
-    /// SAFETY: `this` must point to a live `us_socket_stream_buffer_t` whose
-    /// `list_ptr`/`list_cap` were produced by `update` (decomposed `Vec<u8>` on
-    /// the global mimalloc allocator). Not called more than once.
-    pub(crate) unsafe fn destroy(this: *mut Self) {
-        // SAFETY: caller contract — `this` is non-null and exclusively borrowed
-        let this = unsafe { &mut *this };
-        if !this.list_ptr.is_null() {
+    /// SAFETY: `list_ptr`/`list_cap` were produced by `update` (decomposed
+    /// `Vec<u8>` on the global mimalloc allocator). Not called more than once.
+    pub(crate) unsafe fn destroy(&mut self) {
+        if !self.list_ptr.is_null() {
             unsafe {
                 // SAFETY: list_ptr/list_cap came from a decomposed Vec<u8> (global mimalloc).
-                drop(Vec::from_raw_parts(this.list_ptr, 0, this.list_cap));
+                drop(Vec::from_raw_parts(self.list_ptr, 0, self.list_cap));
             }
+            self.list_ptr = core::ptr::null_mut();
+            self.list_cap = 0;
         }
     }
 }
@@ -676,6 +686,6 @@ impl us_socket_stream_buffer_t {
 #[unsafe(no_mangle)]
 extern "C" fn us_socket_free_stream_buffer(buffer: *mut us_socket_stream_buffer_t) {
     // SAFETY: caller (C) passes a live us_socket_stream_buffer_t*
-    unsafe { us_socket_stream_buffer_t::destroy(buffer) };
+    unsafe { (*buffer).destroy() };
 }
 // us_socket_buffered_js_write moved to src/runtime/socket/uws_jsc.rs

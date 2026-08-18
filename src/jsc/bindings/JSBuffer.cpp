@@ -90,6 +90,7 @@ extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, 
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
+extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
 
 // export fn Bun__inspect_singleline(globalThis: *JSGlobalObject, value: JSValue) bun.String
@@ -405,8 +406,10 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
         uint8Array = JSC::JSUint8Array::create(lexicalGlobalObject, subclassStructure, 0);
     }
 
-    // only JSC::JSUint8Array::create can throw and we control the ArrayBuffer passed in.
-    scope.assertNoException();
+    // JSUint8Array::create throws only on OOM — or with a termination request
+    // pending on this VM (a worker being stopped), which any exception check
+    // materialises. Either way there is no buffer.
+    RETURN_IF_EXCEPTION(scope, {});
     ASSERT(uint8Array);
 
     return JSC::JSValue::encode(uint8Array);
@@ -483,11 +486,6 @@ JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const 
     return createBuffer(lexicalGlobalObject, data.data(), data.size());
 }
 
-JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const char* ptr, size_t length)
-{
-    return createBuffer(lexicalGlobalObject, reinterpret_cast<const uint8_t*>(ptr), length);
-}
-
 JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data)
 {
     return createBuffer(lexicalGlobalObject, data.begin(), data.size());
@@ -549,12 +547,6 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeBody(JSC::JSGl
 static JSC::EncodedJSValue constructBufferEmpty(JSGlobalObject* lexicalGlobalObject)
 {
     return JSBuffer__bufferFromLength(lexicalGlobalObject, 0);
-}
-
-JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, std::span<const uint8_t> bytes, WebCore::BufferEncodingType encoding)
-{
-    WTF::StringView view(bytes);
-    return constructFromEncoding(lexicalGlobalObject, view, encoding);
 }
 
 JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalObject, WTF::StringView view, WebCore::BufferEncodingType encoding)
@@ -712,11 +704,7 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_allocBody(JSC::JSGlobalOb
                 return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
             }
         } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
-            if (view->isDetached()) [[unlikely]] {
-                throwVMTypeError(lexicalGlobalObject, scope, "Uint8Array is detached"_s);
-                return {};
-            }
-
+            // A detached view has byteLength() 0 and is rejected as an empty fill value, like in Node.
             size_t length = view->byteLength();
             if (length == 0) [[unlikely]] {
                 return Bun::ERR::INVALID_ARG_VALUE(scope, lexicalGlobalObject, "value"_s, value);
@@ -837,21 +825,15 @@ static JSC::EncodedJSValue jsBufferConstructorFunction_compareBody(JSC::JSGlobal
     if (!castedThis) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "buf1"_s, "Buffer or Uint8Array"_s, castedThisValue);
     }
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array (first argument) is detached"_s);
-        return {};
-    }
 
     auto buffer = callFrame->argument(1);
     JSC::JSArrayBufferView* view = dynamicDowncast<JSC::JSArrayBufferView>(buffer);
     if (!view) [[unlikely]] {
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "buf2"_s, "Buffer or Uint8Array"_s, buffer);
     }
-    if (view->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array (second argument) is detached"_s);
-        return {};
-    }
 
+    // A detached view has byteLength() 0 and compares as empty, like in Node. Its
+    // vector() is null, but the memcmp below is skipped for a zero length.
     size_t targetStart = 0;
     size_t targetEndInit = view->byteLength();
     size_t targetEnd = targetEndInit;
@@ -1109,11 +1091,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "target"_s, "Buffer or Uint8Array"_s, arg0);
     }
 
-    if (view->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-        return {};
-    }
-
+    // Either side may be detached: it then has byteLength() 0, so the explicit
+    // targetEnd/sourceEnd are validated against 0 and the empty-range returns
+    // below fire before either vector is read, like in Node.
     size_t targetStart = 0;
     size_t targetEndInit = view->byteLength();
     size_t targetEnd = targetEndInit;
@@ -1318,11 +1298,9 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_equalsBody(JSC::JSGlobalObj
         return Bun::ERR::INVALID_ARG_INSTANCE(throwScope, lexicalGlobalObject, "otherBuffer"_s, "Buffer or Uint8Array"_s, buffer);
     }
 
-    if (view->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, throwScope, "Uint8Array is detached"_s);
-        return {};
-    }
-
+    // Either side may be detached: it then has byteLength() 0 and a null vector,
+    // and only equals another empty view, like in Node. The memcmp below is
+    // skipped for a zero length, so the null vector is never read.
     size_t a_length = castedThis->byteLength();
     size_t b_length = view->byteLength();
     auto sourceStartPtr = castedThis->typedVector();
@@ -1447,14 +1425,11 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_fillBody(JSC::JSGlobalObjec
     } else if (auto* view = dynamicDowncast<JSC::JSArrayBufferView>(value)) {
         branch = ViewBranch;
         viewValue = view;
-        if (viewValue->isDetached()) [[unlikely]] {
-            throwVMTypeError(lexicalGlobalObject, scope, "Uint8Array is detached"_s);
-            return {};
-        }
         // Single read of viewValue->byteLength() — used both for the
         // empty check here and for the repeat length in the write loop.
         // No further side effects can run before the write, so the value
-        // is stable.
+        // is stable. A detached view reads as 0 and is rejected as an
+        // empty fill value, like in Node.
         viewValueLength = viewValue->byteLength();
         if (viewValueLength == 0) [[unlikely]] {
             scope.throwException(lexicalGlobalObject, createError(lexicalGlobalObject, Bun::ErrorCode::ERR_INVALID_ARG_VALUE, "Buffer cannot be empty"_s));
@@ -1604,10 +1579,6 @@ static int64_t lastIndexOf(const uint8_t* thisPtr, int64_t thisLength, const uin
 {
     int64_t haystackLen = std::min(thisLength, byteOffset + valueLength);
     if (haystackLen < valueLength) return -1;
-    if (valueLength == 1) {
-        auto span = std::span<const uint8_t>(thisPtr, static_cast<size_t>(haystackLen));
-        return WTF::reverseFind(span, valuePtr[0]);
-    }
     size_t result = highway_memrmem(thisPtr, static_cast<size_t>(haystackLen),
         valuePtr, static_cast<size_t>(valueLength));
     if (result == kHighwayNotFound) return -1;
@@ -1663,15 +1634,15 @@ static int64_t indexOfNumber(JSC::JSGlobalObject* lexicalGlobalObject, bool last
     if (!computeIndexOfRange(byteLength, byteOffsetD, endD, 1, !last, false, &byteOffset, &searchEnd, &immediateResult))
         return immediateResult;
 
-    auto span = std::span<const uint8_t>(typedVector, searchEnd);
     if (last) {
-        span = span.subspan(0, byteOffset + 1);
-        return WTF::reverseFind(span, byteValue);
+        size_t len = byteOffset + 1;
+        size_t result = highway_last_index_of_char(typedVector, len, byteValue);
+        return result == len ? -1 : static_cast<int64_t>(result);
     }
-    span = span.subspan(byteOffset);
-    auto result = WTF::find<uint8_t>(span, byteValue);
-    if (result == WTF::notFound) return -1;
-    return result + byteOffset;
+    size_t len = searchEnd - byteOffset;
+    size_t result = highway_index_of_char(typedVector + byteOffset, len, byteValue);
+    if (result == len) return -1;
+    return static_cast<int64_t>(result + byteOffset);
 }
 
 // ucs2 and utf16le name the same encoding (the parser normalizes every alias
@@ -1957,15 +1928,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A detached buffer has byteLength() 0: nothing below touches its null vector
+    // and it is returned unchanged, like in Node.
     constexpr size_t elemSize = 2;
     size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 16-bits"_s);
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return {};
     }
 
     uint8_t* data = castedThis->typedVector();
@@ -1986,15 +1954,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A detached buffer has byteLength() 0: nothing below touches its null vector
+    // and it is returned unchanged, like in Node.
     constexpr int elemSize = 4;
     int64_t length = static_cast<int64_t>(castedThis->byteLength());
     if (length % elemSize != 0) {
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 32-bits"_s);
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return {};
     }
 
     uint8_t* typedVector = castedThis->typedVector();
@@ -2020,15 +1985,12 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // A detached buffer has byteLength() 0: nothing below touches its null vector
+    // and it is returned unchanged, like in Node.
     constexpr size_t elemSize = 8;
     size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 64-bits"_s);
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwVMTypeError(lexicalGlobalObject, scope, "Buffer is detached"_s);
-        return {};
     }
 
     uint8_t* data = castedThis->typedVector();
@@ -2391,30 +2353,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGl
     return jsBufferToString(lexicalGlobalObject, scope, castedThis, start, end - start, encoding);
 }
 
-// DOMJIT makes it slower! TODO: investigate why
-// JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::JSUint8Array* thisValue, JSC::JSString* encodingValue));
-
-// JSC_DEFINE_JIT_OPERATION(jsBufferPrototypeToStringWithoutTypeChecks, JSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSUint8Array* thisValue, JSString* encodingValue))
-// {
-//     auto& vm = JSC::getVM(lexicalGlobalObject);
-//     IGNORE_WARNINGS_BEGIN("frame-address")
-//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-//     IGNORE_WARNINGS_END
-//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-
-//     std::optional<BufferEncodingType> encoded = parseEnumeration<BufferEncodingType>(*lexicalGlobalObject, encodingValue);
-//     if (!encoded) {
-//         auto scope = DECLARE_THROW_SCOPE(vm);
-
-//         throwTypeError(lexicalGlobalObject, scope, "Invalid encoding"_s);
-//         return {};
-//     }
-
-//     auto encoding = encoded.value();
-
-//     return JSValue::decode(jsBufferToString(vm, lexicalGlobalObject, thisValue, 0, thisValue->byteLength(), encoding));
-// }
-
 // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/buffer.js#L962-L990
 // Only utf8Write/latin1Write/asciiWrite go through this strict JS wrapper in node;
 // the other encodings use jsBufferPrototypeFunction_StringWriteWithEncoding below.
@@ -2447,13 +2385,8 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JSC::VM& 
         }
     }
 
-    // Re-check if detached after potential JS execution
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
-        return {};
-    }
-
-    // Now safe to cache byteLength after all JS calls
+    // Now safe to cache byteLength after all JS calls. A detached view reports 0, so it
+    // goes through the same bounds checks as an empty buffer and writes nothing, as in node.
     size_t byteLength = castedThis->byteLength();
 
     // Node.js JS wrapper checks: if (offset < 0 || offset > this.byteLength)
@@ -2505,11 +2438,6 @@ static JSC::EncodedJSValue jsBufferPrototypeFunctionWriteWithEncoding(JSC::JSGlo
 
     if (!castedThis) [[unlikely]] {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
-        return {};
-    }
-
-    if (castedThis->isDetached()) [[unlikely]] {
-        throwTypeError(lexicalGlobalObject, scope, "ArrayBufferView is detached"_s);
         return {};
     }
 

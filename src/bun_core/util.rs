@@ -38,11 +38,6 @@ pub struct Unaligned<T: Copy>(T);
 
 impl<T: Copy> Unaligned<T> {
     #[inline(always)]
-    pub const fn new(value: T) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
     pub fn get(self) -> T {
         // `self` is by-value (already moved into an aligned local), so a plain
         // field read is fine; the `packed` repr only affects in-place borrows.
@@ -184,7 +179,7 @@ impl ZStr {
     #[inline]
     pub fn as_cstr(&self) -> &core::ffi::CStr {
         debug_assert!(
-            !self.0.contains(&0),
+            !crate::strings::contains_char(&self.0, 0),
             "ZStr::as_cstr: interior NUL would truncate the C view",
         );
         // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
@@ -376,7 +371,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         let mut p = c_environ();
         while !(*p).is_null() {
             let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
-            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
                 key.as_bytes(),
@@ -408,7 +403,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 }
                 core::slice::from_raw_parts(entry.cast::<u8>(), len)
             };
-            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
                 key.as_bytes(),
@@ -601,8 +596,7 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` / `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
-// `Default`.
+// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
@@ -635,13 +629,6 @@ impl<T> Mutex<T> {
             Err(std::sync::TryLockError::WouldBlock) => None,
         }
     }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 impl<T: Default> Default for Mutex<T> {
@@ -673,13 +660,6 @@ impl<T> RwLock<T> {
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         self.0
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
@@ -4130,6 +4110,34 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 /// Writes the current working directory into the caller's `PathBuffer` and
 /// returns the NUL-terminated slice on success.
 pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
+    let len = getcwd_len(buf)?;
+    Ok(ZStr::from_buf(&buf.0, len))
+}
+
+/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
+/// back to the executable's directory like Node's `Environment::GetCwd`, so
+/// startup proceeds and `process.cwd()` surfaces the real error later.
+pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
+    let len = match getcwd_len(buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let dir: &[u8] = self_exe_path()
+                .ok()
+                .and_then(|p| dirname(p.as_bytes()))
+                // Reject a dir that can't fit with its NUL (paths from
+                // /proc/self/exe are not bounded by MAX_PATH_BYTES).
+                .filter(|d| d.len() < buf.0.len())
+                .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
+            buf.0[..dir.len()].copy_from_slice(dir);
+            buf.0[dir.len()] = 0;
+            dir.len()
+        }
+    };
+    ZStr::from_buf(&buf.0, len)
+}
+
+/// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
+fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     #[cfg(unix)]
     // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
     // success the returned pointer aliases `buf` and is NUL-terminated, so
@@ -4137,10 +4145,12 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
+            if crate::ffi::errno() == libc::ENOENT {
+                return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
+            }
             return Err(crate::CrateError::Unexpected);
         }
-        let len = libc::strlen(p);
-        Ok(ZStr::from_buf(&buf.0, len))
+        Ok(libc::strlen(p))
     }
     #[cfg(windows)]
     {
@@ -4176,7 +4186,7 @@ pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
             bi += nb;
         }
         out[bi] = 0;
-        Ok(ZStr::from_buf(&buf.0[..], bi))
+        Ok(bi)
     }
     #[cfg(not(any(unix, windows)))]
     {
@@ -4256,7 +4266,7 @@ pub(crate) fn which<'a>(
         return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH — do NOT consult cwd.
-    for dir in path.split(|&b| b == b':') {
+    for dir in crate::strings::split(path, b":") {
         if dir.is_empty() {
             continue;
         }
@@ -4353,14 +4363,25 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
-/// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
-/// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
-/// back to plain `execve` on all POSIX which is correct on Linux/BSD and
-/// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
-/// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
+/// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
-    RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
+    // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
+    // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
+    // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
+    let owns_reload = RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get());
+    if !owns_reload && RELOAD_IN_PROGRESS.swap(true, AOrdering::SeqCst) {
+        if may_return {
+            return;
+        }
+        // Park (not pthread_exit): the loser may be the JS main thread, and
+        // running its TLS destructors concurrently with the winner's execve
+        // preparation is the same hazard class the swap exists to avoid.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
     if clear_terminal {
@@ -4401,17 +4422,14 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    // SAFETY: the FFI calls below (`on_before_reload_process_linux`, `execve`)
-    // receive only locally-built NUL-terminated argv/envp arrays terminated by
-    // a null pointer; on success `execve` never returns, on failure errno is
-    // read. No borrowed Rust state is observed after the exec.
+    // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
+    // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_linux();
+                safe fn on_before_reload_process_posix();
             }
-            on_before_reload_process_linux();
+            on_before_reload_process_posix();
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.
@@ -4567,6 +4585,8 @@ pub mod spawn_ffi {
         pub gid: u32,
         pub set_uid: bool,
         pub set_gid: bool,
+        /// Linux: directory fd of the cgroup the child starts in. -1 = unset.
+        pub cgroup_fd: c_int,
     }
 
     impl Default for BunSpawnRequest {
@@ -4582,6 +4602,7 @@ pub mod spawn_ffi {
                 gid: 0,
                 set_uid: false,
                 set_gid: false,
+                cgroup_fd: -1,
             }
         }
     }
@@ -4649,7 +4670,7 @@ fn spawn_sync_inherit_impl(
         let pid: libc::pid_t = {
             let arg0 = argv[0].as_ref();
             let mut pathbuf = PathBuffer::uninit();
-            let exe: *const core::ffi::c_char = if arg0.contains(&b'/') {
+            let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
                 // Contains a separator → use as-is (execve resolves relative
                 // to cwd, matching posix_spawnp semantics for non-bare names).
                 ptrs[0]
@@ -4880,11 +4901,6 @@ impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
     const NS_PER_S: i64 = crate::time::NS_PER_S as i64;
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
-
-    #[inline]
-    pub const fn new(sec: i64, nsec: i64) -> Self {
-        Self { sec, nsec }
-    }
 
     #[inline]
     pub fn eql(&self, other: &Timespec) -> bool {

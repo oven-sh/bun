@@ -27,10 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
-    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    ArrayBuffer, CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
+    JSArrayIterator, JSCell, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef,
+    JsResult, MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -50,18 +49,16 @@ pub use bun_jsc::IntegerRange;
 pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgresError {
     use bun_sql::postgres::AnyPostgresError as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 #[inline]
 pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_error::Error {
     use bun_sql::mysql::protocol::any_mysql_error::Error as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
-        JsError::Terminated => E::JSTerminated,
     }
 }
 
@@ -375,9 +372,9 @@ pub use bun_event_loop::EventLoopTimer::{
 // [`SqlRuntimeHooks`] vtable.
 bun_opaque::opaque_ffi! { pub struct TimerHeap; }
 impl TimerHeap {
-    pub(crate) fn insert(&mut self, t: &mut EventLoopTimer) {
+    pub(crate) fn insert(&mut self, t: *mut EventLoopTimer) {
         // SAFETY: `self` is `&mut runtime_state().timer`; `t` is a live
-        // intrusive heap node owned by the caller.
+        // intrusive heap node whose provenance covers its container.
         unsafe { (hooks().timer_insert)(self._p.get().cast::<c_void>(), t) }
     }
     pub(crate) fn remove(&mut self, t: &mut EventLoopTimer) {
@@ -523,7 +520,6 @@ pub mod api {
                 }
             }
         }
-        pub use SSLConfig as SslConfig;
     }
     /// PascalCase namespace alias.
     #[allow(non_snake_case)]
@@ -619,7 +615,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {

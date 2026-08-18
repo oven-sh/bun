@@ -97,8 +97,6 @@ pub mod Classes {
     pub use crate::valkey_jsc::js_valkey::JSValkeyClient as RedisClient;
     pub use crate::webcore::Request;
     pub use crate::webcore::Response;
-    pub use crate::webcore::ResumableFetchSink;
-    pub use crate::webcore::ResumableS3UploadSink;
     pub use crate::webcore::S3Client;
     pub use crate::webcore::S3Stat;
     pub use crate::webcore::TextDecoder;
@@ -106,7 +104,6 @@ pub mod Classes {
     pub(crate) use crate::webcore::byte_stream::Source as BytesInternalReadableStreamSource;
     pub use crate::webcore::crypto::Crypto;
     pub(crate) use crate::webcore::file_reader::Source as FileInternalReadableStreamSource;
-    pub use crate::webcore::text_encoder_stream_encoder::TextEncoderStreamEncoder;
     pub use Bundler as JSBundler;
     pub use Transpiler as JSTranspiler;
     pub use bun_jsc::BuildMessage;

@@ -20,6 +20,7 @@ type TransactionCallback = (sql: (strings: string, ...values: any[]) => Query<an
 enum ReservedConnectionState {
   acceptQueries = 1 << 0,
   closed = 1 << 1,
+  released = 1 << 2,
 }
 
 interface TransactionState {
@@ -301,7 +302,17 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    const onClose = onTransactionDisconnected.bind(state);
+    function releaseReservation() {
+      if (state.connectionState & ReservedConnectionState.released) return;
+      state.connectionState |= ReservedConnectionState.released;
+      pool.release(pooledConnection);
+    }
+
+    const onDisconnected = onTransactionDisconnected.bind(state);
+    function onClose(err: Error) {
+      onDisconnected(err);
+      releaseReservation();
+    }
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
     }
@@ -476,11 +487,8 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$resolve(undefined);
     };
     reserved_sql.release = () => {
-      if (
-        state.connectionState & ReservedConnectionState.closed ||
-        !(state.connectionState & ReservedConnectionState.acceptQueries)
-      ) {
-        return Promise.$reject(pool.connectionClosedError());
+      if (state.connectionState & ReservedConnectionState.released) {
+        return Promise.$resolve(undefined);
       }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
@@ -489,7 +497,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (pool.detachConnectionCloseHandler) {
         pool.detachConnectionCloseHandler(pooledConnection, onClose);
       }
-      pool.release(pooledConnection);
+      releaseReservation();
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions

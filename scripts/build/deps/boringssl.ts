@@ -36,6 +36,10 @@ export const boringssl: Dependency = {
     commit: BORINGSSL_COMMIT,
   }),
 
+  // Our fork ships EVP_sha3_* but never taught EVP_DigestSign/Verify to use
+  // them. Drop once the fork carries the change and BORINGSSL_COMMIT moves.
+  patches: ["patches/boringssl/sha3-sign.patch"],
+
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
     // uses gas .S that clang assembles.

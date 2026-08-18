@@ -1,0 +1,71 @@
+--- a/crypto/fipsmodule/rsa/rsa.cc.inc
++++ b/crypto/fipsmodule/rsa/rsa.cc.inc
+@@ -413,6 +413,13 @@
+   uint8_t bytes[19];
+ };
+ 
++// SHA-3 is exposed only as an EVP_MD, so there are no SHA3_*_DIGEST_LENGTH
++// macros to reuse here.
++#define SHA3_224_DIGEST_LENGTH 28
++#define SHA3_256_DIGEST_LENGTH 32
++#define SHA3_384_DIGEST_LENGTH 48
++#define SHA3_512_DIGEST_LENGTH 64
++
+ // kPKCS1SigPrefixes contains the ASN.1 prefixes for PKCS#1 signatures with
+ // different hash functions.
+ static const struct pkcs1_sig_prefix kPKCS1SigPrefixes[] = {
+@@ -458,6 +465,37 @@
+         {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
+          0x04, 0x02, 0x03, 0x05, 0x00, 0x04, 0x40},
+     },
++    // The SHA-3 DigestInfo values use the id-sha3-* OIDs from the NIST CSOR
++    // arc 2.16.840.1.101.3.4.2.{7,8,9,10}, with the NULL parameters RFC 8017
++    // specifies for PKCS#1 v1.5.
++    {
++        NID_sha3_224,
++        SHA3_224_DIGEST_LENGTH,
++        19,
++        {0x30, 0x2d, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
++         0x04, 0x02, 0x07, 0x05, 0x00, 0x04, 0x1c},
++    },
++    {
++        NID_sha3_256,
++        SHA3_256_DIGEST_LENGTH,
++        19,
++        {0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
++         0x04, 0x02, 0x08, 0x05, 0x00, 0x04, 0x20},
++    },
++    {
++        NID_sha3_384,
++        SHA3_384_DIGEST_LENGTH,
++        19,
++        {0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
++         0x04, 0x02, 0x09, 0x05, 0x00, 0x04, 0x30},
++    },
++    {
++        NID_sha3_512,
++        SHA3_512_DIGEST_LENGTH,
++        19,
++        {0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03,
++         0x04, 0x02, 0x0a, 0x05, 0x00, 0x04, 0x40},
++    },
+     {
+         NID_undef,
+         0,
+--- a/crypto/evp/p_ec.cc
++++ b/crypto/evp/p_ec.cc
+@@ -428,9 +428,13 @@
+     case EVP_PKEY_CTRL_MD: {
+       const EVP_MD *md = reinterpret_cast<const EVP_MD *>(p2);
+       int md_type = EVP_MD_type(md);
++      // pkey_ec_sign/pkey_ec_verify hand the digest straight to ECDSA_sign and
++      // never read dctx->md, so SHA-3 only has to be allowed through here.
+       if (md_type != NID_sha1 && md_type != NID_sha224 &&
+           md_type != NID_sha256 && md_type != NID_sha384 &&
+-          md_type != NID_sha512) {
++          md_type != NID_sha512 && md_type != NID_sha3_224 &&
++          md_type != NID_sha3_256 && md_type != NID_sha3_384 &&
++          md_type != NID_sha3_512) {
+         OPENSSL_PUT_ERROR(EVP, EVP_R_INVALID_DIGEST_TYPE);
+         return 0;
+       }

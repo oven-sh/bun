@@ -100,13 +100,6 @@ fn promise_to_js(p: *mut JSPromise) -> JSValue {
 /// Shared epilog for every Valkey prototype method: build a `Command`,
 /// `this.send()` it, and convert the result to a `JsResult<JSValue>` —
 /// `Ok(promise.toJS())` on success, a JS-side Redis error value on failure.
-///
-/// All 7 `cmd_*!` macros and ~24 hand-written methods (`get`, `getBuffer`,
-/// `set`, `incr`, `decr`, `exists`, `expire`, `ttl`, `srem`, `sadd`,
-/// `sismember`, `hmget`, `hincrby`, `hset`, `smove`, `publish`,
-/// `send_unsubscribe_request_and_cleanup`, …) duplicated this 15-line block
-/// byte-identically; the only per-caller variation is the args slice, the
-/// `meta` flags, and the error-message prefix.
 #[inline]
 fn send_cmd(
     this: &JSValkeyClient,

@@ -383,15 +383,20 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
+// toString()/toStringCopy() return a null String when a non-empty `source` is over
+// the string length limit (or the copy failed to allocate). The constructors below
+// cannot throw, and their callers throw, reject with, or put properties on the
+// result unconditionally, so the error is still created with this message instead.
+static WTF::String errorMessageOrFallback(WTF::String message, const ZigString& source)
+{
+    if (message.isNull() && source.len > 0) [[unlikely]]
+        return "The error message exceeds the maximum string length"_s;
+    return message;
+}
+
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    WTF::String message = toString(*str);
-    if (message.isNull() && str->len > 0) [[unlikely]] {
-        // pending exception while creating an error.
-        return {};
-    }
-
-    JSC::JSObject* result = JSC::createError(globalObject, message);
+    JSC::JSObject* result = JSC::createError(globalObject, errorMessageOrFallback(toString(*str), *str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
@@ -399,7 +404,7 @@ static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* 
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createTypeError(globalObject, toStringCopy(*str));
+    JSC::JSObject* result = JSC::createTypeError(globalObject, errorMessageOrFallback(toStringCopy(*str), *str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
@@ -407,7 +412,7 @@ static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObje
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createSyntaxError(globalObject, toStringCopy(*str));
+    JSC::JSObject* result = JSC::createSyntaxError(globalObject, errorMessageOrFallback(toStringCopy(*str), *str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
@@ -415,7 +420,7 @@ static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalOb
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createRangeError(globalObject, toStringCopy(*str));
+    JSC::JSObject* result = JSC::createRangeError(globalObject, errorMessageOrFallback(toStringCopy(*str), *str));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;

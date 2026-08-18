@@ -501,10 +501,10 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
       return p.then(
         () => {
           if (mod.generation !== generation) return mod;
-          mod.state = State.Loaded;
-          mod.loading = null;
           if (mod.exports === exportsBefore) mod.exports = {};
           mod.cjs = null;
+          mod.state = State.Loaded;
+          mod.loading = null;
           patchImporters(mod);
           return mod;
         },
@@ -513,9 +513,9 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
     }
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
-    patchImporters(mod);
     mod.state = State.Loaded;
     mod.loading = null;
+    patchImporters(mod);
     return mod;
   } catch (e) {
     throwLoadFailure(mod, generation, e);

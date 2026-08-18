@@ -350,13 +350,6 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
-        /// Like `abs_buf` but writes a
-        /// NUL sentinel and returns a `ZStr` borrowing `buf`.
-        pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {
-            use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
-            join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
-        }
-
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};
@@ -1372,11 +1365,20 @@ pub mod fs {
             dir_: &[u8],
             base: &[u8],
         ) -> crate::CrateResult<ResolvedKind> {
-            use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 
             let mut outpath = bun_paths::path_buffer_pool::get();
-            let absolute_path_c =
-                join_abs_string_buf_z::<platform::Auto>(self.cwd, &mut outpath[..], &[dir_, base]);
+            let join_capacity = outpath.len() - 1;
+            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+                self.cwd,
+                &mut outpath[..join_capacity],
+                &[dir_, base],
+            ) else {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
+            let entry_path_len = entry_path.len();
+            outpath[entry_path_len] = 0;
+            let absolute_path_c = ZStr::from_buf(&outpath[..], entry_path_len);
 
             #[cfg(windows)]
             {
@@ -1435,11 +1437,19 @@ pub mod fs {
             real_dir: &[u8],
             base: &[u8],
         ) -> crate::CrateResult<Interned> {
-            use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
 
             let mut path = bun_paths::path_buffer_pool::get();
-            let len =
-                join_abs_string_buf_z::<platform::Auto>(real_dir, &mut path[..], &[base]).len();
+            let join_capacity = path.len() - 1;
+            let Some(joined) = join_abs_string_buf_checked::<platform::Auto>(
+                real_dir,
+                &mut path[..join_capacity],
+                &[base],
+            ) else {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
+            let len = joined.len();
+            path[len] = 0;
             // The kernel resolves the whole chain in three syscalls here; see
             // `bun_sys::realpath`.
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]

@@ -946,7 +946,7 @@ namespace Zig {
 
 using namespace WebCore;
 
-static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
+JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     // Same reasoning as Zig__GlobalObject__createForTestIsolation: keep the
@@ -1000,7 +1000,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
-        &Zig::deriveShadowRealmGlobalObject,
+        &deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1028,7 +1028,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
-        &Zig::deriveShadowRealmGlobalObject,
+        &deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure

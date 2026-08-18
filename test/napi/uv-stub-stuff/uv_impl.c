@@ -1,5 +1,6 @@
 #include <node_api.h>
 
+#include <pthread.h>
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
@@ -131,6 +132,61 @@ static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   return obj;
 }
 
+// Test uv_tty_reset_mode, the one implemented uv_* function that lives in bun's
+// C++ (wtf-bindings.cpp) instead of uv-posix-polyfills.c, so the one that can
+// end up missing from bun's export table. Referenced directly, like a real
+// addon would.
+static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
+  napi_value ret;
+  napi_create_int32(env, uv_tty_reset_mode(), &ret);
+  return ret;
+}
+
+// uv_tty_reset_mode() holds its lock across the tcsetattr() that restores the
+// snapshot, so two threads calling it back to back collide constantly once a
+// snapshot exists. Every result must be 0 or UV_EBUSY; "busy" says how many
+// collisions this run happened to produce.
+#define TTY_RESET_ITERATIONS 4000
+
+static pthread_mutex_t tty_reset_counts = PTHREAD_MUTEX_INITIALIZER;
+static int tty_reset_busy;
+static int tty_reset_unexpected;
+
+static void *tty_reset_hammer(void *arg) {
+  for (int i = 0; i < TTY_RESET_ITERATIONS; i++) {
+    int result = uv_tty_reset_mode();
+    if (result == 0) continue;
+    pthread_mutex_lock(&tty_reset_counts);
+    if (result == UV_EBUSY)
+      tty_reset_busy++;
+    else
+      tty_reset_unexpected++;
+    pthread_mutex_unlock(&tty_reset_counts);
+  }
+  return NULL;
+}
+
+static napi_value test_tty_reset_mode_concurrent(napi_env env,
+                                                 napi_callback_info info) {
+  pthread_t thread;
+  tty_reset_busy = 0;
+  tty_reset_unexpected = 0;
+  if (pthread_create(&thread, NULL, tty_reset_hammer, NULL) != 0) {
+    napi_throw_error(env, NULL, "pthread_create failed");
+    return NULL;
+  }
+  tty_reset_hammer(NULL);
+  pthread_join(thread, NULL);
+
+  napi_value obj, busy, unexpected;
+  napi_create_object(env, &obj);
+  napi_create_int32(env, tty_reset_busy, &busy);
+  napi_create_int32(env, tty_reset_unexpected, &unexpected);
+  napi_set_named_property(env, obj, "busy", busy);
+  napi_set_named_property(env, obj, "unexpected", unexpected);
+  return obj;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
@@ -152,6 +208,13 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_hrtime, NULL, &fn);
   napi_set_named_property(env, exports, "testHrtime", fn);
+
+  napi_create_function(env, NULL, 0, test_tty_reset_mode, NULL, &fn);
+  napi_set_named_property(env, exports, "testTtyResetMode", fn);
+
+  napi_create_function(env, NULL, 0, test_tty_reset_mode_concurrent, NULL,
+                       &fn);
+  napi_set_named_property(env, exports, "testTtyResetModeConcurrent", fn);
 
   return exports;
 }

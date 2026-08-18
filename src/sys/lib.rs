@@ -7064,12 +7064,16 @@ fn openat_windows_impl(dir: Fd, norm: &bun_core::WStr, flags: i32, perm: Mode) -
     let mut access_mask: u32 = w::READ_CONTROL | w::SYNCHRONIZE;
     if (flags & O::RDWR) != 0 {
         access_mask |= w::GENERIC_READ | w::GENERIC_WRITE;
-    } else if (flags & O::APPEND) != 0 {
-        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
     } else if (flags & O::WRONLY) != 0 {
         access_mask |= w::GENERIC_WRITE;
     } else {
         access_mask |= w::GENERIC_READ;
+    }
+    // O_APPEND is orthogonal to the access mode, so it cannot be another arm of
+    // the chain above: `a+` is O_RDWR|O_APPEND and would otherwise never get
+    // FILE_APPEND_DATA, which is what the post-open seek to FILE_END keys off.
+    if (flags & O::APPEND) != 0 {
+        access_mask |= w::GENERIC_WRITE | w::FILE_APPEND_DATA;
     }
 
     // Create disposition is derived from O_CREAT/O_EXCL/O_TRUNC alone; the

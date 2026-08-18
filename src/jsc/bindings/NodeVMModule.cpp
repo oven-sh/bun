@@ -527,7 +527,10 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmModuleGetModuleRequests, (JSC::JSGlobalObject *
     RETURN_IF_EXCEPTION(scope, {});
 
     for (unsigned i = 0; const NodeVMModuleRequest& request : requests) {
-        array->putDirectIndex(globalObject, i++, request.toJS(globalObject));
+        // toJS's RETURN_IF_EXCEPTION services VM traps, so termination can surface there as a null return.
+        auto* requestValue = request.toJS(globalObject);
+        RETURN_IF_EXCEPTION(scope, {});
+        array->putDirectIndex(globalObject, i++, requestValue);
         RETURN_IF_EXCEPTION(scope, {});
     }
 

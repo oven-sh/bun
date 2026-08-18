@@ -401,7 +401,7 @@ devTest("hot updates through shared imports, assets and script imports", {
     {
       await using c = await dev.client("/script");
       await c.style("body").notFound();
-      expect(await stylesheetUrls(dev, "/script")).toEqual([]);
+      expect(await stylesheetUrls(dev, "/script")).toStrictEqual([]);
 
       await dev.patch("script.ts", { find: "// import", replace: "import", errors: null });
       await c.style("body").color.expect.toBe("red");
@@ -415,7 +415,7 @@ devTest("hot updates through shared imports, assets and script imports", {
 
       await dev.patch("script.ts", { find: "import", replace: "// import", errors: null });
       await c.style("body").notFound();
-      expect(await stylesheetUrls(dev, "/script")).toEqual([]);
+      expect(await stylesheetUrls(dev, "/script")).toStrictEqual([]);
     }
   },
 });
@@ -752,7 +752,7 @@ devTest("stylesheets created after the server starts, changing html link tags", 
       // Each <link> becomes its own chunk; only the set is asserted here.
       const urls = await stylesheetUrls(dev, "/relink");
       const chunks = await Promise.all(urls.map(url => fetchCss(dev, url)));
-      expect(chunks.sort()).toEqual([otherCss, testCss].sort());
+      expect(chunks.sort()).toStrictEqual([otherCss, testCss].sort());
     }
 
     // css import before create project relative
@@ -1006,7 +1006,7 @@ devTest("importers bundled alongside a failing stylesheet serve correctly once i
       await expectBuildFailed(dev, "/html");
       await dev.write("html.css", `.a { color: blue; }`);
       const recovered = await routeHtml();
-      expect(recovered.match(/<link [^>]*>/g)).toEqual([
+      expect(recovered.match(/<link [^>]*>/g)).toStrictEqual([
         expect.stringMatching(/^<link rel="stylesheet" href="\/_bun\/asset\/[0-9a-f]{16}\.css">$/),
       ]);
       expect(await servedCss(dev, "/html")).toMatch(/color:\s*#00f/);
@@ -1199,12 +1199,12 @@ devTest("css roots keep their edges and are linked in source order", {
     // html route links stylesheets in source order
     {
       const linked = async () => stylesheetFileNames(dev, await stylesheetUrls(dev, "/order"));
-      expect(await linked()).toEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
+      expect(await linked()).toStrictEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
 
       // Rebuilding a file re-links the edges it already had in the same order.
       await dev.writeNoChanges("order.html");
       await dev.writeNoChanges("order.ts");
-      expect(await linked()).toEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
+      expect(await linked()).toStrictEqual(["one.css", "two.css", "three.css", "four.css", "five.css"]);
 
       await dev.write(
         "order.html",
@@ -1213,7 +1213,7 @@ devTest("css roots keep their edges and are linked in source order", {
           scripts: ["order.ts"],
         }),
       );
-      expect(await linked()).toEqual(["three.css", "one.css", "two.css", "four.css", "five.css"]);
+      expect(await linked()).toStrictEqual(["three.css", "one.css", "two.css", "four.css", "five.css"]);
 
       await dev.write(
         "order.ts",
@@ -1222,24 +1222,24 @@ devTest("css roots keep their edges and are linked in source order", {
           import "./four.css";
         `,
       );
-      expect(await linked()).toEqual(["three.css", "one.css", "two.css", "five.css", "four.css"]);
+      expect(await linked()).toStrictEqual(["three.css", "one.css", "two.css", "five.css", "four.css"]);
     }
 
     // stylesheets bundled together both update when a shared import changes
     {
-      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toEqual(["green", "green"]);
+      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toStrictEqual(["green", "green"]);
       await dev.write("together-shared.css", `.shared { color: yellow; }`);
-      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toEqual(["#ff0", "#ff0"]);
+      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toStrictEqual(["#ff0", "#ff0"]);
       // The re-bundle above processed both roots together again; the edges must survive it.
       await dev.write("together-shared.css", `.shared { color: red; }`);
-      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toEqual(["red", "red"]);
+      expect(await linkedStylesheetColors(dev, "/together", ".shared")).toStrictEqual(["red", "red"]);
     }
 
     // stylesheet importing another linked stylesheet updates when it changes
     {
-      expect(await linkedStylesheetColors(dev, "/linked", ".base")).toEqual(["green", "green"]);
+      expect(await linkedStylesheetColors(dev, "/linked", ".base")).toStrictEqual(["green", "green"]);
       await dev.write("base.css", `.base { color: yellow; }`);
-      expect(await linkedStylesheetColors(dev, "/linked", ".base")).toEqual(["#ff0", "#ff0"]);
+      expect(await linkedStylesheetColors(dev, "/linked", ".base")).toStrictEqual(["#ff0", "#ff0"]);
     }
   },
 });
@@ -1258,7 +1258,7 @@ devTest("framework route lists styles in source order", {
   },
   async test(dev) {
     const styles: string[] = await dev.fetch("/").json();
-    expect(await stylesheetFileNames(dev, styles)).toEqual(["one.css", "two.css", "three.css"]);
+    expect(await stylesheetFileNames(dev, styles)).toStrictEqual(["one.css", "two.css", "three.css"]);
   },
 });
 
@@ -1299,19 +1299,19 @@ devTest("framework route styles follow the css imports of the route and its layo
 
     await dev.write("routes/index.ts", routeRespondingWithStyles("one.css", "two.css"));
     const withTwo = await routeStyles(dev, "/");
-    expect(withTwo.toSorted()).toEqual(["one.css", "two.css"]);
+    expect(withTwo.toSorted()).toStrictEqual(["one.css", "two.css"]);
 
     // Same edges, only their order changes.
     await dev.write("routes/index.ts", routeRespondingWithStyles("two.css", "one.css"));
-    expect(await routeStyles(dev, "/")).toEqual(withTwo.toReversed());
+    expect(await routeStyles(dev, "/")).toStrictEqual(withTwo.toReversed());
 
     await dev.write("routes/index.ts", routeRespondingWithStyles("two.css"));
-    expect(await routeStyles(dev, "/")).toEqual(["two.css"]);
+    expect(await routeStyles(dev, "/")).toStrictEqual(["two.css"]);
 
     // The layout's stylesheets belong to both routes, and both have a cached list by now.
     await dev.write("routes/_layout.ts", cssImports("three.css"));
-    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["three.css", "two.css"]);
-    expect(await routeStyles(dev, "/other")).toEqual(["three.css"]);
+    expect((await routeStyles(dev, "/")).toSorted()).toStrictEqual(["three.css", "two.css"]);
+    expect(await routeStyles(dev, "/other")).toStrictEqual(["three.css"]);
 
     // Now with a hot update subscriber looking at "/"; every rebuild publishes one hot update to it.
     using hmr = await viewRouteOverHmr(dev, "/");
@@ -1319,19 +1319,19 @@ devTest("framework route styles follow the css imports of the route and its layo
     await hmr.nextHotUpdate();
     await dev.write("routes/index.ts", routeRespondingWithStyles("four.css"));
     // While another route has a bundling error viewers only see the error, but the server-side styles are refreshed all the same.
-    expect(await hmr.nextHotUpdate()).toEqual({ reloadedRoutes: [], routeCss: {} });
-    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["four.css", "three.css"]);
+    expect(await hmr.nextHotUpdate()).toStrictEqual({ reloadedRoutes: [], routeCss: {} });
+    expect((await routeStyles(dev, "/")).toSorted()).toStrictEqual(["four.css", "three.css"]);
 
     await dev.write("routes/other.ts", routeRespondingWithStyles("one.css"));
     await hmr.nextHotUpdate();
-    expect((await routeStyles(dev, "/other")).toSorted()).toEqual(["one.css", "three.css"]);
+    expect((await routeStyles(dev, "/other")).toSorted()).toStrictEqual(["one.css", "three.css"]);
 
     // With the error gone, the viewer of "/" is told to reload it and which stylesheets it has now.
     await dev.write("routes/index.ts", routeRespondingWithStyles());
     const update = await hmr.nextHotUpdate();
     const hrefs: string[] = await dev.fetch("/").json();
-    expect(await stylesheetFileNames(dev, hrefs)).toEqual(["three.css"]);
-    expect(update).toEqual({
+    expect(await stylesheetFileNames(dev, hrefs)).toStrictEqual(["three.css"]);
+    expect(update).toStrictEqual({
       reloadedRoutes: [hmr.routeBundleIndex],
       routeCss: { [hmr.routeBundleIndex]: hrefs.map(href => href.match(/^\/_bun\/asset\/([0-9a-f]{16})\.css$/)![1]) },
     });

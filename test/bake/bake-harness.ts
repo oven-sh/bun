@@ -832,7 +832,7 @@ class DevFetchPromise extends Promise<Response> {
         const match = /<script id="__bunfallback" type="application\/json">([^<]*)<\/script>/.exec(text);
         if (!match) throw new Error(`Expected a dev error page, got ${res.status}: ${text}`);
         const payload = JSON.parse(match[1]);
-        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toEqual(messages);
+        expect(payload.problems.exceptions.map((exception: any) => exception.message)).toStrictEqual(messages);
         expect(res.status).toBe(500);
       } catch (err) {
         if (this.dev.panicked) {
@@ -1202,7 +1202,7 @@ export class Client extends EventEmitter {
         await maybeWaitInteractive("expectErrorOverlay");
         throw new Error("Expected errors, but none found");
       }
-      expect(await this.#overlayErrors()).toEqual([...errors].sort());
+      expect(await this.#overlayErrors()).toStrictEqual([...errors].sort());
     });
   }
 

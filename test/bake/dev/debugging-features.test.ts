@@ -191,7 +191,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
       const visualizerHtml = path.join(import.meta.dir, "../../../src/runtime/bake");
       for (const name of ["incremental_visualizer", "memory_visualizer"]) {
         const response = await dev.fetch(`/_bun/${name}`);
-        expect({ status: response.status, contentType: response.headers.get("content-type") }).toEqual({
+        expect({ status: response.status, contentType: response.headers.get("content-type") }).toStrictEqual({
           status: 200,
           contentType: "text/html;charset=utf-8",
         });
@@ -203,7 +203,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
         ["mv", "memory_visualizer"],
       ]) {
         const response = await dev.fetch(`/_bun/${shortcut}`, { redirect: "manual" });
-        expect({ status: response.status, location: response.headers.get("location") }).toEqual({
+        expect({ status: response.status, location: response.headers.get("location") }).toStrictEqual({
           status: 302,
           location: `/_bun/${target}`,
         });
@@ -226,7 +226,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
       visualizer.subscribe();
 
       // Subscribing answers with the current graph right away; nothing has been requested yet.
-      expect(await visualizer.waitForFrame("the frame sent on subscribe", () => true)).toEqual({
+      expect(await visualizer.waitForFrame("the frame sent on subscribe", () => true)).toStrictEqual({
         client: [],
         server: [],
         clientEdges: [],
@@ -238,7 +238,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
       const bundled = await visualizer.waitForFrame("the frame published after bundling /", graph =>
         graph.client.some(file => "name" in file && file.name === "dep.ts"),
       );
-      expect(bundled).toEqual({
+      expect(bundled).toStrictEqual({
         client: [file("dep.ts"), file("index.html", { isRoute: true }), file("index.ts")],
         server: [],
         clientEdges: [
@@ -259,7 +259,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
         graph.client.some(file => "name" in file && file.name === "extra.ts"),
       );
       // dep.ts stays in the graph without importers; only its edge is gone.
-      expect(updated).toEqual({
+      expect(updated).toStrictEqual({
         client: [file("dep.ts"), file("extra.ts"), file("index.html", { isRoute: true }), file("index.ts")],
         server: [],
         clientEdges: [
@@ -273,7 +273,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
       const deleted = await visualizer.waitForFrame("the frame published after deleting dep.ts", graph =>
         graph.client.some(file => "name" in file && file.name === "dep.ts" && file.isStale),
       );
-      expect(deleted.client).toEqual([
+      expect(deleted.client).toStrictEqual([
         file("dep.ts", { isStale: true }),
         file("extra.ts"),
         file("index.html", { isRoute: true }),
@@ -308,7 +308,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
 
       // Scanning the routes at startup registers the route files and the framework entry point as stale server files.
       const serverFlags = { isServer: true };
-      expect(await visualizer.waitForFrame("the frame sent on subscribe", () => true)).toEqual({
+      expect(await visualizer.waitForFrame("the frame sent on subscribe", () => true)).toStrictEqual({
         client: [],
         server: [
           file(frameworkEntry, { ...serverFlags, isRoute: true, isStale: true }),
@@ -323,7 +323,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
       const bundled = await visualizer.waitForFrame("the frame published after bundling /", graph =>
         graph.server.some(file => "name" in file && file.name === "components/Comp.ts"),
       );
-      expect(bundled).toEqual({
+      expect(bundled).toStrictEqual({
         client: [file("components/Comp.ts", { isBoundary: true })],
         server: [
           file(frameworkEntry, { ...serverFlags, isRoute: true }),
@@ -342,7 +342,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)("visualizers", () => {
       const demoted = await visualizer.waitForFrame("the frame published after demoting Comp.ts", graph =>
         graph.client.some(file => "deleted" in file),
       );
-      expect(demoted).toEqual({
+      expect(demoted).toStrictEqual({
         client: [{ deleted: true }],
         server: [
           file(frameworkEntry, { ...serverFlags, isRoute: true }),
@@ -364,7 +364,7 @@ function readDump(dev: Dev, file: string) {
 /** Asserts the two comment lines every non-source-map dump starts with and returns what follows them. */
 function stripDumpHeader(dump: string, fileName: string, graph: "client" | "server") {
   const header = dump.match(/^\/\/ (".*") bundled for (\w+)\n\/\/ Bundled at \d+, Bun (\S+)\n/);
-  expect(header && { fileName: header[1], graph: header[2], version: header[3] }).toEqual({
+  expect(header && { fileName: header[1], graph: header[2], version: header[3] }).toStrictEqual({
     fileName: `"${fileName}"`,
     graph,
     version: Bun.version,
@@ -386,7 +386,7 @@ describe.skipIf(!hasBakeDebuggingFeatures)(".bake-debug dumps", () => {
     async test(dev) {
       const dumpDir = path.join(dev.rootDir, ".bake-debug");
       // Created when the dev server starts; populated as things get bundled.
-      expect({ dumpDir: existsSync(dumpDir), client: existsSync(path.join(dumpDir, "client")) }).toEqual({
+      expect({ dumpDir: existsSync(dumpDir), client: existsSync(path.join(dumpDir, "client")) }).toStrictEqual({
         dumpDir: true,
         client: false,
       });

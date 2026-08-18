@@ -439,7 +439,7 @@ devTest("exceptions thrown from onLoad are reported without a location", {
   async test(dev) {
     const response = await dev.fetch("/");
     expect(response.status).toBe(500);
-    expect(decodeBuildFailedPage(await response.text())).toEqual([
+    expect(decodeBuildFailedPage(await response.text())).toStrictEqual([
       { file: "first.trigger.ts", messages: [bundlerError("cannot load first.trigger.ts")] },
       { file: "second.trigger.ts", messages: [bundlerError("cannot load second.trigger.ts")] },
     ]);
@@ -471,7 +471,7 @@ devTest("exception thrown from onResolve is reported without a location", {
   async test(dev) {
     const response = await dev.fetch("/");
     expect(response.status).toBe(500);
-    expect(decodeBuildFailedPage(await response.text())).toEqual([
+    expect(decodeBuildFailedPage(await response.text())).toStrictEqual([
       { file: "routes/index.ts", messages: [bundlerError("onResolve boom")] },
     ]);
   },
@@ -628,16 +628,16 @@ describe.skipIf(!nativeLogPlugin)("native plugin log locations", () => {
 
       // What the dev server serializes into the error page...
       const response = await dev.fetch("/errors");
-      expect(decodeBuildFailedPage(await response.text())).toEqual(decodedFailures);
+      expect(decodeBuildFailedPage(await response.text())).toStrictEqual(decodedFailures);
       expect(response.status).toBe(500);
 
       // ...and pushes over the HMR socket to the page that was already open.
       await openPage.expectErrorOverlay(errors);
-      expect(await readRenderedCodeLines(openPage)).toEqual(renderedCodeLines);
+      expect(await readRenderedCodeLines(openPage)).toStrictEqual(renderedCodeLines);
 
       // The error page renders the same thing from its embedded copy.
       await using errorPage = await dev.client("/errors", { errors });
-      expect(await readRenderedCodeLines(errorPage)).toEqual(renderedCodeLines);
+      expect(await readRenderedCodeLines(errorPage)).toStrictEqual(renderedCodeLines);
     },
   });
 });

@@ -210,7 +210,7 @@ devTest("client import rules: missing file, html import, bun builtin, html impor
 
     // --- importing html file with text loader (#18154): bundles as a text module ---
     const bundle = await servedClientBundle(dev, "/text-loader");
-    expect(servedModules(bundle)).toEqual(["app.html", "text-loader.html", "text-loader.ts"]);
+    expect(servedModules(bundle)).toStrictEqual(["app.html", "text-loader.html", "text-loader.ts"]);
     expect(servedModule(bundle, "app.html")).toMatchInlineSnapshot(`
       ""app.html"(hmr) {
         hmr.cjs.exports = "<div>hello world</div>"; // bun .s_lazy_export
@@ -687,7 +687,7 @@ devTest("deinit with a free-list slot in DirectoryWatchStore.dependencies", {
     }
 
     // The rebuilt, import-free page is served normally.
-    expect(servedModules(await servedClientBundle(dev, "/"))).toEqual(["index.html", "index.ts"]);
+    expect(servedModules(await servedClientBundle(dev, "/"))).toStrictEqual(["index.html", "index.ts"]);
     // Teardown's DevServer.deinit used to free the free-list slot's specifier again.
   },
 });
@@ -939,7 +939,7 @@ devTest("barrel optimization", {
     const modules = servedModules(await servedClientBundle(dev, "/static"));
     for (const { name, bundled } of staticBarrelCases) {
       for (const [pkg, files] of Object.entries(bundled)) {
-        expect(packageFiles(modules, pkg), `${name}: files of ${pkg} in the bundle`).toEqual(files);
+        expect(packageFiles(modules, pkg), `${name}: files of ${pkg} in the bundle`).toStrictEqual(files);
       }
     }
 
@@ -947,7 +947,7 @@ devTest("barrel optimization", {
     {
       await using c = await dev.client("/add");
       await c.expectMessage("result: ALPHA");
-      expect(await bundledPackageFiles(dev, "/add", "barrel-add")).toEqual(["alpha.js", "index.js"]);
+      expect(await bundledPackageFiles(dev, "/add", "barrel-add")).toStrictEqual(["alpha.js", "index.js"]);
 
       // Importing a name that was deferred so far re-bundles the barrel; a reload because nothing accepts.
       const importNames = (names: string[]) =>
@@ -964,11 +964,11 @@ devTest("barrel optimization", {
 
       await importNames(["Alpha", "Beta"]);
       await c.expectMessage("result: ALPHA BETA");
-      expect(await bundledPackageFiles(dev, "/add", "barrel-add")).toEqual(["alpha.js", "beta.js", "index.js"]);
+      expect(await bundledPackageFiles(dev, "/add", "barrel-add")).toStrictEqual(["alpha.js", "beta.js", "index.js"]);
 
       await importNames(["Alpha", "Beta", "Gamma"]);
       await c.expectMessage("result: ALPHA BETA GAMMA");
-      expect(await bundledPackageFiles(dev, "/add", "barrel-add")).toEqual([
+      expect(await bundledPackageFiles(dev, "/add", "barrel-add")).toStrictEqual([
         "alpha.js",
         "beta.js",
         "gamma.js",
@@ -980,7 +980,11 @@ devTest("barrel optimization", {
     {
       await using c = await dev.client("/multi");
       await c.expectMessage("result: ALPHA BETA");
-      expect(await bundledPackageFiles(dev, "/multi", "barrel-multi")).toEqual(["alpha.js", "beta.js", "index.js"]);
+      expect(await bundledPackageFiles(dev, "/multi", "barrel-multi")).toStrictEqual([
+        "alpha.js",
+        "beta.js",
+        "index.js",
+      ]);
 
       // Only multi-other.ts is edited; Alpha, requested by multi.ts, must survive the re-bundle.
       await c.expectReload(async () => {
@@ -994,7 +998,7 @@ devTest("barrel optimization", {
         );
       });
       await c.expectMessage("result: ALPHA BETA GAMMA");
-      expect(await bundledPackageFiles(dev, "/multi", "barrel-multi")).toEqual([
+      expect(await bundledPackageFiles(dev, "/multi", "barrel-multi")).toStrictEqual([
         "alpha.js",
         "beta.js",
         "gamma.js",

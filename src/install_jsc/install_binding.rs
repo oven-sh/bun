@@ -80,7 +80,7 @@ pub mod bun_install_js_bindings {
         let manager = vm.package_manager();
 
         let load_result: LoadResult<'_> =
-            lockfile_.load_from_dir::<true>(*dir, Some(manager), &mut log);
+            lockfile_.load_from_dir(*dir, Some(manager), &mut log, true);
 
         match load_result {
             LoadResult::Err(err) => {

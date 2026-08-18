@@ -43,11 +43,12 @@ impl ScanCommand {
             // SAFETY: `lockfile` is the owned `Box<Lockfile>` field on the singleton;
             // no other live `&mut Lockfile` exists at this point.
             let lockfile: &mut Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
-            let load_result = lockfile.load_from_cwd::<true>(
+            let load_result = lockfile.load_from_cwd(
                 // SAFETY: see comment above — `load_from_cwd` accesses `manager`
                 // fields disjoint from `lockfile`.
                 Some(unsafe { &mut *pm_ptr }),
                 log,
+                true,
             );
             PackageManagerCommand::handle_load_lockfile_errors_for(&load_result, log_level, "scan");
         }

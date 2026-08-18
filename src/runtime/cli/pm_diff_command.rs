@@ -388,7 +388,7 @@ fn installed_version(pm: &mut PackageManager, name: &[u8]) -> Option<Vec<u8>> {
     let mut lockfile = core::mem::take(&mut pm.lockfile);
     let mut log = bun_ast::Log::init();
     let log_level = pm.options.log_level;
-    let loaded = match lockfile.load_from_cwd::<true>(Some(pm), &mut log) {
+    let loaded = match lockfile.load_from_cwd(Some(pm), &mut log, true) {
         LoadResult::Ok(_) => true,
         LoadResult::NotFound => false,
         // A lockfile that exists but will not load is reported as that, not as "package not installed".

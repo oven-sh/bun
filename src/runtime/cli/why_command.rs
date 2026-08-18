@@ -349,7 +349,7 @@ impl WhyCommand {
         let log = unsafe { ctx.log_mut() };
 
         let mut lockfile_box: Box<Lockfile> = core::mem::take(&mut pm.lockfile);
-        let load_lockfile = lockfile_box.load_from_cwd::<true>(Some(pm), log);
+        let load_lockfile = lockfile_box.load_from_cwd(Some(pm), log, true);
         PackageManagerCommand::handle_load_lockfile_errors(&load_lockfile, log_level);
 
         if top_only {

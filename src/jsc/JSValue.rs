@@ -1066,6 +1066,10 @@ impl JSValue {
             None
         }
     }
+    /// `JSValue::toThis` in strict mode (scope objects become `undefined`).
+    pub fn to_this_strict(self, global: &JSGlobalObject) -> JSValue {
+        crate::cpp::Bun__JSValue__toThisStrict(self, global)
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

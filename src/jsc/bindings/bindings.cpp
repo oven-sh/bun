@@ -6730,6 +6730,11 @@ CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSBoundFunction__bound
     return JSC::JSValue::encode(boundFunction->boundThis());
 }
 
+CPP_DECL [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue Bun__JSValue__toThisStrict(JSC::EncodedJSValue value, JSC::JSGlobalObject* globalObject)
+{
+    return JSC::JSValue::encode(JSC::JSValue::decode(value).toThis(globalObject, JSC::ECMAMode::strict()));
+}
+
 CPP_DECL [[ZIG_EXPORT(check_slow)]] void Bun__JSValue__setPrototypeDirect(JSC::EncodedJSValue valueEncoded, JSC::EncodedJSValue prototypeEncoded, JSC::JSGlobalObject* globalObject)
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());

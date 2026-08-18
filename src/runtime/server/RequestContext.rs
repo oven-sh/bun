@@ -2888,15 +2888,11 @@ where
         self.close_failed_body();
     }
 
-    /// The body failed after its status went out, so `error()` can no longer
-    /// answer. Development mode prints the error (and, under a bake dev server
-    /// with `resp` still writable, renders its error page into the body and
-    /// ends the response, returning `true`); production stays quiet. On
-    /// `false` the caller terminates the response with [`Self::close_failed_body`].
-    ///
-    /// Used for failures the body delivers later (`handle_reject_stream`,
-    /// `end_chunk`); a body failing synchronously during render is reported
-    /// in both modes (`handle_reject`, `do_render_stream`).
+    /// Development-mode report for a body that failed after its status went
+    /// out (`error()` can no longer answer). Returns `true` when a bake dev
+    /// server's error page ended the response; otherwise the caller runs
+    /// [`Self::close_failed_body`]. A body failing synchronously during render
+    /// is reported in both modes instead (`handle_reject`, `do_render_stream`).
     fn report_committed_body_error(&self, err: JSValue, resp_writable: bool) -> bool {
         if !DEBUG_MODE || err.is_empty_or_undefined_or_null() {
             return false;
@@ -2929,9 +2925,8 @@ where
         true
     }
 
-    /// Once body bytes went out, close without the terminating chunk (RFC 9112
-    /// section 7) so the client sees an incomplete message; otherwise end the
-    /// response normally.
+    /// After body bytes went out, close without the chunked terminator so the
+    /// client sees an incomplete message (RFC 9112 section 7); else end normally.
     fn close_failed_body(&self) {
         if let Some(resp) = self.resp.get() {
             let state = resp.state();

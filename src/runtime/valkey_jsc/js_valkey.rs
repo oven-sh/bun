@@ -1221,7 +1221,6 @@ impl JSValkeyClient {
                     let error = global_object.take_exception(err);
                     let client = self.client_mut();
                     client.flags.connection_promise_returns_client = false;
-                    client.flags.is_manually_closed = true;
                     let rejected = match Js::connection_promise_get_cached(this_value) {
                         Some(promise) => {
                             Js::connection_promise_set_cached(
@@ -1234,10 +1233,16 @@ impl JSValkeyClient {
                         }
                         None => Ok(()),
                     };
-                    let failed =
-                        rejected.and_then(|()| client.fail_with_js_value(&global_object, error));
-                    let closed = self.client_mut().close();
-                    return failed.and(closed);
+                    // `fail_with_js_value` closes the socket itself; a second close here would
+                    // hit whatever a connect() from `onclose` just opened.
+                    return match rejected {
+                        Ok(()) => client.fail_with_js_value(&global_object, error),
+                        Err(_) => {
+                            client.flags.is_manually_closed = true;
+                            let closed = client.close(uws::CloseCode::Failure);
+                            rejected.and(closed)
+                        }
+                    };
                 }
             };
             Js::hello_set_cached(this_value, &global_object, hello_value);
@@ -1348,6 +1353,10 @@ impl JSValkeyClient {
         // sole releaser. The caller holds its own scoped ref, so count > 0.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
 
+        // This timer was bounding the attempt that just ended; left armed it
+        // fires during the retry delay, and `fail()` then has no socket to
+        // close and nothing settles connect(). `reconnect()` arms a new one.
+        self.timer.disarm(self);
         self.reconnect_timer
             .arm(self, self.client.get().get_reconnect_delay());
     }
@@ -1853,12 +1862,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         err_value: JSValue,
     ) -> JsResult<()> {
         let _exit = this.vm().enter_event_loop_scope();
-        this.client_mut().flags.is_manually_closed = true;
-        let failed = this
-            .client_mut()
-            .fail_with_js_value(&this.global_object, err_value);
-        let closed = this.client_mut().close();
-        failed.and(closed)
+        this.client_mut()
+            .fail_with_js_value(&this.global_object, err_value)
     }
 
     pub(crate) const ON_HANDSHAKE: Option<
@@ -1875,10 +1880,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
         let _guard = this.ref_scope();
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
-        let _defer = scopeguard::guard(BackRef::new(this), |p| {
-            p.client_mut().status = valkey::Status::Disconnected;
-            p.update_poll_ref();
-        });
+        // Before `on_close()`: it runs `onclose` and settles the connect()
+        // promise, and a connect() called from either must see Disconnected.
+        this.client_mut().status = valkey::Status::Disconnected;
+        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
         this.client_mut().on_close()
     }
@@ -1900,10 +1905,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _guard = this.ref_scope();
-        let _defer = scopeguard::guard(BackRef::new(this), |p| {
-            p.client_mut().status = valkey::Status::Disconnected;
-            p.update_poll_ref();
-        });
+        this.client_mut().status = valkey::Status::Disconnected;
+        let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
         this.client_mut().on_close()
     }
@@ -2029,7 +2032,7 @@ impl ValkeyDeferredClose {
         let ctx = self.ctx;
         // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
         unsafe {
-            crate::dispatch::fold((*ctx).client_mut().close());
+            crate::dispatch::fold((*ctx).client_mut().close(uws::CloseCode::FastShutdown));
             JSValkeyClient::deref(ctx.cast_mut());
         }
     }

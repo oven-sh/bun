@@ -468,6 +468,11 @@ process.on("message", async message => {
   if (message.type === "exit") {
     // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
     await pageLoad?.catch(() => {});
+    // A runtime error reported after the test's last check only shows up on the overlay; the harness knows whether one was expected.
+    if (!message.overlayExpected && overlayVisible()) {
+      console.error("[E] error overlay is visible:", overlayErrors());
+      process.exit(exitCodeMap.unexpectedErrorOverlay);
+    }
     process.exit(0);
   }
   if (message.type === "get-style") {
@@ -518,45 +523,9 @@ process.on("message", async message => {
   if (message.type === "get-errors") {
     const [messageId] = message.args;
     try {
-      const overlay = window.document.querySelector("bun-hmr");
-      if (!overlay) {
-        process.send({
-          type: `get-errors-result-${messageId}`,
-          args: [{ value: [] }],
-        });
-        return;
-      }
-
-      const errors = [];
-      const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
-      for (const message of buildErrors) {
-        const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
-        const label = message.querySelector(".log-label").textContent;
-        const text = message.querySelector(".log-text").textContent;
-
-        const lineNumElem = message.querySelector(".gutter");
-        const spaceElem = message.querySelector(".highlight-wrap > .space");
-
-        let formatted;
-        if (lineNumElem && spaceElem) {
-          const line = lineNumElem.textContent;
-          const col = spaceElem.textContent.length + 1;
-          formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
-        } else {
-          formatted = `${fileName}: ${label}: ${text}`;
-        }
-
-        errors.push(formatted);
-      }
-      const runtimeError = overlay.shadowRoot.querySelector(".r-error");
-      if (runtimeError) {
-        // TODO: line and column of this error
-        errors.push(runtimeError.querySelector(".message-desc").textContent);
-      }
-
       process.send({
         type: `get-errors-result-${messageId}`,
-        args: [{ value: errors.sort() }],
+        args: [{ value: overlayErrors() }],
       });
     } catch (error) {
       console.error(error);
@@ -567,6 +536,43 @@ process.on("message", async message => {
     }
   }
 });
+function overlayVisible() {
+  return window?.document.querySelector("bun-hmr")?.style.display === "block";
+}
+
+/** The messages on the error overlay, sorted; empty when there is no overlay. */
+function overlayErrors() {
+  const overlay = window.document.querySelector("bun-hmr");
+  if (!overlay) return [];
+  const errors = [];
+  const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
+  for (const message of buildErrors) {
+    const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
+    const label = message.querySelector(".log-label").textContent;
+    const text = message.querySelector(".log-text").textContent;
+
+    const lineNumElem = message.querySelector(".gutter");
+    const spaceElem = message.querySelector(".highlight-wrap > .space");
+
+    let formatted;
+    if (lineNumElem && spaceElem) {
+      const line = lineNumElem.textContent;
+      const col = spaceElem.textContent.length + 1;
+      formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
+    } else {
+      formatted = `${fileName}: ${label}: ${text}`;
+    }
+
+    errors.push(formatted);
+  }
+  const runtimeError = overlay.shadowRoot.querySelector(".r-error");
+  if (runtimeError) {
+    // TODO: line and column of this error
+    errors.push(runtimeError.querySelector(".message-desc").textContent);
+  }
+  return errors.sort();
+}
+
 process.on("disconnect", () => {
   process.exit(0);
 });

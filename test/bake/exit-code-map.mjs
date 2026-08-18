@@ -7,6 +7,7 @@ export const exitCodeMap = {
   unexpectedReload: 33,
   reloadFailed: 34,
   reloadNotCalled: 35,
+  unexpectedErrorOverlay: 36,
 };
 export const exitCodeMapStrings = {
   [exitCodeMap.usage]: "CLI Usage error",
@@ -16,4 +17,5 @@ export const exitCodeMapStrings = {
   [exitCodeMap.unexpectedReload]: "Unexpected reload",
   [exitCodeMap.reloadFailed]: "Reload failed",
   [exitCodeMap.reloadNotCalled]: "Reload not called",
+  [exitCodeMap.unexpectedErrorOverlay]: "Error overlay visible at exit",
 };

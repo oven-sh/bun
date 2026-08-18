@@ -401,12 +401,11 @@ export class Dev extends EventEmitter {
           this.socket!.send("H");
           await this.#rejectOnExit(wait, "the hot reload");
 
-          let errors = options.errors;
-          if (errors !== null) {
-            errors ??= [];
-            for (const client of this.connectedClients) {
-              await client.expectErrorOverlay(errors, options.snapshot);
-            }
+          const errors = options.errors;
+          for (const client of this.connectedClients) {
+            // `errors: null` opts out of overlay checks for this write, including the one at exit.
+            if (errors === null) client.overlayExpected = true;
+            else await client.expectErrorOverlay(errors ?? [], options.snapshot);
           }
         } finally {
           this.batchingChanges = null;
@@ -928,6 +927,8 @@ export class Client extends EventEmitter {
   expectingReload = false;
   hmr = false;
   webSocketMessagesAllowed = true;
+  /** What the last `expectErrorOverlay` asserted; the fixture fails at exit if an overlay is up that this does not cover. */
+  overlayExpected = false;
 
   constructor(
     url: string,
@@ -1062,7 +1063,7 @@ export class Client extends EventEmitter {
       activeClient = null;
     }
     try {
-      this.#proc.send({ type: "exit" });
+      this.#proc.send({ type: "exit", overlayExpected: this.overlayExpected });
     } catch (e) {}
     await this.#proc.exited;
     // `exited` settles before `onExit` runs, so read the status off the subprocess itself.
@@ -1190,6 +1191,7 @@ export class Client extends EventEmitter {
    */
   expectErrorOverlay(errors: ErrorSpec[], caller: string | null = null) {
     return withAnnotatedStack(caller ?? snapshotCallerLocationMayFail(), async () => {
+      this.overlayExpected = errors.length > 0;
       this.suppressInteractivePrompt = true;
       let hasVisibleModal: boolean;
       try {

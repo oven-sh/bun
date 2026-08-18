@@ -2997,8 +2997,16 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 static JSValue constructModuleLoadList(VM& vm, JSObject* processObject)
 {
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
+    // Lazy property builder: an exception (OOM allocating the array) must not
+    // propagate into reifyStaticProperty, which performs no exception check.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* list = globalObject->internalModuleRegistry()->moduleLoadList(globalObject);
-    return list ? JSValue(list) : jsUndefined();
+    if (auto* exception = scope.exception()) [[unlikely]] {
+        (void)scope.tryClearException();
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+        return jsUndefined();
+    }
+    return list;
 }
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)

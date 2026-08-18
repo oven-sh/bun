@@ -130,9 +130,10 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
   // https://github.com/oven-sh/bun/issues/30221
   // With unnamed statements Bind is written before the server has described the
   // parameter types, so every non-numeric parameter is bound with an unknown
-  // type (OID 0). Dates and objects used to go out as toString() output there:
-  // a Date.prototype.toString() string the server rejects for timestamps, and
-  // "[object Object]".
+  // type (OID 0) and used to go out as toString() output: a Date.prototype.toString()
+  // string the server rejects for timestamps, and "[object Object]". Dates now go
+  // out as ISO-8601 and arrays and plain objects as JSON. Objects that define their
+  // own toString() keep binding as that string.
   describe("Date and object parameters", () => {
     const date = new Date("2026-08-17T13:06:14.904Z");
     const obj = { a: 1, b: [null, true], c: "hi" };
@@ -166,11 +167,46 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
       expect(v).toEqual(arr);
     });
 
-    test("object param bound where the server infers text is JSON text, not [object Object]", async () => {
+    test("instance of a class without toString() binds as JSON", async () => {
       await container.ready;
       await using db = new SQL(options());
-      const [{ v }] = await db`SELECT ${obj}::text AS v`;
-      expect(v).toBe(JSON.stringify(obj));
+      class Payload {
+        constructor(public a = 1) {}
+      }
+      const [{ v }] = await db`SELECT ${new Payload()}::jsonb AS v`;
+      expect(v).toEqual({ a: 1 });
+    });
+
+    test("object with its own toString() still binds as that string", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      class Point {
+        toString() {
+          return "(1,2)";
+        }
+      }
+      class Decimal {
+        toString() {
+          return "1.50";
+        }
+        toJSON() {
+          return "1.50";
+        }
+      }
+      const [row] = await db`SELECT ${new Point()}::point AS p, ${new Decimal()}::numeric AS n`;
+      expect(row).toEqual({ p: "(1,2)", n: "1.50" });
+    });
+
+    test("prepare: true still binds objects by the server-reported type", async () => {
+      await container.ready;
+      await using db = new SQL({ ...options(), prepare: true });
+      class Point {
+        toString() {
+          return "(1,2)";
+        }
+      }
+      const [row] = await db`SELECT ${obj}::jsonb AS j, ${obj}::text AS t, ${new Point()}::point AS p`;
+      expect(row).toEqual({ j: obj, t: "[object Object]", p: "(1,2)" });
     });
 
     test("Date and object params via sql.unsafe into typed columns", async () => {
@@ -200,8 +236,8 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
   });
 
   // The helpers and sql.unsafe hand the sql.array() wrapper itself to native (only the
-  // tagged-template path unwraps it), so it must still bind as text rather than being
-  // JSON-serialized like other objects.
+  // tagged-template path unwraps it). It defines toString(), so it must keep binding as
+  // the array literal instead of being JSON-encoded like a plain object.
   describe("sql.array()", () => {
     test("inside an UPDATE helper still binds as an array literal", async () => {
       await container.ready;

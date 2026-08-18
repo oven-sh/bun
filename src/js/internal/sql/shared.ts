@@ -1,7 +1,6 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
-const PublicString = globalThis.String;
 const {
   Query,
   SQLQueryFlags,
@@ -64,12 +63,10 @@ type ArrayType =
   | "PG_DATABASE"
   | (string & {});
 export type { ArrayType, SQLArrayParameter, SQLResultArray };
-// Helpers and sql.unsafe bind this object itself (only bindParam unwraps it). Native binds a String object as text.
-class SQLArrayParameter extends PublicString {
+class SQLArrayParameter {
   serializedValues: string;
   arrayType: ArrayType;
   constructor(serializedValues: string, arrayType: ArrayType) {
-    super(serializedValues);
     this.serializedValues = serializedValues;
     this.arrayType = arrayType;
   }

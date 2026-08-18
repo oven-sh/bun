@@ -151,6 +151,27 @@ describe("TextDecoder - streaming across chunk boundaries", () => {
     }
   });
 
+  // https://encoding.spec.whatwg.org/#dom-textdecoder-decode: a chunk with no
+  // bytes gives the decoder nothing to process, so a pending lead byte must
+  // survive it, whether the trail byte or the end of the stream comes next.
+  test.each([
+    ["big5", [0xa4], [0x40], "一"],
+    ["shift_jis", [0x88], [0xea], "一"],
+    ["euc-kr", [0xec], [0xe9], "一"],
+    ["gbk", [0xd2], [0xbb], "一"],
+    ["euc-jp", [0xb0], [0xec], "一"],
+  ])("%s: an empty {stream: true} chunk keeps a pending lead byte", (encoding, lead, trail, expected) => {
+    const completed = new TextDecoder(encoding);
+    expect(completed.decode(new Uint8Array(lead), { stream: true })).toBe("");
+    expect(completed.decode(new Uint8Array(), { stream: true })).toBe("");
+    expect(completed.decode(new Uint8Array(trail))).toBe(expected);
+
+    const flushed = new TextDecoder(encoding);
+    expect(flushed.decode(new Uint8Array(lead), { stream: true })).toBe("");
+    expect(flushed.decode(new Uint8Array(), { stream: true })).toBe("");
+    expect(flushed.decode()).toBe("\uFFFD");
+  });
+
   test("reusing a decoder after a flushing decode starts a fresh stream", () => {
     // End the first stream in JIS X 0208 mode; a fresh stream must start in
     // ASCII so plain ASCII bytes decode as themselves.

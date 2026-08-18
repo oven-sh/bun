@@ -212,6 +212,13 @@ impl TextDecoder {
         decoder: &mut encoding_rs::Decoder,
         bytes: &[u8],
     ) -> Result<Vec<u16>, strings::ToUTF16Error> {
+        // Nothing to decode. Also keeps the chunk away from encoding_rs 0.8.35,
+        // whose big5, euc-kr and shift_jis decoders forget a pending lead byte
+        // when fed an empty non-final chunk.
+        if bytes.is_empty() && !FLUSH {
+            return Ok(Vec::new());
+        }
+
         // Bounds the output for this chunk in both the replacing and the
         // fatal mode, so neither decode call below can stop on a full buffer.
         let cap = decoder
@@ -221,22 +228,28 @@ impl TextDecoder {
         decoded
             .try_reserve_exact(cap)
             .map_err(|_| strings::ToUTF16Error::OutOfMemory)?;
-        decoded.resize(cap, 0);
+        // SAFETY: `decoded` has `cap` spare units. encoding_rs only writes to
+        // its output slice (Gecko has it fill uninitialized string storage the
+        // same way), so the units need no zero-fill; `set_len` below exposes
+        // only the prefix it reports as written.
+        let dst = unsafe { core::slice::from_raw_parts_mut(decoded.as_mut_ptr(), cap) };
 
         let written = if self.fatal {
             let (result, _, written) =
-                decoder.decode_to_utf16_without_replacement(bytes, &mut decoded, FLUSH);
+                decoder.decode_to_utf16_without_replacement(bytes, dst, FLUSH);
             if let encoding_rs::DecoderResult::Malformed(..) = result {
                 return Err(strings::ToUTF16Error::InvalidByteSequence);
             }
             debug_assert!(matches!(result, encoding_rs::DecoderResult::InputEmpty));
             written
         } else {
-            let (result, _, written, _) = decoder.decode_to_utf16(bytes, &mut decoded, FLUSH);
+            let (result, _, written, _) = decoder.decode_to_utf16(bytes, dst, FLUSH);
             debug_assert!(matches!(result, encoding_rs::CoderResult::InputEmpty));
             written
         };
-        decoded.truncate(written);
+        debug_assert!(written <= cap);
+        // SAFETY: encoding_rs initialized `dst[..written]`, and `written <= cap`.
+        unsafe { decoded.set_len(written) };
         // `cap` is about one code unit per input byte; two-byte CJK text fills
         // half of it, and this buffer lives as long as the JS string does.
         decoded.shrink_to_fit();

@@ -1649,7 +1649,6 @@ dependencies = [
  "bun_sys_jsc",
  "bun_tcc_sys",
  "bun_threading",
- "bun_transpiler",
  "bun_url",
  "bun_uws",
  "bun_uws_sys",
@@ -1661,6 +1660,7 @@ dependencies = [
  "bun_zstd",
  "bytemuck",
  "const_format",
+ "encoding_rs",
  "enum-map",
  "enumset",
  "getrandom",
@@ -1848,7 +1848,6 @@ dependencies = [
 name = "bun_spawn"
 version = "0.0.0"
 dependencies = [
- "bstr",
  "bun_alloc",
  "bun_analytics",
  "bun_core",

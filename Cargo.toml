@@ -366,6 +366,7 @@ thiserror = "2"
 smallvec = "1"
 typed-arena = "2"
 itoa = "1"
+encoding_rs = "0.8.35"
 # Vendored, not crates.io — see the `exclude = ["vendor"]` note above.
 lol_html = { path = "vendor/lolhtml" }
 bun_opaque = { path = "src/opaque" }

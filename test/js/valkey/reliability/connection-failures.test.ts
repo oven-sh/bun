@@ -1,4 +1,5 @@
 import { RedisClient } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
@@ -341,50 +342,52 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   });
 });
 
-describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
-  function readCommands(state: { buffer: Buffer }): string[][] {
-    const commands: string[][] = [];
-    while (true) {
-      const text = state.buffer.toString("latin1");
-      if (text[0] !== "*") break;
-      const headerEnd = text.indexOf("\r\n");
-      if (headerEnd === -1) break;
-      const argCount = parseInt(text.slice(1, headerEnd), 10);
-      if (!Number.isInteger(argCount) || argCount < 0) break;
-      let pos = headerEnd + 2;
-      const args: string[] = [];
-      let complete = true;
-      for (let i = 0; i < argCount; i++) {
-        if (text[pos] !== "$") {
-          complete = false;
-          break;
-        }
-        const lenEnd = text.indexOf("\r\n", pos);
-        if (lenEnd === -1) {
-          complete = false;
-          break;
-        }
-        const len = parseInt(text.slice(pos + 1, lenEnd), 10);
-        if (!Number.isInteger(len) || len < 0) {
-          complete = false;
-          break;
-        }
-        const dataStart = lenEnd + 2;
-        const dataEnd = dataStart + len;
-        if (text.length < dataEnd + 2) {
-          complete = false;
-          break;
-        }
-        args.push(text.slice(dataStart, dataEnd));
-        pos = dataEnd + 2;
+// Takes the complete RESP commands off the front of `state.buffer` and leaves
+// any partial command in it for the next chunk.
+function readCommands(state: { buffer: Buffer }): string[][] {
+  const commands: string[][] = [];
+  while (true) {
+    const text = state.buffer.toString("latin1");
+    if (text[0] !== "*") break;
+    const headerEnd = text.indexOf("\r\n");
+    if (headerEnd === -1) break;
+    const argCount = parseInt(text.slice(1, headerEnd), 10);
+    if (!Number.isInteger(argCount) || argCount < 0) break;
+    let pos = headerEnd + 2;
+    const args: string[] = [];
+    let complete = true;
+    for (let i = 0; i < argCount; i++) {
+      if (text[pos] !== "$") {
+        complete = false;
+        break;
       }
-      if (!complete) break;
-      commands.push(args);
-      state.buffer = state.buffer.subarray(pos);
+      const lenEnd = text.indexOf("\r\n", pos);
+      if (lenEnd === -1) {
+        complete = false;
+        break;
+      }
+      const len = parseInt(text.slice(pos + 1, lenEnd), 10);
+      if (!Number.isInteger(len) || len < 0) {
+        complete = false;
+        break;
+      }
+      const dataStart = lenEnd + 2;
+      const dataEnd = dataStart + len;
+      if (text.length < dataEnd + 2) {
+        complete = false;
+        break;
+      }
+      args.push(text.slice(dataStart, dataEnd));
+      pos = dataEnd + 2;
     }
-    return commands;
+    if (!complete) break;
+    commands.push(args);
+    state.buffer = state.buffer.subarray(pos);
   }
+  return commands;
+}
 
+describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
   test("rejects commands that were in flight when the connection dropped instead of pairing them with replies from the next connection", async () => {
     const sockets: net.Socket[] = [];
     let connections = 0;
@@ -1321,6 +1324,159 @@ describe("Valkey: Recovering After fail()", () => {
       });
     } finally {
       fake.server.close();
+    }
+  });
+});
+
+describe("Valkey: Offline Queue", () => {
+  // Answers each complete command in the order it arrives: HELLO with `+OK`
+  // and everything else with `+PONG`. With `answer: false` nothing is ever
+  // answered, so the connection never becomes ready and everything the client
+  // sends stays in its offline queue.
+  function stubServer({ answer = true } = {}) {
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      const state = { buffer: Buffer.alloc(0) };
+      socket.on("data", chunk => {
+        if (!answer) return;
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        const replies = readCommands(state).map(args =>
+          (args[0] ?? "").toUpperCase() === "HELLO" ? "+OK\r\n" : "+PONG\r\n",
+        );
+        if (replies.length > 0) socket.write(replies.join(""));
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      server,
+      listen: async () => {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        return (server.address() as net.AddressInfo).port;
+      },
+      close: () => {
+        for (const socket of sockets) socket.destroy();
+        return new Promise(resolve => server.close(resolve));
+      },
+    };
+  }
+
+  test("estimated memory counts every queued command after the queue was drained and refilled", async () => {
+    const stub = stubServer();
+    const port = await stub.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      await client.connect();
+      // Six commands go through the queue and are answered. The queue is empty
+      // again, but its read position has moved to slot 6 of the 8 it grew to,
+      // so the next five commands wrap around to the start of its storage.
+      await Promise.all(Array.from({ length: 6 }, () => client.ping()));
+      const idleCost = estimateShallowMemoryUsageOf(client);
+
+      // Five more commands are queued in one turn, before the pipeline
+      // flushes them. Their serialized bytes must all show up in the estimate.
+      const key = Buffer.alloc(1000, "k").toString();
+      const pending = Promise.all(Array.from({ length: 5 }, () => client.get(key)));
+      const queuedCost = estimateShallowMemoryUsageOf(client);
+
+      expect(await pending).toEqual(Array(5).fill("PONG"));
+      expect(queuedCost - idleCost).toBeGreaterThanOrEqual(5 * key.length);
+    } finally {
+      client.close();
+      await stub.close();
+    }
+  });
+
+  test("commands queued after the queue wrapped reach the server in one write", async () => {
+    // The client runs in a child process with nothing else live and queues
+    // the GETs from a setImmediate callback, so the flush runs at the end of
+    // that tick and the loop then parks. A client that only flushes the part
+    // of the queue before the wrap point writes two GETs there and the other
+    // three on a later, unrelated wake. The stub records how many GETs the
+    // first read carrying a GET held, and holds the GET replies until it has
+    // all five so no reply can wake the child in between. It then answers all
+    // five, so the child exits and the count is asserted however the GETs
+    // arrived.
+    let getsSeen = 0;
+    let getsInFirstRead = 0;
+    const server = Bun.listen<{ buffer: Buffer }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buffer: Buffer.alloc(0) };
+        },
+        error() {},
+        close() {},
+        data(socket, chunk) {
+          const state = socket.data;
+          state.buffer = Buffer.concat([state.buffer, chunk]);
+          let replies = "";
+          let gets = 0;
+          for (const args of readCommands(state)) {
+            const name = (args[0] ?? "").toUpperCase();
+            if (name === "GET") {
+              gets += 1;
+            } else {
+              replies += name === "HELLO" ? "+OK\r\n" : "+PONG\r\n";
+            }
+          }
+          if (replies) socket.write(replies);
+          if (gets > 0 && getsSeen === 0) getsInFirstRead = gets;
+          const getsSeenBefore = getsSeen;
+          getsSeen += gets;
+          if (getsSeenBefore < 5 && getsSeen >= 5) socket.write("$1\r\nv\r\n".repeat(getsSeen));
+        },
+      },
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${server.port}", { autoReconnect: false });
+          await client.connect();
+          await Promise.all(Array.from({ length: 6 }, () => client.ping()));
+          await new Promise(resolve => setImmediate(resolve));
+          const values = await Promise.all(Array.from({ length: 5 }, () => client.get("k")));
+          console.log(values.length, "replies");
+          client.close();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ getsInFirstRead, stdout, stderr, exitCode }).toEqual({
+        getsInFirstRead: 5,
+        stdout: "5 replies\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
+  test("close() rejects every command queued while the connection never became ready", async () => {
+    const stub = stubServer({ answer: false });
+    const port = await stub.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const outcomes = Array.from({ length: 40 }, (_, i) =>
+        client.get(`key-${i}`).then(
+          () => "fulfilled",
+          (err: Error & { code?: string }) => err.code,
+        ),
+      );
+      client.close();
+      expect(await Promise.all(outcomes)).toEqual(Array(40).fill("ERR_REDIS_CONNECTION_CLOSED"));
+    } finally {
+      client.close();
+      await stub.close();
     }
   });
 });

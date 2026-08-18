@@ -350,13 +350,6 @@ pub mod fs {
             join_abs_string_buf_checked::<platform::Loose>(self.top_level_dir, buf, parts)
         }
 
-        /// Like `abs_buf` but writes a
-        /// NUL sentinel and returns a `ZStr` borrowing `buf`.
-        pub fn abs_buf_z<'b>(&self, parts: &[&[u8]], buf: &'b mut [u8]) -> &'b ZStr {
-            use bun_paths::resolve_path::{join_abs_string_buf_z, platform};
-            join_abs_string_buf_z::<platform::Loose>(self.top_level_dir, buf, parts)
-        }
-
         /// Normalizes `str` (separators, `.`/`..` segments) into `buf`.
         pub fn normalize_buf<'b>(&self, buf: &'b mut [u8], str: &[u8]) -> &'b [u8] {
             use bun_paths::resolve_path::{normalize_string_buf, platform};
@@ -1393,7 +1386,7 @@ pub mod fs {
             existing_fd: Fd,
             store_fd: bool,
         ) -> crate::CrateResult<EntryCache> {
-            use bun_paths::resolve_path::{join_abs_string_buf, platform};
+            use bun_paths::resolve_path::{join_abs_string_buf_checked, platform};
             #[cfg(not(windows))]
             use bun_sys::{FileKind, kind_from_mode};
 
@@ -1405,8 +1398,15 @@ pub mod fs {
 
             let combo: [&[u8]; 2] = [dir_, base];
             let mut outpath = bun_paths::PathBuffer::uninit();
-            let entry_path_len =
-                join_abs_string_buf::<platform::Auto>(self.cwd, &mut outpath[..], &combo).len();
+            let join_capacity = outpath.len() - 2;
+            let Some(entry_path) = join_abs_string_buf_checked::<platform::Auto>(
+                self.cwd,
+                &mut outpath[..join_capacity],
+                &combo,
+            ) else {
+                return Err(crate::Error::Sys(bun_errno::SystemErrno::ENAMETOOLONG));
+            };
+            let entry_path_len = entry_path.len();
 
             outpath[entry_path_len + 1] = 0;
             outpath[entry_path_len] = 0;

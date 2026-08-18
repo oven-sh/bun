@@ -3,11 +3,13 @@
 // with no subjectAltName, signed by ca1. Every request below trusts ca1, so
 // the identity check alone decides whether the request succeeds.
 //
-// The mismatch case runs in a child process. It started as the regression
-// test for a use-after-free when the identity check rejected the peer inside
-// the native handshake callback (#29829). A crash in that path must fail this
-// one test instead of taking down the test runner, so it stays out of process.
-// The other cases only check behavior and run in this process.
+// The mismatch case runs in a child process on purpose. The child makes one
+// rejected request, closes the server as soon as the request emits "error",
+// and exits. The test requires an empty stderr and exit code 0. On the ASAN
+// lane the child also runs with leak detection. A crash or a leak on the
+// reject path fails this one test instead of the test runner. This child is
+// how the close_notify leak fixed in #30368 was found, and that fix has no
+// other test. The other cases only check behavior and run in this process.
 
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";

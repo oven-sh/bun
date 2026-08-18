@@ -641,10 +641,10 @@ test("auto-mock restores the prior factory mock when the require() throws", () =
   mock.module("auto-mock-virtual-no-disk", () => ({ greet: () => "hi" }));
   expect(require("auto-mock-virtual-no-disk").greet()).toBe("hi");
 
-  // jest.mock without a factory fails because there's nothing on disk to
-  // load for this specifier. We don't care what message it throws — only
-  // that the prior factory mock is still intact afterwards.
-  expect(() => jest.mock("auto-mock-virtual-no-disk")).toThrow();
+  // jest.mock without a factory fails inside the internal require() (there
+  // is nothing on disk for this specifier), so the resolution error proves
+  // the stash was already taken when the throw happened.
+  expect(() => jest.mock("auto-mock-virtual-no-disk")).toThrow(/Cannot find package|Module not found|find module/);
 
   // The factory mock must still resolve the specifier.
   expect(require("auto-mock-virtual-no-disk").greet()).toBe("hi");
@@ -737,7 +737,7 @@ test.concurrent("a failing jest.mock() with a relative specifier doesn't break l
       import { test, expect, jest } from "bun:test";
       test("failing mock then import", async () => {
         // Typo'd relative specifier → resolution fails → require() throws.
-        expect(() => jest.mock("./my-fixtrue")).toThrow();
+        expect(() => jest.mock("./my-fixtrue")).toThrow(/Cannot find package|Module not found|find module/);
         // A real ESM import afterwards must not hit the assert.
         const mod = await import("./real.ts");
         expect(mod.value).toBe(42);

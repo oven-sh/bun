@@ -1577,8 +1577,7 @@ devTest("unresolvable relative import longer than the path buffer is a bundling 
   },
 });
 
-// A CSS url() without "./" skips the resolver's directory cache busting, so
-// this only reaches DirectoryWatchStore.track_resolution_failure.
+// A CSS url() without "./" skips the resolver's directory cache busting, so only DirectoryWatchStore.track_resolution_failure sees it.
 devTest("unresolvable css url() longer than the path buffer is a bundling error", {
   files: {
     "index.html": emptyHtmlFile({ styles: ["styles.css"] }),

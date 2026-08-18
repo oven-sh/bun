@@ -315,13 +315,9 @@ devTest("import.meta.hot.accept multiple modules", {
   },
 });
 devTest("modules between the updated module and its accepting boundary are evaluated again", {
-  // One server; each case has its own page and module graph under a directory
-  // of the same name. Clients are opened one at a time.
+  // One server; each case has its own page and module graph under a directory of the same name. Clients are opened one at a time.
   files: {
-    // accept: index -> d, index -> a -> d. `index` accepts `d`, so it is not
-    // evaluated again itself, but `a` computed its export from `d` and has to
-    // be. The accept callback records what it saw instead of logging it, so
-    // that the test does not depend on how many times it runs per update.
+    // accept: index -> d, index -> a -> d. `index` accepts `d` and is not evaluated again, but `a` computed its export from `d` and has to be.
     "accept.html": emptyHtmlFile({ scripts: ["accept/index.ts"] }),
     "accept/index.ts": `
       import { d } from "./d";
@@ -340,9 +336,7 @@ devTest("modules between the updated module and its accepting boundary are evalu
     "accept/d.ts": `
       export const d = "d1";
     `,
-    // order: index -> b -> d, b -> a -> d. `b` loads `d` before `a` does, so
-    // `d` lists `b` as an importer before `a`, and walking up from `d` finds
-    // `b` first. `b` must still be evaluated after `a`, which it imports.
+    // order: index -> b -> d, b -> a -> d. Walking up from `d` finds `b` first, but `b` must still be evaluated after `a`, which it imports.
     "order.html": emptyHtmlFile({ scripts: ["order/index.ts"] }),
     "order/index.ts": `
       import { b } from "./b";
@@ -363,10 +357,7 @@ devTest("modules between the updated module and its accepting boundary are evalu
     "order/d.ts": `
       export const d = "d1";
     `,
-    // self: index -> d, index -> y -> d. Both accept updates to `d`. `d` lists
-    // `index` as an importer first, so `index` is reloaded first; it must still
-    // see the new `y`, and `y`'s own accept callback must only run once `y`,
-    // which has top-level await, has finished evaluating.
+    // self: index -> d, index -> y -> d, both accepting `d`. `index` reloads first but must see the new `y`; `y`'s callback runs once its TLA finishes.
     "self.html": emptyHtmlFile({ scripts: ["self/index.ts"] }),
     "self/index.ts": `
       import { d } from "./d";
@@ -386,10 +377,7 @@ devTest("modules between the updated module and its accepting boundary are evalu
     "self/d.ts": `
       export const d = "d1";
     `,
-    // dispose: index (self-accepting) -> mid -> d. `mid` is replaced along with
-    // `d`, so the copy being thrown away has its dispose callbacks run, which
-    // also removes its event listener (on() is implemented with dispose());
-    // only the new copy's listener fires.
+    // dispose: index (self-accepting) -> mid -> d. The replaced `mid` runs its dispose callbacks, removing its listener; only the new copy's fires.
     "dispose.html": emptyHtmlFile({ scripts: ["dispose/index.ts"] }),
     "dispose/index.ts": `
       import { mid } from "./mid";
@@ -406,14 +394,7 @@ devTest("modules between the updated module and its accepting boundary are evalu
     "dispose/d.ts": `
       export const d = "d1";
     `,
-    // reload: index -> b -> d (b accepts d), index -> c -> d (c self-accepts),
-    // index -> d (index does not accept anything: the update fails).
-    // Everything logs through the console.log captured when the page was
-    // loaded. The test client silences the console object as soon as the page
-    // starts reloading, but a captured reference still reaches the test, so
-    // anything the runtime still did in the page being left (disposing of c,
-    // evaluating d and c again, b's callback) would show up as a message
-    // between "full reload" and the messages of the freshly loaded page.
+    // reload: b accepts d, c self-accepts, index does not accept: the update fails. Logging goes through a captured console.log so anything done in the page being left would show up between "full reload" and the fresh page.
     "reload.html": emptyHtmlFile({ scripts: ["reload/index.ts"] }),
     "reload/index.ts": `
       import "./b";
@@ -463,9 +444,7 @@ devTest("modules between the updated module and its accepting boundary are evalu
       await using c = await dev.client("/self");
       await c.expectMessage("y evaluated y(d1)", "index d1 y(d1)");
       await dev.write("self/d.ts", `export const d = "d2";`);
-      // A callback that ran too early would see the previous `y`. Whether it
-      // runs before or after `index` finishes depends on how the loader reports
-      // a load that is already in flight, so only the values are checked.
+      // A callback that ran too early would see the previous `y`; its position relative to `index` depends on how in-flight loads are reported.
       await c.expectMessageInAnyOrder("y evaluated y(d2)", "index d2 y(d2)", "y accepted y(d2)");
     }
     {
@@ -506,9 +485,7 @@ devTest("modules between the updated module and its accepting boundary are evalu
 devTest("server: modules between the updated module and the route are evaluated again", {
   framework: minimalFramework,
   files: {
-    // Routes never accept updates; the server applies them anyway (and warns).
-    // The route imports `config` before `derived`, so walking up from `config`
-    // reaches the route before `derived`, which still has to be found.
+    // Routes never accept updates; the server applies them anyway. The route imports `config` before `derived`, which still has to be found.
     "config.ts": `
       export const value = "v1";
     `,
@@ -530,7 +507,7 @@ devTest("server: modules between the updated module and the route are evaluated 
     await dev.fetch("/").equals("v2 derived(v2)");
   },
 });
-devTest("server: a module that throws while another one's reload is in flight fails the update without an unhandled rejection", {
+devTest("server: a sync throw during an update with a reload in flight leaves no unhandled rejection", {
   framework: minimalFramework,
   files: {
     "config.ts": `
@@ -566,10 +543,7 @@ devTest("server: a module that throws while another one's reload is in flight fa
 });
 devTest("import.meta.hot.accept specifier callbacks run once per update, dispose once per module", {
   files: {
-    // once: index -> d, index -> a -> d, index -> b -> c -> d,
-    // index -> other -> d, other -> a. Updating `d` walks every importer of
-    // `d` and of the modules that do not accept it (`a`, `c`, `b`), reaching
-    // `index` and `other` once per path. Each accept callback must still run once.
+    // once: index -> d, index -> a -> d, index -> b -> c -> d, index -> other -> d, other -> a. `index` and `other` are reached once per path; each callback runs once.
     "once.html": emptyHtmlFile({ scripts: ["once/index.ts"] }),
     "once/index.ts": `
       import { d } from "./d";
@@ -603,10 +577,7 @@ devTest("import.meta.hot.accept specifier callbacks run once per update, dispose
     "once/d.ts": `
       export const d = "d1";
     `,
-    // two: both replaced modules propagate up to `index`, which must be
-    // disposed of and re-evaluated once. Disposing of it a second time used to
-    // throw (its dispose list is cleared after running), turning the update
-    // into a full reload.
+    // two: both replaced modules propagate up to `index`, which must be disposed of and re-evaluated once (a second dispose used to throw).
     "two.html": emptyHtmlFile({ scripts: ["two/index.ts"] }),
     "two/index.ts": `
       import "./d";
@@ -685,8 +656,7 @@ devTest("an accept callback is not run for an importer the same update evaluated
 });
 devTest("import.meta.hot.dispose runs for every module the update evaluates again", {
   files: {
-    // importer: index handles every update below with its accept callback and
-    // is never evaluated again, so its own dispose callback must never run.
+    // importer: index handles every update with its accept callback and is never evaluated again, so its own dispose callback must never run.
     "importer.html": emptyHtmlFile({ scripts: ["importer/index.ts"] }),
     "importer/index.ts": `
       import { d } from "./d";
@@ -705,9 +675,7 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
         console.log("disposed " + d);
       });
     `,
-    // self: both d (replaced) and index (the boundary) are evaluated again. All
-    // dispose callbacks run, and the promise index's returns is settled, before
-    // either module is evaluated.
+    // self: both d and index are evaluated again; all dispose callbacks run, and index's returned promise settles, before either evaluates.
     "self.html": emptyHtmlFile({ scripts: ["self/index.ts"] }),
     "self/index.ts": `
       import { d } from "./d";
@@ -725,10 +693,7 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
         console.log("disposed " + d);
       });
     `,
-    // several: the boundary is reached from both replaced modules, imports
-    // both, and comes between them in the update's reload order. Each module
-    // must be disposed of once and evaluated once per update; the second round
-    // catches dispose callbacks registered by a duplicate evaluation.
+    // several: the boundary is reached from both replaced modules and sits between them in reload order; each module is disposed of and evaluated once per update.
     "several.html": emptyHtmlFile({ scripts: ["several/index.ts"] }),
     "several/index.ts": `
       import "./d";
@@ -753,9 +718,7 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
         console.log("disposed " + e);
       });
     `,
-    // threw: the failing module is reached through import() so that the page
-    // itself stays up. What it set up before throwing still has to be torn
-    // down when the fixed copy replaces it.
+    // threw: the failing module is reached through import() so the page stays up; what it set up before throwing is torn down when the fix replaces it.
     "threw.html": emptyHtmlFile({ scripts: ["threw/index.ts"] }),
     "threw/index.ts": `
       globalThis.loadDep = async () => {
@@ -775,8 +738,7 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
       export const value = "v1";
       throw new Error("dep is broken");
     `,
-    // listeners: only the listener registered by the current copy of d is
-    // still attached once an update accepted by its importer is applied.
+    // listeners: only the listener registered by the current copy of d is still attached once an update accepted by its importer is applied.
     "listeners.html": emptyHtmlFile({ scripts: ["listeners/index.ts"] }),
     "listeners/index.ts": `
       import { d } from "./d";
@@ -799,12 +761,10 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
       // The copy being thrown away is disposed of before the next one is evaluated.
       await dev.patch("importer/d.ts", { find: "d1", replace: "d2" });
       await c.expectMessage("disposed d1", "evaluated d2", "index accepted d2");
-      // The dispose callback registered by a copy that was itself hot-loaded
-      // runs too, and the first copy's callback does not run again.
+      // The dispose callback registered by a copy that was itself hot-loaded runs too, and the first copy's callback does not run again.
       await dev.patch("importer/d.ts", { find: "d2", replace: "d3" });
       await c.expectMessage("disposed d2", "evaluated d3", "index accepted d3");
-      // The next copy self-accepts. The copy being replaced still does not, so
-      // this update is still accepted by index.
+      // The next copy self-accepts. The copy being replaced still does not, so this update is still accepted by index.
       await dev.write(
         "importer/d.ts",
         `
@@ -817,9 +777,7 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
         `,
       );
       await c.expectMessage("disposed d3", "evaluated d4", "index accepted d4");
-      // Self-accepting update. Only the copy being replaced is disposed of; the
-      // callbacks of d1, d2 and d3 were consumed by the earlier updates instead
-      // of piling up until a self-accepting copy came along.
+      // Self-accepting update: only the copy being replaced is disposed of; the callbacks of d1, d2 and d3 were consumed by the earlier updates.
       await dev.patch("importer/d.ts", { find: "d4", replace: "d5" });
       await c.expectMessage("disposed d4", "evaluated d5", "index accepted d5");
     }
@@ -834,8 +792,7 @@ devTest("import.meta.hot.dispose runs for every module the update evaluates agai
     {
       await using c = await dev.client("/several");
       await c.expectMessage("evaluated d1", "evaluated e1", "index evaluated");
-      // The order the modules of one update are processed in is not specified;
-      // the ordering between disposing and evaluating is pinned by the case above.
+      // The order the modules of one update are processed in is not specified; the dispose/evaluate ordering is pinned by the case above.
       {
         await using batch = await dev.batchChanges();
         await dev.patch("several/d.ts", { find: "d1", replace: "d2" });
@@ -1060,8 +1017,7 @@ devTest("import.meta.hot on/off events", {
           import.meta.hot.accept();
         `,
       );
-      // The initial module's listeners fire for the update that replaces it. The
-      // afterUpdate listener added by the new module fires once the update is done.
+      // The initial module's listeners fire for the update replacing it; the new module's afterUpdate listener fires once the update is done.
       await c.expectMessage(
         "bun:beforeUpdate (initial)",
         "vite:beforeUpdate (initial)",
@@ -1075,9 +1031,7 @@ devTest("import.meta.hot on/off events", {
           import.meta.hot.accept();
         `,
       );
-      // The initial module's listeners were removed when it was replaced, and the
-      // off() listener never fires. The replaced module's afterUpdate listener is
-      // removed before this update finishes.
+      // The initial module's listeners were removed with it, and off() never fires; the replaced module's afterUpdate listener is removed before this update finishes.
       await c.expectMessage("vite:beforeUpdate (updated)", "Third update");
     }
     {

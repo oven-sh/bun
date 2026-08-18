@@ -202,12 +202,7 @@ devTest("using runtime import", {
     );
   },
 });
-// Standard (TC39) decorators, `accessor` fields, and the `#private` members of
-// a decorated class are lowered into calls to "bun:wrap" helpers
-// (__decoratorStart, __decorateElement, __runInitializers, __decoratorMetadata,
-// __privateAdd, __privateGet, __privateSet, __privateIn, __privateMethod). The
-// dev server does not bundle runtime.js; its HMR runtime provides "bun:wrap"
-// itself, so it has to export everything the production runtime does.
+// The dev server does not bundle runtime.js, so its HMR runtime's "bun:wrap" must export every helper decorators, `accessor` and `#private` lowering call.
 const standardDecoratorsSource = `
   const applied: string[] = [];
   function dec(_value: unknown, ctx: DecoratorContext) {
@@ -359,8 +354,7 @@ devTest("hmr handles rapid consecutive edits", {
     // `num_subscribers(HotUpdate) == 0` / `active_viewers == 0` and the
     // hot_update is dropped server-side (DevServer.rs finalize_bundle), so
     // the sentinel never reaches the client. Re-writing on each
-    // `received-hmr-event` (which fires on socket open and once per applied
-    // hot update) guarantees that at least one sentinel write lands after the
+    // `received-hmr-event` (socket open, and each applied hot update) guarantees that at least one sentinel write lands after the
     // server has a subscriber. The same-content writes are idempotent and
     // the loop terminates the moment waitForMessage resolves below.
     const sentinelContent = hmrSelfAcceptingModule("render sentinel");

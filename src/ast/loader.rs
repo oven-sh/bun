@@ -21,9 +21,9 @@ use enum_map::Enum;
     Debug,
     Hash,
     Enum,
-    strum::FromRepr,
     strum::IntoStaticStr,
     strum::VariantNames,
+    strum::FromRepr,
 )]
 // The lower_snake names are exposed to JS (HTMLImportManifest
 // `"loader":`, BuildArtifact.loader) so the strum serialization must match exactly.

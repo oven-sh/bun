@@ -514,11 +514,11 @@ pub fn is_scoped_package_name(name: &[u8]) -> Result<bool, PackageNameError> {
     Err(PackageNameError::InvalidPackageName)
 }
 
-/// A dependency name/alias becomes a directory under `node_modules/`. Names
-/// come from untrusted `package.json` / manifest keys, so reject anything that
-/// could resolve outside that directory. `@scope/name` stays valid.
+/// Names come from untrusted `package.json` / manifest keys and end up as
+/// `node_modules/` directories and in progress and error output, so reject path
+/// escapes and terminal control characters. `@scope/name` stays valid.
 pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
-    if name.is_empty() {
+    if name.is_empty() || contains_control_character(name) {
         return false;
     }
 
@@ -526,12 +526,24 @@ pub(crate) fn is_safe_install_folder_name(name: &[u8]) -> bool {
         if component.is_empty() || component == b"." || component == b".." {
             return false;
         }
-        if strings::contains_any(component, b"\\:\0") {
+        if strings::contains_any(component, b"\\:") {
             return false;
         }
     }
 
     true
+}
+
+/// C0 controls and DEL, plus UTF-8 encoded C1 controls (`C2 80`..`C2 9F`,
+/// U+0080..=U+009F), which terminals interpret too.
+pub(crate) fn contains_control_character(name: &[u8]) -> bool {
+    name.iter().enumerate().any(|(i, &byte)| {
+        byte.is_ascii_control()
+            || (byte == 0xC2
+                && name
+                    .get(i + 1)
+                    .is_some_and(|next| (0x80..=0x9F).contains(next)))
+    })
 }
 
 /// assumes version is valid

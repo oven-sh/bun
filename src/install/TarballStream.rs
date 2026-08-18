@@ -1090,7 +1090,7 @@ impl TarballStream {
                         bun_ast::Loc::EMPTY,
                         format_args!(
                             "Refusing to install package with invalid name \"{}\"",
-                            bun_fmt::s(tarball.name_and_basename().0),
+                            bun_fmt::escape_control_chars(tarball.name_and_basename().0),
                         ),
                     );
                 } else {

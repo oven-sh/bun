@@ -390,14 +390,20 @@ impl PackageManager {
                     {
                         Output::err_generic(
                             "<b>{}<r><d> failed to resolve<r>",
-                            (failed_dep.version.literal.fmt(string_buf),),
+                            (bun_core::fmt::escape_control_chars(
+                                failed_dep.version.literal.slice(string_buf),
+                            ),),
                         );
                     } else {
                         Output::err_generic(
                             "<b>{}<r><d>@<b>{}<r><d> failed to resolve<r>",
                             (
-                                bstr::BStr::new(failed_dep.name.slice(string_buf)),
-                                failed_dep.version.literal.fmt(string_buf),
+                                bun_core::fmt::escape_control_chars(
+                                    failed_dep.name.slice(string_buf),
+                                ),
+                                bun_core::fmt::escape_control_chars(
+                                    failed_dep.version.literal.slice(string_buf),
+                                ),
                             ),
                         );
                     }

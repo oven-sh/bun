@@ -1717,7 +1717,7 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isNativeModule"_s)),
-        JSC::JSFunction::create(vm, globalObject, 1, "isNativeModule"_s, vmIsNativeModule, ImplementationVisibility::Public), 1);
+        JSC::JSFunction::create(vm, globalObject, 1, "isNativeModule"_s, vmIsNativeModule, ImplementationVisibility::Public), 0);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);

@@ -1175,11 +1175,9 @@ where
     /// (`us_internal_free_closed_sockets`) or recycled it onto the next
     /// keep-alive request. Release the handle without dereferencing it. The
     /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
-    /// `detach_response()` would make are already covered by `markDone()`
-    /// (`do_render_stream` arms them before the sink can end the response, and
-    /// nothing arms them afterwards). For the same reason a later
-    /// `server.stop(true)` does not reach `on_abort`, so callers get here even
-    /// when the server is already terminated: nothing else releases the ref.
+    /// `detach_response()` would make are already covered by `markDone()`,
+    /// which is also why a later `server.stop(true)` cannot reach `on_abort`:
+    /// callers come here even once the server is terminated.
     ///
     /// HTTP/3 must never reach this. `Http3Response::markDone()` deliberately
     /// leaves `onAborted` armed so `on_stream_close` can notify the holder,
@@ -1990,11 +1988,10 @@ where
             this.render_metadata();
         }
 
-        // Armed before `pull()` can run, not in `to_async()`: a `server.stop(true)`
-        // inside `pull()` must reach `on_abort` before the sink uses the freed
-        // socket, and if the stream completes the response within this frame,
-        // uWS `markDone()` drops both callbacks for good (`to_async()` then
-        // finds `has_abort_handler` set); see `end_already_responded_stream`.
+        // Before `pull()` runs, not in `to_async()`: a `server.stop(true)` inside
+        // `pull()` has to reach `on_abort`, and once the stream has completed the
+        // response, uWS `markDone()` must have dropped these for good (the flag
+        // makes the later `to_async()` a no-op); see `end_already_responded_stream`.
         this.set_abort_handler();
         resp.on_writable(
             |this, off, resp| Self::on_writable_response_stream(this, off, resp),

@@ -1159,7 +1159,8 @@ impl JSValkeyClient {
 
     /// The `CloseReason::DialFailed` text for a dial uSockets turned down
     /// before it had a socket, in the shape of `node:net`'s: `connect ENOENT
-    /// /run/redis.sock`.
+    /// /run/redis.sock`. `errno` is raw (a WSA code on Windows); `connect_errno`
+    /// normalises it the way `Bun.connect` does.
     fn dial_error_message(&self, err: uws::ConnectError) -> Box<[u8]> {
         let uws::ConnectError::FailedToOpenSocket { errno } = err;
         Self::connect_error_message(&self.client.get().address, errno)
@@ -1168,7 +1169,7 @@ impl JSValkeyClient {
     fn connect_error_message(address: &valkey::Address, errno: i32) -> Box<[u8]> {
         use std::io::Write;
         let mut message = Vec::new();
-        let _ = write!(message, "connect {} ", bun_errno::from_errno(errno));
+        let _ = write!(message, "connect {} ", bun_errno::connect_errno(errno));
         match address {
             valkey::Address::Unix(path) => message.extend_from_slice(path),
             valkey::Address::Host { host, port } => {

@@ -304,6 +304,36 @@ pub fn from_errno(errno: i32) -> SystemErrno {
     SystemErrno::init(errno as i64).unwrap_or(SystemErrno::EIO)
 }
 
+/// The errno a failed `connect(2)` is reported with, as `node:net` reports it.
+/// `raw` is what uSockets hands the connect-error callback (`SO_ERROR`, or the
+/// WSA code on Windows) or what a dial that failed outright left in errno.
+/// Unix-path connect errors keep their real code (a non-socket file is
+/// `ENOTSOCK`, a permission-denied path is `EACCES`, a missing one is
+/// `ENOENT`, an inexpressible path is `EINVAL`); everything else, including
+/// Windows' `ENOTCONN` from the recv probe, is `ECONNREFUSED`.
+pub fn connect_errno(raw: i32) -> SystemErrno {
+    #[cfg(windows)]
+    let raw: i32 = if raw >= 10000 {
+        SystemErrno::init(raw as u32)
+            .map(|e| e as i32)
+            .unwrap_or(SystemErrno::ECONNREFUSED as i32)
+    } else {
+        raw
+    };
+    const KEPT: [SystemErrno; 7] = [
+        SystemErrno::ENOENT,
+        SystemErrno::ENOTSOCK,
+        SystemErrno::EACCES,
+        SystemErrno::EINVAL,
+        SystemErrno::ECONNRESET,
+        SystemErrno::EADDRINUSE,
+        SystemErrno::EADDRNOTAVAIL,
+    ];
+    KEPT.into_iter()
+        .find(|e| *e as i32 == raw)
+        .unwrap_or(SystemErrno::ECONNREFUSED)
+}
+
 #[cfg(not(windows))]
 impl SystemErrno {
     // `i64` covers every concrete call site (errno-range values).

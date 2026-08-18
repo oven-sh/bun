@@ -1128,50 +1128,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
-            // uSockets hands us raw WSA codes (SO_ERROR, the recv probe) on
-            // Windows; map those onto the SystemErrno numbering the whitelist
-            // below compares against.
-            #[cfg(windows)]
-            let errno: c_int = if errno >= 10000 {
-                sys::SystemErrno::init(errno as u32)
-                    .map(|e| e as c_int)
-                    .unwrap_or(sys::SystemErrno::ECONNREFUSED as c_int)
-            } else {
-                errno
-            };
-            // Unix-path connect errors keep their real code (a non-socket file
-            // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
-            // ENOENT, an inexpressible path is EINVAL); everything else stays
-            // ECONNREFUSED.
-            let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
-                || errno == sys::SystemErrno::ENOTSOCK as c_int
-                || errno == sys::SystemErrno::EACCES as c_int
-                || errno == sys::SystemErrno::EINVAL as c_int
-                || errno == sys::SystemErrno::ECONNRESET as c_int
-                || errno == sys::SystemErrno::EADDRINUSE as c_int
-                || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
-            {
-                errno
-            } else {
-                sys::SystemErrno::ECONNREFUSED as c_int
-            };
-            let code_ = if errno == sys::SystemErrno::ENOENT as c_int {
-                BunString::static_("ENOENT")
-            } else if errno == sys::SystemErrno::ENOTSOCK as c_int {
-                BunString::static_("ENOTSOCK")
-            } else if errno == sys::SystemErrno::EACCES as c_int {
-                BunString::static_("EACCES")
-            } else if errno == sys::SystemErrno::EINVAL as c_int {
-                BunString::static_("EINVAL")
-            } else if errno == sys::SystemErrno::ECONNRESET as c_int {
-                BunString::static_("ECONNRESET")
-            } else if errno == sys::SystemErrno::EADDRINUSE as c_int {
-                BunString::static_("EADDRINUSE")
-            } else if errno == sys::SystemErrno::EADDRNOTAVAIL as c_int {
-                BunString::static_("EADDRNOTAVAIL")
-            } else {
-                BunString::static_("ECONNREFUSED")
-            };
+            let errno_enum = bun_errno::connect_errno(errno);
+            let errno_: c_int = errno_enum as c_int;
+            let code_ = BunString::static_(<&'static str>::from(errno_enum));
             #[cfg(windows)]
             let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
                 .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);

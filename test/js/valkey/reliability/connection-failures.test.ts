@@ -484,10 +484,6 @@ describe("Valkey: Recovering After fail()", () => {
         await once(server, "listening");
         return (server.address() as net.AddressInfo).port;
       },
-      listenUnix: async (socketPath: string) => {
-        server.listen(socketPath);
-        await once(server, "listening");
-      },
       close: () => new Promise(resolve => server.close(resolve)),
     };
   }

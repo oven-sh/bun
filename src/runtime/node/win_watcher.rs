@@ -338,8 +338,6 @@ impl PathWatcher {
         path: &ZStr,
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
-        // Resolve symlinks here rather than passing libuv the readlink() target:
-        // a relative target is relative to the link's directory, not the cwd.
         let mut resolve_buf = bun_paths::path_buffer_pool::get();
         let event_path: &ZStr = match sys::realpath(path, &mut resolve_buf) {
             Ok(resolved) => {

@@ -623,10 +623,12 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
 // Closing a client from the continuation of its last reply and collecting
 // before the socket read returns used to panic ("unreachable" in
 // subscription_callback_map): the collector had found the wrapper dead but
-// finalize() had not run yet. The fixture sets that up deterministically and
-// fails on its own if the wrapper survives the collection.
+// finalize() had not run yet. The fixture runs the scenario ten times, checks
+// after each collection whether the wrapper is really dead, and exits non-zero
+// unless at least one round reached that state and came back from the read.
 test.concurrent("a client closed and collected from within its own reply does not crash the socket read", async () => {
-  expect(await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"))).toSpawn(
-    ["round 0 survived", "round 1 survived", "round 2 survived"].join("\n"),
-  );
+  const { stdout, stderr, exitCode } = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
+  expect(stdout).toMatch(/^[1-9]\d* rounds? reached the window$/m);
+  expect(stderr).not.toContain("panic");
+  expect(exitCode).toBe(0);
 });

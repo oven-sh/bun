@@ -90,7 +90,13 @@ async function hop() {
   await null;
 }
 
-for (let round = 0; round < 3; round++) {
+// The conservative stack scan can keep the wrapper alive by chance (a stale
+// slot in a live native frame), and which round that hits differs per build
+// and platform. A round that misses the window is reported and skipped; the
+// run fails only if no round reached it, so a pass always means the socket
+// read ran against a dead wrapper at least once.
+let reached = 0;
+for (let round = 0; round < 10; round++) {
   const done = useAndCloseClient();
   scrub(256);
   await done;
@@ -104,12 +110,19 @@ for (let round = 0; round < 3; round++) {
   // Synchronous collection without a sweep: the wrapper is dead and not
   // finalized when this microtask drain returns into the socket read.
   jscInternals.collectSyncWithoutSweep();
-  if (jscInternals.isLiveCellAtRawAddress(address!)) {
-    throw new Error(`round ${round}: the wrapper survived the collection, the window was not reached`);
-  }
+  const dead = !jscInternals.isLiveCellAtRawAddress(address!);
   // Return into the socket read before anything else happens.
   await nextTick;
-  console.log(`round ${round} survived`);
+  if (dead) {
+    reached++;
+    console.log(`round ${round} survived`);
+  } else {
+    console.log(`round ${round} skipped: the wrapper survived the collection`);
+  }
 }
+if (reached === 0) {
+  throw new Error("no round reached the dead-but-unswept window");
+}
+console.log(`${reached} rounds reached the window`);
 
 for (const client of lowerTier) client.close();

@@ -86,6 +86,10 @@ const spawnTimeout = 5_000;
 const spawnBunTimeout = 20_000; // when running with ASAN/LSAN bun can take a bit longer to exit, not a bug.
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
+// Frames gdb prints per thread of a core file. A bun process has 10 to 20
+// threads; idle ones unwind in about 10 frames, so this bounds the annotation
+// without cutting the crashing thread or the JS thread short.
+const gdbFramesPerThread = 64;
 
 const resolutionGatingFlags = new Set([
   "--expose-internals",
@@ -1791,6 +1795,13 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
     BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
+    // When the marker is handed a cell that the sweeper already freed (a
+    // missing GC root or write barrier somewhere), JSC crashes at once, while
+    // the visitChildren or root constraint that still pointed at the dead cell
+    // is on the stack, with the dead cell's subspace hash, size and block state
+    // in registers. Without it the cell is pushed and a GC helper thread
+    // segfaults later when it pops it. x86_64 only; accepted and inert elsewhere.
+    BUN_JSC_dumpZappedCellCrashData: "1",
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows
@@ -1848,9 +1859,22 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
       for (const coreName of newCores) {
         const corePath = join(coresDir, coreName);
         let out = "";
+        // Every thread, not only the one that crashed: a crash in a GC helper
+        // thread (HeapHelper-*.core) only shows the marker visiting a dead
+        // cell, while the JS thread's stack shows what the process had in
+        // flight. gdb numbers the crashing thread 1 and the main thread next,
+        // so `-ascending` puts the two that matter first. gdb -batch truncates
+        // a deep or corrupt stack silently, hence the frame limit in the
+        // header below.
         const gdb = await spawnSafe({
           command: "gdb",
-          args: ["-batch", `--eval-command=bt`, "--core", corePath, execPath],
+          args: [
+            "-batch",
+            `--eval-command=thread apply all -ascending bt ${gdbFramesPerThread}`,
+            "--core",
+            corePath,
+            execPath,
+          ],
           timeout: 240_000,
           stderr: () => {},
           stdout(text) {
@@ -1860,11 +1884,12 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
         if (!gdb.ok) {
           crashes += `failed to get backtrace from GDB: ${gdb.error}\n`;
         } else {
-          crashes += `======== Stack trace from GDB for ${coreName}: ========\n`;
+          crashes += `======== Stack trace from GDB for ${coreName} (all threads, crashing thread first, up to ${gdbFramesPerThread} frames each): ========\n`;
           for (const line of out.split("\n")) {
             // filter GDB output since it is pretty verbose
             if (
               line.startsWith("Program terminated") ||
+              line.startsWith("Thread ") || // "Thread 2 (Thread 0x... (LWP 123)):" starts each thread's backtrace
               line.startsWith("#") || // gdb backtrace lines start with #0, #1, etc.
               line.startsWith("[Current thread is")
             ) {

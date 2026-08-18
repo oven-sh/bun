@@ -1067,10 +1067,11 @@ impl JSValkeyClient {
     /// close path for it, since no socket exists to dispatch a close event.
     pub(crate) fn cancel_reconnect(&self) -> JsResult<()> {
         debug_assert!(self.client.get().status == valkey::Status::Disconnected);
+        // The timer's ref goes back with the disarm; there is no socket ref
+        // to give back (`connect()` forgets it only once it has a socket) and
+        // `on_valkey_close` adopts none. The caller's scoped ref covers the
+        // call.
         self.reconnect_timer.disarm(self);
-        // `on_close()` ends in `on_valkey_close`, which adopts the ref the
-        // socket of a dial would have held.
-        self.ref_();
         self.client_mut().on_close()
     }
 
@@ -2059,12 +2060,9 @@ impl ValkeyDeferredClose {
                 crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
             }
             DeferredClose::WithoutSocket => {
-                // Holding Connecting (see `close_without_socket_next_tick`) is
-                // what keeps a dial from starting in between; if one did, its
-                // own callbacks own the close path now, so only drop our ref.
-                if !this.client.get().socket.is_closed() {
-                    return;
-                }
+                // Holding Connecting (see `close_without_socket_next_tick`)
+                // and the gate in `reconnect()` keep every dial entry out.
+                debug_assert!(this.client.get().socket.is_closed());
                 // No socket ref to give back: `connect()` forgets it only once
                 // it has a socket, and this task exists because it never did.
                 this.client_mut().status = valkey::Status::Disconnected;

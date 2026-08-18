@@ -1496,6 +1496,46 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  test("connect() during the retry delay starts the retry budget over", async () => {
+    // Connection 1 is dropped on PING; every later connection is dropped as
+    // soon as it sends HELLO, so each dial ends in another retry.
+    const fake = helloServer({
+      PING: (_connection, socket) => {
+        socket.end();
+        return null;
+      },
+      HELLO: (connection, socket) => {
+        if (connection === 1) return "+OK\r\n";
+        socket.destroy();
+        return null;
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { maxRetries: 2 });
+    let closes = 0;
+    client.onclose = () => closes++;
+    try {
+      // Attempt 1 of 2 is pending here. Waiting for it would leave one more
+      // attempt; connect() dials now instead and counts from zero again, so
+      // three more connections are dropped before the client gives up.
+      await dropAndAwaitRetryDelay(client);
+      const outcome = await client.connect().then(
+        () => "connected",
+        (err: Error & { code: string }) => err.code,
+      );
+      expect({ outcome, connections: fake.connections, closes, connected: client.connected }).toEqual({
+        outcome: "ERR_REDIS_CONNECTION_CLOSED",
+        connections: 4,
+        closes: 1,
+        connected: false,
+      });
+    } finally {
+      client.close();
+      for (const socket of fake.sockets) socket.destroy();
+      await fake.close();
+    }
+  });
+
   test("close() during a reconnect attempt reports the close exactly once", async () => {
     const fake = droppingServer();
     const port = await fake.listen();
@@ -1534,11 +1574,16 @@ describe("Valkey: Recovering After fail()", () => {
       const first = helloServer({ HELLO: () => null });
       const second = helloServer();
       await first.listenUnix(socketPath);
-      const client = new RedisClient(`redis+unix://${socketPath}`, { connectionTimeout: 300 });
+      const connectionTimeout = 1000;
+      const client = new RedisClient(`redis+unix://${socketPath}`, { connectionTimeout });
       let closes = 0;
       client.onclose = () => closes++;
       // Settled by the connect() made from the socket callback below.
-      const fromCallback = Promise.withResolvers<{ outcome: Promise<string>; ping: Promise<string> }>();
+      const fromCallback = Promise.withResolvers<{
+        outcome: Promise<string>;
+        ping: Promise<string>;
+        beforeStaleDeadline: boolean;
+      }>();
       // A dial made from a socket callback runs before the timers of that
       // loop iteration are checked, and blocking there makes them due.
       using control = Bun.listen({
@@ -1548,6 +1593,7 @@ describe("Valkey: Recovering After fail()", () => {
           data(_socket, chunk) {
             const staleDeadline = Number(chunk.toString());
             fromCallback.resolve({
+              beforeStaleDeadline: performance.now() < staleDeadline,
               outcome: client.connect().then(
                 () => "connected",
                 (err: Error & { code: string }) => `rejected: ${err.code}`,
@@ -1557,7 +1603,7 @@ describe("Valkey: Recovering After fail()", () => {
                 (err: Error) => `rejected: ${err.message}`,
               ),
             });
-            Bun.sleepSync(Math.max(0, staleDeadline - performance.now()));
+            Bun.sleepSync(Math.max(0, staleDeadline + 100 - performance.now()));
           },
           open() {},
           close() {},
@@ -1570,13 +1616,15 @@ describe("Valkey: Recovering After fail()", () => {
         socket: { data() {}, open() {}, close() {}, error() {} },
       });
       try {
+        // connect() arms the connect timer before it returns; the deadline
+        // measured from here is at or after the real one.
+        const armedAt = performance.now();
         const attempt = client.connect().then(
           () => "connected",
           (err: Error & { code: string }) => `rejected: ${err.code}`,
         );
+        const staleDeadline = armedAt + connectionTimeout;
         expect(await until(() => first.connections === 1, 1000)).toBe(true);
-        // The dial's 300ms connect timer was armed just before this.
-        const staleDeadline = performance.now() + 300;
         client.close();
         expect({ attempt: await attempt, closes }).toEqual({
           attempt: "rejected: ERR_REDIS_CONNECTION_CLOSED",
@@ -1587,8 +1635,11 @@ describe("Valkey: Recovering After fail()", () => {
         // event loop, after the timers of the iteration are checked. Blocking
         // in the callback past the stale deadline makes that timer due first.
         await first.close();
-        sender.write(String(staleDeadline + 100));
-        const { outcome, ping } = await fromCallback.promise;
+        sender.write(String(staleDeadline));
+        const { outcome, ping, beforeStaleDeadline } = await fromCallback.promise;
+        // Had the timer been left armed, it was still pending when the
+        // callback dialled; otherwise the test proved nothing.
+        expect(beforeStaleDeadline).toBe(true);
         // The hold's close schedules a retry, which is what connects.
         await second.listenUnix(socketPath);
         expect(await until(() => second.connections >= 1, 3000)).toBe(true);

@@ -514,10 +514,11 @@ describe("Valkey: Recovering After fail()", () => {
     return promise;
   }
 
-  // A failure after the handshake closes the connection for good even though
-  // auto reconnect is left on here: an accepted HELLO resets the retry counter,
-  // so retrying a server that keeps failing us after it would never end.
-  // onclose only fires on that terminal path, so it firing is the assertion.
+  // A failure the client detects itself is a deliberate close, not a retry,
+  // even with auto reconnect on (left on here): only closes initiated by the
+  // peer go through the retry policy, as has always been the case and unlike
+  // ioredis. onclose only fires on that terminal path, so it firing is the
+  // assertion.
   test.each([
     ["redis", false],
     ["rediss", true],
@@ -911,6 +912,72 @@ describe("Valkey: Recovering After fail()", () => {
     },
   );
 
+  // A fresh client's first dial can fail the same way, whether connect() or the
+  // first command makes it; it goes through the same close as a refused dial.
+  const firstDialFrom: [string, (client: RedisClient) => Promise<unknown>][] = [
+    ["connect()", client => client.connect()],
+    ["a command", client => client.ping()],
+  ];
+
+  test.skipIf(isWindows).each(firstDialFrom)(
+    "a first dial that fails outright, made by %s, rejects and runs onclose once when auto-reconnect is off",
+    async (_entry, dial) => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const fake = helloServer();
+      const client = new RedisClient(`redis+unix://${socketPath}`, { autoReconnect: false });
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        const attempt = dial(client).then(
+          () => "resolved",
+          (err: Error & { code: string }) => `rejected: ${err.code}`,
+        );
+        expect(closes).toBe(0);
+        expect({ outcome: await attempt, closes, connected: client.connected }).toEqual({
+          outcome: "rejected: ERR_REDIS_CONNECTION_CLOSED",
+          closes: 1,
+          connected: false,
+        });
+        // The failed attempt is settled and forgotten: a connect() once a
+        // listener is there dials rather than handing the same promise back.
+        await fake.listenUnix(socketPath);
+        await client.connect();
+        expect({ ping: await client.ping(), connections: fake.connections }).toEqual({ ping: "PONG", connections: 1 });
+      } finally {
+        client.close();
+        await fake.close();
+      }
+    },
+  );
+
+  test.skipIf(isWindows).each(firstDialFrom)(
+    "a first dial that fails outright, made by %s, is retried until a listener is there",
+    async (_entry, dial) => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const fake = helloServer();
+      const client = new RedisClient(`redis+unix://${socketPath}`);
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        const attempt = dial(client);
+        // Listening well before the first retry is due; a later retry would
+        // connect just the same, the retries are not terminal either way.
+        await fake.listenUnix(socketPath);
+        await attempt;
+        expect({ ping: await client.ping(), closes, connections: fake.connections }).toEqual({
+          ping: "PONG",
+          closes: 0,
+          connections: 1,
+        });
+      } finally {
+        client.close();
+        await fake.close();
+      }
+    },
+  );
+
   test("a connect() issued from onclose after the TLS context cannot be built dials again from the event loop", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -973,6 +1040,56 @@ describe("Valkey: Recovering After fail()", () => {
       expect(await secondConnect).toBe("connected");
       expect(await client.ping()).toBe("PONG");
       expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("a message listener that closes and reconnects is not fed the pushes buffered behind its message", async () => {
+    // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
+    const push = (...items: (string | number)[]) =>
+      `>${items.length}\r\n` +
+      items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      await client.connect();
+      const connection1 = fake.sockets[0];
+      connection1.on("data", chunk => {
+        if (chunk.toString("latin1").includes("SUBSCRIBE")) connection1.write(push("subscribe", "ch", 1));
+      });
+      const delivered: string[] = [];
+      const firstDelivered = Promise.withResolvers<void>();
+      const reconnect = Promise.withResolvers<string>();
+      await client.subscribe("ch", message => {
+        delivered.push(message);
+        if (delivered.length === 1) firstDelivered.resolve();
+        if (delivered.length !== 2) return;
+        client.close();
+        reconnect.resolve(
+          client.connect().then(
+            () => "connected",
+            (err: Error) => `rejected: ${err.message}`,
+          ),
+        );
+      });
+      const [m1, m2] = [push("message", "ch", "m1"), push("message", "ch", "m2")];
+      // m0 is handled straight off this read and the start of m1 is kept in the
+      // read buffer, so everything from here on goes through the buffer path.
+      connection1.write(push("message", "ch", "m0") + m1.slice(0, 10));
+      await firstDelivered.promise;
+      // One read completes m1 and carries m2. The listener closes connection 1
+      // on m1 and dials connection 2; m2 belongs to neither (taken as the next
+      // reply, it would be read as connection 2's HELLO answer and fail it).
+      connection1.write(m1.slice(10) + m2);
+      expect({
+        reconnect: await reconnect.promise,
+        delivered,
+        connected: client.connected,
+        connections: fake.connections,
+      }).toEqual({ reconnect: "connected", delivered: ["m0", "m1"], connected: true, connections: 2 });
     } finally {
       client.close();
       fake.server.close();

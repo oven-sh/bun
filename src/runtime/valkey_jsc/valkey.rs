@@ -613,9 +613,9 @@ impl ValkeyClient {
             jsvalue,
         );
 
-        // Deliberate close rather than a retry, even with auto reconnect on: an
-        // accepted HELLO resets retry_attempts, so a server that keeps failing
-        // us after the handshake would otherwise be redialed forever.
+        // A failure the client detected itself (idle timeout, protocol or
+        // handshake error) has always been a deliberate close; only closes the
+        // peer initiated go through the retry policy, even with auto reconnect on.
         self.flags.is_manually_closed = true;
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)

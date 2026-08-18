@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, tempDir, tls } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
 import { join } from "path";
 
 // Worker VM startup/teardown is much slower under debug and/or ASAN; these
@@ -795,6 +795,14 @@ test.skipIf(!isDebug)(
     exitRightAfterConnecting(
       "new Bun.RedisClient('rediss://127.0.0.1:9', { tls: { key: 'x', cert: 'x' }, autoReconnect: false }).connect()",
     ),
+  timeout,
+);
+
+// The same task, queued by a first command whose dial failed outright (a unix
+// socket path nobody listens on), with the command itself still queued behind it.
+test.skipIf(!isDebug || isWindows)(
+  "process.exit() with a redis client's deferred close and a queued command releases both cleanly",
+  () => exitRightAfterConnecting("new Bun.RedisClient('redis+unix:///nonexistent/redis.sock').ping()"),
   timeout,
 );
 

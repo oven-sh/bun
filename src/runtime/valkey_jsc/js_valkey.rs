@@ -1018,16 +1018,13 @@ impl JSValkeyClient {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
 
             if let Err(err) = self.connect() {
-                self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
-                self.client_mut().status = valkey::Status::NeverConnected;
-                let err_value = global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!(" {} connecting to Valkey", err.name()),
-                    )
-                    .to_js();
-                let _exit = self.vm().enter_event_loop_scope();
-                promise_ptr.reject(global_object, Ok(err_value))?;
+                debug!(
+                    "first dial failed before a socket was opened: {}",
+                    err.name()
+                );
+                // Settled by the deferred close like a refused dial: the
+                // promise, onclose and the retry policy all go through on_close().
+                self.close_without_socket_next_tick();
                 return Ok(promise);
             }
 
@@ -1150,10 +1147,11 @@ impl JSValkeyClient {
     ///
     /// Until the task runs the client is `Connecting`, as it would be with a
     /// dial in flight: JS that runs in between (timers due in the same tick,
-    /// or the caller of connect() itself) then gets the cached promise from
-    /// connect() instead of a second dial, and a disconnect() marks the close
-    /// as manual for the task to honour. `update_poll_ref` keeps the wrapper
-    /// and the event loop alive for it like a dial would.
+    /// or the caller of connect() or of the command that dialled) then gets
+    /// the cached promise from connect() instead of a second dial, has its
+    /// commands queued for the retry or the rejection, and a disconnect()
+    /// marks the close as manual for the task to honour. `update_poll_ref`
+    /// keeps the wrapper and the event loop alive for it like a dial would.
     fn close_without_socket_next_tick(&self) {
         self.client_mut().status = valkey::Status::Connecting;
         self.update_poll_ref();
@@ -1579,20 +1577,19 @@ impl JSValkeyClient {
         if self.client.get().status == valkey::Status::NeverConnected {
             bun_core::hint::cold();
 
-            if let Err(err) = self.connect() {
-                self.client_mut().status = valkey::Status::NeverConnected;
-                let err_value = global_this
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!(" {} connecting to Valkey", err.name()),
-                    )
-                    .to_js();
-                let promise = JSPromise::create(global_this);
-                let _exit = self.vm().enter_event_loop_scope();
-                promise.reject(global_this, Ok(err_value))?;
-                return Ok(promise);
+            match self.connect() {
+                // The command is queued below as for a dial in flight; the
+                // deferred close then rejects it or a retry sends it, like a
+                // refused dial.
+                Err(err) => {
+                    debug!(
+                        "first dial failed before a socket was opened: {}",
+                        err.name()
+                    );
+                    self.close_without_socket_next_tick();
+                }
+                Ok(()) => self.reset_connection_timeout(),
             }
-            self.reset_connection_timeout();
         }
 
         let self_br = BackRef::new(self);

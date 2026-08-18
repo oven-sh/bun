@@ -15,6 +15,7 @@
 //!
 //! Ported from TypeScript `src/HIR/MergeOverlappingReactiveScopesHIR.ts`.
 
+use bun_collections::index_sort;
 use std::cmp;
 use std::collections::HashMap;
 
@@ -158,13 +159,13 @@ fn collect_scope_info(func: &HirFunction, env: &Environment) -> ScopeInfo {
         .into_iter()
         .map(|(id, scopes)| ScopeStartEntry { id, scopes })
         .collect();
-    scope_starts.sort_unstable_by(|a, b| b.id.cmp(&a.id));
+    index_sort::sort_slice_unstable_by(&mut scope_starts, |a, b| b.id.cmp(&a.id));
 
     let mut scope_ends: Vec<ScopeEndEntry> = scope_ends_map
         .into_iter()
         .map(|(id, scopes)| ScopeEndEntry { id, scopes })
         .collect();
-    scope_ends.sort_unstable_by(|a, b| b.id.cmp(&a.id));
+    index_sort::sort_slice_unstable_by(&mut scope_ends, |a, b| b.id.cmp(&a.id));
 
     ScopeInfo {
         scope_starts,
@@ -190,7 +191,7 @@ fn visit_instruction_id(
 
             // Sort scopes by start descending (matching active_scopes order)
             let mut scopes_sorted = scope_end_entry.scopes;
-            scopes_sorted.sort_unstable_by(|a, b| {
+            index_sort::sort_slice_unstable_by(&mut scopes_sorted, |a, b| {
                 let a_start = env.scopes[a.0 as usize].range.start;
                 let b_start = env.scopes[b.0 as usize].range.start;
                 b_start.cmp(&a_start)
@@ -218,7 +219,7 @@ fn visit_instruction_id(
 
             // Sort by end descending
             let mut scopes_sorted = scope_start_entry.scopes;
-            scopes_sorted.sort_unstable_by(|a, b| {
+            index_sort::sort_slice_unstable_by(&mut scopes_sorted, |a, b| {
                 let a_end = env.scopes[a.0 as usize].range.end;
                 let b_end = env.scopes[b.0 as usize].range.end;
                 b_end.cmp(&a_end)

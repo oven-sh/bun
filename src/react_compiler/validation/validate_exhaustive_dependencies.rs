@@ -1,3 +1,4 @@
+use bun_collections::index_sort;
 use std::collections::HashSet;
 
 use crate::collections::IdMap;
@@ -1144,7 +1145,7 @@ fn validate_dependencies(
     types: &[Type],
 ) -> Result<Option<CompilerDiagnostic>, CompilerDiagnostic> {
     // Sort dependencies by name and path
-    inferred.sort_unstable_by(|a, b| {
+    index_sort::sort_slice_unstable_by(&mut inferred, |a, b| {
         match (a, b) {
             (
                 InferredDependency::Global { binding: ab },

@@ -27,6 +27,7 @@ use crate::hir::{
 use bun_ast::expr::Data as ExprData;
 use bun_ast::stmt::Data as StmtData;
 use bun_ast::{self as ast, Expr, G, Loc, Ref, Stmt, StmtOrExpr, b};
+use bun_collections::index_sort;
 
 use super::find_context_identifiers::find_context_identifiers;
 use super::hir_builder::{
@@ -448,7 +449,7 @@ pub(super) fn gather_captured_context<'h>(
     // Sort captured entries by source position so context declarations appear
     // in source order, matching the TS compiler's position-ordered traversal.
     let mut sorted: Vec<_> = captured.into_iter().collect();
-    sorted.sort_unstable_by_key(|(_, (pos, _))| *pos);
+    index_sort::sort_slice_unstable_by(&mut sorted, |(_, (a, _)), (_, (b, _))| a.cmp(b));
 
     sorted
         .into_iter()

@@ -69,9 +69,6 @@ impl readable_stream::SourceContext for ByteStream {
     const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
-    // The only native ref holder is the producer (`FetchTasklet`), which never
-    // touches the wrapper; see `SourceContext::NATIVE_REF_ROOTS_WRAPPER`.
-    const NATIVE_REF_ROOTS_WRAPPER: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
     // R-2: trait sigs are fixed at `&mut self` (shared with the other
@@ -92,6 +89,11 @@ impl readable_stream::SourceContext for ByteStream {
     fn finalize_detach(&mut self) -> bool {
         Self::on_wrapper_finalized(self);
         false
+    }
+    /// The producer's ref (`FetchTasklet`) pins the wrapper only while the
+    /// wrapper roots a natively wired sink; see the trait method.
+    fn native_ref_roots_wrapper(&self) -> bool {
+        self.sink.get().is_some()
     }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)

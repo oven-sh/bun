@@ -623,6 +623,7 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
         stdout: "pipe",
         stderr: "pipe",
       });
+      const stderr = proc.stderr.text();
       const exited = proc.exited.then(exitCode => ({ exitCode }));
       const deadline = performance.now() + 10_000;
       let outcome: { exitCode: number } | { stillAlive: true; serverSentMiB: number } | undefined;
@@ -635,7 +636,7 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
           proc.kill();
         }
       }
-      expect({ outcome, stderr: await proc.stderr.text() }).toEqual({ outcome: { exitCode: 0 }, stderr: "" });
+      expect({ outcome, stderr: await stderr }).toEqual({ outcome: { exitCode: 0 }, stderr: "" });
     }, 20_000);
   }
 
@@ -683,6 +684,7 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
         stdout: "pipe",
         stderr: "pipe",
       });
+      const stderr = proc.stderr.text();
       const upstream = await server.response;
       const lines: string[] = [];
       let pending = "";
@@ -696,7 +698,7 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
           if (line === "waiting") upstream.end(Buffer.alloc(CHUNK, 67));
         }
       }
-      expect({ lines: lines.slice(-2), stderr: await proc.stderr.text(), exitCode: await proc.exited }).toEqual({
+      expect({ lines: lines.slice(-2), stderr: await stderr, exitCode: await proc.exited }).toEqual({
         lines: ["waiting", `total ${chunks * CHUNK}`],
         stderr: "",
         exitCode: 0,

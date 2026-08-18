@@ -1,6 +1,6 @@
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug } from "harness";
 
 // Test that ReadableStream objects from cancelled fetch responses are properly GC'd.
 //
@@ -244,7 +244,8 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
       }
       for (let i = 0; i < N; i++) await abandonOne();
 
-      const deadline = performance.now() + 3000;
+      // Bounds the failing case only; the fixed build is done in well under a second.
+      const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
       while (aborted < N && performance.now() < deadline) {
         Bun.gc(true);
         await Bun.sleep(10);

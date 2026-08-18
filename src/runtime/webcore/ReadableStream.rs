@@ -323,6 +323,18 @@ impl ReadableStream {
                 byte_stream.parent_const().set_sink_owner(owner_cell);
                 byte_stream.sink.set(sink);
                 byte_stream.sink_paused.set(false);
+                // The `sinkOwner` slot set above is what roots `owner_cell` from now on, and
+                // this wrapper is what holds the slot. A producer that holds the source
+                // (`FetchTasklet`) keeps delivering to `sink` whether or not JS still reaches
+                // the wrapper, so the wrapper has to stay alive as long as that ref is held.
+                // Done before the first write below, which can run script and so collect.
+                // SAFETY: `Source::Bytes` is the wrapper's whole `m_ctx` allocation, live while
+                // the stream is; `byte_stream` is a back-reference, so no borrow of the context
+                // is live across this call.
+                unsafe {
+                    let source = NewSource::from_context_ptr(NonNull::from(byte_stream).as_ptr());
+                    (*source).root_wrapper_if_needed();
+                }
                 self.lock_native(global);
                 byte_stream.signal_consumer_attached();
 
@@ -750,14 +762,6 @@ pub trait SourceContext: Sized {
     const NAME: &'static str;
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
-    /// Whether a native ref ([`NewSource::increment_count`]) also roots the JS
-    /// wrapper. `FileReader` needs that: a read completes off the event loop and
-    /// then calls the wrapper's `onClose`. A producer that only writes into the
-    /// source's native memory (`FetchTasklet` into a `ByteStream`) opts out: the
-    /// wrapper holds the stream's consumer graph, so rooting it would keep a
-    /// stream nobody can reach alive for as long as the producer runs.
-    const NATIVE_REF_ROOTS_WRAPPER: bool = true;
-
     // ─── codegen accessors (`.classes.ts` → `generated_classes.rs`) ───────────
     // Each context binds its per-type codegen module via `source_context_codegen!`.
     /// `js_${NAME}InternalReadableStreamSource::to_js` — `ptr` is the
@@ -794,6 +798,19 @@ pub trait SourceContext: Sized {
 
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&mut self, _enable: bool) {}
+
+    /// Whether the JS wrapper must stay alive while a native ref beyond the
+    /// wrapper's own is held ([`NewSource::root_wrapper_if_needed`]). The
+    /// default holds for `FileReader`: its read completes off the event loop
+    /// and then calls the wrapper's `onClose`. `ByteStream` answers from its
+    /// state: the wrapper roots a natively wired sink's cell (`sinkOwner`), so
+    /// it has to live while a producer can still deliver to that sink, but
+    /// with no sink it is what the stream's consumers hold, and rooting it
+    /// would keep a stream nobody can reach alive for as long as the producer
+    /// (`FetchTasklet`) runs.
+    fn native_ref_roots_wrapper(&self) -> bool {
+        true
+    }
 
     /// `drainInternalBuffer` — default returns empty.
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
@@ -855,9 +872,8 @@ pub struct NewSource<C: SourceContext> {
     pub global_this: Option<bun_ptr::BackRef<JSGlobalObject>>,
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
-    /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
-    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`; contexts
-    /// with [`SourceContext::NATIVE_REF_ROOTS_WRAPPER`] unset skip this), and
+    /// [`JsRef::upgrade`]d to `Strong` by [`Self::root_wrapper_if_needed`] while a
+    /// native ref is held and the context needs the wrapper for it, and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
@@ -1148,13 +1164,23 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn increment_count(&mut self) {
         self.ref_count += 1;
-        if !C::NATIVE_REF_ROOTS_WRAPPER {
+        self.root_wrapper_if_needed();
+    }
+
+    /// Root the wrapper while a ref beyond the wrapper's own is held and the
+    /// context needs the wrapper alive for it
+    /// ([`SourceContext::native_ref_roots_wrapper`]): a FileReader
+    /// `waiting_for_on_reader_done` I/O ref, whose `on_js_close` is reached from
+    /// `on_reader_done` off the event loop with no JS frame on the stack and
+    /// must never read a dead-but-unswept cell; or a ByteStream that a producer
+    /// holds while a native sink is wired to it. Re-run whenever one of the two
+    /// inputs changes: a ref is taken ([`Self::increment_count`]) or a sink is
+    /// wired ([`ReadableStream::wire_native_sink`]). [`Self::decrement_count`]
+    /// drops the root once only the wrapper's own ref remains.
+    pub fn root_wrapper_if_needed(&mut self) {
+        if self.ref_count <= 1 || !self.context.native_ref_roots_wrapper() {
             return;
         }
-        // A ref beyond the JS wrapper's own is held (a FileReader
-        // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
-        // `on_js_close`, reached from `on_reader_done` off the event loop with
-        // no JS frame on the stack, never reads a dead-but-unswept cell.
         if let Some(global) = self.global_this.as_deref() {
             if self.this_jsvalue.is_not_empty() {
                 self.this_jsvalue.upgrade(global);

@@ -34,15 +34,11 @@ pub use posix_spawn::WaitPidResult;
 #[derive(Clone, Copy)]
 pub struct WaitPidResult {}
 
-/// Low-level fd / memfd helpers historically grouped here as `spawn_sys`.
-/// MOVE_DOWN: real impls now live in `bun_sys` (lower crate); re-export so
-/// higher-tier callers (`bun_runtime::api::bun::spawn::stdio`, `Terminal`)
-/// keep their `bun_spawn::process::spawn_sys::*` import path.
+/// Real impls live in `bun_sys`; re-exported so callers keep the
+/// `bun_spawn::process::spawn_sys::*` import path.
 pub mod spawn_sys {
-    // POSIX-only — memfd / FD_CLOEXEC have no Windows equivalent
-    // (`can_use_memfd` is always-false there and `set_close_on_exec` is a
-    // no-op since Win32 handles default to non-inheritable). Gated so the
-    // re-export resolves without `bun_sys` having to ship Windows stubs.
+    // POSIX-only (memfd / FD_CLOEXEC have no Windows equivalent); gated so the
+    // re-export resolves without `bun_sys` shipping Windows stubs.
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub use bun_sys::{MemfdFlags, MemfdFlags as MemfdFlag, memfd_create};
     #[cfg(unix)]
@@ -51,10 +47,8 @@ pub mod spawn_sys {
 
 bun_core::declare_scope!(PROCESS, visible);
 
-// ─── Re-exports from `bun_spawn_sys` ─────────────────────────────────────────
-// The raw OS spawn layer (option/result structs, `Rusage`, `spawn_process_posix`)
-// moved into the leaf `bun_spawn_sys` crate so it has no event-loop dependency.
-// Re-export here so existing `bun_spawn::process::*` paths keep resolving.
+// Raw OS spawn layer lives in leaf `bun_spawn_sys` (no event-loop dep);
+// re-exported so `bun_spawn::process::*` paths keep resolving.
 pub use bun_spawn_sys::spawn_process::{IoCounters, WinRusage, WinTimeval, rusage_zeroed};
 #[cfg(windows)]
 pub use bun_spawn_sys::uv_getrusage;
@@ -63,30 +57,9 @@ pub use bun_spawn_sys::{
     PosixSpawnResult, PosixStdio, Rusage, StdioKind,
 };
 
-/// Whether the process-exit poll should be registered one-shot.
-///
-/// On Linux we watch a pidfd via `EPOLLIN`. A pidfd becomes readable when the
-/// tracked process exits and stays readable until the fd is closed, so a
-/// plain level-triggered watch is sufficient: when the event fires we
-/// `wait4(WNOHANG)`, and on success we close the pidfd (which removes it
-/// from epoll).
-///
-/// `EPOLLONESHOT` is actively harmful here: the kernel disarms the fd the
-/// instant `epoll_wait` returns it — before user-space has dispatched it.
-/// If a poll callback then re-enters `us_loop_run_bun_tick` (e.g.
-/// `expect(p).resolves` → `waitForPromise` → `autoTick`, or any other
-/// `waitForPromise` path), the inner tick overwrites the shared
-/// `loop->ready_polls`/`num_ready_polls`/`current_ready_poll` and the outer
-/// dispatch silently skips its remaining events. A dropped one-shot pidfd
-/// event is unrecoverable: the fd is disarmed with no re-arm path, so the
-/// process's `'exit'` arrives only when the next unrelated timer wakes the
-/// loop. Level-triggered makes a dropped slot harmless — the next
-/// `epoll_wait` just returns it again. `rewatch_posix` still re-registers
-/// defensively if `wait4` returns 0, which is a harmless `CTL_MOD`.
-///
-/// macOS/FreeBSD watch the pid via `EVFILT_PROC` + `NOTE_EXIT`, which is
-/// inherently once-per-process — keep `EV_ONESHOT` there so the kernel
-/// auto-removes the filter.
+/// Linux pidfd is level-triggered (stays readable); `EPOLLONESHOT` would
+/// strand the event under re-entrant `us_loop_run_bun_tick`. macOS/FreeBSD
+/// `EVFILT_PROC`+`NOTE_EXIT` is inherently once-per-process → keep `EV_ONESHOT`.
 #[cfg(unix)]
 const PROCESS_POLL_ONE_SHOT: bool = !cfg!(any(target_os = "linux", target_os = "android"));
 
@@ -113,11 +86,8 @@ fn call_exit_handler(
     h.on_process_exit(process, status, rusage);
 }
 
-// bun.ptr.ThreadSafeRefCount → intrusive (FFI-crossing: *mut Process recovered
-// via `container_of` in on_exit_uv / on_close_uv). Per PORTING.md §Pointers,
-// keep the embedded count; the derive emits `ThreadSafeRefCounted` +
-// `AnyRefCounted`. Default `destructor` (`heap::take`) applies — `Drop` below
-// handles `poller.deinit()`.
+// Intrusive refcount (FFI-crossing: *mut Process recovered via `container_of`
+// in on_exit_uv / on_close_uv). `Drop` below handles `poller.deinit()`.
 #[derive(bun_ptr::ThreadSafeRefCounted)]
 pub struct Process {
     pub pid: PidT,
@@ -179,14 +149,9 @@ impl Process {
         unsafe { bun_ptr::ThreadSafeRefCount::<Process>::ref_(std::ptr::from_mut(self)) };
     }
 
-    /// Drop one ref. Takes `*mut Self`, **not** `&mut self`: on the last ref
-    /// the destructor `Box::from_raw`-drops the allocation, and a `&mut self`
-    /// argument carries a Stacked-Borrows protector for the call's full
-    /// duration — freeing while it's live is UB even though we never touch
-    /// `self` afterwards. Same rationale as [`Process::has_exited`] (:215).
-    ///
     /// # Safety
-    /// `this` must point at a live `Process` with refcount ≥ 1.
+    /// `this` must be live with refcount ≥ 1. `*mut Self` not `&mut self`:
+    /// last-ref frees, and a `&mut` protector outliving the allocation is UB.
     #[inline]
     pub unsafe fn deref(this: *mut Self) {
         // SAFETY: caller contract — `this` is a live `Process` with refcount ≥ 1.
@@ -266,10 +231,8 @@ impl Process {
     }
 
     /// # Safety
-    /// `this` carries the +1 ref taken when the waiter-thread task was queued.
-    /// `ScopedRef::adopt` releases it on return — which may free `this` — so
-    /// this takes `*mut Self`, not `&mut self` (a `&mut` argument's
-    /// Stacked-Borrows protector outliving the allocation is UB; see :215).
+    /// `this` carries the queued +1 ref; `ScopedRef::adopt` may free it, so
+    /// `*mut Self` not `&mut self` (protector outliving allocation is UB).
     #[cfg(unix)]
     pub(crate) unsafe fn on_wait_pid_from_waiter_thread(
         this: *mut Self,
@@ -320,14 +283,8 @@ impl Process {
                             pid,
                             &posix_spawn::wait4(
                                 pid,
-                                // Normally we would use WNOHANG to avoid blocking the event loop.
-                                // However, there seems to be a race condition where the operating system
-                                // tells us that the process has already exited (ESRCH) but the waitpid
-                                // call with WNOHANG doesn't return the status yet.
-                                // As a workaround, we use 0 to block the event loop until the status is available.
-                                // This should be fine because the process has already exited, so the data
-                                // should become available basically immediately. Also, testing has shown that this
-                                // occurs extremely rarely and only under high load.
+                                // macOS race: ESRCH says exited but WNOHANG returns no status yet.
+                                // Block (flags=0); process is dead so this is near-instant.
                                 0,
                                 Some(&mut rusage_result),
                             ),
@@ -473,18 +430,8 @@ impl Process {
 
     #[cfg(windows)]
     extern "C" fn on_exit_uv(process: *mut uv::uv_process_t, exit_status: i64, term_signal: c_int) {
-        // A Rust default-repr `enum` has no
-        // stable variant-payload offset, so the back-pointer is stored in
-        // `uv_process_t.data` (set in `spawn_process_windows` immediately
-        // after the handle is zeroed).
-        //
-        // Read everything needed from `*process` BEFORE creating
-        // `this: &mut Process`. The handle is the inline `Poller::Uv` field,
-        // so once `this` exclusively borrows the whole `Process`, any later
-        // `&mut *process` (or raw read via `process`) overlaps that borrow
-        // and pops `this`'s Unique tag under Stacked Borrows — the
-        // subsequent `this.close()` (which touches `self.poller`) would then
-        // use an invalidated tag.
+        // Read from `*process` BEFORE `this: &mut Process`: the handle is
+        // inline in `Poller::Uv`, so touching it after pops `this`'s SB tag.
         // SAFETY: libuv passes the live handle; only reads its POD fields.
         let rusage = uv_getrusage(unsafe { &mut *process });
         // SAFETY: raw read of POD `pid` field on the live handle.
@@ -629,20 +576,13 @@ impl Process {
     pub fn kill(&mut self, signal: u8) -> Maybe<()> {
         #[cfg(unix)]
         {
-            // Detached is a deliberate no-op: spawnSync's `read_all()` runs
-            // before `watch_or_reap()` installs the poller; the first
-            // `recv_non_block` returns EAGAIN (yes hasn't written yet) so the
-            // maxBuffer overflow fires from the event-loop poll
-            // tick *after* the Fd poller is armed. Do not widen this match to
-            // mask spawn-maxbuf.test.ts — the async-path hang there has a
-            // different root cause (poller is already Fd when `on_max_buffer`
-            // fires, so this arm is unreachable on that path).
+            // Detached is a deliberate no-op (spawnSync reads before poller is
+            // armed). Do not widen — spawn-maxbuf.test.ts's async hang has a
+            // different root cause (poller already Fd there).
             match &self.poller {
                 Poller::WaiterThread(_) | Poller::Fd(_) => {
-                    // All by-value `pid_t`/`c_int`; the kernel validates pid/
-                    // signal and returns -1/errno (ESRCH/EINVAL/EPERM) — no
-                    // memory-safety preconditions, so `safe fn` discharges the
-                    // link-time proof here.
+                    // By-value args, kernel-validated; no memory-safety
+                    // preconditions so `safe fn` discharges the link-time proof.
                     unsafe extern "C" {
                         #[link_name = "kill"]
                         safe fn libc_kill(pid: libc::pid_t, sig: c_int) -> c_int;
@@ -689,11 +629,8 @@ pub enum Status {
     #[default]
     Running,
     Exited(Exited),
-    /// Raw signal byte — any `u8` (incl. Linux RT signals 32..=64) is a valid
-    /// payload. `bun_core::SignalCode` is exhaustive 1..=31,
-    /// so storing it here would force lossy `Signaled→Exited` rewrites for RT
-    /// signals — observable as `{exitCode:0, signal:null}` in JS. Carry the raw
-    /// byte and range-check in `signal_code()` instead.
+    /// Raw signal byte (incl. RT signals 32..=64). `SignalCode` is 1..=31, so
+    /// storing it would be lossy; carry raw and range-check in `signal_code()`.
     Signaled(u8),
     Err(bun_sys::Error),
 }
@@ -741,11 +678,7 @@ impl Status {
                 if libc::WIFSIGNALED(status) {
                     signal = Some(libc::WTERMSIG(status) as u8);
                 }
-                // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html
-                // True if the process has not terminated, but has stopped and can
-                // be restarted.  This macro can be true only if the wait call spec-ified specified
-                // ified the WUNTRACED option or if the child process is being
-                // traced (see ptrace(2)).
+                // WIFSTOPPED: https://pubs.opengroup.org/onlinepubs/9699919799/functions/waitpid.html
                 else if libc::WIFSTOPPED(status) {
                     signal = Some(libc::WSTOPSIG(status) as u8);
                 }
@@ -821,11 +754,8 @@ pub enum PollerPosix {
 
 #[cfg(unix)]
 impl PollerPosix {
-    /// NOT `impl Drop`: this enum is reassigned freely (`self.poller =
-    /// Poller::Detached`, `Poller::WaiterThread(..)`, etc.) and `close()`
-    /// already performs the same teardown explicitly before reassigning. A
-    /// `Drop` impl would double-free the hive slot on those reassignments.
-    /// Called only from `Process` drop.
+    /// NOT `impl Drop`: reassigned freely; a Drop impl would double-free the
+    /// hive slot. Called only from `Process` drop.
     pub(crate) fn deinit(&mut self) {
         // Route the `Fd` arm through the centralized `fd_poll_mut()` accessor
         // instead of open-coding the `NonNull` deref here.
@@ -843,13 +773,9 @@ impl PollerPosix {
         }
     }
 
-    /// Mutably borrow the hive-allocated `FilePoll` slot if this poller is `Fd`.
-    ///
-    /// Single `unsafe` deref site for the `NonNull<FilePoll>` payload. The slot
-    /// lives in the hive `Store` until `deinit` returns it; the only Rust handle
-    /// is the `NonNull` inside this enum, so `&mut self` ⇒ the returned
-    /// `&mut FilePoll` is the only live reference to the slot
-    /// (event-loop-thread exclusive).
+    /// Mutably borrow the hive `FilePoll` slot if `Fd`. Single unsafe deref
+    /// site; slot lives in hive until `deinit`, `&mut self` ⇒ sole live
+    /// reference (event-loop-thread exclusive).
     #[inline]
     fn fd_poll_mut(&mut self) -> Option<&mut FilePoll> {
         match self {
@@ -946,15 +872,9 @@ pub mod waiter_thread_posix {
 
     pub struct NewQueue<T: 'static> {
         pub(crate) queue: ConcurrentQueue<T>,
-        // The active list holds raw `*T` whose strong ref was taken
-        // by the caller before `append()` (Process::watch does `self.ref_()`).
-        // The matching `deref()` happens in `on_wait_pid_from_waiter_thread`.
-        //
-        // `UnsafeCell` so `loop_` can take `&self`: the waiter thread is the
-        // *sole* mutator of `active`, but producers concurrently hold `&self`
-        // to push onto `queue` — a `&mut self` on the waiter side would alias
-        // those producer borrows (forbidden aliased-&mut). With `&self` on
-        // both sides the only interior mutation goes through this cell.
+        // Strong refs taken by caller before `append()`; released in
+        // `on_wait_pid_from_waiter_thread`. `UnsafeCell`: waiter thread is sole
+        // mutator of `active` while producers hold `&self` for `queue`.
         pub(crate) active: core::cell::UnsafeCell<Vec<*mut T>>,
     }
 
@@ -1131,10 +1051,9 @@ pub mod waiter_thread_posix {
         }
 
         pub(crate) fn loop_(&self) {
-            // The dedicated waiter thread is the only caller of `loop_` and
-            // the only code path that touches `active`; producers (`append`)
-            // only touch `self.queue`. Move the Vec out and work on it by
-            // value so no reference into the cell spans the loop body.
+            // Waiter thread is sole caller/mutator of `active`; producers only
+            // touch `self.queue`. Swap the Vec out so no reference into the
+            // cell spans the loop body.
             // SAFETY: sole accessor per above; the swap cannot race or alias.
             let mut active = unsafe { core::ptr::replace(self.active.get(), Vec::new()) };
             {
@@ -1157,11 +1076,8 @@ pub mod waiter_thread_posix {
                 let mut remove = false;
 
                 let process = active[i];
-                // SAFETY: each `*mut T` in `active` was strong-ref'd by the
-                // producer (`Process::watch` → `ref_()`) before `append()`;
-                // the matching `deref()` is in `on_wait_pid_from_waiter_thread`,
-                // so the pointee outlives this shared borrow. Single deref
-                // serves both `pid()` and `event_loop()` accessor reads.
+                // SAFETY: strong-ref'd by producer before `append()`; released
+                // in `on_wait_pid_from_waiter_thread`.
                 let process_ref = unsafe { &*process };
                 let pid = T::pid(process_ref);
                 // this case shouldn't really happen
@@ -1239,10 +1155,8 @@ pub mod waiter_thread_posix {
 
     const STACK_SIZE: usize = 512 * 1024;
 
-    // Singleton. The waiter
-    // thread is the sole mutator of `js_process.active`; producers only touch
-    // the lock-free `queue`. Wrapped so the address is stable for the SIGCHLD
-    // handler / waiter loop without taking `&mut` to a `static mut`.
+    // Singleton; waiter thread is sole mutator of `js_process.active`,
+    // producers only touch the lock-free `queue`.
     struct Instance(core::cell::UnsafeCell<WaiterThreadPosix>);
     // SAFETY: see field-level access notes above.
     unsafe impl Sync for Instance {}
@@ -1259,14 +1173,9 @@ pub mod waiter_thread_posix {
         INSTANCE.0.get()
     }
 
-    /// Shared borrow of the singleton — sole deref site for the set-once
-    /// `INSTANCE` cell. All fields are either atomic (`started`),
-    /// interior-mutable (`js_process.active` via `UnsafeCell`, `js_process.queue`
-    /// lock-free), or write-once-before-spawn (`eventfd`, set in `init()` under
-    /// the `started` fetch_max guard before any reader thread exists), so a
-    /// shared `&'static` is sound. The lone mutating write (`eventfd` in
-    /// `init()`) goes through the raw [`instance()`] pointer; no `&` from this
-    /// accessor is live across it.
+    /// Shared borrow of singleton. Fields are atomic / interior-mutable /
+    /// write-once-before-spawn, so `&'static` is sound. The `eventfd` write in
+    /// `init()` goes through raw [`instance()`]; no `&` live across it.
     #[inline]
     fn instance_ref() -> &'static WaiterThreadPosix {
         // SAFETY: see doc comment — process-lifetime singleton, fields are
@@ -1372,11 +1281,8 @@ pub mod waiter_thread_posix {
         // SAFETY: NUL-terminated literal.
         Output::Source::configure_named_thread(bun_core::ZStr::from_static(b"Waitpid\0"));
         WaiterThreadPosix::reload_handlers();
-        // We must NOT materialize a long-lived `&mut WaiterThreadPosix` here:
-        // the JS thread's `append()` and the SIGCHLD handler `wakeup()`
-        // concurrently form shared borrows of `js_process` / `eventfd` via the
-        // same singleton, and a live `&mut` covering those fields would be UB
-        // (aliased-&mut). A shared `&'static` is fine — see `instance_ref()`.
+        // No `&mut WaiterThreadPosix`: JS `append()` and SIGCHLD `wakeup()`
+        // concurrently hold shared borrows; a `&mut` would alias them.
         let this: &'static WaiterThreadPosix = instance_ref();
 
         #[allow(unused_labels)]
@@ -1436,10 +1342,8 @@ impl WaiterThread {
 
 #[cfg(windows)]
 pub struct WindowsSpawnResult {
-    // Raw intrusive pointer. `Process` is intrusively
-    // ref-counted via `bun_ptr::ThreadSafeRefCount` and recovered via
-    // `uv_process_t.data` in the libuv callbacks; allocation is `heap::alloc`
-    // and destruction is `heap::take` (see `ThreadSafeRefCounted::destructor`).
+    // Intrusive-refcounted `*mut Process`; recovered via `uv_process_t.data`
+    // in libuv callbacks.
     pub(crate) process: Option<*mut Process>,
     pub stdin: WindowsStdioResult,
     pub stdout: WindowsStdioResult,
@@ -1489,22 +1393,13 @@ impl WindowsStdioResult {
 #[cfg(windows)]
 impl Drop for WindowsSpawnResult {
     fn drop(&mut self) {
-        // Any `Buffer(Box<uv::Pipe>)` still held here was `uv_pipe_init`'d in
-        // `spawn_process_windows` and is linked into the loop's handle queue;
-        // auto-dropping the Box would deallocate a live handle and the next
-        // `uv_run` would walk freed memory. Route un-consumed pipes through
-        // `uv_close` (free in the close callback). Slots already consumed via
-        // `.take()` are `Unavailable` and skip this.
-        //
-        // `WindowsStdioResult` itself deliberately has no `Drop` so callers
-        // can keep destructuring `Buffer(pipe)` by value; the container is
-        // the ownership boundary.
+        // Un-consumed `Buffer(Box<uv::Pipe>)` is linked into the uv loop; route
+        // through `uv_close`, not auto-drop. `WindowsStdioResult` has no Drop so
+        // callers can destructure by value; this container is the owner.
         for slot in [&mut self.stdin, &mut self.stdout, &mut self.stderr] {
             if let WindowsStdioResult::Buffer(pipe) = core::mem::take(slot) {
-                // SAFETY: `pipe` is the Box-allocated `uv::Pipe` from
-                // `create_zeroed_pipe`; `close_and_destroy` reclaims it via
-                // `Box::from_raw` in the close callback (or immediately if
-                // never init'd / `loop_ == null`).
+                // SAFETY: Box-allocated `uv::Pipe` from `create_zeroed_pipe`;
+                // `close_and_destroy` reclaims it in the close callback.
                 unsafe { uv::Pipe::close_and_destroy(Box::into_raw(pipe)) };
             }
         }
@@ -1595,15 +1490,9 @@ impl Default for WindowsOptions {
         Self {
             verbatim_arguments: false,
             hide_window: true,
-            // Every `bun.spawnSync` call site sets `loop_` explicitly. A
-            // zeroed handle here keeps `..Default::default()` usable
-            // for the other fields. `spawn_process_windows` (the sole consumer)
-            // asserts non-null at the read site so a forgotten `loop_` panics
-            // with a pointed message instead of segfaulting at the `.uv_loop`
-            // field offset.
-            // SAFETY: `EventLoopHandle` is a `Copy` enum of raw pointers; the
-            // all-zero bit pattern is discriminant 0 with a null payload —
-            // valid representation, never dereferenced before assignment.
+            // Zeroed; every call site sets `loop_` explicitly and the consumer
+            // asserts non-null. SAFETY: `EventLoopHandle` is Copy raw pointers;
+            // all-zero is a valid repr, never dereferenced before assignment.
             loop_: unsafe { bun_core::ffi::zeroed_unchecked() },
         }
     }
@@ -1614,10 +1503,8 @@ pub enum WindowsStdio {
     Path(Box<[u8]>),
     Inherit,
     Ignore,
-    /// FFI-owned `uv::Pipe` (allocated via `heap::alloc` in
-    /// `create_zeroed_pipe`). Stored as a raw pointer so `spawn_process_windows`
-    /// can transfer sole ownership into `WindowsStdioResult::Buffer` via
-    /// `heap::take` without double-freeing when `WindowsSpawnOptions` drops.
+    /// FFI-owned `uv::Pipe` (heap::alloc). Raw pointer so ownership can
+    /// transfer to `WindowsStdioResult::Buffer` without double-free on drop.
     Buffer(*mut uv::Pipe),
     /// See `Buffer` — same FFI ownership model.
     Ipc(*mut uv::Pipe),
@@ -1627,15 +1514,9 @@ pub enum WindowsStdio {
 
 #[cfg(windows)]
 impl WindowsStdio {
-    /// Explicit destructor.
-    ///
-    /// **Not** `Drop`: `spawn_process_windows` takes `&WindowsSpawnOptions`
-    /// (immutable borrow) and transfers sole ownership of the `Buffer`/`Ipc`
-    /// pipe into `WindowsStdioResult::Buffer` via `heap::take`. An auto-Drop
-    /// here would then double-free the same `*mut uv::Pipe` when the borrowed
-    /// `WindowsSpawnOptions` (or the `to_spawn_options` temporary) goes out of
-    /// scope. Callers invoke
-    /// `deinit()` only on the *error* path where ownership was never taken.
+    /// Explicit destructor — NOT `Drop`: `spawn_process_windows` transfers pipe
+    /// ownership to `WindowsStdioResult::Buffer`; auto-Drop would double-free.
+    /// Called only on the error path where ownership was never taken.
     pub fn deinit(&mut self) {
         match self {
             WindowsStdio::Buffer(pipe) | WindowsStdio::Ipc(pipe) => {
@@ -1655,16 +1536,9 @@ impl WindowsStdio {
 // must invoke `WindowsSpawnOptions::deinit` explicitly on the error path.
 #[cfg(windows)]
 impl WindowsSpawnOptions {
-    /// Explicit destructor. Closes and frees the heap-allocated `uv::Pipe`
-    /// handles for `Buffer`/`Ipc` stdio.
-    ///
-    /// **Not** `Drop`: on the *success* path `spawn_process_windows` transfers
-    /// sole ownership of each pipe into `WindowsStdioResult::Buffer` via
-    /// `heap::take`, leaving the raw pointers in `self` stale. An auto-Drop
-    /// would then double-free. Callers invoke this only on the *error* path
-    /// where ownership was never taken — failing to do so leaks `uv_pipe_t`
-    /// handles on the spawn-sync loop, which makes `uv_loop_close` return
-    /// `EBUSY` and trips `assert(err == 0)` in `uv_loop_delete` (uv-common.c).
+    /// Explicit destructor — NOT `Drop`: success-path transfers pipe ownership
+    /// to `WindowsStdioResult::Buffer`; auto-Drop would double-free. Error-path
+    /// only; skipping leaks uv_pipe_t → `uv_loop_close` EBUSY.
     pub fn deinit(&mut self) {
         self.stdin.deinit();
         self.stdout.deinit();
@@ -1675,10 +1549,8 @@ impl WindowsSpawnOptions {
     }
 }
 
-/// Event-loop-aware extension on the raw [`PosixSpawnResult`] from
-/// `bun_spawn_sys`. The result type itself lives in the leaf `-sys` crate (no
-/// `Process`/`EventLoopHandle` dependency); `to_process` is added here as a
-/// trait method so callers keep the `.to_process(loop_, sync)` spelling.
+/// Event-loop-aware extension on [`PosixSpawnResult`] (leaf `-sys` crate);
+/// `to_process` added here so callers keep `.to_process(loop_)`.
 pub trait SpawnResultExt {
     fn to_process(self, event_loop: EventLoopHandle) -> *mut Process;
 }
@@ -1745,10 +1617,8 @@ mod spawn_process_body {
     }
 
     /// # Safety
-    /// `argv` must point to a null-terminated array of NUL-terminated C
-    /// strings with at least one non-null element; `envp` must point to a
-    /// null-terminated array of NUL-terminated C strings. Both must remain
-    /// valid for the duration of the call.
+    /// `argv`/`envp` must be null-terminated arrays of NUL-terminated C strings
+    /// (argv[0] non-null), valid for the call.
     pub unsafe fn spawn_process(
         options: &SpawnOptions,
         argv: Argv, // [*:null]?[*:0]const u8
@@ -1782,13 +1652,9 @@ mod spawn_process_body {
         // SAFETY: argv is null-terminated, argv[0] is non-null
         uv_process_options.file = options.argv0.unwrap_or_else(|| unsafe { *argv });
         uv_process_options.exit_cb = Some(Process::on_exit_uv);
-        // `WindowsOptions::default()` leaves `loop_` zeroed (every
-        // `bun.spawnSync` call site sets it explicitly). A zeroed
-        // `EventLoopHandle` is discriminant 0 (`Js`) with a null inner pointer,
-        // so `platform_event_loop()` returns null and the deref below segfaults
-        // at the `.uv_loop` field offset. Catch that with a clear panic instead
-        // of an opaque exit-code-3. Release-build assert: this is the contract
-        // boundary, not a debug aid.
+        // `WindowsOptions::default()` leaves `loop_` zeroed; a null deref here
+        // would segfault. Release assert for a clear panic at the contract
+        // boundary instead.
         assert!(
             !options.windows.loop_.platform_event_loop().is_null(),
             "spawn_process_windows: WindowsSpawnOptions.windows.loop_ was not set. \
@@ -1805,11 +1671,8 @@ mod spawn_process_body {
             Err(e) => return Err(crate::Error::Sys(e)),
         };
 
-        // `git_diff_internal` reaches here
-        // with `Options::default()` → `cwd = ""`. libuv treats a
-        // non-NULL `cwd` as explicit and hands `L""` to `CreateProcessW`, which
-        // fails with `ERROR_DIRECTORY` → `UV_ENOENT`. Map empty to NULL so libuv
-        // inherits the parent cwd.
+        // Empty cwd → NULL so libuv inherits parent cwd; non-NULL `""` is passed
+        // to CreateProcessW and fails with ERROR_DIRECTORY → UV_ENOENT.
         uv_process_options.cwd = if options.cwd.is_empty() {
             core::ptr::null()
         } else {
@@ -1858,11 +1721,8 @@ mod spawn_process_body {
 
         let stdio_options: [&WindowsStdio; 3] = [&options.stdin, &options.stdout, &options.stderr];
 
-        // On Windows it seems don't have a dup2 equivalent with pipes
-        // So we need to use file descriptors.
-        // We can create a pipe with `uv_pipe(fds, 0, 0)` and get a read fd and write fd.
-        // We give the write fd to stdout/stderr
-        // And use the read fd to read from the output.
+        // Windows has no dup2 for pipes: `uv_pipe(fds, 0, 0)`, give write fd to
+        // stdout/stderr, read from the read fd.
         let mut dup_fds: [uv::uv_file; 2] = [-1, -1];
         let mut dup_src: Option<u32> = None;
         let mut dup_tgt: Option<u32> = None;
@@ -1958,10 +1818,8 @@ mod spawn_process_body {
 
             if treat_as_dup {
                 if fd_i == 1 {
-                    // SAFETY: `dup_fds` is a 2-element out-array; libuv writes both.
-                    // `from_uv_rc` sets `from_libuv` so display goes through the
-                    // checked uv→errno translator (raw codes are sparse on Windows;
-                    // an unchecked `E::from_raw` would be UB for unmapped values).
+                    // SAFETY: `dup_fds` is a 2-element out-array; libuv writes
+                    // both. `from_uv_rc` routes through the checked uv→errno map.
                     if let Some(err) = bun_sys::Error::from_uv_rc(
                         unsafe { uv::uv_pipe(&mut dup_fds, 0, 0) },
                         bun_sys::Tag::pipe,
@@ -2180,13 +2038,9 @@ mod spawn_process_body {
             } else {
                 match stdio_options[i] {
                     WindowsStdio::Buffer(_) => {
-                        // SAFETY: stdio.data.stream is the same `*mut uv::Pipe`
-                        // produced by `heap::alloc` in create_zeroed_pipe and
-                        // stored in `options.{stdin,stdout,stderr}`. `WindowsStdio`
-                        // has no `Drop` (deinit is explicit), so
-                        // reconstructing the Box here is the *sole* ownership
-                        // transfer — the borrowed `options` dropping later is a
-                        // no-op on the raw pointer.
+                        // SAFETY: same `*mut uv::Pipe` from create_zeroed_pipe;
+                        // `WindowsStdio` has no Drop, so this is sole ownership
+                        // transfer.
                         *result_stdio = WindowsStdioResult::Buffer(unsafe {
                             bun_core::heap::take(stdio.data.stream.cast::<uv::Pipe>())
                         });
@@ -2227,11 +2081,8 @@ mod spawn_process_body {
 
     pub mod sync {
         use super::*;
-        // `Options.windows` is `WindowsOptions` on Windows; surface it under the
-        // `…::process::sync` path. A `pub use super::…`
-        // re-export trips E0365 here because the `use super::*` glob has already
-        // bound the name privately and rustc treats the explicit re-export as
-        // re-exporting that private binding; a type alias sidesteps the conflict.
+        // Type alias, not `pub use`: the `use super::*` glob binds the name
+        // privately so a re-export trips E0365.
         #[cfg(windows)]
         pub type WindowsOptions = super::WindowsOptions;
 
@@ -2391,10 +2242,8 @@ mod spawn_process_body {
             }
 
             fn on_read(this: &mut SyncWindowsPipeReader, data: &[u8]) {
-                // `data` *is* the buffer
-                // `on_alloc` returned, sliced to `nread`. Reclaim that allocation
-                // (debug-assert it's the same pointer), truncate to the read
-                // length, and push — no copy, no leak.
+                // `data` is the `on_alloc` buffer sliced to `nread`; reclaim,
+                // truncate, push — no copy, no leak.
                 let buf = this
                     .pending_alloc
                     .take()
@@ -2412,10 +2261,8 @@ mod spawn_process_body {
             }
 
             // ── libuv C trampolines ──────────────────────────────────────────
-            // There is exactly
-            // one call site, so we hand-write the wrapper pair against
-            // `SyncWindowsPipeReader` and call `on_alloc` / `on_read` / `on_error`
-            // *directly* — no runtime fn-ptr stash.
+            // Single call site; hand-written wrappers call on_alloc/on_read/
+            // on_error directly, no runtime fn-ptr stash.
             unsafe extern "C" fn uv_alloc_cb(
                 req: *mut uv::uv_handle_t,
                 suggested_size: usize,
@@ -2425,12 +2272,9 @@ mod spawn_process_body {
                 let this: &mut SyncWindowsPipeReader =
                     unsafe { &mut *((*req).data as *mut SyncWindowsPipeReader) };
                 let buf = Self::on_alloc(this, suggested_size);
-                // SAFETY: `buffer` is a libuv-owned out-parameter. Do NOT route
-                // through `uv_buf_t::init(&[u8])` — that reborrows the `&mut [u8]`
-                // as shared, so `as_ptr().cast_mut()` yields a SharedReadOnly tag
-                // and libuv's subsequent write into `base[..nread]` is
-                // Stacked-Borrows UB. Construct from `as_mut_ptr()` directly so the
-                // raw pointer carries write provenance.
+                // SAFETY: libuv out-param. Use `as_mut_ptr()` for write
+                // provenance — `uv_buf_t::init(&[u8])` yields a SharedReadOnly
+                // tag, making libuv's write SB-UB.
                 unsafe {
                     *buffer = uv::uv_buf_t {
                         len: buf.len() as uv::ULONG,
@@ -2452,11 +2296,8 @@ mod spawn_process_body {
                 } // EAGAIN / EWOULDBLOCK
                 if nreads < 0 {
                     this.pipe.read_stop();
-                    // Route through the libuv→errno translator: on Windows, raw
-                    // libuv codes are sparse negatives (e.g. UV_EOF = -4095) and
-                    // do **not** map 1:1 onto `bun_sys::E` discriminants, so an
-                    // unchecked `E::from_raw(err_enum())` would be UB for any
-                    // unmapped value.
+                    // uv→errno translator: raw uv codes are sparse negatives on
+                    // Windows; unchecked `E::from_raw` would be UB for unmapped.
                     let e = bun_sys::windows::translate_uv_error_to_e(nreads as core::ffi::c_int);
                     Self::on_error(this, e);
                 } else {
@@ -2482,9 +2323,7 @@ mod spawn_process_body {
                 // ownership here.
                 let mut this = unsafe { bun_core::heap::take(this) };
                 let context = this.context;
-                // Move ownership of the chunk allocations out *before* dropping
-                // `this`, otherwise the callback would observe freed buffers.
-                // The chunk allocations survive to be freed later by
+                // Move chunks out before dropping `this`; freed later by
                 // `flatten_owned_chunks`.
                 let chunks: Vec<Box<[u8]>> = core::mem::take(&mut this.chunks);
                 let err = if this.err == bun_sys::E::CANCELED {
@@ -2502,11 +2341,8 @@ mod spawn_process_body {
             }
 
             pub(crate) fn start(self: Box<Self>) -> Maybe<()> {
-                // Single-pointer ownership: `heap::alloc` is the *only* root for
-                // this allocation. Every subsequent access (including the libuv
-                // callbacks and the `heap::take` in `on_close`) goes through
-                // this pointer, so no Stacked Borrows tag is invalidated by an
-                // interleaved Box deref.
+                // Single-pointer ownership: all access (incl. callbacks) goes
+                // through this pointer, so no SB tag invalidation via Box deref.
                 let this: *mut SyncWindowsPipeReader = bun_core::heap::into_raw(self);
                 // SAFETY: just allocated; sole owner.
                 unsafe {
@@ -2517,11 +2353,9 @@ mod spawn_process_body {
                         .read_start(Some(Self::uv_alloc_cb), Some(Self::uv_read_cb))
                         .to_error(bun_sys::Tag::listen)
                     {
-                        // Intentionally leak `this`. The boxed `uv::Pipe` was already
-                        // `uv_pipe_init`'d by the spawn path and is linked into the
-                        // loop's handle queue; freeing it here without `uv_close()`
-                        // would leave a dangling `uv_handle_t`. The sole caller
-                        // `Output::panic`s on error, so the leak is bounded.
+                        // Intentionally leak `this`: `uv::Pipe` is linked into the
+                        // loop; freeing without `uv_close()` dangles. Sole caller
+                        // panics on error, so leak is bounded.
                         return Err(err);
                     }
                 }
@@ -2553,10 +2387,8 @@ mod spawn_process_body {
             pub(crate) stdout: Vec<Box<[u8]>>,
             pub(crate) err: bun_sys::E,
             pub(crate) waiting_count: u8,
-            /// Intrusive-refcounted. Allocated via
-            /// `heap::alloc` in `to_process`; freed when the embedded
-            /// `ThreadSafeRefCount` hits zero. Stored raw — `Arc<Process>` would
-            /// give only `*const` provenance and make `&mut *` writes UB.
+            /// Intrusive-refcounted (heap::alloc). Raw pointer: `Arc` gives only
+            /// `*const` provenance, making `&mut *` writes UB.
             pub(crate) process: *mut Process,
             pub(crate) status: Option<Status>,
         }
@@ -2567,12 +2399,9 @@ mod spawn_process_body {
                 Box::new(v)
             }
 
-            /// `process` is the *same* `*mut Process` that was threaded through
-            /// `Process::on_exit_uv` → `Process::on_exit` → `ProcessExitHandler::call`
-            /// (which holds a protector-guarded `&mut Process` in its frame).
-            /// Re-deriving a `&mut Process` from the independent `self.process`
-            /// root would pop that protected tag under Stacked Borrows, so we
-            /// take the already-live pointer instead.
+            /// `process` is threaded through the exit-handler chain (live `&mut`
+            /// protector). Re-deriving from `self.process` would pop that SB
+            /// tag; use this pointer instead.
             pub fn on_process_exit(
                 this: *mut SyncWindowsProcess,
                 process: *mut Process,
@@ -2680,12 +2509,8 @@ mod spawn_process_body {
                     Err(err) => return Ok(Err(err)),
                     Ok(process) => process,
                 };
-            // Single-pointer ownership: the
-            // `heap::alloc` result is the *only* root for this allocation. Every
-            // field access below — including those inside uv callbacks fired from
-            // `tick()` — goes through `this_ptr`, so no Box auto-deref ever
-            // reasserts a Unique tag and pops the callbacks' tags under Stacked
-            // Borrows.
+            // Single-pointer ownership: all access (incl. uv callbacks from
+            // `tick()`) goes through `this_ptr`, so no Box deref pops SB tags.
             let this_ptr: *mut SyncWindowsProcess =
                 bun_core::heap::into_raw(SyncWindowsProcess::new(SyncWindowsProcess {
                     process: spawned.to_process(()),
@@ -2710,10 +2535,8 @@ mod spawn_process_body {
                 (OutFd::Stdout, &mut spawned.stdout),
                 (OutFd::Stderr, &mut spawned.stderr),
             ] {
-                // Move ownership of the `Box<uv::Pipe>` out of `spawned` by
-                // resetting the slot to `Unavailable`; otherwise `spawned`'s
-                // auto-Drop at scope end would double-free the pipe already freed
-                // via `SyncWindowsPipeReader::on_close`.
+                // Take `Box<uv::Pipe>` out of `spawned`; otherwise its Drop
+                // double-frees the pipe freed via `SyncWindowsPipeReader::on_close`.
                 let taken = core::mem::replace(stdio, WindowsStdioResult::Unavailable);
                 if let WindowsStdioResult::Buffer(pipe) = taken {
                     let reader = SyncWindowsPipeReader::new(SyncWindowsPipeReader {
@@ -2808,13 +2631,9 @@ mod spawn_process_body {
             }
             string_builder.allocate()?;
 
-            // Stacked Borrows: `append_z` returns a borrow derived from a fresh
-            // `&mut` over the whole buffer, so each call would invalidate the raw
-            // pointer saved from the previous one. Instead, copy all strings first
-            // (recording offsets), then derive every argv pointer in one pass from
-            // the builder's base `NonNull` — those raw pointers share the
-            // allocation's original provenance and stay valid until `string_builder`
-            // drops after `spawn_with_argv` returns.
+            // SB: each `append_z` reborrows `&mut` over the buffer, invalidating
+            // prior raw pointers. Copy all first, then derive every argv pointer
+            // from the base `NonNull` in one pass so they share provenance.
             for arg in argv {
                 string_builder.append_count_z(arg);
             }
@@ -2873,15 +2692,9 @@ mod spawn_process_body {
             }
         }
 
-        /// TTY job-control bridge for `--no-orphans` `bun run`. We put the script
-        /// in its own pgroup so `kill(-pgid)` reaches every descendant on cleanup,
-        /// which makes `bun run` a one-job mini shell on a controlling terminal:
-        /// Ctrl-Z stops only the script's pgroup, so we must observe the stop
-        /// (WUNTRACED / EVFILT_SIGNAL+SIGCHLD), take the terminal back, stop
-        /// *ourselves*, and on `fg` hand the terminal back and SIGCONT the script.
-        /// Inert (`prev <= 0`) when stdin is not a TTY — the supervisor/CI case
-        /// this feature targets — and the wait loops don't ask for stop reports
-        /// then, matching plain `bun run`.
+        /// TTY job-control bridge for `--no-orphans`: script in own pgroup, so
+        /// Ctrl-Z stops only it — observe stop, take terminal, stop ourselves,
+        /// on `fg` hand back + SIGCONT. Inert (`prev <= 0`) when stdin isn't a TTY.
         #[cfg(unix)]
         struct JobControl {
             /// Foreground pgroup we displaced (i.e. the one the user's shell put
@@ -2923,13 +2736,9 @@ mod spawn_process_body {
                     return;
                 }
                 let fg = tcgetpgrp(0);
-                // Only take the terminal if we *are* the foreground pgroup.
-                // `bun run --no-orphans dev &` from an interactive shell leaves
-                // stdin as the TTY (shells rely on SIGTTIN, not redirection), so
-                // `tcgetpgrp` returns the shell's pgid — blocking SIGTTOU and
-                // `tcsetpgrp`'ing anyway would steal the terminal from the user.
-                // Same gate as `onChildStopped`'s resume path below; real shells
-                // (bash `give_terminal_to`, zsh `attachtty`) do the same.
+                // Only take the terminal if we *are* foreground. Backgrounded
+                // `bun run … &` has the shell's pgid here; stealing the TTY
+                // would be wrong. Same gate as bash `give_terminal_to`.
                 if fg <= 0 || fg != getpgrp() {
                     return;
                 }
@@ -2945,11 +2754,9 @@ mod spawn_process_body {
                 self.prev = 0;
             }
 
-            /// Called from the wait loop when WIFSTOPPED(child). Takes the terminal
-            /// back, stops `bun run` so the user's shell's `waitpid(WUNTRACED)`
-            /// returns, and on resume gives the terminal back to the script (only
-            /// if the shell `fg`'d us — for `bg` the shell keeps foreground and
-            /// the script runs as a background pgroup like any other job).
+            /// On WIFSTOPPED(child): take terminal back, stop ourselves so the
+            /// shell's `waitpid(WUNTRACED)` returns; on resume give it back iff
+            /// `fg`'d (for `bg`, shell keeps foreground).
             #[cfg(any(target_os = "linux", target_os = "android", target_os = "macos"))]
             fn on_child_stopped(&self) {
                 if self.prev <= 0 {
@@ -2989,37 +2796,15 @@ mod spawn_process_body {
             argv: *const *const c_char,
             envp: *const *const c_char,
         ) -> core::result::Result<Maybe<Result>, crate::Error> {
-            // --no-orphans: put the script in its own process group so we can
-            // `kill(-pgid, SIGKILL)` on every exit path. Pgroup membership is
-            // inherited recursively and survives reparenting to launchd/init, so
-            // this reaches grandchildren even after the script itself has exited
-            // (which the libproc/procfs walk cannot — those are gone from our tree
-            // once their parent dies). A `setsid()`+double-fork escapee is caught
-            // by PR_SET_CHILD_SUBREAPER (Linux) / the p_puniqueid spawn-graph
-            // tracker (macOS) — see `waitMacKqueue` / `waitLinuxSignalfd`.
-            //
-            // Disabled when `use_execve_on_macos` actually applies (macOS only —
-            // see `spawnProcessPosix`): that path is `POSIX_SPAWN_SETEXEC`, which
-            // replaces *our own* image and never returns, so there is no parent to
-            // run the wait loop or the cleanup defers. Callers
-            // (`runBinaryWithoutBunxPath`, `bunx`) set the flag unconditionally;
-            // on Linux it's a spawn-side no-op so no-orphans must stay armed there.
-            //
-            // Also disabled off the watchdog-arming (main) thread: the subreaper
-            // toggle is process-wide and `wait4(-1)` reaps *any* child, so
-            // concurrent calls from a worker pool (install's `repository::exec`
-            // git clones) would race the subreaper flag and steal each other's
-            // exit statuses. Those callers fall through to the plain
-            // `reap_child(pid)` path below; the inherited PDEATHSIG on the main
-            // thread still tears the whole process down if our parent dies.
+            // --no-orphans: own pgroup → `kill(-pgid)` on every exit. setsid
+            // escapees caught by subreaper (Linux) / p_puniqueid scan (macOS).
+            // Disabled for macOS POSIX_SPAWN_SETEXEC and off the main thread.
             let no_orphans = ParentDeathWatchdog::is_enabled()
                 && bun_spawn_sys::pdeathsig::is_arming_thread()
                 && !(cfg!(target_os = "macos") && options.use_execve_on_macos);
 
-            // Snapshot pre-existing direct children so the disarm defer can tell
-            // subreaper-adopted orphans (ppid==us) apart from `Bun.spawn` siblings
-            // (also ppid==us). Typically empty — `bun run`/`bunx` have no JS VM —
-            // but spawnSync can run inside a live VM (the FFI xcrun probe).
+            // Snapshot pre-existing children so disarm can tell subreaper
+            // adoptees from `Bun.spawn` siblings (both ppid==us).
             #[cfg(any(target_os = "linux", target_os = "android"))]
             let mut siblings_buf = [0 as libc::pid_t; 64];
             #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -3030,44 +2815,25 @@ mod spawn_process_body {
             };
             #[cfg(any(target_os = "linux", target_os = "android"))]
             if no_orphans {
-                // Subreaper: arm *before* spawn so a fast-daemonizing script can't
-                // reparent its grandchild to init in the gap. Process-wide and
-                // only the spawnSync wait loop has a `wait4(-1)` to reap
-                // adoptees, so arming it globally from `enable()` would leak
-                // zombies in `bun foo.js` / `--filter` / `bun test`. Disarmed by
-                // the defer immediately below — registered here (not in the
-                // post-spawn `defer if (no_orphans)` block) so spawn-failure
-                // early returns don't leave subreaper armed process-wide.
-                // SAFETY: prctl
+                // Arm subreaper *before* spawn so fast daemonizers can't escape.
+                // Disarmed by the defer below (registered here so spawn-failure
+                // returns don't leave it armed). SAFETY: prctl
                 let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 1) };
             }
             #[cfg(any(target_os = "linux", target_os = "android"))]
             scopeguard::defer! {
                 if no_orphans {
-                    // Kill subreaper-adopted setsid daemons (ppid==us, not in the
-                    // pre-arm snapshot) *before* disarming, while we can still find
-                    // them. Without this, a daemon whose intermediate parent exits
-                    // between disarm and `onProcessExit`→`killDescendants()` escapes
-                    // to init.
+                    // Kill subreaper adoptees (ppid==us, not in snapshot) *before*
+                    // disarming, while we can still find them.
                     ParentDeathWatchdog::kill_subreaper_adoptees(siblings);
                     // SAFETY: prctl
                     let _ = unsafe { libc::prctl(libc::PR_SET_CHILD_SUBREAPER, 0) };
                 }
             }
 
-            // macOS no_orphans: kqueue passed to `waitMacKqueue` for ppid/child
-            // NOTE_EXIT and per-descendant NOTE_FORK. NOTE_TRACK (auto-attach to
-            // forks) has been ENOTSUP since macOS 10.5 — see sys/event.h:356 — so
-            // we cannot get atomic in-kernel descendant tracking. Instead the
-            // wait loop reacts to NOTE_FORK by running a `p_puniqueid` scan
-            // (`NoOrphansTracker::scan()`) to discover and re-arm new
-            // descendants. `p_puniqueid` is the *spawning* parent's per-boot
-            // uniqueid — immutable across reparenting — so the scan finds
-            // setsid+double-fork escapees as long as each intermediate's uniqueid
-            // was recorded before it died. The `begin()` call below seeds the
-            // scan root after spawn.
-            // LIFO: `no_orphans_kq` drops (closes) LAST — after killSyncScriptTree()
-            // (which scans via m_kq) and the releaseKq() defer below.
+            // macOS no_orphans kqueue for ppid/child NOTE_EXIT + NOTE_FORK.
+            // NOTE_TRACK is ENOTSUP since 10.5, so descendants are found via a
+            // `p_puniqueid` scan on each NOTE_FORK. LIFO: drops after killTracked().
             #[cfg(target_os = "macos")]
             let mut no_orphans_kq = AutoCloseFd::invalid();
             #[cfg(target_os = "macos")]
@@ -3115,33 +2881,24 @@ mod spawn_process_body {
             };
             let pgid_pushed = no_orphans && ParentDeathWatchdog::push_sync_pgid(process.pid);
             if no_orphans {
-                // Script is now a background pgroup; if stdin is a TTY hand it the
-                // foreground so Ctrl-C / TTY reads behave as before. Ctrl-Z is
-                // bridged by `JobControl.onChildStopped` in the wait loop. No-op on
-                // non-TTY stdin (the supervisor / CI case this feature targets).
+                // Script is a background pgroup; give it TTY foreground so Ctrl-C
+                // and TTY reads work. Ctrl-Z bridged by `on_child_stopped`.
                 jc.give(process.pid);
-                // `begin()` records the script's `p_uniqueid` as the scan root
-                // and stashes kq so `scan()` can EV_ADD NOTE_FORK|NOTE_EXIT on
-                // each discovered descendant. waitMacKqueue registers the
-                // script's own knote.
+                // `begin()` records the script's `p_uniqueid` as scan root and
+                // stashes kq for `scan()` to EV_ADD on each descendant.
                 #[cfg(target_os = "macos")]
                 if no_orphans_kq.fd() != Fd::INVALID {
                     Bun__noOrphans_begin(no_orphans_kq.fd().native(), process.pid);
                 }
             }
-            // Move `jc` into the guard so the defer closure owns it (avoids holding
-            // a mutable borrow across the wait loop below); access via `&*_jc` deref.
-            // `_`-prefixed: on freebsd the guard is held only for its `Drop`
-            // (`restore()`); the binding is read only on linux/macos.
+            // `jc` moved into guard so the defer owns it (avoids &mut across the
+            // wait loop). `_`-prefixed: freebsd reads it only via Drop.
             let _jc = scopeguard::guard(jc, move |mut jc| {
                 if no_orphans {
                     jc.restore();
-                    // pgroup → tracked uniqueids (macOS). Do NOT call the
-                    // getpid()-rooted `killDescendants()` here — `spawnSync` can be
-                    // reached from inside a live VM (the FFI xcrun probe, etc.) and
-                    // that would SIGKILL the user's unrelated `Bun.spawn` children.
-                    // The full-tree walk runs from `onProcessExit` when the whole
-                    // process is actually exiting.
+                    // Do NOT call getpid()-rooted `killDescendants()` — spawnSync
+                    // can run inside a live VM and would kill unrelated children.
+                    // Full-tree walk runs from `onProcessExit` instead.
                     ParentDeathWatchdog::kill_sync_script_tree();
                     if pgid_pushed {
                         ParentDeathWatchdog::pop_sync_pgid();
@@ -3186,16 +2943,9 @@ mod spawn_process_body {
                 out_fds_to_wait_for[1] = Fd::INVALID;
             }
 
-            // no-orphans: replace the blind `poll()`/`wait4()` with a wait loop
-            // that also watches our parent (and on macOS, the script's whole
-            // spawn tree via the NOTE_FORK kq + p_puniqueid scan above).
-            // Linux/macOS only — other POSIX (FreeBSD) falls through to the
-            // original `poll()`+`wait4()` below so buffered stdio still drains;
-            // the `defer` above still does the pgroup kill there.
-            //
-            // Do NOT return from here — Linux backs `.buffer` stdio with memfds
-            // that are read *after* the wait, so falling through to the memfd block
-            // below is required.
+            // no-orphans wait loop watches parent + (macOS) spawn tree.
+            // Linux/macOS only; others fall through to plain `poll()`. Do NOT
+            // return — Linux `.buffer` memfds are read after the wait below.
             let status: Status = 'blk: {
                 if no_orphans
                     && (cfg!(any(target_os = "linux", target_os = "android"))
@@ -3343,27 +3093,9 @@ mod spawn_process_body {
             }
         }
 
-        /// no-orphans wait loop for `spawnSync`. Replaces the blind `poll()` +
-        /// blocking `wait4()` so that:
-        ///   - we notice our parent dying and run cleanup before PDEATHSIG / never
-        ///     (macOS) — `Global.exit(129)` → `kill(-pgid)` + deep walk
-        ///   - macOS: `NOTE_FORK` on the script (and recursively on each
-        ///     discovered descendant) triggers a `p_puniqueid` scan
-        ///     (`NoOrphansTracker::scan()`) so `setsid()`+double-fork escapees
-        ///     are tracked and killed via `Bun__noOrphans_killTracked()`.
-        ///     `NOTE_TRACK` would have made this atomic, but it has been
-        ///     ENOTSUP since macOS 10.5.
-        ///   - Linux: subreaper (armed in `spawnPosix`) makes those reparent to us,
-        ///     so the procfs walk finds them; this loop just needs to run
-        ///     cleanup *before* our own SIGKILL-PDEATHSIG fires
-        ///
-        /// `ppid == 0` means "no parent worth watching" — still run the loop for
-        /// the descendant tracking + pgroup cleanup on script exit.
-        ///
-        /// Returns `null` when kqueue setup fails: the caller falls through to
-        /// the plain `poll()`+`wait4()` loop so `.buffer` stdio still drains (a
-        /// blind `reapChild()` would drop captured output or deadlock if the
-        /// child fills the pipe while we block in `wait4`).
+        /// no-orphans spawnSync wait loop: watches parent death and tracks
+        /// setsid escapees via NOTE_FORK + `p_puniqueid` scan (NOTE_TRACK is
+        /// ENOTSUP since 10.5). Returns `None` on setup failure → caller polls.
         #[cfg(target_os = "macos")]
         fn wait_mac_kqueue(
             child: libc::pid_t,
@@ -3381,10 +3113,8 @@ mod spawn_process_body {
                 return None;
             }
 
-            // udata tag for the ppid PROC filter. Descendant PROC knotes
-            // (`child` here, plus any `scan()` adds) use udata=0; EVFILT_READ
-            // udata 0/1 are a separate filter, so the dispatch checks `filter`
-            // before `udata`.
+            // udata tag for ppid PROC filter; descendant knotes use udata=0.
+            // Dispatch checks `filter` before `udata`.
             const TAG_PPID: usize = 2;
 
             // SAFETY: zeroed kevent is valid
@@ -3416,13 +3146,8 @@ mod spawn_process_body {
                     TAG_PPID,
                 );
             }
-            // NOTE_FORK so the wait loop wakes to scan whenever the script (or
-            // any registered descendant) forks. NOTE_TRACK would have let xnu
-            // auto-attach to the new child atomically, but it returns ENOTSUP on
-            // every macOS since 10.5 — which previously made *this* registration
-            // fail, the receipt loop below `return null`, and the caller fall
-            // through to a plain `wait4()` that watches neither ppid nor
-            // descendants (the `runDied=false` failure on darwin in CI).
+            // NOTE_FORK wakes the loop to scan on each fork. NOTE_TRACK is
+            // ENOTSUP since macOS 10.5.
             add(
                 &mut changes_buf,
                 &mut changes_len,
@@ -3431,12 +3156,8 @@ mod spawn_process_body {
                 libc::NOTE_FORK | libc::NOTE_EXIT,
                 0,
             );
-            // TTY job-control: EVFILT_PROC has no "stopped" note, so wake on
-            // SIGCHLD and `wait4(WUNTRACED|WNOHANG)` to catch Ctrl-Z. Only when
-            // stdin is a TTY — non-TTY callers never see stops, matching plain
-            // `bun run`. EVFILT_SIGNAL coexists with the (default-ignore) SIGCHLD
-            // disposition; only direct children raise SIGCHLD, so this fires for
-            // `child` alone.
+            // EVFILT_PROC has no "stopped" note; wake on SIGCHLD +
+            // wait4(WUNTRACED|WNOHANG) to catch Ctrl-Z (TTY only).
             if jc.is_active() {
                 add(
                     &mut changes_buf,
@@ -3476,42 +3197,53 @@ mod spawn_process_body {
                     continue;
                 }
                 if r.udata as usize == TAG_PPID {
-                    // ESRCH: parent already gone — treat as fired. Any other
-                    // errno (ENOMEM, sandbox EACCES via `mac_proc_check_kqfilter`)
-                    // is a best-effort miss — same policy as
-                    // `ParentDeathWatchdog.installOnEventLoop`. The
-                    // `getppid() != ppid` recheck below is the backstop.
+                    // ESRCH: parent gone → treat as fired. Other errno is a
+                    // best-effort miss; `getppid() != ppid` below is the backstop.
                     if r.data == libc::ESRCH as isize {
                         Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
                     }
                     continue;
                 }
-                // Non-ppid registration (child PROC / EVFILT_SIGNAL / EVFILT_READ)
-                // failed — fall through to the caller's `poll()` loop so
-                // `.buffer` stdio still drains instead of a blind `reapChild()`
-                // that would drop output or deadlock on a full pipe. ESRCH on the
-                // child PROC entry is impossible (our own unreaped child —
-                // `filt_procattach` finds zombies), so any errno here is a real
-                // registration failure. `begin()` has already seeded m_tracked
-                // with `child`; prune it so the caller's `reapChild()` doesn't
-                // leave a freed pid for `killTracked()` to SIGSTOP.
+                // Non-ppid registration failed → caller's `poll()` loop drains
+                // stdio. Prune `child` from m_tracked so `killTracked()` doesn't
+                // SIGSTOP a freed pid after `reapChild()`.
                 Bun__noOrphans_onExit(child);
                 return None;
             }
             if ppid > 1 && getppid() != ppid {
                 Global::exit(ParentDeathWatchdog::EXIT_CODE as u32);
             }
-            // Initial scan: `child` may have forked between `posix_spawn`
-            // returning (in spawnPosix) and the NOTE_FORK registration above
-            // taking effect; that fork produced no event. `begin()` already
-            // seeded `m_seen` with `child`'s uniqueid, so this picks them up.
+            // Initial scan: `child` may have forked before NOTE_FORK registered;
+            // `begin()` seeded `m_seen` so this picks those up.
             Bun__noOrphans_onFork();
 
             // SAFETY: zeroed kevent is valid
             let mut events: [libc::kevent; 16] = bun_core::ffi::zeroed();
             let mut child_exited = false;
             let mut child_status: Option<Status> = None;
+            // Register-after-exit race: `filt_procattach` attaches to zombies but
+            // NOTE_EXIT fires only at exit time, so a knote armed after exit never
+            // fires. Probe once, non-blocking.
+            {
+                let r = posix_spawn::wait4(child, libc::WNOHANG as u32, None);
+                if let Ok(ref w) = r {
+                    if w.pid == child {
+                        child_status = Status::from(child, &r);
+                        child_exited = true;
+                        Bun__noOrphans_onExit(child);
+                    }
+                }
+            }
             loop {
+                if child_exited {
+                    // Don't wait for pipe EOF: a grandchild holding the write end
+                    // is what no-orphans kills, and defers can't run until we
+                    // return. drainFd() loops to EAGAIN so script output is captured.
+                    for i in 0..2 {
+                        let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
+                    }
+                    return Some(Ok(child_status.unwrap_or_else(|| reap_child(child))));
+                }
                 let got = match bun_sys::kevent(kq_fd, &[], &mut events[..], None) {
                     Err(err) => return Some(Err(err)),
                     Ok(c) => c,
@@ -3559,11 +3291,9 @@ mod spawn_process_body {
                                 } else {
                                     child_status = Status::from(child, &r);
                                     child_exited = true;
-                                    // wait4 just freed `child`'s pid; if NOTE_EXIT for
-                                    // it isn't in this batch we'd return with the root
-                                    // still in m_tracked and `killTracked()` would
-                                    // SIGSTOP a (potentially recycled) freed pid.
-                                    // Idempotent with the NOTE_EXIT handler above.
+                                    // wait4 freed `child`'s pid; prune from m_tracked
+                                    // so `killTracked()` doesn't hit a recycled pid.
+                                    // Idempotent with NOTE_EXIT above.
                                     Bun__noOrphans_onExit(child);
                                 }
                             }
@@ -3577,29 +3307,11 @@ mod spawn_process_body {
                         }
                     }
                 }
-                // After the batch so a single scan covers every NOTE_FORK in it.
-                // `scan()` walks `proc_listallpids` for any pid whose
-                // `p_puniqueid` (immutable spawning-parent uniqueid) is in our
-                // seen set, adds it to m_tracked, and EV_ADDs NOTE_FORK|NOTE_EXIT
-                // on it (udata 0) so its own forks wake this loop. Race: a
-                // fast-exit intermediate (fork+setsid+fork+exit) can die before
-                // this scan records its uniqueid, leaving its child's
-                // `p_puniqueid` unlinkable. NOTE_TRACK closed that atomically;
-                // without it the freeze-then-rescan loop in `killTracked()` is
-                // the best-effort backstop.
+                // One scan per batch: walk `proc_listallpids` for `p_puniqueid`
+                // in our seen set, add to m_tracked, EV_ADD NOTE_FORK|NOTE_EXIT.
+                // Fast-exit intermediates can escape; `killTracked()` backstops.
                 if saw_fork {
                     Bun__noOrphans_onFork();
-                }
-                if child_exited {
-                    // Intentionally don't wait for pipe EOF (unlike the `poll()`
-                    // path): a grandchild holding the write end is exactly what
-                    // no-orphans exists to kill, and the killTracked()/pgroup-kill
-                    // defers can't run until we return. drainFd() loops to EAGAIN,
-                    // so everything the script itself wrote is captured.
-                    for i in 0..2 {
-                        let _ = drain_fd(&mut out_fds_to_wait_for[i], &mut out_fds[i], &mut out[i]);
-                    }
-                    return Some(Ok(child_status.unwrap_or_else(|| reap_child(child))));
                 }
             }
         }
@@ -3614,13 +3326,8 @@ mod spawn_process_body {
             out_fds_to_wait_for: &mut [Fd; 2],
             out_fds: &mut [Fd; 2],
         ) -> Option<Maybe<Status>> {
-            // Child-exit: signalfd(SIGCHLD). Works everywhere pidfd doesn't
-            // (gVisor, ancient kernels). Subreaper means orphaned grandchildren
-            // also reparent to us and fire SIGCHLD here — drain them with
-            // waitpid(-1, WNOHANG) and only stop when *our* child is reaped.
-            // signalfd takes the *kernel* sigset_t (1 word), sigprocmask the libc
-            // one (16 words) — block via libc, build a separate kernel mask for
-            // signalfd.
+            // signalfd(SIGCHLD) for child-exit (works where pidfd doesn't).
+            // Subreaper adoptees also fire here; drain with waitpid(-1,WNOHANG).
             // SAFETY: signal mask manipulation
             let (chld_fd, _restore_mask): (Fd, scopeguard::ScopeGuard<libc::sigset_t, _>) = unsafe {
                 let mut libc_mask: libc::sigset_t = bun_core::ffi::zeroed();
@@ -3654,14 +3361,9 @@ mod spawn_process_body {
             // preserved (close signalfd, then restore the signal mask).
             let chld_fd = AutoCloseFd::new(chld_fd);
 
-            // Child-exit, take 2: pidfd. signalfd only fires if SIGCHLD stays
-            // pending — i.e. is blocked on *every* thread. PackageManager / HTTP
-            // client threads created before we got here don't block it, so the
-            // kernel can hand the signal to one of them and the signalfd never
-            // wakes. A pidfd becomes readable on child exit regardless of signal
-            // masking, so poll it too. Keep the signalfd for the subreaper-adopted
-            // orphans (whose pidfds we don't have) and as the gVisor / pre-5.3
-            // fallback when pidfd_open is unavailable.
+            // pidfd too: signalfd misses if another thread doesn't block SIGCHLD.
+            // pidfd wakes regardless of masking. Keep signalfd for subreaper
+            // adoptees (no pidfd) and gVisor / pre-5.3 fallback.
             let child_pidfd = match bun_sys::pidfd_open(child, 0) {
                 Ok(fd) => AutoCloseFd::new(fd),
                 Err(_) => AutoCloseFd::invalid(),
@@ -3681,14 +3383,9 @@ mod spawn_process_body {
                     }
                 }
             }
-            // `enable()` armed `PDEATHSIG=SIGKILL` on us. The kernel queues
-            // PDEATHSIG to children inside `exit_notify()` *before*
-            // `do_notify_pidfd()` wakes pidfd pollers (both under tasklist_lock),
-            // and SIGKILL is processed on syscall-return — so `poll()` would never
-            // get back to userspace and the cleanup defer never runs. Clear it
-            // now that we have a parent watch (pidfd or 100ms-getppid fallback);
-            // restore on return so the next caller — or `bun run`'s own
-            // post-script lifetime — keeps the backstop.
+            // Clear PDEATHSIG=SIGKILL: kernel queues it before waking pidfd
+            // pollers (both in `exit_notify()`), so `poll()` never returns to run
+            // cleanup. Restored on return.
             if ppid > 1 {
                 // SAFETY: prctl
                 let _ = unsafe { libc::prctl(libc::PR_SET_PDEATHSIG, 0) };
@@ -3715,24 +3412,9 @@ mod spawn_process_body {
 
             let mut child_status: Option<Status> = None;
             loop {
-                // Reap *before* poll(). Covers (a) the SIGCHLD-before-block race —
-                // child may have exited between spawnProcessPosix and the
-                // sigprocmask above, in which case the kernel discarded SIGCHLD
-                // (default disposition is ignore) and signalfd will never wake;
-                // (b) the no-signalfd fallback; (c) subreaper-adopted orphans that
-                // would otherwise re-fire SIGCHLD forever.
-                //
-                // The `wait4(-1)` orphan drain is only valid when `drain_orphans`
-                // (i.e. on the watchdog-arming thread, where subreaper is armed
-                // and there is exactly one wait loop in the process). Off-thread
-                // callers — install's threadpool `git` clones — run several wait
-                // loops concurrently with no subreaper; a `wait4(-1)` there would
-                // reap a sibling thread's `git` child, discard its status as an
-                // "orphan", and leave that sibling busy-polling a permanently-
-                // readable pidfd. Target `child` directly in that case.
-                //
-                // WUNTRACED only on a TTY: bridges Ctrl-Z via `JobControl`.
-                // Non-TTY callers never see stops, matching plain `bun run`.
+                // Reap *before* poll(): covers SIGCHLD-before-block race,
+                // no-signalfd fallback, and subreaper adoptees. `wait4(-1)` only
+                // when `drain_orphans` (else steals sibling threads' children).
                 let wopts: u32 =
                     (libc::WNOHANG | if jc.is_active() { libc::WUNTRACED } else { 0 }) as u32;
                 let wait_target: libc::pid_t = if drain_orphans { -1 } else { child };
@@ -3826,10 +3508,8 @@ mod spawn_process_body {
             Some(Ok(child_status.unwrap()))
         }
 
-        /// Non-blocking drain of `fd` into `bytes`. Closes and invalidates both
-        /// slots on EOF so the caller's deferred cleanup skips them; returns null
-        /// on EOF/retry/EPIPE (caller keeps polling) or the recv/OOM error
-        /// otherwise. Shared by the `poll()` path and the no-orphans wait loops.
+        /// Non-blocking drain of `fd` into `bytes`. Closes/invalidates on EOF;
+        /// returns None on EOF/retry/EPIPE, else the recv/OOM error.
         #[cfg(unix)]
         fn drain_fd(fd: &mut Fd, out_fd: &mut Fd, bytes: &mut Vec<u8>) -> Option<bun_sys::Error> {
             if *fd == Fd::INVALID {

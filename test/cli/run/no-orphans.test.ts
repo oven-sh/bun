@@ -618,6 +618,63 @@ test.concurrent.skipIf(!isPosix)("bun run --no-orphans <script>: clean exit reap
   expect(proc.exitCode).toBe(0);
 });
 
+// macOS register-after-exit race: `wait_mac_kqueue` arms EVFILT_PROC
+// NOTE_EXIT on the script *after* posix_spawn returns. `filt_procattach`
+// happily attaches to a zombie, but the exit notification fired before the
+// knote existed and is never redelivered, so kevent() blocks forever and
+// `bun run` hangs with its child unreaped. Fixed by a single wait4(WNOHANG)
+// probe right after registration. Linux (signalfd/pidfd) is unaffected; it
+// runs here to pin the same behavior.
+//
+// The script must exit inside the spawn -> EV_ADD window. Spawning many
+// `sh -c :` concurrently is enough: the kernel preempts bun between the two
+// syscalls while the siblings are scheduled, which is exactly the CI-load
+// condition this first showed up under. Any run that doesn't exit is a hang;
+// kill it so the assertion names the hang instead of the test timing out.
+test.concurrent.skipIf(!isPosix)(
+  "bun run --no-orphans: script that exits before kqueue NOTE_EXIT registration does not hang",
+  async () => {
+    using dir = tempDir("no-orphans-instant-exit", {
+      "package.json": JSON.stringify({ name: "p", scripts: { go: ":" } }),
+    });
+    const env: Record<string, string> = { ...bunEnv };
+    delete env.BUN_FEATURE_FLAG_NO_ORPHANS;
+
+    // The rest of this file's test.concurrent suite supplies most of the
+    // preemption pressure; keep N modest so debug+ASAN has headroom.
+    const N = 12;
+    const runs = Array.from({ length: N }, () =>
+      Bun.spawn({
+        cmd: [bunExe(), "run", "--no-orphans", "--silent", "go"],
+        env,
+        cwd: String(dir),
+        stdout: "ignore",
+        stderr: "pipe",
+      }),
+    );
+    try {
+      const allExited = Promise.all(runs.map(p => p.exited));
+      const ok = await Promise.race([allExited.then(() => true), sleep(15_000).then(() => false)]);
+      const hung = runs.filter(p => p.exitCode === null && p.signalCode === null).map(p => p.pid);
+      for (const p of runs) if (p.exitCode === null && p.signalCode === null) p.kill("SIGKILL");
+      await allExited.catch(() => {});
+      const results = await Promise.all(
+        runs.map(async p => ({ exitCode: p.exitCode, signal: p.signalCode, stderr: await p.stderr.text() })),
+      );
+      expect({ ok, hung, results }).toEqual({
+        ok: true,
+        hung: [],
+        results: Array(N).fill({ exitCode: 0, signal: null, stderr: "" }),
+      });
+    } finally {
+      for (const p of runs)
+        try {
+          p.kill("SIGKILL");
+        } catch {}
+    }
+  },
+);
+
 // Ctrl-Z bridge: with the script in its own pgroup `bun run` is a one-job
 // shell on a controlling TTY. Send SIGTSTP to the script's pgroup; bun run's
 // WUNTRACED wait must observe the stop, take the terminal, and `raise(SIGTSTP)`

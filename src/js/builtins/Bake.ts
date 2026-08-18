@@ -111,7 +111,8 @@ export async function renderRoutesForProdStatic(
     if (fileList.length > 1) {
       let anyPromise = false;
       let loaded = fileList.map(
-        x => loadedModules[x] ?? ((anyPromise = true), import(allServerFiles[x]).then(x => (loadedModules[x] = x))),
+        id =>
+          loadedModules[id] ?? ((anyPromise = true), import(allServerFiles[id]).then(mod => (loadedModules[id] = mod))),
       );
       modulesForFiles.push(anyPromise ? await Promise.all(loaded) : loaded);
     } else {

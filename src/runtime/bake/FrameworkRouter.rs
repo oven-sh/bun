@@ -11,9 +11,7 @@ use bun_alloc::{AllocError, Arena, ArenaVec};
 use bun_collections::array_hash_map::ArrayHashContext;
 use bun_collections::{ArrayHashMap, BoundedArray, StringArrayHashMap};
 use bun_core::Output;
-use bun_jsc::{
-    CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, Strong, StrongOptional,
-};
+use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult, StringJsc, StrongOptional};
 use bun_paths::{self as paths, MAX_PATH_BYTES, PathBuffer};
 use bun_resolver::{DirInfo, Resolver};
 
@@ -49,7 +47,7 @@ pub struct FrameworkRouter {
     ///
     /// Root files are not caught using this technique, since every route tree has a
     /// root. This check is special cased.
-    // TODO: no code to sort this data structure
+    /// Sorted by `EncodedPattern::precedence_key` at the end of `scan`; `match_slow` returns the first match.
     pub(crate) dynamic_routes: DynamicRouteMap,
 
     /// Arena allocator for pattern strings.
@@ -313,7 +311,20 @@ impl EncodedPattern {
         bun_wyhash::hash(&stack_space[..pos]) as usize
     }
 
+    /// Next.js `getSortedRoutes` order: per part text < param < catch-all < optional catch-all, shorter first, groups ignored.
+    fn precedence_key(&self) -> impl Iterator<Item = (u8, &[u8])> {
+        self.iterate().filter_map(|part| match part {
+            Part::Text(text) => Some((0, text)),
+            Part::Param(_) => Some((1, b"".as_slice())),
+            Part::CatchAll(_) => Some((2, b"".as_slice())),
+            Part::CatchAllOptional(_) => Some((3, b"".as_slice())),
+            Part::Group(_) => None,
+        })
+    }
+
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
+        // Discard captures left by a previous candidate that failed partway.
+        params.params.clear();
         let mut param_num: usize = 0;
         let mut it = self.iterate();
         let mut i: usize = 1;
@@ -328,13 +339,21 @@ impl EncodedPattern {
                     if !strings::eql(&path[i..i + expect.len()], expect) {
                         return false;
                     }
-                    i += 1 + expect.len();
+                    i += expect.len();
+                    if i < path.len() {
+                        // Consume the separator unless the text ends the path.
+                        i += 1;
+                    }
                 }
                 Part::Param(name) => {
-                    if i > path.len() {
+                    if i >= path.len() {
                         return false;
                     }
                     let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
+                    // A parameter matches exactly one non-empty segment.
+                    if end == i {
+                        return false;
+                    }
                     // Check if we're about to exceed the maximum number of parameters
                     if param_num >= MatchedParams::MAX_COUNT {
                         // TODO: ideally we should throw a nice user message
@@ -353,26 +372,27 @@ impl EncodedPattern {
                     i = if end == path.len() { end } else { end + 1 };
                 }
                 Part::CatchAllOptional(name) | Part::CatchAll(name) => {
+                    let params_before = param_num;
                     // Capture remaining path segments as individual parameters
                     if i < path.len() {
                         let mut segment_start = i;
                         while segment_start < path.len() {
                             let segment_end = strings::index_of_char_pos(path, b'/', segment_start)
                                 .unwrap_or(path.len());
-                            if segment_start < segment_end {
-                                // Check if we're about to exceed the maximum number of parameters
-                                if param_num >= MatchedParams::MAX_COUNT {
-                                    return false;
-                                }
-                                params.params.resize(param_num + 1).unwrap();
-                                params.params.slice()[param_num] = MatchedParamEntry {
-                                    key: bun_ptr::RawSlice::new(name),
-                                    value: bun_ptr::RawSlice::new(
-                                        &path[segment_start..segment_end],
-                                    ),
-                                };
-                                param_num += 1;
+                            // An empty segment (double slash) never matches.
+                            if segment_start == segment_end {
+                                return false;
                             }
+                            // Check if we're about to exceed the maximum number of parameters
+                            if param_num >= MatchedParams::MAX_COUNT {
+                                return false;
+                            }
+                            params.params.resize(param_num + 1).unwrap();
+                            params.params.slice()[param_num] = MatchedParamEntry {
+                                key: bun_ptr::RawSlice::new(name),
+                                value: bun_ptr::RawSlice::new(&path[segment_start..segment_end]),
+                            };
+                            param_num += 1;
                             segment_start = if segment_end == path.len() {
                                 segment_end
                             } else {
@@ -380,7 +400,8 @@ impl EncodedPattern {
                             };
                         }
                     }
-                    return true;
+                    // Only the optional form may match zero segments.
+                    return matches!(part, Part::CatchAllOptional(_)) || param_num > params_before;
                 }
                 Part::Group(_) => continue,
             }
@@ -612,50 +633,32 @@ pub enum ParsedPatternKind {
     Extra,
 }
 
+#[derive(Copy, Clone)]
 pub enum Style {
     NextjsPages,
     NextjsAppUi,
     NextjsAppRoutes,
-    JavascriptDefined(Strong),
-}
-
-// The built-in styles are trivially copyable; the `JavascriptDefined` arm owns
-// a `Strong` (Drop type), so a shallow copy would double-free. That arm is an
-// unimplemented feature (`Style::from_js` never produces it), so cloning it is
-// unreachable today.
-impl Clone for Style {
-    fn clone(&self) -> Self {
-        match self {
-            Style::NextjsPages => Style::NextjsPages,
-            Style::NextjsAppUi => Style::NextjsAppUi,
-            Style::NextjsAppRoutes => Style::NextjsAppRoutes,
-            Style::JavascriptDefined(_) => {
-                panic!("TODO: customizable Style")
-            }
-        }
-    }
 }
 
 bun_core::comptime_string_map! {
-    pub(crate) static STYLE_MAP: fn() -> Style = {
-        b"nextjs-pages" => || Style::NextjsPages,
-        b"nextjs-app-ui" => || Style::NextjsAppUi,
-        b"nextjs-app-routes" => || Style::NextjsAppRoutes,
+    pub(crate) static STYLE_MAP: Style = {
+        b"nextjs-pages" => Style::NextjsPages,
+        b"nextjs-app-ui" => Style::NextjsAppUi,
+        b"nextjs-app-routes" => Style::NextjsAppRoutes,
     };
 }
 
-const STYLE_ERROR_MESSAGE: &str = "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", \"nextjs-app-routes\", or a function.";
+const STYLE_ERROR_MESSAGE: &str =
+    "'style' must be either \"nextjs-pages\", \"nextjs-app-ui\", or \"nextjs-app-routes\"";
 
 impl Style {
     pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Style> {
         if value.is_string() {
             let bun_string = bun_core::OwnedString::new(value.to_bun_string(global)?);
             let utf8 = bun_string.to_utf8();
-            if let Some(style) = STYLE_MAP.get(utf8.slice()) {
-                return Ok(style());
+            if let Some(&style) = STYLE_MAP.get(utf8.slice()) {
+                return Ok(style);
             }
-        } else if value.is_callable() {
-            return Ok(Style::JavascriptDefined(Strong::create(value, global)));
         }
 
         Err(global.throw_invalid_arguments(format_args!("{STYLE_ERROR_MESSAGE}")))
@@ -676,7 +679,7 @@ enum NextRoutingConvention {
 
 impl Style {
     pub(crate) fn parse<'bump>(
-        &self,
+        self,
         file_path: &'bump [u8],
         ext: &[u8],
         log: &mut TinyLog,
@@ -703,11 +706,6 @@ impl Style {
                 allow_layouts,
                 arena,
             ),
-
-            // The strategy for this should be to collect a list of candidates,
-            // then batch-call the javascript handler and collect all results.
-            // This will avoid most of the back-and-forth native<->js overhead.
-            Style::JavascriptDefined(_) => panic!("TODO: customizable Style"),
         }
     }
 
@@ -1131,18 +1129,17 @@ impl FrameworkRouter {
 
         let file_id = ctx.get_file_id_for_router(file_path, new_route_index, file_kind)?;
 
-        let new_route = self.route_ptr_mut(new_route_index);
-        if let Some(existing) = *new_route.file_ptr(file_kind) {
+        if let Some(existing) = *self.route_ptr_mut(new_route_index).file_ptr(file_kind) {
             if existing == file_id {
                 return Ok(()); // exact match already exists. Hot-reloading code hits this
             }
             *out_colliding_file_id = existing;
             return Err(InsertError::RouteCollision);
         }
-        *new_route.file_ptr(file_kind) = Some(file_id);
 
         if file_kind == FileKind::Page {
-            match pattern {
+            // A different route can still serve the same URLs (see `dynamic_routes`).
+            let aliased_route = match pattern {
                 InsertPattern::Static(p) => {
                     let key: &[u8] = if p.route_path().is_empty() {
                         b"/"
@@ -1151,19 +1148,32 @@ impl FrameworkRouter {
                     };
                     let gop = self.static_routes.get_or_put(key)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
                 InsertPattern::Dynamic(p) => {
                     let gop = self.dynamic_routes.get_or_put(p)?;
                     if gop.found_existing {
-                        panic!("TODO: propagate aliased route error");
+                        Some(*gop.value_ptr)
+                    } else {
+                        *gop.value_ptr = new_route_index;
+                        None
                     }
-                    *gop.value_ptr = new_route_index;
                 }
+            };
+            if let Some(aliased_route) = aliased_route {
+                *out_colliding_file_id = self
+                    .route_ptr(aliased_route)
+                    .file_page
+                    .expect("routes in the url maps have a page");
+                return Err(InsertError::RouteCollision);
             }
         }
+
+        *self.route_ptr_mut(new_route_index).file_ptr(file_kind) = Some(file_id);
         Ok(())
     }
 }
@@ -1471,6 +1481,15 @@ impl bun_collections::zig_hash_map::HashContext<Box<[u8]>> for ZigStringHashCont
     }
 }
 
+/// The scanned entry's absolute path, or `None` when it is too long to open, in which case the scan skips the entry.
+fn entry_abs_path<'b>(
+    fs: &bun_resolver::fs::FileSystem,
+    entry: &bun_resolver::fs::Entry,
+    buf: &'b mut PathBuffer,
+) -> Option<&'b [u8]> {
+    fs.abs_buf_checked(&[entry.dir, entry.base()], &mut buf[..MAX_PATH_BYTES - 1])
+}
+
 impl FrameworkRouter {
     pub(crate) fn scan(
         &mut self,
@@ -1485,7 +1504,14 @@ impl FrameworkRouter {
             return Ok(());
         };
         let mut arena_state = Arena::new();
-        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)
+        self.scan_inner(ty, r, &root_info, &mut arena_state, ctx)?;
+        self.dynamic_routes.sort(|patterns, _, a, b| {
+            patterns[a]
+                .precedence_key()
+                .cmp(patterns[b].precedence_key())
+                .is_lt()
+        });
+        Ok(())
     }
 
     fn scan_inner(
@@ -1555,9 +1581,15 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if let Some(child_info) =
-                            r.read_dir_info_ignore_error(fs_ref.abs(&[file.dir, file.base()]))
-                        {
+                        let child_info = {
+                            let mut abs_path_buf = paths::path_buffer_pool::get();
+                            let Some(abs_path) = entry_abs_path(fs_ref, file, &mut abs_path_buf)
+                            else {
+                                continue 'outer;
+                            };
+                            r.read_dir_info_ignore_error(abs_path)
+                        };
+                        if let Some(child_info) = child_info {
                             self.scan_inner(t_index, r, &child_info, arena_state, ctx)?;
                         }
                     }
@@ -1580,15 +1612,18 @@ impl FrameworkRouter {
                             }
                         }
 
+                        let mut abs_path_buf = paths::path_buffer_pool::get();
+                        let Some(abs_path) = entry_abs_path(fs_ref, file, &mut abs_path_buf) else {
+                            continue 'outer;
+                        };
+
                         let mut rel_path_buf = PathBuffer::uninit();
                         let full_rel_path_len = {
                             let full_rel_path = paths::resolve_path::relative_normalized_buf::<
                                 paths::platform::Auto,
                                 true,
                             >(
-                                &mut rel_path_buf[1..],
-                                &self.root,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                &mut rel_path_buf[1..], &self.root, abs_path
                             );
                             full_rel_path.len()
                         };
@@ -1650,8 +1685,15 @@ impl FrameworkRouter {
                             }
                         }
 
-                        if param_count > 64 {
-                            log.write(format_args!("Pattern cannot have more than 64 param"));
+                        if param_count > MatchedParams::MAX_COUNT {
+                            log.fail(
+                                format_args!(
+                                    "Pattern cannot have more than {} params",
+                                    MatchedParams::MAX_COUNT
+                                ),
+                                0,
+                                full_rel_path.len(),
+                            );
                             ctx.on_router_syntax_error(full_rel_path, log)?;
                             arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                             continue 'outer;
@@ -1663,7 +1705,18 @@ impl FrameworkRouter {
                             ParsedPatternKind::Page => FileKind::Page,
                             ParsedPatternKind::Layout => FileKind::Layout,
                             ParsedPatternKind::Extra => {
-                                panic!("TODO: associate extra files with route")
+                                let file_name = paths::basename(full_rel_path);
+                                log.fail(
+                                    format_args!(
+                                        "Bun Bake currently does not support \"{}\" files",
+                                        bstr::BStr::new(paths::stem(full_rel_path))
+                                    ),
+                                    full_rel_path.len() - file_name.len(),
+                                    file_name.len(),
+                                );
+                                ctx.on_router_syntax_error(full_rel_path, log)?;
+                                arena_state.reset_retain_with_limit(8 * 1024 * 1024);
+                                continue 'outer;
                             }
                         };
 
@@ -1676,7 +1729,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Dynamic(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1707,7 +1760,7 @@ impl FrameworkRouter {
                                 t_index,
                                 InsertPattern::Static(pattern),
                                 file_kind,
-                                fs_ref.abs(&[file.dir, file.base()]),
+                                abs_path,
                                 ctx,
                                 &mut out_colliding_file_id,
                             )
@@ -1745,13 +1798,21 @@ impl FrameworkRouter {
 pub struct JSFrameworkRouter {
     pub(crate) files: Vec<bun_core::String>,
     pub(crate) router: FrameworkRouter,
-    pub(crate) stored_parse_errors: Vec<StoredParseError>,
+    pub(crate) stored_scan_errors: Vec<StoredScanError>,
 }
 
-pub(crate) struct StoredParseError {
-    /// Owned by global allocator
-    pub rel_path: Box<[u8]>,
-    pub log: TinyLog,
+/// Collected while scanning and thrown together once the scan is done.
+pub(crate) enum StoredScanError {
+    InvalidRoute {
+        rel_path: Box<[u8]>,
+        message: Box<[u8]>,
+    },
+    Collision {
+        rel_path: Box<[u8]>,
+        /// Indexes `JSFrameworkRouter.files`.
+        other: OpaqueFileId,
+        file_kind: FileKind,
+    },
 }
 
 impl JSFrameworkRouter {
@@ -1794,17 +1855,13 @@ impl JSFrameworkRouter {
             opts.get(global, "style")?.unwrap_or(JSValue::UNDEFINED),
             global,
         )?;
-        // `Style` owns a `Strong` (Drop type), so `?` on any error path below
-        // drops it automatically.
 
-        let abs_root: Box<[u8]> = strings::without_trailing_slash(paths::resolve_path::join_abs::<
-            paths::platform::Auto,
-        >(
-            // SAFETY: FileSystem::instance() returns the process-global singleton; live for the program.
-            bun_resolver::fs::FileSystem::get().top_level_dir,
-            root.slice(),
-        ))
-        .into();
+        let Some(abs_root) = crate::bake::bake_body::resolve_dir_option(root.slice()) else {
+            return Err(global.throw_invalid_arguments(format_args!(
+                "options.root must resolve to a path shorter than {} bytes",
+                MAX_PATH_BYTES
+            )));
+        };
 
         let types: Box<[Type]> = Box::new([Type {
             abs_root: abs_root.clone(),
@@ -1827,34 +1884,57 @@ impl JSFrameworkRouter {
         let mut jsfr = Box::new(JSFrameworkRouter {
             router: FrameworkRouter::init_empty(&abs_root, types)?,
             files: Vec::new(),
-            stored_parse_errors: Vec::new(),
+            stored_scan_errors: Vec::new(),
         });
 
         let resolver = &mut global.bun_vm().as_mut().transpiler.resolver;
-        // The handler only touches `files`/`stored_parse_errors`, so split-borrow
+        // The handler only touches `files`/`stored_scan_errors`, so split-borrow
         // those two fields into a dedicated context (see `JSFrameworkRouterScanCtx`).
         {
             let JSFrameworkRouter {
                 router,
                 files,
-                stored_parse_errors,
+                stored_scan_errors,
             } = &mut *jsfr;
             let mut ctx = JSFrameworkRouterScanCtx {
                 files,
-                stored_parse_errors,
+                stored_scan_errors,
             };
             router.scan(TypeIndex::init(0), resolver, &mut ctx)?;
         }
 
-        if !jsfr.stored_parse_errors.is_empty() {
-            let arr =
-                JSValue::create_array_from_iter(global, jsfr.stored_parse_errors.iter(), |item| {
-                    Ok(global.create_error_instance(format_args!(
-                        "Invalid route {}: {}",
-                        bun_core::fmt::quote(&item.rel_path),
-                        bstr::BStr::new(item.log.msg.const_slice()),
-                    )))
-                })?;
+        if !jsfr.stored_scan_errors.is_empty() {
+            let JSFrameworkRouter {
+                router,
+                files,
+                stored_scan_errors,
+            } = &*jsfr;
+            let arr = JSValue::create_array_from_iter(global, stored_scan_errors.iter(), |item| {
+                Ok(match item {
+                    StoredScanError::InvalidRoute { rel_path, message } => global
+                        .create_error_instance(format_args!(
+                            "Invalid route {}: {}",
+                            bun_core::fmt::quote(rel_path),
+                            bstr::BStr::new(message),
+                        )),
+                    StoredScanError::Collision {
+                        rel_path,
+                        other,
+                        file_kind,
+                    } => {
+                        let other_abs_path = files[other.get() as usize].to_utf8();
+                        global.create_error_instance(format_args!(
+                            "Multiple {} matching the same route pattern is ambiguous: {} and {}",
+                            file_kind.collision_noun(),
+                            bun_core::fmt::quote(rel_path),
+                            bun_core::fmt::quote(paths::resolve_path::relative(
+                                &router.root,
+                                other_abs_path.slice(),
+                            )),
+                        ))
+                    }
+                })
+            })?;
             return Err(global.throw_value(global.create_aggregate_error_with_array(
                 bun_core::String::static_str("Errors scanning routes"),
                 arr,
@@ -1868,28 +1948,20 @@ impl JSFrameworkRouter {
     pub fn r#match(&self, global: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
         let path_value = callframe.arguments_as_array::<1>()[0];
         let path = path_value.to_slice(global)?;
+        // match_slow requires an origin-form path.
+        if path.slice().is_empty() || path.slice()[0] != b'/' {
+            return Err(global.throw(format_args!(
+                "Invalid path \"{}\": it should be non-empty and start with a slash",
+                bstr::BStr::new(path.slice())
+            )));
+        }
 
         let mut params_out = MatchedParams {
             params: BoundedArray::default(),
         };
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
-            obj.put(
-                global,
-                b"params",
-                if params_out.params.len() > 0 {
-                    let params_obj =
-                        JSValue::create_empty_object(global, params_out.params.len() as usize);
-                    for param in params_out.params.slice() {
-                        // key/value borrow from `path`/pattern, both live here (RawSlice invariant)
-                        let value_str = bun_core::String::clone_utf8(param.value.slice());
-                        params_obj.put(global, param.key.slice(), value_str.to_js(global)?);
-                    }
-                    params_obj
-                } else {
-                    JSValue::NULL
-                },
-            );
+            obj.put(global, b"params", params_out.to_js(global));
             obj.put(global, b"route", self.route_to_json_inverse(global, index)?);
             return Ok(obj);
         }
@@ -1974,7 +2046,7 @@ impl JSFrameworkRouter {
 
     pub fn finalize(self: Box<Self>) {
         drop(self);
-        // files, router, stored_parse_errors freed by Drop.
+        // files, router, stored_scan_errors freed by Drop.
     }
 
     pub(crate) fn parse_route_pattern(
@@ -1991,7 +2063,6 @@ impl JSFrameworkRouter {
         let [style_js, filepath_js] = frame.arguments_as_array::<2>();
         let filepath = filepath_js.to_slice(global)?;
         let style = Style::from_js(style_js, global)?;
-        // errdefer style.deinit() — Drop handles this
 
         let mut log = TinyLog::empty();
         let parsed = match style.parse(
@@ -2061,12 +2132,12 @@ fn parse_route_pattern(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<J
 use bun_core::fmt::VecWriter as ByteFmtWriter;
 
 // `scan` needs `&mut jsfr.router` and the insertion handler simultaneously.
-// The handler only touches `files` / `stored_parse_errors`, so we split-borrow
+// The handler only touches `files` / `stored_scan_errors`, so we split-borrow
 // those two fields into a dedicated context struct instead of implementing the
 // trait on `JSFrameworkRouter` itself.
 struct JSFrameworkRouterScanCtx<'a> {
     files: &'a mut Vec<bun_core::String>,
-    stored_parse_errors: &'a mut Vec<StoredParseError>,
+    stored_scan_errors: &'a mut Vec<StoredScanError>,
 }
 
 impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
@@ -2083,20 +2154,24 @@ impl InsertionHandler for JSFrameworkRouterScanCtx<'_> {
     }
 
     fn on_router_syntax_error(&mut self, rel_path: &[u8], log: TinyLog) -> Result<(), AllocError> {
-        let rel_path_dupe: Box<[u8]> = rel_path.into();
-        self.stored_parse_errors.push(StoredParseError {
-            rel_path: rel_path_dupe,
-            log,
+        self.stored_scan_errors.push(StoredScanError::InvalidRoute {
+            rel_path: rel_path.into(),
+            message: log.msg.const_slice().into(),
         });
         Ok(())
     }
 
     fn on_router_collision_error(
         &mut self,
-        _rel_path: &[u8],
-        _other_id: OpaqueFileId,
-        _file_kind: FileKind,
+        rel_path: &[u8],
+        other_id: OpaqueFileId,
+        file_kind: FileKind,
     ) -> Result<(), AllocError> {
-        panic!("TODO: onRouterCollisionError for JSFrameworkRouter")
+        self.stored_scan_errors.push(StoredScanError::Collision {
+            rel_path: rel_path.into(),
+            other: other_id,
+            file_kind,
+        });
+        Ok(())
     }
 }

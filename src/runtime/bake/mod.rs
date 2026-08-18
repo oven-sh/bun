@@ -102,8 +102,6 @@ impl Default for ReactFastRefresh {
 /// `bake.Framework.FileSystemRouterType`. Full body (with `Style` enum and
 /// `from_js`) lives in the gated `bake_body.rs` draft; only the field set
 /// DevServer touches is named here.
-// Deliberately not `Clone` — `framework_router::Style` is the
-// body enum (carries `JavascriptDefined(jsc::Strong)`, not `Clone`).
 pub struct FileSystemRouterType {
     pub(crate) root: Cow<'static, [u8]>,
     pub(crate) prefix: Cow<'static, [u8]>,
@@ -376,15 +374,11 @@ impl Framework {
                 b"server components runtime",
             );
         }
-        for fsr in self.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = Cow::Owned(
-                bun_paths::resolve_path::join_abs::<bun_paths::platform::Auto>(
-                    top_level_dir,
-                    &fsr.root,
-                )
-                .to_vec(),
-            );
+        for (i, fsr) in self.file_system_router_types.iter_mut().enumerate() {
+            match bake_body::resolve_router_root(i, &fsr.root) {
+                Some(root) => fsr.root = Cow::Owned(root.into_vec()),
+                None => had_errors = true,
+            }
             let _ = arena;
             if let Some(entry_client) = &mut fsr.entry_client {
                 Self::resolve_helper(

@@ -693,7 +693,7 @@ fn get_routes_object(global: &JSGlobalObject, arg: JSValue) -> JsResult<Option<J
 /// slices live as long as `UserOptions.arena`.
 fn convert_file_system_router_type(
     arena: &bun_alloc::Arena,
-    src: crate::bake::FileSystemRouterType,
+    src: &crate::bake::FileSystemRouterType,
 ) -> crate::bake::bake_body::FileSystemRouterType {
     use crate::bake::bake_body as bb;
     // NOTE: `bb::arena_erase` is the single sanctioned `'bump → 'static`
@@ -1080,7 +1080,7 @@ impl ServerConfig {
                     // duplication; remove once the two structs unify.
                     let router_types: Vec<bb::FileSystemRouterType> =
                         core::mem::take(&mut init_ctx.framework_router_list)
-                            .into_iter()
+                            .iter()
                             .map(|t| convert_file_system_router_type(&arena, t))
                             .collect();
 

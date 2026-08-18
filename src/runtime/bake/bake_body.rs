@@ -27,19 +27,6 @@ use super::{dev_server, framework_router};
 // FrameworkRouter` are already provided by the parent `mod.rs` (lines 349/369);
 // re-exporting here triggers E0365 because `bake_body` is a private module.
 
-/// Local shim until `bun_jsc` grows a typed `get_optional`.
-/// Returns `None` for missing/null/undefined.
-fn get_optional_slice(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<ZigStringSlice>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_slice(global)?)),
-        _ => Ok(None),
-    }
-}
-
 /// `JSValue.getBooleanStrict` — local shim.
 fn get_boolean_strict(
     target: JSValue,
@@ -60,18 +47,6 @@ fn get_boolean_loose(
 ) -> JsResult<Option<bool>> {
     match target.get(global, property)? {
         Some(v) if !v.is_undefined_or_null() => Ok(Some(v.to_boolean())),
-        _ => Ok(None),
-    }
-}
-
-/// `JSValue.getOptional(JSValue, ..)` — local shim: filters undefined/null.
-fn get_optional_value(
-    target: JSValue,
-    global: &JSGlobalObject,
-    property: &[u8],
-) -> JsResult<Option<JSValue>> {
-    match target.get(global, property)? {
-        Some(v) if !v.is_undefined_or_null() => Ok(Some(v)),
         _ => Ok(None),
     }
 }
@@ -158,15 +133,7 @@ impl UserOptions {
                 let utf8_string = bunstr.to_utf8();
 
                 if strings::eql(utf8_string.slice(), b"react") {
-                    let root = match bun_sys::getcwd_alloc() {
-                        Ok(z) => arena_dupe_z(&arena, z.as_bytes()),
-                        Err(e) => {
-                            return Err(global.throw_error(
-                                e.to_zig_err(),
-                                "while querying current working directory",
-                            ));
-                        }
-                    };
+                    let root = resolve_root(None, global, &arena)?;
 
                     let framework = Framework::react(&arena)
                         .map_err(|e| throw_core_error(global, e, "Framework::react"))?;
@@ -186,14 +153,14 @@ impl UserOptions {
             );
         }
 
-        if let Some(js_options) = get_optional_value(config, global, b"bundlerOptions")? {
-            if let Some(server_options) = get_optional_value(js_options, global, b"server")? {
+        if let Some(js_options) = config.get_optional::<JSValue>(global, b"bundlerOptions")? {
+            if let Some(server_options) = js_options.get_optional::<JSValue>(global, b"server")? {
                 bundler_options.server = BuildConfigSubset::from_js(global, server_options)?;
             }
-            if let Some(client_options) = get_optional_value(js_options, global, b"client")? {
+            if let Some(client_options) = js_options.get_optional::<JSValue>(global, b"client")? {
                 bundler_options.client = BuildConfigSubset::from_js(global, client_options)?;
             }
-            if let Some(ssr_options) = get_optional_value(js_options, global, b"ssr")? {
+            if let Some(ssr_options) = js_options.get_optional::<JSValue>(global, b"ssr")? {
                 bundler_options.ssr = BuildConfigSubset::from_js(global, ssr_options)?;
             }
         }
@@ -214,32 +181,37 @@ impl UserOptions {
             &arena,
         )?;
 
-        let root: &[u8] = if let Some(slice) = get_optional_slice(config, global, b"root")? {
-            allocations.track(slice)
-        } else {
-            match bun_sys::getcwd_alloc() {
-                Ok(z) => arena_dupe_z(&arena, z.as_bytes()).as_bytes(),
-                Err(e) => {
-                    return Err(global
-                        .throw_error(e.to_zig_err(), "while querying current working directory"));
-                }
-            }
-        };
+        let root = resolve_root(config.get_optional_slice(global, b"root")?, global, &arena)?;
 
-        if let Some(plugin_array) = config.get(global, "plugins")? {
+        if let Some(plugin_array) = config.get_optional::<JSValue>(global, b"plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
-        let root_z = arena_dupe_z(&arena, root);
-
         Ok(UserOptions {
-            root: root_z,
+            root,
             framework,
             bundler_options,
             allocations,
             arena,
         })
     }
+}
+
+/// Absolute, no trailing separator, resolved against the same directory as `Framework::resolve`.
+fn resolve_root(
+    user_root: Option<ZigStringSlice>,
+    global: &JSGlobalObject,
+    arena: &Arena,
+) -> JsResult<&'static ZStr> {
+    let user_root = user_root.as_ref().map_or(b".".as_slice(), |s| s.slice());
+    let Some(resolved) = resolve_dir_option(user_root) else {
+        return Err(global.throw_invalid_arguments(format_args!(
+            "'{}.root' must resolve to a path shorter than {} bytes",
+            API_NAME,
+            paths::MAX_PATH_BYTES
+        )));
+    };
+    Ok(arena_dupe_z(arena, &resolved))
 }
 
 /// Each string stores its allocator since some may hold reference counts to JSC
@@ -295,6 +267,10 @@ impl SplitBundlerOptions {
         plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
+        if !plugin_array.is_array() {
+            return Err(global.throw_invalid_arguments(format_args!("plugins must be an array")));
+        }
+
         // Created before iterating so `plugins: []` still leaves `self.plugin = Some(_)`.
         let plugin: &mut OwnedPlugin = self
             .plugin
@@ -309,7 +285,7 @@ impl SplitBundlerOptions {
                 );
             }
 
-            if let Some(slice) = get_optional_slice(plugin_config, global, b"name")? {
+            if let Some(slice) = plugin_config.get_optional_slice(global, b"name")? {
                 if slice.slice().is_empty() {
                     return Err(global.throw_invalid_arguments(format_args!(
                         "Expected plugin to have a non-empty name"
@@ -377,7 +353,7 @@ impl BuildConfigSubset {
         let mut options = BuildConfigSubset::default();
 
         'brk: {
-            let Some(val) = get_optional_value(js_options, global, b"sourcemap")? else {
+            let Some(val) = js_options.get_optional::<JSValue>(global, b"sourcemap")? else {
                 break 'brk;
             };
             if let Some(sourcemap) = source_map_mode_from_js(global, val)? {
@@ -394,7 +370,8 @@ impl BuildConfigSubset {
         }
 
         'brk: {
-            let Some(minify_options) = get_optional_value(js_options, global, b"minify")? else {
+            let Some(minify_options) = js_options.get_optional::<JSValue>(global, b"minify")?
+            else {
                 break 'brk;
             };
             if minify_options.is_boolean() && minify_options.as_boolean() {
@@ -467,6 +444,33 @@ impl Default for Framework {
             built_in_modules: ArrayHashMap::new(),
         }
     }
+}
+
+/// Resolves a directory from the app options; `None` once it is `MAX_PATH_BYTES` long, the length from which `Resolver::read_dir_info` rejects it too.
+pub(crate) fn resolve_dir_option(dir: &[u8]) -> Option<Box<[u8]>> {
+    let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
+    let mut buf = paths::path_buffer_pool::get();
+    let resolved = paths::resolve_path::join_abs_string_buf_checked::<paths::platform::Auto>(
+        top_level_dir,
+        &mut buf[..paths::MAX_PATH_BYTES - 1],
+        &[dir],
+    )?;
+    Some(Box::from(
+        paths::string_paths::without_trailing_slash_windows_path(resolved),
+    ))
+}
+
+/// `resolve_dir_option` for `fileSystemRouterTypes[index].root`; a too-long root is reported like an unresolvable entry point.
+pub(crate) fn resolve_router_root(index: usize, root: &[u8]) -> Option<Box<[u8]>> {
+    let resolved = resolve_dir_option(root);
+    if resolved.is_none() {
+        Output::err(
+            "ENAMETOOLONG",
+            "Failed to resolve 'fileSystemRouterTypes[{}].root' for framework: the resolved path must be shorter than {} bytes",
+            (index, paths::MAX_PATH_BYTES),
+        );
+    }
+    resolved
 }
 
 impl Framework {
@@ -649,11 +653,11 @@ impl Framework {
             // self.resolve_helper(client, &mut sc.client_runtime_import, &mut had_errors);
         }
 
-        for fsr in clone.file_system_router_types.iter_mut() {
-            let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-            fsr.root = arena_erase(arena.alloc_slice_copy(paths::resolve_path::join_abs::<
-                paths::platform::Auto,
-            >(top_level_dir, fsr.root)));
+        for (i, fsr) in clone.file_system_router_types.iter_mut().enumerate() {
+            match resolve_router_root(i, fsr.root) {
+                Some(root) => fsr.root = arena_erase(arena.alloc_slice_copy(&root)),
+                None => had_errors = true,
+            }
             if let Some(entry_client) = &mut fsr.entry_client {
                 self.resolve_helper(
                     client,
@@ -805,7 +809,7 @@ impl Framework {
             Some(ServerComponents {
                 separate_ssr_graph: 'brk: {
                     // Intentionally not using a truthiness check
-                    let prop = match get_optional_value(sc, global, b"separateSSRGraph")? {
+                    let prop = match sc.get_optional::<JSValue>(global, b"separateSSRGraph")? {
                         Some(p) => p,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -824,7 +828,7 @@ impl Framework {
                     )));
                 },
                 server_runtime_import: refs.track(
-                    match get_optional_slice(sc, global, b"serverRuntimeImportSource")? {
+                    match sc.get_optional_slice(global, b"serverRuntimeImportSource")? {
                         Some(s) => s,
                         None => {
                             return Err(global.throw_invalid_arguments(format_args!(
@@ -834,7 +838,7 @@ impl Framework {
                     },
                 ),
                 server_register_client_reference: if let Some(slice) =
-                    get_optional_slice(sc, global, b"serverRegisterClientReferenceExport")?
+                    sc.get_optional_slice(global, b"serverRegisterClientReferenceExport")?
                 {
                     refs.track(slice)
                 } else {
@@ -910,9 +914,6 @@ impl Framework {
 
             let mut it = array.array_iterator(global)?;
             let mut i: usize = 0;
-            // On the error path, dropping the `Vec` drops each `Style`, which
-            // releases the `Strong` held by its `JavascriptDefined` arm (the
-            // only owning variant; the named styles are unit-like).
             while let Some(fsr_opts) = it.next()? {
                 let root = match get_optional_string(fsr_opts, global, b"root", refs)? {
                     Some(r) => r,
@@ -953,7 +954,6 @@ impl Framework {
                     },
                     global,
                 )?;
-                // errdefer style.deinit() — handled by Style's Drop
 
                 let extensions: &'static [&'static [u8]] = if let Some(exts_js) =
                     fsr_opts.get(global, "extensions")?
@@ -1011,24 +1011,24 @@ impl Framework {
                     ]
                 };
 
-                let ignore_dirs: &'static [&'static [u8]] = if let Some(exts_js) =
+                let ignore_dirs: &'static [&'static [u8]] = if let Some(dirs_js) =
                     fsr_opts.get(global, "ignoreDirs")?
                 {
-                    'exts: {
-                        if exts_js.is_array() {
-                            let mut it_2 = array.array_iterator(global)?;
+                    'dirs: {
+                        if dirs_js.is_array() {
+                            let mut it_2 = dirs_js.array_iterator(global)?;
                             let mut dirs = bun_alloc::ArenaVec::<&'static [u8]>::with_capacity_in(
-                                len as usize,
+                                dirs_js.get_length(global)? as usize,
                                 arena,
                             );
                             while let Some(array_item) = it_2.next()? {
                                 dirs.push(refs.track(array_item.to_slice(global)?));
                             }
-                            break 'exts arena_erase(dirs.into_bump_slice());
+                            break 'dirs arena_erase(dirs.into_bump_slice());
                         }
 
                         return Err(global.throw_invalid_arguments(format_args!(
-                            "'ignoreDirs' must be an array of strings or \"*\" for all extensions"
+                            "'ignoreDirs' must be an array of strings"
                         )));
                     }
                 } else {
@@ -1051,8 +1051,6 @@ impl Framework {
 
             break 'brk file_system_router_types;
         };
-        // errdefer for (file_system_router_types) |*fsr| fsr.style.deinit();
-        // — Vec<FileSystemRouterType> drops contents on early return.
 
         let framework = Framework {
             is_built_in_react: false,
@@ -1062,7 +1060,7 @@ impl Framework {
             built_in_modules,
         };
 
-        if let Some(plugin_array) = get_optional_value(opts, global, b"plugins")? {
+        if let Some(plugin_array) = opts.get_optional::<JSValue>(global, b"plugins")? {
             bundler_options.parse_plugin_array(plugin_array, global)?;
         }
 
@@ -1107,27 +1105,25 @@ impl Framework {
         )
     }
 
-    pub fn init_transpiler_with_options<'a>(
-        &mut self,
+    pub(crate) fn init_transpiler_with_options<'a, 'slot>(
+        &self,
         arena: &'a Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
-        out: &mut core::mem::MaybeUninit<bun_bundler::Transpiler<'a>>,
+        out: &'slot mut super::TranspilerSlot<'a>,
+        framework_view: &'a bun_bundler::bake_types::Framework,
         bundler_options: &BuildConfigSubset,
         source_map: bun_bundler::options::SourceMapOption,
         minify_whitespace: Option<bool>,
         minify_syntax: Option<bool>,
         minify_identifiers: Option<bool>,
-    ) -> crate::Result<()> {
+    ) -> crate::Result<&'slot mut bun_bundler::Transpiler<'a>> {
         // `ASTMemoryAllocator::enter` returns an RAII `Scope` whose `Drop`
         // runs `exit()` at end-of-fn.
         let mut ast_memory_allocator = bun_ast::ASTMemoryAllocator::borrowing(arena);
         let _ast_scope = ast_memory_allocator.enter();
 
-        // The caller (`DevServer::init`) hands us an uninitialized slot, so
-        // use `MaybeUninit::write` (no drop of prior bytes) then reborrow as
-        // `&mut Transpiler` for the field assignments below.
         let out: &mut bun_bundler::Transpiler = out.write(bun_bundler::Transpiler::init(
             arena,
             log,
@@ -1189,13 +1185,7 @@ impl Framework {
         out.options.minify_identifiers = minify_identifiers.unwrap_or(mode != Mode::Development);
         out.options.minify_whitespace = minify_whitespace.unwrap_or(mode != Mode::Development);
         out.options.css_chunking = true;
-        // The bundler crate (lower tier) carries a TYPE_ONLY projection
-        // (`bake_types::Framework`); construct it here and give it arena
-        // lifetime so `BundleOptions<'a>` can borrow it for the bundle pass.
-        // NOTE: interior `Box<[u8]>` in the projection are not dropped by
-        // bumpalo — bounded per-session, revisit when `bake_types::BuiltInModule`
-        // is reshaped to `&'a [u8]`.
-        out.options.framework = Some(&*arena.alloc(self.as_bundler_view()));
+        out.options.framework = Some(framework_view);
         out.options.inline_entrypoint_import_meta_main = true;
         if let Some(ignore) = bundler_options.ignore_dce_annotations {
             out.options.ignore_dce_annotations = ignore;
@@ -1262,7 +1252,7 @@ impl Framework {
         // Re-sync after define/naming mutations so the resolver sees the
         // final option set.
         out.sync_resolver_opts();
-        Ok(())
+        Ok(out)
     }
 }
 

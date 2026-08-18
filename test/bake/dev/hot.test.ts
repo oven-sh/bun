@@ -2,7 +2,7 @@
 import { expect } from "bun:test";
 import { isDebug, runWithErrorPromise } from "harness";
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
-import { Dev, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "../bake-harness";
+import { Dev, devTest, emptyHtmlFile, minimalFramework, WAIT_MULTIPLIER } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
   files: {
@@ -314,6 +314,514 @@ devTest("import.meta.hot.accept multiple modules", {
     await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
   },
 });
+devTest("modules between the updated module and its accepting boundary are evaluated again", {
+  // One server; each case has its own page and module graph under a directory
+  // of the same name. Clients are opened one at a time.
+  files: {
+    // accept: index -> d, index -> a -> d. `index` accepts `d`, so it is not
+    // evaluated again itself, but `a` computed its export from `d` and has to
+    // be. The accept callback records what it saw instead of logging it, so
+    // that the test does not depend on how many times it runs per update.
+    "accept.html": emptyHtmlFile({ scripts: ["accept/index.ts"] }),
+    "accept/index.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      console.log("index " + d + " " + a);
+      globalThis.snapshot = () => d + " " + a;
+      import.meta.hot.accept("./d", newModule => {
+        globalThis.accepted = newModule.d + " " + a;
+      });
+    `,
+    "accept/a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+      console.log("a evaluated " + a);
+    `,
+    "accept/d.ts": `
+      export const d = "d1";
+    `,
+    // order: index -> b -> d, b -> a -> d. `b` loads `d` before `a` does, so
+    // `d` lists `b` as an importer before `a`, and walking up from `d` finds
+    // `b` first. `b` must still be evaluated after `a`, which it imports.
+    "order.html": emptyHtmlFile({ scripts: ["order/index.ts"] }),
+    "order/index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+      import.meta.hot.accept();
+    `,
+    "order/b.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      export const b = "b(" + d + "," + a + ")";
+      console.log("b evaluated " + b);
+    `,
+    "order/a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+      console.log("a evaluated " + a);
+    `,
+    "order/d.ts": `
+      export const d = "d1";
+    `,
+    // self: index -> d, index -> y -> d. Both accept updates to `d`. `d` lists
+    // `index` as an importer first, so `index` is reloaded first; it must still
+    // see the new `y`, and `y`'s own accept callback must only run once `y`,
+    // which has top-level await, has finished evaluating.
+    "self.html": emptyHtmlFile({ scripts: ["self/index.ts"] }),
+    "self/index.ts": `
+      import { d } from "./d";
+      import { y } from "./y";
+      console.log("index " + d + " " + y);
+      import.meta.hot.accept();
+    `,
+    "self/y.ts": `
+      import { d } from "./d";
+      await 0;
+      export const y = "y(" + d + ")";
+      console.log("y evaluated " + y);
+      import.meta.hot.accept(newModule => {
+        console.log("y accepted " + newModule.y);
+      });
+    `,
+    "self/d.ts": `
+      export const d = "d1";
+    `,
+    // dispose: index (self-accepting) -> mid -> d. `mid` is replaced along with
+    // `d`, so the copy being thrown away has its dispose callbacks run, which
+    // also removes its event listener (on() is implemented with dispose());
+    // only the new copy's listener fires.
+    "dispose.html": emptyHtmlFile({ scripts: ["dispose/index.ts"] }),
+    "dispose/index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid);
+      import.meta.hot.accept();
+    `,
+    "dispose/mid.ts": `
+      import { d } from "./d";
+      export const mid = "mid(" + d + ")";
+      console.log("mid evaluated " + mid);
+      import.meta.hot.dispose(() => console.log("mid disposed " + mid));
+      import.meta.hot.on("bun:afterUpdate", () => console.log("afterUpdate seen by " + mid));
+    `,
+    "dispose/d.ts": `
+      export const d = "d1";
+    `,
+    // reload: index -> b -> d (b accepts d), index -> c -> d (c self-accepts),
+    // index -> d (index does not accept anything: the update fails).
+    // Everything logs through the console.log captured when the page was
+    // loaded. The test client silences the console object as soon as the page
+    // starts reloading, but a captured reference still reaches the test, so
+    // anything the runtime still did in the page being left (disposing of c,
+    // evaluating d and c again, b's callback) would show up as a message
+    // between "full reload" and the messages of the freshly loaded page.
+    "reload.html": emptyHtmlFile({ scripts: ["reload/index.ts"] }),
+    "reload/index.ts": `
+      import "./b";
+      import "./c";
+      import "./d";
+      import.meta.hot.on("bun:beforeFullReload", () => globalThis.log("full reload"));
+      globalThis.log("index evaluated");
+    `,
+    "reload/b.ts": `
+      import { d } from "./d";
+      globalThis.log("b evaluated " + d);
+      import.meta.hot.accept("./d", newModule => globalThis.log("b accepted " + newModule.d));
+    `,
+    "reload/c.ts": `
+      import { d } from "./d";
+      globalThis.log("c evaluated " + d);
+      import.meta.hot.dispose(() => globalThis.log("c disposed " + d));
+      import.meta.hot.accept();
+    `,
+    "reload/d.ts": `
+      globalThis.log ??= console.log;
+      export const d = "d1";
+      globalThis.log("d evaluated " + d);
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/accept");
+      await c.expectMessage("a evaluated a(d1)", "index d1 a(d1)");
+      await dev.write("accept/d.ts", `export const d = "d2";`);
+      await c.expectMessage("a evaluated a(d2)");
+      expect(await c.js<string>`snapshot()`).toBe("d2 a(d2)");
+      expect(await c.js<string>`globalThis.accepted`).toBe("d2 a(d2)");
+      // The re-evaluated `a` takes part in the next update like the original did.
+      await dev.write("accept/d.ts", `export const d = "d3";`);
+      await c.expectMessage("a evaluated a(d3)");
+      expect(await c.js<string>`snapshot()`).toBe("d3 a(d3)");
+      expect(await c.js<string>`globalThis.accepted`).toBe("d3 a(d3)");
+    }
+    {
+      await using c = await dev.client("/order");
+      await c.expectMessage("a evaluated a(d1)", "b evaluated b(d1,a(d1))", "index b(d1,a(d1))");
+      await dev.write("order/d.ts", `export const d = "d2";`);
+      await c.expectMessage("a evaluated a(d2)", "b evaluated b(d2,a(d2))", "index b(d2,a(d2))");
+    }
+    {
+      await using c = await dev.client("/self");
+      await c.expectMessage("y evaluated y(d1)", "index d1 y(d1)");
+      await dev.write("self/d.ts", `export const d = "d2";`);
+      // A callback that ran too early would see the previous `y`. Whether it
+      // runs before or after `index` finishes depends on how the loader reports
+      // a load that is already in flight, so only the values are checked.
+      await c.expectMessageInAnyOrder("y evaluated y(d2)", "index d2 y(d2)", "y accepted y(d2)");
+    }
+    {
+      await using c = await dev.client("/dispose");
+      await c.expectMessage("mid evaluated mid(d1)", "index mid(d1)");
+      await dev.write("dispose/d.ts", `export const d = "d2";`);
+      await c.expectMessage(
+        "mid disposed mid(d1)",
+        "mid evaluated mid(d2)",
+        "index mid(d2)",
+        "afterUpdate seen by mid(d2)",
+      );
+      await dev.write("dispose/d.ts", `export const d = "d3";`);
+      await c.expectMessage(
+        "mid disposed mid(d2)",
+        "mid evaluated mid(d3)",
+        "index mid(d3)",
+        "afterUpdate seen by mid(d3)",
+      );
+    }
+    {
+      await using c = await dev.client("/reload");
+      await c.expectMessage("d evaluated d1", "b evaluated d1", "c evaluated d1", "index evaluated");
+      await c.expectReload(async () => {
+        await dev.write(
+          "reload/d.ts",
+          `
+            globalThis.log ??= console.log;
+            export const d = "d2";
+            globalThis.log("d evaluated " + d);
+          `,
+        );
+      });
+      await c.expectMessage("full reload", "d evaluated d2", "b evaluated d2", "c evaluated d2", "index evaluated");
+    }
+  },
+});
+devTest("server: modules between the updated module and the route are evaluated again", {
+  framework: minimalFramework,
+  files: {
+    // Routes never accept updates; the server applies them anyway (and warns).
+    // The route imports `config` before `derived`, so walking up from `config`
+    // reaches the route before `derived`, which still has to be found.
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "derived.ts": `
+      import { value } from "./config";
+      export const derived = "derived(" + value + ")";
+    `,
+    "routes/index.ts": `
+      import { value } from "../config";
+      import { derived } from "../derived";
+      export default function () {
+        return new Response(value + " " + derived);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1 derived(v1)");
+    await dev.write("config.ts", `export const value = "v2";`);
+    await dev.fetch("/").equals("v2 derived(v2)");
+  },
+});
+devTest("import.meta.hot.accept specifier callbacks run once per update, dispose once per module", {
+  files: {
+    // once: index -> d, index -> a -> d, index -> b -> c -> d,
+    // index -> other -> d, other -> a. Updating `d` walks every importer of
+    // `d` and of the modules that do not accept it (`a`, `c`, `b`), reaching
+    // `index` and `other` once per path. Each accept callback must still run once.
+    "once.html": emptyHtmlFile({ scripts: ["once/index.ts"] }),
+    "once/index.ts": `
+      import { d } from "./d";
+      import { a } from "./a";
+      import { b } from "./b";
+      import "./other";
+      console.log("index " + d + " " + a + " " + b);
+      import.meta.hot.accept("./d", newModule => {
+        console.log("index accepted " + newModule.d);
+      });
+    `,
+    "once/other.ts": `
+      import "./d";
+      import "./a";
+      import.meta.hot.accept(["./d", "./a"], newModules => {
+        console.log("other accepted " + newModules[0]?.d + " " + newModules[1]?.a);
+      });
+    `,
+    "once/a.ts": `
+      import { d } from "./d";
+      export const a = "a(" + d + ")";
+    `,
+    "once/b.ts": `
+      import { c } from "./c";
+      export const b = "b(" + c + ")";
+    `,
+    "once/c.ts": `
+      import { d } from "./d";
+      export const c = "c(" + d + ")";
+    `,
+    "once/d.ts": `
+      export const d = "d1";
+    `,
+    // two: both replaced modules propagate up to `index`, which must be
+    // disposed of and re-evaluated once. Disposing of it a second time used to
+    // throw (its dispose list is cleared after running), turning the update
+    // into a full reload.
+    "two.html": emptyHtmlFile({ scripts: ["two/index.ts"] }),
+    "two/index.ts": `
+      import "./d";
+      import "./e";
+      console.log("index evaluated");
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
+      import.meta.hot.accept();
+    `,
+    "two/d.ts": `
+      export const d = "d1";
+    `,
+    "two/e.ts": `
+      export const e = "e1";
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/once");
+      await c.expectMessage("index d1 a(d1) b(c(d1))");
+      await dev.write("once/d.ts", `export const d = "d2";`);
+      await c.expectMessage("index accepted d2", "other accepted d2 undefined");
+      // The next update starts over: the callbacks run again, still once each.
+      await dev.write("once/d.ts", `export const d = "d3";`);
+      await c.expectMessage("index accepted d3", "other accepted d3 undefined");
+    }
+    {
+      await using c = await dev.client("/two");
+      await c.expectMessage("index evaluated");
+      {
+        await using batch = await dev.batchChanges();
+        await dev.write("two/d.ts", `export const d = "d2";`);
+        await dev.write("two/e.ts", `export const e = "e2";`);
+      }
+      await c.expectMessage("index disposed", "index evaluated");
+    }
+  },
+});
+devTest("import.meta.hot.dispose runs for every module the update evaluates again", {
+  files: {
+    // importer: index handles every update below with its accept callback and
+    // is never evaluated again, so its own dispose callback must never run.
+    "importer.html": emptyHtmlFile({ scripts: ["importer/index.ts"] }),
+    "importer/index.ts": `
+      import { d } from "./d";
+      console.log("index " + d);
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
+      import.meta.hot.accept("./d", newModule => {
+        console.log("index accepted " + newModule.d);
+      });
+    `,
+    "importer/d.ts": `
+      export const d = "d1";
+      console.log("evaluated " + d);
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + d);
+      });
+    `,
+    // self: both d (replaced) and index (the boundary) are evaluated again. All
+    // dispose callbacks run, and the promise index's returns is settled, before
+    // either module is evaluated.
+    "self.html": emptyHtmlFile({ scripts: ["self/index.ts"] }),
+    "self/index.ts": `
+      import { d } from "./d";
+      console.log("index " + d);
+      import.meta.hot.dispose(async () => {
+        await null;
+        console.log("index disposed");
+      });
+      import.meta.hot.accept();
+    `,
+    "self/d.ts": `
+      export const d = "d1";
+      console.log("evaluated " + d);
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + d);
+      });
+    `,
+    // several: the boundary is reached from both replaced modules, imports
+    // both, and comes between them in the update's reload order. Each module
+    // must be disposed of once and evaluated once per update; the second round
+    // catches dispose callbacks registered by a duplicate evaluation.
+    "several.html": emptyHtmlFile({ scripts: ["several/index.ts"] }),
+    "several/index.ts": `
+      import "./d";
+      import "./e";
+      console.log("index evaluated");
+      import.meta.hot.dispose(() => {
+        console.log("index disposed");
+      });
+      import.meta.hot.accept();
+    `,
+    "several/d.ts": `
+      export const d = "d1";
+      console.log("evaluated " + d);
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + d);
+      });
+    `,
+    "several/e.ts": `
+      export const e = "e1";
+      console.log("evaluated " + e);
+      import.meta.hot.dispose(() => {
+        console.log("disposed " + e);
+      });
+    `,
+    // threw: the failing module is reached through import() so that the page
+    // itself stays up. What it set up before throwing still has to be torn
+    // down when the fixed copy replaces it.
+    "threw.html": emptyHtmlFile({ scripts: ["threw/index.ts"] }),
+    "threw/index.ts": `
+      globalThis.loadDep = async () => {
+        try {
+          return (await import("./dep")).value;
+        } catch (e) {
+          return "failed: " + e.message;
+        }
+      };
+      console.log("index evaluated");
+      import.meta.hot.accept();
+    `,
+    "threw/dep.ts": `
+      import.meta.hot.dispose(() => {
+        console.log("dep disposed");
+      });
+      export const value = "v1";
+      throw new Error("dep is broken");
+    `,
+    // listeners: only the listener registered by the current copy of d is
+    // still attached once an update accepted by its importer is applied.
+    "listeners.html": emptyHtmlFile({ scripts: ["listeners/index.ts"] }),
+    "listeners/index.ts": `
+      import { d } from "./d";
+      console.log("index " + d);
+      import.meta.hot.accept("./d", newModule => {
+        console.log("index accepted " + newModule.d);
+      });
+    `,
+    "listeners/d.ts": `
+      export const d = "d1";
+      import.meta.hot.on("bun:afterUpdate", () => {
+        console.log(d + " saw afterUpdate");
+      });
+    `,
+  },
+  async test(dev) {
+    {
+      await using c = await dev.client("/importer");
+      await c.expectMessage("evaluated d1", "index d1");
+      // The copy being thrown away is disposed of before the next one is evaluated.
+      await dev.patch("importer/d.ts", { find: "d1", replace: "d2" });
+      await c.expectMessage("disposed d1", "evaluated d2", "index accepted d2");
+      // The dispose callback registered by a copy that was itself hot-loaded
+      // runs too, and the first copy's callback does not run again.
+      await dev.patch("importer/d.ts", { find: "d2", replace: "d3" });
+      await c.expectMessage("disposed d2", "evaluated d3", "index accepted d3");
+      // The next copy self-accepts. The copy being replaced still does not, so
+      // this update is still accepted by index.
+      await dev.write(
+        "importer/d.ts",
+        `
+          export const d = "d4";
+          console.log("evaluated " + d);
+          import.meta.hot.dispose(() => {
+            console.log("disposed " + d);
+          });
+          import.meta.hot.accept();
+        `,
+      );
+      await c.expectMessage("disposed d3", "evaluated d4", "index accepted d4");
+      // Self-accepting update. Only the copy being replaced is disposed of; the
+      // callbacks of d1, d2 and d3 were consumed by the earlier updates instead
+      // of piling up until a self-accepting copy came along.
+      await dev.patch("importer/d.ts", { find: "d4", replace: "d5" });
+      await c.expectMessage("disposed d4", "evaluated d5", "index accepted d5");
+    }
+    {
+      await using c = await dev.client("/self");
+      await c.expectMessage("evaluated d1", "index d1");
+      await dev.patch("self/d.ts", { find: "d1", replace: "d2" });
+      await c.expectMessage("disposed d1", "index disposed", "evaluated d2", "index d2");
+      await dev.patch("self/d.ts", { find: "d2", replace: "d3" });
+      await c.expectMessage("disposed d2", "index disposed", "evaluated d3", "index d3");
+    }
+    {
+      await using c = await dev.client("/several");
+      await c.expectMessage("evaluated d1", "evaluated e1", "index evaluated");
+      // The order the modules of one update are processed in is not specified;
+      // the ordering between disposing and evaluating is pinned by the case above.
+      {
+        await using batch = await dev.batchChanges();
+        await dev.patch("several/d.ts", { find: "d1", replace: "d2" });
+        await dev.patch("several/e.ts", { find: "e1", replace: "e2" });
+      }
+      await c.expectMessageInAnyOrder(
+        "disposed d1",
+        "disposed e1",
+        "index disposed",
+        "evaluated d2",
+        "evaluated e2",
+        "index evaluated",
+      );
+      {
+        await using batch = await dev.batchChanges();
+        await dev.patch("several/d.ts", { find: "d2", replace: "d3" });
+        await dev.patch("several/e.ts", { find: "e2", replace: "e3" });
+      }
+      await c.expectMessageInAnyOrder(
+        "disposed d2",
+        "disposed e2",
+        "index disposed",
+        "evaluated d3",
+        "evaluated e3",
+        "index evaluated",
+      );
+    }
+    {
+      await using c = await dev.client("/threw");
+      await c.expectMessage("index evaluated");
+      expect(await c.js`loadDep()`).toBe("failed: dep is broken");
+      await dev.write(
+        "threw/dep.ts",
+        `
+          import.meta.hot.dispose(() => {
+            console.log("dep disposed");
+          });
+          export const value = "v2";
+        `,
+      );
+      // dep is replaced and index, which imported it, self-accepts.
+      await c.expectMessage("dep disposed", "index evaluated");
+      expect(await c.js`loadDep()`).toBe("v2");
+      await dev.patch("threw/dep.ts", { find: "v2", replace: "v3" });
+      await c.expectMessage("dep disposed", "index evaluated");
+      expect(await c.js`loadDep()`).toBe("v3");
+    }
+    {
+      await using c = await dev.client("/listeners");
+      await c.expectMessage("index d1");
+      await dev.patch("listeners/d.ts", { find: "d1", replace: "d2" });
+      await c.expectMessage("index accepted d2", "d2 saw afterUpdate");
+      await dev.patch("listeners/d.ts", { find: "d2", replace: "d3" });
+      await c.expectMessage("index accepted d3", "d3 saw afterUpdate");
+    }
+  },
+});
 devTest("import.meta.hot.data persistence", {
   files: {
     "index.html": emptyHtmlFile({
@@ -434,42 +942,85 @@ devTest("import.meta.hot on/off events", {
     }),
     "index.ts": `
       console.log("Initial setup");
-      // Add event listener
-      import.meta.hot.on("vite:beforeUpdate", () => {
-        console.log("Before update event");
+      import.meta.hot.on("bun:beforeUpdate", () => {
+        console.log("bun:beforeUpdate (initial)");
       });
+      // "vite:*" names are aliases of the "bun:*" events
+      import.meta.hot.on("vite:beforeUpdate", () => {
+        console.log("vite:beforeUpdate (initial)");
+      });
+      import.meta.hot.accept();
+    `,
+    // "off" accepts either name for a listener registered under the other.
+    "off.html": emptyHtmlFile({
+      scripts: ["off.ts"],
+    }),
+    "off.ts": `
+      console.log("Initial setup");
+      const a = () => console.log("a");
+      import.meta.hot.on("bun:beforeUpdate", a);
+      import.meta.hot.off("vite:beforeUpdate", a);
+      const b = () => console.log("b");
+      import.meta.hot.on("vite:beforeUpdate", b);
+      import.meta.hot.off("bun:beforeUpdate", b);
+      import.meta.hot.on("vite:beforeUpdate", () => console.log("still listening"));
       import.meta.hot.accept();
     `,
   },
   async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("Initial setup");
-    await dev.write(
-      "index.ts",
-      `
-        console.log("Updated setup");
-        // Events implementation is partial according to docs
-        import.meta.hot.on("vite:beforeUpdate", () => {
-          console.log("Before update event 2");
-        });
-        const handler = () => {
-          console.log("Another handler");
-        };
-        import.meta.hot.on("vite:beforeUpdate", handler);
-        // Remove the handler
-        import.meta.hot.off("vite:beforeUpdate", handler);
-        import.meta.hot.accept();
-      `,
-    );
-    await c.expectMessage("Updated setup");
-    await dev.write(
-      "index.ts",
-      `
-        console.log("Third update");
-        import.meta.hot.accept();
-      `,
-    );
-    await c.expectMessage("Third update");
+    {
+      await using c = await dev.client("/index");
+      await c.expectMessage("Initial setup");
+      await dev.write(
+        "index.ts",
+        `
+          console.log("Updated setup");
+          import.meta.hot.on("vite:beforeUpdate", () => {
+            console.log("vite:beforeUpdate (updated)");
+          });
+          import.meta.hot.on("vite:afterUpdate", () => {
+            console.log("vite:afterUpdate (updated)");
+          });
+          const handler = () => {
+            console.log("removed handler");
+          };
+          import.meta.hot.on("vite:beforeUpdate", handler);
+          import.meta.hot.off("vite:beforeUpdate", handler);
+          import.meta.hot.accept();
+        `,
+      );
+      // The initial module's listeners fire for the update that replaces it. The
+      // afterUpdate listener added by the new module fires once the update is done.
+      await c.expectMessage(
+        "bun:beforeUpdate (initial)",
+        "vite:beforeUpdate (initial)",
+        "Updated setup",
+        "vite:afterUpdate (updated)",
+      );
+      await dev.write(
+        "index.ts",
+        `
+          console.log("Third update");
+          import.meta.hot.accept();
+        `,
+      );
+      // The initial module's listeners were removed when it was replaced, and the
+      // off() listener never fires. The replaced module's afterUpdate listener is
+      // removed before this update finishes.
+      await c.expectMessage("vite:beforeUpdate (updated)", "Third update");
+    }
+    {
+      await using c = await dev.client("/off");
+      await c.expectMessage("Initial setup");
+      await dev.write(
+        "off.ts",
+        `
+          console.log("Updated setup");
+          import.meta.hot.accept();
+        `,
+      );
+      await c.expectMessage("still listening", "Updated setup");
+    }
   },
 });
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {

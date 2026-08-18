@@ -808,6 +808,9 @@ impl<'a> LinkerContext<'a> {
             self.check_for_memory_corruption();
         }
 
+        // Must run before `compute_cross_chunk_dependencies` clears the `import()` records it walks.
+        StaticRouteVisitor::mark_chunks_with_transitive_use_client(self, &mut chunks)?;
+
         compute_cross_chunk_dependencies(self, &mut chunks)?;
 
         if FeatureFlags::HELP_CATCH_MEMORY_ISSUES {

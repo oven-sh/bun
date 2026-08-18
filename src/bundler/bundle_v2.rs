@@ -4024,7 +4024,7 @@ pub mod bv2_impl {
                     // both are `crate::Index` (= `bun_ast::Index`), so no cast is needed.
                     let ep = (*bundle_ptr).graph.entry_points.as_slice();
                     // `this.graph.server_component_boundaries` must stay intact for
-                    // `StaticRouteVisitor` (generateChunksInParallel) to read via
+                    // `StaticRouteVisitor` (run by `link`) to read via
                     // `parse_graph`. Borrow — do NOT `take`, which would empty the
                     // graph slot and drop the moved-out `MultiArrayList` heap inside
                     // `load()` (ASAN use-after-poison / wrong `fully_static`).
@@ -7366,11 +7366,7 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
-                        this.graph
-                            .path_to_source_index_map(result_ast_target)
-                            .put(source_path_text, reference_source_index)
-                            .expect("oom");
-
+                        // Not put in the path maps: `LinkerGraph::load` redirects cross-target import records instead.
                         this.graph
                             .server_component_boundaries
                             .put(

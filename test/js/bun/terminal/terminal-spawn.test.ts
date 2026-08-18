@@ -268,6 +268,42 @@ describe("Bun.Terminal subprocess integration", () => {
     expect(output).toContain("rows=45");
   });
 
+  async function sizeSeenBySubprocess(size: Pick<Bun.TerminalOptions, "cols" | "rows">): Promise<string> {
+    let output = "";
+    const { promise, resolve, reject } = Promise.withResolvers<string>();
+
+    // Inline terminal: the subprocess owns it, so `exit` fires once the child exits.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", "process.stdout.write('[' + process.stdout.columns + 'x' + process.stdout.rows + ']')"],
+      env: bunEnv,
+      terminal: {
+        ...size,
+        data(_term, chunk: Uint8Array) {
+          output += new TextDecoder().decode(chunk);
+          // Match the whole token: ConPTY's own escape sequences contain "]" too.
+          const seen = output.match(/\[\d+x\d+\]/);
+          if (seen) resolve(seen[0]);
+        },
+        exit() {
+          reject(new Error("terminal closed before reporting a size; output=" + JSON.stringify(output)));
+        },
+      },
+    });
+
+    const seen = await promise;
+    await proc.exited;
+    proc.terminal!.close();
+    return seen;
+  }
+
+  test("null cols/rows leave the default size in place", async () => {
+    expect(await sizeSeenBySubprocess({ cols: null, rows: null } as any)).toBe("[80x24]");
+  });
+
+  test("cols/rows given as numeric strings are coerced", async () => {
+    expect(await sizeSeenBySubprocess({ cols: "101", rows: "31" } as any)).toBe("[101x31]");
+  });
+
   test("exit callback fires after close", async () => {
     const { promise, resolve } = Promise.withResolvers<void>();
     const terminal = new Bun.Terminal({

@@ -166,8 +166,6 @@ pub(crate) fn write_bind<Context: WriterContext>(
         };
 
         if effective_tag.is_unspecified() {
-            // Send the text form of the type Signature inferred for the value.
-            // The toString() output of the generic arm is not valid json or timestamp input.
             match crate::postgres::types::tag_jsc::from_js(global, value)
                 .map_err(js_error_to_postgres)?
             {

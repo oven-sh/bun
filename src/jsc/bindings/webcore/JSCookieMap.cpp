@@ -552,10 +552,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<CookieMapIterator, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForCookieMapIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCookieMapIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForCookieMapIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForCookieMapIterator = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForCookieMapIterator, &WebCore::DOMIsoSubspaces::m_subspaceForCookieMapIterator);
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -634,10 +631,7 @@ GCClient::IsoSubspace* JSCookieMap::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSCookieMap, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCookieMap.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCookieMap = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCookieMap.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCookieMap = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForCookieMap, &WebCore::DOMIsoSubspaces::m_subspaceForCookieMap);
 }
 
 void JSCookieMap::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

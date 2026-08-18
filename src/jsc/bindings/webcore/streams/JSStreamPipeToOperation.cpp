@@ -65,10 +65,7 @@ GCClient::IsoSubspace* JSStreamPipeToOperation::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSStreamPipeToOperation, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForStreamPipeToOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForStreamPipeToOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForStreamPipeToOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForStreamPipeToOperation = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForStreamPipeToOperation, &WebCore::DOMIsoSubspaces::m_subspaceForStreamPipeToOperation);
 }
 
 DEFINE_VISIT_CHILDREN(JSStreamPipeToOperation);

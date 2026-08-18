@@ -233,10 +233,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC:
 {
     return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserverEntryList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceObserverEntryList.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForPerformanceObserverEntryList, &WebCore::DOMIsoSubspaces::m_subspaceForPerformanceObserverEntryList);
 }
 
 void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

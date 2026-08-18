@@ -28,10 +28,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<ObjectTemplate, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForObjectTemplate.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForObjectTemplate = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForObjectTemplate.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForObjectTemplate = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForObjectTemplate, &WebCore::DOMIsoSubspaces::m_subspaceForObjectTemplate);
     }
 
     DECLARE_VISIT_CHILDREN;

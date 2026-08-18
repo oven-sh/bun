@@ -146,10 +146,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSBundlerPlugin, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForBundlerPlugin.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForBundlerPlugin = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForBundlerPlugin.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForBundlerPlugin = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForBundlerPlugin, &WebCore::DOMIsoSubspaces::m_subspaceForBundlerPlugin);
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

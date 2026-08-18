@@ -34,10 +34,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<GlobalInternals, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForV8GlobalInternals = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForV8GlobalInternals.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForV8GlobalInternals = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForV8GlobalInternals, &WebCore::DOMIsoSubspaces::m_subspaceForV8GlobalInternals);
     }
 
     JSC::Structure* objectTemplateStructure(JSC::JSGlobalObject* globalObject) const

@@ -94,10 +94,7 @@ template<> GCClient::IsoSubspace* JSCountQueuingStrategyConstructor::subspaceFor
 {
     return WebCore::subspaceForImpl<JSCountQueuingStrategyConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategyConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategyConstructor = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForCountQueuingStrategyConstructor, &WebCore::DOMIsoSubspaces::m_subspaceForCountQueuingStrategyConstructor);
 }
 
 template<> void JSCountQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -231,10 +228,7 @@ GCClient::IsoSubspace* JSCountQueuingStrategy::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSCountQueuingStrategy, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCountQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCountQueuingStrategy = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForCountQueuingStrategy, &WebCore::DOMIsoSubspaces::m_subspaceForCountQueuingStrategy);
 }
 
 // Prototype accessors

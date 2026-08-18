@@ -59,10 +59,7 @@ GCClient::IsoSubspace* JSAsyncIteratorSourceOperation::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSAsyncIteratorSourceOperation, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForAsyncIteratorSourceOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAsyncIteratorSourceOperation = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForAsyncIteratorSourceOperation.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAsyncIteratorSourceOperation = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForAsyncIteratorSourceOperation, &WebCore::DOMIsoSubspaces::m_subspaceForAsyncIteratorSourceOperation);
 }
 
 template<typename Visitor>

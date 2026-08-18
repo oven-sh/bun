@@ -131,10 +131,7 @@ template<> GCClient::IsoSubspace* JSDecompressionStreamConstructor::subspaceForI
 {
     return WebCore::subspaceForImpl<JSDecompressionStreamConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDecompressionStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDecompressionStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDecompressionStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDecompressionStreamConstructor = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForDecompressionStreamConstructor, &WebCore::DOMIsoSubspaces::m_subspaceForDecompressionStreamConstructor);
 }
 
 template<> void JSDecompressionStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -227,10 +224,7 @@ GCClient::IsoSubspace* JSDecompressionStream::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSDecompressionStream, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDecompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDecompressionStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDecompressionStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDecompressionStream = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForDecompressionStream, &WebCore::DOMIsoSubspaces::m_subspaceForDecompressionStream);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsDecompressionStreamPrototypeGetter_constructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))

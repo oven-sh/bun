@@ -103,10 +103,7 @@ template<> GCClient::IsoSubspace* JSTransformStreamConstructor::subspaceForImpl(
 {
     return WebCore::subspaceForImpl<JSTransformStreamConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStreamConstructor = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForTransformStreamConstructor, &WebCore::DOMIsoSubspaces::m_subspaceForTransformStreamConstructor);
 }
 
 template<> void JSTransformStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -263,10 +260,7 @@ GCClient::IsoSubspace* JSTransformStream::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSTransformStream, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTransformStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTransformStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTransformStream = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForTransformStream, &WebCore::DOMIsoSubspaces::m_subspaceForTransformStream);
 }
 
 DEFINE_VISIT_CHILDREN(JSTransformStream);

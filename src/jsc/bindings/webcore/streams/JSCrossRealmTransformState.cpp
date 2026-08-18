@@ -47,10 +47,7 @@ GCClient::IsoSubspace* JSCrossRealmTransformState::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSCrossRealmTransformState, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForCrossRealmTransformState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCrossRealmTransformState = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForCrossRealmTransformState.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForCrossRealmTransformState = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForCrossRealmTransformState, &WebCore::DOMIsoSubspaces::m_subspaceForCrossRealmTransformState);
 }
 
 DEFINE_VISIT_CHILDREN(JSCrossRealmTransformState);

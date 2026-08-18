@@ -173,10 +173,7 @@ JSC::GCClient::IsoSubspace* JSPerformanceMeasure::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSPerformanceMeasure, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMeasure = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForPerformanceMeasure.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMeasure = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForPerformanceMeasure, &WebCore::DOMIsoSubspaces::m_subspaceForPerformanceMeasure);
 }
 
 template<typename Visitor>

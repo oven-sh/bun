@@ -43,10 +43,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSWrappingFunction, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForWrappingFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWrappingFunction = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForWrappingFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForWrappingFunction = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForWrappingFunction, &WebCore::DOMIsoSubspaces::m_subspaceForWrappingFunction);
     }
 
     DECLARE_EXPORT_INFO;

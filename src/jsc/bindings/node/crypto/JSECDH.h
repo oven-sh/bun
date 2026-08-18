@@ -37,10 +37,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSECDH, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSECDH.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSECDH = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSECDH.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSECDH = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSECDH, &WebCore::DOMIsoSubspaces::m_subspaceForJSECDH);
     }
 
     ncrypto::ECKeyPointer m_key;

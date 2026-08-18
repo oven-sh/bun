@@ -500,10 +500,7 @@ public:
     {
         return WebCore::subspaceForImpl<JSSQLStatement, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLStatement.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLStatement = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSQLStatement.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLStatement = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSSQLStatement, &WebCore::DOMIsoSubspaces::m_subspaceForJSSQLStatement);
     }
     DECLARE_VISIT_CHILDREN;
     DECLARE_EXPORT_INFO;

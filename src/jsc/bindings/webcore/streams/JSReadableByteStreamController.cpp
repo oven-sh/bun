@@ -352,10 +352,7 @@ GCClient::IsoSubspace* JSReadableByteStreamController::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSReadableByteStreamController, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForReadableByteStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForReadableByteStreamController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForReadableByteStreamController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForReadableByteStreamController = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForReadableByteStreamController, &WebCore::DOMIsoSubspaces::m_subspaceForReadableByteStreamController);
 }
 
 template<typename Visitor>

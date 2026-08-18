@@ -135,10 +135,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSNodePerformanceHooksHistogram, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSNodePerformanceHooksHistogram.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSNodePerformanceHooksHistogram.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSNodePerformanceHooksHistogram = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSNodePerformanceHooksHistogram, &WebCore::DOMIsoSubspaces::m_subspaceForJSNodePerformanceHooksHistogram);
     }
 
     JSNodePerformanceHooksHistogram(JSC::VM& vm, JSC::Structure* structure, HistogramData&& histogramData)

@@ -30,10 +30,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSCommonJSExtensions, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSCommonJSExtensions.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCommonJSExtensions = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSCommonJSExtensions.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCommonJSExtensions = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSCommonJSExtensions, &WebCore::DOMIsoSubspaces::m_subspaceForJSCommonJSExtensions);
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

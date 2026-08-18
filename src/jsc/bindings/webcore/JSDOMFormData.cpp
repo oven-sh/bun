@@ -536,10 +536,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<DOMFormDataIterator, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForDOMFormDataIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMFormDataIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForDOMFormDataIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormDataIterator = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForDOMFormDataIterator, &WebCore::DOMIsoSubspaces::m_subspaceForDOMFormDataIterator);
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -701,10 +698,7 @@ JSC::GCClient::IsoSubspace* JSDOMFormData::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSDOMFormData, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForDOMFormData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForDOMFormData = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForDOMFormData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForDOMFormData = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForDOMFormData, &WebCore::DOMIsoSubspaces::m_subspaceForDOMFormData);
 }
 
 void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

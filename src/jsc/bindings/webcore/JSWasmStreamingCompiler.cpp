@@ -193,10 +193,7 @@ GCClient::IsoSubspace* JSWasmStreamingCompiler::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSWasmStreamingCompiler, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWasmStreamingCompiler.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWasmStreamingCompiler = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWasmStreamingCompiler.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWasmStreamingCompiler = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForWasmStreamingCompiler, &WebCore::DOMIsoSubspaces::m_subspaceForWasmStreamingCompiler);
 }
 
 void JSWasmStreamingCompiler::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

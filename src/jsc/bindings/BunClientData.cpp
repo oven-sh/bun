@@ -173,4 +173,23 @@ void JSVMClientData::create(VM* vm, void* bunVM, bool isWorkerVM)
     clientData->builtinFunctions().exportNames();
 }
 
+NEVER_INLINE JSC::GCClient::IsoSubspace* subspaceForImplSlow(JSC::VM& vm, ClientIsoSubspaceSlot clientSlot, ServerIsoSubspaceSlot serverSlot, const JSC::HeapCellType& cellType, size_t cellSize, uint8_t numberOfLowerTierPreciseCells, bool hasOutputConstraints)
+{
+    auto& clientData = *downcast<JSVMClientData>(vm.clientData);
+    auto& heapData = clientData.heapData();
+    Locker locker { heapData.lock() };
+
+    auto& space = heapData.subspaces().*serverSlot;
+    if (!space) {
+        // "T" matches what ISO_SUBSPACE_INIT(heap, cellType, T) stringized before.
+        space = makeUnique<JSC::IsoSubspace>("T"_s, vm.heap, cellType, cellSize, numberOfLowerTierPreciseCells);
+        if (hasOutputConstraints)
+            heapData.outputConstraintSpaces().append(space.get());
+    }
+
+    auto& clientSpace = clientData.clientSubspaces().*clientSlot;
+    clientSpace = makeUnique<JSC::GCClient::IsoSubspace>(*space);
+    return clientSpace.get();
+}
+
 } // namespace WebCore

@@ -239,10 +239,7 @@ template<> GCClient::IsoSubspace* JSWritableStreamDefaultWriterConstructor::subs
 {
     return WebCore::subspaceForImpl<JSWritableStreamDefaultWriterConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriterConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriterConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriterConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriterConstructor = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForWritableStreamDefaultWriterConstructor, &WebCore::DOMIsoSubspaces::m_subspaceForWritableStreamDefaultWriterConstructor);
 }
 
 template<> void JSWritableStreamDefaultWriterConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -368,10 +365,7 @@ GCClient::IsoSubspace* JSWritableStreamDefaultWriter::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSWritableStreamDefaultWriter, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForWritableStreamDefaultWriter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForWritableStreamDefaultWriter.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForWritableStreamDefaultWriter = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForWritableStreamDefaultWriter, &WebCore::DOMIsoSubspaces::m_subspaceForWritableStreamDefaultWriter);
 }
 
 DEFINE_VISIT_CHILDREN(JSWritableStreamDefaultWriter);

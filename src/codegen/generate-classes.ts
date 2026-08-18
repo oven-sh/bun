@@ -484,10 +484,7 @@ class ${name} final : public JSC::InternalFunction {
 
         return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.${clientSubspaceFor("BunClass")}Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor("BunClass")}Constructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.${subspaceFor("BunClass")}Constructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.${subspaceFor("BunClass")}Constructor = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::${clientSubspaceFor("BunClass")}Constructor, &WebCore::DOMIsoSubspaces::${subspaceFor("BunClass")}Constructor);
       }
 
       // Must be defined for each specialization class.
@@ -1129,10 +1126,7 @@ function generateClassHeader(typeName, obj: ClassDefinition) {
                 return nullptr;
             return WebCore::subspaceForImpl<${name}, WebCore::UseCustomHeapCellType::No>(
                 vm,
-                [](auto& spaces) { return spaces.${clientSubspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${clientSubspaceFor(typeName)} = std::forward<decltype(space)>(space); },
-                [](auto& spaces) { return spaces.${subspaceFor(typeName)}.get(); },
-                [](auto& spaces, auto&& space) { spaces.${subspaceFor(typeName)} = std::forward<decltype(space)>(space); });
+                &WebCore::DOMClientIsoSubspaces::${clientSubspaceFor(typeName)}, &WebCore::DOMIsoSubspaces::${subspaceFor(typeName)});
         }
 
         static void destroy(JSC::JSCell*);

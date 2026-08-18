@@ -680,10 +680,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<URLSearchParamsIterator, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForURLSearchParamsIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLSearchParamsIterator = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForURLSearchParamsIterator.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForURLSearchParamsIterator = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForURLSearchParamsIterator, &WebCore::DOMIsoSubspaces::m_subspaceForURLSearchParamsIterator);
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -762,10 +759,7 @@ JSC::GCClient::IsoSubspace* JSURLSearchParams::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSURLSearchParams, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForURLSearchParams.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForURLSearchParams = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForURLSearchParams.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForURLSearchParams = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForURLSearchParams, &WebCore::DOMIsoSubspaces::m_subspaceForURLSearchParams);
 }
 
 void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)

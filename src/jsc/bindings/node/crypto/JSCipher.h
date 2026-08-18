@@ -55,10 +55,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSCipher, WebCore::UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSCipher.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSCipher = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSCipher.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSCipher = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSCipher, &WebCore::DOMIsoSubspaces::m_subspaceForJSCipher);
     }
 
     bool checkCCMMessageLength(int32_t messageLen) const

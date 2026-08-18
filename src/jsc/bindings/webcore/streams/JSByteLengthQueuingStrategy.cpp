@@ -94,10 +94,7 @@ template<> GCClient::IsoSubspace* JSByteLengthQueuingStrategyConstructor::subspa
 {
     return WebCore::subspaceForImpl<JSByteLengthQueuingStrategyConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForByteLengthQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategyConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForByteLengthQueuingStrategyConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategyConstructor = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForByteLengthQueuingStrategyConstructor, &WebCore::DOMIsoSubspaces::m_subspaceForByteLengthQueuingStrategyConstructor);
 }
 
 template<> void JSByteLengthQueuingStrategyConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -231,10 +228,7 @@ GCClient::IsoSubspace* JSByteLengthQueuingStrategy::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSByteLengthQueuingStrategy, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForByteLengthQueuingStrategy.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForByteLengthQueuingStrategy = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForByteLengthQueuingStrategy, &WebCore::DOMIsoSubspaces::m_subspaceForByteLengthQueuingStrategy);
 }
 
 // Prototype accessors

@@ -228,10 +228,7 @@ JSC::GCClient::IsoSubspace* JSAbortController::subspaceForImpl(JSC::VM& vm)
 {
     return WebCore::subspaceForImpl<JSAbortController, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForAbortController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForAbortController = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForAbortController.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForAbortController = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForAbortController, &WebCore::DOMIsoSubspaces::m_subspaceForAbortController);
 }
 
 template<typename Visitor>

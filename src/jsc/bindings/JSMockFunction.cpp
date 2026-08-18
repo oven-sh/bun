@@ -170,10 +170,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSMockImplementation, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSMockImplementation.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSMockImplementation = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSMockImplementation.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMockImplementation = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSMockImplementation, &WebCore::DOMIsoSubspaces::m_subspaceForJSMockImplementation);
     }
 
     // either a function or a return value, depends on kind
@@ -456,10 +453,7 @@ public:
             return nullptr;
         return WebCore::subspaceForImpl<JSMockFunction, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSMockFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSMockFunction = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSMockFunction.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSMockFunction = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForJSMockFunction, &WebCore::DOMIsoSubspaces::m_subspaceForJSMockFunction);
     }
 
     JSMockFunction(JSC::VM& vm, JSC::Structure* structure, CallbackKind wrapKind)
@@ -1271,10 +1265,7 @@ JSC::GCClient::IsoSubspace* MockWithImplementationCleanupData::subspaceFor(JSC::
 {
     return WebCore::subspaceForImpl<MockWithImplementationCleanupData, WebCore::UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForMockWithImplementationCleanupData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForMockWithImplementationCleanupData = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForMockWithImplementationCleanupData.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForMockWithImplementationCleanupData = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForMockWithImplementationCleanupData, &WebCore::DOMIsoSubspaces::m_subspaceForMockWithImplementationCleanupData);
 }
 
 MockWithImplementationCleanupData* MockWithImplementationCleanupData::create(VM& vm, Structure* structure)

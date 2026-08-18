@@ -109,10 +109,7 @@ template<> GCClient::IsoSubspace* JSTextDecoderStreamConstructor::subspaceForImp
 {
     return WebCore::subspaceForImpl<JSTextDecoderStreamConstructor, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStreamConstructor = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextDecoderStreamConstructor.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStreamConstructor = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForTextDecoderStreamConstructor, &WebCore::DOMIsoSubspaces::m_subspaceForTextDecoderStreamConstructor);
 }
 
 template<> void JSTextDecoderStreamConstructor::finishCreation(VM& vm, JSDOMGlobalObject& globalObject)
@@ -266,10 +263,7 @@ GCClient::IsoSubspace* JSTextDecoderStream::subspaceForImpl(VM& vm)
 {
     return WebCore::subspaceForImpl<JSTextDecoderStream, UseCustomHeapCellType::No>(
         vm,
-        [](auto& spaces) { return spaces.m_clientSubspaceForTextDecoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTextDecoderStream = std::forward<decltype(space)>(space); },
-        [](auto& spaces) { return spaces.m_subspaceForTextDecoderStream.get(); },
-        [](auto& spaces, auto&& space) { spaces.m_subspaceForTextDecoderStream = std::forward<decltype(space)>(space); });
+        &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForTextDecoderStream, &WebCore::DOMIsoSubspaces::m_subspaceForTextDecoderStream);
 }
 
 // Prototype accessors

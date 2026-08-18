@@ -128,10 +128,7 @@ public:
 
         return WebCore::subspaceForImpl<TTYWrapObject, UseCustomHeapCellType::No>(
             vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForTTYWrapObject = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForTTYWrapObject.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForTTYWrapObject = std::forward<decltype(space)>(space); });
+            &WebCore::DOMClientIsoSubspaces::m_clientSubspaceForTTYWrapObject, &WebCore::DOMIsoSubspaces::m_subspaceForTTYWrapObject);
     }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSObject* prototype)

@@ -1066,7 +1066,7 @@ impl BuildCommand {
             }
 
             for f in output_files.iter() {
-                if let Err(err) = f.write_to_disk(root_dir.fd, from_path) {
+                if let Err(err) = f.write_to_disk(root_dir.fd) {
                     Output::err(
                         err,
                         "failed to write file '{}'",

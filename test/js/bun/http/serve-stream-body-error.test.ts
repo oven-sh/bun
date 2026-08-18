@@ -176,6 +176,33 @@ test.concurrent.each(nativeBodies)("%s: the body is terminated", async (variant,
   });
 });
 
+// When the development server also runs a bake dev server (it has an HTML
+// route), the report additionally renders the dev error page as the rest of
+// the body and ends the response normally, so the browser shows the error
+// after whatever was already streamed. The JS stream has always taken this
+// branch; the native body now goes through the same code.
+test.concurrent.each([
+  ["rewriter-mid-stream-throw", "e\r\n<b>chunk-a</b>\r\n"],
+  ["mid-stream-reject", "7\r\nchunk-a\r\n"],
+])("%s under a dev server: the error page is appended to the body", async (variant, firstChunk) => {
+  const { stdout, stderr, exitCode } = await runFixture(variant, "development", "dev-server");
+  const { body, ...result } = JSON.parse(stdout);
+  expect({ result, exitCode }).toEqual({
+    result: {
+      statusLine: "HTTP/1.1 200 OK",
+      cleanChunkedTerminator: true,
+      errorCb: 0,
+      unhandled: 0,
+      secondStatusLine: "HTTP/1.1 200 OK",
+    },
+    exitCode: 0,
+  });
+  expect(body).toStartWith(firstChunk);
+  expect(body).toContain("Stream error during server-side rendering");
+  expect(body).toContain("boom");
+  expect(stderr).toContain("boom");
+});
+
 // The client aborts the download mid-stream, which makes Bun cancel the body
 // ReadableStream. The source's cancel() throws, but the rejected promise is
 // one Bun created internally: it must be marked handled rather than surfacing

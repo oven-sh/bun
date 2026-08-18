@@ -5,13 +5,19 @@
 // reporting contract for bodies Bun.serve streams without a JS ReadableStream.
 //
 // argv[2]: variant name (see `sources` and `nativeBodies` below)
-// argv[3]: "development" to run the server with development: true
+// argv[3..]: "development" to run the server with development: true;
+//            "dev-server" to also give it an HTML route, which makes the
+//            development server run a bake dev server (the requests below
+//            still go to fetch())
 //
 // Prints a single JSON object on stdout and exits 0.
 import net from "node:net";
+import devServerPage from "./serve-stream-body-error-fixture.html";
 
 const variant = process.argv[2];
-const development = process.argv[3] === "development";
+const flags = process.argv.slice(3);
+const development = flags.includes("development");
+const devServer = flags.includes("dev-server");
 
 // Set by the mid-stream variants so they only error once their chunk has
 // provably reached the client socket, i.e. after the 200 response is committed
@@ -228,6 +234,7 @@ let errorCb = 0;
 await using server = Bun.serve({
   port: 0,
   development,
+  ...(devServer ? { routes: { "/dev-server-page": devServerPage } } : {}),
   error() {
     errorCb++;
     return new Response("err-body", { status: 500 });

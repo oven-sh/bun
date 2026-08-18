@@ -129,18 +129,17 @@ impl AlgorithmValue {
 
                             let memory_cost = memory_value.as_number();
 
-                            // argon2 requires `memoryCost >= 8 * parallelism`;
-                            // Bun hard-codes `parallelism = 1` (see
-                            // `Argon2Params::to_params`), so the floor is 8.
-                            if memory_cost < 8.0 || memory_cost.is_nan() {
+                            // Values below 8 are computed with 8 blocks (see the
+                            // vendored rust-argon2 patch), matching pre-Rust Bun.
+                            if memory_cost < 1.0 || memory_cost.is_nan() {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be at least 8"
+                                    "Memory cost must be greater than 0"
                                 )));
                             }
 
                             if memory_cost.fract() != 0.0 || memory_cost > f64::from(u32::MAX) {
                                 return Err(global_object.throw_invalid_arguments(format_args!(
-                                    "Memory cost must be an integer between 8 and 4294967295"
+                                    "Memory cost must be an integer between 1 and 4294967295"
                                 )));
                             }
 

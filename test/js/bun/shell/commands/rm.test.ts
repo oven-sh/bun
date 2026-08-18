@@ -316,8 +316,8 @@ test.skipIf(process.platform === "win32")(
       // <base>/<tag>/ddd.../ddd... with an absolute path of deepLength bytes.
       function deepDir(tag: string): string {
         let dir = join(base, tag);
-        while (dir.length + 1 + component.length <= deepLength) dir = join(dir, component);
-        const rest = deepLength - dir.length - 1;
+        while (Buffer.byteLength(dir) + 1 + component.length <= deepLength) dir = join(dir, component);
+        const rest = deepLength - Buffer.byteLength(dir) - 1;
         if (rest > 0) dir = join(dir, Buffer.alloc(rest, "e").toString());
         mkdirSync(dir, { recursive: true });
         return dir;
@@ -362,8 +362,8 @@ test.skipIf(process.platform === "win32")(
     const results = JSON.parse(stdout);
     // The entries are what rm could not remove, and this is why: a path of
     // PATH_MAX bytes has no room left for its NUL.
-    expect(results.file.entry.length).toBeGreaterThanOrEqual(PATH_MAX);
-    expect(results.dir.entry.length).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(Buffer.byteLength(results.file.entry)).toBeGreaterThanOrEqual(PATH_MAX);
+    expect(Buffer.byteLength(results.dir.entry)).toBeGreaterThanOrEqual(PATH_MAX);
     expect(results).toEqual({
       file: {
         exitCode: 1,

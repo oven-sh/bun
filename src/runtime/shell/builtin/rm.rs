@@ -853,8 +853,7 @@ impl ShellRmTask {
         Ok(())
     }
 
-    /// Join into `buf` (into `spill` when the result does not fit) honoring
-    /// [`join_style`].
+    /// Join into `buf` honoring [`join_style`].
     fn buf_join<'a>(
         &self,
         buf: &'a mut bun_paths::PathBuffer,

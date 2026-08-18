@@ -1596,6 +1596,7 @@ dependencies = [
  "bun_core",
  "bun_crash_handler",
  "bun_csrf",
+ "bun_css",
  "bun_css_jsc",
  "bun_dns",
  "bun_dotenv",

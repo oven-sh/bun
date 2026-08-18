@@ -391,7 +391,6 @@ pub use self::regular_expression::RegularExpression;
 pub use self::script_execution_status::ScriptExecutionStatus;
 pub use self::source_provider::SourceProvider;
 pub use self::url_search_params::URLSearchParams;
-pub use self::zig_error_type::ZigErrorType;
 pub use self::zig_stack_frame_code::ZigStackFrameCode;
 pub use self::zig_stack_frame_position::ZigStackFramePosition;
 
@@ -457,9 +456,7 @@ pub mod zig_exception;
 pub mod zig_stack_frame;
 #[path = "ZigStackTrace.rs"]
 pub mod zig_stack_trace;
-// `generated_classes_list.rs` is mounted by `bun_runtime` (see its lib.rs) —
-// every aliased type lives in api/webcore/test_runner/bake, so mounting it
-// here would create a `bun_jsc → bun_runtime` cycle.
+
 #[path = "AsyncModule.rs"]
 pub mod async_module;
 #[path = "bindgen.rs"]
@@ -1389,8 +1386,6 @@ pub mod codegen {
     }
 }
 pub use self::codegen as Codegen;
-// `GeneratedClassesList` lives in `bun_runtime::GeneratedClassesList`
-// (layering: every aliased type is defined above `bun_jsc`).
 
 /// Extension trait providing JSC-aware methods on `bun_core::String`.
 pub trait StringJsc {

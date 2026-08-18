@@ -114,9 +114,7 @@ pub use any_request_context::AnyRequestContext;
 
 #[path = "server_body.rs"]
 mod server_body;
-pub use server_body::{
-    BunInfo, GetOrStartLoadResult, PreparedRequestFor, ServePluginsCallback, ServerInitContext,
-};
+pub use server_body::{GetOrStartLoadResult, ServePluginsCallback};
 
 // ─── write_status ────────────────────────────────────────────────────────────
 pub(crate) fn write_status<const SSL: bool>(resp: *mut uws_sys::NewAppResponse<SSL>, status: u16) {
@@ -212,7 +210,7 @@ impl AnyRoute {
 // Full state machine + intrusive refcount lives in `server_body.rs` (the
 // `*mut ServePlugins` is smuggled through `JSValue::then` as a promise context,
 // so `Rc` is unsuitable). Re-exported here for `AnyServer` callers.
-pub use server_body::{ServePlugins, ServePluginsState};
+pub use server_body::ServePlugins;
 
 // ─── ServerFlags ─────────────────────────────────────────────────────────────
 bitflags::bitflags! {
@@ -1733,7 +1731,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // SAFETY: `listener` is a live uws ListenSocket FFI handle just taken
             // from `self.listener`; deref'd once to read the socket fd. `vm` is a
-            // STATIC ref (see `ServerLike::vm_mut`) — non-null for the server's
+            // STATIC ref (see `NewServer::vm_mut`) — non-null for the server's
             // lifetime, so the raw→`&mut` deref is sound.
             unsafe {
                 let fd = (*listener).socket().fd();
@@ -1989,7 +1987,7 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         if !SSL {
             // S008: `app::ListenSocket<SSL>` is a ZST opaque — safe deref.
             let fd = bun_opaque::opaque_deref_mut(socket).socket().fd();
-            // SAFETY: `vm` is a STATIC ref (see `ServerLike::vm_mut`) — non-null
+            // SAFETY: `vm` is a STATIC ref (see `NewServer::vm_mut`) — non-null
             // for the server's lifetime, so the raw→`&mut` deref is sound.
             unsafe { (*self.vm_mut()).add_listening_socket_for_watch_mode(fd) };
         }
@@ -3539,15 +3537,8 @@ fn throw_ssl_error_if_necessary(global: &JSGlobalObject) -> bool {
 // field/method surface the per-request state machine needs without naming
 // `NewServer` (avoids a generic-parameter cycle).
 pub trait ServerLike {
-    const SSL_ENABLED: bool;
-    const DEBUG_MODE: bool;
     fn global_this(&self) -> &jsc::JSGlobalObject;
     fn vm(&self) -> &jsc::VirtualMachine;
-    /// Raw mutable pointer to the VM. Exists so callers that genuinely need
-    /// `&mut VirtualMachine` (e.g. `drain_microtasks`, unhandled-rejection
-    /// hooks) can go raw→raw instead of `&T as *const T as *mut T`, which
-    /// trips `invalid_reference_casting`.
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine;
     fn config(&self) -> &ServerConfig;
     fn on_request_complete(&mut self);
     fn dev_server(&self) -> Option<&crate::bake::DevServer::DevServer>;
@@ -3562,8 +3553,6 @@ pub trait ServerLike {
 }
 
 impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
-    const SSL_ENABLED: bool = SSL;
-    const DEBUG_MODE: bool = DEBUG;
     // These trait-method forwards are on the per-request hot path (called via
     // `RequestContext::server.vm()` etc.). Without `#[inline]` a generic trait
     // impl is not eligible for cross-crate inlining at all, so each accessor
@@ -3576,10 +3565,6 @@ impl<const SSL: bool, const DEBUG: bool> ServerLike for NewServer<SSL, DEBUG> {
     #[inline(always)]
     fn vm(&self) -> &jsc::VirtualMachine {
         Self::vm(self)
-    }
-    #[inline(always)]
-    fn vm_mut(&self) -> *mut jsc::VirtualMachine {
-        Self::vm_mut(self)
     }
     #[inline(always)]
     fn config(&self) -> &ServerConfig {

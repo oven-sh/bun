@@ -15,7 +15,6 @@ pub use self::unicode::{
     decode_wtf8_rune_t_multibyte, wtf8_byte_sequence_length,
     wtf8_byte_sequence_length_with_invalid,
 };
-pub use unicode_draft::CodePointZero;
 
 // Sub-modules (peer files under `src/string/immutable/`).
 #[path = "immutable/escapeHTML.rs"]
@@ -604,17 +603,6 @@ pub fn rsplit_once_char(self_: &[u8], delimiter: u8) -> Option<(&[u8], &[u8])> {
 #[inline]
 pub fn split_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
     let i = index_of(self_, delimiter)?;
-    Some((&self_[..i], &self_[i + delimiter.len()..]))
-}
-
-/// `str::rsplit_once` for bytes with a multi-byte delimiter. An empty
-/// delimiter never matches.
-#[inline]
-pub fn rsplit_once<'a>(self_: &'a [u8], delimiter: &[u8]) -> Option<(&'a [u8], &'a [u8])> {
-    if delimiter.is_empty() {
-        return None;
-    }
-    let i = last_index_of(self_, delimiter)?;
     Some((&self_[..i], &self_[i + delimiter.len()..]))
 }
 

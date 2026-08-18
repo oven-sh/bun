@@ -11,7 +11,7 @@ use bun_jsc::{GlobalRef, JSGlobalObject, JSValue, JsCell, JsResult, StringJsc};
 
 // Re-exports (thin aliases)
 pub(crate) use crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask;
-pub use crate::webcore::s3::multipart::{self, MultiPartUpload};
+pub use crate::webcore::s3::multipart::MultiPartUpload;
 pub use crate::webcore::s3::multipart_options::MultiPartUploadOptions;
 pub use bun_s3_signing::acl::ACL;
 pub use bun_s3_signing::storage_class::StorageClass;

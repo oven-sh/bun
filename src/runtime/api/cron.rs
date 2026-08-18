@@ -2640,8 +2640,6 @@ pub(crate) fn xml_escape(input: &[u8]) -> Result<Vec<u8>, bun_alloc::AllocError>
 pub enum CalendarError {
     #[error("InvalidCron")]
     InvalidCron,
-    #[error("OutOfMemory")]
-    OutOfMemory,
 }
 
 #[cfg(target_os = "macos")]

@@ -7300,7 +7300,6 @@ pub mod bv2_impl {
         }
     }
 
-    pub use crate::AdditionalFile;
     pub use bun_core::cheap_prefix_normalizer;
 
     #[derive(Clone, Copy, Default)]
@@ -7683,7 +7682,6 @@ pub mod bv2_impl {
     pub use crate::BundleThread::{BuildResult, BundleV2Result, CompletionStruct, singleton};
 
     // re-exports
-    pub use crate::IndexStringMap::IndexStringMap;
     pub use bun_ast::Loc;
 
     // C++ binding for lazy metafile getter (defined in BundlerMetafile.cpp)

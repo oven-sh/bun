@@ -36,9 +36,6 @@ pub use bun_jsc::web_worker;
 pub use cookie_map::{CookieMap, CookieMapRef};
 pub use s3_client::S3Client;
 pub use s3_stat::S3Stat;
-pub use streams::{
-    H3ResponseSink, HTTPResponseSink, HTTPSResponseSink, HTTPServerWritable, NetworkSink,
-};
 
 #[path = "webcore/ObjectURLRegistry.rs"]
 pub mod object_url_registry;
@@ -54,19 +51,6 @@ pub(crate) use object_url_registry::ObjectURLRegistry;
 pub mod jsc {
     pub use crate::jsc::*;
     pub use bun_jsc::virtual_machine::VirtualMachine;
-
-    /// `jsc.Codegen.JS*` — forward the real `js_class_module!`-emitted modules
-    /// so any webcore call site that still spells the path
-    /// `crate::webcore::jsc::codegen::JS…` resolves to working C++ shims
-    /// instead of a no-op stub.
-    pub mod codegen {
-        pub use crate::jsc::codegen::*;
-        pub use bun_jsc::generated::{JSBlob, JSRequest, JSResponse};
-        // `JSFileSink` / `JSFileReader` are NOT `.classes.ts`-generated —
-        // FileSink uses the JSSink codegen (`FileSink__createObject` /
-        // `FileSink__fromJS` in JSSink.cpp) and FileReader uses
-        // `source_context_codegen!`; neither flows through `js_class_module!`.
-    }
 }
 
 // Forward the real enums so `webcore::node_types::X` and
@@ -296,7 +280,6 @@ pub mod prompt;
 
 #[path = "webcore/FormData.rs"]
 pub mod form_data;
-pub use form_data::{AsyncFormData, FormData};
 
 #[path = "webcore/ScriptExecutionContext.rs"]
 pub mod script_execution_context;
@@ -430,7 +413,6 @@ impl SinkHandle {
 pub enum DrainResult {
     Owned { list: Vec<u8>, size_hint: usize },
     EstimatedSize(usize),
-    Empty,
     Aborted,
 }
 

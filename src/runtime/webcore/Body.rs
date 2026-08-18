@@ -867,7 +867,7 @@ impl Value {
             drain_result = drain(locked.task.unwrap());
         }
 
-        if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
+        if matches!(drain_result, DrainResult::Aborted) {
             *self = Value::Null;
             return ReadableStream::empty(global_this);
         }
@@ -1487,7 +1487,7 @@ impl Value {
             drain_result = drain(locked.task.unwrap());
         }
 
-        if matches!(drain_result, DrainResult::Empty | DrainResult::Aborted) {
+        if matches!(drain_result, DrainResult::Aborted) {
             *self = Value::Null;
             return Ok(Value::Null);
         }

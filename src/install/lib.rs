@@ -304,7 +304,6 @@ pub use repository::{Repository, RepositoryExt};
 pub use resolution::Tag as ResolutionTag;
 
 // Real types — previously shadowed by inline ZST stubs in this file.
-pub use _folder_resolver::FolderResolution;
 pub use isolated_install::Store;
 pub use lifecycle_script_runner::LifecycleScriptSubprocess;
 pub use network_task::NetworkTask;
@@ -313,7 +312,6 @@ pub use package_manager_real::security_scanner::SecurityScanSubprocess;
 pub use package_manager_task::Task;
 pub use package_manifest_map::PackageManifestMap;
 pub use patch_install::PatchTask;
-pub use postinstall_optimizer::PostinstallOptimizer;
 pub use tarball_stream::TarballStream;
 
 // PackageManager + its associated types — re-exported from the file-backed

@@ -3075,8 +3075,7 @@ where
                         readable_stream::Source::Blob(_)
                         | readable_stream::Source::File(_)
                         // These are the common scenario:
-                        | readable_stream::Source::JavaScript
-                        | readable_stream::Source::Direct => {
+                        | readable_stream::Source::JavaScript => {
                             if let Some(resp) = this.resp.get() {
                                 let mut pair = StreamPair { stream, this };
                                 resp.run_corked_with_type(Self::do_render_stream, &raw mut pair);

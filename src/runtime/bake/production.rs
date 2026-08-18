@@ -1363,9 +1363,8 @@ extern "C" fn BakeProdResolve(
 /// to enqueue the entry points.
 ///
 /// Canonical definition lives in `bun_bundler::bake_types::production` (lower
-/// tier) so the bundler and runtime share ONE nominal type. Re-exported here
-/// for `bake::production::EntryPointMap` callers.
-pub use bun_bundler::bake_types::production::EntryPointMap;
+/// tier) so the bundler and runtime share ONE nominal type.
+pub(crate) use bun_bundler::bake_types::production::EntryPointMap;
 use bun_bundler::bake_types::production::{EntryPointHashMap, InputFile};
 
 impl framework_router::InsertionHandler for EntryPointMap {
@@ -1624,7 +1623,7 @@ extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString
 /// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
-pub struct TypeAndFlags(i32);
+pub(crate) struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
     pub(crate) const fn new(ty: u8, no_client: bool) -> Self {

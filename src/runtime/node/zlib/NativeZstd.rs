@@ -1,4 +1,4 @@
-pub use _impl::{Context, NativeZstd};
+pub use _impl::NativeZstd;
 
 mod _impl {
     use core::cell::Cell;

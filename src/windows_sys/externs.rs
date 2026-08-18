@@ -882,14 +882,6 @@ pub mod kernel32 {
         pub fn GetExitCodeProcess(hProcess: HANDLE, lpExitCode: *mut DWORD) -> BOOL;
         /// `FlushFileBuffers` — fsync(2)-equivalent for HANDLE-backed files.
         pub fn FlushFileBuffers(hFile: HANDLE) -> BOOL;
-        /// `SetFileTime` (`fileapi.h`). Any of the three `FILETIME` pointers
-        /// may be null to leave that timestamp unchanged.
-        pub fn SetFileTime(
-            hFile: HANDLE,
-            lpCreationTime: *const FILETIME,
-            lpLastAccessTime: *const FILETIME,
-            lpLastWriteTime: *const FILETIME,
-        ) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,

@@ -464,10 +464,9 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
     return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
   };
-  // m_<fn> becomes the executable's name (fn.name). m_<fn>PrivateName keys the
-  // `$<fn>` global of @internal files, so it must be the symbol BunBuiltinNames owns.
   const initializeNames = (fn: BundledBuiltin, internal: boolean) => {
     if (internal) {
+      // The private name keys the `$<fn>` global, so it has to be the BunBuiltinNames symbol.
       return [`m_${fn.name}(builtinNames.${fn.name}PublicName())`, `m_${fn.name}PrivateName(${privateName(fn.name)})`];
     }
     return [`m_${fn.name}(JSC::Identifier::fromString(vm, "${fn.name}"_s))`];

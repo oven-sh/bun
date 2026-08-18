@@ -1763,6 +1763,26 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  test("subscribe() with a channel of the wrong type throws before the fresh client dials", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`);
+    const probe = new RedisClient(`redis://127.0.0.1:${port}`);
+    try {
+      expect(() => client.subscribe(123 as never, () => {})).toThrow(
+        "Expected channel to be a string or array for 'subscribe'.",
+      );
+      // A dial made by the call above is ahead of the probe's in the stub's
+      // accept queue, so it has been counted by the time the probe is answered.
+      await probe.connect();
+      expect(fake.connections).toBe(1);
+    } finally {
+      client.close();
+      probe.close();
+      fake.server.close();
+    }
+  });
+
   test("the process exits after subscribe() is rejected by a failed client", async () => {
     const fake = helloServer();
     const port = await fake.listen();

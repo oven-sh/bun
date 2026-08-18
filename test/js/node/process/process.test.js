@@ -1346,20 +1346,20 @@ describe.concurrent(() => {
          process.nextTick(() => order.push("tick"));
          Promise.resolve().then(() => order.push("microtask"));
          const out = process.stdout;
-         const same = out === process.stdout && process.stdin === process.stdin;
+         const same = out === process.stdout && process.stdin === process.stdin && process.stderr === process.stderr;
          const fake = { write() {} };
-         process.stderr = fake;
-         const assigned = process.stderr === fake;
+         const assigned = ["stdin", "stdout", "stderr"].every(name => (process[name] = fake, process[name] === fake));
          process.nextTick = 1;
-         setImmediate(() => out.write(JSON.stringify({ same, assigned, nextTick: process.nextTick, order: order.sort(), release: "release" in process }) + "\\n"));`,
+         setImmediate(() => out.write(JSON.stringify({ same, assigned, nextTick: process.nextTick, order, release: "release" in process }) + "\\n"));`,
       ],
       env: bunEnv,
       stderr: "inherit",
     });
-    expect(await proc.stdout.text()).toBe(
-      JSON.stringify({ same: true, assigned: true, nextTick: 1, order: ["microtask", "tick"], release: false }) + "\n",
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      JSON.stringify({ same: true, assigned: true, nextTick: 1, order: ["tick", "microtask"], release: false }) + "\n",
     );
-    expect(await proc.exited).toBe(0);
+    expect(exitCode).toBe(0);
   });
 
   it("dlopen args parsing", () => {

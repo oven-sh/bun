@@ -59,8 +59,7 @@ fn create_buffer_with_ctx(
     }
 }
 
-// ── C++ put helpers (ZigGeneratedCode.cpp); each installs a host function that
-// forwards to the matching `*__slowpath` export in ffi/mod.rs ──
+// ── Put helpers from ZigGeneratedCode.cpp; each installs a host fn over its `*__slowpath` export ──
 #[allow(non_snake_case)]
 unsafe extern "C" {
     fn FFI__ptr__put(global: *mut JSGlobalObject, value: JSValue);

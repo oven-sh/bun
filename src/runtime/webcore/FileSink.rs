@@ -286,14 +286,9 @@ pub(crate) extern "C" fn Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(
     }
 }
 
-/// `constructStdioWriteStream` just created a `process.stdout`/`process.stderr`
-/// sink. Under `bun test --isolate` each test file's fresh global re-creates
-/// these lazily over a new dup of the stdio fd (registered with the event
-/// loop), and nothing ends the outgoing file's sink at the global swap — the
-/// dups and their poll registrations accumulate per file, and a stale epoll
-/// entry whose fd number gets reused over the same pipe makes a later
-/// registration fail with EEXIST. Track the sink so
-/// `stop_active_handles_for_test_isolation` ends it at the swap.
+/// Registers a just-created `process.stdout`/`process.stderr` sink so the
+/// `--isolate` swap ends it. Each isolate global dups the stdio fd anew; an
+/// unclosed dup leaks its epoll registration (EEXIST on fd-number reuse).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
     global: &JSGlobalObject,
@@ -317,15 +312,12 @@ pub(crate) extern "C" fn Bun__trackProcessStdioSinkForTestIsolation(
 }
 
 impl FileSink {
-    /// Ends a sink tracked by `ActiveHandle::ProcessStdioSink` (the
-    /// `--isolate` global swap or VM teardown), flushing buffered output,
-    /// closing the dup'd fd with its poll registration, and releasing the
-    /// registration's +1.
+    /// Ends a sink tracked by `ActiveHandle::ProcessStdioSink` and releases
+    /// the registration's +1.
     ///
     /// # Safety
     /// `this` must be the canonical live `*mut FileSink` whose registration
-    /// ref is still held; it must not be used after the call, which may free
-    /// it.
+    /// ref is still held; the call may free it.
     pub(crate) unsafe fn stop_tracked_stdio_sink(this: *mut FileSink) {
         // SAFETY: caller contract — the registry's +1 keeps `this` live until
         // the trailing `deref`, which is its last use.

@@ -133,10 +133,9 @@ pub(crate) enum ActiveHandle {
     Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
     /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
     DnsResolver(ptr::NonNull<crate::dns_jsc::Resolver>),
-    /// A `process.stdout`/`process.stderr` FileSink under `bun test --isolate`:
-    /// each isolate global lazily re-creates it over a fresh dup of the stdio
-    /// fd, so the swap must end the outgoing one (closing the dup and its
-    /// poll registration). Only registered when isolation is enabled.
+    /// A `process.stdout`/`process.stderr` FileSink, registered only under
+    /// `bun test --isolate`, where each global dups the stdio fd anew and the
+    /// swap must close the outgoing dup and its poll registration.
     ProcessStdioSink(ptr::NonNull<crate::webcore::FileSink>),
 }
 

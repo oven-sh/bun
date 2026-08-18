@@ -101,8 +101,6 @@ pub struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
-    /// Fail with the stack overflow error instead of returning the truncated
-    /// output of a value deeper than the native stack allows.
     pub(crate) can_throw_stack_overflow: bool,
 }
 
@@ -323,8 +321,6 @@ pub struct Formatter<'a> {
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
     stack_check: StackCheck,
-    /// `stack_check` cut the walk short (and set `failed`, which makes the
-    /// rest of the walk unwind without printing).
     hit_stack_limit: bool,
 }
 
@@ -345,9 +341,7 @@ impl<'a> Formatter<'a> {
         }
     }
 
-    /// Thrown once the walk has unwound rather than where the limit was hit,
-    /// so it does not depend on the C++ property/entry walks in between (whose
-    /// callbacks cannot return an error) carrying a pending exception back out.
+    /// Deferred to here because the C++ property walks drop exceptions thrown from their callbacks.
     fn finish(&self, options: FormatOptions) -> JsResult<()> {
         if self.hit_stack_limit && options.can_throw_stack_overflow {
             return Err(self.global_this.throw_stack_overflow());

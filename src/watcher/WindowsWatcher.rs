@@ -381,10 +381,12 @@ impl WindowsWatcher {
     }
 
     pub(crate) fn stop(&mut self) {
-        // SAFETY: handles were opened in init() and are valid until stop() is called once.
-        unsafe {
-            w::CloseHandle(self.watcher.dir_handle);
-            w::CloseHandle(self.iocp);
+        for handle in [&mut self.watcher.dir_handle, &mut self.iocp] {
+            if *handle != w::INVALID_HANDLE_VALUE {
+                // SAFETY: handle was opened in init() and is closed exactly once here.
+                unsafe { w::CloseHandle(*handle) };
+                *handle = w::INVALID_HANDLE_VALUE;
+            }
         }
     }
 }

@@ -306,10 +306,10 @@ impl Watcher {
             }
         };
         if free {
-            // watchlist freed by Drop on Box
             // SAFETY: this was heap-allocated by caller of init(); no borrow of it
             // is live here.
-            drop(unsafe { bun_core::heap::take(this) });
+            let mut me = unsafe { bun_core::heap::take(this) };
+            me.platform.stop();
         }
     }
 

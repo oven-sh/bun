@@ -876,7 +876,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     });
     expect(
       (
-        await bunRun(path.join(tmp, "index.ts"), {
+        await bunRun(path.join(String(tmp), "index.ts"), {
           NODE_ENV: undefined,
           YOLO: "boo",
         })
@@ -892,7 +892,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     });
     expect(
       (
-        await bunRun(path.join(tmp, "index.ts"), {
+        await bunRun(path.join(String(tmp), "index.ts"), {
           NODE_ENV: "production",
           YOLO: "boo",
         })
@@ -908,7 +908,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
     });
     expect(
       (
-        await bunRun(path.join(tmp, "index.ts"), {
+        await bunRun(path.join(String(tmp), "index.ts"), {
           NODE_ENV: "buh",
           YOLO: "boo",
         })
@@ -925,7 +925,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
 });`,
     });
     expect(
-      bunTest(path.join(tmp, "index.test.ts"), {
+      bunTest(path.join(String(tmp), "index.test.ts"), {
         YOLO: "boo",
       }).stdout,
     ).toBe(`bun test ${Bun.version_with_sha}\n` + "test\ndevelopment woo!");
@@ -940,7 +940,7 @@ console.log(process.env.NODE_ENV, process.env.YOLO);`,
 });`,
     });
     expect(
-      bunTest(path.join(tmp, "index.test.ts"), {
+      bunTest(path.join(String(tmp), "index.test.ts"), {
         YOLO: "boo",
         NODE_ENV: "production",
       }).stdout,
@@ -955,7 +955,7 @@ test("my test", () => {
   console.log(dynamic().NODE_ENV);
 });`,
     });
-    expect(bunTest(path.join(tmp, "index.test.ts"), {}).stdout).toBe(
+    expect(bunTest(path.join(String(tmp), "index.test.ts"), {}).stdout).toBe(
       `bun test ${Bun.version_with_sha}\n` + "test\nproduction",
     );
   });
@@ -968,7 +968,7 @@ test("my test", () => {
   console.log(dynamic().NODE_ENV);
 });`,
     });
-    expect(bunTest(path.join(tmp, "index.test.ts"), { NODE_ENV: "development" }).stdout).toBe(
+    expect(bunTest(path.join(String(tmp), "index.test.ts"), { NODE_ENV: "development" }).stdout).toBe(
       `bun test ${Bun.version_with_sha}\n` + "development\nproduction",
     );
   });
@@ -983,7 +983,7 @@ process.env.NODE_ENV = "production";
 console.log(dynamic().NODE_ENV);
 `,
   });
-  expect((await bunRun(path.join(tmp, "index.ts"), {})).stdout).toBe("undefined\nundefined\nproduction");
+  expect((await bunRun(path.join(String(tmp), "index.ts"), {})).stdout).toBe("undefined\nundefined\nproduction");
 });
 
 test("NODE_ENV default is not propogated in bun run", () => {
@@ -1169,8 +1169,8 @@ test.skipIf(!canUseRunuser)("process.env is preserved when cwd lacks read permis
     "noread/.keep": "",
   });
 
-  const noreadDir = path.join(dir, "noread");
-  const scriptPath = path.join(dir, "script.ts");
+  const noreadDir = path.join(String(dir), "noread");
+  const scriptPath = path.join(String(dir), "script.ts");
 
   // Allow "nobody" to traverse the temp dir and read the script. Under
   // restrictive umasks the temp files can default to 0o640 which nobody
@@ -1227,7 +1227,7 @@ test.skipIf(!isASAN || isWindows)(".env with a huge lying st_size does not abort
     "app.js": `console.log("reached user code");`,
   });
   // 1 TiB sparse `.env`: fstat reports 2**40 bytes, nothing is actually stored.
-  fs.truncateSync(path.join(dir, ".env"), 2 ** 40);
+  fs.truncateSync(path.join(String(dir), ".env"), 2 ** 40);
 
   await using proc = Bun.spawn({
     cmd: [bunExe(), "app.js"],

@@ -7,7 +7,7 @@ test("delete() and stat() should work with unicode paths", async () => {
   await using dir = tempDir("delete-stat-unicode-path", {
     "another-file.txt": "HEY",
   });
-  const filename = join(dir, "🌟.txt");
+  const filename = join(String(dir), "🌟.txt");
 
   expect(async () => {
     await Bun.file(filename).delete();
@@ -29,7 +29,7 @@ test("writer.end() should not close the fd if it does not own the fd", async () 
   await using dir = tempDir("writer-end-fd", {
     "tmp.txt": "HI",
   });
-  const filename = join(dir, "tmp.txt");
+  const filename = join(String(dir), "tmp.txt");
 
   for (let i = 0; i < 30; i++) {
     const fileHandle = await fsPromises.open(filename, "w", 0o666);
@@ -67,7 +67,7 @@ test("Bun.write() errors include async stack frames", async () => {
   // Windows. Bun.write recursively creates directories, so a plain
   // /nonexistent-path/ would succeed on Windows where / is the drive root.
   await using dir = tempDir("bun-write-async-stack", { "blocker.txt": "x" });
-  const badPath = join(dir, "blocker.txt", "cannot-write.txt");
+  const badPath = join(String(dir), "blocker.txt", "cannot-write.txt");
   // Bun.write uses a sync fast path for inputs under 256KB on POSIX — use
   // 512KB to force the async (threadpool) path so we're actually testing the
   // rejected-from-native-callback stack attachment.
@@ -140,7 +140,7 @@ test("Bun.file().json() with UTF-8 BOM does not free an interior pointer", async
   });
 
   await using proc = Bun.spawn({
-    cmd: [bunExe(), join(dir, "read.js"), dir],
+    cmd: [bunExe(), join(String(dir), "read.js"), dir],
     env: bunEnv,
     stdout: "pipe",
     stderr: "pipe",

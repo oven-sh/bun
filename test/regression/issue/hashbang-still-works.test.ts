@@ -32,7 +32,7 @@ describe.concurrent("hashbang-still-works", () => {
     // Using Bun.build to exercise the lexer directly
     try {
       await Bun.build({
-        entrypoints: [path.join(dir, "single-hash.js")],
+        entrypoints: [path.join(String(dir), "single-hash.js")],
         target: "node",
       });
       expect.unreachable();

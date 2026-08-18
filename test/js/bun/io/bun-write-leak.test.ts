@@ -12,8 +12,8 @@ test.concurrent(
       "out.bin": "here",
     });
 
-    const dest = path.join(dir, "out.bin");
-    expect(await bunRun([path.join(dir, "bun-write-leak-fixture.js"), dest])).toSpawn();
+    const dest = path.join(String(dir), "out.bin");
+    expect(await bunRun([path.join(String(dir), "bun-write-leak-fixture.js"), dest])).toSpawn();
   },
   30 * 1000,
 );

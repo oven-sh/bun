@@ -9,12 +9,12 @@ test("minifying new Array(if (0) 1 else 2) works", async () => {
   });
 
   await build({
-    entrypoints: [join(testDir, "entry.js")],
+    entrypoints: [join(String(testDir), "entry.js")],
     minify: true,
-    outdir: join(testDir, "outdir"),
+    outdir: join(String(testDir), "outdir"),
   });
 
-  expect(await file(join(testDir, "outdir/entry.js")).text()).toMatchInlineSnapshot(`
+  expect(await file(join(String(testDir), "outdir/entry.js")).text()).toMatchInlineSnapshot(`
     "console.log(Array(Math.random()>-1?1:2));
     "
   `);

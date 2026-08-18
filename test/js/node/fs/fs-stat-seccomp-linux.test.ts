@@ -189,9 +189,9 @@ describe.skipIf(!isLinux)("fs.stat seccomp statx fallback", () => {
       await using targetDir = tempDir("stat-seccomp-target", { "file.txt": "hello" });
       // symlink created here rather than via tempDirWithFiles (which only
       // supports regular files).
-      symlinkSync("file.txt", join(targetDir, "link.txt"));
+      symlinkSync("file.txt", join(String(targetDir), "link.txt"));
 
-      const out = await runUnderSeccomp(helperBin, EPERM, c.snippet(c.target(targetDir)));
+      const out = await runUnderSeccomp(helperBin, EPERM, c.snippet(c.target(String(targetDir))));
       if (out == null) {
         console.warn(`SKIP fs.${c.name} seccomp: seccomp not permitted in this environment`);
         return;

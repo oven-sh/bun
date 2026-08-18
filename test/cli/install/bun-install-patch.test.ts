@@ -557,7 +557,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         },
       };
 
-      await Bun.write(join(filedir, "package.json"), JSON.stringify(pkgjsonWithPatch));
+      await Bun.write(join(String(filedir), "package.json"), JSON.stringify(pkgjsonWithPatch));
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install", "--linker=hoisted"],
         env: bunEnv,
@@ -604,7 +604,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      const patchPath = join(String(filedir), relativePatchPath!);
 
       // Edit the patched package
       const indexPath = join(patchPath, "index.js");
@@ -627,11 +627,11 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(commitStderrText).not.toContain("panic:");
 
       // Verify patch file was created
-      const patchFile = join(filedir, "patches", "is-even@1.0.0.patch");
+      const patchFile = join(String(filedir), "patches", "is-even@1.0.0.patch");
       expect(await Bun.file(patchFile).exists()).toBe(true);
 
       // Verify package.json was updated
-      const pkgJson = await Bun.file(join(filedir, "package.json")).json();
+      const pkgJson = await Bun.file(join(String(filedir), "package.json")).json();
       expect(pkgJson.patchedDependencies).toEqual({
         "is-even@1.0.0": "patches/is-even@1.0.0.patch",
       });
@@ -667,7 +667,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      const patchPath = join(String(filedir), relativePatchPath!);
 
       // Edit the patched package
       const indexPath = join(patchPath, "index.js");
@@ -720,7 +720,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      const patchPath = join(String(filedir), relativePatchPath!);
 
       // Create a new index.js in the patched package
       const indexPath = join(patchPath, "index.js");
@@ -745,7 +745,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
 
       // Update index.ts to actually use the patched module
       await Bun.write(
-        join(filedir, "index.ts"),
+        join(String(filedir), "index.ts"),
         /* ts */ `import hlsDl from '@zackradisic/hls-dl'; console.log(hlsDl());`,
       );
 
@@ -784,7 +784,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      const patchPath = join(String(filedir), relativePatchPath!);
 
       // Edit the patched package
       const indexPath = join(patchPath, "index.js");
@@ -807,13 +807,15 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(commitStderrText).not.toContain("panic:");
 
       // Verify root package.json was updated
-      const rootPkgJson = await Bun.file(join(filedir, "package.json")).json();
+      const rootPkgJson = await Bun.file(join(String(filedir), "package.json")).json();
       expect(rootPkgJson.patchedDependencies).toEqual({
         "is-even@1.0.0": "patches/is-even@1.0.0.patch",
       });
 
       // Run from workspace package to verify patch was applied
-      const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(patchEnv).cwd(join(filedir, "packages", "app"));
+      const { stdout, stderr } = await $`${bunExe()} run index.ts`
+        .env(patchEnv)
+        .cwd(join(String(filedir), "packages", "app"));
       expect(stderr.toString()).toBe("");
       expect(stdout.toString()).toContain("WORKSPACE PATCH with isolated!");
     });
@@ -841,7 +843,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath).toBeTruthy();
-      const patchPath = join(filedir, relativePatchPath!);
+      const patchPath = join(String(filedir), relativePatchPath!);
 
       const indexPath = join(patchPath, "index.js");
       const originalContent = await Bun.file(indexPath).text();
@@ -854,7 +856,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       await $`${bunExe()} patch --commit '${relativePatchPath}'`.env(patchEnv).cwd(filedir);
 
       // Delete node_modules and reinstall with isolated linker
-      rmSync(join(filedir, "node_modules"), { force: true, recursive: true });
+      rmSync(join(String(filedir), "node_modules"), { force: true, recursive: true });
       await $`${bunExe()} install --linker=isolated`.env(patchEnv).cwd(filedir);
 
       // Verify patch is still applied
@@ -892,7 +894,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput1.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput1.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath1).toBeTruthy();
-      const patchPath1 = join(filedir, relativePatchPath1!);
+      const patchPath1 = join(String(filedir), relativePatchPath1!);
 
       const indexPath1 = join(patchPath1, "index.js");
       const originalContent1 = await Bun.file(indexPath1).text();
@@ -917,7 +919,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
         patchOutput2.match(/To patch .+, edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim() ||
         patchOutput2.match(/edit the following folder:\s*\n\s*(.+)/)?.[1]?.trim();
       expect(relativePatchPath2).toBeTruthy();
-      const patchPath2 = join(filedir, relativePatchPath2!);
+      const patchPath2 = join(String(filedir), relativePatchPath2!);
 
       const indexPath2 = join(patchPath2, "index.js");
       const originalContent2 = await Bun.file(indexPath2).text();
@@ -942,7 +944,7 @@ index 832d92223a9ec491364ee10dcbe3ad495446ab80..7e079a817825de4b8c3d01898490dc7e
       expect(stdout.toString()).toContain("is-odd PATCHED with isolated!");
 
       // Verify package.json has both patches
-      const pkgJson = await Bun.file(join(filedir, "package.json")).json();
+      const pkgJson = await Bun.file(join(String(filedir), "package.json")).json();
       expect(pkgJson.patchedDependencies).toEqual({
         "is-even@1.0.0": "patches/is-even@1.0.0.patch",
         "is-odd@3.0.1": "patches/is-odd@3.0.1.patch",
@@ -983,7 +985,7 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: filedir,
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-with-patch") },
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(filedir), "cache-with-patch") },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -991,13 +993,13 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
       expect(stderr).not.toContain("error:");
       expect(exitCode).toBe(0);
     }
-    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(true);
-    expect(await Bun.file(join(filedir, "bun.lock")).text()).toContain("patchedDependencies");
+    expect(await Bun.file(join(String(filedir), "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(true);
+    expect(await Bun.file(join(String(filedir), "bun.lock")).text()).toContain("patchedDependencies");
 
     // Remove the patch from package.json (bun.lock still references it) and
     // install again with an empty cache so the package has to be downloaded.
     await Bun.write(
-      join(filedir, "package.json"),
+      join(String(filedir), "package.json"),
       JSON.stringify({
         name: "remove-patch-test",
         dependencies: {
@@ -1013,7 +1015,7 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
       await using proc = Bun.spawn({
         cmd: [bunExe(), "install"],
         cwd: filedir,
-        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(filedir, "cache-empty") },
+        env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(String(filedir), "cache-empty") },
         stdout: "pipe",
         stderr: "pipe",
       });
@@ -1023,12 +1025,12 @@ index 0000000000000000000000000000000000000000..2f9a147b6e5d17254f1bfce0d4e109a2
     }
 
     // The package is reinstalled without the patch.
-    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "package.json")).json()).toMatchObject({
+    expect(await Bun.file(join(String(filedir), "node_modules", "is-odd", "package.json")).json()).toMatchObject({
       name: "is-odd",
       version: "3.0.1",
     });
-    expect(await Bun.file(join(filedir, "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
-    expect(await Bun.file(join(filedir, "bun.lock")).text()).not.toContain("patchedDependencies");
+    expect(await Bun.file(join(String(filedir), "node_modules", "is-odd", "bun-patch-test.txt")).exists()).toBe(false);
+    expect(await Bun.file(join(String(filedir), "bun.lock")).text()).not.toContain("patchedDependencies");
   });
 });
 

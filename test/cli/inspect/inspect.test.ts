@@ -483,12 +483,12 @@ test.todo("junit reporter", async () => {
       });
     `,
   });
-  const path = randomSocketPathFn(tempdir)();
+  const path = randomSocketPathFn(String(tempdir))();
   let { resolve, reject, promise } = Promise.withResolvers();
   const [socket, subprocess] = await Promise.all([
     connect(`unix://${path}`, resolve),
     spawn({
-      cmd: [bunExe(), "--inspect-wait=unix:" + path, "test", join(tempdir, "a.test.js")],
+      cmd: [bunExe(), "--inspect-wait=unix:" + path, "test", join(String(tempdir), "a.test.js")],
       env: bunEnv,
       stdout: "inherit",
       stderr: "inherit",

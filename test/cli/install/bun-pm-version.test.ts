@@ -692,8 +692,8 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(await Bun.file(join(testDir1, "lifecycle.log")).exists()).toBe(true);
-      const logContent = await Bun.file(join(testDir1, "lifecycle.log")).text();
+      expect(await Bun.file(join(String(testDir1), "lifecycle.log")).exists()).toBe(true);
+      const logContent = await Bun.file(join(String(testDir1), "lifecycle.log")).text();
       expect(logContent.trim()).toBe("step1\nstep2\nstep3");
 
       await using testDir2 = tempDir(`version-${i++}`, {
@@ -717,11 +717,11 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir2, "event.log")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir2, "script.log")).exists()).resolves.toBe(true);
+      expect(Bun.file(join(String(testDir2), "event.log")).exists()).resolves.toBe(true);
+      expect(Bun.file(join(String(testDir2), "script.log")).exists()).resolves.toBe(true);
 
-      const eventContent = await Bun.file(join(testDir2, "event.log")).text();
-      const scriptContent = await Bun.file(join(testDir2, "script.log")).text();
+      const eventContent = await Bun.file(join(String(testDir2), "event.log")).text();
+      const scriptContent = await Bun.file(join(String(testDir2), "script.log")).text();
 
       expect(eventContent.trim()).toBe("preversion");
       expect(scriptContent.trim()).toContain("echo $npm_lifecycle_event");
@@ -751,7 +751,7 @@ describe.concurrent("bun pm version", () => {
       expect(proc.exitCode).toBe(1);
       expect(await proc.stderr.text()).toContain('script "preversion" exited with code 1');
 
-      const packageJson = await Bun.file(join(testDir3, "package.json")).json();
+      const packageJson = await Bun.file(join(String(testDir3), "package.json")).json();
       expect(packageJson.version).toBe("1.0.0");
 
       await using testDir4 = tempDir(`version-${i++}`, {
@@ -777,10 +777,10 @@ describe.concurrent("bun pm version", () => {
         stdout: "ignore",
       }).exited;
 
-      expect(Bun.file(join(testDir4, "version-output.txt")).exists()).resolves.toBe(true);
-      expect(Bun.file(join(testDir4, "build")).exists()).resolves.toBe(false);
+      expect(Bun.file(join(String(testDir4), "version-output.txt")).exists()).resolves.toBe(true);
+      expect(Bun.file(join(String(testDir4), "build")).exists()).resolves.toBe(false);
 
-      const content = await Bun.file(join(testDir4, "version-output.txt")).text();
+      const content = await Bun.file(join(String(testDir4), "version-output.txt")).text();
       expect(content.trim()).toBe("built");
 
       await using testDir5 = tempDir(`version-${i++}`, {
@@ -807,10 +807,10 @@ describe.concurrent("bun pm version", () => {
       expect(code5).toBe(0);
       expect(output5.trim()).toBe("v1.0.1");
 
-      const packageJson5 = await Bun.file(join(testDir5, "package.json")).json();
+      const packageJson5 = await Bun.file(join(String(testDir5), "package.json")).json();
       expect(packageJson5.version).toBe("1.0.1");
 
-      expect(await Bun.file(join(testDir5, "ignored.log")).exists()).toBe(false);
+      expect(await Bun.file(join(String(testDir5), "ignored.log")).exists()).toBe(false);
     });
   });
 
@@ -844,7 +844,7 @@ describe.concurrent("bun pm version", () => {
 
       const { output, code } = await runCommand(
         [bunExe(), "pm", "version", "patch", "--no-git-tag-version"],
-        join(testDir, "src"),
+        join(String(testDir), "src"),
       );
 
       expect(code).toBe(0);

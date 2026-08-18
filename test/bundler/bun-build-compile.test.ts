@@ -188,10 +188,10 @@ server.close();`,
 
     expect(() =>
       Bun.build({
-        entrypoints: [join(dir, "index.js")],
+        entrypoints: [join(String(dir), "index.js")],
         compile: {
           target: "bun-invalid-platform",
-          outfile: join(dir, "invalid-app"),
+          outfile: join(String(dir), "invalid-app"),
         },
       }),
     ).toThrowErrorMatchingInlineSnapshot(`"Unknown compile target: bun-invalid-platform"`);

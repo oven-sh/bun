@@ -2024,11 +2024,11 @@ export class VerdaccioRegistry {
   ) {
     await rm(join(dirname(this.configPath), "htpasswd"), { force: true });
     await rm(join(this.packagesPath, "private-pkg-dont-touch"), { force: true });
-    const packageDir = tempDir("verdaccio-test-", opts.files ?? {});
+    const packageDir = String(tempDir("verdaccio-test-", opts.files ?? {}));
     const packageJson = join(packageDir, "package.json");
     await this.writeBunfig(packageDir, opts.bunfigOpts);
     this.users = {};
-    return { packageDir: String(packageDir), packageJson };
+    return { packageDir, packageJson };
   }
 
   async writeBunfig(dir: string, opts: BunfigOpts = {}) {

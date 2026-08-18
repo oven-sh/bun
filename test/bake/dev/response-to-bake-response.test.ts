@@ -39,7 +39,7 @@ test("Response -> import { Response } from 'bun:app' transform in server compone
 
   // Build with server components enabled for server-side
   const serverResult =
-    await Bun.$`${bunExe()} build ${path.join(dir, "server-component.js")} --target=bun --server-components`
+    await Bun.$`${bunExe()} build ${path.join(String(dir), "server-component.js")} --target=bun --server-components`
       .env(bunEnv)
       .text();
 
@@ -51,7 +51,7 @@ test("Response -> import { Response } from 'bun:app' transform in server compone
   expect(serverResult).toContain("import_bun_app.Response.render");
 
   // Build client component (should not have the transform)
-  const clientResult = await Bun.$`${bunExe()} build ${path.join(dir, "client-component.js")} --target=browser`
+  const clientResult = await Bun.$`${bunExe()} build ${path.join(String(dir), "client-component.js")} --target=browser`
     .env(bunEnv)
     .text();
 
@@ -88,7 +88,7 @@ test("Response import is added for global Response in various contexts", async (
     `,
   });
 
-  const result = await Bun.$`${bunExe()} build ${path.join(dir, "server.js")} --target=bun --server-components`
+  const result = await Bun.$`${bunExe()} build ${path.join(String(dir), "server.js")} --target=bun --server-components`
     .env(bunEnv)
     .text();
 
@@ -141,16 +141,17 @@ test("Response import is not added when Response is already imported or shadowed
     `,
   });
 
-  const result1 = await Bun.$`${bunExe()} build ${path.join(dir, "server.js")} --target=bun --server-components`
+  const result1 = await Bun.$`${bunExe()} build ${path.join(String(dir), "server.js")} --target=bun --server-components`
     .env(bunEnv)
     .text();
 
   // When Response is already imported from another source, no bun:app import should be added
   expect(result1).not.toContain('import { Response } from "bun:app"');
 
-  const result2 = await Bun.$`${bunExe()} build ${path.join(dir, "server2.js")} --target=bun --server-components`
-    .env(bunEnv)
-    .text();
+  const result2 =
+    await Bun.$`${bunExe()} build ${path.join(String(dir), "server2.js")} --target=bun --server-components`
+      .env(bunEnv)
+      .text();
 
   // Should preserve local variable
   expect(result2).toContain("return new CustomResponse");
@@ -196,7 +197,7 @@ test("Response import is NOT added in client components", async () => {
   });
 
   // Test 1: Client component - Response should NOT be transformed
-  const clientResult = await Bun.$`${bunExe()} build ${path.join(dir, "client-component.js")} --target=browser`
+  const clientResult = await Bun.$`${bunExe()} build ${path.join(String(dir), "client-component.js")} --target=browser`
     .env(bunEnv as any)
     .text();
 
@@ -209,7 +210,7 @@ test("Response import is NOT added in client components", async () => {
 
   // Test 2: Server component - Response SHOULD be transformed
   const serverResult =
-    await Bun.$`${bunExe()} build ${path.join(dir, "server-component.js")} --target=bun --server-components`
+    await Bun.$`${bunExe()} build ${path.join(String(dir), "server-component.js")} --target=bun --server-components`
       .env(bunEnv as any)
       .text();
 
@@ -234,7 +235,7 @@ test("Response import is added when Response is global, but not when shadowed", 
   });
 
   const serverResult =
-    await Bun.$`${bunExe()} build ${path.join(dir, "server-component.js")} --target=bun --server-components`
+    await Bun.$`${bunExe()} build ${path.join(String(dir), "server-component.js")} --target=bun --server-components`
       .env(bunEnv as any)
       .text();
 

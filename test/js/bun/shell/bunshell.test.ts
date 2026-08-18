@@ -1061,7 +1061,7 @@ booga"
 
     test.if(isPosix && !isRoot)("glob over an unreadable directory reports the real error", async () => {
       await using dir = tempDir("glob-eacces", { "placeholder.txt": "" });
-      const noaccess = join(dir, "noaccess").replaceAll("\\", "/");
+      const noaccess = join(String(dir), "noaccess").replaceAll("\\", "/");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
       try {
@@ -1288,7 +1288,7 @@ booga"
     // (e.g. EACCES, ELOOP) left the shell promise unresolved forever.
     test.if(isPosix && !isRoot)("cd with EACCES fails with exit code 1 instead of hanging", async () => {
       await using dir = tempDir("cd-eacces", { "placeholder.txt": "" });
-      const noaccess = join(dir, "noaccess");
+      const noaccess = join(String(dir), "noaccess");
       mkdirSync(noaccess);
       chmodSync(noaccess, 0o000);
       try {

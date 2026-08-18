@@ -102,11 +102,9 @@ pub mod options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// The only copy of the `bun pm` help text: `bun pm --help` prints it via
-// `CommandLineArguments::print_help`, and the bun_cli `PackageManagerCommand`
-// (bare `bun pm`, unknown subcommand) forwards there as well. The `exec()` body
-// remains in bun_cli (it depends on tier-6 ScanCommand / PackCommand etc. and is
-// the *consumer* of install, not a dependency).
+// The only copy of the `bun pm` help text. bun_cli's `PackageManagerCommand`
+// prints it through `CommandLineArguments::print_help` too; its `exec()` stays
+// in bun_cli, which consumes this crate.
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) struct PackageManagerCommand;
 

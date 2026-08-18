@@ -61,8 +61,6 @@
 #include "NodeVMScriptFetcher.h"
 #include "wtf/FileHandle.h"
 
-#include "../vm/SigintWatcher.h"
-
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/MicrotaskQueue.h"
 #include "JavaScriptCore/MicrotaskQueueInlines.h"
@@ -1103,10 +1101,7 @@ void NodeVMGlobalObject::destroy(JSCell* cell)
     static_cast<NodeVMGlobalObject*>(cell)->~NodeVMGlobalObject();
 }
 
-NodeVMGlobalObject::~NodeVMGlobalObject()
-{
-    SigintWatcher::get().unregisterGlobalObject(this);
-}
+NodeVMGlobalObject::~NodeVMGlobalObject() = default;
 
 void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject)
 {
@@ -1660,9 +1655,9 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
 
     JSValue optionsArg = callFrame->argument(1);
 
-    // Validate options argument
-    if (!optionsArg.isUndefined() && !optionsArg.isObject()) {
-        return ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
+    if (!optionsArg.isUndefined()) {
+        V::validateObject(scope, globalObject, optionsArg, "options"_s);
+        RETURN_IF_EXCEPTION(scope, {});
     }
 
     JSValue importer;
@@ -1941,12 +1936,9 @@ bool BaseVMOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& vm, JSC::
     bool any = false;
 
     if (!optionsArg.isUndefined()) {
-        if (optionsArg.isObject()) {
-            options = asObject(optionsArg);
-        } else {
-            auto _ = ERR::INVALID_ARG_TYPE(scope, globalObject, "options"_s, "object"_s, optionsArg);
-            return false;
-        }
+        V::validateObject(scope, globalObject, optionsArg, "options"_s);
+        RETURN_IF_EXCEPTION(scope, false);
+        options = asObject(optionsArg);
 
         auto filenameOpt = options->getIfPropertyExists(globalObject, builtinNames(vm).filenamePublicName());
         RETURN_IF_EXCEPTION(scope, false);
@@ -2080,15 +2072,14 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
     if (!optionsArg.isUndefined() && !optionsArg.isString()) {
         JSObject* options = asObject(optionsArg);
 
-        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateProduceCachedData(globalObject, vm, scope, options, this->produceCachedData))
             any = true;
-        }
+        // The validators return false both for "absent" and for "threw".
+        RETURN_IF_EXCEPTION(scope, false);
 
-        if (validateCachedData(globalObject, vm, scope, options, this->cachedData)) {
-            RETURN_IF_EXCEPTION(scope, false);
+        if (validateCachedData(globalObject, vm, scope, options, this->cachedData))
             any = true;
-        }
+        RETURN_IF_EXCEPTION(scope, false);
 
         JSValue parsingContextValue = options->getIfPropertyExists(globalObject, Identifier::fromString(vm, "parsingContext"_s));
         RETURN_IF_EXCEPTION(scope, {});

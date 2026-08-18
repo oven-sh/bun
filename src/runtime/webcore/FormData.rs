@@ -3,7 +3,7 @@
 use bun_core::{self, declare_scope, scoped_log};
 use bun_core::{ZigString, ZigStringSlice, strings};
 use bun_jsc::{
-    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult, JsTerminated,
+    AnyPromise, CallFrame, DOMFormData, JSGlobalObject, JSValue, JsError, JsResult,
     ZigStringJsc as _,
 };
 use bun_semver::{self, SlicedString};
@@ -25,23 +25,12 @@ pub use bun_core::form_data::{AsyncFormData, Encoding, get_boundary};
 /// JSC-touching extension on `AsyncFormData` (lives in this crate because it
 /// needs `JSGlobalObject` + `AnyPromise`).
 pub trait AsyncFormDataExt {
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated>;
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()>;
 }
 
 impl AsyncFormDataExt for AsyncFormData {
-    // Only a VM-termination error can escape
-    // (JS exceptions are routed into the promise rejection above).
-    fn to_js(
-        &self,
-        global: &JSGlobalObject,
-        data: &[u8],
-        promise: AnyPromise,
-    ) -> Result<(), JsTerminated> {
+    /// Parse errors are routed into the promise rejection; only settlement's own exception escapes.
+    fn to_js(&self, global: &JSGlobalObject, data: &[u8], promise: AnyPromise) -> JsResult<()> {
         if let Encoding::Multipart(b) = &self.encoding {
             if b.is_empty() {
                 scoped_log!(
@@ -162,7 +151,6 @@ pub(crate) fn from_multipart_data(global: &JSGlobalObject, frame: &CallFrame) ->
     match FormData::to_js(global, input, &encoding) {
         Ok(v) => Ok(v),
         Err(crate::Error::JSError) => Err(JsError::Thrown),
-        Err(crate::Error::JSTerminated) => Err(JsError::Terminated),
         Err(e) => Err(global.throw_error(e, "while parsing FormData")),
     }
 }

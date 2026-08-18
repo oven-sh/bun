@@ -8,14 +8,13 @@ use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};
 use crate::cli::Command;
 use crate::cli::filter_arg as FilterArg;
-use crate::cli::run_command::RunCommand;
+use crate::cli::run_command::{ConfigureEnvOptions, RunCommand};
 use bun_collections::StringHashMap;
 use bun_core::{Global, Output};
 use bun_core::{ZStr, strings};
 use bun_event_loop::EventLoopHandle;
 use bun_event_loop::MiniEventLoop::{self as MiniEventLoopMod, MiniEventLoop};
 use bun_io::{BufferedReader, ReadState};
-use bun_resolver::package_json::{IncludeDependencies, IncludeScripts};
 use bun_sys as sys;
 
 // The string fields below are owned boxes, except `combined` which is interned
@@ -45,6 +44,9 @@ struct ProcessInfo {
     // `to_process()` and `set_exit_handler` callers.
     ptr: *mut Process,
     status: Status,
+    start_time: Instant,
+    /// Set together with `status` when the exit arrives.
+    end_time: Option<Instant>,
 }
 
 // `state` is a backref into the owning `State` (which holds `handles: []ProcessHandle`),
@@ -67,9 +69,6 @@ pub(crate) struct ProcessHandle<'a> {
 
     process: Option<ProcessInfo>,
     options: SpawnOptions,
-
-    start_time: Option<Instant>,
-    end_time: Option<Instant>,
 
     remaining_dependencies: usize,
     dependents: Vec<*mut ProcessHandle<'a>>,
@@ -102,7 +101,7 @@ impl<'a> ProcessHandle<'a> {
             handle.config.combined.as_ptr().cast(),
             core::ptr::null(),
         ];
-        handle.start_time = Some(Instant::now());
+        let start_time = Instant::now();
         let spawned: spawn::SpawnProcessResult = 'brk: {
             // Get the envp with the PATH configured
             // There's probably a more optimal way to do this where you have a Vec shared
@@ -186,6 +185,8 @@ impl<'a> ProcessHandle<'a> {
         handle.process = Some(ProcessInfo {
             ptr: process,
             status: Status::Running,
+            start_time,
+            end_time: None,
         });
         // SAFETY: `process` was just allocated by `to_process` (heap::alloc);
         // sole owner until reaped, owner backref set before reap callback can fire.
@@ -272,8 +273,9 @@ bun_spawn::link_impl_ProcessExit! {
     FilterRunHandle for ProcessHandle<'static> => |this| {
         // The Process is never freed; the program exits when all scripts finish.
         on_process_exit(_process, status, _rusage) => {
-            (*this).process.as_mut().unwrap().status = status;
-            (*this).end_time = Some(Instant::now());
+            let info = (*this).process.as_mut().unwrap();
+            info.status = status;
+            info.end_time = Some(Instant::now());
             // Aborted runs finish on exit alone; their pending output is dropped.
             if !(*(*this).state.as_ptr()).aborted {
                 ProcessHandle::drain_and_close_pipes(this);
@@ -298,7 +300,7 @@ impl<'a> ProcessHandle<'a> {
 bun_io::impl_buffered_reader_parent! {
     FilterRunHandle for ProcessHandle<'a>;
     has_on_read_chunk = true;
-    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(chunk, has_more);
+    on_read_chunk   = |this, chunk, has_more| (*this).on_read_chunk(&chunk, has_more);
     on_reader_done  = |this| (*this).on_reader_done();
     on_reader_error = |this, err| (*this).on_reader_error(&err);
     loop_           = |this| (*this).loop_();
@@ -567,8 +569,8 @@ impl<'a> State<'a> {
                     }
                     Status::Exited(exited) => {
                         if exited.code == 0 {
-                            if let (Some(start), Some(end)) = (handle.start_time, handle.end_time) {
-                                let duration = end.duration_since(start);
+                            if let Some(end) = proc.end_time {
+                                let duration = end.duration_since(proc.start_time);
                                 let ms = duration.as_nanos() as f64 / 1_000_000.0;
                                 if ms > 1000.0 {
                                     write!(
@@ -786,85 +788,43 @@ pub(crate) fn run_scripts_with_filter(
     let _ = bun_resolver::fs::FileSystem::init(None)?;
     let fsinstance = bun_resolver::fs::FileSystem::get();
 
-    // these things are leaked because we are going to exit
-    // When --workspaces is set, we want to match all workspace packages
-    // Otherwise use the provided filters
-    // `FilterSet::init` takes `&[&[u8]]`; ctx.filters is
-    // `Vec<Box<[u8]>>` so build a borrowed-slice view.
-    let filters_to_use: Vec<&[u8]> = if ctx.workspaces {
-        // Use "*" as filter to match all packages in the workspace
-        vec![b"*".as_slice()]
-    } else {
-        ctx.filters.iter().map(|f| f.as_ref()).collect()
-    };
-
-    let filter_instance = FilterArg::FilterSet::init(&filters_to_use, fsinstance.top_level_dir)?;
-    let mut patterns: Vec<Box<[u8]>> = Vec::new();
-
-    // Find package.json at workspace root
-    let mut root_buf = bun_paths::PathBuffer::uninit();
-    let resolve_root = FilterArg::get_candidate_package_patterns(
-        // SAFETY: `ctx.log` is the process-static `Cli::LOG_`; CLI dispatch is single-threaded
-        // and no other `&mut Log` borrow is live for the duration of this call.
-        unsafe { ctx.log_mut() },
-        &mut patterns,
-        fsinstance.top_level_dir,
-        &mut root_buf,
-    )?;
-
     // TODO(refactor): out-param init — `configureEnvForRun` writes through the
     // out-param. Per PORTING.md this should be reshaped to
     // `RunCommand::configure_env_for_run(...) -> Result<Transpiler, _>`; until then
     // pass `&mut MaybeUninit<Transpiler>` (zeroed() is invalid: Transpiler is not #[repr(C)] POD).
     let mut this_transpiler = core::mem::MaybeUninit::<bun_bundler::Transpiler<'static>>::uninit();
-    let _ = RunCommand::configure_env_for_run(&mut *ctx, &mut this_transpiler, None, true, false)?;
+    let _ = RunCommand::configure_env_for_run(
+        &mut *ctx,
+        &mut this_transpiler,
+        None,
+        ConfigureEnvOptions {
+            log_errors: true,
+            store_root_fd: false,
+        },
+    )?;
     // SAFETY: configure_env_for_run fully initializes the out-param on Ok.
     let mut this_transpiler = unsafe { this_transpiler.assume_init() };
 
-    let mut package_json_iter = FilterArg::PackageFilterIterator::init(&patterns, resolve_root)?;
-    // defer package_json_iter.deinit() — handled by Drop
+    let selected = FilterArg::select_packages(
+        &*ctx,
+        &mut this_transpiler.resolver,
+        fsinstance.top_level_dir,
+    )?;
 
-    // Get list of packages that match the configuration
     let mut scripts: Vec<ScriptConfig> = Vec::new();
-    // var scripts = std.ArrayHashMap([]const u8, ScriptConfig).init(ctx.allocator);
-    while let Some(package_json_path) = package_json_iter.next()? {
-        let dirpath =
-            bun_paths::resolve_path::dirname::<bun_paths::platform::Auto>(&package_json_path);
-        let path = strings::without_trailing_slash(dirpath);
-
-        // When using --workspaces, skip the root package to prevent recursion
-        if ctx.workspaces && path == resolve_root {
-            continue;
-        }
-
-        let Some(pkgjson) = bun_resolver::PackageJSON::parse::<{ IncludeDependencies::Main }>(
-            &mut this_transpiler.resolver,
-            dirpath,
-            bun_sys::Fd::invalid(),
-            None,
-            IncludeScripts::IncludeScripts,
-        ) else {
-            bun_core::warn!(
-                "Failed to read {}, skipping this workspace package\n",
-                bun_core::fmt::quote(&*package_json_path),
-            );
+    for package in &selected.packages {
+        let path: &[u8] = &package.dir;
+        let Some(pkgscripts) = &package.json.scripts else {
             continue;
         };
-        let Some(pkgscripts) = &pkgjson.scripts else {
-            continue;
-        };
-
-        if !filter_instance.matches(path, &pkgjson.name) {
-            continue;
-        }
 
         let run_in_bun = ctx.debug.run_in_bun;
         let path_var: Vec<u8> = RunCommand::configure_path_for_run_with_package_json_dir(
             &mut *ctx,
-            dirpath,
+            path,
             &mut this_transpiler,
             None,
-            dirpath,
+            path,
             run_in_bun,
         )?;
 
@@ -910,8 +870,9 @@ pub(crate) fn run_scripts_with_filter(
             // SAFETY: interned[combined_len] == 0 (copied from `copy_script`).
             let combined = ZStr::from_buf(interned, combined_len);
 
-            let dep_source_buf = pkgjson.dependencies.source_buf;
-            let deps: Vec<Box<[u8]>> = pkgjson
+            let dep_source_buf = package.json.dependencies.source_buf;
+            let deps: Vec<Box<[u8]>> = package
+                .json
                 .dependencies
                 .map
                 .keys()
@@ -920,8 +881,8 @@ pub(crate) fn run_scripts_with_filter(
                 .collect();
 
             scripts.push(ScriptConfig {
-                package_json_path: package_json_path.clone(),
-                package_name: Box::<[u8]>::from(&pkgjson.name[..]),
+                package_json_path: package.package_json_path.clone(),
+                package_name: Box::<[u8]>::from(&package.json.name[..]),
                 script_name: Box::<[u8]>::from(*name),
                 script_content: Box::<[u8]>::from(&interned[0..len_command_only]),
                 combined,
@@ -943,7 +904,15 @@ pub(crate) fn run_scripts_with_filter(
                 (bstr::BStr::new(script_name),),
             );
         } else {
-            Output::err_generic("No packages matched the filter", ());
+            let patterns: Vec<&[u8]> = ctx.filters.iter().map(|f| &**f).collect();
+            Output::err_generic(
+                "{}",
+                (bstr::BStr::new(
+                    &bun_install::package_manager::workspace_selection::unmatched_message(
+                        &patterns,
+                    ),
+                ),),
+            );
         }
         Global::exit(1);
     }
@@ -1055,8 +1024,6 @@ pub(crate) fn run_scripts_with_filter(
                 stream: true,
                 ..Default::default()
             },
-            start_time: None,
-            end_time: None,
             remaining_dependencies: 0,
             dependents: Vec::new(),
             visit_state: VisitState::Unvisited,

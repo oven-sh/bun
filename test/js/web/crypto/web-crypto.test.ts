@@ -353,6 +353,60 @@ describe("Ed25519", () => {
       expect(privateKey.algorithm!.namedCurve).toBe(undefined);
     });
   });
+
+  describe("importKey", () => {
+    it("rejects a 64-byte JWK d whose trailing half is not the public key derived from the seed", async () => {
+      const { publicKey, privateKey } = (await crypto.subtle.generateKey("Ed25519", true, [
+        "sign",
+        "verify",
+      ])) as CryptoKeyPair;
+      const jwk = await crypto.subtle.exportKey("jwk", privateKey);
+      const seed = Buffer.from(jwk.d!, "base64url");
+      const pub = Buffer.from(jwk.x!, "base64url");
+      expect(seed.byteLength).toBe(32);
+      expect(pub.byteLength).toBe(32);
+
+      const outcome = (d: Buffer) =>
+        crypto.subtle.importKey("jwk", { ...jwk, d: d.toString("base64url") }, "Ed25519", true, ["sign"]).then(
+          key => (key instanceof CryptoKey ? "imported" : "other"),
+          e => `${e.name}: ${e.message}`,
+        );
+
+      expect({
+        mismatchedTrailingHalf: await outcome(Buffer.concat([seed, Buffer.alloc(32, 0)])),
+        oneBitOffTrailingHalf: await outcome(
+          Buffer.concat([seed, Buffer.from(pub.map((b, i) => (i === 0 ? b ^ 1 : b)))]),
+        ),
+        seedOnly: await outcome(seed),
+        seedWithDerivedPublicKey: await outcome(Buffer.concat([seed, pub])),
+      }).toEqual({
+        mismatchedTrailingHalf: "DataError: Invalid keyData",
+        oneBitOffTrailingHalf: "DataError: Invalid keyData",
+        seedOnly: "imported",
+        seedWithDerivedPublicKey: "imported",
+      });
+
+      const data = new TextEncoder().encode("hello ed25519");
+      const consistent = await crypto.subtle.importKey(
+        "jwk",
+        { ...jwk, d: Buffer.concat([seed, pub]).toString("base64url") },
+        "Ed25519",
+        true,
+        ["sign"],
+      );
+      const reexported = await crypto.subtle.exportKey("jwk", consistent);
+      expect({ d: reexported.d, x: reexported.x }).toEqual({ d: jwk.d, x: jwk.x });
+      expect(
+        await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", consistent, data), data),
+      ).toBe(true);
+
+      for (const cloned of [structuredClone(privateKey), structuredClone(consistent)]) {
+        expect(
+          await crypto.subtle.verify("Ed25519", publicKey, await crypto.subtle.sign("Ed25519", cloned, data), data),
+        ).toBe(true);
+      }
+    });
+  });
 });
 
 describe("ChaCha20-Poly1305 and AKP review fixes", () => {

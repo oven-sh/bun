@@ -38,11 +38,6 @@ pub struct Unaligned<T: Copy>(T);
 
 impl<T: Copy> Unaligned<T> {
     #[inline(always)]
-    pub const fn new(value: T) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
     pub fn get(self) -> T {
         // `self` is by-value (already moved into an aligned local), so a plain
         // field read is fine; the `packed` repr only affects in-place borrows.
@@ -601,8 +596,7 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` / `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
-// `Default`.
+// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
@@ -635,13 +629,6 @@ impl<T> Mutex<T> {
             Err(std::sync::TryLockError::WouldBlock) => None,
         }
     }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 impl<T: Default> Default for Mutex<T> {
@@ -673,13 +660,6 @@ impl<T> RwLock<T> {
     pub fn write(&self) -> RwLockWriteGuard<'_, T> {
         self.0
             .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
@@ -4165,6 +4145,9 @@ fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
+            if crate::ffi::errno() == libc::ENOENT {
+                return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
+            }
             return Err(crate::CrateError::Unexpected);
         }
         Ok(libc::strlen(p))
@@ -4602,6 +4585,8 @@ pub mod spawn_ffi {
         pub gid: u32,
         pub set_uid: bool,
         pub set_gid: bool,
+        /// Linux: directory fd of the cgroup the child starts in. -1 = unset.
+        pub cgroup_fd: c_int,
     }
 
     impl Default for BunSpawnRequest {
@@ -4617,6 +4602,7 @@ pub mod spawn_ffi {
                 gid: 0,
                 set_uid: false,
                 set_gid: false,
+                cgroup_fd: -1,
             }
         }
     }
@@ -4915,11 +4901,6 @@ impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
     const NS_PER_S: i64 = crate::time::NS_PER_S as i64;
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
-
-    #[inline]
-    pub const fn new(sec: i64, nsec: i64) -> Self {
-        Self { sec, nsec }
-    }
 
     #[inline]
     pub fn eql(&self, other: &Timespec) -> bool {

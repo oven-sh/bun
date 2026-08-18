@@ -22,9 +22,9 @@
 
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depSourceDir } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "ac93f352e3e4c58db88cc941aecd19a710391011";
+const BORINGSSL_COMMIT = "37fae71009c3a577de38c6796cdee7bdbf6304e1";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -35,11 +35,6 @@ export const boringssl: Dependency = {
     repo: "oven-sh/boringssl",
     commit: BORINGSSL_COMMIT,
   }),
-
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  patches: ["patches/boringssl/require-memory-hooks.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
@@ -53,8 +48,12 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
-        // See `patches:` above. Off under ASAN so BoringSSL allocs stay on the
-        // intercepted libc heap on Mach-O/COFF instead of routing to mimalloc.
+        // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
+        // on every object format, not just as ELF weak symbols, and routes the
+        // sites upstream keeps on libc malloc (TLS record buffers, error queue,
+        // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
+        // defines all of them. Off under ASAN so BoringSSL stays on the
+        // intercepted libc heap instead of mimalloc.
         ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,
@@ -85,6 +84,10 @@ export const boringssl: Dependency = {
         "-gcv8",
         `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
       ],
+      // With the hooks on, nothing in BoringSSL may allocate from libc any
+      // more (mem.cc's fallback is dead code the compiler drops); under ASAN
+      // the fallbacks are live and libc is the point.
+      ...(!cfg.asan && { forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS } }),
     };
     return spec;
   },

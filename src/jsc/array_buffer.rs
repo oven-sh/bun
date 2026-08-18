@@ -31,6 +31,8 @@ pub struct ArrayBuffer {
     /// True for resizable ArrayBuffer or growable SharedArrayBuffer — borrowing
     /// a slice from one is unsafe (it can shrink/reallocate underneath you).
     pub resizable: bool,
+    /// Set by [`JSValue::as_pinned_arraybuffer`] when an ArrayBuffer was actually pinned (as opposed to a bufferless view merely held); [`ArrayBuffer::unpin`] is a no-op otherwise.
+    pub pinned: bool,
 }
 
 impl Default for ArrayBuffer {
@@ -43,6 +45,7 @@ impl Default for ArrayBuffer {
             typed_array_type: JSType::Cell,
             shared: false,
             resizable: false,
+            pinned: false,
         }
     }
 }
@@ -138,8 +141,7 @@ unsafe extern "C" {
 }
 
 impl JSValue {
-    /// Releases a pin taken on this value's backing `JSC::ArrayBuffer` by
-    /// [`JSValue::as_pinned_arraybuffer`] or a pinning collector.
+    /// Releases a pin on this value's backing `JSC::ArrayBuffer`. Only for a value whose pin actually pinned a buffer; prefer [`ArrayBuffer::unpin`], which knows.
     pub fn unpin_array_buffer(self) {
         JSC__JSValue__unpinArrayBuffer(self);
     }
@@ -150,9 +152,11 @@ impl ArrayBuffer {
         self.ptr.is_null()
     }
 
-    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`].
+    /// Releases the pin taken by [`JSValue::as_pinned_arraybuffer`], if it took one.
     pub fn unpin(&self) {
-        self.value.unpin_array_buffer();
+        if self.pinned {
+            self.value.unpin_array_buffer();
+        }
     }
 
     // require('buffer').kMaxLength.
@@ -293,6 +297,7 @@ impl ArrayBuffer {
         typed_array_type: JSType::Uint8Array,
         shared: false,
         resizable: false,
+        pinned: false,
     };
 
     // Via `#![feature(adt_const_params)]`: `JSType` derives `ConstParamTy`, so
@@ -445,8 +450,7 @@ impl ArrayBuffer {
                     self.byte_len,
                     Some(MarkedArrayBuffer_deallocator),
                     // The deallocator ignores its ctx (mi_free needs no ctx). Any non-null
-                    // sentinel would do; pass the data ptr itself for symmetry with
-                    // `MarkedArrayBuffer::to_js`.
+                    // sentinel would do; pass the data ptr itself.
                     self.ptr.cast(),
                 )
             };
@@ -918,42 +922,6 @@ impl MarkedArrayBuffer {
         self.owns_buffer = false;
         let mut buf = self.buffer;
         JSValue::create_buffer(global, buf.byte_slice_mut())
-    }
-
-    /// Ownership of the bytes moves to JSC (freed by `MarkedArrayBuffer_deallocator`).
-    pub fn to_js(&mut self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        if !self.buffer.value.is_empty_or_undefined_or_null() {
-            return Ok(self.buffer.value);
-        }
-        self.owns_buffer = false;
-        if self.buffer.byte_len == 0 {
-            // SAFETY: null `ptr` with `len == 0` and no deallocator — every
-            // obligation of the callee's contract holds trivially.
-            return unsafe {
-                make_typed_array_with_bytes_no_copy(
-                    global,
-                    self.buffer.typed_array_type.to_typed_array_type(),
-                    ptr::null_mut(),
-                    0,
-                    None,
-                    ptr::null_mut(),
-                )
-            };
-        }
-        // SAFETY: this type's contract: `buffer.ptr` is the live backing
-        // allocation of `byte_len` bytes, mimalloc-owned (`from_string`/
-        // `from_bytes`); ownership moves to JSC, which frees it exactly once
-        // via `MarkedArrayBuffer_deallocator` (`mi_free`, ctx ignored).
-        unsafe {
-            make_typed_array_with_bytes_no_copy(
-                global,
-                self.buffer.typed_array_type.to_typed_array_type(),
-                self.buffer.ptr.cast(),
-                self.buffer.byte_len,
-                Some(MarkedArrayBuffer_deallocator),
-                self.buffer.ptr.cast(),
-            )
-        }
     }
 }
 

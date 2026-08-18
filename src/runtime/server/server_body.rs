@@ -1146,10 +1146,15 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: the DevServer holds a pending request on its server until this call, which may free it, so nothing touches `server` afterwards.
+            let any_server = server.server;
+            // SAFETY: the DevServer holds a pending request on its server, so it is live and no other borrow exists.
             bun_core::handle_oom(unsafe { server.get_mut() }.on_plugins_resolved(Some(
                 std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
             )));
+            // Releases the pending request from `ensure_route_is_bundled`; may free the DevServer, so it comes last.
+            if let Some(mut s) = any_server {
+                s.on_static_request_complete();
+            }
         }
     }
 
@@ -1176,8 +1181,13 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
+            let any_server = server.server;
             // SAFETY: same as the `dev_server` arm of `handle_on_resolve`.
             bun_core::handle_oom(unsafe { server.get_mut() }.on_plugins_rejected());
+            // May free the DevServer, so it comes after the last use of `server`.
+            if let Some(mut s) = any_server {
+                s.on_static_request_complete();
+            }
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());

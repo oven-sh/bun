@@ -9,7 +9,9 @@ bun_opaque::opaque_ffi! {
 
 impl JSUint8Array {
     /// `bytes` must come from `bun.default_allocator` (the global mimalloc allocator);
-    /// ownership is transferred to the returned JS Uint8Array.
+    /// ownership is transferred to the returned JS Uint8Array. Returns
+    /// `JSValue::ZERO` with an exception pending (and `bytes` already freed) when
+    /// the length is above `MAX_ARRAY_BUFFER_SIZE`.
     // The global allocator IS mimalloc, so `Box<[u8]>` encodes that ownership.
     pub fn from_bytes(global: &JSGlobalObject, bytes: Box<[u8]>) -> JSValue {
         let len = bytes.len();

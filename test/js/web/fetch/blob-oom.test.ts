@@ -280,3 +280,45 @@ describe.skipIf(isWindows || os.totalmem() < 10 * 1024 ** 3)(
     }, 120_000);
   },
 );
+
+// A string body whose utf8 encoding exceeds the ArrayBuffer cap (2^32 bytes)
+// used to reach ArrayBuffer::createFromBytes, which RELEASE_ASSERTs above the
+// cap, so the process aborted. arrayBuffer() and bytes() adopt the bytes
+// through two different functions, so each gets a case. Each case encodes a
+// real 4 GiB in the child (about 30 seconds in a debug build), so it runs in a
+// subprocess with the same memory gate and timeout as the file cases above.
+describe.skipIf(os.totalmem() < 10 * 1024 ** 3)("string bodies above the 4 GiB ArrayBuffer limit", () => {
+  async function consumeOversizedStringBody(method: "arrayBuffer" | "bytes") {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const s = "\\u20ac".repeat(1431655766); // 3 utf8 bytes each -> 2**32 + 2
+          const result = await new Response(s)[${JSON.stringify(method)}]().then(
+            buf => ({ unexpectedByteLength: buf.byteLength }),
+            e => ({ error: { name: e.name, message: e.message } }),
+          );
+          console.log(JSON.stringify(result));
+          `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return JSON.parse(stdout.trim() || JSON.stringify({ stdout, stderr, exitCode, signalCode: proc.signalCode }));
+  }
+
+  test("Response.arrayBuffer() rejects with a RangeError instead of aborting", async () => {
+    expect(await consumeOversizedStringBody("arrayBuffer")).toEqual({
+      error: { name: "RangeError", message: "Out of memory" },
+    });
+  }, 120_000);
+
+  test("Response.bytes() rejects with a RangeError instead of aborting", async () => {
+    expect(await consumeOversizedStringBody("bytes")).toEqual({
+      error: { name: "RangeError", message: "Out of memory" },
+    });
+  }, 120_000);
+});

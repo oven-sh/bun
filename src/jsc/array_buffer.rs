@@ -358,17 +358,19 @@ impl ArrayBuffer {
         value.as_array_buffer(ctx).unwrap()
     }
 
+    /// Ownership of `bytes` transfers to JSC either way: above
+    /// `MAX_ARRAY_BUFFER_SIZE` the C++ side frees them and throws a RangeError.
     pub fn from_default_allocator(
         global: &JSGlobalObject,
         typed_array_type: JSType,
         bytes: &mut [u8],
-    ) -> JSValue {
+    ) -> JsResult<JSValue> {
         match typed_array_type {
             // SAFETY: FFI — `global` is a live opaque ZST handle (coerces to *const); `bytes` is
             // a mimalloc-backed buffer whose ownership transfers to JSC.
-            JSType::ArrayBuffer => unsafe {
+            JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || unsafe {
                 JSArrayBuffer__fromDefaultAllocator(global, bytes.as_mut_ptr(), bytes.len())
-            },
+            }),
             // `JSUint8Array::from_bytes` takes `Box<[u8]>`; reconstruct
             // ownership from the mimalloc-backed slice the caller hands us.
             JSType::Uint8Array => {
@@ -378,7 +380,9 @@ impl ArrayBuffer {
                 // fat raw pointer — no need to round-trip through
                 // `from_raw_parts_mut(as_mut_ptr(), len)`.
                 let owned = unsafe { bun_core::heap::take(ptr::from_mut(bytes)) };
-                jsc::JSUint8Array::from_bytes(global, owned)
+                crate::host_fn::from_js_host_call(global, || {
+                    jsc::JSUint8Array::from_bytes(global, owned)
+                })
             }
             _ => unreachable!("Not implemented yet"),
         }

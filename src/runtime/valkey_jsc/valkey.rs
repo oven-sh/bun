@@ -340,6 +340,7 @@ impl ValkeyClient {
         let mut pending = core::mem::take(&mut self.in_flight);
         let mut commands = core::mem::take(&mut self.queue);
 
+        // When finalizing we cannot call into JS; the queues just drop.
         if let Some(global_this) = global_object_or_finalizing {
             let object = valkey_error_to_js(
                 global_this,
@@ -355,27 +356,9 @@ impl ValkeyClient {
             while let Some(mut offline_cmd) = commands.pop_front() {
                 // Same as above: swallow reject exceptions so the whole queue drains.
                 let _ = offline_cmd.promise.reject(global_this, Ok(object));
-                // Note: `offline_cmd.deinit()` — Entry/Box<[u8]> drops automatically.
-            }
-        } else {
-            // finalizing. we can't call into JS.
-            while let Some(pair) = pending.pop_front() {
-                // Note: `pair.promise.deinit()` — JSPromiseStrong drops automatically.
-                drop(pair);
-            }
-
-            while let Some(offline_cmd) = commands.pop_front() {
-                // Note: `offline_cmd.promise.deinit()` / `offline_cmd.deinit()` —
-                // JSPromiseStrong / Box<[u8]> drop automatically.
-                drop(offline_cmd);
             }
         }
 
-        // Note: `allocator.free(connection_strings)` and `write_buffer/read_buffer.deinit()`
-        // and `tls.deinit()` are handled by Drop on the owning fields. Only the side-effecting
-        // unregister remains explicit.
-        drop(pending);
-        drop(commands);
         self.unregister_auto_flusher();
     }
 

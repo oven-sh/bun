@@ -261,6 +261,8 @@ impl ZBox {
     /// Take ownership of `v` and append a trailing NUL.
     #[inline]
     pub fn from_vec(mut v: Vec<u8>) -> ZBox {
+        // Grow by exactly one so `into_boxed_slice` doesn't have to shrink again.
+        v.reserve_exact(1);
         v.push(0);
         ZBox(v.into_boxed_slice())
     }
@@ -3760,10 +3762,18 @@ fn argv_storage() -> &'static [ZBox] {
         // libstd's `args_os()` splits `GetCommandLineW` itself with the MSVC
         // CRT (2008+) rules — the argv every `wmain` program, node included,
         // sees — without loading shell32.dll for `CommandLineToArgvW`.
-        // Unpaired surrogates become U+FFFD, as they did before.
+        // `into_string()` is an O(1) check that moves the buffer through; only
+        // an arg with an unpaired surrogate takes the lossy copy (→ U+FFFD, as
+        // before).
         #[cfg(windows)]
         let args = std::env::args_os()
-            .map(|a| ZBox::from_vec(a.to_string_lossy().into_owned().into_bytes()))
+            .map(|a| {
+                ZBox::from_vec(
+                    a.into_string()
+                        .unwrap_or_else(|a| a.to_string_lossy().into_owned())
+                        .into_bytes(),
+                )
+            })
             .collect();
         #[cfg(not(windows))]
         let args = match raw_os_argv() {

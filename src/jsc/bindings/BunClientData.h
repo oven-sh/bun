@@ -20,6 +20,7 @@ bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
 extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
 
 namespace WebCore {
+class WorkerMessagingProxy;
 class EventLoopTask;
 }
 // Post through a reference and give it up in one step (a reference taken only to outlive a lock).
@@ -147,7 +148,8 @@ public:
 
     virtual ~JSVMClientData();
 
-    static void create(JSC::VM*, void* bunVM, bool isWorkerVM);
+    // `worker` is the WorkerMessagingProxy this VM is being created for, or null on the main thread.
+    static void create(JSC::VM*, void* bunVM, WorkerMessagingProxy* worker);
 
     JSHeapData& heapData() { return *m_heapData; }
     BunBuiltinNames& builtinNames() { return m_builtinNames; }
@@ -241,10 +243,13 @@ private:
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };
+    bool m_isNodeWorkerVM { false };
 
 public:
     // upstream's `&vm != commonVMOrNull()`
     bool isWorkerVM() const { return m_isWorkerVM; }
+    // Created by node:worker_threads' Worker (WorkerOptions::Kind::Node), as opposed to the Web Worker constructor.
+    bool isNodeWorkerVM() const { return m_isNodeWorkerVM; }
     // VM thread. Unlinking is the client's own (`remove()` in its destructor).
     void addClient(JSVMClientDataClient& client) { m_clients.append(&client); }
 };

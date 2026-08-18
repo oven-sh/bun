@@ -21,7 +21,6 @@ const ArrayPrototypeMap = Array.prototype.map;
 const PromisePrototypeThen = $Promise.prototype.$then;
 const PromiseResolve = Promise.$resolve.bind(Promise);
 const PromiseReject = Promise.$reject.bind(Promise);
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const ObjectGetOwnPropertyDescriptor = Object.getOwnPropertyDescriptor;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
@@ -32,7 +31,6 @@ const ArrayPrototypeForEach = Array.prototype.forEach;
 const ArrayPrototypeIndexOf = Array.prototype.indexOf;
 
 const kPerContextModuleId = Symbol("kPerContextModuleId");
-const kNative = Symbol("kNative");
 const kContext = Symbol("kContext");
 const kLink = Symbol("kLink");
 const kDependencySpecifiers = Symbol("kDependencySpecifiers");
@@ -46,7 +44,7 @@ const {
   createContext: createContextNative,
   isContext,
   compileFunction,
-  isModuleNamespaceObject,
+  isNativeModule,
   kLinked,
   kEvaluated,
   kErrored,
@@ -223,7 +221,7 @@ class Module {
     }
 
     if (sourceText !== undefined) {
-      this[kNative] = new ModuleNative(
+      this.$bunNativePtr = new ModuleNative(
         identifier,
         context,
         sourceText,
@@ -232,11 +230,11 @@ class Module {
         options.cachedData,
         options.initializeImportMeta,
         this,
-        options.importModuleDynamically ? importModuleDynamicallyWrap(options.importModuleDynamically) : undefined,
+        options.importModuleDynamically,
       );
     } else {
       $assert(syntheticEvaluationSteps);
-      this[kNative] = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);
+      this.$bunNativePtr = new ModuleNative(identifier, context, syntheticExportNames, syntheticEvaluationSteps, this);
     }
 
     this[kContext] = context;
@@ -244,7 +242,7 @@ class Module {
 
   get identifier() {
     validateModule(this);
-    return this[kNative].identifier;
+    return this.$bunNativePtr.identifier;
   }
 
   get context() {
@@ -254,25 +252,25 @@ class Module {
 
   get status() {
     validateModule(this);
-    return this[kNative].getStatus();
+    return this.$bunNativePtr.getStatus();
   }
 
   get namespace() {
     validateModule(this);
-    if (this[kNative].getStatusCode() < kLinked) {
+    if (this.$bunNativePtr.getStatusCode() < kLinked) {
       throw $ERR_VM_MODULE_STATUS("must not be unlinked or linking");
     }
 
-    return this[kNative].getNamespace();
+    return this.$bunNativePtr.getNamespace();
   }
 
   get error() {
     validateModule(this);
-    if (this[kNative].getStatusCode() !== kErrored) {
+    if (this.$bunNativePtr.getStatusCode() !== kErrored) {
       throw $ERR_VM_MODULE_STATUS("must be errored");
     }
 
-    return this[kNative].getError();
+    return this.$bunNativePtr.getError();
   }
 
   async link(linker) {
@@ -291,7 +289,7 @@ class Module {
     }
 
     await this[kLink](linker);
-    this[kNative].instantiate();
+    this.$bunNativePtr.instantiate();
   }
 
   // Not async: a synchronously-completed evaluation must return an
@@ -311,14 +309,14 @@ class Module {
       }
       const { breakOnSigint = false } = options;
       validateBoolean(breakOnSigint, "options.breakOnSigint");
-      const status = this[kNative].getStatusCode();
+      const status = this.$bunNativePtr.getStatusCode();
       if (status !== kLinked && status !== kEvaluated && status !== kErrored) {
         throw $ERR_VM_MODULE_STATUS("must be one of linked, evaluated, or errored");
       }
       // Always call into native, even when already evaluated: Node re-enters
       // ModuleWrap::Evaluate, which performs the afterEvaluate microtask
       // checkpoint for contexts with their own microtask queue.
-      const result = this[kNative].evaluate(timeout, breakOnSigint);
+      const result = this.$bunNativePtr.evaluate(timeout, breakOnSigint);
       if (status === kEvaluated) {
         // Re-evaluating a settled module resolves synchronously with
         // undefined (a then-chain on the cached promise would be pending).
@@ -407,7 +405,7 @@ class SourceTextModule extends Module {
     // moduleRequests is available immediately, matching Node where ModuleWrap
     // compiles the module during construction. JSC has no source-phase
     // imports, so every request is an evaluation-phase request.
-    const requests = this[kNative].createModuleRecord();
+    const requests = this.$bunNativePtr.createModuleRecord();
     this.#moduleRequests = ObjectFreeze(
       ArrayPrototypeMap.$call(requests, request =>
         ObjectFreeze({
@@ -425,7 +423,7 @@ class SourceTextModule extends Module {
   async [kLink](linker) {
     validateModule(this, "SourceTextModule");
 
-    if (this[kNative].getStatusCode() >= kLinked) {
+    if (this.$bunNativePtr.getStatusCode() >= kLinked) {
       throw $ERR_VM_MODULE_ALREADY_LINKED();
     }
 
@@ -458,7 +456,7 @@ class SourceTextModule extends Module {
         if (mod.status === "unlinked") {
           await mod[kLink](linker);
         }
-        return mod[kNative];
+        return mod.$bunNativePtr;
       });
       modulePromises[idx] = modulePromise;
       specifiers[idx] = specifier;
@@ -466,7 +464,7 @@ class SourceTextModule extends Module {
 
     try {
       const moduleNatives = await SafePromiseAllReturnArrayLike(modulePromises);
-      this[kNative].link(specifiers, moduleNatives, 0);
+      this.$bunNativePtr.link(specifiers, moduleNatives, 0);
     } catch (e) {
       this.#error = e;
       throw e;
@@ -498,9 +496,9 @@ class SourceTextModule extends Module {
         throw $ERR_VM_MODULE_DIFFERENT_CONTEXT();
       }
       specifiers[idx] = moduleRequests[idx].specifier;
-      moduleNatives[idx] = mod[kNative];
+      moduleNatives[idx] = mod.$bunNativePtr;
     }
-    this[kNative].link(specifiers, moduleNatives, 0);
+    this.$bunNativePtr.link(specifiers, moduleNatives, 0);
   }
 
   instantiate() {
@@ -508,7 +506,7 @@ class SourceTextModule extends Module {
     if (this.status !== "unlinked") {
       throw $ERR_VM_MODULE_STATUS("must be unlinked");
     }
-    this[kNative].instantiate();
+    this.$bunNativePtr.instantiate();
   }
 
   get moduleRequests() {
@@ -518,15 +516,15 @@ class SourceTextModule extends Module {
 
   hasAsyncGraph() {
     validateModule(this, "SourceTextModule");
-    if (this[kNative].getStatusCode() < kLinked) {
+    if (this.$bunNativePtr.getStatusCode() < kLinked) {
       throw $ERR_VM_MODULE_STATUS("must be instantiated");
     }
-    return this[kNative].hasAsyncGraph();
+    return this.$bunNativePtr.hasAsyncGraph();
   }
 
   hasTopLevelAwait() {
     validateModule(this, "SourceTextModule");
-    return this[kNative].hasTopLevelAwait();
+    return this.$bunNativePtr.hasTopLevelAwait();
   }
 
   get dependencySpecifiers() {
@@ -562,7 +560,7 @@ class SourceTextModule extends Module {
     if (status === "evaluating" || status === "evaluated" || status === "errored") {
       throw $ERR_VM_MODULE_CANNOT_CREATE_CACHED_DATA();
     }
-    return this[kNative].createCachedData();
+    return this.$bunNativePtr.createCachedData();
   }
 }
 
@@ -591,7 +589,7 @@ class SyntheticModule extends Module {
     });
     // A synthetic module does not have dependencies; Node instantiates it
     // directly in the constructor so setExport()/evaluate() work right away.
-    this[kNative].instantiate();
+    this.$bunNativePtr.instantiate();
   }
 
   link() {
@@ -607,10 +605,10 @@ class SyntheticModule extends Module {
   setExport(name, value) {
     validateModule(this, "SyntheticModule");
     validateString(name, "name");
-    if (this[kNative].getStatusCode() < kLinked) {
+    if (this.$bunNativePtr.getStatusCode() < kLinked) {
       throw $ERR_VM_MODULE_STATUS("must be linked");
     }
-    this[kNative].setExport(name, value);
+    this.$bunNativePtr.setExport(name, value);
   }
 }
 
@@ -620,27 +618,10 @@ const constants = {
   DONT_CONTEXTIFY,
 };
 
+// The native handle lives under a private name so NodeVM.cpp can recognize a Module returned from an
+// importModuleDynamically callback and resolve the import() to its namespace.
 function isModule(object) {
-  return typeof object === "object" && object !== null && ObjectPrototypeHasOwnProperty.$call(object, kNative);
-}
-
-function importModuleDynamicallyWrap(importModuleDynamically) {
-  const importModuleDynamicallyWrapper = async (specifier, referrer, attributes, phase) => {
-    // JSC has no source-phase imports, so every dynamic import is an
-    // evaluation-phase request (Node passes the phase name as 4th argument).
-    const m: any = await importModuleDynamically.$call(this, specifier, referrer, attributes, phase ?? "evaluation");
-    if (isModuleNamespaceObject(m)) {
-      return m;
-    }
-    if (!isModule(m)) {
-      throw $ERR_VM_MODULE_NOT_MODULE();
-    }
-    if (m.status === "errored") {
-      throw m.error;
-    }
-    return m.namespace;
-  };
-  return importModuleDynamicallyWrapper;
+  return $isObject(object) && isNativeModule(object.$bunNativePtr);
 }
 
 function getConstructorOf(obj) {

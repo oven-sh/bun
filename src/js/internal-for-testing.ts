@@ -749,3 +749,8 @@ export const byteStreamInternals = {
     stream: ReadableStream,
   ) => void,
 };
+
+export const vmInternals = {
+  // The NodeVMModule cell behind a vm.Module (not reachable from user code).
+  nativeModuleOf: (module: object) => (module as any).$bunNativePtr,
+};

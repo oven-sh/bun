@@ -338,45 +338,37 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     args.append(jsString(vm, String("evaluation"_s)));
 
     JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
-
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    if (result.isUndefinedOrNull()) {
-        throwException(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
-        return nullptr;
-    }
-
-    if (auto* promise = dynamicDowncast<JSPromise>(result)) {
-        return promise;
-    }
-
-    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    auto* transformer = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
+    // Node (lib/internal/vm/module.js importModuleDynamicallyWrap): the callback may return, or resolve to, a module
+    // namespace object or a vm.Module; import() gets the namespace either way.
+    auto* toNamespace = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
         VM& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        JSValue argument = callFrame->argument(0);
+        JSValue value = callFrame->argument(0);
+        if (value.inherits<JSModuleNamespaceObject>())
+            return JSValue::encode(value);
 
-        if (JSObject* object = argument.getObject()) {
-            JSValue result = object->get(globalObject, JSC::Identifier::fromString(vm, "namespace"_s));
-            RETURN_IF_EXCEPTION(scope, {});
-            if (!result.isUndefinedOrNull()) {
-                return JSValue::encode(result);
-            }
+        NodeVMModule* module = nullptr;
+        if (JSObject* object = value.getObject()) {
+            if (JSValue native = object->getDirect(vm, WebCore::builtinNames(vm).bunNativePtrPrivateName()))
+                module = dynamicDowncast<NodeVMModule>(native);
         }
+        if (!module)
+            return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
 
-        return JSValue::encode(argument);
+        module->reconcileEvaluationState(vm);
+        if (JSC::Exception* exception = module->evaluationException())
+            return throwVMError(globalObject, scope, exception->value());
+        if (module->status() < NodeVMModule::Status::Linked)
+            return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must not be unlinked or linking"_s));
+        RELEASE_AND_RETURN(scope, JSValue::encode(module->namespaceObject(globalObject)));
     });
 
+    JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
-
-    promise->fulfill(vm, result);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-
-    JSObject* thenResult = promise->then(globalObject, transformer, jsUndefined());
+    JSObject* thenResult = promise->then(globalObject, toNamespace, jsUndefined());
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     // JSPromise::then() may return a non-JSPromise when Promise[Symbol.species]
@@ -1644,18 +1636,18 @@ static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
-
     if (sourceOrigin.fetcher() == nullptr && sourceOrigin.url().isEmpty()) {
         if (globalObject->dynamicImportCallback().isCallable()) {
-            return NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {});
+            RELEASE_AND_RETURN(scope, NodeVM::importModuleInner(globalObject, moduleName, WTF::move(parameters), sourceOrigin, globalObject->dynamicImportCallback(), JSValue {}));
         }
 
+        auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
         promise->reject(vm, createError(globalObject, ErrorCode::ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING, "A dynamic import callback was not specified."_s));
         return promise;
     }
 
     // Default behavior copied from JSModuleLoader::importModule
+    auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
     auto moduleNameString = moduleName->value(globalObject);
     RETURN_IF_EXCEPTION(scope, promise->rejectWithCaughtException(vm, scope));
 
@@ -1671,19 +1663,17 @@ JSPromise* NodeVMGlobalObject::moduleLoaderImportModule(JSGlobalObject* globalOb
     VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // The Script's / compiled function's callback first, then the context's (createContext({ importModuleDynamically })).
     JSPromise* result = NodeVM::importModule(nodeVmGlobalObject, moduleName, parameters, sourceOrigin);
-    // importModule runs the user's dynamic-import callback, which can throw
-    // and leave a null result; surface that as a rejected promise instead of
-    // falling through with the exception pending.
+    if (!result && !scope.exception())
+        result = moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, WTF::move(parameters), sourceOrigin);
+    // Either path runs a user callback that can throw and leave a null result; surface that as a rejected promise
+    // instead of returning with the exception pending.
     if (scope.exception()) [[unlikely]] {
         auto* promise = JSPromise::create(vm, globalObject->promiseStructure());
         return promise->rejectWithCaughtException(vm, scope);
     }
-    if (result) {
-        return result;
-    }
-
-    RELEASE_AND_RETURN(scope, moduleLoaderImportModuleInner(nodeVmGlobalObject, moduleLoader, moduleName, WTF::move(parameters), sourceOrigin));
+    return result;
 }
 
 void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArrayBuilder& propertyNames, JSC::DontEnumPropertiesMode mode)
@@ -1700,9 +1690,9 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     RELEASE_AND_RETURN(scope, Base::getOwnPropertyNames(cell, globalObject, propertyNames, mode));
 }
 
-JSC_DEFINE_HOST_FUNCTION(vmIsModuleNamespaceObject, (JSGlobalObject * globalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(vmIsNativeModule, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
-    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits(JSModuleNamespaceObject::info())));
+    return JSValue::encode(jsBoolean(callFrame->argument(0).inherits<NodeVMModule>()));
 }
 
 JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
@@ -1725,8 +1715,8 @@ JSC::JSValue createNodeVMBinding(Zig::GlobalObject* globalObject)
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "compileFunction"_s)),
         JSC::JSFunction::create(vm, globalObject, 0, "compileFunction"_s, vmModuleCompileFunction, ImplementationVisibility::Public), 0);
     obj->putDirect(
-        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isModuleNamespaceObject"_s)),
-        JSC::JSFunction::create(vm, globalObject, 0, "isModuleNamespaceObject"_s, vmIsModuleNamespaceObject, ImplementationVisibility::Public), 1);
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "isNativeModule"_s)),
+        JSC::JSFunction::create(vm, globalObject, 1, "isNativeModule"_s, vmIsNativeModule, ImplementationVisibility::Public), 1);
     obj->putDirect(
         vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "kUnlinked"_s)),
         JSC::jsNumber(static_cast<unsigned>(NodeVMSourceTextModule::Status::Unlinked)), 0);

@@ -1020,6 +1020,115 @@ describe("Script compiles its source once and links that in every context it run
   });
 });
 
+describe("importModuleDynamically", () => {
+  const { SourceTextModule, SyntheticModule } = require("node:vm");
+  const synthetic = async (exports: Record<string, unknown>) => {
+    const m = new SyntheticModule(Object.keys(exports), function () {
+      for (const key in exports) this.setExport(key, exports[key]);
+    });
+    await m.link(() => {});
+    await m.evaluate();
+    return m;
+  };
+  const importV = (importModuleDynamically: Function) =>
+    new Script(`import("x").then(ns => ns.v)`, { importModuleDynamically }).runInThisContext();
+
+  // Node resolves import() to the namespace whether the callback gives back the vm.Module or its namespace,
+  // synchronously or via a promise (lib/internal/vm/module.js importModuleDynamicallyWrap).
+  test("import() resolves to the namespace when the callback returns a Module", async () => {
+    const mod = await synthetic({ v: "module" });
+    expect(await importV(() => mod)).toBe("module");
+    expect(await importV(async () => mod)).toBe("module");
+    expect(await importV(() => mod.namespace)).toBe("module");
+    expect(await importV(async () => mod.namespace)).toBe("module");
+  });
+
+  test("works the same for compileFunction, Script in a context, and SourceTextModule", async () => {
+    const fn = compileFunction(`return import("x")`, [], { importModuleDynamically: () => synthetic({ v: "cf" }) });
+    expect((await fn()).v).toBe("cf");
+
+    const context = createContext({});
+    const promise = new Script(`import("x").then(ns => ns.v)`, {
+      importModuleDynamically: async () => synthetic({ v: "ctx" }),
+    }).runInContext(context);
+    expect(promise).toBeInstanceOf(runInContext("Promise", context));
+    expect(await promise).toBe("ctx");
+
+    const stm = new SourceTextModule(`export default (await import("x")).v`, {
+      importModuleDynamically: () => synthetic({ v: "stm" }),
+    });
+    await stm.link(() => {});
+    await stm.evaluate();
+    expect(stm.namespace.default).toBe("stm");
+  });
+
+  test("rejects with ERR_VM_MODULE_NOT_MODULE for anything else", async () => {
+    for (const value of [undefined, null, 42, "str", {}, { namespace: { v: 1 } }, process.stdout]) {
+      const returned = importV(() => value);
+      await expect(returned).rejects.toMatchObject({ code: "ERR_VM_MODULE_NOT_MODULE" });
+      const resolved = importV(async () => value);
+      await expect(resolved).rejects.toMatchObject({ code: "ERR_VM_MODULE_NOT_MODULE" });
+    }
+  });
+
+  test("an unlinked Module rejects with ERR_VM_MODULE_STATUS, an errored one with its error", async () => {
+    const unlinked = new SourceTextModule(`export const v = 1`);
+    await expect(importV(() => unlinked)).rejects.toMatchObject({ code: "ERR_VM_MODULE_STATUS" });
+
+    const errored = new SourceTextModule(`throw new RangeError("from module")`);
+    await errored.link(() => {});
+    await errored.evaluate().catch(() => {});
+    expect(errored.status).toBe("errored");
+    await expect(importV(async () => errored)).rejects.toBe(errored.error);
+  });
+
+  test("a context's callback (createContext options) behaves the same", async () => {
+    // import() falls back to the context's own callback only when no script is on the stack (an indirect eval
+    // from a microtask), which the test runner's own frames would defeat, so run it as a separate process.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const vm = require("node:vm");
+        const synthetic = async exports => {
+          const m = new vm.SyntheticModule(Object.keys(exports), function () { for (const k in exports) this.setExport(k, exports[k]); });
+          await m.link(() => {});
+          await m.evaluate();
+          return m;
+        };
+        const run = async importModuleDynamically => {
+          const context = vm.createContext({}, { importModuleDynamically });
+          try {
+            return (await new vm.Script("Promise.resolve('import(\\"x\\")').then(eval)").runInContext(context)).v;
+          } catch (e) {
+            return "rejected: " + (e.code ?? e.message);
+          }
+        };
+        (async () => {
+          console.log(JSON.stringify([
+            await run(() => synthetic({ v: "sync" })),
+            await run(async () => synthetic({ v: "async" })),
+            await run(async () => (await synthetic({ v: "ns" })).namespace),
+            await run(() => 42),
+            await run(() => { throw new RangeError("thrown") }),
+          ]));
+        })();`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual(["sync", "async", "ns", "rejected: ERR_VM_MODULE_NOT_MODULE", "rejected: thrown"]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("callback exceptions and rejections reject the import()", async () => {
+    await expect(importV(() => { throw new RangeError("thrown"); })).rejects.toThrow("thrown");
+    await expect(importV(async () => { throw new RangeError("rejected"); })).rejects.toThrow("rejected");
+  });
+});
+
 describe("codeGeneration options", () => {
   test("disabling codeGeneration.strings should block eval and Function constructor", () => {
     const context = createContext(
@@ -1325,15 +1434,14 @@ test("Loader is not defined in vm context", () => {
 });
 
 test("node:vm native Module prototype methods reject non-module receivers", async () => {
-  // The native NodeVMModule prototype (reachable via the kNative own-symbol on a
-  // vm.SourceTextModule instance) must validate its receiver. Calling its methods
+  // The native NodeVMModule prototype must validate its receiver. Calling its methods
   // with a plain object as `this` must throw a TypeError instead of reinterpreting
   // the object's inline property storage as native module fields.
   const fixture = `
     const vm = require("node:vm");
     const mod = new vm.SourceTextModule('import "./dep.js"; export const a = 1;');
-    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
-    const native = mod[kNative];
+    const { nativeModuleOf } = require("bun:internal-for-testing").vmInternals;
+    const native = nativeModuleOf(mod);
     const proto = Object.getPrototypeOf(native);
     const fake = { p1: 1n, p2: 0x41414141n };
 
@@ -1401,8 +1509,8 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
     const vm = require("node:vm");
 
     const mod = new vm.SourceTextModule('import "x";');
-    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
-    const native = mod[kNative];
+    const { nativeModuleOf } = require("bun:internal-for-testing").vmInternals;
+    const native = nativeModuleOf(mod);
     native.createModuleRecord();
 
     const results = [];
@@ -1416,7 +1524,7 @@ test("node:vm SourceTextModule.link() rejects non-module entries in the moduleNa
 
     // A real native module in the same slot still links.
     const dep = new vm.SourceTextModule("export const x = 1;");
-    const depNative = dep[kNative];
+    const depNative = nativeModuleOf(dep);
     depNative.createModuleRecord();
     native.link(["x"], [depNative], 0);
     results.push("status after valid link: " + native.getStatus());
@@ -1448,8 +1556,8 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
   const fixture = `
     const vm = require("node:vm");
     const mod = new vm.SourceTextModule('import { z } from "x"; export const w = z;');
-    const kNative = Object.getOwnPropertySymbols(mod).find(s => s.description === "kNative");
-    const native = mod[kNative];
+    const { nativeModuleOf } = require("bun:internal-for-testing").vmInternals;
+    const native = nativeModuleOf(mod);
     native.createModuleRecord();
 
     const results = [];
@@ -1463,7 +1571,7 @@ test("node:vm SourceTextModule.link() rejects holey and mismatched argument arra
     };
 
     const dep = new vm.SourceTextModule("export const z = 1;");
-    const depNative = dep[kNative];
+    const depNative = nativeModuleOf(dep);
     depNative.createModuleRecord();
 
     attempt("holey both", new Array(1), new Array(1));

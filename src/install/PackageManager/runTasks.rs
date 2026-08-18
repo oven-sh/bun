@@ -42,9 +42,10 @@ use crate::isolated_install::store as Store;
 // ──────────────────────────────────────────────────────────────────────────
 //
 // Dyn-compatible so `run_tasks` is compiled once: the impls are the ctx
-// types themselves (`PackageInstaller`, `Store::Installer`, `Queue`) or unit
-// markers, and `flags()` says which optional hooks are live. Hook defaults
-// are unreachable and only called when the matching flag is set.
+// types themselves (`PackageInstaller`, `Store::Installer`), a wrapper around
+// the auto-install `Queue`, or unit markers, and `flags()` says which optional
+// hooks are live. Hook defaults are unreachable and only called when the
+// matching flag is set.
 
 #[derive(Clone, Copy, Default)]
 pub struct RunTasksFlags {
@@ -1515,7 +1516,6 @@ pub fn run_tasks(
                             }
                         }
 
-                        // Invariant: this branch only reachable when !HAS_ON_EXTRACT.
                         debug_assert!(!flags.has_on_extract, "ctx should be void");
                     }
                 }
@@ -1938,19 +1938,9 @@ fn process_dependency_list_for_ctx(
     extract_ctx: &mut dyn RunTasksCallbacks<'_>,
     install_peer: bool,
 ) -> crate::Result<()> {
-    let ctx_ptr: *mut dyn RunTasksCallbacks<'_> = extract_ctx;
-    manager.process_dependency_list(
-        dependency_list,
-        (),
-        if extract_ctx.flags().has_on_resolve {
-            Some(move |()| {
-                // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
-                // this closure; `process_dependency_list` does not alias it.
-                unsafe { &mut *ctx_ptr }.on_resolve();
-            })
-        } else {
-            None
-        },
-        install_peer,
-    )
+    let on_resolve = extract_ctx
+        .flags()
+        .has_on_resolve
+        .then_some(|ctx: &mut dyn RunTasksCallbacks<'_>| ctx.on_resolve());
+    manager.process_dependency_list(dependency_list, extract_ctx, on_resolve, install_peer)
 }

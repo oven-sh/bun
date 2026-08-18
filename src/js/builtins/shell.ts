@@ -1,7 +1,7 @@
 export function createBunShellTemplateFunction(createShellInterpreter_, createParsedShellScript_) {
   const createShellInterpreter = createShellInterpreter_ as (
     resolve: (code: number, stdout: Buffer, stderr: Buffer) => void,
-    reject: (code: number, stdout: Buffer, stderr: Buffer) => void,
+    reject: (error: unknown) => void,
     args: $ZigGeneratedClasses.ParsedShellScript,
   ) => $ZigGeneratedClasses.ShellInterpreter;
   const createParsedShellScript = createParsedShellScript_ as (
@@ -108,7 +108,7 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
     #hasRun: boolean = false;
     #throws: boolean = true;
     #resolve: (code: number, stdout: Buffer, stderr: Buffer) => void;
-    #reject: (code: number, stdout: Buffer, stderr: Buffer) => void;
+    #reject: (error: unknown) => void;
 
     constructor(args: $ZigGeneratedClasses.ParsedShellScript, throws: boolean) {
       // Create the error immediately so it captures the stacktrace at the point
@@ -131,9 +131,10 @@ export function createBunShellTemplateFunction(createShellInterpreter_, createPa
             res(out);
           }
         };
-        reject = (code, stdout, stderr) => {
-          potentialError!.initialize(new ShellOutput(stdout, stderr, code), code);
-          rej(potentialError);
+        // Only for a failure to build the output buffers; exit codes go through `resolve`.
+        reject = error => {
+          potentialError = undefined;
+          rej(error);
         };
       });
 

@@ -351,6 +351,50 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     30 * 1000,
   );
 
+  const workersFixture = join(__dirname, "napi-app/linked-addon-workers-fixture.js");
+
+  it("the same addon loaded from four Workers and the main thread at once works on every thread", async () => {
+    await using proc = spawn({
+      cmd: [bunExe(), workersFixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "ok 5\n", stderr: "", exitCode: 0 });
+  });
+
+  // On Windows the compiled exe binds the merged addon on whichever thread's
+  // dlopen comes first, while the other four wait for the binder lock and then
+  // replay the registration it published. The flag run is the same exe on the
+  // extract-to-tempfile path; elsewhere both runs take that path.
+  it(
+    "the same addon loaded from four Workers at once works inside a --compile exe",
+    async () => {
+      await using dir = tempDir("napi-workers-compile", {});
+      const exe = join(dir, "workers" + (isWindows ? ".exe" : ""));
+      const build = spawnSync({
+        cmd: [bunExe(), "build", "--compile", workersFixture, "--outfile", exe],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "inherit",
+        stderr: "inherit",
+      });
+      expect(build.success).toBeTrue();
+      if (isWindows) expect(peHasSection(exe, ".bunL"), "unwind_addon.node was not merged into the exe").toBeTrue();
+
+      const modes: [string, Record<string, string>][] = [["default", bunEnv]];
+      if (isWindows) modes.push(["tempfile fallback", { ...bunEnv, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" }]);
+      for (const [mode, env] of modes) {
+        const result = spawnSync({ cmd: [exe], env, stdin: "inherit", stderr: "inherit", stdout: "pipe" });
+        expect(result.stdout.toString(), mode).toBe("ok 5\n");
+        expect(result.success, mode).toBeTrue();
+      }
+    },
+    // Same --compile workload as the tests above; see the timeout note there.
+    30 * 1000,
+  );
+
   describe("issue_7685", () => {
     it("works", async () => {
       const args = [...Array(20).keys()];

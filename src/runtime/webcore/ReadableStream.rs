@@ -750,6 +750,13 @@ pub trait SourceContext: Sized {
     const NAME: &'static str;
     /// `setRefUnrefFn != null`
     const SUPPORTS_REF: bool = false;
+    /// Whether a native ref ([`NewSource::increment_count`]) also roots the JS
+    /// wrapper. `FileReader` needs that: a read completes off the event loop and
+    /// then calls the wrapper's `onClose`. A producer that only writes into the
+    /// source's native memory (`FetchTasklet` into a `ByteStream`) opts out: the
+    /// wrapper holds the stream's consumer graph, so rooting it would keep a
+    /// stream nobody can reach alive for as long as the producer runs.
+    const NATIVE_REF_ROOTS_WRAPPER: bool = true;
 
     // ─── codegen accessors (`.classes.ts` → `generated_classes.rs`) ───────────
     // Each context binds its per-type codegen module via `source_context_codegen!`.
@@ -849,7 +856,8 @@ pub struct NewSource<C: SourceContext> {
     /// Back-reference to the owning `JS{Blob,Bytes,File}InternalReadableStreamSource`
     /// wrapper. Starts `Weak` (set in [`Self::to_readable_stream`]), is
     /// [`JsRef::upgrade`]d to `Strong` in [`Self::increment_count`] while a
-    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`), and
+    /// native I/O ref is held (FileReader `waiting_for_on_reader_done`; contexts
+    /// with [`SourceContext::NATIVE_REF_ROOTS_WRAPPER`] unset skip this), and
     /// [`JsRef::downgrade`]d back to `Weak` in [`Self::decrement_count`] when
     /// only the wrapper's own ref remains. [`Self::finalize`] flips it to
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
@@ -1140,7 +1148,10 @@ impl<C: SourceContext> NewSource<C> {
 
     pub fn increment_count(&mut self) {
         self.ref_count += 1;
-        // A ref beyond the JS wrapper's own is held (in practice a FileReader
+        if !C::NATIVE_REF_ROOTS_WRAPPER {
+            return;
+        }
+        // A ref beyond the JS wrapper's own is held (a FileReader
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.

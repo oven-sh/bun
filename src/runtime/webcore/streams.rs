@@ -1010,6 +1010,32 @@ impl SourceHandle {
             | SourceHandle::TestingCancelOnDrain(_) => {}
         }
     }
+
+    /// The source's JS wrapper was collected with no native consumer attached:
+    /// nothing can read what the producer delivers from now on. Called from a
+    /// GC sweep, so an arm may only schedule work, and none may run JS. The
+    /// fetch arm hands over the pointer itself: the work it queues needs the
+    /// write-capable pointer the handle carries, not a borrow taken here.
+    pub fn consumer_collected(&mut self) {
+        match *self {
+            SourceHandle::FetchResponseBody(p) => {
+                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_response_stream_collected(
+                    p.into(),
+                );
+            }
+            // Remaining variants do not act on this signal.
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
 }
 
 // ──────────────────────────────────────────────────────────────────────────

@@ -69,6 +69,9 @@ impl readable_stream::SourceContext for ByteStream {
     const NAME: &'static str = "Bytes";
     // setRefUnrefFn = null
     const SUPPORTS_REF: bool = false;
+    // The only native ref holder is the producer (`FetchTasklet`), which never
+    // touches the wrapper; see `SourceContext::NATIVE_REF_ROOTS_WRAPPER`.
+    const NATIVE_REF_ROOTS_WRAPPER: bool = false;
     crate::source_context_codegen!(js_BytesInternalReadableStreamSource);
 
     // R-2: trait sigs are fixed at `&mut self` (shared with the other
@@ -85,6 +88,10 @@ impl readable_stream::SourceContext for ByteStream {
     }
     fn deinit_fn(&mut self) {
         Self::finalize(self)
+    }
+    fn finalize_detach(&mut self) -> bool {
+        Self::on_wrapper_finalized(self);
+        false
     }
     fn drain_internal_buffer(&mut self) -> Vec<u8> {
         Self::drain(self)
@@ -256,8 +263,9 @@ impl ByteStream {
         Vec::<u8>::move_from_list(list)
     }
 
-    /// Called by native fast-paths after wiring `self.sink`. Restores
-    /// producer-side backpressure if it was already dropped (BufferAll).
+    /// A consumer now waits on this stream: a native sink was just wired to
+    /// it, or a pull found the buffer empty and went pending. The producer
+    /// keeps the process alive for it (`FetchTasklet::on_consumer_attached`).
     pub fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }
@@ -622,6 +630,7 @@ impl ByteStream {
         // Raw borrow of a JS-owned buffer; rooted by `set_value`.
         self.pending_buffer.set(std::ptr::from_mut::<[u8]>(buffer));
         self.set_value(view);
+        self.signal_consumer_attached();
 
         // R-2: `JsCell::as_ptr` yields the stable `*mut Pending` that the
         // returned `streams::Result::Pending` raw-backref needs.
@@ -662,6 +671,19 @@ impl ByteStream {
     fn memory_cost(&self) -> usize {
         // ReadableStreamSource covers @sizeOf(ByteStream)
         self.buffer.get().capacity()
+    }
+
+    /// The JS wrapper was collected (`NewSource::finalize`): no stream, reader,
+    /// or node `Readable` can pull from this source again. A native consumer (a
+    /// `sink`, or a `buffer_action` that waits for the whole body) does not hold
+    /// the wrapper and still takes the bytes; with neither attached, the
+    /// producer is delivering into memory nobody can read. Runs inside a GC
+    /// sweep, so the producer may only schedule its teardown.
+    fn on_wrapper_finalized(&self) {
+        if self.sink.get().is_some() || self.buffer_action.get().is_some() {
+            return;
+        }
+        self.parent_const().producer.get().consumer_collected();
     }
 
     /// NOTE: not `impl Drop` — `ByteStream` is the `context` payload of a `.classes.ts`

@@ -1,5 +1,5 @@
 import { heapStats } from "bun:jsc";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
 // Test that ReadableStream objects from cancelled fetch responses are properly GC'd.
@@ -200,4 +200,57 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
     timedOut: false,
     exitCode: 0,
   });
+});
+
+// Nothing holds the body any more, so it has to go away: the stream is collected and the
+// fetch behind it is aborted, in whatever state it was dropped. Before, the fetch rooted its
+// own stream until the body ended, so against a body that does not end, the stream, the
+// connection, and whatever the fetch went on buffering all lived until the process exited.
+describe("an abandoned fetch body stream is collected and its fetch is aborted", () => {
+  const shapes: [string, (res: Response) => Promise<unknown>][] = [
+    ["res.body touched", async res => res.body],
+    [
+      "one read(), then releaseLock()",
+      async res => {
+        const reader = res.body!.getReader();
+        await reader.read();
+        reader.releaseLock();
+      },
+    ],
+    ["dropped while a reader holds the lock", res => res.body!.getReader().read()],
+  ];
+
+  for (const [name, shape] of shapes) {
+    test(name, async () => {
+      let aborted = 0;
+      using server = Bun.serve({
+        port: 0,
+        fetch(req) {
+          req.signal.addEventListener("abort", () => aborted++);
+          return new Response(
+            new ReadableStream({
+              async pull(controller) {
+                await Bun.sleep(1);
+                controller.enqueue(new Uint8Array(4096));
+              },
+            }),
+          );
+        },
+      });
+      const N = 20;
+      // Its own frame, so that nothing on this one still refers to a response afterwards.
+      async function abandonOne() {
+        await shape(await fetch(server.url));
+      }
+      for (let i = 0; i < N; i++) await abandonOne();
+
+      const deadline = performance.now() + 3000;
+      while (aborted < N && performance.now() < deadline) {
+        Bun.gc(true);
+        await Bun.sleep(10);
+      }
+      // A couple can survive a collection through stale stack slots; the rest must go.
+      expect(N - aborted).toBeLessThanOrEqual(2);
+    });
+  }
 });

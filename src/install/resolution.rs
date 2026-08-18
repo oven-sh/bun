@@ -51,8 +51,7 @@ impl Resolution {
         false
     }
 
-    /// The name (or anything keyed by it) that `trustedDependencies` identifies
-    /// a dependency resolving to this package by.
+    /// Which of a dependency's two names `trustedDependencies` entries match.
     #[inline]
     pub fn trusted_name<T>(&self, by_alias: T, by_pkg_name: T) -> T {
         if self.tag == Tag::Npm {

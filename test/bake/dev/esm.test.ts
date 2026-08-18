@@ -1395,7 +1395,7 @@ devTest("a module that failed to load fails the same way when it is loaded again
   },
   async test(dev) {
     {
-      await using c = await dev.client("/index");
+      await using c = await dev.client("/");
       await c.expectMessage({
         importWithThrowingDep: ["threw: a-dep threw", "threw: a-dep threw"],
         requireWithThrowingDep: ["threw: b-dep threw", "threw: b-dep threw"],

@@ -969,7 +969,7 @@ devTest("import.meta.hot on/off events", {
   },
   async test(dev) {
     {
-      await using c = await dev.client("/index");
+      await using c = await dev.client("/");
       await c.expectMessage("Initial setup");
       await dev.write(
         "index.ts",

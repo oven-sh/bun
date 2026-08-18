@@ -1667,17 +1667,13 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
 mod tests {
     use super::{EXTENSIONS, Table};
 
-    /// `EXTENSIONS` is by far the largest `comptime_string_map!`, so it is
-    /// looked up through the shared sorted-key tables rather than a compare
-    /// tree. Many extensions share a MIME type, so compare entry addresses:
-    /// value equality would not notice a lookup landing on the wrong entry.
-    ///
-    /// Probes the map rather than `by_extension`: `to_mime_type` reaches the
-    /// highway FFI, which `cargo test -p bun_http_types` does not link.
+    /// Largest map in the tree, so it exercises `SortedKeys`. Entries are
+    /// compared by address because many extensions share a MIME type. Not
+    /// through `by_extension`: `to_mime_type` needs highway, which
+    /// `cargo test -p bun_http_types` does not link.
     #[test]
     fn extensions_resolve_to_their_own_entry() {
-        // Miri interprets every probe of the search; all 1184 extensions take
-        // ~30s there, so it checks every 37th one (32 of assorted lengths).
+        // All 1184 take ~30s under Miri; every 37th is 32 of them.
         let stride = if cfg!(miri) { 37 } else { 1 };
         for (ext, table) in EXTENSIONS.entries().step_by(stride) {
             let ext_str = bstr::BStr::new(ext);

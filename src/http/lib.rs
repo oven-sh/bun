@@ -2192,13 +2192,12 @@ impl<'a> HTTPClient<'a> {
     ///
     /// For large files, we want to avoid extra network send overhead
     /// So we do two things:
-    /// 1. Use a 32 KB stack buffer for small files
-    /// 2. Use a 512 KB heap buffer for large files
+    /// 1. Use a 32 KB buffer for small files, 2. a 512 KB buffer for large files.
     /// This only has an impact on http://
     ///
     /// On https://, we are limited to a 16 KB TLS record size.
     #[inline]
-    fn get_request_body_send_buffer(&self) -> http_thread::RequestBodyBuffer {
+    fn get_request_body_send_buffer(&self) -> Vec<u8> {
         let actual_estimated_size =
             self.request_body().len() + self.estimated_request_header_byte_length();
         let estimated_size = if HTTPClient::is_https(self) {
@@ -2206,7 +2205,9 @@ impl<'a> HTTPClient<'a> {
         } else {
             actual_estimated_size * 2
         };
-        http_thread().get_request_body_send_buffer(estimated_size)
+        Vec::with_capacity(http_thread::request_body_send_buffer_capacity(
+            estimated_size,
+        ))
     }
 
     pub(crate) fn is_keep_alive_possible(&self) -> bool {
@@ -2990,10 +2991,7 @@ impl<'a> HTTPClient<'a> {
     ) -> crate::Result<InitialRequestPayloadResult> {
         self.compress_body_for_send(true)?;
 
-        let mut request_body_buffer = self.get_request_body_send_buffer();
-        // request_body_buffer drops at scope exit (was `defer .deinit()`)
-        let mut temporary_send_buffer = request_body_buffer.to_array_list();
-        // temporary_send_buffer drops at scope exit
+        let mut temporary_send_buffer = self.get_request_body_send_buffer();
 
         let writer = &mut temporary_send_buffer; // Vec<u8> impls bun_io::Write
 
@@ -3780,6 +3778,9 @@ impl<'a> HTTPClient<'a> {
         }
 
         if should_continue == ShouldContinue::Finished {
+            if !to_read.is_empty() {
+                self.state.flags.allow_keepalive = false;
+            }
             if self.state.flags.is_redirect_pending {
                 self.do_redirect::<IS_SSL>(ctx, socket);
                 return;

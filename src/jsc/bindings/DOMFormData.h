@@ -94,7 +94,6 @@ public:
     Iterator createIterator(const ScriptExecutionContext* context) { return Iterator { *this }; }
 
 private:
-    // explicit DOMFormData(ScriptExecutionContext*, const PAL::TextEncoding& = PAL::UTF8Encoding());
     explicit DOMFormData(ScriptExecutionContext*);
 
     void set(const String& name, Item&&);

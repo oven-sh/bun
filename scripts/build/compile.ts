@@ -8,7 +8,7 @@
 
 import { mkdirSync } from "node:fs";
 import { availableParallelism } from "node:os";
-import { basename, dirname, extname, relative, resolve } from "node:path";
+import { basename, dirname, extname, relative, resolve, sep } from "node:path";
 import type { Config } from "./config.ts";
 import { assert } from "./error.ts";
 import { writeIfChanged } from "./fs.ts";
@@ -485,15 +485,18 @@ export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts
 }
 
 /**
- * Create a static library. Returns absolute path to output.
+ * Create a static library. Returns absolute path to output. `implicitInputs`
+ * are waited for but not archived (the forbidUndefined stamps of the dep
+ * objects going in).
  */
-export function ar(n: Ninja, cfg: Config, out: string, objects: string[]): string {
+export function ar(n: Ninja, cfg: Config, out: string, objects: string[], implicitInputs: string[] = []): string {
   const absOut = resolve(cfg.buildDir, out);
 
   n.build({
     outputs: [absOut],
     rule: "ar",
     inputs: objects,
+    ...(implicitInputs.length > 0 ? { implicitInputs } : {}),
   });
 
   return absOut;
@@ -528,7 +531,16 @@ function objectPath(cfg: Config, src: string): string {
     relSrc = relative(cfg.buildDir, absSrc);
   } else {
     relSrc = relative(cfg.cwd, absSrc);
+    // --local-deps checkouts may live outside the repo; map them onto the
+    // vendor/<name>/ path the pinned source would have so obj/ stays a tree.
+    for (const [name, dir] of Object.entries(cfg.localDeps)) {
+      if (absSrc.startsWith(dir + sep)) {
+        relSrc = relative(cfg.cwd, resolve(cfg.vendorDir, name, relative(dir, absSrc)));
+        break;
+      }
+    }
   }
+  assert(!relSrc.startsWith(".."), `object path for ${absSrc} escapes the build dir (obj/${relSrc})`);
 
   return resolve(cfg.buildDir, "obj", relSrc + cfg.objSuffix);
 }

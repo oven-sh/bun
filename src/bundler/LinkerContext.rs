@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
-use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
@@ -1366,9 +1366,14 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `line_offset_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.line_offset_wait_group.finish();
+            // SAFETY: live until this lets the linker's `wait()` return; the linker then frees
+            // the tasks at once (`generate_chunks_in_parallel`), and nothing below touches `ctx`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.line_offset_wait_group,
+                )
+            };
         }
 
         // SAFETY: ctx is BundleV2.linker; container_of recovers the parent. We
@@ -1403,9 +1408,13 @@ impl SourceMapDataTask {
         // pointee outlives every task (joined via `quoted_contents_wait_group`).
         let ctx = task.ctx.expect("SourceMapDataTask.ctx");
         scopeguard::defer! {
-            // Both `&self` methods (atomic ops) — safe via `ParentRef::Deref`.
             ctx.mark_pending_task_done();
-            ctx.source_maps.quoted_contents_wait_group.finish();
+            // SAFETY: as in `run_line_offset`, for `quoted_contents_wait_group`.
+            unsafe {
+                WaitGroup::finish_raw(
+                    &raw const (*ctx.as_const_ptr()).source_maps.quoted_contents_wait_group,
+                )
+            };
         }
 
         // SAFETY: see `run_line_offset` — raw-ptr container_of, no `&mut`
@@ -1592,7 +1601,7 @@ pub struct GenerateChunkCtx<'a> {
     pub(crate) c: bun_ptr::ParentRef<LinkerContext<'a>, bun_ptr::Mut>,
     /// Backref to the full `chunks: &mut [Chunk]` slice owned by
     /// `generate_chunks_in_parallel`. The slice outlives every
-    /// `GenerateChunkCtx` (joined via `wait_for_all`), so [`bun_ptr::BackRef`]'s
+    /// `GenerateChunkCtx` (joined via the batch's `group.wait()`), so [`bun_ptr::BackRef`]'s
     /// owner-outlives-holder invariant holds and per-task reads go through
     /// safe `Deref`. Read-only: each task writes only through its own
     /// `*mut Chunk`.
@@ -1642,7 +1651,7 @@ impl<'a> GenerateChunkCtx<'a> {
 
 pub struct PendingPartRange<'a> {
     pub(crate) part_range: PartRange,
-    pub(crate) task: ThreadPoolLib::Task,
+    pub(crate) task: ThreadPoolLib::CountedTask,
     pub(crate) ctx: &'a GenerateChunkCtx<'a>,
     pub(crate) i: u32,
 }
@@ -1753,7 +1762,7 @@ impl<'a> LinkerContext<'a> {
             .contains(crate::chunk::Flags::IS_BROWSER_CHUNK_FROM_SERVER_BUILD)
         {
             // SAFETY: self is BundleV2.linker; container_of recovers the parent.
-            // `transpiler_for_target` only reads `bundle.browser_transpiler`.
+            // `transpiler_for_target` only reads `bundle.client_transpiler`.
             let bundle = unsafe {
                 &mut *LinkerContext::bundle_v2_ptr(std::ptr::from_mut::<LinkerContext>(self))
             };
@@ -2539,7 +2548,7 @@ impl<'a> LinkerContext<'a> {
                 r#ref: export_ref,
             });
         }
-        list.sort_by(|a, b| {
+        index_sort::sort_slice_by(list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 core::cmp::Ordering::Less
             } else {
@@ -2990,7 +2999,7 @@ impl<'a> LinkerContext<'a> {
         log: &mut Log,
     ) -> ScanCssImportsResult {
         // SAFETY: `css_asts` points at the `graph.ast.items_css()` column for
-        // the duration of `scanImportsAndExports`; we only test `is_none()`.
+        // the duration of `scan_imports_and_exports`; we only test `is_none()`.
         let css_asts = unsafe { &*css_asts };
         for record in file_import_records.iter() {
             if record.source_index.is_valid() {
@@ -3831,12 +3840,16 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        let mut order = index_sort::identity(unsafe { (&*keys).len() });
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        order
-            .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
+        index_sort::sort_indices(&mut order, &mut |a, b| unsafe {
+            (&*keys)[a as usize]
+                .inner_index()
+                .cmp(&(&*keys)[b as usize].inner_index())
+        });
 
         for &i in &order {
+            let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
             let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
 

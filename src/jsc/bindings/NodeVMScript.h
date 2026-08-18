@@ -2,8 +2,6 @@
 
 #include "NodeVM.h"
 
-#include "../vm/SigintReceiver.h"
-
 namespace JSC {
 class UnlinkedProgramCodeBlock;
 }
@@ -42,7 +40,7 @@ private:
 
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(NodeVMScriptConstructor, JSC::InternalFunction);
 
-class NodeVMScript final : public JSC::JSDestructibleObject, public SigintReceiver {
+class NodeVMScript final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
 

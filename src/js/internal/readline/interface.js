@@ -22,7 +22,6 @@ const {
   MathMaxApply,
   NumberIsFinite,
   ObjectDefineProperty,
-  ObjectSetPrototypeOf,
   RegExpPrototypeExec,
   SafeStringIterator,
   StringPrototypeCodePointAt,
@@ -1550,7 +1549,6 @@ __node_module__.exports = {
   kWordRight,
   kWriteToOutput,
   kMultilinePrompt,
-  kRestorePreviousState,
   kAddNewLineOnTTY,
   kLastCommandErrored,
 };

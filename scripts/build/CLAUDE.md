@@ -123,6 +123,8 @@ Tables: `cpuTargetFlags` (`-march`/`-mcpu`/`-mtune` — also forwarded to local 
 
 **Bump a dependency** — edit the `commit` in `scripts/build/deps/<name>.ts`. See `deps/README.md` for adding/removing deps.
 
+**Iterate on a dependency from a local checkout** — `bun bd --local-deps=mimalloc=~/code/mimalloc …` builds that dep from the clone instead of the pinned tarball (no fetch, no patches; edits rebuild incrementally). Any `github-archive` dep the graph compiles (not lolhtml — cargo reads that via `Cargo.toml`); details in `deps/README.md`.
+
 **Add a codegen step** — add a function in `codegen.ts` following the shape of `emitErrorCode` (simple) or `emitCppBind` (needs file-list input). Call it from `emitCodegen()` and add outputs to the right `CodegenOutputs` group (`rustInputs` if the Rust build reads it (the `include!`d generated `.rs` files) — `cppSources` if it's a `.cpp` to compile, `cppAll` if it's a header).
 
 **Add a Config field** — add to `Config` interface and `PartialConfig` in `config.ts`, resolve in `resolveConfig()`. If it needs a CLI flag, `build.ts`'s arg parser already handles `--anyfield=value` generically.
@@ -204,7 +206,7 @@ Split CI modes: `rust-only` (lolhtml+codegen+cargo → libbun_rust.a), `cpp-only
 | `error.ts`                     | `BuildError` with hint/file/cause, `assert()`                                                                           |
 | `download.ts`                  | `downloadWithRetry()`, archive extraction                                                                               |
 | `winsysroot.ts`                | Windows MSVC CRT + SDK sysroot (xwin): validates, adds case aliases, CI fetch                                           |
-| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads                                                                              |
+| `fetch-cli.ts`                 | Build-time CLI ninja invokes for downloads, `.h.in` substitution and the `forbidUndefined` symbol check                 |
 | `ci.ts`                        | CI integration — annotations, artifacts, log groups                                                                     |
 | `clean.ts`                     | `bun run clean` preset-based cleanup                                                                                    |
 | `glob-sources.ts` (parent dir) | Source glob patterns + CLI to print them                                                                                |

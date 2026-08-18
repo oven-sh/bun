@@ -21,7 +21,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFFIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWrappingFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiClass;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiPrototype;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSQLStatement;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteDatabaseSync;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeSqliteStatementSync;
@@ -33,12 +32,10 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSinkController;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStringDecoder;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableState;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForPendingVirtualModuleResult;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCallSite;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForImportMeta;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNapiExternal;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForRequireResolveFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBundlerPlugin;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMGlobalObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNodeVMSpecialSandbox;
@@ -58,7 +55,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSocketHandlers;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSDiffieHellman;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSDiffieHellmanGroup;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSECDH;
@@ -76,8 +72,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFunctionTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8Function;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodeHTTPServerSocket;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3Bucket;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSS3File;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSX509Certificate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNodePerformanceHooksHistogram;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForWasmStreamingCompiler;
@@ -97,8 +91,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookie;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookieMap;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForCookieMapIterator;
-
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForExposedToWorkerAndWindow;
 
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeaders;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForFetchHeadersIterator;
@@ -134,7 +126,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForOneShotDirectSink;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamIntoArrayOperation;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamAsyncIterator;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamReaderBase;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBReader;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamBYOBRequest;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForReadableStreamDefaultController;
@@ -176,7 +167,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForAbortSignal;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorEvent;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEvent;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventListener;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventEmitter;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSign;
@@ -184,7 +174,6 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHmac;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSHash;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSCipher;
-    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSSecretKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPublicKeyObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSPrivateKeyObject;

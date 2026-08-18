@@ -216,22 +216,16 @@ pub enum IPCDecodeError {
     /// Format could not be recognized. Report an error and close the socket.
     #[error("InvalidFormat")]
     InvalidFormat,
-    // —— bun.JSError variants ——
-    #[error("JSError")]
-    JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
-    #[error("OutOfMemory")]
-    OutOfMemory,
+    /// The decode ran under a VM that is stopping (loop-level; not an exception).
+    #[error("Stopped")]
+    Stopped,
+    #[error("{0:?}")]
+    Js(JsError),
 }
 
 impl From<JsError> for IPCDecodeError {
     fn from(e: JsError) -> Self {
-        match e {
-            JsError::Thrown => IPCDecodeError::JSError,
-            JsError::Terminated => IPCDecodeError::JSTerminated,
-            JsError::OutOfMemory => IPCDecodeError::OutOfMemory,
-        }
+        IPCDecodeError::Js(e)
     }
 }
 
@@ -243,10 +237,17 @@ pub enum IPCSerializationError {
     // —— bun.JSError variants ——
     #[error("JSError")]
     JSError,
-    #[error("JSTerminated")]
-    JSTerminated,
     #[error("OutOfMemory")]
     OutOfMemory,
+}
+
+impl From<JsError> for IPCSerializationError {
+    fn from(e: JsError) -> Self {
+        match e {
+            JsError::Thrown | JsError::Terminated => IPCSerializationError::JSError,
+            JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
+        }
+    }
 }
 
 mod advanced {
@@ -385,11 +386,7 @@ mod advanced {
         let (value, message_type) = match is_internal {
             IsInternal::Internal => (value, IPCMessageType::SerializedInternalMessage),
             IsInternal::External => {
-                let tagged = ipc_tag_advanced_buffers(global, value).map_err(|e| match e {
-                    JsError::Thrown => IPCSerializationError::JSError,
-                    JsError::Terminated => IPCSerializationError::JSTerminated,
-                    JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-                })?;
+                let tagged = ipc_tag_advanced_buffers(global, value)?;
                 if tagged.is_null() {
                     (value, IPCMessageType::SerializedMessage)
                 } else {
@@ -398,20 +395,14 @@ mod advanced {
             }
         };
 
-        let serialized = value
-            .serialize(
-                global,
-                SerializedFlags {
-                    // IPC sends across process.
-                    for_cross_process_transfer: true,
-                    for_storage: false,
-                },
-            )
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
+        let serialized = value.serialize(
+            global,
+            SerializedFlags {
+                // IPC sends across process.
+                for_cross_process_transfer: true,
+                for_storage: false,
+            },
+        )?;
         // `serialized` Drops at scope exit (defer serialized.deinit()).
 
         let size: u32 = u32::try_from(serialized.data().len()).expect("int cast");
@@ -511,7 +502,7 @@ mod json {
             );
             if s.tag() == bun_core::Tag::Dead {
                 bun_core::hint::cold();
-                return Err(IPCDecodeError::OutOfMemory);
+                return Err(IPCDecodeError::Js(JsError::OutOfMemory));
             }
             s
         } else {
@@ -533,7 +524,9 @@ mod json {
         }
         let deserialized = match parsed {
             Ok(v) => v,
-            Err(JsError::Thrown) | Err(JsError::Terminated) => {
+            Err(JsError::Terminated) => return Err(IPCDecodeError::Js(JsError::Terminated)),
+            Err(JsError::Thrown) => {
+                // A malformed message; a pending termination is not cleared by this and keeps unwinding.
                 global_this.clear_exception();
                 return Err(IPCDecodeError::InvalidFormat);
             }
@@ -561,13 +554,7 @@ mod json {
         let mut out: BunString = BunString::default();
         // Use jsonStringifyFast which passes undefined for the space parameter,
         // triggering JSC's SIMD-optimized FastStringifier code path.
-        value
-            .json_stringify_fast(global, &mut out)
-            .map_err(|e| match e {
-                JsError::Thrown => IPCSerializationError::JSError,
-                JsError::Terminated => IPCSerializationError::JSTerminated,
-                JsError::OutOfMemory => IPCSerializationError::OutOfMemory,
-            })?;
+        value.json_stringify_fast(global, &mut out)?;
         // `bun_core::String` is `Copy` (no `Drop`),
         // so the +1 ref written by `json_stringify_fast` is wrapped in
         // `OwnedString` immediately so every exit path (Dead, OOM in
@@ -614,7 +601,7 @@ pub(crate) fn decode_ipc_message(
     // The previous message's JS handler may have taken a worker's termination
     // trap; JSONParse with it pending trips LiteralParser's state assert.
     if global.bun_vm().script_execution_status() != bun_jsc::ScriptExecutionStatus::Running {
-        return Err(IPCDecodeError::JSTerminated);
+        return Err(IPCDecodeError::Stopped);
     }
     match mode {
         Mode::Advanced => advanced::decode_ipc_message(data, global),
@@ -2185,7 +2172,7 @@ fn handle_ipc_message(
                 if let Err(e) = res {
                     // ack written already, that's okay.
                     let _ = fd.close_allowing_standard_io(None);
-                    global_this.report_active_exception_as_unhandled(e);
+                    crate::dispatch::fold(Err(e));
                     return;
                 }
                 drop(_scope);
@@ -2276,8 +2263,16 @@ fn finish_decode(send_queue: &SendQueue, step: &DecodeStep) {
         DecodeStep::Wait => {
             log!("hit NotEnoughBytes");
         }
-        DecodeStep::Fail(IPCDecodeError::OutOfMemory) => {
+        DecodeStep::Fail(IPCDecodeError::Js(JsError::OutOfMemory)) => {
             Output::print_errorln("IPC message is too long.");
+            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
+        }
+        // Materializing the message (structured-clone deserialize, buffer
+        // restore) threw: that is this message's delivery failing, folded like
+        // a throwing listener, and the channel is closed as for any undecodable
+        // input.
+        DecodeStep::Fail(IPCDecodeError::Js(err)) => {
+            crate::dispatch::fold(Err(*err));
             send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
         DecodeStep::Fail(_) => {

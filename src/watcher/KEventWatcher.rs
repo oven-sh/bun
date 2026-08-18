@@ -28,6 +28,12 @@ impl KEventWatcher {
     }
 }
 
+impl Drop for KEventWatcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 fn watch_event_from_kevent(kevent: &libc::kevent) -> WatchEvent {
     let mut op = Op::empty();
     if (kevent.fflags & libc::NOTE_DELETE) > 0 {

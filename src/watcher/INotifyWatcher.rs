@@ -194,15 +194,14 @@ impl INotifyWatcher {
         }
         let fd = Fd::from_native(raw);
         bun_core::scoped_log!(watcher, "{} init", fd);
-        Ok(Self {
-            fd,
-            loaded: true,
-            coalesce_interval: env_var::BUN_INOTIFY_COALESCE_INTERVAL
-                .get()
-                .and_then(|v| isize::try_from(v).ok())
-                .unwrap_or(100_000),
-            ..Self::default()
-        })
+        let mut this = Self::default();
+        this.fd = fd;
+        this.loaded = true;
+        this.coalesce_interval = env_var::BUN_INOTIFY_COALESCE_INTERVAL
+            .get()
+            .and_then(|v| isize::try_from(v).ok())
+            .unwrap_or(100_000);
+        Ok(this)
     }
 
     fn read(&mut self) -> bun_sys::Result<&[*const Event]> {
@@ -365,6 +364,12 @@ impl INotifyWatcher {
             let _ = bun_sys::close(self.fd);
             self.fd = Fd::INVALID;
         }
+    }
+}
+
+impl Drop for INotifyWatcher {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 

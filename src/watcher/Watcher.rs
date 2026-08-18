@@ -308,8 +308,7 @@ impl Watcher {
         if free {
             // SAFETY: this was heap-allocated by caller of init(); no borrow of it
             // is live here.
-            let mut me = unsafe { bun_core::heap::take(this) };
-            me.platform.stop();
+            drop(unsafe { bun_core::heap::take(this) });
         }
     }
 

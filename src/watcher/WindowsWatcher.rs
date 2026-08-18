@@ -391,6 +391,12 @@ impl WindowsWatcher {
     }
 }
 
+impl Drop for WindowsWatcher {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
 #[repr(u32)]
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub(crate) enum Timeout {

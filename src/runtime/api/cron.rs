@@ -32,6 +32,7 @@ use bun_paths::{self as path};
 use bun_resolver::fs::FileSystem;
 #[cfg(not(target_os = "macos"))]
 use bun_resolver::fs::RealFS;
+
 #[cfg(not(windows))]
 use crate::api::bun::process::SpawnResultExt as _;
 use crate::api::bun::process::{self as spawn, Process, Rusage, SpawnOptions, Status};

@@ -1,6 +1,7 @@
 // Bundling bugs that only occur in DevServer; independent cases share one dev server, one route each.
 import type { Bake } from "bun";
 import { expect } from "bun:test";
+import { isWindows } from "harness";
 import { readdirSync, readlinkSync } from "node:fs";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
@@ -1555,5 +1556,41 @@ devTest("an html route that client code also imports as text is still bundled as
       }),
     );
     await dev.fetch("/about").expect.toInclude("<p>about, second</p>");
+  },
+});
+
+// Longer than MAX_PATH_BYTES (4 KiB posix, ~96 KiB Windows); used to overflow the resolver's join buffer and abort.
+const specifierLongerThanPathBuffer = Buffer.alloc((isWindows ? 96 : 4) * 1024 + 1024, "a").toString();
+
+devTest("unresolvable relative import longer than the path buffer is a bundling error", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import './${specifierLongerThanPathBuffer}';
+      console.log('loaded');
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("index.ts", `console.log('fixed');`);
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+
+// A CSS url() without "./" skips the resolver's directory cache busting, so
+// this only reaches DirectoryWatchStore.track_resolution_failure.
+devTest("unresolvable css url() longer than the path buffer is a bundling error", {
+  files: {
+    "index.html": emptyHtmlFile({ styles: ["styles.css"] }),
+    "styles.css": `
+      body {
+        background-image: url(${specifierLongerThanPathBuffer});
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    await dev.write("styles.css", `body { color: blue; }`);
+    expect((await dev.fetch("/")).status).toBe(200);
   },
 });

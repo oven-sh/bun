@@ -102,17 +102,17 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
-    pub(super) fn join_abs(cwd: &[u8], platform: Platform, part: &[u8]) -> &'static [u8] {
-        // NOTE: `resolve_path::join_abs` ties the result lifetime to `cwd`, but the
-        // returned slice always points into the threadlocal `PARSER_JOIN_INPUT_BUFFER`
-        // (or is `cwd` itself when `parts.is_empty()`, which never happens here — we
-        // pass exactly one part). Re-erase to `'static` so the resolver can hold it
-        // across `&mut self` calls.
-        let s = dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join_abs::<P>(
-            cwd, part
-        ));
-        // SAFETY: see NOTE — slice borrows threadlocal storage, valid 'static per-thread.
-        unsafe { bun_ptr::detach_lifetime(s) }
+    /// Like `join_abs_string_buf`, but returns `None` when the normalized
+    /// result does not fit in `buf`. Use it when `parts` may be arbitrarily long.
+    pub(super) fn join_abs_string_buf_checked<'b>(
+        cwd: &'b [u8],
+        buf: &'b mut [u8],
+        parts: &[&[u8]],
+        platform: Platform,
+    ) -> Option<&'b [u8]> {
+        dispatch_platform!(platform, |P| {
+            ::bun_paths::resolve_path::join_abs_string_buf_checked::<P>(cwd, buf, parts)
+        })
     }
     pub(super) fn join(parts: &[&[u8]], platform: Platform) -> &'static [u8] {
         dispatch_platform!(platform, |P| ::bun_paths::resolve_path::join::<P>(parts))
@@ -2482,11 +2482,16 @@ impl<'a> Resolver<'a> {
             return false;
         }
 
-        let joined = bun_paths::join_abs(
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let Some(joined) = bun_paths::join_abs_string_buf_checked(
             bun_paths::dirname_platform(import_source_file, bun_paths::Platform::AUTO),
+            &mut buf.0,
+            &[specifier],
             bun_paths::Platform::AUTO,
-            specifier,
-        );
+        ) else {
+            // Longer than any cache key (see `dir_info_cached_maybe_log`).
+            return false;
+        };
         let dir = bun_paths::dirname_platform(joined, bun_paths::Platform::AUTO);
 
         let a = self.bust_dir_cache(dir);

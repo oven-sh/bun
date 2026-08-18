@@ -65,6 +65,24 @@ describe("vm", () => {
       );
       expect(result).toBe(2);
     });
+    test("ShadowRealm can be created and used inside a context", async () => {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const vm = require("node:vm");
+          const realm = vm.runInNewContext("new ShadowRealm()");
+          const wrapped = vm.runInNewContext("new ShadowRealm().evaluate('(a, b) => a + b')");
+          console.log(typeof realm.evaluate, realm.evaluate("6 * 7"), wrapped(20, 22));`,
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(stdout).toBe("function 42 42\n");
+      expect(exitCode).toBe(0);
+    });
   });
 
   describe("runInThisContext()", () => {
@@ -391,6 +409,18 @@ describe("Script", () => {
       err = e;
     }
     expect(err.stack.split("\n").slice(0, 4)).toEqual(["evalmachine.<anonymous>:2", "   %%", "   ^", ""]);
+  });
+
+  test("a compile-time error without a position gets no arrow header", () => {
+    // Overflowing the parser's stack fails compilation without a line, like Node's RangeError.
+    let err: any;
+    try {
+      new Script(Buffer.alloc(200_000, "(").toString());
+    } catch (e) {
+      err = e;
+    }
+    expect(err).toBeInstanceOf(RangeError);
+    expect(err.stack.split("\n")[0]).toBe("RangeError: Maximum call stack size exceeded.");
   });
 
   test("vm.compileFunction compile-time SyntaxError is arrow-decorated like new Script", () => {
@@ -890,6 +920,104 @@ test("can't use bytecode from a different script", () => {
   expect(secondScript.cachedDataRejected).toBeTrue();
   expect(firstScript.runInThisContext()).toBe(2);
   expect(secondScript.runInThisContext()).toBe(4);
+});
+
+describe("Script compiles its source once and links that in every context it runs in", () => {
+  // Runs Script(s) in fresh contexts, keeping what every run produced alive (each run's wrapper function
+  // pins that run's ProgramExecutable), and reports how many UnlinkedProgramCodeBlock cells (one per
+  // compile of a program) the runs after the first added. BUN_JSC_useCodeCache=0 takes JSC's own cache
+  // out of the picture, so a Script that does not hold on to its compile adds one per context.
+  const fixture = String.raw`
+    const { Script, createContext } = require("node:vm");
+    const { heapStats } = require("bun:jsc");
+    let body = "";
+    for (let i = 0; i < 50; i++) body += "function f" + i + "(a) { return a + " + i + "; }\n";
+    const source = "(function (exports) {\n" + body + "exports.sum = f0(1) + f49(1);\n})";
+    const options = process.env.VM_FIXTURE_CACHED_DATA ? { cachedData: new Script(source).createCachedData() } : {};
+    const scripts = [new Script(source, options)];
+    if (process.env.VM_FIXTURE_TWO_SCRIPTS) scripts.push(new Script(source, options));
+    const programBlocks = () => {
+      Bun.gc(true);
+      return heapStats().objectTypeCounts.UnlinkedProgramCodeBlock ?? 0;
+    };
+    const keep = [];
+    let afterFirstContext = 0;
+    for (let i = 0; i < 6; i++) {
+      const context = createContext({});
+      for (const script of scripts) {
+        const wrapper = script.runInContext(context);
+        const exports = {};
+        wrapper(exports);
+        if (exports.sum !== 51) throw new Error("context " + i + " computed " + exports.sum);
+        keep.push(wrapper);
+      }
+      if (i === 0) afterFirstContext = programBlocks();
+    }
+    console.log(JSON.stringify({
+      programBlocksAddedByLaterContexts: programBlocks() - afterFirstContext,
+      cachedDataRejected: scripts.map(script => script.cachedDataRejected),
+      cachedDataStillProducible: scripts.every(script => script.createCachedData().length > 0),
+    }));
+  `;
+
+  async function runFixture(extraEnv: Record<string, string>) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, BUN_JSC_useCodeCache: "0", ...extraEnv },
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    const { programBlocksAddedByLaterContexts, ...rest } = JSON.parse(stdout);
+    // A Script that recompiles adds one per Script per context (+5 / +10 here). Slightly negative is
+    // possible: garbage from before the first measurement may only be collected by the second one.
+    expect(programBlocksAddedByLaterContexts).toBeLessThanOrEqual(0);
+    return rest;
+  }
+
+  test.concurrent("one Script", async () => {
+    expect(await runFixture({})).toEqual({ cachedDataRejected: [null], cachedDataStillProducible: true });
+  });
+
+  test.concurrent("two Scripts with the same source", async () => {
+    expect(await runFixture({ VM_FIXTURE_TWO_SCRIPTS: "1" })).toEqual({
+      cachedDataRejected: [null, null],
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test.concurrent("a Script constructed with accepted cachedData", async () => {
+    expect(await runFixture({ VM_FIXTURE_CACHED_DATA: "1" })).toEqual({
+      cachedDataRejected: [false],
+      cachedDataStillProducible: true,
+    });
+  });
+
+  test("each context gets its own global declarations", () => {
+    const script = new Script(
+      "var counter = (typeof counter === 'number' ? counter : 0) + 1; function whoami() { return tag; } counter;",
+    );
+    const first = createContext({ tag: "first" });
+    const second = createContext({ tag: "second" });
+    expect(script.runInContext(first)).toBe(1);
+    expect(script.runInContext(second)).toBe(1);
+    expect(script.runInContext(first)).toBe(2);
+    expect(runInContext("whoami()", first)).toBe("first");
+    expect(runInContext("whoami()", second)).toBe("second");
+    expect(first.counter).toBe(2);
+    expect(second.counter).toBe(1);
+  });
+
+  test("source positions are the same in every context the compile is linked into", () => {
+    const script = new Script("\n\nnew Error('where').stack.split('\\n')[1].trim()", {
+      filename: "shared.js",
+      lineOffset: 100,
+    });
+    for (const context of [createContext({}), createContext({})]) {
+      expect(script.runInContext(context)).toBe("at shared.js:103:10");
+    }
+  });
 });
 
 describe("codeGeneration options", () => {
@@ -1734,4 +1862,85 @@ test.concurrent("timeout during a nested event-loop wait beneath the script", as
   expect(stderr).toBe("");
   expect(stdout).toBe("ERR_SCRIPT_EXECUTION_TIMEOUT\n");
   expect(exitCode).toBe(0);
+});
+
+describe("node:vm lineOffset/columnOffset at the edge of int32", () => {
+  // Node's validator accepts any int32 here. JSC stores positions as ints,
+  // converts the offset to one-based and counts the source's own lines on top
+  // of it, so an offset this large used to overflow in the parser: assertion
+  // builds abort in JSTextPosition::checkConsistency ("line >= 0"), release
+  // builds report wrapped negative line numbers. Each case gets its own
+  // process because the failure mode is an abort.
+  const INT32_MAX = 2147483647;
+
+  async function runFixture(body: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `const vm = require("node:vm");\n${body}`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+    return stdout;
+  }
+
+  test.concurrent.each([
+    ["new Script, one-line source", `new vm.Script("1", { lineOffset: ${INT32_MAX} })`],
+    [
+      "new Script, second line steps past INT32_MAX",
+      `new vm.Script(${JSON.stringify("1;\n2;")}, { lineOffset: ${INT32_MAX - 1} })`,
+    ],
+    ["new Script, columnOffset", `new vm.Script(${JSON.stringify("1;\n2;")}, { columnOffset: ${INT32_MAX} })`],
+    ["compileFunction", `vm.compileFunction("return 1", [], { lineOffset: ${INT32_MAX} })`],
+    [
+      "compileFunction with params, a multi-line body and both offsets",
+      `vm.compileFunction(${JSON.stringify("a;\nreturn a;")}, ["a"], { lineOffset: ${INT32_MAX - 1}, columnOffset: ${INT32_MAX} })`,
+    ],
+    // Three lines so the counter steps past INT32_MAX whether the module's
+    // first line is taken as lineOffset or, like Script, as lineOffset + 1.
+    ["SourceTextModule", `new vm.SourceTextModule(${JSON.stringify("1;\n2;\n3;")}, { lineOffset: ${INT32_MAX - 1} })`],
+  ])("%s compiles", async (_, expression) => {
+    const stdout = await runFixture(`${expression};\nconsole.log("ok");`);
+    expect(stdout).toBe("ok\n");
+  });
+
+  test.concurrent.each([
+    [
+      "line of a runtime error thrown by a Script",
+      `new vm.Script(${JSON.stringify('1;\nthrow new Error("q")')}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} }).runInThisContext()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from a Script",
+      `new vm.Script(${JSON.stringify("1;\n%%")}, { filename: "big.js", lineOffset: ${INT32_MAX - 1} })`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "column of a runtime error thrown on the first line of a Script",
+      `new vm.Script('throw new Error("q")', { filename: "big.js", columnOffset: ${INT32_MAX} }).runInThisContext()`,
+      /big\.js:1:(-?\d+)/,
+    ],
+    [
+      "line of a runtime error thrown by a compileFunction body",
+      `vm.compileFunction('throw new Error("q")', [], { filename: "big.js", lineOffset: ${INT32_MAX} })()`,
+      /big\.js:(-?\d+)/,
+    ],
+    [
+      "line of a compile-time SyntaxError from compileFunction",
+      `vm.compileFunction("%%", [], { filename: "big.js", lineOffset: ${INT32_MAX} })`,
+      /big\.js:(-?\d+)/,
+    ],
+  ])("%s stays near the requested offset", async (_, expression, pattern) => {
+    const stdout = await runFixture(`try { ${expression}; } catch (e) { console.log(e.stack); }`);
+    const match = pattern.exec(stdout);
+    expect(match).not.toBeNull();
+    // The offset is only pulled down by as much as the (tiny) source could
+    // possibly add to it, so the reported position stays just below INT32_MAX
+    // rather than wrapping negative or being dropped.
+    const position = Number(match![1]);
+    expect(position).toBeGreaterThan(INT32_MAX - 100);
+    expect(position).toBeLessThanOrEqual(INT32_MAX);
+  });
 });

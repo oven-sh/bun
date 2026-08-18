@@ -302,11 +302,6 @@ size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, 
         dest);
 }
 
-size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const char** dest)
-{
-    return ffi_sv(((Http3Request*)req)->getParameter(index), dest);
-}
-
 #pragma clang attribute pop
 
 } // extern "C"

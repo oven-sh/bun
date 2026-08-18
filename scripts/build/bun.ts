@@ -234,9 +234,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
+  // forbidUndefined stamps (source.ts). Whatever the dep objects go into
+  // next, the archive or the link, waits for them, so a dep that regrows a
+  // forbidden reference fails before anything containing it is produced.
+  const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
     depObjects.push(...d.objects);
+    depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     // d.outputs is the "headers are ready" signal: for nested-cmake/
     // prebuilt that's the .a/stamp (headers are undeclared side-effects),
@@ -443,7 +448,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   if (archived) {
     n.comment(`─── Archive (${cfg.mode}) ───`);
     n.blank();
-    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects);
+    archive = ar(n, cfg, `${cfg.libPrefix}${exeName}${cfg.libSuffix}`, allObjects, depChecks);
 
     // Upload dep libs as soon as they're built — they're ready ~minutes
     // before the archive (WebKit copies from prefetch in seconds; lolhtml
@@ -501,7 +506,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
     // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
     // up. Linux release only — the map flag itself is gated identically in
     // flags.ts.

@@ -288,9 +288,7 @@ pub mod compat {
     // ── kernel32 surface (bun_sys::windows::kernel32 layers extras on top
     //    of bun_windows_sys::kernel32; mirror just what the shim calls) ──
     pub mod kernel32 {
-        pub use bun_windows_sys::externs::{
-            GetConsoleMode, GetExitCodeProcess, SetConsoleMode, WaitForSingleObject,
-        };
+        pub use bun_windows_sys::externs::{GetConsoleMode, GetExitCodeProcess, SetConsoleMode};
         pub use bun_windows_sys::kernel32::*;
     }
 }

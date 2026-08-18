@@ -1073,6 +1073,7 @@ impl Tree {
 // FillItem / TreeFiller
 // ──────────────────────────────────────────────────────────────────────────
 
+#[derive(Clone, Copy)]
 pub struct FillItem {
     pub(crate) tree_id: Id,
     pub(crate) dependency_id: DependencyID,

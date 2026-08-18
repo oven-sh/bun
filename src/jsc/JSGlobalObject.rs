@@ -106,6 +106,8 @@ impl JSGlobalObject {
         JsError::Thrown
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory(&self) -> JsError {
         // See `throw_stack_overflow` for the validation-scope rationale.
         crate::validation_scope!(scope, self);
@@ -118,6 +120,8 @@ impl JSGlobalObject {
         JSGlobalObject__createOutOfMemoryError(self)
     }
 
+    #[cold]
+    #[inline(never)]
     pub fn throw_out_of_memory_value(&self) -> JSValue {
         JSGlobalObject__throwOutOfMemoryError(self);
         JSValue::ZERO
@@ -379,10 +383,6 @@ impl JSGlobalObject {
             format_args!("Expected {} to be a {} for '{}'.", field, typename, name_),
         )
         .to_js()
-    }
-
-    pub fn to_js<T: Into<JSValue>>(&self, value: T) -> JsResult<JSValue> {
-        Ok(value.into())
     }
 
     /// "Expected {field} to be a {typename} for '{name}'."
@@ -929,15 +929,6 @@ impl JSGlobalObject {
         let str = ZigString::init_utf8(&buffer);
         let err_value = str.to_error_instance(self);
         self.throw_value(err_value)
-    }
-
-    // TODO: delete these two fns
-    pub fn ref_(&self) -> &JSGlobalObject {
-        self
-    }
-    #[inline]
-    pub fn ctx(&self) -> &JSGlobalObject {
-        self.ref_()
     }
 
     pub fn create_aggregate_error(

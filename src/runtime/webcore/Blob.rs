@@ -4022,13 +4022,14 @@ fn read_slice<B: AsRef<[u8]>>(
     reader: &mut bun_io::FixedBufferStream<B>,
     len: usize,
 ) -> crate::Result<Vec<u8>> {
-    if len > reader.buffer.as_ref().len().saturating_sub(reader.pos) {
-        return Err(crate::Error::TooSmall);
-    }
-    let mut slice = vec![0u8; len];
-    reader
-        .read_exact(&mut slice)
-        .map_err(|_| crate::Error::TooSmall)?;
+    let buffer = reader.buffer.as_ref();
+    let end = reader
+        .pos
+        .checked_add(len)
+        .filter(|&end| end <= buffer.len())
+        .ok_or(crate::Error::TooSmall)?;
+    let slice = buffer[reader.pos..end].to_vec();
+    reader.pos = end;
     Ok(slice)
 }
 
@@ -7031,7 +7032,6 @@ pub trait FileCloser: Sized {
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-    fn update(&mut self);
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
@@ -7129,9 +7129,6 @@ macro_rules! impl_file_closer {
             }
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
-            }
-            fn update(&mut self) {
-                $T::update(self)
             }
             #[cfg(windows)]
             fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {

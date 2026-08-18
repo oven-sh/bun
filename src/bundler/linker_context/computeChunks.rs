@@ -625,13 +625,7 @@ pub(crate) fn compute_chunks(
         if chunk.template.needs(PlaceholderField::Target) {
             // Determine the target from the AST of the entry point source
             let chunk_target = ast_targets[chunk.entry_point.source_index() as usize];
-            chunk.template.placeholder.target = match chunk_target {
-                Target::Browser => b"browser".to_vec().into_boxed_slice(),
-                Target::Bun => b"bun".to_vec().into_boxed_slice(),
-                Target::Node => b"node".to_vec().into_boxed_slice(),
-                Target::BunMacro => b"macro".to_vec().into_boxed_slice(),
-                Target::ServerComponentsSsr => b"ssr".to_vec().into_boxed_slice(),
-            };
+            chunk.template.placeholder.target = chunk_target.naming_placeholder().into();
         }
 
         if chunk.template.needs(PlaceholderField::Dir) {

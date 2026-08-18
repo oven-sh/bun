@@ -21,12 +21,12 @@ use crate::renamer;
 use crate::{
     ARGUMENTS_STR as arguments_str, DeferredArrowArgErrors, DeferredErrors,
     DeferredImportNamespace, EXPORTS_STRING_NAME as exports_string_name, ExprBindingTuple,
-    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, FunctionKind,
-    IdentifierOpts, ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest,
-    LocList, MacroState, ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref,
-    RefMap, RefRefMap, RuntimeImports, ScopeOrder, ScopeOrderList, StrictModeFeature,
-    StringBoolMap, Substitution, TempRef, ThenCatchChain, TransposeState, WrapMode, fs,
-    is_eval_or_arguments, options, statement_cares_about_scope,
+    FindLabelSymbolResult, FnOnlyDataVisit, FnOrArrowDataParse, FnOrArrowDataVisit, IdentifierOpts,
+    ImportItemForNamespaceMap, InvalidLoc, JSXImport, JSXTransformType, Jest, LocList, MacroState,
+    ParseStatementOptions, ParsedPath, PrependTempRefsOpts, ReactRefresh, Ref, RefMap, RefRefMap,
+    RuntimeImports, ScopeOrder, ScopeOrderList, StrictModeFeature, StringBoolMap, Substitution,
+    TempRef, ThenCatchChain, TransposeState, WrapMode, fs, is_eval_or_arguments, options,
+    statement_cares_about_scope,
 };
 use bun_ast as js_ast;
 use bun_ast::DeclaredSymbol;
@@ -4548,7 +4548,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
         Ok(ref_)
     }
 
-    pub(crate) fn validate_function_name(&mut self, func: &G::Fn, kind: FunctionKind) {
+    pub(crate) fn validate_function_name(&mut self, func: &G::Fn) {
         if let Some(name) = &func.name {
             // SAFETY: Symbol.original_name is an arena/source-contents slice valid for 'a.
             let original_name: &[u8] = self.symbols[name.ref_.inner_index() as usize]
@@ -4561,9 +4561,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     js_lexer::range_of_identifier(self.source, name.loc),
                     b"An async function cannot be named \"await\"",
                 );
-            } else if kind == FunctionKind::Expr
-                && func.flags.contains(Flags::Function::IsGenerator)
-                && original_name == b"yield"
+            } else if func.flags.contains(Flags::Function::IsGenerator) && original_name == b"yield"
             {
                 self.log().add_range_error(
                     Some(self.source),

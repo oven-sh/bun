@@ -21,14 +21,6 @@ use crate::{JSGlobalObject, JsError};
 // `bun_jsc::Task` / `bun_jsc::Taskable` without reaching down a tier.
 pub use bun_event_loop::{Task, TaskTag, Taskable, task_tag};
 
-/// `Task::new<T: Taskable>(ptr)` — typed constructor. Kept as a free fn for
-/// back-compat with existing call sites; equivalent to [`Task::init`].
-/// The tag comes from the [`Taskable`] impl.
-#[inline]
-pub fn new<T: Taskable>(ptr: *mut T) -> Task {
-    Task::init(ptr)
-}
-
 // ─── run_tasks dispatch ─────────────────────────────────────────────────────
 // The per-tick dispatch entry point is `bun_jsc::event_loop::tick_queue_with_
 // count` (declares `__bun_tick_queue_with_count`, defined in

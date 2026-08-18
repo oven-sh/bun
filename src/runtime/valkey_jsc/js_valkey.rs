@@ -866,9 +866,6 @@ impl JSValkeyClient {
                 tls,
                 database: client.database,
                 flags: valkey::ConnectionFlags {
-                    // If the user manually closed the connection, then duplicating a closed client
-                    // means the new client remains finalized.
-                    is_manually_closed: client.flags.is_manually_closed,
                     enable_offline_queue: if sub_ctx.is_subscriber {
                         sub_ctx.original_enable_offline_queue
                     } else {
@@ -881,8 +878,6 @@ impl JSValkeyClient {
                     } else {
                         client.flags.enable_auto_pipelining
                     },
-                    // Duplicating a finalized client means it stays finalized.
-                    finalized: client.flags.finalized,
                     ..Default::default()
                 },
                 max_retries: client.max_retries,

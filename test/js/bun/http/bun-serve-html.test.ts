@@ -691,7 +691,11 @@ test("serve html whose file is deleted before its first bundle", async () => {
     "app.ts": `console.log("app");`,
     "serve.ts": /*ts*/ `
       import { renameSync } from "node:fs";
+      import { join } from "node:path";
       import html from "./index.html";
+
+      const htmlPath = join(import.meta.dir, "index.html");
+      const movedPath = htmlPath + ".moved";
 
       const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
       async function page() {
@@ -700,11 +704,11 @@ test("serve html whose file is deleted before its first bundle", async () => {
         return { status: response.status, title: text.match(/<title>(.*?)<\\/title>/)?.[1] };
       }
 
-      renameSync("index.html", "index.html.moved");
+      renameSync(htmlPath, movedPath);
       // The second request hits the route while it is already marked as failed.
       const missing = [await page(), await page()];
 
-      renameSync("index.html.moved", "index.html");
+      renameSync(movedPath, htmlPath);
       let restored = await page();
       const deadline = Date.now() + 30_000;
       while (restored.status !== 200 && Date.now() < deadline) {

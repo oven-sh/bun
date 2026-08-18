@@ -681,6 +681,7 @@ describe("pathological bracket inputs", () => {
     expect(Markdown.html("*a [[b*|c]] d\n", o)).toBe('<p>*a <x-wikilink data-target="b*">c</x-wikilink> d</p>\n');
     expect(Markdown.html("[[a *b|c]] d* e\n", o)).toBe('<p><x-wikilink data-target="a *b">c</x-wikilink> d* e</p>\n');
     expect(Markdown.html("**a [[b**|c]]\n", o)).toBe('<p>**a <x-wikilink data-target="b**">c</x-wikilink></p>\n');
+    expect(Markdown.html("_a [[b_|c]] d\n", o)).toBe('<p>_a <x-wikilink data-target="b_">c</x-wikilink> d</p>\n');
     expect(Markdown.html("~a [[b~|c]] d\n", { wikiLinks: true, strikethrough: true })).toBe(
       '<p>~a <x-wikilink data-target="b~">c</x-wikilink> d</p>\n',
     );

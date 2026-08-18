@@ -50,8 +50,7 @@ pub(crate) enum LabelLeave {
     Wikilink,
 }
 
-/// Result of `match_wiki_link`: the construct spans `start..inner_end + 2`,
-/// with the target at `inner_start..pipe_pos.unwrap_or(inner_end)`.
+/// Result of `match_wiki_link`; the construct ends at `inner_end + 2`.
 pub(crate) struct WikiLinkMatch {
     pub(crate) inner_start: usize,
     pub(crate) pipe_pos: Option<usize>,
@@ -854,9 +853,8 @@ impl Parser<'_> {
         false
     }
 
-    /// Lookahead-only match of a wiki link: [[destination]] or
-    /// [[destination|label]]. Shared by `process_wiki_link` and the emphasis
-    /// collection phase so both agree on what forms a wiki link.
+    /// Lookahead-only match of `[[destination]]` / `[[destination|label]]`,
+    /// shared by rendering and emphasis collection so they agree.
     pub(crate) fn match_wiki_link(&self, content: &[u8], start: usize) -> Option<WikiLinkMatch> {
         // start points at first '[', next char is also '['
         let mut pos = start + 2;

@@ -717,11 +717,8 @@ impl Parser<'_> {
                     }
                 }
             }
-            // Skip wiki link constructs — like regular links they are
-            // resolved before emphasis, and the emit walk renders them as a
-            // unit, so a delimiter inside the target must not pair with one
-            // outside. The label gets its own collection pass when its frame
-            // is entered.
+            // Skip wiki links — like regular links they resolve before
+            // emphasis; the label gets its own collection pass.
             if c == b'[' && self.flags.wiki_links && i + 1 < content.len() && content[i + 1] == b'['
             {
                 if let Some(m) = self.match_wiki_link(content, i) {

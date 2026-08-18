@@ -10345,13 +10345,22 @@ describe("dependency names containing terminal control characters", () => {
     });
   });
 
-  // [description, root dependencies, how the unresolved dependency is summarized]
-  const aliasCases: [string, Record<string, string>, string][] = [
-    ["as the alias of a dependency", { [controlName]: "npm:bar@0.0.2" }, `${escapedName}@npm:bar@0.0.2`],
+  // [description, root dependencies, how the unresolved dependency is summarized afterwards]
+  const aliasCases: [string, Record<string, string>, string[]][] = [
+    [
+      "as the alias of a dependency",
+      { [controlName]: "npm:bar@0.0.2" },
+      [`error: ${escapedName}@npm:bar@0.0.2 failed to resolve`],
+    ],
     [
       "as the target of an npm: alias",
       { "safe-alias": `npm:${controlName}@0.0.2` },
-      `safe-alias@npm:${escapedName}@0.0.2`,
+      [`error: safe-alias@npm:${escapedName}@0.0.2 failed to resolve`],
+    ],
+    [
+      "as the alias of a catalog dependency",
+      { [controlName]: "catalog:" },
+      [`error: ${escapedName}@catalog: is not in the catalog`, `bun add --catalog ${escapedName}`],
     ],
   ];
   for (const [description, dependencies, summary] of aliasCases) {
@@ -10374,7 +10383,7 @@ describe("dependency names containing terminal control characters", () => {
         const [out, err, exitCode] = await Promise.all([stdout.text(), stderr.text(), exited]);
 
         expect(err).toContain(`error: Invalid dependency name "${escapedName}"`);
-        expect(err).toContain(`error: ${summary} failed to resolve`);
+        for (const line of summary) expect(err).toContain(line);
         assertNameNeverLeaked(out, err, urls);
         expect(await installed(ctx)).toEqual([]);
         expect(exitCode).toBe(1);

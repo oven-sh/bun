@@ -2665,6 +2665,35 @@ it("should not add duplicate package.json entries when installing the same tarba
   });
 });
 
+it("reports a tarball URL that fails to download once, as unresolved", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch() {
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const tarball_url = `${server.url.href.replace(/\/+$/, "")}/baz-0.0.3.tgz`;
+  setHandler(dummyRegistry([]));
+  await writeFile(join(package_dir, "package.json"), JSON.stringify({ name: "foo", version: "0.0.1" }));
+
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "add", tarball_url],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+  const [err, , exitCode] = await Promise.all([stderr.text(), stdout.text(), exited]);
+
+  expect(err).toContain(`error: ${tarball_url} failed to resolve`);
+  // Until the tarball resolves, the URL itself stands in as the dependency's
+  // name. The tree builder must not complain about that placeholder being an
+  // unusable folder name on top of the download failure.
+  expect(err).not.toContain("Invalid dependency name");
+  expect(exitCode).toBe(1);
+});
+
 it("should add multiple dependencies specified on command line", async () => {
   expect(check_npm_auth_type.check).toBe(true);
   using server = Bun.serve({

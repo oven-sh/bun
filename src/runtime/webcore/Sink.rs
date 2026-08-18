@@ -115,7 +115,7 @@ macro_rules! impl_js_sink_abi {
 /// Invoke inside the `impl JsSinkType for T` block; `Self::name` resolves to
 /// the inherent method ahead of the trait item being defined, so the forward
 /// does not recurse. Items whose bodies differ per sink (`finalize`,
-/// `construct`, `end_from_js`, `source`, `done`, the `HAS_*` consts) stay
+/// `construct`, `end_from_js`, `source`, the `HAS_*` consts) stay
 /// hand-written.
 #[macro_export]
 macro_rules! impl_js_sink_forwarders {
@@ -333,9 +333,6 @@ pub trait JsSinkType: Sized + JsSinkAbi {
     /// `&mut Self` and the C++ dispatcher keeps using `m_sinkPtr` in the
     /// same frame; defer a last-owner free to the event loop.
     fn controller_detached(&mut self) {}
-    fn done(&self) -> bool {
-        false
-    }
     fn flush_from_js(&mut self, _global: &JSGlobalObject, _wait: bool) -> sys::Result<JSValue> {
         // Guarded by `HAS_FLUSH_FROM_JS`; default impl delegates to `flush()`
         // (returning undefined on success) so buffered bytes are

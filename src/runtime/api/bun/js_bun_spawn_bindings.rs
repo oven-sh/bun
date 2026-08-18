@@ -2031,6 +2031,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
     if global_this.has_exception() {
         // e.g. a termination exception.
+        // SAFETY: same as the `finalize` below; `subprocess` is not used after this line.
+        SubprocessT::finalize(unsafe { Box::from_raw(subprocess_ptr) });
         return Ok(JSValue::ZERO);
     }
 

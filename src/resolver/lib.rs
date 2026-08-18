@@ -598,8 +598,7 @@ pub mod fs {
                         FilenameStore::instance().append_slice(self.text)?
                     };
                     let pretty: &mut [u8] = alloc.alloc_slice_copy(self.pretty);
-                    // SAFETY: arena memory lives for the whole bundle pass; the
-                    // consuming `Path` (graph/import-record) never outlives it.
+                    // SAFETY: arena memory lives for the whole bundle pass; the consuming `Path` never outlives it.
                     let pretty: &'static [u8] =
                         unsafe { core::slice::from_raw_parts(pretty.as_ptr(), pretty.len()) };
                     let mut p = Path::<'static>::init(text);

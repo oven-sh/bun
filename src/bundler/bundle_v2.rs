@@ -7060,8 +7060,7 @@ pub mod bv2_impl {
             let watcher_data = &parse_result.watcher_data;
             if this.bun_watcher.is_some() && watcher_data.fd.is_valid() {
                 let source_index = parse_result.value.source_index();
-                // borrowck — read the source path before
-                // `should_add_watcher(&self)` so the column borrow is released.
+                // Read the source path before `should_add_watcher(&self)` so the column borrow is released.
                 let source_path = this.graph.input_files.items_source()[source_index as usize]
                     .path
                     .text;

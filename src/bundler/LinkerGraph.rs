@@ -223,9 +223,7 @@ pub struct LinkerGraph<'a> {
 // - `bump: *const Arena` is a backref into `BundleV2`; the arena is frozen
 //   (no new allocations) for the duration of any worker-pool fan-out that
 //   holds `&LinkerGraph`.
-// - `files_live` / `parts_live` / `reachable_files` / `stable_source_indices` /
-//   `code_splitting` / `ts_enums` are populated before fan-out and only read
-//   by workers.
+// - `files_live` / `parts_live` / `reachable_files` / `stable_source_indices` / `code_splitting` / `ts_enums` are populated before fan-out and only read by workers.
 // - `ast` / `meta` / `files` columns that workers mutate are split out via
 //   `split_mut()` into disjoint `&mut [_]` *before* the pool runs (see
 //   `compute_cross_chunk_dependencies`); workers never reach those columns

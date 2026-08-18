@@ -3143,9 +3143,7 @@ impl DevServer {
         // borrows it (self-ref via `CurrentBundle`, see Note on
         // `CurrentBundle.bv2`).
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
-        // Borrows `heap`, so AST nodes built during bundle setup
-        // live exactly as long as the bundle. The arena-allocated allocator
-        // never runs `Drop`; the `AstAllocState` goes to `bv2` on success and is recycled by the guard on error.
+        // Borrows `heap`; never runs `Drop`. The `AstAllocState` goes to `bv2` on success and is recycled by the guard on error.
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
             heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
         struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);

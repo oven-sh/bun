@@ -102,8 +102,7 @@ mod bun_paths {
             |P| ::bun_paths::resolve_path::join_abs_string_buf::<P>(cwd, buf, parts)
         )
     }
-    /// Like `join_abs_string_buf`, but returns `None` when the normalized
-    /// result does not fit in `buf`. Use it when `parts` may be arbitrarily long.
+    /// Like `join_abs_string_buf`, but returns `None` when the normalized result does not fit in `buf`.
     pub(super) fn join_abs_string_buf_checked<'b>(
         cwd: &'b [u8],
         buf: &'b mut [u8],

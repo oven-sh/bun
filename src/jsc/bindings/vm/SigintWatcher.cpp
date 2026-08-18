@@ -25,7 +25,6 @@ static BOOL WindowsCtrlHandler(DWORD signal)
 SigintWatcher::SigintWatcher()
     : m_semaphore(1)
 {
-    m_globalObjects.reserveInitialCapacity(16);
 }
 
 SigintWatcher::~SigintWatcher()
@@ -68,11 +67,11 @@ void SigintWatcher::install()
             if (m_waiting.test_and_set()) {
                 m_waiting.clear();
 #if !OS(WINDOWS)
-                if (!signalAll()) {
+                if (!signalInnermost()) {
                     Bun__onPosixSignal(SIGINT);
                 }
 #else
-                signalAll();
+                signalInnermost();
 #endif
             } else {
                 m_waiting.clear();
@@ -112,77 +111,35 @@ void SigintWatcher::signalReceived()
     }
 }
 
-void SigintWatcher::registerGlobalObject(JSGlobalObject* globalObject)
+void SigintWatcher::registerReceiver(NodeVMRunTermination* receiver)
 {
-    if (globalObject == nullptr) {
-        return;
+    WTF::Locker transition(m_installMutex);
+    bool wasEmpty;
+    {
+        WTF::Locker lock(m_receiversMutex);
+        wasEmpty = m_receivers.isEmpty();
+        m_receivers.append(receiver);
     }
-
-    WTF::Locker lock(m_globalObjectsMutex);
-    m_globalObjects.appendIfNotContains(globalObject);
-}
-
-void SigintWatcher::unregisterGlobalObject(JSGlobalObject* globalObject)
-{
-    if (globalObject == nullptr) {
-        return;
-    }
-
-    WTF::Locker lock(m_globalObjectsMutex);
-
-    auto iter = std::find(m_globalObjects.begin(), m_globalObjects.end(), globalObject);
-    if (iter == m_globalObjects.end()) {
-        return;
-    }
-
-    std::swap(*iter, m_globalObjects.last());
-    m_globalObjects.removeLast();
-}
-
-void SigintWatcher::registerReceiver(SigintReceiver* module)
-{
-    if (module == nullptr) {
-        return;
-    }
-
-    WTF::Locker lock(m_receiversMutex);
-    m_receivers.appendIfNotContains(module);
-}
-
-void SigintWatcher::unregisterReceiver(SigintReceiver* module)
-{
-    WTF::Locker lock(m_receiversMutex);
-
-    auto iter = std::find(m_receivers.begin(), m_receivers.end(), module);
-    if (iter == m_receivers.end()) {
-        return;
-    }
-
-    std::swap(*iter, m_receivers.last());
-    m_receivers.removeLast();
-}
-
-void SigintWatcher::ref()
-{
-    // ref()/deref() race across worker_threads (each worker registers its own
-    // global while running vm code with breakOnSigint). The lock makes the
-    // count and the paired install()/uninstall() transition atomic; a lost
-    // increment would otherwise let one worker's deref() tear down the
-    // watcher thread while another worker still holds a reference, and the
-    // underflowing count would trip the ASSERT below.
-    WTF::Locker locker { m_refCountMutex };
-    if (m_refCount++ == 0) {
+    if (wasEmpty)
         install();
-    }
 }
 
-void SigintWatcher::deref()
+void SigintWatcher::unregisterReceiver(NodeVMRunTermination* receiver)
 {
-    WTF::Locker locker { m_refCountMutex };
-    ASSERT(m_refCount > 0);
-    if (--m_refCount == 0) {
-        uninstall();
+    WTF::Locker transition(m_installMutex);
+    bool nowEmpty;
+    {
+        WTF::Locker lock(m_receiversMutex);
+        auto index = m_receivers.reverseFind(receiver);
+        ASSERT(index != notFound);
+        if (index == notFound)
+            return;
+        m_receivers.removeAt(index);
+        nowEmpty = m_receivers.isEmpty();
     }
+    // Not under m_receiversMutex: uninstall() joins the signal thread, which takes it in signalInnermost().
+    if (nowEmpty)
+        uninstall();
 }
 
 SigintWatcher& SigintWatcher::get()
@@ -191,25 +148,15 @@ SigintWatcher& SigintWatcher::get()
     return instance;
 }
 
-bool SigintWatcher::signalAll()
+// As in Node (SigintWatchdogHelper::InformWatchdogsAboutSignal): one SIGINT interrupts the innermost run.
+bool SigintWatcher::signalInnermost()
 {
-    {
-        WTF::Locker lock(m_receiversMutex);
-        for (auto* receiver : m_receivers) {
-            receiver->setSigintReceived();
-        }
-    }
-
-    WTF::Locker lock(m_globalObjectsMutex);
-
-    if (m_globalObjects.isEmpty()) {
+    WTF::Locker lock(m_receiversMutex);
+    if (m_receivers.isEmpty())
         return false;
-    }
-
-    for (JSGlobalObject* globalObject : m_globalObjects) {
-        globalObject->vm().notifyNeedTermination();
-    }
-
+    auto* receiver = m_receivers.last();
+    receiver->setSigintReceived();
+    receiver->vm().notifyNeedTermination();
     return true;
 }
 

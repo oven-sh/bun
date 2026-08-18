@@ -300,10 +300,15 @@ impl TextDecoder {
                 //
                 // => The reason we need to encode it is because TextDecoder "latin1" is actually CP1252, while WebKit latin1 is 8-bit utf-16
                 let out_length = strings::element_length_cp1252_into_utf16(buffer_slice);
-                let mut bytes = vec![0u16; out_length].into_boxed_slice();
-
-                let out = strings::copy_cp1252_into_utf16(&mut bytes, buffer_slice);
+                let mut units: Vec<u16> = Vec::with_capacity(out_length);
+                // SAFETY: `units` has `out_length` spare units; `buf` is only ever written.
+                let buf =
+                    unsafe { core::slice::from_raw_parts_mut(units.as_mut_ptr(), out_length) };
+                let out = strings::copy_cp1252_into_utf16(buf, buffer_slice);
+                // SAFETY: the copy above initialized all `out_length` units (one per input byte).
+                unsafe { units.set_len(out_length) };
                 // The boxed slice is a tight allocation (no excess capacity).
+                let bytes = units.into_boxed_slice();
                 // SAFETY: `bytes` was allocated by the global allocator; `into_raw`
                 // transfers ownership of the buffer to JSC's external-string finalizer.
                 Ok(unsafe {
@@ -321,13 +326,8 @@ impl TextDecoder {
                 let joined_owned: Box<[u8]>;
                 let buffered = self.buffered.get();
                 let joined: &[u8] = if buffered.len > 0 {
-                    let buffered_len = buffered.len as usize;
-                    let mut storage =
-                        vec![0u8; buffered_len + buffer_slice.len()].into_boxed_slice();
-                    storage[0..buffered_len].copy_from_slice(buffered.slice());
-                    storage[buffered_len..].copy_from_slice(buffer_slice);
+                    joined_owned = [buffered.slice(), buffer_slice].concat().into_boxed_slice();
                     self.buffered.set(Buffered::default());
-                    joined_owned = storage;
                     &joined_owned
                 } else {
                     buffer_slice

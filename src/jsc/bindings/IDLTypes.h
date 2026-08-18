@@ -36,10 +36,6 @@
 #include <wtf/URL.h>
 #include <wtf/WallTime.h>
 
-#if ENABLE(WEBGL)
-#include "WebGLAny.h"
-#endif
-
 namespace JSC {
 class ArrayBuffer;
 class ArrayBufferView;
@@ -50,16 +46,7 @@ class JSObject;
 
 namespace WebCore {
 
-class IDBKey;
-class IDBKeyData;
-class IDBValue;
-class JSWindowProxy;
 class DOMPromise;
-class ScheduledAction;
-
-#if ENABLE(WEBGL)
-class WebGLExtension;
-#endif
 
 template<typename T>
 struct IDLType {
@@ -90,10 +77,6 @@ struct IDLType {
     static ImplementationType extractValueFromNullable(const NullableTypeWithLessPadding<Traits>& value) { return value.value(); }
     template<typename Traits>
     static ImplementationType extractValueFromNullable(NullableTypeWithLessPadding<Traits>&& value) { return std::move(value.value()); }
-};
-
-// IDLUnsupportedType is a special type that serves as a base class for currently unsupported types.
-struct IDLUnsupportedType : IDLType<void> {
 };
 
 // IDLNull is a special type for use as a subtype in an IDLUnion that is nullable.
@@ -290,11 +273,6 @@ template<typename T> struct IDLPromise : IDLWrapper<DOMPromise> {
     using InnerType = T;
 };
 
-struct IDLError : IDLUnsupportedType {
-};
-struct IDLDOMException : IDLUnsupportedType {
-};
-
 template<typename... Ts>
 struct IDLUnion : IDLType<std::variant<typename Ts::ImplementationType...>> {
     using TypeList = brigand::list<Ts...>;
@@ -344,7 +322,7 @@ struct IDLDataView : IDLBufferSource<JSC::DataView> {
 template<typename T> struct IDLTypedArray : IDLBufferSource<T> {
 };
 // NOTE: The specific typed array types are IDLTypedArray specialized on the typed array
-//       implementation type, e.g. IDLFloat64Array is IDLTypedArray<JSC::Float64Array>
+//       implementation type, e.g. IDLUint8Array is IDLTypedArray<JSC::Uint8Array>
 
 // Non-WebIDL extensions
 
@@ -357,24 +335,8 @@ struct IDLDate : IDLType<WallTime> {
     static WallTime extractValueFromNullable(WallTime value) { return value; }
 };
 
-struct IDLScheduledAction : IDLType<std::unique_ptr<ScheduledAction>> {
-};
 template<typename T> struct IDLEventListener : IDLWrapper<T> {
 };
-
-struct IDLIDBKey : IDLWrapper<IDBKey> {
-};
-struct IDLIDBKeyData : IDLWrapper<IDBKeyData> {
-};
-struct IDLIDBValue : IDLWrapper<IDBValue> {
-};
-
-#if ENABLE(WEBGL)
-struct IDLWebGLAny : IDLType<WebGLAny> {
-};
-struct IDLWebGLExtension : IDLWrapper<WebGLExtension> {
-};
-#endif
 
 // Helper predicates
 

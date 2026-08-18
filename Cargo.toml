@@ -108,13 +108,13 @@ members = [
 # heavy dev-dependencies (criterion, html5ever) never enter `Cargo.lock`.
 exclude = ["vendor"]
 
-# Lint pack run by `bun run rust:mordant` (.github/workflows/mordant.yml). Pinned:
+# Lint pack run by `bun run rust:mordant` (.github/workflows/rust-lints.yml). Pinned:
 # bumping the rev is a PR of its own, where whatever the new revision finds gets
 # fixed or added to mordant-baseline.toml. Mordant brings its own nightly
 # (see its rust-toolchain), which must still be able to compile this workspace.
 [workspace.metadata.dylint]
 libraries = [
-    { git = "https://github.com/scarletindustries/mordant", rev = "3bcf1165e57b7a0e266df661f62781ad368340e7" },
+    { git = "https://github.com/scarletindustries/mordant", rev = "12d279767fd7150afe7e549003896b5ec54493f6" },
 ]
 
 [workspace.package]

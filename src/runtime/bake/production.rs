@@ -985,34 +985,13 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
         // Fetch the output file fresh at each use site instead of binding it.
 
         // Count how many JS+CSS files associated with this route and prepare `pattern`
-        pattern.prepend_part(route.part);
-        match route.part {
-            framework_router::Part::Param(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAll(name) => {
-                params_buf.push(name);
-            }
-            framework_router::Part::CatchAllOptional(_) => {
-                return Err(js_err(global.throw(format_args!(
-                    "catch-all routes are not supported in static site generation",
-                ))));
-            }
-            _ => {}
-        }
         let mut file_count: u32 = 1;
-        if route.file_layout.is_some() {
-            file_count += 1;
-        }
-        let mut next: Option<framework_router::RouteIndex> = route.parent;
-        while let Some(parent_index) = next {
-            let parent = router.route_ptr(parent_index);
-            pattern.prepend_part(parent.part);
-            match parent.part {
-                framework_router::Part::Param(name) => {
-                    params_buf.push(name);
-                }
-                framework_router::Part::CatchAll(name) => {
+        let mut next: Option<framework_router::RouteIndex> = Some(route_index);
+        while let Some(current_index) = next {
+            let current = router.route_ptr(current_index);
+            pattern.prepend_part(current.part);
+            match current.part {
+                framework_router::Part::Param(name) | framework_router::Part::CatchAll(name) => {
                     params_buf.push(name);
                 }
                 framework_router::Part::CatchAllOptional(_) => {
@@ -1020,12 +999,12 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
                         "catch-all routes are not supported in static site generation",
                     ))));
                 }
-                _ => {}
+                framework_router::Part::Text(_) | framework_router::Part::Group(_) => {}
             }
-            if parent.file_layout.is_some() {
+            if current.file_layout.is_some() {
                 file_count += 1;
             }
-            next = parent.parent;
+            next = current.parent;
         }
 
         // Fill styles and file_list
@@ -1419,10 +1398,7 @@ impl framework_router::InsertionHandler for EntryPointMap {
     ) -> Result<(), bun_alloc::AllocError> {
         bun_core::err_generic!(
             "Multiple {} matching the same route pattern is ambiguous",
-            match ty {
-                framework_router::FileKind::Page => "pages",
-                framework_router::FileKind::Layout => "layout",
-            }
+            ty.collision_noun()
         );
         bun_core::pretty_errorln!("  - <blue>{}<r>", BStr::new(rel_path));
         bun_core::pretty_errorln!(

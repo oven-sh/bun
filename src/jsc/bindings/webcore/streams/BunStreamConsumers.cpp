@@ -263,7 +263,7 @@ static WTF::String stripTextResultBOM(const WTF::String& string)
 }
 
 // UTF-8 size / write via the simdutf-backed Buffer encoders. Lone surrogates count (and
-// write) as U+FFFD, so the pair always agrees; BunString::utf8ByteLength does not.
+// write) as U+FFFD, so the pair always agrees; plain simdutf::utf8_length_from_utf16 does not.
 static size_t utf8ByteLengthWithReplacement(const WTF::String& string)
 {
     if (string.isEmpty())
@@ -564,7 +564,11 @@ static JSValue convertChunksToText(JSGlobalObject* globalObject, JSValue chunksV
                 throwOutOfMemoryError(globalObject, scope);
                 return {};
             }
-            WTF::String text = WTF::String::fromUTF8ReplacingInvalidSequences(span);
+            WTF::String text = Zig::convertUTF8ToString(span);
+            if (text.isNull() && !span.empty()) [[unlikely]] {
+                throwOutOfMemoryError(globalObject, scope);
+                return {};
+            }
             RELEASE_AND_RETURN(scope, jsString(vm, withoutUTF8BOM(text)));
         }
     }
@@ -730,7 +734,12 @@ static WTF::String finishTextAccumulator(JSC::VM& vm, JSGlobalObject* globalObje
         throwOutOfMemoryError(globalObject, scope);
         return WTF::String();
     }
-    return WTF::String::fromUTF8ReplacingInvalidSequences(bytes.span());
+    WTF::String text = Zig::convertUTF8ToString(bytes.span());
+    if (text.isNull() && !bytes.isEmpty()) [[unlikely]] {
+        throwOutOfMemoryError(globalObject, scope);
+        return WTF::String();
+    }
+    return text;
 }
 
 // reader.read() as a Promise-kind read request.

@@ -1,6 +1,7 @@
 use crate::lockfile::package::PackageColumns as _;
 use core::mem::ManuallyDrop;
 
+use bun_collections::index_sort;
 use bun_core::Output;
 use bun_core::strings;
 use bun_paths::PathBuffer;
@@ -191,7 +192,9 @@ impl PackageManager {
             // Sort descending. Use the total-order helper with swapped args
             // (`b.order(a)`) so equal keys yield `Equal`; a two-way Less/Greater
             // closure is not antisymmetric and may panic since Rust 1.81.
-            installed_versions.sort_by(|a, b| semver::Version::order_fn(tags_slice, *b, *a));
+            index_sort::sort_slice_by(&mut installed_versions, |a, b| {
+                semver::Version::order_fn(tags_slice, *b, *a)
+            });
         }
         let npm_query = version.npm();
         for installed_version in installed_versions.iter().copied() {
@@ -325,8 +328,7 @@ impl PackageManager {
                     continue;
                 }
 
-                // TODO lockfile rewrite: remove this and make non-optional peer dependencies error if they did not resolve.
-                //      Need to keep this for now because old lockfiles might have a peer dependency without the optional flag set.
+                // Unmet peers only warn (`warn_unmet_peer_dependency`).
                 if failed_dep.behavior.is_peer() {
                     continue;
                 }

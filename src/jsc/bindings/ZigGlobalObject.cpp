@@ -92,7 +92,6 @@
 #include "JSBroadcastChannel.h"
 #include "JSBuffer.h"
 #include "JSBufferList.h"
-#include "webcore/JSMIMEBindings.h"
 #include "streams/JSByteLengthQueuingStrategy.h"
 #include "JSCloseEvent.h"
 #include "JSCommonJSExtensions.h"
@@ -2019,7 +2018,6 @@ void GlobalObject::finishCreation(VM& vm)
     ASSERT(inherits(info()));
 
     m_commonStrings.initialize();
-    m_http2CommonStrings.initialize();
     m_bakeAdditions.initialize();
     m_markdownTagStrings.initialize();
 
@@ -3063,13 +3061,15 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     auto* readableStream = dynamicDowncast<WebCore::JSReadableStream>(stream);
     if (!readableStream) [[unlikely]]
         return JSC::JSValue::encode(JSC::Exception::create(vm, createTypeError(this, "Expected a ReadableStream"_s)));
-    // The generated `${Sink}__assignToStream` caller expects any failure returned as the
+    // The native caller (JSSinkController__assignToStream) expects any failure returned as the
     // encoded Exception cell, never left pending on the VM.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue result = Bun::WebStreams::assignToStream(this, readableStream, controller);
     if (auto* exception = scope.exception()) [[unlikely]] {
-        // Hand the Exception cell back to the native caller; a termination stays pending by design.
+        // Hand the Exception cell back to the native caller. A termination that has left script is
+        // taken (the caller stands down on the cell); beneath script it stays for JSC to unwind.
         scope.clearExceptionExceptTermination();
+        Bun__VM__takeTerminationOutsideScript(this);
         return JSC::JSValue::encode(exception);
     }
     return JSC::JSValue::encode(result);
@@ -3273,16 +3273,21 @@ extern "C" [[ZIG_EXPORT(nothrow)]] double JSC__JSGlobalObject__jsDateNow(JSC::JS
 
 // ====================== end conditional builtin globals ======================
 
-extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject*);
-
 uint8_t GlobalObject::drainMicrotasks()
 {
     auto& vm = this->vm();
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
+    // A stopped VM has no checkpoint to run: whether or not its termination is still pending here (the
+    // landing frame may already have taken it), nothing queued may execute any more.
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
+        Bun__VM__takeTerminationOutsideScript(this);
+        return 1;
+    }
+
     if (auto* exception = scope.exception()) [[unlikely]] {
         if (vm.isTerminationException(exception)) [[unlikely]] {
-            Bun__VM__keepTerminationRequestWithPendingException(this);
+            Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
 
@@ -3306,7 +3311,7 @@ uint8_t GlobalObject::drainMicrotasks()
         nextTickQueue->drain(vm, this);
         if (auto* exception = scope.exception()) {
             if (vm.isTerminationException(exception)) {
-                Bun__VM__keepTerminationRequestWithPendingException(this);
+                Bun__VM__takeTerminationOutsideScript(this);
                 return 1;
             }
             (void)scope.tryClearException();
@@ -3317,7 +3322,7 @@ uint8_t GlobalObject::drainMicrotasks()
     vm.drainMicrotasks();
     if (auto* exception = scope.exception()) {
         if (vm.isTerminationException(exception)) {
-            Bun__VM__keepTerminationRequestWithPendingException(this);
+            Bun__VM__takeTerminationOutsideScript(this);
             return 1;
         }
         (void)scope.tryClearException();
@@ -3360,14 +3365,6 @@ extern "C" uint8_t JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globa
         return 2;
     return globalObject->drainMicrotasks();
 }
-extern "C" EncodedJSValue JSC__JSGlobalObject__getHTTP2CommonString(Zig::GlobalObject* globalObject, uint32_t hpack_index)
-{
-    auto value = globalObject->http2CommonStrings().getStringFromHPackIndex(hpack_index, globalObject);
-    if (value != nullptr) {
-        return JSValue::encode(value);
-    }
-    return JSValue::encode(JSValue::JSUndefined);
-}
 
 template<class Visitor, class T> static void visitGlobalObjectMember(Visitor& visitor, T& anything)
 {
@@ -3404,12 +3401,12 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
 
+    for (auto& structure : thisObject->m_domStructures)
+        visitor.append(structure);
+
     {
         // The GC thread has to grab the GC lock even though it is not mutating the containers.
         Locker locker { thisObject->m_gcLock };
-
-        for (auto& structure : thisObject->m_structures.values())
-            visitor.append(structure);
 
         for (auto& guarded : thisObject->m_guardedObjects)
             guarded->visitAggregate(visitor);
@@ -3444,13 +3441,6 @@ extern "C" bool JSGlobalObject__setTimeZone(JSC::JSGlobalObject* globalObject, c
     }
 
     return false;
-}
-
-extern "C" void JSGlobalObject__requestTermination(JSC::JSGlobalObject* globalObject)
-{
-    auto& vm = JSC::getVM(globalObject);
-    vm.ensureTerminationException();
-    vm.setHasTerminationRequest();
 }
 
 extern "C" void JSGlobalObject__clearTerminationException(JSC::JSGlobalObject* globalObject)

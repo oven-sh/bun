@@ -56,7 +56,6 @@ const rustIdentifierPaths: Record<string, string> = {
   "collections/linear_fifo.rs": "collections/linear_fifo.rs",
   "crash_handler.rs": "crash_handler/crash_handler.rs",
   "css_internals.rs": "css_jsc/css_internals.rs",
-  "dependency.rs": "install/dependency.rs",
   "escapeRegExp.rs": "string/escapeRegExp.rs",
   "event_loop.rs": "jsc/event_loop.rs",
   "ffi.rs": "runtime/ffi/ffi.rs",

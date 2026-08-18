@@ -7,6 +7,18 @@ struct BunVmHandleRef;
 extern "C" const BunVmHandleRef* Bun__VmHandle__retain(void* bunVM); // JS thread
 extern "C" const BunVmHandleRef* Bun__VmHandle__retainRef(const BunVmHandleRef*); // any thread
 extern "C" void Bun__VmHandle__release(const BunVmHandleRef*);
+namespace JSC {
+class TopExceptionScope;
+}
+namespace Bun {
+// A TerminationException that has unwound past the outermost script frame (!vm.isEntered()) is the VM's stop arriving
+// at native code that keeps running: take it off the VM, reset JSC's request flag as an entry-scope exit would, forbid
+// execution (WebCore's forbidExecution() at the same point). Beneath script it stays pending for JSC to unwind. True if
+// taken. bindings.cpp.
+bool takeTerminationOutsideScript(JSC::VM&, JSC::TopExceptionScope&);
+}
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject*);
+
 namespace WebCore {
 class EventLoopTask;
 }
@@ -167,6 +179,9 @@ public:
     // vmHandle's state byte (Bun__VmHandle__stateAddress): the per-callback "may run script" test is one load.
     const unsigned char* vmHandleState { nullptr };
     ALWAYS_INLINE bool scriptAllowed() const { return Bun__VmHandle__scriptAllowedInline(vmHandleState); }
+    // Stopping: the stop has been requested (any thread; `!scriptAllowed()`). Stopped: it has been carried out on
+    // this thread and JSC forbids execution. Either way no script may be entered on this VM.
+    ALWAYS_INLINE bool isStoppingOrStopped(const JSC::VM& vm) const { return !scriptAllowed() || vm.executionForbidden(); }
     Bun::JSCTaskScheduler deferredWorkTimer;
 
     // Domain runs (see EventLoopDomain.h).

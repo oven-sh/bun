@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<false>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<false>(global_this, args, secondary_args_value, &mut None)
 }
 
 /// Bun.spawnSync() calls this.
@@ -298,7 +298,32 @@ pub(crate) fn spawn_sync(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
+    let mut bun_test_deadline: Option<Timespec> = None;
+    let result = spawn_maybe_sync::<true>(
+        global_this,
+        args,
+        secondary_args_value,
+        &mut bun_test_deadline,
+    );
+    // A bun:test deadline that passed while the sync wait was blocking is reported only now: the wait is over (domain run exited / isolated loop torn down) and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
+    if let Some(deadline) = bun_test_deadline
+        && result.is_ok()
+        && !global_this.has_exception()
+        && let Some(runner) = crate::test_runner::jest::Jest::runner()
+        && let Some(active_file) = runner.bun_test_root.active_file.clone()
+    {
+        let vm = global_this.bun_vm().as_mut();
+        runner.remove_active_timeout(vm);
+        crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
+            &active_file,
+            &deadline,
+            vm,
+        );
+        if global_this.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+    }
+    result
 }
 
 /// How spawnSync blocks. On POSIX it turns the real event loop inside a
@@ -332,6 +357,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
+    bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if IS_SYNC {
         // We skip this on Windows due to test failures.
@@ -1062,7 +1088,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // - No stdin, stdout, stderr pipes
     // - No extra fds
     // - No auto killer (for tests)
-    // - No execution time limit (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
     let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && IS_SYNC)
@@ -1074,9 +1099,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
         && !jsc_vm.auto_killer.enabled
-        // `jsc_vm()` is the audited safe `&VM` accessor (centralised opaque-ZST
-        // deref proof in `VirtualMachine`).
-        && !jsc_vm.jsc_vm().has_execution_time_limit()
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()
@@ -2019,39 +2041,24 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
                     // different test fails, and that SHOULD be okay.
-                    if has_bun_test_timeout {
-                        if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
-                            bun_test_fired = true;
-                            let mut active_file_strong = crate::test_runner::jest::Jest::runner()
-                                .unwrap()
-                                .bun_test_root
-                                .active_file
-                                // TODO: add a .cloneNonOptional()?
-                                .clone();
-
-                            let taken_active_file = active_file_strong.take().unwrap();
-
-                            // SAFETY: jsc_vm_ptr is the live thread VM.
-                            crate::test_runner::jest::Jest::runner()
-                                .unwrap()
-                                .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
-
-                            // This might internally call `kill(2)` on this
-                            // spawnSync process. Even if we do that, we still
-                            // need to reap the process. So we may go through
-                            // the event loop again, but it should wake up
-                            // ~instantly so we can drain the events.
-                            crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                &taken_active_file,
-                                &absolute_timespec,
-                                // SAFETY: jsc_vm_ptr is the live thread VM.
-                                unsafe { &*jsc_vm_ptr },
-                            );
-                            // The direct child may already be reaped (and
-                            // gone from the auto-killer), so kill it here too.
-                            let _ = subprocess.try_kill(subprocess.kill_signal);
-                            // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
+                    // Kill the dangling processes now so this wait can drain, but leave the runner's timeout callback to `spawn_sync`: it re-enters the test runner and must not run while this wait is still active.
+                    if has_bun_test_timeout
+                        && bun_test_timeout.order(&now) == core::cmp::Ordering::Less
+                    {
+                        bun_test_fired = true;
+                        *bun_test_deadline = Some(absolute_timespec);
+                        if let Some(active_file) = crate::test_runner::jest::Jest::runner()
+                            .unwrap()
+                            .bun_test_root
+                            .active_file
+                            .clone()
+                        {
+                            active_file
+                                .get()
+                                .execution
+                                .kill_dangling_processes_on_timeout(global_this);
                         }
+                        let _ = subprocess.try_kill(subprocess.kill_signal);
                     }
                 }
             }

@@ -3,13 +3,9 @@
 use core::ffi::{c_char, c_int, c_uint, c_void};
 
 pub use crate::shared::{
-    Bytef, DataType, FlushValue, ReturnCode, alloc_func, free_func, gzFile, gzFile_s,
-    internal_state, struct_gzFile_s, struct_internal_state, struct_z_stream_s, uInt, uLong, uLongf,
-    voidpf, z_alloc_func, z_free_func, z_stream, z_stream_s, z_streamp, zStream_struct,
+    Bytef, DataType, FlushValue, ReturnCode, uInt, uLong, uLongf, z_stream, z_streamp,
+    zStream_struct,
 };
-
-type voidpc = *const c_void;
-type voidp = *mut c_void;
 
 #[repr(C)]
 pub struct struct_gz_header_s {
@@ -84,21 +80,8 @@ unsafe extern "C" {
         source: *const Bytef,
         sourceLen: uLong,
     ) -> ReturnCode;
-    pub fn gzdopen(fd: c_int, mode: *const u8) -> gzFile;
-    pub fn gzread(file: gzFile, buf: voidp, len: c_uint) -> ReturnCode;
-    pub fn gzwrite(file: gzFile, buf: voidpc, len: c_uint) -> ReturnCode;
-    pub fn gzgetc(file: gzFile) -> ReturnCode;
-    pub fn gzclose(file: gzFile) -> ReturnCode;
-    pub fn gzerror(file: gzFile, errnum: *mut c_int) -> *const u8;
     pub fn adler32(adler: uLong, buf: *const Bytef, len: uInt) -> uLong;
     pub fn crc32(crc: uLong, buf: *const Bytef, len: uInt) -> uLong;
-    pub fn deflateInit_(
-        strm: z_streamp,
-        level: c_int,
-        version: *const c_char,
-        stream_size: c_int,
-    ) -> ReturnCode;
-    pub fn inflateInit_(strm: z_streamp, version: *const c_char, stream_size: c_int) -> ReturnCode;
     pub fn deflateInit2_(
         strm: z_streamp,
         level: c_int,
@@ -122,7 +105,6 @@ unsafe extern "C" {
         version: *const c_char,
         stream_size: c_int,
     ) -> ReturnCode;
-    pub fn gzopen(path: *const u8, mode: *const u8) -> gzFile;
     // pub fn get_crc_table() -> *const z_crc_t;
     pub fn inflateResetKeep(strm: z_streamp) -> ReturnCode;
     pub fn deflateResetKeep(strm: z_streamp) -> ReturnCode;

@@ -452,7 +452,7 @@ export interface Dependency {
 
   /**
    * Macro name suffix for `bun_dependency_versions.h` — becomes
-   * `BUN_DEP_<macro>` / `BUN_VERSION_<macro>`. The value is derived from
+   * `BUN_VERSION_<macro>`. The value is derived from
    * `source(cfg)`: `github-archive.commit`, `prebuilt.identity`, etc.
    *
    * Omit for deps that shouldn't appear in `process.versions` (e.g.

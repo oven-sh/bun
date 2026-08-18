@@ -72,6 +72,52 @@ impl HasLength for &crate::String {
     }
 }
 
+/// Key tables of a large map (see `SORTED_LOOKUP_MIN_KEYS` in the macro
+/// crate): the same length-then-bytes dispatch as the small-map compare
+/// tree, but as data plus one shared binary search instead of an unrolled
+/// compare per key.
+#[doc(hidden)]
+pub struct SortedKeys {
+    /// All keys concatenated in declaration order.
+    pub blob: &'static [u8],
+    /// `n + 1` prefix byte offsets into `blob`, declaration order.
+    pub offsets: &'static [u16],
+    /// Declaration indexes ordered by (length, bytes).
+    pub sorted: &'static [u16],
+    /// `MAX_LEN - MIN_LEN + 2` cumulative starts into `sorted`, one per length.
+    pub buckets: &'static [u16],
+    pub min_len: usize,
+}
+
+impl SortedKeys {
+    /// The key declared at index `decl`.
+    #[inline]
+    pub fn key(&self, decl: usize) -> &'static [u8] {
+        &self.blob[self.offsets[decl] as usize..self.offsets[decl + 1] as usize]
+    }
+
+    /// Declaration indexes of all keys of length `len`, sorted by bytes.
+    #[inline]
+    pub fn bucket(&self, len: usize) -> &'static [u16] {
+        let Some(i) = len.checked_sub(self.min_len) else {
+            return &[];
+        };
+        if i + 1 >= self.buckets.len() {
+            return &[];
+        }
+        &self.sorted[self.buckets[i] as usize..self.buckets[i + 1] as usize]
+    }
+
+    /// Declaration index of `key`, or `u32::MAX` for a miss.
+    #[inline(never)]
+    pub fn index_of(&self, key: &[u8]) -> u32 {
+        let bucket = self.bucket(key.len());
+        bucket
+            .binary_search_by(|&i| self.key(i as usize).cmp(key))
+            .map_or(u32::MAX, |pos| bucket[pos] as u32)
+    }
+}
+
 #[macro_export]
 macro_rules! comptime_string_map {
     ($($t:tt)*) => {
@@ -211,4 +257,274 @@ mod tests {
         assert_eq!(COMMANDS.len(), 3);
         assert_eq!(COMMANDS.iter().count(), 3);
     }
+    #[test]
+    fn large_map_uses_sorted_tables() {
+        crate::comptime_string_map! {
+            static BIG: usize = {
+            "k0000x" => 0,
+            "key1" => 1,
+            "key2" => 2,
+            "k0003xyyy" => 3,
+            "key4" => 4,
+            "key5" => 5,
+            "k0006xyyyyyy" => 6,
+            "key7" => 7,
+            "key8" => 8,
+            "k0009xyy" => 9,
+            "key10" => 10,
+            "key11" => 11,
+            "k0012xyyyyy" => 12,
+            "key13" => 13,
+            "key14" => 14,
+            "k0015xy" => 15,
+            "key16" => 16,
+            "key17" => 17,
+            "k0018xyyyy" => 18,
+            "key19" => 19,
+            "key20" => 20,
+            "k0021x" => 21,
+            "key22" => 22,
+            "key23" => 23,
+            "k0024xyyy" => 24,
+            "key25" => 25,
+            "key26" => 26,
+            "k0027xyyyyyy" => 27,
+            "key28" => 28,
+            "key29" => 29,
+            "k0030xyy" => 30,
+            "key31" => 31,
+            "key32" => 32,
+            "k0033xyyyyy" => 33,
+            "key34" => 34,
+            "key35" => 35,
+            "k0036xy" => 36,
+            "key37" => 37,
+            "key38" => 38,
+            "k0039xyyyy" => 39,
+            "key40" => 40,
+            "key41" => 41,
+            "k0042x" => 42,
+            "key43" => 43,
+            "key44" => 44,
+            "k0045xyyy" => 45,
+            "key46" => 46,
+            "key47" => 47,
+            "k0048xyyyyyy" => 48,
+            "key49" => 49,
+            "key50" => 50,
+            "k0051xyy" => 51,
+            "key52" => 52,
+            "key53" => 53,
+            "k0054xyyyyy" => 54,
+            "key55" => 55,
+            "key56" => 56,
+            "k0057xy" => 57,
+            "key58" => 58,
+            "key59" => 59,
+            "k0060xyyyy" => 60,
+            "key61" => 61,
+            "key62" => 62,
+            "k0063x" => 63,
+            "key64" => 64,
+            "key65" => 65,
+            "k0066xyyy" => 66,
+            "key67" => 67,
+            "key68" => 68,
+            "k0069xyyyyyy" => 69,
+            "key70" => 70,
+            "key71" => 71,
+            "k0072xyy" => 72,
+            "key73" => 73,
+            "key74" => 74,
+            "k0075xyyyyy" => 75,
+            "key76" => 76,
+            "key77" => 77,
+            "k0078xy" => 78,
+            "key79" => 79,
+            "key80" => 80,
+            "k0081xyyyy" => 81,
+            "key82" => 82,
+            "key83" => 83,
+            "k0084x" => 84,
+            "key85" => 85,
+            "key86" => 86,
+            "k0087xyyy" => 87,
+            "key88" => 88,
+            "key89" => 89,
+            "k0090xyyyyyy" => 90,
+            "key91" => 91,
+            "key92" => 92,
+            "k0093xyy" => 93,
+            "key94" => 94,
+            "key95" => 95,
+            "k0096xyyyyy" => 96,
+            "key97" => 97,
+            "key98" => 98,
+            "k0099xy" => 99,
+            "key100" => 100,
+            "key101" => 101,
+            "k0102xyyyy" => 102,
+            "key103" => 103,
+            "key104" => 104,
+            "k0105x" => 105,
+            "key106" => 106,
+            "key107" => 107,
+            "k0108xyyy" => 108,
+            "key109" => 109,
+            "key110" => 110,
+            "k0111xyyyyyy" => 111,
+            "key112" => 112,
+            "key113" => 113,
+            "k0114xyy" => 114,
+            "key115" => 115,
+            "key116" => 116,
+            "k0117xyyyyy" => 117,
+            "key118" => 118,
+            "key119" => 119,
+            "k0120xy" => 120,
+            "key121" => 121,
+            "key122" => 122,
+            "k0123xyyyy" => 123,
+            "key124" => 124,
+            "key125" => 125,
+            "k0126x" => 126,
+            "key127" => 127,
+            "key128" => 128,
+            "k0129xyyy" => 129,
+            "key130" => 130,
+            "key131" => 131,
+            "k0132xyyyyyy" => 132,
+            "key133" => 133,
+            "key134" => 134,
+            "k0135xyy" => 135,
+            "key136" => 136,
+            "key137" => 137,
+            "k0138xyyyyy" => 138,
+            "key139" => 139,
+            "key140" => 140,
+            "k0141xy" => 141,
+            "key142" => 142,
+            "key143" => 143,
+            "k0144xyyyy" => 144,
+            "key145" => 145,
+            "key146" => 146,
+            "k0147x" => 147,
+            "key148" => 148,
+            "key149" => 149,
+            "k0150xyyy" => 150,
+            "key151" => 151,
+            "key152" => 152,
+            "k0153xyyyyyy" => 153,
+            "key154" => 154,
+            "key155" => 155,
+            "k0156xyy" => 156,
+            "key157" => 157,
+            "key158" => 158,
+            "k0159xyyyyy" => 159,
+            "key160" => 160,
+            "key161" => 161,
+            "k0162xy" => 162,
+            "key163" => 163,
+            "key164" => 164,
+            "k0165xyyyy" => 165,
+            "key166" => 166,
+            "key167" => 167,
+            "k0168x" => 168,
+            "key169" => 169,
+            "key170" => 170,
+            "k0171xyyy" => 171,
+            "key172" => 172,
+            "key173" => 173,
+            "k0174xyyyyyy" => 174,
+            "key175" => 175,
+            "key176" => 176,
+            "k0177xyy" => 177,
+            "key178" => 178,
+            "key179" => 179,
+            "k0180xyyyyy" => 180,
+            "key181" => 181,
+            "key182" => 182,
+            "k0183xy" => 183,
+            "key184" => 184,
+            "key185" => 185,
+            "k0186xyyyy" => 186,
+            "key187" => 187,
+            "key188" => 188,
+            "k0189x" => 189,
+            "key190" => 190,
+            "key191" => 191,
+            "k0192xyyy" => 192,
+            "key193" => 193,
+            "key194" => 194,
+            "k0195xyyyyyy" => 195,
+            "key196" => 196,
+            "key197" => 197,
+            "k0198xyy" => 198,
+            "key199" => 199,
+            "key200" => 200,
+            "k0201xyyyyy" => 201,
+            "key202" => 202,
+            "key203" => 203,
+            "k0204xy" => 204,
+            "key205" => 205,
+            "key206" => 206,
+            "k0207xyyyy" => 207,
+            "key208" => 208,
+            "key209" => 209,
+            "k0210x" => 210,
+            "key211" => 211,
+            "key212" => 212,
+            "k0213xyyy" => 213,
+            "key214" => 214,
+            "key215" => 215,
+            "k0216xyyyyyy" => 216,
+            "key217" => 217,
+            "key218" => 218,
+            "k0219xyy" => 219,
+            "key220" => 220,
+            "key221" => 221,
+            "k0222xyyyyy" => 222,
+            "key223" => 223,
+            "key224" => 224,
+            "k0225xy" => 225,
+            "key226" => 226,
+            "key227" => 227,
+            "k0228xyyyy" => 228,
+            "key229" => 229,
+            "key230" => 230,
+            "k0231x" => 231,
+            "key232" => 232,
+            "key233" => 233,
+            "k0234xyyy" => 234,
+            "key235" => 235,
+            "key236" => 236,
+            "k0237xyyyyyy" => 237,
+            "key238" => 238,
+            "key239" => 239
+            };
+        }
+        assert_eq!(BIG.len(), 240);
+        for (i, (key, value)) in BIG.entries().enumerate() {
+            assert_eq!(*value, i);
+            assert_eq!(BIG.get(key), Some(&i));
+            let upper = key.to_ascii_uppercase();
+            assert_eq!(BIG.get_ascii_case_insensitive(&upper), Some(&i));
+            assert_eq!(BIG.get(&upper), None, "{}", key.escape_ascii());
+        }
+        assert_eq!(BIG.keys().next(), Some(b"k0000x".as_slice()));
+        assert_eq!(BIG.get(b""), None);
+        assert_eq!(BIG.get(b"key"), None);
+        assert_eq!(BIG.get(b"key1000"), None);
+        assert_eq!(BIG.get(b"k0000xyyyyyyyyyyyyyyyyy"), None);
+        assert_eq!(BIG.get_ascii_case_insensitive(b"KEY"), None);
+        assert_eq!(
+            BIG.get_with_eql(b"key7".as_slice(), |a: &[u8], b| a == b),
+            Some(&7)
+        );
+        assert_eq!(
+            BIG.get_with_eql(b"key0".as_slice(), |a: &[u8], b| a == b),
+            None
+        );
+    }
+
 }

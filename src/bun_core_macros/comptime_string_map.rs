@@ -5,7 +5,8 @@
 //! table) followed by constant-length byte-slice compares, which LLVM lowers
 //! to word-sized loads compared against immediates — no hashing, no memcmp
 //! calls. See `known_global.rs` in `bun_ast` for the hand-written shape this
-//! automates.
+//! automates. Maps with [`SORTED_LOOKUP_MIN_KEYS`] or more keys instead emit
+//! index tables and share one binary search (`SortedKeys` in `bun_core`).
 
 use proc_macro2::{Span, TokenStream};
 use quote::{format_ident, quote};
@@ -233,6 +234,65 @@ fn eq_check(keys: &[(Vec<u8>, Span)], idx: usize) -> TokenStream {
     }
 }
 
+/// Maps with at least this many keys are looked up through
+/// `bun_core::comptime_string_map::SortedKeys` (index tables + one shared
+/// binary search) instead of an unrolled compare per key, which for a
+/// thousand keys is tens of KB of code per map.
+const SORTED_LOOKUP_MIN_KEYS: usize = 200;
+
+struct SortedTables {
+    sorted: Vec<u16>,
+    offsets: Vec<u16>,
+    buckets: Vec<u16>,
+}
+
+fn sorted_tables(
+    name: &Ident,
+    keys: &[(Vec<u8>, Span)],
+    buckets: &[(usize, Vec<usize>)],
+    blob_total: usize,
+) -> syn::Result<SortedTables> {
+    let too_large = |what: &str| {
+        syn::Error::new(
+            name.span(),
+            format!("comptime string map {what} exceeds u16::MAX"),
+        )
+    };
+    if keys.len() > u16::MAX as usize {
+        return Err(too_large("key count"));
+    }
+    if blob_total > u16::MAX as usize {
+        return Err(too_large("total key bytes"));
+    }
+    let min_len = buckets.first().map(|(l, _)| *l).unwrap_or(0);
+    let max_len = buckets.last().map(|(l, _)| *l).unwrap_or(0);
+    // `starts[len - min_len]..starts[len - min_len + 1]` is the run of
+    // `sorted` holding the keys of length `len`; lengths with no keys get an
+    // empty run.
+    let mut sorted: Vec<u16> = Vec::with_capacity(keys.len());
+    let mut starts: Vec<u16> = Vec::with_capacity(max_len - min_len + 2);
+    let mut buckets = buckets.iter().peekable();
+    for len in min_len..=max_len {
+        starts.push(sorted.len() as u16);
+        if let Some((_, idxs)) = buckets.next_if(|(l, _)| *l == len) {
+            sorted.extend(idxs.iter().map(|&i| i as u16));
+        }
+    }
+    starts.push(sorted.len() as u16);
+    let mut offsets = Vec::with_capacity(keys.len() + 1);
+    let mut off = 0usize;
+    offsets.push(0u16);
+    for (k, _) in keys {
+        off += k.len();
+        offsets.push(off as u16);
+    }
+    Ok(SortedTables {
+        sorted,
+        offsets,
+        buckets: starts,
+    })
+}
+
 pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let MapParse(input) = syn::parse2(input)?;
     let Input {
@@ -297,6 +357,63 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
     let decl_values = values.iter();
     let decl_values_again = values.iter();
 
+    let (tables, key_index_body, eql_body) = if n >= SORTED_LOOKUP_MIN_KEYS {
+        let table_name = format_ident!("__COMPTIME_STRING_MAP_TABLE_{}", name);
+        let sorted_name = format_ident!("__COMPTIME_STRING_MAP_SORTED_{}", name);
+        let offsets_name = format_ident!("__COMPTIME_STRING_MAP_OFFSETS_{}", name);
+        let buckets_name = format_ident!("__COMPTIME_STRING_MAP_BUCKETS_{}", name);
+        let SortedTables {
+            sorted,
+            offsets,
+            buckets: bucket_starts,
+        } = sorted_tables(&name, &keys, &buckets, blob_total)?;
+        let (sorted_n, offsets_n, buckets_n) = (sorted.len(), offsets.len(), bucket_starts.len());
+        (
+            quote! {
+                #[doc(hidden)]
+                static #sorted_name: [::core::primitive::u16; #sorted_n] = [ #(#sorted),* ];
+                #[doc(hidden)]
+                static #offsets_name: [::core::primitive::u16; #offsets_n] = [ #(#offsets),* ];
+                #[doc(hidden)]
+                static #buckets_name: [::core::primitive::u16; #buckets_n] = [ #(#bucket_starts),* ];
+                #[doc(hidden)]
+                static #table_name: #crate_path::comptime_string_map::SortedKeys =
+                    #crate_path::comptime_string_map::SortedKeys {
+                        blob: &#blob_name,
+                        offsets: &#offsets_name,
+                        sorted: &#sorted_name,
+                        buckets: &#buckets_name,
+                        min_len: #min_len,
+                    };
+            },
+            quote! { #table_name.index_of(key) },
+            quote! {
+                for &i in #table_name.bucket(len) {
+                    if eql(input, #table_name.key(i as usize)) {
+                        break 'found i as ::core::primitive::u32;
+                    }
+                }
+                ::core::primitive::u32::MAX
+            },
+        )
+    } else {
+        (
+            TokenStream::new(),
+            quote! {
+                match key.len() {
+                    #(#eq_arms)*
+                    _ => ::core::primitive::u32::MAX,
+                }
+            },
+            quote! {
+                match len {
+                    #(#eql_arms)*
+                    _ => ::core::primitive::u32::MAX,
+                }
+            },
+        )
+    };
+
     Ok(quote! {
         #(#attrs)*
         #vis static #name: #ty_name = #ty_name(());
@@ -308,14 +425,16 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
         #[doc(hidden)]
         static #values_name: [#value_ty; #n] = [ #(#decl_values),* ];
 
-        // Keys are baked into the lookup's compare instructions; these two
-        // pointer-free tables exist only so `entries()`/`keys()` can hand out
-        // `&'static [u8]` slices without a per-key pointer (and its load-time
-        // relocation) in the data segment.
+        // Small maps bake their keys into the lookup's compare instructions,
+        // so these two pointer-free tables exist only so `entries()`/`keys()`
+        // can hand out `&'static [u8]` slices without a per-key pointer (and
+        // its load-time relocation) in the data segment. Large maps also
+        // look keys up through the blob (see `SORTED_LOOKUP_MIN_KEYS`).
         #[doc(hidden)]
         static #blob_name: [u8; #blob_total] = *#blob_lit;
         #[doc(hidden)]
         static #lens_name: [#len_ty; #n] = [ #(#lens),* ];
+        #tables
 
         #[allow(dead_code)]
         impl #ty_name {
@@ -332,10 +451,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
             #[doc(hidden)]
             #[inline]
             #vis fn __key_index(key: &[u8]) -> ::core::primitive::u32 {
-                match key.len() {
-                    #(#eq_arms)*
-                    _ => ::core::primitive::u32::MAX,
-                }
+                #key_index_body
             }
 
             #[inline]
@@ -382,12 +498,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
                 len: usize,
                 eql: impl Fn(I, &'static [u8]) -> bool,
             ) -> ::core::option::Option<&'static #value_ty> {
-                let index = 'found: {
-                    match len {
-                        #(#eql_arms)*
-                        _ => ::core::primitive::u32::MAX,
-                    }
-                };
+                let index = 'found: { #eql_body };
                 #values_name.get(index as usize)
             }
 
@@ -419,7 +530,7 @@ pub(crate) fn expand_map(input: TokenStream) -> syn::Result<TokenStream> {
                 for (dst, src) in buf.iter_mut().zip(key.iter()) {
                     *dst = src.to_ascii_lowercase();
                 }
-                self.get_with_len_and_eql(&*buf, key.len(), |a: &[u8], b| a == b)
+                #values_name.get(Self::__key_index(buf) as usize)
             }
         }
 

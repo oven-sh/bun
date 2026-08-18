@@ -127,12 +127,12 @@ const FRAMES: [name: string, frame: string, expected: Decoded][] = [
   [
     "simple error (-ERR)",
     `-ERR unknown command${CRLF}`,
-    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE", message: "ERR unknown command" } },
+    { rejects: { code: "ERR_REDIS_SERVER_ERROR", message: "ERR unknown command" } },
   ],
   [
     "blob error (!)",
     `!21${CRLF}SYNTAX invalid syntax${CRLF}`,
-    { rejects: { code: "ERR_REDIS_INVALID_RESPONSE", message: "SYNTAX invalid syntax" } },
+    { rejects: { code: "ERR_REDIS_SERVER_ERROR", message: "SYNTAX invalid syntax" } },
   ],
 ];
 
@@ -250,7 +250,7 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
         e => e,
       );
       expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
       expect(err.message).toBe("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });

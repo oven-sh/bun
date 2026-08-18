@@ -468,8 +468,13 @@ fn parse_until_before<T, C>(
         result
     };
     parser.stop_before = saved_stop_before;
+    skip_until_delimiter(parser, delimiters);
+    result
+}
 
-    // FIXME: have a special-purpose tokenizer method for this that does less work.
+// FIXME: have a special-purpose tokenizer method for this that does less work.
+#[inline(never)]
+fn skip_until_delimiter(parser: &mut Parser, delimiters: Delimiters) {
     loop {
         if delimiters.intersects(Delimiters::from_byte(parser.input.tokenizer.next_byte())) {
             break;
@@ -483,8 +488,6 @@ fn parse_until_before<T, C>(
             _ => break,
         }
     }
-
-    result
 }
 
 pub(crate) fn parse_until_after<T, C>(

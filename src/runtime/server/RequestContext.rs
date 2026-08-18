@@ -1923,10 +1923,16 @@ where
         );
     }
 
-    /// `do_render_stream` found the request aborted (or the server stopped)
-    /// once the user code it ran returned. `on_abort` has already aborted the
-    /// sink and detached `resp`, and whoever detaches `resp` also releases the
-    /// base ref, so all that is left here is dropping the sink and the stream.
+    /// `do_render_stream` found `resp` detached once the user code it ran
+    /// returned: `on_abort` ran from inside it (`server.stop(true)` in `pull()`
+    /// closes this request's socket), aborted the sink and took over the base
+    /// ref, so all that is left is dropping the sink and the stream.
+    ///
+    /// Not for a stop that did not reach `on_abort` because the stream had
+    /// already completed the response (uWS `markDone()` dropped the callback):
+    /// `resp` is still set then, the request still owns its base ref, and the
+    /// regular arms release it (`end_stream()` right away, or the settle paths
+    /// once `pull()` finishes).
     fn discard_stream_after_abort(
         &self,
         stream: &WebCore::ReadableStream,
@@ -2027,7 +2033,8 @@ where
         let aborted = this.flags.aborted() || response_stream.sink.is_aborted();
         this.flags.set_aborted(aborted);
 
-        if this.is_aborted_or_ended() {
+        // Deliberately not `is_aborted_or_ended()`; see the helper.
+        if this.resp.get().is_none() {
             this.discard_stream_after_abort(stream, global_this);
             return;
         }
@@ -2086,9 +2093,11 @@ where
                 if this.drain_microtasks().is_err() {
                     return;
                 }
-                // The drained microtasks ran user code too (`server.stop(true)`
-                // from one of them reaches `on_abort` just like from `pull()`).
-                if this.is_aborted_or_ended() {
+                // The drained microtasks ran user code too: a `server.stop(true)`
+                // in one of them reaches `on_abort` just like one in `pull()`
+                // (unless the drain completed the response first; then the
+                // request stays owned and the settle paths release it).
+                if this.resp.get().is_none() {
                     this.discard_stream_after_abort(stream, global_this);
                     return;
                 }

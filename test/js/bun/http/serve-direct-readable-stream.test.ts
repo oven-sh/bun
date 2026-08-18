@@ -412,9 +412,10 @@ test.concurrent(
 // pull() is still parked after the response completed, nothing tells the
 // request when its socket goes away, so both a later stop() and the Request
 // based APIs have to cope with that on their own.
-describe("direct stream whose pull() runs while the request is still being dispatched", () => {
+describe("direct stream whose pull() runs while its Response is being attached", () => {
   // Raw socket so the test decides when the connection goes away (it stays
   // open after the response until the test or server.stop(true) closes it).
+  // Always reading, so a close that arrives behind response bytes is seen too.
   const client = `
     const net = require("node:net");
     const socket = net.connect(server.port, "127.0.0.1", () => {
@@ -422,15 +423,14 @@ describe("direct stream whose pull() runs while the request is still being dispa
     });
     socket.on("error", () => {});
     const closed = new Promise(resolve => socket.once("close", resolve));
-    const responseBody = () =>
-      new Promise(resolve => {
-        let buf = "";
-        socket.on("data", chunk => {
-          buf += chunk.toString("latin1");
-          // Content-Length: 4, so the response is complete once "seed" is in.
-          if (buf.endsWith("seed")) resolve(buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4));
-        });
-      });
+    const responded = Promise.withResolvers();
+    let received = "";
+    socket.on("data", chunk => {
+      received += chunk.toString("latin1");
+      // Content-Length: 4, so the response is complete once "seed" is in.
+      if (received.endsWith("seed")) responded.resolve(received.slice(received.indexOf("\\r\\n\\r\\n") + 4));
+    });
+    const responseBody = () => responded.promise;
   `;
 
   // pull() parks after close(): the response completes inside the dispatch,
@@ -543,40 +543,44 @@ describe("direct stream whose pull() runs while the request is still being dispa
     });
   });
 
-  // A sync handler's Response is attached inside the request's dispatch (the
-  // context is kept alive by the dispatch frame); an async handler's from its
-  // promise reaction (kept alive by the reaction's ref). Both must survive the
-  // request being aborted out from under them while pull() runs.
-  test.concurrent.each(["fetch()", "async fetch()"])(
-    "server.stop(true) from inside pull() aborts the stream before the socket is freed (%s)",
-    async handler => {
-      const result = await run(`
+  // A handler that returns (or whose promise is already settled once the
+  // dispatch drains microtasks) has its Response attached inside the request's
+  // dispatch, which keeps the context alive; one that is still pending when the
+  // dispatch returns has it attached later from the promise reaction, which
+  // holds its own ref and has already armed the request's callbacks (toAsync).
+  // Both have to cope with whatever pull() does to the request while it runs.
+  const handlers = [
+    ["fetch()", "fetch() {"],
+    ["async fetch()", "async fetch() { await Bun.sleep(0);"],
+  ];
+
+  // pull() runs `body` with "seed" buffered, yields one event loop turn
+  // (uSockets frees a closed socket at the end of the turn that closed it),
+  // runs `afterwards` and finishes. The request count is sampled one more turn
+  // later, once the microtasks queued by pull() finishing (the stream
+  // settling) have run as well.
+  function stopFromPull(handler: string, body: string, afterwards = "") {
+    return `
       const events = [];
       const pulled = Promise.withResolvers();
+      const stop = () => {
+        events.push("stop(true)");
+        server.stop(true);
+        events.push("stop(true) returned");
+      };
       const server = Bun.serve({
         port: 0,
         hostname: "127.0.0.1",
         idleTimeout: 0,
-        ${handler} {
+        ${handler}
           return new Response(
             new ReadableStream({
               type: "direct",
               async pull(controller) {
                 controller.write("seed");
-                events.push("stop(true)");
-                server.stop(true);
-                events.push("stop(true) returned");
-                // uSockets frees the closed socket at the end of this event
-                // loop turn; the calls below must not be able to reach it.
+                ${body}
                 await Bun.sleep(0);
-                try {
-                  controller.write("late");
-                  events.push("write() returned");
-                } catch (error) {
-                  events.push("write() threw: " + error.message);
-                }
-                controller.end();
-                events.push("end() returned");
+                ${afterwards}
                 pulled.resolve();
               },
               cancel() {
@@ -588,23 +592,61 @@ describe("direct stream whose pull() runs while the request is still being dispa
       });
       ${client}
       await closed;
-      // The request was released as soon as the Response had been attached,
-      // i.e. before the timer above resumed pull().
       await pulled.promise;
+      await Bun.sleep(0);
       console.log(JSON.stringify({ events, pendingRequests: server.pendingRequests }));
-    `);
+    `;
+  }
+
+  const lateWrites = `
+    try {
+      controller.write("late");
+      events.push("write() returned");
+    } catch (error) {
+      events.push("write() threw: " + error.message);
+    }
+    controller.end();
+    events.push("end() returned");
+  `;
+  const abortedEvents = [
+    "stop(true)",
+    "cancel()",
+    "stop(true) returned",
+    'write() threw: This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
+    "end() returned",
+  ];
+
+  // Called directly, the stop runs while the stream is being attached. From a
+  // microtask it runs inside the microtask drain that follows the attach (sync
+  // handler) or once the stream's promise reactions are in place (async one).
+  test.concurrent.each(
+    handlers.flatMap(([label, handler]) => [
+      [label, "directly", handler, "stop();"],
+      [label, "from a microtask", handler, "queueMicrotask(stop);"],
+    ]),
+  )(
+    "server.stop(true) from inside pull() (%s, %s) aborts the stream before the socket is freed",
+    async (_label, _where, handler, body) => {
+      const result = await run(stopFromPull(handler, body, lateWrites));
+      expect(result).toEqual({
+        stdout: JSON.stringify({ events: abortedEvents, pendingRequests: 0 }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+
+  // end() completes the response, so uWS has already dropped the abort
+  // callback when the stop closes the socket: nothing aborts the request, and
+  // it has to be released the way a completed response normally is.
+  test.concurrent.each(handlers)(
+    "server.stop(true) from inside pull() after end() still releases the request (%s)",
+    async (_label, handler) => {
+      const result = await run(stopFromPull(handler, `events.push("end()"); controller.end(); stop();`));
       expect(result).toEqual({
         stdout:
-          JSON.stringify({
-            events: [
-              "stop(true)",
-              "cancel()",
-              "stop(true) returned",
-              'write() threw: This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
-              "end() returned",
-            ],
-            pendingRequests: 0,
-          }) + "\n",
+          JSON.stringify({ events: ["end()", "cancel()", "stop(true)", "stop(true) returned"], pendingRequests: 0 }) +
+          "\n",
         stderr: "",
         exitCode: 0,
       });

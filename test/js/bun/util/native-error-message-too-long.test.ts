@@ -2,8 +2,8 @@
 // string length limit. The error object must still be created, with a stand-in
 // message: the Error variant used to come back as an empty value, so a failing
 // expect() was reported as passing (or the process crashed when the creator
-// then set properties on it), and the TypeError/SyntaxError/RangeError
-// variants came back with no message at all.
+// then set properties on it), and the TypeError/SyntaxError/RangeError and
+// AggregateError variants came back with no message at all.
 //
 // Each case runs in its own process: setSyntheticAllocationLimitForTesting is
 // process-wide (floor 1 MiB), and the unfixed Bun.listen case crashes.
@@ -20,11 +20,11 @@ const prelude = /* ts */ `
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 setSyntheticAllocationLimitForTesting(${LIMIT});
 const LIMIT = ${LIMIT};
-function caught(fn) {
+async function caught(fn) {
   try {
-    fn();
+    await fn();
   } catch (e) {
-    return { name: e.name, message: e.message };
+    return { name: e.name, message: e.message, errors: e.errors?.length };
   }
   return "did not throw";
 }
@@ -58,22 +58,22 @@ describe.concurrent("native error whose message exceeds the string length limit"
 
           // expect(value, label) starts the failure message with the label verbatim,
           // so the message is label.length + suffix characters long.
-          const suffix = caught(() => expect(1, "L").toBe(2)).message.length - 1;
+          const suffix = (await caught(() => expect(1, "L").toBe(2))).message.length - 1;
           const longest = Buffer.alloc(LIMIT - suffix, "a").toString();
           const tooLong = Buffer.alloc(LIMIT - suffix + 1, "a").toString();
           // Fits in a string by itself; the failure message quoting it does not.
           const big = Buffer.alloc(LIMIT - 16, "a").toString();
 
           const results = {};
-          test("message exactly at the limit is kept", () => {
-            const { name, message } = caught(() => expect(1, longest).toBe(2));
+          test("message exactly at the limit is kept", async () => {
+            const { name, message } = await caught(() => expect(1, longest).toBe(2));
             results.atLimit = { name, length: message.length, startsWithLabel: message.startsWith(longest) };
           });
-          test("message one past the limit", () => {
-            results.onePast = caught(() => expect(1, tooLong).toBe(2));
+          test("message one past the limit", async () => {
+            results.onePast = await caught(() => expect(1, tooLong).toBe(2));
           });
-          test("rendered received value takes the message past the limit", () => {
-            results.renderedValue = caught(() => expect(() => big).toThrow());
+          test("rendered received value takes the message past the limit", async () => {
+            results.renderedValue = await caught(() => expect(() => big).toThrow());
             console.log(JSON.stringify(results));
           });
           test("uncaught", () => {
@@ -103,7 +103,7 @@ describe.concurrent("native error whose message exceeds the string length limit"
         "listen.ts": /* ts */ `
           ${prelude}
           const unix = Buffer.alloc(LIMIT - 16, "a").toString();
-          console.log(JSON.stringify(caught(() => Bun.listen({ unix, socket: { data() {} } }))));
+          console.log(JSON.stringify(await caught(() => Bun.listen({ unix, socket: { data() {} } }))));
         `,
       },
       "listen.ts",
@@ -119,7 +119,7 @@ describe.concurrent("native error whose message exceeds the string length limit"
         "jsonc.ts": /* ts */ `
           ${prelude}
           const big = Buffer.alloc(LIMIT - 16, "a").toString();
-          console.log(JSON.stringify([caught(() => Bun.JSONC.parse(big)), caught(() => Bun.JSONC.parse("bbb"))]));
+          console.log(JSON.stringify([await caught(() => Bun.JSONC.parse(big)), await caught(() => Bun.JSONC.parse("bbb"))]));
         `,
       },
       "jsonc.ts",
@@ -129,6 +129,33 @@ describe.concurrent("native error whose message exceeds the string length limit"
       { name: "SyntaxError", message: FALLBACK },
       { name: "SyntaxError", message: "JSONC Parse error: Unexpected bbb" },
     ]);
+    expect(exitCode).toBe(0);
+  });
+
+  test("AggregateError for a module with several build errors keeps its errors and gets the fallback message", async () => {
+    const { report, exitCode } = await run(
+      {
+        "aggregate.ts": /* ts */ `
+          ${prelude}
+          // Two statements that each fail to parse, then a comment to pad the
+          // specifier out; the module's errors are reported as an AggregateError
+          // whose message quotes the whole specifier.
+          const prefix = "data:text/javascript,a b; c d;//";
+          const importPadded = pad => import(prefix + Buffer.alloc(pad, "a").toString());
+          const overhead = (await caught(() => importPadded(1))).message.length - prefix.length - 1;
+
+          const atLimit = await caught(() => importPadded(LIMIT - overhead - prefix.length));
+          const onePast = await caught(() => importPadded(LIMIT - overhead - prefix.length + 1));
+          console.log(JSON.stringify({ atLimit: { ...atLimit, message: atLimit.message.length }, onePast }));
+        `,
+      },
+      "aggregate.ts",
+    );
+
+    expect(report).toEqual({
+      atLimit: { name: "AggregateError", errors: 2, message: LIMIT },
+      onePast: { name: "AggregateError", errors: 2, message: FALLBACK },
+    });
     expect(exitCode).toBe(0);
   });
 });

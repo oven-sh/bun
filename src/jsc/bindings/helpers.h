@@ -384,9 +384,10 @@ static const WTF::String toStringStatic(ZigString str)
 }
 
 // toString()/toStringCopy() return a null String when a non-empty `source` is over
-// the string length limit (or the copy failed to allocate). The constructors below
-// cannot throw, and their callers throw, reject with, or put properties on the
-// result unconditionally, so the error is still created with this message instead.
+// the string length limit (or the copy failed to allocate). The error constructors
+// taking a ZigString message cannot throw, and their callers throw, reject with, or
+// put properties on the result unconditionally, so the error is still created and
+// carries this message instead.
 static WTF::String errorMessageOrFallback(WTF::String message, const ZigString& source)
 {
     if (message.isNull() && source.len > 0) [[unlikely]]
@@ -394,36 +395,32 @@ static WTF::String errorMessageOrFallback(WTF::String message, const ZigString& 
     return message;
 }
 
-static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+static JSC::JSValue createErrorInstance(JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::String message, const ZigString& source)
 {
-    JSC::JSObject* result = JSC::createError(globalObject, errorMessageOrFallback(toString(*str), *str));
+    JSC::JSObject* result = JSC::createError(globalObject, type, errorMessageOrFallback(WTF::move(message), source));
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return result;
+}
+
+static JSC::JSValue getErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
+{
+    return createErrorInstance(globalObject, JSC::ErrorType::Error, toString(*str), *str);
 }
 
 static JSC::JSValue getTypeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createTypeError(globalObject, errorMessageOrFallback(toStringCopy(*str), *str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
+    return createErrorInstance(globalObject, JSC::ErrorType::TypeError, toStringCopy(*str), *str);
 }
 
 static JSC::JSValue getSyntaxErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createSyntaxError(globalObject, errorMessageOrFallback(toStringCopy(*str), *str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
+    return createErrorInstance(globalObject, JSC::ErrorType::SyntaxError, toStringCopy(*str), *str);
 }
 
 static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC::JSGlobalObject* globalObject)
 {
-    JSC::JSObject* result = JSC::createRangeError(globalObject, errorMessageOrFallback(toStringCopy(*str), *str));
-    JSC::EnsureStillAliveScope ensureAlive(result);
-
-    return result;
+    return createErrorInstance(globalObject, JSC::ErrorType::RangeError, toStringCopy(*str), *str);
 }
 
 static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)

@@ -464,17 +464,29 @@ JSC::FunctionExecutable* ${lowerBasename}${cap(fn.name)}CodeGenerator(JSC::VM& v
     const name = `${low(basename)}${cap(fn.name)}CodeSource`;
     return `m_${name}(SourceCode(sourceProvider.copyRef(), ${fn.sourceOffset}, ${fn.source.length + fn.sourceOffset}, 1, 1))`;
   };
+  // DECLARE_BUILTIN_NAMES (header) declares m_<fn> and m_<fn>PrivateName.
+  // DEFINE_BUILTIN_EXECUTABLES passes m_<fn> to createBuiltinExecutable, where it
+  // becomes the function's `name` unless $overriddenName is set, so it must be
+  // initialized for every function. m_<fn>PrivateName is only read by
+  // exportNames() for @internal files and must be the symbol BunBuiltinNames
+  // created, since that is what `$<fn>` resolves to in other builtins.
+  const initializeNames = (fn: BundledBuiltin, internal: boolean) => {
+    if (internal) {
+      return [`m_${fn.name}(builtinNames.${fn.name}PublicName())`, `m_${fn.name}PrivateName(${privateName(fn.name)})`];
+    }
+    return [`m_${fn.name}(JSC::Identifier::fromString(vm, "${fn.name}"_s))`];
+  };
   for (const { basename, internal, functions } of files) {
+    const initializers = [
+      "m_vm(vm)",
+      ...functions.flatMap(fn => initializeNames(fn, internal)),
+      ...functions.map(fn => initializeSourceCodeFn(fn, basename)),
+    ];
     bundledCPP += `
 #pragma mark ${basename}
 
 ${basename}BuiltinsWrapper::${basename}BuiltinsWrapper(JSC::VM& vm, RefPtr<JSC::SourceProvider> sourceProvider, BunBuiltinNames &builtinNames)
-    : m_vm(vm)`;
-
-    if (internal) {
-      bundledCPP += `, ${functions.map(fn => `m_${fn.name}PrivateName(${privateName(fn.name)})`).join(",\n   ")}`;
-    }
-    bundledCPP += `, ${functions.map(fn => initializeSourceCodeFn(fn, basename)).join(",\n   ")} {}
+    : ${initializers.join(",\n    ")} {}
 `;
   }
 

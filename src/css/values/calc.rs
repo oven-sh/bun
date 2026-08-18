@@ -629,9 +629,7 @@ impl<V: CalcValue> Calc<V> {
         input: &mut css::Parser,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        // Parse nested calc() and other math functions. They resolve the same
-        // identifiers as the enclosing function: `calc(r + abs(g))` in a
-        // relative color.
+        // Parse nested calc() and other math functions.
         match input.try_parse(|i| Self::parse_with(i, parse_ident)) {
             Ok(calc) => match calc {
                 Calc::Function(f) => {

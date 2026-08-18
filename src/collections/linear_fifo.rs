@@ -1,5 +1,6 @@
-// FIFO of fixed size items
-// Usually used for e.g. byte buffers
+// FIFO of fixed size `Copy` items, usually byte buffers, raw pointers or small
+// plain structs. The ring never runs item destructors, so `T: Copy` is the
+// contract; owning element types belong in `VecDeque`.
 
 use core::marker::PhantomData;
 use core::mem::{self, MaybeUninit};
@@ -53,22 +54,14 @@ fn assume_init_slice_mut<T>(s: &mut [MaybeUninit<T>]) -> &mut [T] {
     unsafe { &mut *(ptr::from_mut::<[MaybeUninit<T>]>(s) as *mut [T]) }
 }
 
-/// Shift `slice[1..]` down to `slice[0..len-1]` (memmove). Used by
-/// `ordered_remove_item` for the four wrap/non-wrap segment shifts. Not
-/// `slice::copy_within` because that requires `T: Copy`; this fifo permits
-/// move-only `T` (the duplicated tail slot is logically discarded by the
-/// subsequent `count -= 1`).
+/// Shift `slice[1..]` down to `slice[0..len-1]`. Used by
+/// `ordered_remove_item` for the four wrap/non-wrap segment shifts; the
+/// duplicated tail slot is logically discarded by the subsequent `count -= 1`.
 #[inline(always)]
-fn shift_down_one<T>(slice: &mut [T]) {
-    let len = slice.len();
-    if len <= 1 {
-        return;
+fn shift_down_one<T: Copy>(slice: &mut [T]) {
+    if slice.len() > 1 {
+        slice.copy_within(1.., 0);
     }
-    let p = slice.as_mut_ptr();
-    // SAFETY: src `[1..len)` and dst `[0..len-1)` are both in-bounds of
-    // `slice`; `ptr::copy` handles the overlap. Both pointers derive from one
-    // `as_mut_ptr()` so the src tag is not invalidated by a later Unique retag.
-    unsafe { ptr::copy(p.add(1), p, len - 1) };
 }
 
 #[cfg(debug_assertions)]
@@ -157,15 +150,9 @@ pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
 // re-exported as `bun_io::Write`), plus `std::io::Read`, `std::io::Write`,
 // and `core::fmt::Write` for std interop.
 
-impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
+impl<T: Copy, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     /// `init` for `.Static`.
     pub fn init() -> Self {
-        const {
-            assert!(
-                !mem::needs_drop::<T>(),
-                "LinearFifo does not drop its items; use VecDeque for types with drop glue"
-            )
-        };
         Self {
             buf: StaticBuffer([const { MaybeUninit::uninit() }; N]),
             head: 0,
@@ -175,15 +162,9 @@ impl<T, const N: usize> LinearFifo<T, StaticBuffer<T, N>> {
     }
 }
 
-impl<T> LinearFifo<T, DynamicBuffer<T>> {
+impl<T: Copy> LinearFifo<T, DynamicBuffer<T>> {
     /// `init` for `.Dynamic`.
     pub fn init() -> Self {
-        const {
-            assert!(
-                !mem::needs_drop::<T>(),
-                "LinearFifo does not drop its items; use VecDeque for types with drop glue"
-            )
-        };
         Self {
             buf: DynamicBuffer(Box::new([])),
             head: 0,
@@ -194,12 +175,9 @@ impl<T> LinearFifo<T, DynamicBuffer<T>> {
 }
 
 // `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static is a
-// no-op. Items are never dropped: the ring is for POD/pointer payloads only,
-// and the `!needs_drop::<T>()` const assert in each `init` enforces it, so
-// e.g. `LinearFifo::<Box<u8>, DynamicBuffer<_>>::init()` fails to compile at
-// monomorphization.
+// no-op. Items are never dropped, which is why every impl requires `T: Copy`.
 
-impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
+impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     #[inline]
     fn buf_len(&self) -> usize {
         self.buf.len()
@@ -408,10 +386,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Read data from the fifo into `dst`, returns number of items copied.
-    pub(crate) fn read(&mut self, dst: &mut [T]) -> usize
-    where
-        T: Copy,
-    {
+    pub(crate) fn read(&mut self, dst: &mut [T]) -> usize {
         let total = dst.len();
         let mut dst_left = &mut dst[..];
 
@@ -480,10 +455,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Appends the data in `src` to the fifo.
     /// You must have ensured there is enough space.
-    pub(crate) fn write_assume_capacity(&mut self, src: &[T])
-    where
-        T: Copy,
-    {
+    pub(crate) fn write_assume_capacity(&mut self, src: &[T]) {
         debug_assert!(self.writable_length() >= src.len());
 
         let mut src_left = src;
@@ -526,10 +498,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Appends the data in `src` to the fifo.
     /// Allocates more memory as necessary
-    pub fn write(&mut self, src: &[T]) -> Result<(), AllocError>
-    where
-        T: Copy,
-    {
+    pub fn write(&mut self, src: &[T]) -> Result<(), AllocError> {
         self.ensure_unused_capacity(src.len())?;
         self.write_assume_capacity(src);
         Ok(())
@@ -550,10 +519,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     }
 
     /// Place data back into the read stream
-    pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError>
-    where
-        T: Copy,
-    {
+    pub fn unget(&mut self, src: &[T]) -> Result<(), AllocError> {
         self.ensure_unused_capacity(src.len())?;
 
         self.rewind(src.len());
@@ -575,10 +541,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
 
     /// Returns the item at `offset`.
     /// Asserts offset is within bounds.
-    pub fn peek_item(&self, offset: usize) -> T
-    where
-        T: Copy,
-    {
+    pub fn peek_item(&self, offset: usize) -> T {
         debug_assert!(offset < self.count);
 
         let mut index = self.head + offset;

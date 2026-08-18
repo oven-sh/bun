@@ -1,6 +1,6 @@
 import { spawn } from "bun";
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir, tempDirWithFiles } from "harness";
 import { existsSync, mkdtempSync, realpathSync } from "node:fs";
 import { mkdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -69,24 +69,22 @@ describe.concurrent.each(["why", "pm why"])("bun %s", cmd => {
       stderr: "pipe",
     });
 
-    const [banner, ...usage] = (await stdout.text()).replaceAll("\r\n", "\n").split("\n");
-    expect(banner).toContain(`bun why v${Bun.version.replace("-debug", "")}`);
-    expect(usage).toEqual([
-      "Explain why a package is installed",
-      "",
-      "Arguments:",
-      "  <package>     The package name to explain (supports glob patterns like '@org/*')",
-      "",
-      "Options:",
-      "  --top         Show only the top dependency tree instead of nested ones",
-      "  --depth <NUM> Maximum depth of the dependency tree to display",
-      "",
-      "Examples:",
-      "  $ bun why react",
-      '  $ bun why "@types/*" --depth 2',
-      '  $ bun why "*-lodash" --top',
-      "",
-    ]);
+    expect(normalizeBunSnapshot(await stdout.text())).toMatchInlineSnapshot(`
+"bun why <version> (<revision>)
+Explain why a package is installed
+
+Arguments:
+  <package>     The package name to explain (supports glob patterns like '@org/*')
+
+Options:
+  --top         Show only the top dependency tree instead of nested ones
+  --depth <NUM> Maximum depth of the dependency tree to display
+
+Examples:
+  $ bun why react
+  $ bun why "@types/*" --depth 2
+  $ bun why "*-lodash" --top"
+`);
     expect(await exited).toBe(1);
   });
 

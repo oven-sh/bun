@@ -30,9 +30,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#if OS(WINDOWS)
-#include <winsock2.h>
-#else
+#if !OS(WINDOWS)
 #include <unistd.h>
 #include <sys/mman.h>
 #include <fcntl.h>
@@ -76,27 +74,21 @@ Shm s_shm;
 #include "libusockets.h"
 #include "_libusockets.h"
 
-// LIBUS_SOCKET_DESCRIPTOR is SOCKET on Windows, int on POSIX. us_socket_
-// from_fd takes one; its failure-path close needs the matching close.
-// Bun__Chrome__ensure returns -1 on Windows (no socketpair) so the branch
-// is unreachable there, but the compiler needs the decl to type-check.
-#if OS(WINDOWS)
-static inline void closefd(LIBUS_SOCKET_DESCRIPTOR s) { closesocket(s); }
-#else
-static inline void closefd(LIBUS_SOCKET_DESCRIPTOR fd) { ::close(fd); }
-#endif
-
 namespace Bun {
 namespace CDP {
 
 using namespace JSC;
 
-// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (bidirectional).
+// Implemented in ChromeProcess.rs. Returns the parent's socketpair fd (0 on Windows, which keeps the pipes), -1 on failure.
 // path overrides auto-detection; extraArgv (count entries, each NUL-
 // terminated) appends after core flags. All pointers nullable.
 extern "C" int32_t Bun__Chrome__ensure(Zig::GlobalObject*, const char* userDataDir,
     const char* path, const char* const* extraArgv, uint32_t extraArgvLen,
     bool stdoutInherit, bool stderrInherit);
+#if OS(WINDOWS)
+// Copies and queues one chunk; a failure arrives later as Bun__Chrome__onPipeClosed.
+extern "C" void Bun__Chrome__writePipe(const char* data, size_t len);
+#endif
 extern "C" void* Blob__fromBytesWithType(JSC::JSGlobalObject*, const uint8_t* ptr, size_t len, const char* mime);
 extern "C" JSC::EncodedJSValue SYSV_ABI Blob__create(Zig::GlobalObject*, void* impl);
 extern "C" void Bun__VmHandle__refKeepAlive(const ::BunVmHandleRef*, int delta);
@@ -238,6 +230,7 @@ Transport& transport()
     return instance.get();
 }
 
+#if !OS(WINDOWS)
 // One group per process — reused across Chrome respawns. Embedded (not
 // heap-alloc'd) and lazily linked into the loop on first socket. The vtable
 // is static-const since the singleton handlers never change.
@@ -278,6 +271,7 @@ static constexpr us_socket_vtable_t s_cdpVTable = {
     .on_connecting_error = nullptr,
     .on_handshake = nullptr,
 };
+#endif
 
 bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDataDir,
     const WTF::String& path, const WTF::Vector<WTF::String>& extraArgv,
@@ -305,21 +299,27 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
         argvC.append(s.utf8());
         argvPtrs.append(argvC.last().data());
     }
-    int32_t fd = Bun__Chrome__ensure(zig,
+    int32_t rc = Bun__Chrome__ensure(zig,
         dir.length() ? dir.data() : nullptr,
         pathC.length() ? pathC.data() : nullptr,
         argvPtrs.isEmpty() ? nullptr : argvPtrs.span().data(),
         static_cast<uint32_t>(argvPtrs.size()),
         stdoutInherit, stderrInherit);
-    if (fd < 0) {
+    if (rc < 0) {
         m_dead = true;
         return false;
     }
+    m_global = zig;
+
+#if OS(WINDOWS)
+    // Nothing to adopt: the Rust side owns the pipes (m_readSock stays null).
+    return true;
+#else
     // Socketpair — same fd for read + write. Chrome's end is dup'd to its
     // fd 3 and fd 4; read(3)+write(4) both hit our socketpair peer. usockets'
     // bsd_recv calls recv() which needs a real socket (pipe fds broke here
     // with ENOTSOCK silently misread as EOF).
-    m_global = zig;
+    int fd = rc;
 
     if (!s_cdpGroup.loop) {
         us_socket_group_init(&s_cdpGroup, uws_get_loop(), &s_cdpVTable, nullptr);
@@ -331,11 +331,12 @@ bool Transport::ensureSpawned(Zig::GlobalObject* zig, const WTF::String& userDat
     // they're harmless. kind=1 (.dynamic) → dispatch via s_cdpVTable.
     m_readSock = us_socket_from_fd(&s_cdpGroup, BUN_SOCKET_KIND_DYNAMIC, nullptr, sizeof(void*), fd, 0, 0);
     if (!m_readSock) {
-        closefd(fd);
+        ::close(fd);
         m_dead = true;
         return false;
     }
     return true;
+#endif
 }
 
 void Transport::send(uint32_t cdpId, Command&& cmd)
@@ -500,6 +501,10 @@ bool Transport::ensureConnected(Zig::GlobalObject* zig, const WTF::String& wsUrl
 // stopped the poll after the first fire, hanging large frames.
 void Transport::writeRaw(const char* data, size_t len)
 {
+#if OS(WINDOWS)
+    // libuv queues the chunks in order; m_txQueue/onWritable are unused.
+    if (!m_dead) Bun__Chrome__writePipe(data, len);
+#else
     if (m_dead || !m_readSock) return;
 
     if (m_txQueue.isEmpty()) {
@@ -513,6 +518,7 @@ void Transport::writeRaw(const char* data, size_t len)
         m_txQueue.append(std::span<const uint8_t>(
             reinterpret_cast<const uint8_t*>(data), len));
     }
+#endif
 }
 
 void Transport::onWritable()
@@ -1735,7 +1741,7 @@ void close(JSWebView* view)
 
 } // namespace CDP
 
-// Called from ChromeProcess.rs's onProcessExit. Idempotent with onClose.
+// Called from ChromeProcess.rs's on_exit. Idempotent with onClose.
 extern "C" void Bun__Chrome__died(int32_t signo)
 {
     auto& t = CDP::transport();
@@ -1744,5 +1750,18 @@ extern "C" void Bun__Chrome__died(int32_t signo)
             ? makeString("Chrome killed by signal "_s, signo)
             : "Chrome exited"_s);
 }
+
+#if OS(WINDOWS)
+// cdpOnData / cdpOnEnd counterparts, called from the tasks ChromeProcess.rs posts.
+extern "C" void Bun__Chrome__onPipeData(const char* data, size_t len)
+{
+    CDP::transport().onData(data, static_cast<int>(len));
+}
+
+extern "C" void Bun__Chrome__onPipeClosed()
+{
+    CDP::transport().onClose();
+}
+#endif
 
 } // namespace Bun

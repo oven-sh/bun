@@ -100,8 +100,8 @@ pub type GenArrayBuffer = *mut JSCArrayBuffer;
 /// payload). LAYERING: `webcore::Blob` lives in `bun_runtime` (a dependent of
 /// this crate); the bindgen extern struct only ever stores the raw pointer
 /// (filled by C++ `bindgenConvertJSTo*`), so it stays erased as `*mut c_void`
-/// here and is cast to `*mut bun_runtime::webcore::Blob` by the consumer in
-/// `bun_runtime::api::bun::spawn::stdio::convert_from_extern`.
+/// here and is cast to `*mut bun_runtime::webcore::Blob` by its consumer
+/// (`bun_runtime::socket::SSLConfig`).
 pub type GenBlob = *mut core::ffi::c_void;
 
 // ──────────────────────────────────────────────────────────────────────────

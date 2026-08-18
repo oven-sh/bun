@@ -1363,10 +1363,6 @@ pub(crate) fn mark_member_binding(class: &'static str, src: &core::panic::Locati
     }
 }
 
-// LAYERING: no `Subprocess` alias is exported here — that type lives in
-// `bun_runtime::api` (forward-dep); callers reference
-// `bun_runtime::api::Subprocess` directly.
-
 /// Generated classes — re-run generate-classes.ts with .rs output.
 pub mod codegen {
     // GENERATED: re-run src/codegen/generate-classes.ts with .rs output

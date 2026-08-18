@@ -788,8 +788,9 @@ test.skipIf(!isDebug)(
 // the redis client then settles that from a task it queues on the event loop,
 // holding a ref to itself and the loop. The exit in the next immediate tears
 // the VM down with that task still queued, so it has to be released without
-// running (a debug build asserts on the refcount if either ref is mishandled).
-test.skipIf(!isDebug)(
+// running (a debug build asserts on the refcount if either ref is mishandled;
+// the ASAN build reports the leak).
+test.skipIf(!isDebug && !isASAN)(
   "process.exit() with a redis client's deferred close still queued releases it cleanly",
   () =>
     exitRightAfterConnecting(
@@ -800,9 +801,39 @@ test.skipIf(!isDebug)(
 
 // The same task, queued by a first command whose dial failed outright (a unix
 // socket path nobody listens on), with the command itself still queued behind it.
-test.skipIf(!isDebug || isWindows)(
+test.skipIf((!isDebug && !isASAN) || isWindows)(
   "process.exit() with a redis client's deferred close and a queued command releases both cleanly",
   () => exitRightAfterConnecting("new Bun.RedisClient('redis+unix:///nonexistent/redis.sock').ping()"),
+  timeout,
+);
+
+// The same deferred close on the main thread, left to run: it settles the
+// connect and drops its refs, so nothing keeps the event loop alive and the
+// process exits on its own.
+test(
+  "a redis client whose TLS context cannot be built does not keep the process alive",
+  async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        new Bun.RedisClient("rediss://127.0.0.1:1", { tls: { key: "x", cert: "x" }, autoReconnect: false })
+          .connect()
+          .catch(err => console.log("connect rejected", err.code));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "connect rejected ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  },
   timeout,
 );
 

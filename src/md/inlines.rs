@@ -4,14 +4,13 @@ use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
 use crate::types::{SpanType, TextType, VerbatimLine};
 
-/// Inline capacity of `EmphSizes`, chosen so the `Inline` variant is no
-/// larger than the `Heap` one (Vec = 3 words, +tag +len = 32 bytes).
+/// Inline capacity of `EmphSizes`; 30 makes the `Inline` variant the same
+/// 32-byte size as the `Heap` variant.
 const EMPH_SIZES_INLINE_CAP: usize = 30;
 
 /// Ordered match sizes (1 = em, 2 = strong) for one side of an emphasis
-/// delimiter run. A run can match arbitrarily many times (e.g. 14 `*`
-/// opened against seven `**` closers), so overflow spills to the heap:
-/// dropping a recorded match would emit unbalanced HTML.
+/// delimiter run. A run can match arbitrarily many times, so sizes past
+/// the inline capacity spill to the heap instead of being dropped.
 #[derive(Clone)]
 pub(crate) enum EmphSizes {
     Inline {

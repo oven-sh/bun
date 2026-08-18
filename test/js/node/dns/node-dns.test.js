@@ -1093,18 +1093,40 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
     });
   });
 
+  // U+200D (ZWJ) outside a CONTEXTJ position fails UTS #46, so there is no
+  // ASCII form to send. Before IDNA encoding these names were rejected with
+  // no wire traffic. An encoding failure must not turn into an empty name:
+  // Channel::resolve lets an empty name through for NS and SOA as a root-zone
+  // query, so these would otherwise return the root servers.
+  const unencodable = "a\u200Db.example";
+
+  it.each(["resolveNs", "resolveSoa", "resolve4", "resolveTxt"])(
+    "%s of an unencodable name rejects without a query",
+    async method => {
+      wire.length = 0;
+      const err = await resolver[method](unencodable).then(
+        () => ({}),
+        e => e,
+      );
+      expect({ code: err.code, hostname: err.hostname, wire: [...wire] }).toEqual({
+        code: "ENOTFOUND",
+        hostname: unencodable,
+        wire: [],
+      });
+    },
+  );
+
   // dns.lookup() goes through the default resolver, so point that resolver at
   // the fake server in a child process. The trailing dot keeps c-ares from also
-  // trying the host's search domains. The hostname is spelled with a \\u escape
-  // so argv stays ASCII on every platform.
-  it("c-ares lookup() sends the punycode form on the wire", async () => {
-    wire.length = 0;
+  // trying the host's search domains. The hostname is passed as a JS string
+  // literal with \\u escapes so argv stays ASCII on every platform.
+  async function caresLookupInChild(hostnameLiteral) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
         "-e",
         `require("node:dns").setServers(["127.0.0.1:" + process.argv[1]]);
-         Bun.dns.lookup("b\\u00fccher.example.", { backend: "c-ares", family: 4 }).then(
+         Bun.dns.lookup(${hostnameLiteral}, { backend: "c-ares", family: 4 }).then(
            r => console.log(JSON.stringify(r.map(({ address, family }) => ({ address, family })))),
            e => console.log(JSON.stringify({ code: e.code })),
          );`,
@@ -1115,10 +1137,22 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect({ result: JSON.parse(stdout), wire: [...wire] }).toEqual({
+    expect(exitCode).toBe(0);
+    return JSON.parse(stdout);
+  }
+
+  it("c-ares lookup() sends the punycode form on the wire", async () => {
+    wire.length = 0;
+    const result = await caresLookupInChild('"b\\u00fccher.example."');
+    expect({ result, wire: [...wire] }).toEqual({
       result: [{ address: "10.7.7.7", family: 4 }],
       wire: ["xn--bcher-kva.example"],
     });
-    expect(exitCode).toBe(0);
+  });
+
+  it("c-ares lookup() of an unencodable name rejects without a query", async () => {
+    wire.length = 0;
+    const result = await caresLookupInChild('"a\\u200Db.example."');
+    expect({ result, wire: [...wire] }).toEqual({ result: { code: "DNS_ENOTFOUND" }, wire: [] });
   });
 });

@@ -59,7 +59,7 @@ test("deep nesting", () => {
 // before that point: a failure diff shows what was rendered, and a snapshot refuses to serialize
 // the value (a truncated snapshot would be stored as if it were complete). Each case runs in a
 // subprocess so a regression fails the test instead of the runner.
-describe.concurrent("pretty_format on a value deeper than the native stack", () => {
+describe.concurrent("pretty_format and the native stack limit", () => {
   // Several times deeper than the native stack holds for any of these shapes on any platform
   // (a release build gets through about 23k array levels or 5k object levels on Linux's 8 MB main
   // thread stack; macOS and Windows builds get an 18 MB stack, debug builds have far larger frames).
@@ -96,10 +96,11 @@ describe.concurrent("pretty_format on a value deeper than the native stack", () 
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    const snapshotFile = join(String(dir), "__snapshots__", "deep.test.ts.snap");
     return {
       stderr,
       exitCode,
-      snapshotFileWritten: existsSync(join(String(dir), "__snapshots__", "deep.test.ts.snap")),
+      snapshot: existsSync(snapshotFile) ? readFileSync(snapshotFile, "utf8") : null,
       testFileRewritten: readFileSync(join(String(dir), "deep.test.ts"), "utf8") !== source,
     };
   }
@@ -119,12 +120,10 @@ describe.concurrent("pretty_format on a value deeper than the native stack", () 
   const formattingFailed = /Maximum call stack size exceeded|Failed to pretty format value/;
 
   test("toMatchSnapshot on a deep object fails instead of writing a truncated snapshot", async () => {
-    const { stderr, exitCode, snapshotFileWritten } = await runDeepTest(
-      `${shapes.object}\nexpect(v).toMatchSnapshot();`,
-    );
+    const { stderr, exitCode, snapshot } = await runDeepTest(`${shapes.object}\nexpect(v).toMatchSnapshot();`);
     expect(stderr).toMatch(formattingFailed);
     expect(stderr).toContain("1 fail");
-    expect(snapshotFileWritten).toBe(false);
+    expect(snapshot).toBeNull();
     expect(exitCode).toBe(1);
   });
 
@@ -135,6 +134,23 @@ describe.concurrent("pretty_format on a value deeper than the native stack", () 
     expect(stderr).toMatch(formattingFailed);
     expect(stderr).toContain("1 fail");
     expect(testFileRewritten).toBe(false);
+    expect(exitCode).toBe(1);
+  });
+
+  // The limit has to stay well clear of depths in everyday use. A debug build with ASAN, the build
+  // with the largest frames, gets through about 500 object levels before the guard fires (a release
+  // build about ten times that), so this value has to come out in full both as a snapshot and in a
+  // diff, leaf included.
+  test("a 256-deep object is still serialized in full", async () => {
+    const { stderr, exitCode, snapshot } = await runDeepTest(`
+      let v = "floor-leaf";
+      for (let i = 0; i < 256; i++) v = { k: v, x: 1 };
+      expect(v).toMatchSnapshot();
+      expect(v).toEqual(1);
+    `);
+    expect(snapshot).toContain('"floor-leaf"');
+    expect(stderr).toContain('"floor-leaf"');
+    expect(stderr).toContain("1 fail");
     expect(exitCode).toBe(1);
   });
 });

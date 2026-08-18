@@ -1337,6 +1337,28 @@ devTest("framework route styles follow the css imports of the route and its layo
     });
   },
 });
+// The server graph learns about the stylesheet through its failure; recovering used to clear the file but keep the failure listed.
+devTest("framework route recovers from a stylesheet that failed on first load", {
+  framework: minimalFramework,
+  files: {
+    "routes/index.ts": routeRespondingWithStyles("styles.css"),
+    "styles.css": `
+      .one {
+        color: red;
+      }}
+    `,
+  },
+  async test(dev) {
+    await expectBuildFailed(dev, "/");
+    await dev.write("styles.css", `.one { color: red; }`);
+    expect(await routeStyles(dev, "/")).toStrictEqual(["styles.css"]);
+
+    // With no failure left over, a viewer of "/" is told to reload it on the next edit.
+    using hmr = await viewRouteOverHmr(dev, "/");
+    await dev.write("routes/index.ts", routeRespondingWithStyles("styles.css") + "\nexport const edited = true;");
+    expect((await hmr.nextHotUpdate()).reloadedRoutes).toStrictEqual([hmr.routeBundleIndex]);
+  },
+});
 
 /** Fetches a route written with `routeRespondingWithStyles` and resolves the stylesheets to file names. */
 async function routeStyles(dev: Dev, route: string): Promise<string[]> {

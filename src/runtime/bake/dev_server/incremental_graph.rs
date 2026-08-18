@@ -1437,14 +1437,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let found_existing = gop.found_existing;
         if !found_existing {
             *gop.key_ptr = Box::<[u8]>::from(abs_path);
+            self.edge_lists.push(EdgeLists::default());
+        } else {
+            // Overwriting the slot would clear `failed` and orphan its `bundling_failures` entry.
+            self.retract_failure(file_index);
         }
-        *gop.value_ptr = File {
+        if self.stale_files.bit_length > file_index.get() as usize {
+            self.stale_files.unset(file_index.get() as usize);
+        }
+        self.bundled_files.values_mut()[file_index.get() as usize] = File {
             kind: FileKind::Css,
             ..Default::default()
         };
-        if !found_existing {
-            self.edge_lists.push(EdgeLists::default());
-        }
         *ctx.get_cached_index(Side::Server, index) =
             CachedFileIndex::from(Some::<FileIndex<SIDE>>(file_index));
         Ok(())

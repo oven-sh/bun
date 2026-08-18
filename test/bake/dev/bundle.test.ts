@@ -865,3 +865,60 @@ devTest("barrel optimization: namespace re-export cycle through a star-exported 
     await c.expectMessage("result: object Y KEEP DEEP OTHER");
   },
 });
+
+// Every rebuild re-resolves the import records of the files it re-bundles, and
+// `Path::dupe_alloc` used to append each resolved path to the process-lifetime
+// FilenameStore every time, so a dev server grew by one copy of every import's
+// path per rebuild for as long as it ran (here: the entry plus its
+// PATH_STORE_MODULES imports per edit). The edited file is kept in a directory
+// of its own so that the files whose paths are being counted are only ever
+// re-resolved, never re-read from disk.
+const PATH_STORE_MODULES = 20;
+const PATH_STORE_EDITS = 5;
+function pathStoreEntry(edit: number) {
+  return (
+    Array.from({ length: PATH_STORE_MODULES }, (_, i) => `import { v${i} } from "../lib/m${i}.ts";`).join("\n") +
+    `\nimport.meta.hot.accept();\nconsole.log("edit ${edit}: " + (${Array.from({ length: PATH_STORE_MODULES }, (_, i) => `v${i}`).join(" + ")}));\n`
+  );
+}
+devTest("rebuilding after an edit does not intern the imported files' paths again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["src/entry.ts"] }),
+    "src/entry.ts": pathStoreEntry(0),
+    ...Object.fromEntries(
+      Array.from({ length: PATH_STORE_MODULES }, (_, i) => [`lib/m${i}.ts`, `export const v${i} = ${i};\n`]),
+    ),
+    // The harness-generated config only serves the HTML; the counts have to be
+    // read inside the dev server's process, so serve them from a route.
+    "bun.app.ts": `
+      import { bundlerInternals } from "bun:internal-for-testing";
+      import html from "./index.html";
+      export default {
+        static: { "/": html },
+        fetch(req) {
+          if (new URL(req.url).pathname === "/path-store-counts") {
+            return Response.json(bundlerInternals.pathStoreCounts());
+          }
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    const counts = () => dev.fetch("/path-store-counts").json();
+    const sum = (PATH_STORE_MODULES * (PATH_STORE_MODULES - 1)) / 2;
+    await using c = await dev.client("/");
+    await c.expectMessage(`edit 0: ${sum}`);
+    const before = await counts();
+    for (let edit = 1; edit <= PATH_STORE_EDITS; edit++) {
+      await dev.write("src/entry.ts", pathStoreEntry(edit));
+      await c.expectMessage(`edit ${edit}: ${sum}`);
+    }
+    const after = await counts();
+    expect({
+      filenames: after.filenames - before.filenames,
+      dirnames: after.dirnames - before.dirnames,
+    }).toEqual({ filenames: 0, dirnames: 0 });
+  },
+});

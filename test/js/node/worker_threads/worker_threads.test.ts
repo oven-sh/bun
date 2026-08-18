@@ -2844,3 +2844,17 @@ describe("no JS entry after a worker's termination has been thrown", () => {
     });
   }
 });
+
+// Startup-cost guard: a node worker's bootstrap must not build the fd-backed
+// process.stdout/stderr/stdin (node:fs + fs streams) it immediately replaces, nor
+// reify process's whole static table (which builds the nextTick queue). Each
+// builtin here is re-parsed on every worker thread.
+test("a Worker's bootstrap doesn't build fd stdio or reify all of process", async () => {
+  const w = new Worker("self.postMessage(process.moduleLoadList)", { eval: true });
+  const [list] = await once(w, "message");
+  await w.terminate();
+  expect(list).toContain("NativeModule node:worker_threads");
+  for (const unexpected of ["node:fs", "internal:fs/streams", "internal:fs/glob", "internal:fixed_queue"]) {
+    expect(list).not.toContain("NativeModule " + unexpected);
+  }
+});

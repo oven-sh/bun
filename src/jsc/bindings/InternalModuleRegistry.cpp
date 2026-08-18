@@ -146,6 +146,7 @@ void InternalModuleRegistry::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<InternalModuleRegistry>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_moduleLoadList);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalModuleRegistry);
@@ -177,11 +178,37 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
         value = createInternalModuleById(globalObject, vm, id);
         RETURN_IF_EXCEPTION(throwScope, {});
         internalField(id).set(vm, this, value);
+        didLoad(globalObject, vm, id);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return value;
 }
 
 #include "InternalModuleRegistry+createInternalModuleById.h"
+#include "InternalModuleRegistry+names.h"
+
+void InternalModuleRegistry::didLoad(JSGlobalObject* globalObject, VM& vm, Field id)
+{
+    ASSERT(m_loadCount < BUN_INTERNAL_MODULE_COUNT);
+    m_loadOrder[m_loadCount++] = static_cast<uint8_t>(id);
+    if (auto* list = m_moduleLoadList.get())
+        list->push(globalObject, jsString(vm, String(internalModuleNames[static_cast<uint8_t>(id)])));
+}
+
+JSArray* InternalModuleRegistry::moduleLoadList(JSGlobalObject* globalObject)
+{
+    if (auto* list = m_moduleLoadList.get())
+        return list;
+    auto& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+    MarkedArgumentBuffer names;
+    for (uint16_t i = 0; i < m_loadCount; i++)
+        names.append(jsString(vm, String(internalModuleNames[m_loadOrder[i]])));
+    auto* list = constructArray(globalObject, static_cast<ArrayAllocationProfile*>(nullptr), names);
+    RETURN_IF_EXCEPTION(throwScope, nullptr);
+    m_moduleLoadList.set(vm, this, list);
+    return list;
+}
 
 // This is called like @getInternalField(@internalModuleRegistry, 1) ?? @createInternalModuleById(1)
 // so we want to write it to the internal field when loaded.
@@ -195,6 +222,8 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);
+    registry->didLoad(lexicalGlobalObject, vm, static_cast<Field>(id));
+    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(mod);
 }
 

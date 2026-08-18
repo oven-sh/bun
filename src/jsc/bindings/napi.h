@@ -980,10 +980,7 @@ public:
         , m_dataPtr(dataPtr)
     {
         // Node-API function calls always run in "sloppy mode," even if the JS side is in strict mode.
-        //
-        // TopExceptionScope: this runs before the addon's callback and its
-        // first NAPI_PREAMBLE; a ThrowScope would simulate a throw on
-        // destruction that the next preamble would see as unchecked.
+        // Not a ThrowScope: its simulated throw would reach the addon's first NAPI_PREAMBLE unchecked.
         auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
         JSValue jscThis = m_callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy());
         scope.assertNoException();

@@ -3,8 +3,7 @@
 //! Rust port of Zig's `ComptimeStringMap`. Declared via
 //! [`comptime_string_map!`] / [`comptime_string_set!`]; lookups compile to a
 //! `match key.len()` jump table plus constant-length byte compares (word-sized
-//! loads against immediates) — no hashing at runtime. Large maps binary
-//! search [`SortedKeys`] tables instead.
+//! loads against immediates) — no hashing at runtime.
 //!
 //! ```ignore
 //! bun_core::comptime_string_map! {

@@ -1532,6 +1532,16 @@ impl<'a> BundleOptions<'a> {
         !self.dev_server.is_null()
     }
 
+    /// Base of project-relative paths: the dev server root (`root_dir`), else the process cwd.
+    pub(crate) fn top_level_dir(&self) -> &[u8] {
+        if self.has_dev_server() {
+            debug_assert!(!self.root_dir.is_empty());
+            &self.root_dir
+        } else {
+            Fs::FileSystem::get().top_level_dir
+        }
+    }
+
     pub(crate) const DEFAULT_UNWRAP_COMMONJS_PACKAGES: &'static [&'static [u8]] = &[
         b"react",
         b"react-is",

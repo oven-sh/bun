@@ -198,12 +198,14 @@ impl Framework {
     /// version operates on the keystone `BuildConfigSubset` (which omits
     /// `conditions`/`env`/`define`/`drop` until the schema types are
     /// const-constructible — those paths default).
+    /// `root` (`DevServer.root`) becomes the directory module ids are relative to.
     pub(crate) fn init_transpiler<'a>(
         &self,
         arena: &'a bun_alloc::Arena,
         log: &mut bun_ast::Log,
         mode: Mode,
         renderer: Graph,
+        root: &[u8],
         out: &mut TranspilerSlot<'a>,
         framework_view: &'a bun_bundler::bake_types::Framework,
         bundler_options: &BuildConfigSubset,
@@ -238,6 +240,7 @@ impl Framework {
         out.options.hot_module_reloading = mode == Mode::Development;
         out.options.code_splitting = mode != Mode::Development;
         out.options.output_dir = Box::default();
+        out.options.root_dir = bun_core::strings::without_trailing_slash(root).into();
 
         out.options.react_fast_refresh = mode == Mode::Development
             && renderer == Graph::Client

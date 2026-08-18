@@ -282,8 +282,7 @@ pub struct DevServer {
     /// To validate the DevServer has not been collected, this can be checked.
     /// When freed, this is set to `undefined`. UAF here also trips ASAN.
     pub(crate) magic: Magic,
-    /// Absolute path to project root directory. For the HMR
-    /// runtime, its module IDs are strings relative to this.
+    /// Absolute project root; module ids are relative to it (bundler root_dir and relative_path).
     pub(crate) root: Box<[u8]>,
     /// Unique identifier for this DevServer instance. Used to identify it
     /// when using the debugger protocol.
@@ -498,11 +497,6 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
     let global = options.vm.global();
 
     let generic_action = "while initializing development server";
-    // Process-lifetime singleton; the root it interns is never freed.
-    let _fs = match bun_resolver::fs::FileSystem::init(Some(options.root.as_bytes())) {
-        Ok(fs) => fs,
-        Err(err) => return Err(global.throw_error(err, generic_action)),
-    };
     let top_level_dir: &'static [u8] = bun_resolver::fs::FileSystem::get().top_level_dir;
 
     // Only stores `p`; nothing dereferences it before `bun_watcher.start()` below.
@@ -667,6 +661,7 @@ pub(crate) fn init(options: Options) -> JsResult<Box<DevServer>> {
                 &mut dev.log,
                 bake::Mode::Development,
                 graph,
+                &dev.root,
                 slot,
                 // SAFETY: fresh arena slot; only `Drop for DevServer` destroys it, after the transpilers.
                 unsafe { &*view },

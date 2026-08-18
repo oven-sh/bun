@@ -1156,7 +1156,7 @@ pub mod parse_worker {
                 // scope the scanner so its `&mut log` / `&source`
                 // borrows release before `new_lazy_export_ast` re-borrows them.
                 let import_records = {
-                    let mut scanner = HTMLScanner::init(log, source);
+                    let mut scanner = HTMLScanner::init(log, source, topts.top_level_dir());
                     scanner.scan(&source.contents)?;
                     scanner.import_records
                 };

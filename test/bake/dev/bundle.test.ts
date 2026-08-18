@@ -1594,3 +1594,105 @@ devTest("unresolvable css url() longer than the path buffer is a bundling error"
     expect((await dev.fetch("/")).status).toBe(200);
   },
 });
+// Module ids are relative to the dev server root, not the live cwd: `app.root` below the cwd, and chdir() after creation.
+devTest("app.root that is not the cwd", {
+  files: {
+    "bun.app.ts": `
+      import path from "node:path";
+      export default {
+        app: {
+          root: path.join(process.cwd(), "app"),
+          framework: {
+            fileSystemRouterTypes: [
+              {
+                root: "app/routes",
+                style: "nextjs-pages",
+                serverEntryPoint: "./app/server.ts",
+                clientEntryPoint: "./app/client.ts",
+              },
+            ],
+          },
+        },
+      };
+    `,
+    "app/server.ts": `
+      export function render(req, meta) {
+        const scripts = meta.modules.map(src => '<script type="module" src="' + src + '"></script>').join("");
+        return new Response("<!DOCTYPE html><html><body><p>" + meta.pageModule.default() + "</p>" + scripts + "</body></html>", {
+          headers: { "Content-Type": "text/html" },
+        });
+      }
+    `,
+    "app/client.ts": `
+      console.log("client loaded");
+    `,
+    "app/message.ts": `
+      export const message = "Hello";
+    `,
+    "app/routes/index.ts": `
+      import { message } from "../message";
+      export default () => message;
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expect.toInclude("<p>Hello</p>");
+
+    await using c = await dev.client("/");
+    await c.expectMessage("client loaded");
+
+    // Server-side changes make connected clients reload the page.
+    await c.expectReload(async () => {
+      await dev.write("app/message.ts", `export const message = "Updated";`);
+    });
+    await c.expectMessage("client loaded");
+    await dev.fetch("/").expect.toInclude("<p>Updated</p>");
+  },
+});
+devTest("process.chdir() after the server was created", {
+  files: {
+    // Root-absolute specifiers resolve against the project root too.
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts", "/rooted.ts"],
+    }),
+    "index.ts": `
+      console.log("loaded");
+      import.meta.hot.accept();
+    `,
+    "rooted.ts": `
+      console.log("rooted loaded");
+    `,
+    "elsewhere/placeholder.txt": "",
+    "bun.app.ts": `
+      import html from "./index.html";
+      export default {
+        routes: {
+          "/": html,
+          "/chdir": () => {
+            process.chdir("elsewhere");
+            return new Response("ok");
+          },
+        },
+        fetch() {
+          return new Response("Not Found", { status: 404 });
+        },
+      };
+    `,
+  },
+  htmlFiles: [],
+  async test(dev) {
+    // Nothing is bundled yet, so the first bundle and the hot update both happen after the chdir.
+    await dev.fetch("/chdir").equals("ok");
+
+    await using c = await dev.client("/");
+    await c.expectMessageInAnyOrder("loaded", "rooted loaded");
+
+    await dev.write(
+      "index.ts",
+      `
+        console.log("updated");
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("updated");
+  },
+});

@@ -382,8 +382,12 @@ impl<'a> LinkerContext<'a> {
         path: &bun_paths::fs::Path<'static>,
         arena: &Bump,
     ) -> Result<bun_paths::fs::Path<'static>, BunError> {
-        let top_level_dir = bun_resolver::fs::FileSystem::get().top_level_dir;
-        generic_path_with_pretty_initialized(path, self.options.target, top_level_dir, arena)
+        generic_path_with_pretty_initialized(
+            path,
+            self.options.target,
+            self.options.top_level_dir,
+            arena,
+        )
     }
 
     pub(crate) fn should_include_part(&self, source_index: crate::IndexInt, part: &Part) -> bool {
@@ -1266,6 +1270,8 @@ pub struct LinkerOptions {
     pub(crate) mode: LinkerOptionsMode,
 
     pub(crate) public_path: &'static [u8],
+    /// `BundleOptions::top_level_dir()` at load time.
+    pub(crate) top_level_dir: &'static [u8],
 }
 
 impl LinkerOptions {
@@ -1301,6 +1307,7 @@ impl Default for LinkerOptions {
             metafile_markdown_path: b"",
             mode: LinkerOptionsMode::Bundle,
             public_path: b"",
+            top_level_dir: b"",
         }
     }
 }

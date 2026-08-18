@@ -2538,9 +2538,7 @@ pub mod bv2_impl {
                 let rel = bun_paths::resolve_path::relative_platform::<
                     bun_paths::resolve_path::platform::Loose,
                     false,
-                >(
-                    bun_resolver::fs::FileSystem::get().top_level_dir, path.text
-                );
+                >(self.transpiler.options.top_level_dir(), path.text);
                 // SAFETY: arena outlives the bundle pass; raw-pointer detour erases the
                 // `&self` lifetime so the resulting `&'static [u8]` doesn't pin `self`.
                 path.pretty =
@@ -2999,6 +2997,9 @@ pub mod bv2_impl {
             // SAFETY: same `'a`-owned `Transpiler` field as `banner` above.
             this.linker.options.public_path =
                 unsafe { interned_slice(&this.transpiler.options.public_path) };
+            // SAFETY: `root_dir` is the same `'a`-owned `Transpiler` field; the cwd is process-static.
+            this.linker.options.top_level_dir =
+                unsafe { interned_slice(this.transpiler.options.top_level_dir()) };
             this.linker.options.target = this.transpiler.options.target;
             this.linker.options.output_format = this.transpiler.options.output_format;
             this.linker.options.generate_bytecode_cache = this.transpiler.options.bytecode;
@@ -5838,7 +5839,7 @@ pub mod bv2_impl {
             let out = generic_path_with_pretty_initialized(
                 path,
                 target,
-                self.transpiler.fs().top_level_dir,
+                self.transpiler.options.top_level_dir(),
                 bump,
             )?;
             Ok(out)
@@ -6439,12 +6440,13 @@ pub mod bv2_impl {
                                     } else {
                                         #[cfg(windows)]
                                         let mut buf = bun_paths::path_buffer_pool::get();
+                                        // Undo the join `HTMLScanner` did for root-absolute specifiers.
+                                        let top_level_dir = transpiler.options.top_level_dir();
                                         let specifier_to_use: &[u8] = if loader == Loader::Html
-                                            && import_record.path.text.starts_with(
-                                                Fs::FileSystem::instance().top_level_dir,
-                                            ) {
-                                            let specifier_to_use = &import_record.path.text
-                                                [Fs::FileSystem::instance().top_level_dir.len()..];
+                                            && import_record.path.text.starts_with(top_level_dir)
+                                        {
+                                            let specifier_to_use =
+                                                &import_record.path.text[top_level_dir.len()..];
                                             #[cfg(windows)]
                                             {
                                                 &*bun_paths::resolve_path::path_to_posix_buf::<u8>(
@@ -6551,12 +6553,6 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
-                            let rel = bun_paths::resolve_path::relative_platform::<
-                                bun_paths::resolve_path::platform::Loose,
-                                false,
-                            >(
-                                self.transpiler.fs().top_level_dir, path.text
-                            );
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -6582,8 +6578,6 @@ pub mod bv2_impl {
                                 };
                                 import_record.path.is_disabled = false;
                             } else {
-                                import_record.path.text = path.text;
-                                import_record.path.pretty = rel;
                                 import_record.path = path_as_static(
                                     &self
                                         .path_with_pretty_initialized(path, target)

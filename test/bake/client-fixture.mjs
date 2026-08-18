@@ -32,6 +32,7 @@ let expectingReload = false;
 let webSockets = [];
 let pendingReload = null;
 let pendingReloadTimer = null;
+let pageLoad = null;
 // Bumped when the current window is abandoned; acks captured by an older window are dropped.
 let windowGeneration = 0;
 let objectURLRegistry = new Map();
@@ -356,8 +357,6 @@ async function handleReload() {
     pendingReloadTimer = null;
   }
 
-  process.send({ type: "reload", args: [] });
-
   // Destroy the old window
   reset();
   window.close();
@@ -367,11 +366,12 @@ async function handleReload() {
 
   // Reload the page content
   try {
-    await loadPage(window);
+    await (pageLoad = loadPage(window));
   } catch (error) {
     console.error("Failed to reload page:", error);
     process.exit(exitCodeMap.reloadFailed);
   }
+  process.send({ type: "reload", args: [] });
 }
 
 // Extract page loading logic to a reusable function
@@ -466,6 +466,8 @@ process.on("message", async message => {
     }
   }
   if (message.type === "exit") {
+    // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
+    await pageLoad?.catch(() => {});
     process.exit(0);
   }
   if (message.type === "get-style") {
@@ -589,7 +591,7 @@ process.on("exit", () => {
 // Initial page load
 createWindow(url);
 try {
-  await loadPage(window);
+  await (pageLoad = loadPage(window));
 } catch (error) {
   console.error("Failed initial page load:", error);
   process.exit(exitCodeMap.reloadFailed);

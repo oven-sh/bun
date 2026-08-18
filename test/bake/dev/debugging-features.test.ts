@@ -364,7 +364,8 @@ function readDump(dev: Dev, file: string) {
 /** Asserts the two comment lines every non-source-map dump starts with and returns what follows them. */
 function stripDumpHeader(dump: string, fileName: string, graph: "client" | "server") {
   const header = dump.match(/^\/\/ (".*") bundled for (\w+)\n\/\/ Bundled at \d+, Bun (\S+)\n/);
-  expect(header && { fileName: header[1], graph: header[2], version: header[3] }).toStrictEqual({
+  // The dump carries the canary suffix (`1.4.0-canary.1`) that `Bun.version` does not.
+  expect(header && { fileName: header[1], graph: header[2], version: header[3].split("-")[0] }).toStrictEqual({
     fileName: `"${fileName}"`,
     graph,
     version: Bun.version,

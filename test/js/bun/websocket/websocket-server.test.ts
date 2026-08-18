@@ -1452,6 +1452,42 @@ it("you can call server.subscriberCount() when its not a websocket server", asyn
   expect(server.subscriberCount("boop")).toBe(0);
 });
 
+it.concurrent("server.upgrade() from the error() handler after fetch() threw completes the handshake", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const server = Bun.serve({
+         port: 0,
+         development: true,
+         fetch(req) { throw Object.assign(new Error("boom"), { req }); },
+         error(err) {
+           if (err.req && server.upgrade(err.req, { data: { from: "error" } })) return;
+           return new Response("err", { status: 500 });
+         },
+         websocket: {
+           open(ws) { ws.send("opened:" + ws.data.from); },
+           message(ws, m) { ws.send("echo:" + m); },
+         },
+       });
+       const ws = new WebSocket(server.url.href.replace(/^http/, "ws"));
+       ws.onerror = () => { console.log("ws error"); process.exit(1); };
+       ws.onmessage = e => {
+         console.log(e.data);
+         if (e.data === "echo:hi") ws.close();
+         else ws.send("hi");
+       };
+       ws.onclose = e => { console.log("closed", e.code); server.stop(true); };`,
+    ],
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "inherit",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout).toBe("opened:error\necho:hi\nclosed 1000\n");
+  expect(exitCode).toBe(0);
+});
+
 it("server.upgrade() does not blank the Request's url/headers read afterwards", async () => {
   // req.url and req.headers are lifted lazily from the uws request. upgrade()
   // detaches that context, so fields not touched before the call must be
@@ -1575,6 +1611,61 @@ it("server.upgrade() with Sec-WebSocket-Protocol in options.headers does not use
   // builds the panic line was past line 3, leaving "" and a misleading diff.
   expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
     stdout: expected,
+    stderr: "",
+  });
+  expect(exitCode).toBe(0);
+});
+
+it("server.publish() keeps the topic alive while converting the message", async () => {
+  await using proc = spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `
+        const TOPIC = "t_".repeat(4000);
+        const server = Bun.serve({
+          port: 0,
+          fetch(req, s) { return s.upgrade(req) ? undefined : new Response("x"); },
+          websocket: { open(ws) { ws.subscribe(TOPIC); }, message() {} },
+        });
+        const client = new WebSocket("ws://127.0.0.1:" + server.port + "/");
+        const got = Promise.withResolvers();
+        client.onmessage = e => got.resolve(e.data);
+        client.onclose = () => got.resolve("closed");
+        await new Promise((resolve, reject) => { client.onopen = resolve; client.onerror = reject; });
+        // A String object so toPrimitive hands back a fresh, otherwise-unreferenced JSString.
+        const topic = Object.assign(new String("z"), { [Symbol.toPrimitive]() { return "t_".repeat(4000).slice(0) + ""; } });
+        const data = Object.assign(new String("z"), {
+          [Symbol.toPrimitive]() {
+            Bun.gc(true);
+            const k = [];
+            for (let i = 0; i < 300; i++) k.push("Q".repeat(40000 + i));
+            globalThis.keep = k;
+            Bun.gc(true);
+            return "payload";
+          },
+        });
+        const rc = server.publish(topic, data);
+        // If the first publish went to a garbage topic, this one arrives first.
+        server.publish(TOPIC, "sentinel");
+        const result = await got.promise;
+        console.log(JSON.stringify({ rc, result }));
+        client.close();
+        server.stop(true);
+      `,
+    ],
+    env: {
+      ...bunEnv,
+      // Route bmalloc through the system heap so ASAN builds observe the freed
+      // StringImpl (see the Sec-WebSocket-Protocol test above).
+      ...(isWindows ? {} : { Malloc: "1" }),
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), stderr: stderr.trim() }).toEqual({
+    stdout: JSON.stringify({ rc: 7, result: "payload" }),
     stderr: "",
   });
   expect(exitCode).toBe(0);

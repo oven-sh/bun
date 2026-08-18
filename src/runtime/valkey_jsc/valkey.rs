@@ -619,18 +619,17 @@ impl ValkeyClient {
         val
     }
 
-    /// For a half-open socket this runs `on_close` itself (see below) and returns what its
-    /// `onclose` listener left pending; the caller propagates that like any other callback
-    /// result (or folds it if it is the trampoline), it is never folded here beneath a
-    /// frame that is still going to return its own `Err`.
+    /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
+    /// runs by hand here, whatever that left.
     pub fn close(&mut self) -> JsResult<()> {
+        if self.socket.is_closed() {
+            return Ok(());
+        }
+        let global = self.global_object();
         let socket = core::mem::replace(
             &mut self.socket,
             AnySocket::SocketTcp(uws::SocketTCP::detached()),
         );
-        if socket.is_closed() {
-            return Ok(());
-        }
         // usockets does not dispatch `on_close`/`on_connect_error` when an
         // application explicitly closes a `us_socket_t` whose TCP connect
         // hasn't resolved yet (`POLL_TYPE_SEMI_SOCKET` — DNS resolved
@@ -643,7 +642,11 @@ impl ValkeyClient {
         // and run the close path ourselves afterwards.
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
+        // TODO: make socket.close() return a JsResult.
         socket.close(uws::CloseCode::Normal);
+        if global.has_exception() {
+            return Err(bun_jsc::JsError::Thrown);
+        }
         if is_semi_socket {
             self.status = Status::Disconnected;
             // A half-open socket never gets uSockets' close dispatch, so run the

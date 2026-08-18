@@ -619,9 +619,9 @@ const constants = {
 };
 
 // The native handle lives under a private name so NodeVM.cpp can recognize a Module returned from an
-// importModuleDynamically callback and resolve the import() to its namespace.
+// importModuleDynamically callback and resolve the import() to its namespace (it makes this same check).
 function isModule(object) {
-  return $isObject(object) && isNativeModule(object.$bunNativePtr);
+  return $isObject(object) && isNativeModule($getByIdDirectPrivate(object, "bunNativePtr"));
 }
 
 function getConstructorOf(obj) {

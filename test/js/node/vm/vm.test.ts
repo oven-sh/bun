@@ -1063,7 +1063,8 @@ describe("importModuleDynamically", () => {
   });
 
   test("rejects with ERR_VM_MODULE_NOT_MODULE for anything else", async () => {
-    for (const value of [undefined, null, 42, "str", {}, { namespace: { v: 1 } }, process.stdout]) {
+    const inheritsFromModule = Object.create(await synthetic({ v: 1 }));
+    for (const value of [undefined, null, 42, "str", {}, { namespace: { v: 1 } }, process.stdout, inheritsFromModule]) {
       const returned = importV(() => value);
       await expect(returned).rejects.toMatchObject({ code: "ERR_VM_MODULE_NOT_MODULE" });
       const resolved = importV(async () => value);
@@ -1074,6 +1075,11 @@ describe("importModuleDynamically", () => {
   test("an unlinked Module rejects with ERR_VM_MODULE_STATUS, an errored one with its error", async () => {
     const unlinked = new SourceTextModule(`export const v = 1`);
     await expect(importV(() => unlinked)).rejects.toMatchObject({ code: "ERR_VM_MODULE_STATUS" });
+
+    const linkFailed = new SourceTextModule(`import { nope } from "dep"`);
+    await linkFailed.link(() => new SourceTextModule(`export const yes = 1`)).catch(() => {});
+    expect(linkFailed.status).toBe("unlinked");
+    await expect(importV(() => linkFailed)).rejects.toMatchObject({ code: "ERR_VM_MODULE_STATUS" });
 
     const errored = new SourceTextModule(`throw new RangeError("from module")`);
     await errored.link(() => {});

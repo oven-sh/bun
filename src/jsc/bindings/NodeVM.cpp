@@ -340,43 +340,44 @@ static JSPromise* importModuleInner(JSGlobalObject* globalObject, JSString* modu
     JSValue result = AsyncContextFrame::call(globalObject, dynamicImportCallback, jsUndefined(), args);
     RETURN_IF_EXCEPTION(scope, nullptr);
 
-    // Node (lib/internal/vm/module.js importModuleDynamicallyWrap): the callback may return, or resolve to, a module
-    // namespace object or a vm.Module; import() gets the namespace either way.
-    auto* toNamespace = JSNativeStdFunction::create(vm, globalObject, 1, {}, [](JSGlobalObject* globalObject, CallFrame* callFrame) -> JSC::EncodedJSValue {
-        VM& vm = globalObject->vm();
-        auto scope = DECLARE_THROW_SCOPE(vm);
-
-        JSValue value = callFrame->argument(0);
-        if (value.inherits<JSModuleNamespaceObject>())
-            return JSValue::encode(value);
-
-        NodeVMModule* module = nullptr;
-        if (JSObject* object = value.getObject()) {
-            if (JSValue native = object->getDirect(vm, WebCore::builtinNames(vm).bunNativePtrPrivateName()))
-                module = dynamicDowncast<NodeVMModule>(native);
-        }
-        if (!module)
-            return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
-
-        module->reconcileEvaluationState(vm);
-        if (JSC::Exception* exception = module->evaluationException())
-            return throwVMError(globalObject, scope, exception->value());
-        if (module->status() < NodeVMModule::Status::Linked)
-            return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_STATUS, "Module status must not be unlinked or linking"_s));
-        RELEASE_AND_RETURN(scope, JSValue::encode(module->namespaceObject(globalObject)));
-    });
-
-    JSPromise* promise = JSPromise::resolvedPromise(globalObject, result);
+    // Settle the callback's result and turn it into a namespace in the main realm, as Node's (main-realm) wrapper
+    // around the callback does; the context's own Promise machinery, which its code may have altered, stays out of it.
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    JSPromise* promise = JSPromise::resolvedPromise(zigGlobalObject, result);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    JSObject* thenResult = promise->then(globalObject, toNamespace, jsUndefined());
+    auto* namespacePromise = JSPromise::create(vm, zigGlobalObject->promiseStructure());
+    promise->performPromiseThenExported(vm, zigGlobalObject, zigGlobalObject->m_nodeVMDynamicImportToNamespaceFunction.get(zigGlobalObject), jsUndefined(), namespacePromise);
     RETURN_IF_EXCEPTION(scope, nullptr);
+    return namespacePromise;
+}
 
-    // JSPromise::then() may return a non-JSPromise when Promise[Symbol.species]
-    // is overridden in the vm context — don't uncheckedDowncast (release-mode
-    // static_cast) on a user-influenced shape.
-    if (auto* thenPromise = dynamicDowncast<JSPromise>(thenResult))
-        RELEASE_AND_RETURN(scope, thenPromise);
-    RELEASE_AND_RETURN(scope, JSPromise::resolvedPromise(globalObject, thenResult));
+// What import() resolves to for a value an importModuleDynamically callback returned or resolved to; the checks
+// Node's lib/internal/vm/module.js importModuleDynamicallyWrap makes, reading the vm.Module wrapper's own getters.
+JSC_DEFINE_HOST_FUNCTION(vmDynamicImportToNamespace, (JSGlobalObject * globalObject, CallFrame* callFrame))
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    JSValue value = callFrame->argument(0);
+    if (value.inherits<JSModuleNamespaceObject>())
+        return JSValue::encode(value);
+
+    // vm.ts isModule(): an object whose own @bunNativePtr is the native module cell.
+    JSObject* module = value.getObject();
+    JSValue native = module ? module->getDirect(vm, WebCore::builtinNames(vm).bunNativePtrPrivateName()) : JSValue();
+    if (!native || !native.inherits<NodeVMModule>())
+        return throwVMError(globalObject, scope, createError(globalObject, ErrorCode::ERR_VM_MODULE_NOT_MODULE, "Provided module is not an instance of Module"_s));
+
+    JSValue status = module->get(globalObject, WebCore::builtinNames(vm).statusPublicName());
+    RETURN_IF_EXCEPTION(scope, {});
+    bool errored = status.isString() && asString(status)->view(globalObject) == "errored"_s;
+    RETURN_IF_EXCEPTION(scope, {});
+    if (errored) {
+        JSValue error = module->get(globalObject, vm.propertyNames->error);
+        RETURN_IF_EXCEPTION(scope, {});
+        return throwVMError(globalObject, scope, error);
+    }
+    RELEASE_AND_RETURN(scope, JSValue::encode(module->get(globalObject, Identifier::fromString(vm, "namespace"_s))));
 }
 
 // Helper function to create an anonymous function expression with parameters
@@ -1757,6 +1758,9 @@ void configureNodeVM(JSC::VM& vm, Zig::GlobalObject* globalObject)
     });
     globalObject->m_nodeVMUseMainContextDefaultLoader.initLater([](const LazyProperty<JSC::JSGlobalObject, Symbol>::Initializer& init) {
         init.set(JSC::Symbol::createWithDescription(init.vm, "vm_use_main_context_default_loader"_s));
+    });
+    globalObject->m_nodeVMDynamicImportToNamespaceFunction.initLater([](const LazyProperty<JSC::JSGlobalObject, JSFunction>::Initializer& init) {
+        init.set(JSC::JSFunction::create(init.vm, init.owner, 1, String(), vmDynamicImportToNamespace, ImplementationVisibility::Private));
     });
 
     globalObject->m_NodeVMScriptClassStructure.initLater(

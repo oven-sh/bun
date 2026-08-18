@@ -1779,6 +1779,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("napi_get_prototype", () => {
+    it("returns null for a Proxy without running its getPrototypeOf trap, like Node", async () => {
+      // Before this was special-cased, Bun ran the trap: a proxy without traps
+      // reported its target's prototype, and a throwing trap reported napi_ok
+      // with a NULL handle written to *result and the exception left pending.
+      const output = await checkSameOutput("test_napi_get_prototype_proxy", []);
+      // checkSameOutput already asserted parity with Node; pin the values so a
+      // shared failure cannot pass.
+      expect(output.split(/\r?\n/)).toEqual([
+        "plain object: status=0 pending=false result=Object.prototype exception=none",
+        "null prototype: status=0 pending=false result=null exception=none",
+        "proxy without traps: status=0 pending=false result=null exception=none",
+        "callable proxy: status=0 pending=false result=null exception=none",
+        "trap returns Array.prototype: status=0 pending=false result=null exception=none",
+        "getPrototypeOf trap calls: 0",
+        "trap throws: status=0 pending=false result=null exception=none",
+        "trap returns a number: status=0 pending=false result=null exception=none",
+        "revoked proxy: status=0 pending=false result=null exception=none",
+        "object whose prototype is a proxy: status=0 pending=false result=the proxy exception=none",
+        "plain object again: status=0 pending=false result=Object.prototype exception=none",
+      ]);
+    });
+  });
+
   describe("napi_object_freeze and napi_object_seal", () => {
     it("should handle arrays with indexed properties", async () => {
       const output = await checkSameOutput("test_napi_freeze_seal_indexed", []);

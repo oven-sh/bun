@@ -80,7 +80,6 @@
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
 #include "JavaScriptCore/WasmFaultSignalHandler.h"
-#include "JavaScriptCore/Watchdog.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSObjectInlines.h"
@@ -3047,16 +3046,6 @@ void JSC__VM__collectAsync(JSC::VM* vm)
     vm->heap.collectAsync();
 }
 
-extern "C" bool JSC__VM__hasExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog()) {
-        return vm->watchdog()->hasTimeLimit();
-    }
-
-    return false;
-}
-
 size_t JSC__VM__heapSize(JSC::VM* arg0)
 {
     return arg0->heap.size();
@@ -3144,7 +3133,7 @@ extern "C" JSC::EncodedJSValue Bun__JSValue__call(JSC::JSGlobalObject* globalObj
     // WebCore: JSEventListener's isJSExecutionForbidden): once the VM's stop was requested or
     // teardown has forbidden script, a callback from any event source is a silent no-op rather
     // than each source checking.
-    if (vm.executionForbidden() || !WebCore::clientData(vm)->scriptAllowed()) [[unlikely]] {
+    if (WebCore::clientData(vm)->isStoppingOrStopped(vm)) [[unlikely]] {
         RETURN_IF_EXCEPTION(scope, {});
         return JSValue::encode(jsUndefined());
     }
@@ -3815,7 +3804,9 @@ void JSC__AnyPromise__wrap(JSC::JSGlobalObject* globalObject, EncodedJSValue enc
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to settle the promise with; it stays pending and unwinds.
+        if (!scope.tryClearException())
+            return;
 
         if (auto* promise = dynamicDowncast<JSC::JSPromise>(promiseValue)) {
             promise->reject(vm, exception->value());
@@ -3853,7 +3844,9 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to reject with; it stays pending and the caller unwinds on it.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -3868,7 +3861,9 @@ JSC::EncodedJSValue JSC__JSPromise__wrap(JSC::JSGlobalObject* globalObject, void
     JSValue resolved = JSC::JSPromise::resolvedPromise(globalObject, result);
     if (scope.exception()) [[unlikely]] {
         auto* exception = scope.exception();
-        (void)scope.tryClearException();
+        // A termination is not a value to reject with; it stays pending and the caller unwinds on it.
+        if (!scope.tryClearException())
+            RELEASE_AND_RETURN(scope, {});
         RELEASE_AND_RETURN(scope, JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value())));
     }
 
@@ -5039,6 +5034,9 @@ JSC::EncodedJSValue JSC__JSValue__toError_(JSC::EncodedJSValue JSValue0)
     case JSC::CellType:
         if (cell->inherits<JSC::Exception>()) {
             JSC::Exception* exception = uncheckedDowncast<JSC::Exception>(cell);
+            // The VM's TerminationException wraps a bare string; it is not an error anyone should see as a value.
+            if (exception->vm().isTerminationException(exception))
+                return {};
             return JSC::JSValue::encode(exception->value());
         }
     default: {
@@ -5088,19 +5086,6 @@ size_t JSC__VM__runGC(JSC::VM* vm, bool sync)
 [[ZIG_EXPORT(nothrow)]] bool JSC__VM__isJITEnabled()
 {
     return JSC::Options::useJIT();
-}
-
-void JSC__VM__clearExecutionTimeLimit(JSC::VM* vm)
-{
-    JSC::JSLockHolder locker(vm);
-    if (vm->watchdog())
-        vm->watchdog()->setTimeLimit(JSC::Watchdog::noTimeLimit);
-}
-void JSC__VM__setExecutionTimeLimit(JSC::VM* vm, double limit)
-{
-    JSC::JSLockHolder locker(vm);
-    JSC::Watchdog& watchdog = vm->ensureWatchdog();
-    watchdog.setTimeLimit(WTF::Seconds { limit });
 }
 
 bool JSC__JSValue__isTerminationException(JSC::EncodedJSValue JSValue0)
@@ -5180,6 +5165,12 @@ bool JSC__VM__isEntered(JSC::VM* arg0)
     return (*arg0).isEntered();
 }
 
+// The TerminationException cell itself (what a pending one reads as), not the error object it wraps.
+extern "C" JSC::EncodedJSValue JSC__VM__terminationException(JSC::VM* vm)
+{
+    return JSC::JSValue::encode(JSC::JSValue(vm->ensureTerminationException()));
+}
+
 [[ZIG_EXPORT(nothrow)]]
 bool JSC__VM__isTerminationException(JSC::VM* vm, JSC::Exception* exception)
 {
@@ -5220,21 +5211,12 @@ bool JSC__JSGlobalObject__hasPendingTerminationException(JSC::JSGlobalObject* gl
     return JSC::getVM(globalObject).hasPendingTerminationException();
 }
 
-void JSC__VM__setExecutionForbidden(JSC::VM* arg0, bool arg1)
-{
-    (*arg0).setExecutionForbidden();
-}
-
-// These may be called concurrently from another thread.
+// These may be called concurrently from another thread — or from the VM's own thread inside a host call,
+// API lock held: VMTraps::fireTrap is CONCURRENT_SAFE and needs no lock either way (releasing the API lock
+// here would run JSLock's microtask checkpoint mid-host-call).
 void JSC__VM__notifyNeedTermination(JSC::VM* arg0)
 {
-    JSC::VM& vm = *arg0;
-    bool didEnter = vm.currentThreadIsHoldingAPILock();
-    if (didEnter)
-        vm.apiLock().unlock();
-    vm.notifyNeedTermination();
-    if (didEnter)
-        vm.apiLock().lock();
+    arg0->notifyNeedTermination();
 }
 void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 {
@@ -5243,10 +5225,6 @@ void JSC__VM__notifyNeedDebuggerBreak(JSC::VM* arg0)
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC::VM* arg0)
 {
     (*arg0).notifyNeedShellTimeoutCheck();
-}
-void JSC__VM__notifyNeedWatchdogCheck(JSC::VM* arg0)
-{
-    (*arg0).notifyNeedWatchdogCheck();
 }
 
 void JSC__VM__throwError(JSC::VM* vm_, JSC::JSGlobalObject* arg1, JSC::EncodedJSValue encodedValue)
@@ -6809,18 +6787,30 @@ extern "C" double Bun__JSC__operationMathPow(double x, double y)
     return operationMathPow(x, y);
 }
 
-// A stopped worker's TerminationException is kept pending after the JS entry it unwound has
-// returned, until teardown clears or re-arms it (Bun__GlobalObject__clearExceptionsForExit /
-// Zig__GlobalObject__forbidExecution). JSC resets its "termination in progress" flag when the
-// outermost VMEntryScope exits and expects the two to agree while the exception is pending
-// (VMTraps::deferTerminationSlow, VM::setException); its own clients never keep the exception past
-// that point without also ceasing to touch the VM. Called where an entry has just come back with an
-// exception: keep the flag for as long as we keep the exception.
-extern "C" void Bun__VM__keepTerminationRequestWithPendingException(JSC::JSGlobalObject* globalObject)
+// See BunClientData.h.
+bool Bun::takeTerminationOutsideScript(JSC::VM& vm, JSC::TopExceptionScope& scope)
+{
+    if (vm.isEntered())
+        return false;
+    auto* exception = scope.exception();
+    if (!exception || !vm.isTerminationException(exception))
+        return false;
+    // Every termination that unwinds past the outermost script frame is the VM's stop (node:vm withdraws its own
+    // beneath script), and the stop closed the gate before firing the trap.
+    ASSERT(!WebCore::clientData(vm)->scriptAllowed());
+    scope.clearException();
+    // Thrown by a trap check out here, no VM entry exit will reset this for JSC (VM::executeEntryScopeServicesOnExit).
+    if (vm.hasTerminationRequest() && !vm.traps().needHandling(JSC::VMTraps::NeedTermination))
+        vm.clearHasTerminationRequest();
+    vm.setExecutionForbidden();
+    return true;
+}
+
+extern "C" bool Bun__VM__takeTerminationOutsideScript(JSC::JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
-    if (vm.hasPendingTerminationException() && !vm.hasTerminationRequest()) [[unlikely]]
-        vm.setHasTerminationRequest();
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    return Bun::takeTerminationOutsideScript(vm, scope);
 }
 
 #if !ENABLE(EXCEPTION_SCOPE_VERIFICATION)

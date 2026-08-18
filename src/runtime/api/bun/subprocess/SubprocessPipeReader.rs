@@ -324,7 +324,7 @@ impl PipeReader {
                 ReadableStream::cancel(
                     &ReadableStream::from_js(empty, global_object)?.unwrap(),
                     global_object,
-                );
+                )?;
                 Ok(empty)
             }
         }

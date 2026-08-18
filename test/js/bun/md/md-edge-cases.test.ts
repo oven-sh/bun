@@ -686,12 +686,8 @@ describe("pathological bracket inputs", () => {
     );
     // Emphasis fully inside the label, or fully outside the construct,
     // still resolves.
-    expect(Markdown.html("[[a|*b* c]]\n", o)).toBe(
-      '<p><x-wikilink data-target="a"><em>b</em> c</x-wikilink></p>\n',
-    );
-    expect(Markdown.html("*x [[a]] y*\n", o)).toBe(
-      '<p><em>x <x-wikilink data-target="a">a</x-wikilink> y</em></p>\n',
-    );
+    expect(Markdown.html("[[a|*b* c]]\n", o)).toBe('<p><x-wikilink data-target="a"><em>b</em> c</x-wikilink></p>\n');
+    expect(Markdown.html("*x [[a]] y*\n", o)).toBe('<p><em>x <x-wikilink data-target="a">a</x-wikilink> y</em></p>\n');
   });
 
   test("wiki link bracket nesting is capped", () => {

@@ -722,10 +722,7 @@ impl Parser<'_> {
             // unit, so a delimiter inside the target must not pair with one
             // outside. The label gets its own collection pass when its frame
             // is entered.
-            if c == b'['
-                && self.flags.wiki_links
-                && i + 1 < content.len()
-                && content[i + 1] == b'['
+            if c == b'[' && self.flags.wiki_links && i + 1 < content.len() && content[i + 1] == b'['
             {
                 if let Some(m) = self.match_wiki_link(content, i) {
                     i = m.inner_end + 2;

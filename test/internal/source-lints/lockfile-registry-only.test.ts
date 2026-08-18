@@ -2,25 +2,29 @@ import { expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import path from "node:path";
 
-// CI installs from the committed lockfiles on machines with no cache to fall
-// back on: root on every PR's GitHub Actions checks (lint.yml, format.yml,
-// rust-lints.yml, bun-types.yml), root + packages/bun-error + src/node-fallbacks
-// on every build (scripts/build/codegen.ts), root + test/ on every Buildkite
-// test shard. A package in one of them that downloads from anywhere but the npm
-// registry puts a second host on the critical path of all of those jobs: the
-// root `bun-tracestrings` github: dependency used to turn every GitHub tarball
-// hiccup into "failed to download bun-tracestrings@github:...: HTTP 5xx" on
-// unrelated PRs' Lint and Format checks, and bench/bun.lock was committed with
-// two packages pointing at an internal mirror. bun retries a tarball a few times
-// back to back, which does not cover an outage of a few minutes.
+// CI installs from the committed lockfiles: root on every PR's GitHub Actions
+// checks (lint.yml, format.yml, rust-lints.yml, bun-types.yml) on runners with
+// no cache to fall back on, root + packages/bun-error + src/node-fallbacks on
+// every build (scripts/build/codegen.ts), root + test/ + scripts/ci-remap-server
+// when bootstrap.sh bakes the agent images' install cache and again on every
+// Buildkite test shard. A package in one of them that downloads from anywhere
+// but the npm registry puts a second host on the critical path of all of those
+// jobs: the root `bun-tracestrings` github: dependency used to turn every GitHub
+// tarball hiccup into "failed to download bun-tracestrings@github:...: HTTP 5xx"
+// on unrelated PRs' Lint and Format checks, and bench/bun.lock was committed
+// with two packages pointing at an internal mirror. bun retries a tarball a few
+// times back to back, which does not cover an outage of a few minutes.
 //
-// So every committed bun.lock has to resolve everything from the registry or
-// from disk, except the ones listed here with the reason. A package that needs
-// to come from somewhere else gets a package.json of its own, installed only by
-// whatever needs it, like scripts/ci-remap-server.
-const allowedOffRegistry: Record<string, string> = {
-  "scripts/ci-remap-server/bun.lock":
-    "bun-tracestrings is github:oven-sh/bun.report; only scripts/runner.node.mjs installs it, best-effort, from the cache bootstrap.sh bakes into the agent images",
+// So every committed bun.lock (the text lockfiles; the few bun.lockb left in
+// bench/ are not parsed here) has to download everything from the registry or
+// take it from disk, except the entries listed here with the reason. A package
+// that needs to come from somewhere else gets a package.json of its own,
+// installed only by whatever needs it, like scripts/ci-remap-server.
+const allowedOffRegistry: Record<string, { why: string; entries: string[] }> = {
+  "scripts/ci-remap-server/bun.lock": {
+    why: "bun-tracestrings is github:oven-sh/bun.report; only scripts/runner.node.mjs installs it, best-effort, and bootstrap.sh bakes it into the agent images' install cache",
+    entries: ["bun-tracestrings"],
+  },
 };
 
 const repoRoot = path.resolve(import.meta.dir, "..", "..", "..");
@@ -61,13 +65,16 @@ function describeEntry([nameAtResolution, registry]: Entry): string {
   return typeof registry === "string" && registry !== "" ? `${nameAtResolution} from ${registry}` : nameAtResolution;
 }
 
-function offRegistryEntries(lockfile: string): string[] {
+/** Entry key -> description, for every entry of the lockfile that downloads from somewhere other than the registry. */
+function offRegistryEntries(lockfile: string): Record<string, string> {
   const lock = Bun.JSONC.parse(readFileSync(path.join(repoRoot, lockfile), "utf8")) as {
     packages?: Record<string, Entry>;
   };
-  return Object.entries(lock.packages ?? {})
-    .filter(([, entry]) => !isRegistryOrOnDisk(entry))
-    .map(([key, entry]) => `${key}: ${describeEntry(entry)}`);
+  return Object.fromEntries(
+    Object.entries(lock.packages ?? {})
+      .filter(([, entry]) => !isRegistryOrOnDisk(entry))
+      .map(([key, entry]) => [key, `${key}: ${describeEntry(entry)}`]),
+  );
 }
 
 test("isRegistryOrOnDisk accepts registry tarballs and on-disk resolutions only", () => {
@@ -122,24 +129,26 @@ test("isRegistryOrOnDisk accepts registry tarballs and on-disk resolutions only"
 
 const lockfiles = committedLockfiles();
 
-test("the lockfiles CI installs from are among the committed ones", () => {
+test("the lockfiles CI installs from, and the allowlisted ones, are among the committed ones", () => {
   // Guards the lint below against `git ls-files` coming back empty or rooted
-  // in the wrong directory, which would make it pass vacuously.
+  // in the wrong directory, which would make it pass vacuously, and keeps the
+  // allowlist from outliving the lockfiles it names.
   expect(lockfiles).toEqual(
-    expect.arrayContaining(["bun.lock", "test/bun.lock", "packages/bun-error/bun.lock", "src/node-fallbacks/bun.lock"]),
+    expect.arrayContaining([
+      "bun.lock",
+      "test/bun.lock",
+      "packages/bun-error/bun.lock",
+      "src/node-fallbacks/bun.lock",
+      ...Object.keys(allowedOffRegistry),
+    ]),
   );
 });
 
-test.each(lockfiles.filter(lockfile => !(lockfile in allowedOffRegistry)))(
-  "%s downloads only from the npm registry",
-  lockfile => {
-    expect(offRegistryEntries(lockfile)).toEqual([]);
-  },
-);
-
-test.each(Object.keys(allowedOffRegistry))("%s still needs its allowlist entry", lockfile => {
-  expect(lockfiles).toContain(lockfile);
-  // Once nothing in it comes from elsewhere any more, drop it from the list so
-  // the lint covers it again.
-  expect(offRegistryEntries(lockfile)).not.toEqual([]);
+// An allowlisted entry that no longer comes from elsewhere fails too (expected
+// but not received): drop it from the allowlist, it does not need excusing.
+test.each(lockfiles)("%s downloads only from the npm registry, except its allowlisted entries", lockfile => {
+  const found = offRegistryEntries(lockfile);
+  const allowed = allowedOffRegistry[lockfile]?.entries ?? [];
+  const detail = Object.values(found).join("\n") || `nothing in ${lockfile} downloads from outside the registry`;
+  expect(Object.keys(found).sort(), detail).toEqual([...allowed].sort());
 });

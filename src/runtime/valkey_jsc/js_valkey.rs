@@ -747,8 +747,8 @@ impl JSValkeyClient {
                 protocol: uri,
                 username,
                 password,
-                in_flight: command::promise_pair::Queue::init(),
-                queue: command::entry::Queue::init(),
+                in_flight: command::promise_pair::Queue::new(),
+                queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
                 connection_strings,
                 socket: Socket::SocketTcp(uws::SocketTCP {
@@ -856,8 +856,8 @@ impl JSValkeyClient {
                 protocol: client.protocol,
                 username,
                 password,
-                in_flight: command::promise_pair::Queue::init(),
-                queue: command::entry::Queue::init(),
+                in_flight: command::promise_pair::Queue::new(),
+                queue: command::entry::Queue::new(),
                 status: valkey::Status::NeverConnected,
                 connection_strings: connection_strings_copy,
                 socket: Socket::SocketTcp(uws::SocketTCP {
@@ -1599,13 +1599,12 @@ impl JSValkeyClient {
         memory_cost += client.read_buffer.byte_list.capacity() as usize;
 
         // Add queue sizes
-        memory_cost += client.in_flight.readable_length()
-            * core::mem::size_of::<super::valkey_command::PromisePair>();
-        for command in client.queue.readable_slice(0) {
+        memory_cost +=
+            client.in_flight.len() * core::mem::size_of::<super::valkey_command::PromisePair>();
+        for command in client.queue.iter() {
             memory_cost += command.serialized_data.len();
         }
-        memory_cost +=
-            client.queue.readable_length() * core::mem::size_of::<super::valkey_command::Entry>();
+        memory_cost += client.queue.len() * core::mem::size_of::<super::valkey_command::Entry>();
         memory_cost
     }
 

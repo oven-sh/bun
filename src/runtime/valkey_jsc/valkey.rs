@@ -337,46 +337,28 @@ impl ValkeyClient {
     /// Clean up resources used by the Valkey client
     // Cannot be `Drop` — takes a JSGlobalObject param and has JS side effects.
     pub(crate) fn shutdown(&mut self, global_object_or_finalizing: Option<&JSGlobalObject>) {
-        let mut pending =
-            core::mem::replace(&mut self.in_flight, command::promise_pair::Queue::init());
-        let mut commands = core::mem::replace(&mut self.queue, command::entry::Queue::init());
+        let mut pending = core::mem::take(&mut self.in_flight);
+        let mut commands = core::mem::take(&mut self.queue);
 
+        // When finalizing we cannot call into JS; the queues just drop.
         if let Some(global_this) = global_object_or_finalizing {
             let object = valkey_error_to_js(
                 global_this,
                 b"Connection closed",
                 RedisError::ConnectionClosed,
             );
-            while let Some(mut pair) = pending.read_item() {
+            while let Some(mut pair) = pending.pop_front() {
                 // Any exception from the reject is swallowed so
                 // every remaining pending command still gets rejected at shutdown.
                 let _ = pair.reject_command(global_this, object);
             }
 
-            while let Some(mut offline_cmd) = commands.read_item() {
+            while let Some(mut offline_cmd) = commands.pop_front() {
                 // Same as above: swallow reject exceptions so the whole queue drains.
                 let _ = offline_cmd.promise.reject(global_this, Ok(object));
-                // Note: `offline_cmd.deinit()` — Entry/Box<[u8]> drops automatically.
-            }
-        } else {
-            // finalizing. we can't call into JS.
-            while let Some(pair) = pending.read_item() {
-                // Note: `pair.promise.deinit()` — JSPromiseStrong drops automatically.
-                drop(pair);
-            }
-
-            while let Some(offline_cmd) = commands.read_item() {
-                // Note: `offline_cmd.promise.deinit()` / `offline_cmd.deinit()` —
-                // JSPromiseStrong / Box<[u8]> drop automatically.
-                drop(offline_cmd);
             }
         }
 
-        // Note: `allocator.free(connection_strings)` and `write_buffer/read_buffer.deinit()`
-        // and `tls.deinit()` are handled by Drop on the owning fields. Only the side-effecting
-        // unregister remains explicit.
-        drop(pending);
-        drop(commands);
         self.unregister_auto_flusher();
     }
 
@@ -408,11 +390,10 @@ impl ValkeyClient {
         // Start draining the command queue
         let mut total_bytelength: usize = 0;
 
-        // We compute the count first, then drain by `read_item`.
+        // We compute the count first, then drain by `pop_front`.
         let pipelineable_count: usize = {
-            let to_process = self.queue.readable_slice(0);
             let mut total: usize = 0;
-            for command in to_process {
+            for command in self.queue.iter() {
                 if !command
                     .meta
                     .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
@@ -429,13 +410,11 @@ impl ValkeyClient {
             .byte_list
             .ensure_unused_capacity(total_bytelength);
         for _ in 0..pipelineable_count {
-            let cmd = self.queue.read_item().expect("count was precomputed");
-            self.in_flight
-                .write_item(command::PromisePair {
-                    meta: cmd.meta,
-                    promise: cmd.promise,
-                })
-                .unwrap_or_oom();
+            let cmd = self.queue.pop_front().expect("count was precomputed");
+            self.in_flight.push_back(command::PromisePair {
+                meta: cmd.meta,
+                promise: cmd.promise,
+            });
             self.write_buffer
                 .write(&cmd.serialized_data)
                 .unwrap_or_oom();
@@ -445,7 +424,7 @@ impl ValkeyClient {
 
         let _ = self.flush_data();
 
-        let have_more = self.queue.readable_length() > 0;
+        let have_more = !self.queue.is_empty();
         self.auto_flusher.registered.set(have_more);
 
         self.deref();
@@ -467,8 +446,8 @@ impl ValkeyClient {
     }
 
     pub(crate) fn has_any_pending_commands(&self) -> bool {
-        self.in_flight.readable_length() > 0
-            || self.queue.readable_length() > 0
+        !self.in_flight.is_empty()
+            || !self.queue.is_empty()
             || self.write_buffer.len() > 0
             || self.read_buffer.len() > 0
     }
@@ -505,17 +484,17 @@ impl ValkeyClient {
         global_this: &JSGlobalObject,
         jsvalue: JSValue,
     ) -> JsResult<()> {
-        let mut pending = core::mem::replace(pending_ptr, command::promise_pair::Queue::init());
-        let mut entries = core::mem::replace(entries_ptr, command::entry::Queue::init());
+        let mut pending = core::mem::take(pending_ptr);
+        let mut entries = core::mem::take(entries_ptr);
         // Note: `defer pending.deinit()` / `defer entries.deinit()` — handled by Drop.
 
         // Reject commands in the command queue
-        while let Some(mut command_pair) = pending.read_item() {
+        while let Some(mut command_pair) = pending.pop_front() {
             command_pair.reject_command(global_this, jsvalue)?;
         }
 
         // Reject commands in the offline queue
-        while let Some(mut cmd) = entries.read_item() {
+        while let Some(mut cmd) = entries.pop_front() {
             // Note: `defer cmd.deinit(allocator)` — Entry should impl Drop.
             cmd.promise.reject(global_this, Ok(jsvalue))?;
         }
@@ -523,7 +502,7 @@ impl ValkeyClient {
     }
 
     fn reject_in_flight_commands(&mut self, message: &[u8], err: RedisError) -> JsResult<()> {
-        if self.in_flight.readable_length() == 0 {
+        if self.in_flight.is_empty() {
             return Ok(());
         }
 
@@ -533,11 +512,8 @@ impl ValkeyClient {
                 message: Box::<[u8]>::from(message),
                 err,
                 global_this: GlobalRef::from(vm.global()),
-                in_flight: core::mem::replace(
-                    &mut self.in_flight,
-                    command::promise_pair::Queue::init(),
-                ),
-                queue: command::entry::Queue::init(),
+                in_flight: core::mem::take(&mut self.in_flight),
+                queue: command::entry::Queue::new(),
             });
             deferred_failure.enqueue();
             return Ok(());
@@ -545,7 +521,7 @@ impl ValkeyClient {
 
         let global_this = self.global_object();
         let jsvalue = valkey_error_to_js(&global_this, message, err);
-        let mut entries = command::entry::Queue::init();
+        let mut entries = command::entry::Queue::new();
         Self::reject_all_pending_commands(&mut self.in_flight, &mut entries, &global_this, jsvalue)
     }
 
@@ -572,7 +548,7 @@ impl ValkeyClient {
 
         if self.flags.finalized {
             // We can't run promises inside finalizers.
-            if self.queue.readable_length() + self.in_flight.readable_length() > 0 {
+            if !self.queue.is_empty() || !self.in_flight.is_empty() {
                 let vm = self.vm;
                 let deferred_failure = Box::new(DeferredFailure {
                     // This memory is not owned by us.
@@ -580,11 +556,8 @@ impl ValkeyClient {
 
                     err,
                     global_this: GlobalRef::from(vm.global()),
-                    in_flight: core::mem::replace(
-                        &mut self.in_flight,
-                        command::promise_pair::Queue::init(),
-                    ),
-                    queue: core::mem::replace(&mut self.queue, command::entry::Queue::init()),
+                    in_flight: core::mem::take(&mut self.in_flight),
+                    queue: core::mem::take(&mut self.queue),
                 });
                 deferred_failure.enqueue();
             }
@@ -722,22 +695,20 @@ impl ValkeyClient {
 
     pub(crate) fn send_next_command(&mut self) {
         if self.write_buffer.remaining().is_empty() && self.connection_ready() {
-            if self.queue.readable_length() > 0 {
+            if let Some(head) = self.queue.front() {
                 // Check the command at the head of the queue
-                let flags = self.queue.readable_slice(0)[0].meta;
+                let flags = head.meta;
 
                 if !flags.contains(command::Meta::SUPPORTS_AUTO_PIPELINING) {
                     // Head is non-pipelineable. Try to drain it serially if nothing is in-flight.
-                    if self.in_flight.readable_length() == 0 {
+                    if self.in_flight.is_empty() {
                         let _ = self.drain(); // Send the single non-pipelineable command
 
                         // After draining, check if the *new* head is pipelineable and schedule flush if needed.
                         // This covers sequences like NON_PIPE -> PIPE -> PIPE ...
-                        if self.queue.readable_length() > 0
-                            && self.queue.readable_slice(0)[0]
-                                .meta
-                                .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-                        {
+                        if self.queue.front().is_some_and(|head| {
+                            head.meta.contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+                        }) {
                             self.register_auto_flusher(self.vm);
                         }
                     } else {
@@ -747,7 +718,7 @@ impl ValkeyClient {
                     // Head is pipelineable. Register the flusher to batch it with others.
                     self.register_auto_flusher(self.vm);
                 }
-            } else if self.in_flight.readable_length() == 0 {
+            } else if self.in_flight.is_empty() {
                 // Without auto pipelining, wait for in-flight to empty before draining
                 let _ = self.drain();
             }
@@ -1134,12 +1105,10 @@ impl ValkeyClient {
                     | protocol::SubscriptionPushMessage::Unsubscribe,
                 ) => {
                     // Subscribe/unsubscribe pushes only need promise pairs if we have pending commands
-                    if self.in_flight.readable_length() == 0
-                        || !self
-                            .in_flight
-                            .peek_item_mut(0)
-                            .meta
-                            .contains(command::Meta::SUBSCRIPTION_REQUEST)
+                    if !self
+                        .in_flight
+                        .front()
+                        .is_some_and(|pair| pair.meta.contains(command::Meta::SUBSCRIPTION_REQUEST))
                     {
                         should_consume_promise_pair = false;
                     }
@@ -1157,7 +1126,7 @@ impl ValkeyClient {
         // responses which indicate all the channels we have connected to. As a stop-gap, we currently ignore the
         // actual of content of the SUBSCRIBE responses and just resolve the first one with the count of channels.
         if should_consume_promise_pair {
-            pair_maybe = self.in_flight.read_item();
+            pair_maybe = self.in_flight.pop_front();
         }
 
         // We handle subscriptions specially because they are not regular commands and their failure will potentially
@@ -1336,28 +1305,22 @@ impl ValkeyClient {
     pub(crate) fn drain(&mut self) -> bool {
         // If there's something in the in-flight queue and the next command
         // doesn't support pipelining, we should wait for in-flight commands to complete
-        if self.in_flight.readable_length() > 0 {
-            let queue_slice = self.queue.readable_slice(0);
-            if !queue_slice.is_empty()
-                && !queue_slice[0]
-                    .meta
-                    .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-            {
-                return false;
-            }
+        if !self.in_flight.is_empty()
+            && let Some(head) = self.queue.front()
+            && !head.meta.contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+        {
+            return false;
         }
 
-        let Some(offline_cmd) = self.queue.read_item() else {
+        let Some(offline_cmd) = self.queue.pop_front() else {
             return false;
         };
 
         // Add the promise to the command queue first
-        self.in_flight
-            .write_item(command::PromisePair {
-                meta: offline_cmd.meta,
-                promise: offline_cmd.promise,
-            })
-            .unwrap_or_oom();
+        self.in_flight.push_back(command::PromisePair {
+            meta: offline_cmd.meta,
+            promise: offline_cmd.promise,
+        });
         let data = offline_cmd.serialized_data;
 
         if self.connection_ready() && self.write_buffer.remaining().is_empty() {
@@ -1403,13 +1366,13 @@ impl ValkeyClient {
         let must_wait_for_queue = !command
             .meta
             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-            && self.queue.readable_length() > 0;
+            && !self.queue.is_empty();
 
         if
         // If there are any pending commands, queue this one
-        self.queue.readable_length() > 0
+        !self.queue.is_empty()
             // With auto pipelining, we can accept commands regardless of in_flight commands
-            || (!can_pipeline && self.in_flight.readable_length() > 0)
+            || (!can_pipeline && !self.in_flight.is_empty())
             // We need authentication before processing commands
             || !self.connection_ready()
             // Commands that don't support pipelining must wait for the entire queue to drain
@@ -1419,7 +1382,7 @@ impl ValkeyClient {
         {
             // We serialize the bytes in here, so we don't need to worry about the lifetime of the Command itself.
             let entry = command::Entry::create(command, promise)?;
-            self.queue.write_item(entry)?;
+            self.queue.push_back(entry);
 
             // If we're connected and using auto pipelining, schedule a flush
             if self.status == Status::Connected && can_pipeline {
@@ -1446,7 +1409,7 @@ impl ValkeyClient {
         };
 
         // Add to queue with command type
-        self.in_flight.write_item(cmd_pair)?;
+        self.in_flight.push_back(cmd_pair);
 
         let _ = self.flush_data();
         Ok(())
@@ -1486,7 +1449,7 @@ impl ValkeyClient {
                             .meta
                             .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
                         && self.status == Status::Connected
-                        && self.queue.readable_length() > 0
+                        && !self.queue.is_empty()
                     {
                         self.register_auto_flusher(self.vm);
                     }

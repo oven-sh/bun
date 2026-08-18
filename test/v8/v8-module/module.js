@@ -118,6 +118,18 @@ module.exports = debugMode => {
       }
     },
 
+    call_function_bare_through_closure() {
+      const { return_this } = nativeModule;
+      // return_this is captured by keep, so the bare call below is resolved through the closure's
+      // scope object, which JSC leaves in the call's this slot. The callback must still see the
+      // sloppy-mode receiver (globalThis), never that scope object.
+      function keep() {
+        return return_this;
+      }
+      console.log("bare call returned globalThis:", return_this() === globalThis);
+      keep();
+    },
+
     test_v8_object_get_set_exceptions() {
       for (const key of [0, "key"]) {
         for (const access of ["get", "set"]) {

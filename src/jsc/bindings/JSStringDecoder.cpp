@@ -580,9 +580,7 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
             return Bun::ERR::UNKNOWN_ENCODING(throwScope, lexicalGlobalObject, view);
         }
     }
-    JSValue thisValue = callFrame->newTarget();
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    JSObject* newTarget = asObject(thisValue);
     auto* constructor = globalObject->JSStringDecoder();
     Structure* structure = globalObject->JSStringDecoderStructure();
 
@@ -593,9 +591,14 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     // This is a hack to make express' body-parser work
     // It does something weird with the prototype
     // Not exactly a subclass
-    if (constructor != newTarget && callFrame->thisValue().isObject()) {
+    //
+    // The this slot holds the receiver of a call and new.target of a construct. A call
+    // resolved through a scope (captured or module-level binding) has that scope object as
+    // its receiver; strict toThis maps it to undefined so it is not decorated and returned.
+    JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
+    if (thisValue.isObject() && thisValue != constructor) {
         auto clientData = WebCore::clientData(vm);
-        JSObject* thisObject = asObject(callFrame->thisValue());
+        JSObject* thisObject = asObject(thisValue);
 
         thisObject->putDirect(vm, clientData->builtinNames().decodePrivateName(), jsObject, JSC::PropertyAttribute::DontEnum | 0);
         thisObject->putDirect(vm, clientData->builtinNames().encodingPublicName(), convertEnumerationToJS<BufferEncodingType>(*lexicalGlobalObject, encoding), JSC::PropertyAttribute::DontEnum | 0);

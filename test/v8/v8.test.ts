@@ -294,6 +294,11 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("correctly receives the this value from JS", async () => {
       await checkSameOutput("call_function_with_weird_this_values");
     });
+
+    it("receives globalThis as this when called bare through a closure", async () => {
+      const output = await checkSameOutput("call_function_bare_through_closure");
+      expect(output).toContain("bare call returned globalThis: true");
+    });
   });
 
   describe("error handling", () => {

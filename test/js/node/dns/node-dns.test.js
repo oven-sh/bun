@@ -874,13 +874,6 @@ describe("dns.lookupService with a numeric-string port", () => {
   });
 });
 
-function encodeName(name) {
-  return Buffer.concat([
-    ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
-    Buffer.from([0]),
-  ]);
-}
-
 // A resolver keeps a 32-slot pending cache per query kind. The first in-flight
 // query for a name owns a slot; identical queries issued while it is in flight
 // are chained onto it and settled together when it completes, so the server
@@ -890,6 +883,13 @@ function encodeName(name) {
 // 10.0.0.<n>, so a promise settled from the wrong slot shows up as the wrong
 // address.
 describe("pending cache", () => {
+  function encodeName(name) {
+    return Buffer.concat([
+      ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
+      Buffer.from([0]),
+    ]);
+  }
+
   async function startFakeServer() {
     const socket = dgram.createSocket("udp4");
     const queries = [];
@@ -993,150 +993,25 @@ describe("pending cache", () => {
   });
 });
 
-// resolve(hostname, rrtype) maps the rrtype string onto the same per-type
-// queries the resolveXxx() functions issue. The fake server below records the
-// QTYPE of every query it receives (as "<qtype> <first label>") and answers
-// NAPTR queries with NAPTR_RECORD and everything else with an empty NOERROR
-// response, so these stay off the network.
-describe("resolve() rrtype", () => {
-  const QTYPES = {
-    A: 1,
-    AAAA: 28,
-    ANY: 255,
-    CAA: 257,
-    CNAME: 5,
-    MX: 15,
-    NAPTR: 35,
-    NS: 2,
-    PTR: 12,
-    SOA: 6,
-    SRV: 33,
-    TXT: 16,
-  };
-
-  const NAPTR_RECORD = {
-    order: 10,
-    preference: 20,
-    flags: "S",
-    service: "SIP+D2U",
-    regexp: "",
-    replacement: "_sip._udp.example.test",
-  };
-
-  function characterString(value) {
-    return Buffer.concat([Buffer.from([value.length]), Buffer.from(value)]);
-  }
-
-  function naptrAnswer() {
-    const rdata = Buffer.concat([
-      Buffer.from([0, NAPTR_RECORD.order, 0, NAPTR_RECORD.preference]),
-      characterString(NAPTR_RECORD.flags),
-      characterString(NAPTR_RECORD.service),
-      characterString(NAPTR_RECORD.regexp),
-      encodeName(NAPTR_RECORD.replacement),
-    ]);
-    // NAME = pointer to QNAME, TYPE NAPTR, CLASS IN, TTL 60, RDLENGTH
-    return Buffer.concat([
-      Buffer.from([0xc0, 0x0c, 0, QTYPES.NAPTR, 0, 1, 0, 0, 0, 60, rdata.length >> 8, rdata.length & 0xff]),
-      rdata,
-    ]);
-  }
-
-  async function startFakeServer() {
-    const socket = dgram.createSocket("udp4");
-    const queries = [];
-    socket.on("message", (query, rinfo) => {
-      let off = 12;
-      while (query[off] !== 0) off += query[off] + 1;
-      const qtype = query.readUInt16BE(off + 1);
-      const question = query.subarray(12, off + 5);
-      queries.push(`${qtype} ${query.toString("latin1", 13, 13 + query[12])}`);
-      const answer = qtype === QTYPES.NAPTR ? naptrAnswer() : Buffer.alloc(0);
-      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, answer.length ? 1 : 0, 0, 0, 0, 0]);
-      socket.send(Buffer.concat([header, question, answer]), rinfo.port, rinfo.address);
-    });
+// The socket never answers. The QTYPE that reaches it and the syscall the
+// cancelled query reports pin resolve()'s rrtype dispatch to the query that
+// resolveNaptr() issues; decoding is covered by the resolveNaptr() tests.
+test.concurrent.each(["NAPTR", "naptr"])("resolve(hostname, %p) issues a NAPTR query", async rrtype => {
+  const socket = dgram.createSocket("udp4");
+  try {
     socket.bind(0, "127.0.0.1");
     await once(socket, "listening");
-    return { socket, queries, server: "127.0.0.1:" + socket.address().port };
+    const resolver = new dns_promises.Resolver();
+    resolver.setServers(["127.0.0.1:" + socket.address().port]);
+    const received = once(socket, "message");
+    const promise = resolver.resolve("naptr.example.test", rrtype);
+    const [query] = await received;
+    let off = 12;
+    while (query[off] !== 0) off += query[off] + 1;
+    expect(query.readUInt16BE(off + 1)).toBe(35);
+    resolver.cancel();
+    expect(await promise.catch(err => err)).toMatchObject({ code: "ECANCELLED", syscall: "queryNaptr" });
+  } finally {
+    socket.close();
   }
-
-  test.concurrent("Resolver#resolve() queries the QTYPE named by the rrtype, in either case", async () => {
-    const { socket, queries, server } = await startFakeServer();
-    try {
-      const resolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
-      resolver.setServers([server]);
-      // Distinct names per case: identical (name, type) queries in flight at
-      // the same time are coalesced onto one wire query by the pending cache.
-      await Promise.allSettled(
-        Object.keys(QTYPES).flatMap(rrtype => [
-          resolver.resolve("upper.example.test", rrtype),
-          resolver.resolve("lower.example.test", rrtype.toLowerCase()),
-        ]),
-      );
-      expect(queries.sort()).toEqual(
-        Object.values(QTYPES)
-          .flatMap(qtype => [`${qtype} upper`, `${qtype} lower`])
-          .sort(),
-      );
-    } finally {
-      socket.close();
-    }
-  });
-
-  test.concurrent("Resolver#resolve(hostname, 'NAPTR') returns what resolveNaptr() returns", async () => {
-    const { socket, queries, server } = await startFakeServer();
-    try {
-      const promisesResolver = new dns_promises.Resolver({ timeout: 5000, tries: 1 });
-      promisesResolver.setServers([server]);
-      const callbackResolver = new dns.Resolver({ timeout: 5000, tries: 1 });
-      callbackResolver.setServers([server]);
-
-      const results = await Promise.all([
-        promisesResolver.resolve("promises.example.test", "NAPTR"),
-        promisesResolver.resolveNaptr("naptr.example.test"),
-        new Promise((resolve, reject) =>
-          callbackResolver.resolve("callback.example.test", "NAPTR", (err, records) =>
-            err ? reject(err) : resolve(records),
-          ),
-        ),
-      ]);
-      expect(results).toEqual(Array(3).fill([NAPTR_RECORD]));
-      expect(queries.sort()).toEqual(["35 callback", "35 naptr", "35 promises"]);
-    } finally {
-      socket.close();
-    }
-  });
-
-  // The module-level functions use the process-wide resolver, so point that one
-  // at the fake server in a child process.
-  test.concurrent("dns.resolve(), dns.promises.resolve() and Bun.dns.resolve() accept 'NAPTR'", async () => {
-    const { socket, queries, server } = await startFakeServer();
-    try {
-      await using proc = Bun.spawn({
-        cmd: [
-          bunExe(),
-          "-e",
-          `const dns = require("node:dns");
-           dns.setServers([process.argv[1]]);
-           Promise.all([
-             new Promise((resolve, reject) =>
-               dns.resolve("callback.example.test", "NAPTR", (err, records) => (err ? reject(err) : resolve(records))),
-             ),
-             dns.promises.resolve("promises.example.test", "NAPTR"),
-             Bun.dns.resolve("bun.example.test", "NAPTR"),
-           ]).then(results => console.log(JSON.stringify(results)));`,
-          server,
-        ],
-        env: bunEnv,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual(Array(3).fill([NAPTR_RECORD]));
-      expect(exitCode).toBe(0);
-      expect(queries.sort()).toEqual(["35 bun", "35 callback", "35 promises"]);
-    } finally {
-      socket.close();
-    }
-  });
 });

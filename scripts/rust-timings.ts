@@ -255,7 +255,11 @@ if (cfg.cargo === undefined) {
 
 // Codegen + vendored path deps must exist before cargo can load the workspace
 // manifest. The configure step is a no-op when already done.
-if (!existsSync(cfg.codegenDir) || !existsSync(join(repo, "vendor/lolhtml/Cargo.toml"))) {
+if (
+  !existsSync(cfg.codegenDir) ||
+  !existsSync(join(repo, "vendor/lolhtml/Cargo.toml")) ||
+  !existsSync(join(repo, "vendor/rust-argon2/Cargo.toml"))
+) {
   console.log(cyan("[setup]") + " bun scripts/build.ts --configure-only --profile=" + opts.profile);
   const r = spawnSync(process.execPath, ["scripts/build.ts", "--configure-only", `--profile=${opts.profile}`], {
     stdio: "inherit",

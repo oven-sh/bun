@@ -35,8 +35,7 @@ pub trait LinearFifoBuffer<T> {
 /// layout to `T`; exposing uninitialized bytes as `T` is sound only when any
 /// bit pattern is a valid `T`. NOT every in-tree element type satisfies this:
 /// besides byte buffers and raw pointers, fifos today store `NonNull`-bearing
-/// enums (`bun_test::RefDataValue`), `JSPromiseStrong`-bearing structs
-/// (`ValkeyCommand::PromisePair`), and the `event_loop::Task` enum — see the
+/// enums (`bun_test::RefDataValue`) and the `event_loop::Task` enum — see the
 /// `StaticBuffer` note below for the pending MaybeUninit accessor rework.
 /// Centralises the four per-buffer-kind casts behind one audited block.
 #[inline(always)]
@@ -95,9 +94,9 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // (`writable_slice` hands out `&mut [T]` over not-yet-written slots) bakes in
 // the same exposure for every buffer kind. Sound only for `T` whose
 // any-bit-pattern is valid — and in-tree element types ALREADY violate that:
-// `RefDataValue` (NonNull<DescribeScope> payload), `PromisePair`
-// (JSPromiseStrong), and the `Task` enum are stored in fifos today, so
-// materialising `&[T]` over uninitialized slots for those types is latent UB.
+// `RefDataValue` (NonNull<DescribeScope> payload) and the `Task` enum are
+// stored in fifos today, so materialising `&[T]` over uninitialized slots for
+// those types is latent UB.
 // The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
 // only assume-init the logically-written subranges. That cannot be done by
 // touching this file alone — `writable_slice`-family callers in other crates

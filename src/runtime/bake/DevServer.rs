@@ -4964,25 +4964,21 @@ impl DevServer {
 
         let mut watch_for_route_file = false;
         if matches!(err.name(), "ENOENT" | "FileNotFound" | "ModuleNotFound") {
-            // Special-case files being deleted: the importers are re-bundled
-            // and report the missing file.
+            // Special-case files being deleted: the importers report them.
             match graph {
                 bake::Graph::Server | bake::Graph::Ssr => {
                     self.server_graph.on_file_deleted(abs_path, bv2)?
                 }
                 bake::Graph::Client => {
                     self.client_graph.on_file_deleted(abs_path, bv2)?;
-                    // Nothing imports the html file of a route. Without a
-                    // failure of its own, `finalize_bundle` marks the route
-                    // loaded and serves it without any bundled html.
+                    // The html file of a route has no importer.
                     if let Some(file) = self
                         .client_graph
                         .bundled_files
                         .get(abs_path)
                         .filter(|file| file.html_route_bundle_index.is_some())
                     {
-                        // The failure stays set until the file is bundled again,
-                        // so a route that keeps failing registers one watch.
+                        // `failed` is cleared by the next successful bundle.
                         watch_for_route_file = !file.failed;
                         self.client_graph.insert_failure(
                             incremental_graph::InsertFailureKey::AbsPath(abs_path),
@@ -5011,12 +5007,11 @@ impl DevServer {
                 )?,
             }
         }
+        // `track_resolution_failure` takes the graph lock itself.
         drop(graph_lock);
 
         if watch_for_route_file {
-            // The same directory watch that retries a failed import re-bundles
-            // the route once its html file exists again. It takes the graph
-            // lock itself.
+            // Bundles the route again once its html file exists, like a failed import.
             self.directory_watchers.track_resolution_failure(
                 abs_path,
                 paths::basename(abs_path),

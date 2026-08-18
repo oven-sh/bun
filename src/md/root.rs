@@ -116,6 +116,7 @@ impl Options {
             wiki_links: self.wiki_links,
             latex_math: self.latex_math,
             collapse_whitespace: self.collapse_whitespace,
+            hard_soft_breaks: self.hard_soft_breaks,
             permissive_atx_headers: self.permissive_atx_headers,
             no_indented_code_blocks: self.no_indented_code_blocks,
             no_html_blocks: self.no_html_blocks,

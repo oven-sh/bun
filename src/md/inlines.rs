@@ -270,7 +270,7 @@ impl Parser<'_> {
                         while sp > text_start && content[sp - 1] == b' ' {
                             sp -= 1;
                         }
-                        if emit_end - sp >= 2 {
+                        if emit_end - sp >= 2 || self.flags.hard_soft_breaks {
                             // Also strip any trailing tabs/spaces before the space run
                             while sp > text_start
                                 && (content[sp - 1] == b' ' || content[sp - 1] == b'\t')
@@ -279,6 +279,16 @@ impl Parser<'_> {
                             }
                             emit_end = sp;
                             is_hard = true;
+                        } else if self.flags.collapse_whitespace {
+                            // Trailing whitespace before a soft break collapses away.
+                            while sp > text_start
+                                && (content[sp - 1] == b' '
+                                    || content[sp - 1] == b'\t'
+                                    || content[sp - 1] == b'\r')
+                            {
+                                sp -= 1;
+                            }
+                            emit_end = sp;
                         }
                     }
                     if emit_end > text_start {
@@ -291,6 +301,34 @@ impl Parser<'_> {
                     }
                     i += 1;
                     text_start = i;
+                    continue;
+                }
+
+                // Whitespace run (space/tab/CR are mark chars only when
+                // collapse_whitespace is set). md4c's MD_FLAG_COLLAPSEWHITESPACE
+                // replaces a non-trivial run (longer than one char, or not a
+                // plain space) with a single space.
+                if self.flags.collapse_whitespace && (c == b' ' || c == b'\t' || c == b'\r') {
+                    let mut end = i + 1;
+                    while end < content.len()
+                        && (content[end] == b' ' || content[end] == b'\t' || content[end] == b'\r')
+                    {
+                        end += 1;
+                    }
+                    if end < content.len() && content[end] == b'\n' {
+                        // Trailing run before a line break: the newline branch
+                        // above decides hard-break vs collapse.
+                        i = end;
+                        continue;
+                    }
+                    if end - i > 1 || c != b' ' {
+                        if i > text_start {
+                            self.emit_text(TextType::Normal, &content[text_start..i])?;
+                        }
+                        self.emit_text(TextType::Normal, b" ")?;
+                        text_start = end;
+                    }
+                    i = end;
                     continue;
                 }
 

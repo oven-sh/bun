@@ -1382,3 +1382,66 @@ describe.concurrent("importing .md modules", () => {
     expect(exitCode).not.toBe(0);
   });
 });
+
+// ============================================================================
+// hardSoftBreaks / collapseWhitespace (issue #39491)
+// ============================================================================
+
+describe("hardSoftBreaks", () => {
+  test("soft line breaks become hard breaks", () => {
+    expect(Markdown.html("a\nb\n", { hardSoftBreaks: true })).toBe("<p>a<br />\nb</p>\n");
+  });
+
+  test("trailing whitespace before the forced break is dropped", () => {
+    expect(Markdown.html("a \nb\n", { hardSoftBreaks: true })).toBe("<p>a<br />\nb</p>\n");
+    expect(Markdown.html("a\t\nb\n", { hardSoftBreaks: true })).toBe("<p>a<br />\nb</p>\n");
+  });
+
+  test("existing hard breaks still work", () => {
+    expect(Markdown.html("a  \nb\n", { hardSoftBreaks: true })).toBe("<p>a<br />\nb</p>\n");
+    expect(Markdown.html("a\\\nb\n", { hardSoftBreaks: true })).toBe("<p>a<br />\nb</p>\n");
+  });
+
+  test("disabled by default", () => {
+    expect(Markdown.html("a\nb\n")).toBe("<p>a\nb</p>\n");
+    expect(Markdown.html("a\nb\n", { hardSoftBreaks: false })).toBe("<p>a\nb</p>\n");
+  });
+});
+
+describe("collapseWhitespace", () => {
+  test("collapses whitespace runs in normal text", () => {
+    expect(Markdown.html("a    b\n", { collapseWhitespace: true })).toBe("<p>a b</p>\n");
+    expect(Markdown.html("a \t b\n", { collapseWhitespace: true })).toBe("<p>a b</p>\n");
+  });
+
+  test("a single tab collapses to a space", () => {
+    expect(Markdown.html("a\tb\n", { collapseWhitespace: true })).toBe("<p>a b</p>\n");
+  });
+
+  test("a single space is left alone", () => {
+    expect(Markdown.html("a b\n", { collapseWhitespace: true })).toBe("<p>a b</p>\n");
+  });
+
+  test("collapses inside emphasis and link labels", () => {
+    expect(Markdown.html("*a    b*\n", { collapseWhitespace: true })).toBe("<p><em>a b</em></p>\n");
+    expect(Markdown.html("[a    b](u)\n", { collapseWhitespace: true })).toBe('<p><a href="u">a b</a></p>\n');
+  });
+
+  test("does not touch code spans or code blocks", () => {
+    expect(Markdown.html("`a    b`\n", { collapseWhitespace: true })).toBe("<p><code>a    b</code></p>\n");
+    expect(Markdown.html("    a    b\n", { collapseWhitespace: true })).toBe("<pre><code>a    b\n</code></pre>\n");
+  });
+
+  test("two trailing spaces still produce a hard break", () => {
+    expect(Markdown.html("a  \nb\n", { collapseWhitespace: true })).toBe("<p>a<br />\nb</p>\n");
+  });
+
+  test("trailing whitespace before a soft break collapses away", () => {
+    expect(Markdown.html("a \nb\n", { collapseWhitespace: true })).toBe("<p>a\nb</p>\n");
+  });
+
+  test("disabled by default", () => {
+    expect(Markdown.html("a    b\n")).toBe("<p>a    b</p>\n");
+    expect(Markdown.html("a    b\n", { collapseWhitespace: false })).toBe("<p>a    b</p>\n");
+  });
+});

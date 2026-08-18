@@ -11,14 +11,20 @@ import { bunExe, isASAN, isDebug, isLinux } from "harness";
 //
 // Reads the symbol table, which only the unstripped debug and asan binaries
 // have; the release `bun` is stripped.
-test.skipIf(!isLinux || !(isDebug || isASAN))("the math function parser is compiled once per value type", async () => {
-  const nm = Bun.which("nm") || Bun.which("llvm-nm");
+const hasSymbolTable = isLinux && (isDebug || isASAN);
+const nm = hasSymbolTable ? Bun.which("nm") || Bun.which("llvm-nm") : null;
+
+// Listing the debug binary takes a couple of seconds, so it happens here rather
+// than against the test's own timeout. grep exits 1 when nothing matches; that
+// case fails the assertions below.
+const symbols = nm
+  ? await $`${nm} -C --defined-only --no-sort ${bunExe()} | grep 'values::calc::Calc<'`.nothrow().text()
+  : "";
+
+test.skipIf(!hasSymbolTable)("the math function parser is compiled once per value type", () => {
   if (!nm) {
     throw new Error("nm executable not found. Please install binutils or llvm.");
   }
-
-  // grep exits 1 when nothing matches; that case fails the assertions below.
-  const symbols = await $`${nm} -C --defined-only ${bunExe()} | grep 'values::calc::Calc<'`.nothrow().text();
 
   const instances: Record<string, Record<string, number>> = {};
   for (const line of symbols.split("\n")) {

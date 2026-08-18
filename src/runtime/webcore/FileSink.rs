@@ -1313,9 +1313,6 @@ impl crate::webcore::sink::JsSinkType for FileSink {
         // SAFETY: JsCell — trait receiver is `&mut self`; sole borrow of `source`.
         Some(unsafe { self.source.get_mut() })
     }
-    fn done(&self) -> bool {
-        self.done.get()
-    }
     fn pending_state_is_pending(&self) -> bool {
         self.pending.get().state == streams::PendingState::Pending
     }

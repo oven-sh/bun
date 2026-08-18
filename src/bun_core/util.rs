@@ -3392,16 +3392,11 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
 pub trait GenericIndexInt: Copy + Eq + PartialOrd {
     const NULL_VALUE: Self;
     fn to_usize(self) -> usize;
-    fn from_usize(n: usize) -> Self;
 }
 macro_rules! generic_index_int { ($($t:ty),*) => { $(
     impl GenericIndexInt for $t {
         const NULL_VALUE: Self = <$t>::MAX;
         #[inline] fn to_usize(self) -> usize { self as usize }
-        #[inline] fn from_usize(n: usize) -> Self {
-            debug_assert!(n as u128 <= <$t>::MAX as u128, "GenericIndex::from_usize: truncation");
-            n as Self
-        }
     }
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize, i32, i64);

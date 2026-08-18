@@ -111,7 +111,6 @@ JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_byteLength);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_compare);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_concat);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_copyBytesFrom);
-JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isBuffer);
 JSC_DECLARE_HOST_FUNCTION(jsBufferConstructorFunction_isEncoding);
 
 JSC_DECLARE_HOST_FUNCTION(jsBufferPrototypeFunction_compare);
@@ -1189,14 +1188,24 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_compareBody(JSC::JSGlobalOb
     RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(JSC::jsNumber(normalizeCompareVal(result, sourceLength, targetLength))));
 }
 
-static double toInteger(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value, double defaultVal)
+// Node coerces each Buffer#copy offset with `NumberIsInteger(n) ? n : toInteger(n, 0)`:
+// an integral number is used as is, whatever its magnitude, so 2**53 is still
+// compared against the buffer lengths below (and rejected or clamped there)
+// instead of turning into offset 0. Everything else goes through toInteger():
+// NaN, +-Infinity and values outside the safe-integer range become 0, and
+// fractions round down (-0.5 becomes -1, which the callers reject).
+static double toCopyOffset(JSC::ThrowScope& scope, JSC::JSGlobalObject* globalObject, JSValue value)
 {
-    auto n = value.toNumber(globalObject);
+    if (value.isNumber()) {
+        double n = value.asNumber();
+        if (std::isfinite(n) && std::trunc(n) == n) return n;
+    }
+    double n = value.toNumber(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    if (std::isnan(n)) return defaultVal;
-    if (n < JSC::minSafeInteger()) return defaultVal;
-    if (n > JSC::maxSafeInteger()) return defaultVal;
-    return std::trunc(n);
+    if (std::isnan(n)) return 0;
+    if (n < JSC::minSafeInteger()) return 0;
+    if (n > JSC::maxSafeInteger()) return 0;
+    return std::floor(n);
 }
 
 // https://github.com/nodejs/node/blob/v22.9.0/lib/buffer.js#L825
@@ -1228,22 +1237,27 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObjec
     // so the memmove stays inside the current logical range, even if
     // valueOf resized the buffer after its own argument was checked.
     //
-    // toInteger() calls toNumber() which invokes user valueOf /
+    // toCopyOffset() calls toNumber() which invokes user valueOf /
     // Symbol.toPrimitive. Those callbacks can transfer() (detach →
     // vector() returns nullptr) or resize() a resizable ArrayBuffer
     // (pointer stays valid, logical length shrinks). The final clamp
     // handles both: a detached buffer has byteLength 0 → sourceStart >=
     // sourceEnd → we return 0 without touching the null vector.
+    //
+    // The offsets stay doubles until the range checks are done: a
+    // coerced offset can be any integral double (2**53, 1e308), and
+    // converting one of those to size_t before comparing it against the
+    // buffer lengths is undefined behavior.
     double targetStartD = 0;
     if (!targetStartValue.isUndefined()) {
-        targetStartD = targetStartValue.isAnyInt() ? targetStartValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, targetStartValue, 0);
+        targetStartD = toCopyOffset(throwScope, lexicalGlobalObject, targetStartValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (targetStartD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, ">= 0"_s, targetStartValue);
+        if (targetStartD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "targetStart"_s, ">= 0"_s, jsNumber(targetStartD));
     }
 
     double sourceStartD = 0;
     if (!sourceStartValue.isUndefined()) {
-        sourceStartD = sourceStartValue.isAnyInt() ? sourceStartValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, sourceStartValue, 0);
+        sourceStartD = toCopyOffset(throwScope, lexicalGlobalObject, sourceStartValue);
         RETURN_IF_EXCEPTION(throwScope, {});
         // sourceStart is bound-checked against source.length as seen
         // here — BEFORE the later sourceEnd coercion gets a chance to
@@ -1251,15 +1265,15 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObjec
         // original length must stay valid even if sourceEnd's valueOf
         // resizes mid-call (Node behavior: the call then just copies 0).
         auto sourceLengthAtCheck = source->byteLength();
-        if (sourceStartD < 0 || sourceStartD > sourceLengthAtCheck) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, makeString(">= 0 && <= "_s, sourceLengthAtCheck), sourceStartValue);
+        if (sourceStartD < 0 || sourceStartD > static_cast<double>(sourceLengthAtCheck)) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceStart"_s, makeString(">= 0 && <= "_s, sourceLengthAtCheck), jsNumber(sourceStartD));
     }
 
     bool sourceEndGiven = !sourceEndValue.isUndefined();
     double sourceEndD = 0;
     if (sourceEndGiven) {
-        sourceEndD = sourceEndValue.isAnyInt() ? sourceEndValue.asNumber() : toInteger(throwScope, lexicalGlobalObject, sourceEndValue, 0);
+        sourceEndD = toCopyOffset(throwScope, lexicalGlobalObject, sourceEndValue);
         RETURN_IF_EXCEPTION(throwScope, {});
-        if (sourceEndD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, ">= 0"_s, sourceEndValue);
+        if (sourceEndD < 0) return Bun::ERR::OUT_OF_RANGE(throwScope, lexicalGlobalObject, "sourceEnd"_s, ">= 0"_s, jsNumber(sourceEndD));
     }
 
     // Single post-coercion read for the hot path. byteLength is 0 for a
@@ -1268,16 +1282,20 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_copyBody(JSC::JSGlobalObjec
     auto sourceLength = source->byteLength();
     auto targetLength = target->byteLength();
 
-    size_t targetStart = static_cast<size_t>(targetStartD);
-    size_t sourceStart = static_cast<size_t>(sourceStartD);
     // If valueOf resized the source smaller, don't read past the new end
     // even if the user passed a larger sourceEnd — that would bypass the
     // JS-enforced resize boundary and leak hidden bytes into target.
-    size_t sourceEnd = sourceEndGiven ? std::min<size_t>(static_cast<size_t>(sourceEndD), sourceLength) : sourceLength;
+    if (!sourceEndGiven || sourceEndD > static_cast<double>(sourceLength))
+        sourceEndD = static_cast<double>(sourceLength);
 
-    if (targetStart >= targetLength || sourceStart >= sourceEnd) {
+    if (targetStartD >= static_cast<double>(targetLength) || sourceStartD >= sourceEndD) {
         return JSValue::encode(jsNumber(0));
     }
+
+    // Every offset is now below the length of a live buffer, so it fits a size_t.
+    size_t targetStart = static_cast<size_t>(targetStartD);
+    size_t sourceStart = static_cast<size_t>(sourceStartD);
+    size_t sourceEnd = static_cast<size_t>(sourceEndD);
 
     if (sourceEnd - sourceStart > targetLength - targetStart)
         sourceEnd = sourceStart + (targetLength - targetStart);

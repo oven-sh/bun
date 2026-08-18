@@ -278,32 +278,7 @@ pub fn is_error(code: usize) -> bool {
     c::ZSTD_isError(code) != 0
 }
 
-/// ZSTD_decompress() :
-/// `compressedSize` : must be the _exact_ size of some number of compressed and/or skippable frames.
-/// `dstCapacity` is an upper bound of originalSize to regenerate.
-/// If user cannot imply a maximum upper bound, it's better to use streaming mode to decompress data.
-/// @return : the number of bytes decompressed into `dst` (<= `dstCapacity`),
-///           or an errorCode if it fails (which can be tested using ZSTD_isError()). */
-// ZSTDLIB_API size_t ZSTD_decompress( void* dst, size_t dstCapacity,
-//   const void* src, size_t compressedSize);
-pub fn decompress(dest: &mut [u8], src: &[u8]) -> Result {
-    // SAFETY: dest/src are valid for their lengths; ZSTD_decompress reads src and writes dest.
-    let result = unsafe {
-        c::ZSTD_decompress(
-            dest.as_mut_ptr().cast::<c_void>(),
-            dest.len(),
-            src.as_ptr().cast::<c_void>(),
-            src.len(),
-        )
-    };
-    if c::ZSTD_isError(result) != 0 {
-        // SAFETY: ZSTD_getErrorName returns a static NUL-terminated string.
-        return Result::Err(unsafe { ZStr::from_c_ptr(c::ZSTD_getErrorName(result)) });
-    }
-    Result::Success(result)
-}
-
-/// [`decompress`] into `out`'s spare capacity, which is the output bound; commits the bytes written.
+/// `ZSTD_decompress` into `out`'s spare capacity, which is the output bound; commits the bytes written.
 fn decompress_append(out: &mut Vec<u8>, src: &[u8]) -> core::result::Result<(), ZstdError> {
     let spare = out.spare_capacity_mut();
     // SAFETY: spare/src are valid for their lengths; ZSTD_decompress reads src

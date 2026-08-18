@@ -180,10 +180,6 @@ impl ReadableStream {
         Ok(Some((out_stream1, out_stream2)))
     }
 
-    pub fn to_js(&self) -> JSValue {
-        self.value
-    }
-
     /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
     pub fn reload_tag(&mut self) {
         *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {

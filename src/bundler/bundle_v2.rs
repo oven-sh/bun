@@ -4,8 +4,11 @@
 // bodies live in the `bv2_impl` module below.
 // ══════════════════════════════════════════════════════════════════════════
 
+use core::cell::Cell;
 use core::ptr::NonNull;
+use std::rc::Rc;
 
+use bun_alloc::ast_alloc::{self, AstAllocState};
 use bun_collections::{ArrayHashMap, StringHashMap};
 use bun_core::ThreadLock;
 
@@ -140,6 +143,94 @@ pub struct BundleV2<'a> {
     /// dense and this is probed once per import in `on_parse_task_complete`
     /// (the main-thread parse-phase throughput limiter).
     pub(crate) requested_exports: Vec<Option<RequestedExports>>,
+
+    /// Declared last: `graph` / `linker` hold `AstVec`s backed by the parked state, so it drops after them.
+    pub(crate) async_ast_alloc: Rc<AsyncAstAlloc>,
+}
+
+/// The `AstAllocState` of a dev server bundle, installed by each JS-thread callback that works on the graph ([`BundleV2::enter_async_ast_scope`]) and shared with the guard that outlives the bundle.
+#[derive(Default)]
+pub(crate) struct AsyncAstAlloc(Cell<AsyncAstState>);
+
+#[derive(Default)]
+enum AsyncAstState {
+    /// Synchronous bundle: the owning thread keeps its own state installed.
+    #[default]
+    Disabled,
+    Parked(Box<AstAllocState>),
+    Installed {
+        id: *const AstAllocState,
+        /// Thread-local occupant displaced by `enter`, reinstated by `exit`.
+        displaced: Option<Box<AstAllocState>>,
+    },
+}
+
+impl AsyncAstAlloc {
+    fn adopt(&self, state: Box<AstAllocState>) {
+        let previous = self.0.replace(AsyncAstState::Parked(state));
+        debug_assert!(matches!(previous, AsyncAstState::Disabled));
+    }
+
+    /// Installs the parked state; `false` (and a no-op) unless one is parked.
+    fn enter(&self, spill: *mut bun_alloc::mimalloc::Heap) -> bool {
+        let mut state = match self.0.take() {
+            AsyncAstState::Parked(state) => state,
+            other => {
+                self.0.set(other);
+                return false;
+            }
+        };
+        state.set_spill_heap(spill);
+        let id: *const AstAllocState = &raw const *state;
+        self.0.set(AsyncAstState::Installed {
+            id,
+            displaced: ast_alloc::swap_state(Some(state)),
+        });
+        true
+    }
+
+    /// Uninstalls and parks the state again; no-op unless it is installed and still the thread's active state.
+    fn exit(&self) {
+        let (id, displaced) = match self.0.take() {
+            AsyncAstState::Installed { id, displaced } => (id, displaced),
+            other => {
+                self.0.set(other);
+                return;
+            }
+        };
+        if !core::ptr::eq(ast_alloc::active_state_id(), id) {
+            debug_assert!(
+                false,
+                "AsyncAstAlloc::exit: another AstAllocState is installed on top of the bundle's"
+            );
+            self.0.set(AsyncAstState::Installed { id, displaced });
+            return;
+        }
+        let state = ast_alloc::swap_state(displaced)
+            .expect("AsyncAstAlloc::exit: the active state's identity matched");
+        self.0.set(AsyncAstState::Parked(state));
+    }
+}
+
+impl Drop for AsyncAstAlloc {
+    fn drop(&mut self) {
+        self.exit();
+        if let AsyncAstState::Parked(state) = self.0.take() {
+            ast_alloc::release_state(state);
+        }
+    }
+}
+
+/// `Some` only for the guard that installed the state, which uninstalls it on drop.
+#[must_use = "the state is uninstalled as soon as the guard drops"]
+pub(crate) struct AsyncAstScope(Option<Rc<AsyncAstAlloc>>);
+
+impl Drop for AsyncAstScope {
+    fn drop(&mut self) {
+        if let Some(alloc) = &self.0 {
+            alloc.exit();
+        }
+    }
 }
 
 bun_core::declare_scope!(Bundle, visible);
@@ -266,6 +357,21 @@ impl<'a> BundleV2<'a> {
                 _ => &mut *self.transpiler,
             }
         }
+    }
+
+    /// Dev server: the (uninstalled) state the bundle was set up under; see [`AsyncAstAlloc`].
+    pub fn adopt_async_ast_state(&mut self, state: Box<AstAllocState>) {
+        debug_assert!(self.asynchronous);
+        self.async_ast_alloc.adopt(state);
+    }
+
+    /// Must be the first local of every event loop callback that works on the graph, so a later guard completing the bundle still sees the state.
+    pub(crate) fn enter_async_ast_scope(&self) -> AsyncAstScope {
+        AsyncAstScope(
+            self.async_ast_alloc
+                .enter(self.graph.heap.heap_ptr())
+                .then(|| Rc::clone(&self.async_ast_alloc)),
+        )
     }
 
     // draft `on_parse_task_complete` / `deinit_without_freeing_arena`
@@ -2810,6 +2916,7 @@ pub mod bv2_impl {
                 asynchronous: false,
                 has_any_top_level_await_modules: false,
                 requested_exports: Vec::new(),
+                async_ast_alloc: Default::default(),
             });
             if let Some(bo) = bake_options {
                 // SAFETY: `bo.client_transpiler` is the caller's live, write-capable
@@ -4381,6 +4488,7 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_load(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            let _ast_alloc = this.enter_async_ast_scope();
             if load.deferred_in.take() == Some(this.graph.defer_epoch) {
                 // Answered while `.defer()`red and before that batch was drained (cancelled, or a plugin
                 // that did not wait): its unit is still parked in `deferred_pending`; move it back so this
@@ -4606,6 +4714,8 @@ pub mod bv2_impl {
 
     impl<'a> BundleV2<'a> {
         pub(crate) fn on_resolve(resolve: &mut jsc_api::JSBundler::Resolve, this: &mut BundleV2) {
+            // Declared before `_dec_guard`, whose drop may complete the bundle.
+            let _ast_alloc = this.enter_async_ast_scope();
             // RAII guard captures `this`
             // as a raw pointer so it does not hold a unique borrow across the body.
             let _dec_guard = this.decrement_scan_counter_on_drop();
@@ -5028,6 +5138,9 @@ pub mod bv2_impl {
             for free in self.free_list.drain(..) {
                 drop(free);
             }
+
+            // The dev server tears a bundle down from inside the callback that completed it, so the state is still installed.
+            self.async_ast_alloc.exit();
         }
 
         pub fn run_from_js_in_new_thread(
@@ -6902,6 +7015,7 @@ pub mod bv2_impl {
         /// A load handed to the plugins called `.defer()`: its scan-counter unit is parked in
         /// `deferred_pending` until the deferred batch runs or its answer arrives. Bundle thread.
         pub fn on_notify_defer(load: &mut jsc_api::JSBundler::Load, this: &mut BundleV2) {
+            let _ast_alloc = this.enter_async_ast_scope();
             this.thread_lock.assert_locked();
             load.deferred_in = Some(this.graph.defer_epoch);
             this.graph.deferred_pending += 1;
@@ -6912,6 +7026,7 @@ pub mod bv2_impl {
             parse_result: &mut parse_task::Result,
             this: &mut BundleV2,
         ) {
+            let _ast_alloc = this.enter_async_ast_scope();
             let _trace = crate::perf::trace("Bundler.onParseTaskComplete");
             // Borrowck rejects holding a `&this.graph` alias
             // across the `this.*` method calls below (each takes

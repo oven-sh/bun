@@ -237,9 +237,6 @@ pub struct CurrentBundle {
     /// Owns the arena that `bv2.graph.heap` borrows (`'static` self-ref via the
     /// boxed allocation's stable address; same erasure as `bv2` above).
     pub heap: Box<bun_alloc::MimallocArena>,
-    /// Backs the small `AstVec`s built during bundle setup
-    /// (`start_async_bundle`'s AST scope); dropped with the bundle.
-    pub ast_alloc_state: Option<Box<bun_alloc::ast_alloc::AstAllocState>>,
     /// Information BundleV2 needs to finalize the bundle
     pub(crate) start_data: bundler::bundle_v2::DevServerInput,
     /// Started when the bundle was queued
@@ -3097,8 +3094,7 @@ impl DevServer {
         let heap: Box<bun_alloc::MimallocArena> = Box::new(bun_alloc::MimallocArena::new());
         // Borrows `heap`, so AST nodes built during bundle setup
         // live exactly as long as the bundle. The arena-allocated allocator
-        // never runs `Drop`; the `AstAllocState` is taken into `CurrentBundle`
-        // on success and recycled by the guard below on error paths.
+        // never runs `Drop`; the `AstAllocState` goes to `bv2` on success and is recycled by the guard on error.
         let ast_memory_store: *mut bun_ast::ASTMemoryAllocator =
             heap.alloc(bun_ast::ASTMemoryAllocator::borrowing(&heap));
         struct ReleaseAstState(*mut bun_ast::ASTMemoryAllocator);
@@ -3188,16 +3184,17 @@ impl DevServer {
             bt
         })?;
         drop(entry_points);
-        // End the AST scope and move its state into the bundle so the small
-        // `AstVec`s built during setup stay alive until the bundle completes.
+        // The bundle reinstalls its state for the callbacks that finish it (`BundleV2::enter_async_ast_scope`).
         drop(ast_scope);
         // SAFETY: `ast_memory_store` lives in `heap`; the scope above has
         // exited, so no `&mut` to the allocator is live.
         let ast_alloc_state = unsafe { (*ast_memory_store).take_ast_state() };
+        bv2.adopt_async_ast_state(
+            ast_alloc_state.unwrap_or_else(bun_alloc::ast_alloc::acquire_state),
+        );
         self.current_bundle = Some(CurrentBundle {
             bv2,
             heap,
-            ast_alloc_state,
             timer,
             start_data,
             had_reload_event,

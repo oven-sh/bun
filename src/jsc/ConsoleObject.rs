@@ -463,14 +463,15 @@ fn message_with_type_and_level_(
 
     // Routed: format into memory, then hand the bytes to process.stdout/stderr.
     // Otherwise the console's own buffered fd writer.
-    // SAFETY: see [`vm_console`] — raw deref so the writer borrow does not pin a
-    // long-lived `&mut ConsoleObject` (formatting can re-enter this function).
     let mut routed_buffer: Vec<u8> = Vec::new();
     let writer: &mut dyn bun_io::Write = if routed {
         &mut routed_buffer
     } else if to_stderr {
+        // SAFETY: see [`vm_console`] — raw deref so the writer borrow does not pin a
+        // long-lived `&mut ConsoleObject` (formatting can re-enter this function).
         unsafe { (*console).error_writer() }
     } else {
+        // SAFETY: as above.
         unsafe { (*console).writer() }
     };
 
@@ -6025,13 +6026,13 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     fmt.stack_check = StackCheck::init();
     fmt.can_throw_stack_overflow = true;
     let console = vm_console(global);
-    // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
-    // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
-    // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
-    // across the `fmt.format(...)` calls below, which can re-enter JS.
     let writer: &mut dyn bun_io::Write = if routed {
         &mut routed_buffer
     } else {
+        // SAFETY: see [`vm_console`] — points at the live boxed `ConsoleObject` for
+        // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
+        // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
+        // across the `fmt.format(...)` calls below, which can re-enter JS.
         unsafe { (*console).error_writer() }
     };
     // SAFETY: caller passes a valid (args, args_len) pair.

@@ -1018,16 +1018,13 @@ impl JSValkeyClient {
             self.poll_ref.with_mut(|r| r.ref_(vm_event_loop_ctx()));
 
             if let Err(err) = self.connect() {
-                self.poll_ref.with_mut(|r| r.unref(vm_event_loop_ctx()));
-                self.client_mut().status = valkey::Status::NeverConnected;
-                let err_value = global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!(" {} connecting to Valkey", err.name()),
-                    )
-                    .to_js();
-                let _exit = self.vm().enter_event_loop_scope();
-                promise_ptr.reject(global_object, Ok(err_value))?;
+                debug!(
+                    "first dial failed before a socket was opened: {}",
+                    err.name()
+                );
+                // Settled by the deferred close like a refused dial: the
+                // promise, onclose and the retry policy all go through on_close().
+                self.close_without_socket_next_tick();
                 return Ok(promise);
             }
 
@@ -1142,6 +1139,38 @@ impl JSValkeyClient {
         }
     }
 
+    /// Runs `ValkeyClient::on_close()` for a dial that failed before there was
+    /// a socket, so the connect() promise, `onclose`, the retry policy and the
+    /// poll ref are handled as for a dial that failed asynchronously. Deferred
+    /// because `onclose` may call connect(), and a dial that fails the same way
+    /// from in there would otherwise re-enter `on_close()` on the same stack.
+    ///
+    /// Until the task runs the client is `Connecting`, as it would be with a
+    /// dial in flight: JS that runs in between (timers due in the same tick,
+    /// or the caller of connect() or of the command that dialled) then gets
+    /// the cached promise from connect() instead of a second dial, has its
+    /// commands queued for the retry or the rejection, and a disconnect()
+    /// marks the close as manual for the task to honour. `update_poll_ref`
+    /// keeps the wrapper and the event loop alive for it like a dial would.
+    fn close_without_socket_next_tick(&self) {
+        self.client_mut().status = valkey::Status::Connecting;
+        self.update_poll_ref();
+        self.enqueue_deferred_close(DeferredClose::WithoutSocket);
+    }
+
+    fn enqueue_deferred_close(&self, what: DeferredClose) {
+        // Released by the task, whether it runs or the VM tears down first.
+        self.ref_();
+        let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
+            ctx: self.as_ctx_ptr(),
+            what,
+        }));
+        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
+        unsafe {
+            (*self.vm().event_loop()).enqueue_task(task);
+        }
+    }
+
     pub(crate) fn on_reconnect_timer(&self) -> JsResult<()> {
         debug!("Reconnect timer fired, attempting to reconnect");
 
@@ -1175,15 +1204,14 @@ impl JSValkeyClient {
         });
 
         if let Err(err) = self.connect() {
-            self.poll_ref.with_mut(|r| r.disable());
-            return self.fail_with_js_value(
-                self.global_object
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!("{} reconnecting", err.name()),
-                    )
-                    .to_js(),
+            debug!(
+                "reconnect failed before a socket was opened: {}",
+                err.name()
             );
+            // Same outcome as a dial that fails asynchronously: another retry,
+            // or fail() and a settled connect() promise once retries are used up.
+            self.close_without_socket_next_tick();
+            return Ok(());
         }
 
         // Reset the socket timeout
@@ -1348,9 +1376,10 @@ impl JSValkeyClient {
     // Callback for when Valkey client needs to reconnect
     pub(crate) fn on_valkey_reconnect(&self) {
         // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket. Reached only from `ValkeyClient::on_close()`'s reconnect
-        // branch, which never calls `on_valkey_close()`, so this scope is the
-        // sole releaser. The caller holds its own scoped ref, so count > 0.
+        // socket (or the one `ValkeyDeferredClose::run` took in its place).
+        // Reached only from `ValkeyClient::on_close()`'s reconnect branch,
+        // which never calls `on_valkey_close()`, so this scope is the sole
+        // releaser. The caller holds its own scoped ref, so count > 0.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
 
         // This timer was bounding the attempt that just ended; left armed it
@@ -1365,8 +1394,9 @@ impl JSValkeyClient {
     pub(crate) fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
 
-        // SAFETY: adopts connect()'s socket keep-alive ref; the caller holds
-        // its own scoped ref so count stays > 0 until this drops.
+        // SAFETY: adopts connect()'s socket keep-alive ref (or the one
+        // `ValkeyDeferredClose::run` took in its place); the caller holds its
+        // own scoped ref so count stays > 0 until this drops.
         let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
@@ -1375,7 +1405,8 @@ impl JSValkeyClient {
         };
         this_jsvalue.ensure_still_alive();
         if global_object.has_exception() {
-            // As in `fail_with_js_value`: an exception already unwinding keeps propagating.
+            // Already unwinding an exception (a caller's, or the worker's termination): it keeps
+            // propagating; `onclose` cannot be entered on top of it.
             return Err(bun_jsc::JsError::Thrown);
         }
 
@@ -1411,37 +1442,13 @@ impl JSValkeyClient {
         self.client_mut().fail(message, err)
     }
 
-    pub(crate) fn fail_with_js_value(&self, value: JSValue) -> JsResult<()> {
-        let Some(this_value) = self.this_value.get().try_get() else {
-            return Ok(());
-        };
-        let global_object = self.global_object;
-        if global_object.has_exception() {
-            // Already unwinding an exception (a caller's, or the worker's termination): it keeps
-            // propagating; `onclose` cannot be entered on top of it.
-            return Err(bun_jsc::JsError::Thrown);
-        }
-        if let Some(on_close) = Js::onclose_get_cached(this_value) {
-            let _exit = self.vm().enter_event_loop_scope();
-            on_close.call(&global_object, this_value, &[value])?;
-        }
-        Ok(())
-    }
-
     fn close_socket_next_tick(&self) {
         if self.client.get().socket.is_closed() {
             return;
         }
 
-        self.ref_();
         // socket close can potentially call JS so we need to enqueue the deinit
-        let task = jsc::Task::from_boxed(Box::new(ValkeyDeferredClose {
-            ctx: self.as_ctx_ptr(),
-        }));
-        // SAFETY: VM-owned event loop pointer; uniquely accessed on the JS thread.
-        unsafe {
-            (*self.vm().event_loop()).enqueue_task(task);
-        }
+        self.enqueue_deferred_close(DeferredClose::Socket);
     }
 
     pub fn finalize(self: Box<Self>) {
@@ -1474,12 +1481,6 @@ impl JSValkeyClient {
         }
 
         let _guard = self.ref_scope();
-
-        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
-        // Taken before the TLS-context check so the `tls_ctx_failed` branch's
-        // `on_valkey_close()` has a ref to consume instead of over-releasing.
-        // Forgotten on success (the socket adopts it).
-        let socket_ref = self.ref_scope();
 
         let is_tls = self.client.get().tls != valkey::TLS::None;
         let vm = self.client.get().vm.as_mut();
@@ -1517,11 +1518,7 @@ impl JSValkeyClient {
                 b"Failed to create TLS context",
                 protocol::RedisError::ConnectionClosed,
             )?;
-            // `on_valkey_close()` consumes the socket ref; hand it over so it
-            // isn't released twice.
-            socket_ref.forget();
-            self.client_mut().on_valkey_close()?;
-            self.client_mut().status = valkey::Status::Disconnected;
+            self.close_without_socket_next_tick();
             return Ok(());
         }
         let ssl_ctx: Option<*mut uws::SslCtx> = match &self.client.get().tls {
@@ -1549,6 +1546,9 @@ impl JSValkeyClient {
         // `owner_ptr` opaquely (no overlapping write).
         let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
+        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
+        // Forgotten once there is a socket to own it.
+        let socket_ref = self.ref_scope();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
         // BoringSSL `SSL_CTX*` (or None) forwarded opaquely to usockets.
@@ -1577,20 +1577,19 @@ impl JSValkeyClient {
         if self.client.get().status == valkey::Status::NeverConnected {
             bun_core::hint::cold();
 
-            if let Err(err) = self.connect() {
-                self.client_mut().status = valkey::Status::NeverConnected;
-                let err_value = global_this
-                    .err(
-                        jsc::ErrorCode::SOCKET_CLOSED_BEFORE_CONNECTION,
-                        format_args!(" {} connecting to Valkey", err.name()),
-                    )
-                    .to_js();
-                let promise = JSPromise::create(global_this);
-                let _exit = self.vm().enter_event_loop_scope();
-                promise.reject(global_this, Ok(err_value))?;
-                return Ok(promise);
+            match self.connect() {
+                // The command is queued below as for a dial in flight; the
+                // deferred close then rejects it or a retry sends it, like a
+                // refused dial.
+                Err(err) => {
+                    debug!(
+                        "first dial failed before a socket was opened: {}",
+                        err.name()
+                    );
+                    self.close_without_socket_next_tick();
+                }
+                Ok(()) => self.reset_connection_timeout(),
             }
-            self.reset_connection_timeout();
         }
 
         let self_br = BackRef::new(self);
@@ -2022,27 +2021,67 @@ impl Options {
     }
 }
 
+#[derive(Clone, Copy)]
+enum DeferredClose {
+    /// Close the socket the finalized wrapper left behind.
+    Socket,
+    /// Run the close path for a dial that never produced a socket
+    /// (`close_without_socket_next_tick`).
+    WithoutSocket,
+}
+
 pub(crate) struct ValkeyDeferredClose {
-    ctx: *const JSValkeyClient,
+    ctx: *mut JSValkeyClient,
+    what: DeferredClose,
 }
 
 impl ValkeyDeferredClose {
     #[allow(clippy::boxed_local, reason = "reclaim point for the boxed task")]
     pub(crate) fn run(self: Box<Self>) {
-        let ctx = self.ctx;
-        // SAFETY: single-threaded; intrusive ref taken before enqueue guarantees liveness.
-        unsafe {
-            crate::dispatch::fold((*ctx).client_mut().close(uws::CloseCode::FastShutdown));
-            JSValkeyClient::deref(ctx.cast_mut());
+        // SAFETY: adopts the ref `enqueue_deferred_close` took, which kept the
+        // client alive until now; released when this scope ends.
+        let _enqueue_ref = unsafe { ScopedRef::adopt(self.ctx) };
+        // SAFETY: live per the ref above; tasks run on the JS thread.
+        let this = unsafe { &*self.ctx };
+        match self.what {
+            DeferredClose::Socket => {
+                crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
+            }
+            DeferredClose::WithoutSocket => {
+                // Holding Connecting (see `close_without_socket_next_tick`) is
+                // what keeps a dial from starting in between; if one did, its
+                // own callbacks own the close path now, so only drop our ref.
+                if !this.client.get().socket.is_closed() {
+                    return;
+                }
+                // `on_close()` ends in `on_valkey_close`/`on_valkey_reconnect`,
+                // which release the ref the socket would have held.
+                this.ref_();
+                this.client_mut().status = valkey::Status::Disconnected;
+                let closed = this.client_mut().on_close();
+                this.update_poll_ref();
+                crate::dispatch::fold(closed);
+            }
         }
     }
 }
 
 impl bun_event_loop::Taskable for ValkeyDeferredClose {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::ValkeyDeferredClose;
-    /// The deferred close is script-free bookkeeping; do it.
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — boxed at the enqueue site.
-        unsafe { bun_core::heap::take(this) }.run();
+        let task = unsafe { bun_core::heap::take(this) };
+        match task.what {
+            // Script-free bookkeeping; do it.
+            DeferredClose::Socket => task.run(),
+            // The VM is going away: `on_close()` would run `onclose`, so only
+            // give back what `close_without_socket_next_tick` took.
+            DeferredClose::WithoutSocket => {
+                // SAFETY: as in `run`.
+                let _enqueue_ref = unsafe { ScopedRef::adopt(task.ctx) };
+                // SAFETY: live per the ref above.
+                unsafe { &*task.ctx }.poll_ref.with_mut(|r| r.disable());
+            }
+        }
     }
 }

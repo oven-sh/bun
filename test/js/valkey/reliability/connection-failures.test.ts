@@ -1,8 +1,9 @@
 import { RedisClient } from "bun";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
-import { bunEnv, bunExe, tls as tlsCert } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
 import net from "net";
+import path from "path";
 import tls from "tls";
 import { DEFAULT_REDIS_OPTIONS, DEFAULT_REDIS_URL, delay, isEnabled } from "../test-utils";
 
@@ -484,6 +485,10 @@ describe("Valkey: Recovering After fail()", () => {
         await once(server, "listening");
         return (server.address() as net.AddressInfo).port;
       },
+      listenUnix: async (socketPath: string) => {
+        server.listen(socketPath);
+        await once(server, "listening");
+      },
       close: () => new Promise(resolve => server.close(resolve)),
     };
   }
@@ -948,5 +953,314 @@ describe("Valkey: Recovering After fail()", () => {
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // The close for a dial that failed before a socket existed runs from the
+  // event loop; until then the client must look like it is dialling, so that
+  // whatever JS runs first neither dials on top of it nor is ignored.
+  test.skipIf(isWindows)(
+    "a close() issued right after a dial failed outright is honoured by the deferred close",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const first = helloServer();
+      const second = helloServer();
+      await first.listenUnix(socketPath);
+      const client = new RedisClient(`redis+unix://${socketPath}`);
+      try {
+        await client.connect();
+        client.close();
+        await first.close();
+        let closes = 0;
+        client.onclose = () => closes++;
+        const outcome = client.connect().then(
+          () => "connected",
+          (err: Error & { code: string }) => err.code,
+        );
+        client.close();
+        await second.listenUnix(socketPath);
+        expect({ outcome: await outcome, closes, connected: client.connected, redialled: second.connections }).toEqual({
+          outcome: "ERR_REDIS_CONNECTION_CLOSED",
+          closes: 1,
+          connected: false,
+          redialled: 0,
+        });
+      } finally {
+        client.close();
+        await first.close();
+        await second.close();
+      }
+    },
+  );
+
+  test.skipIf(isWindows)(
+    "a connect() that runs in the same tick as a retry that failed outright does not dial on top of it",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      // Connection 1 is dropped by the server instead of answering PING.
+      const first = helloServer({
+        PING: (_connection, socket) => {
+          socket.end();
+          return null;
+        },
+      });
+      // The listener that comes back holds its HELLO reply, so a second dial on
+      // top of the first one would show up as a second connection here.
+      const second = helloServer({ HELLO: () => null });
+      await first.listenUnix(socketPath);
+      const client = new RedisClient(`redis+unix://${socketPath}`);
+      // Settled by the connect() made in the window; the handler is attached
+      // right away so that a failure elsewhere is not reported as its rejection.
+      const fromTimer = Promise.withResolvers<string>();
+      try {
+        await client.connect();
+        // Stops accepting at once while connection 1 stays up, so the retry
+        // scheduled when it drops fails outright.
+        void first.close();
+        const ping = await client.ping().then(
+          () => "answered",
+          (err: Error & { code: string }) => err.code,
+        );
+        expect(ping).toBe("ERR_REDIS_CONNECTION_CLOSED");
+        // The close that rejected the PING also armed the retry, 50ms out, and
+        // this continuation runs in its microtask checkpoint, before the loop
+        // turns again. Blocking past the retry and the timer armed here makes
+        // the loop fire both in one pass, in due order: the retry fails
+        // outright, then the callback runs in the window before the deferred
+        // close, brings the listener back and calls connect().
+        setTimeout(() => {
+          void second.listenUnix(socketPath);
+          fromTimer.resolve(
+            client.connect().then(
+              () => "connected",
+              (err: Error & { code: string }) => err.code,
+            ),
+          );
+        }, 150);
+        Bun.sleepSync(250);
+        // The deferred close schedules the next retry, which is what connects.
+        while (second.connections === 0) await Bun.sleep(1);
+        // Had the callback's connect() dialled on top, the deferred close would
+        // still have scheduled its retry, so a second connection would follow
+        // within one retry delay (at most 100ms at this point); this is the
+        // bound on asserting that it never comes.
+        await Bun.sleep(250);
+        expect(second.connections).toBe(1);
+        second.sockets[0].write("+OK\r\n");
+        expect({
+          fromTimer: await fromTimer.promise,
+          connected: client.connected,
+          connections: second.connections,
+        }).toEqual({ fromTimer: "connected", connected: true, connections: 1 });
+      } finally {
+        client.close();
+        await first.close();
+        await second.close();
+      }
+    },
+  );
+
+  test.skipIf(isWindows)("a reconnect whose dial fails outright is retried like a refused one", async () => {
+    using dir = tempDir("valkey-unix", {});
+    const socketPath = path.join(String(dir), "r.sock");
+    const first = helloServer();
+    const second = helloServer();
+    await first.listenUnix(socketPath);
+    const client = new RedisClient(`redis+unix://${socketPath}`);
+    try {
+      await client.connect();
+      client.close();
+      await first.close();
+      // connect(2) on a path nobody listens on fails before a socket exists.
+      const reconnected = client.connect();
+      await second.listenUnix(socketPath);
+      await reconnected;
+      expect(await client.ping()).toBe("PONG");
+      expect({ first: first.connections, second: second.connections }).toEqual({ first: 1, second: 1 });
+    } finally {
+      client.close();
+      await first.close();
+      await second.close();
+    }
+  });
+
+  test.skipIf(isWindows)(
+    "a reconnect whose dial fails outright rejects connect() when auto-reconnect is off",
+    async () => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const fake = helloServer();
+      await fake.listenUnix(socketPath);
+      const client = new RedisClient(`redis+unix://${socketPath}`, { autoReconnect: false });
+      try {
+        await client.connect();
+        client.close();
+        await fake.close();
+        let closes = 0;
+        client.onclose = () => closes++;
+        const attempt = client.connect();
+        // Reported from the event loop like a refused connection, not from
+        // inside connect(), so an onclose that calls connect() cannot recurse.
+        expect(closes).toBe(0);
+        const outcome = await attempt.then(
+          () => "connected",
+          (err: Error & { code: string }) => `rejected: ${err.code}`,
+        );
+        expect({ outcome, closes }).toEqual({ outcome: "rejected: ERR_REDIS_CONNECTION_CLOSED", closes: 1 });
+        await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_CONNECTION_CLOSED" });
+      } finally {
+        client.close();
+        await fake.close();
+      }
+    },
+  );
+
+  // A fresh client's first dial can fail the same way, whether connect() or the
+  // first command makes it; it goes through the same close as a refused dial.
+  const firstDialFrom: [string, (client: RedisClient) => Promise<unknown>][] = [
+    ["connect()", client => client.connect()],
+    ["a command", client => client.ping()],
+  ];
+
+  test.skipIf(isWindows).each(firstDialFrom)(
+    "a first dial that fails outright, made by %s, rejects and runs onclose once when auto-reconnect is off",
+    async (_entry, dial) => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const fake = helloServer();
+      const client = new RedisClient(`redis+unix://${socketPath}`, { autoReconnect: false });
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        const attempt = dial(client).then(
+          () => "resolved",
+          (err: Error & { code: string }) => `rejected: ${err.code}`,
+        );
+        expect(closes).toBe(0);
+        expect({ outcome: await attempt, closes, connected: client.connected }).toEqual({
+          outcome: "rejected: ERR_REDIS_CONNECTION_CLOSED",
+          closes: 1,
+          connected: false,
+        });
+        // The failed attempt is settled and forgotten: a connect() once a
+        // listener is there dials rather than handing the same promise back.
+        await fake.listenUnix(socketPath);
+        await client.connect();
+        expect({ ping: await client.ping(), connections: fake.connections }).toEqual({ ping: "PONG", connections: 1 });
+      } finally {
+        client.close();
+        await fake.close();
+      }
+    },
+  );
+
+  test.skipIf(isWindows).each(firstDialFrom)(
+    "a first dial that fails outright, made by %s, is retried until a listener is there",
+    async (_entry, dial) => {
+      using dir = tempDir("valkey-unix", {});
+      const socketPath = path.join(String(dir), "r.sock");
+      const fake = helloServer();
+      const client = new RedisClient(`redis+unix://${socketPath}`);
+      try {
+        let closes = 0;
+        client.onclose = () => closes++;
+        const attempt = dial(client);
+        // Listening well before the first retry is due; a later retry would
+        // connect just the same, the retries are not terminal either way.
+        await fake.listenUnix(socketPath);
+        await attempt;
+        expect({ ping: await client.ping(), closes, connections: fake.connections }).toEqual({
+          ping: "PONG",
+          closes: 0,
+          connections: 1,
+        });
+      } finally {
+        client.close();
+        await fake.close();
+      }
+    },
+  );
+
+  test("a connect() issued from onclose after the TLS context cannot be built dials again from the event loop", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Neither key nor cert parses, so no attempt ever gets as far as a socket.
+        const client = new Bun.RedisClient("rediss://127.0.0.1:1", {
+          tls: { key: "not a key", cert: "not a cert" },
+          autoReconnect: false,
+        });
+        const attempts = [];
+        const done = Promise.withResolvers();
+        let closes = 0, depth = 0, nested = false;
+        client.onclose = () => {
+          closes += 1;
+          nested ||= depth > 0;
+          depth += 1;
+          if (closes < 3) attempts.push(client.connect());
+          else done.resolve();
+          depth -= 1;
+        };
+        attempts.push(client.connect());
+        const closesInsideConnect = closes;
+        await done.promise;
+        const outcomes = await Promise.all(attempts.map(p => p.then(() => "connected", err => err.code)));
+        console.log(JSON.stringify({ closesInsideConnect, nested, closes, outcomes, connected: client.connected }));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: JSON.stringify({
+        closesInsideConnect: 0,
+        nested: false,
+        closes: 3,
+        outcomes: ["ERR_REDIS_CONNECTION_CLOSED", "ERR_REDIS_CONNECTION_CLOSED", "ERR_REDIS_CONNECTION_CLOSED"],
+        connected: false,
+      }),
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  test("close() discards a half-received reply instead of letting it keep the process alive", async () => {
+    // Announces a 4 byte bulk string and stops halfway through it.
+    const fake = helloServer({ PING: () => "$4\r\nPO" });
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { autoReconnect: false });
+          await client.connect();
+          const ping = client.ping().catch(err => console.log("ping rejected", err.code));
+          while (client.bufferedAmount === 0) await Bun.sleep(1);
+          console.log("buffered before close", client.bufferedAmount);
+          client.close();
+          await ping;
+          console.log("buffered after close", client.bufferedAmount);
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "buffered before close 6\nping rejected ERR_REDIS_CONNECTION_CLOSED\nbuffered after close 0\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      fake.server.close();
+    }
   });
 });

@@ -31,12 +31,14 @@ pub struct ConnectionFlags {
     pub(crate) is_selecting_db_internal: bool,
     pub(crate) enable_offline_queue: bool,
     pub(crate) enable_auto_reconnect: bool,
-    /// Sticky until the next accepted HELLO, so it overlaps `Connecting`
-    /// (`reconnect()` reads it there) and `failed` (`update_poll_ref` reads it
-    /// there); that is why it is not a `Status` variant.
+    /// Set from the close that schedules a retry until the next accepted HELLO
+    /// or `fail()`, so it overlaps `Disconnected` and `Connecting`; that is why
+    /// it is not a `Status` variant.
     pub(crate) is_reconnecting: bool,
-    /// Sticky until `on_open`/`connect()`, and orthogonal to `Status`: `fail()`
-    /// while `Connected` leaves the socket open and `status` unchanged.
+    /// Sticky until `on_open`/`connect()`. `fail()` closes the socket outright
+    /// (see `close()`), so by the time it returns the close callback has run
+    /// (`on_close` reads this to skip the retry policy) and this overlaps
+    /// `Disconnected`.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
@@ -604,6 +606,7 @@ impl ValkeyClient {
             return Ok(());
         }
         self.flags.failed = true;
+        self.flags.is_reconnecting = false;
         let val = Self::reject_all_pending_commands(
             &mut self.in_flight,
             &mut self.queue,
@@ -611,17 +614,24 @@ impl ValkeyClient {
             jsvalue,
         );
 
-        if !self.connection_ready() {
-            self.flags.is_manually_closed = true;
-            let closed = self.close(); // unconditionally, whatever `val` is
-            return val.and(closed);
-        }
-        val
+        // A failure the client detected itself (idle timeout, protocol or
+        // handshake error) has always been a deliberate close; `on_close` reads
+        // `failed` and skips the retry policy. It is not `is_manually_closed`:
+        // that flag is copied into `duplicate()`, and a duplicate of a failed
+        // client should still reconnect.
+        let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
+        val.and(closed)
     }
 
+    /// `fail()` passes `Failure`, the one code whose close callback has run by
+    /// the time this returns (see `CloseCode`); everything after a failure
+    /// relies on that, and an RST instead of a FIN costs nothing once the
+    /// connection's commands have been rejected. `disconnect()` and the
+    /// finalizer pass `FastShutdown`, the graceful close.
+    ///
     /// `Err` when the close event left a termination pending, or, for a half-open socket whose `on_close`
     /// runs by hand here, whatever that left.
-    pub fn close(&mut self) -> JsResult<()> {
+    pub fn close(&mut self, code: uws::CloseCode) -> JsResult<()> {
         if self.socket.is_closed() {
             return Ok(());
         }
@@ -643,7 +653,7 @@ impl ValkeyClient {
         let is_semi_socket = matches!(socket.socket(), uws::InternalSocket::Connected(_))
             && !socket.is_established();
         // TODO: make socket.close() return a JsResult.
-        socket.close(uws::CloseCode::Normal);
+        socket.close(code);
         if global.has_exception() {
             return Err(bun_jsc::JsError::Thrown);
         }
@@ -660,10 +670,14 @@ impl ValkeyClient {
     pub fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
+        // A partial reply can never complete now; left in place it counts as
+        // pending activity in `update_poll_ref` and keeps the event loop alive.
+        self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
 
-        // If manually closing, don't attempt to reconnect
-        if self.flags.is_manually_closed {
-            debug!("skip reconnecting since the connection is manually closed");
+        // A manual close or a failure the client detected itself: no retry.
+        if self.flags.is_manually_closed || self.flags.failed {
+            debug!("skip reconnecting since the connection is manually closed or failed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;
             return Ok(());
@@ -751,6 +765,10 @@ impl ValkeyClient {
             data.len(),
             bstr::BStr::new(data)
         );
+        // Handling a reply can close this socket and, from `onclose` or a
+        // rejection handler, dial the next one; the remaining replies came from
+        // the closed connection and must not reach the new one.
+        let socket = *self.socket.socket();
         // Path 1: Buffer already has data, append and process from buffer
         if !self.read_buffer.remaining().is_empty() {
             self.read_buffer
@@ -818,7 +836,7 @@ impl ValkeyClient {
                 let mut value_to_handle = value; // Use temp var for defer
                 self.handle_response(&mut value_to_handle)?;
 
-                if self.status == Status::Disconnected || self.flags.failed {
+                if *self.socket.socket() != socket {
                     return Ok(());
                 }
                 self.send_next_command();
@@ -877,8 +895,7 @@ impl ValkeyClient {
             let mut value_to_handle = value; // Use temp var for defer
             self.handle_response(&mut value_to_handle)?;
 
-            // Check connection status after handling
-            if self.status == Status::Disconnected || self.flags.failed {
+            if *self.socket.socket() != socket {
                 return Ok(());
             }
 
@@ -1503,7 +1520,7 @@ impl ValkeyClient {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
         if self.status == Status::Connected || self.status == Status::Connecting {
-            return self.close();
+            return self.close(uws::CloseCode::FastShutdown);
         }
         Ok(())
     }

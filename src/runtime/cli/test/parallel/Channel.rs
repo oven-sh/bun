@@ -734,11 +734,9 @@ impl<Owner: ChannelOwner> uv::StreamReader for Channel<Owner> {
         WindowsHandlers::<Owner>::on_alloc(this, suggested_size)
     }
     #[inline]
-    unsafe fn on_read_error(this: *mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         let e = bun_sys::windows::translate_uv_error_to_e(err);
-        // SAFETY: `this` is the live `Channel` stashed in `handle.data` by
-        // `read_start_ctx`; `on_error` only needs a shared view.
-        WindowsHandlers::<Owner>::on_error(unsafe { &*this }, e);
+        WindowsHandlers::<Owner>::on_error(this, e);
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {

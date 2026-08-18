@@ -1112,12 +1112,11 @@ impl SendQueue {
                 }
                 #[cfg(not(windows))]
                 {
-                    // Recorded before `close()`, which runs `on_close` (`socket_closed`) synchronously.
-                    self.socket_closed_notify(from != CloseFrom::Deinit);
                     s.close(match reason {
                         CloseReason::Normal => bun_uws::CloseCode::Normal,
                         CloseReason::Failure => bun_uws::CloseCode::Failure,
                     });
+                    self.socket_closed_notify(from != CloseFrom::Deinit);
                 }
             }
             None => {
@@ -1127,58 +1126,8 @@ impl SendQueue {
         let _ = reason; // suppress unused on windows
     }
 
-    /// uSockets' `on_close`; still open here only for closes uSockets made itself (peer read error).
     fn socket_closed(&self) {
-        if !self.socket_is_open() {
-            return;
-        }
         self.socket_closed_notify(true);
-        self.deliver_close_event_now();
-    }
-
-    /// The peer closed its end (EOF; a read error on Windows). A write still in flight on Windows
-    /// postpones the close to its completion, which delivers the event instead.
-    fn peer_closed(&self) {
-        self.close_socket(CloseReason::Failure, CloseFrom::User);
-        self.deliver_close_event_now();
-    }
-
-    /// A peer-initiated close is reported from the read dispatch, ahead of the peer's exit, which
-    /// is usually dispatched later in the same poll batch (as in node). The deferred task still
-    /// runs (as a no-op); its ref keeps `self` alive across the JS run here.
-    fn deliver_close_event_now(&self) {
-        if !self.pending_after_close.get() {
-            return;
-        }
-        let global = self.get_global_this();
-        let vm = global.bun_vm();
-        // Teardown closes every socket with script forbidden; the queued task is released unrun.
-        if !vm.script_allowed() {
-            return;
-        }
-        let _scope = vm.enter_event_loop_scope();
-        self.run_after_close();
-    }
-
-    fn run_after_close(&self) {
-        if !self.pending_after_close.replace(false) {
-            return;
-        }
-        log!("SendQueue#_onAfterIPCClosed");
-        if self.close_event_sent.replace(true) {
-            return;
-        }
-        let global = self.get_global_this();
-        if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
-            item.complete(&global);
-        }
-        // on_write_complete already dequeued everything fully written; the rest was never delivered.
-        for item in self.queue.with_mut(std::mem::take) {
-            item.abort_unsent(&global);
-        }
-        if let Some(owner) = self.owner.get() {
-            owner.handle_ipc_close();
-        }
     }
 
     fn socket_closed_notify(&self, notify: bool) {
@@ -1249,6 +1198,47 @@ impl SendQueue {
     pub unsafe fn release_deferred_unrun(this: *mut SendQueue) {
         // SAFETY: caller contract.
         unsafe { <SendQueue as bun_ptr::CellRefCounted>::deref(this) };
+    }
+
+    fn run_after_close(&self) {
+        if !self.pending_after_close.replace(false) {
+            return;
+        }
+        log!("SendQueue#_onAfterIPCClosed");
+        if self.close_event_sent.replace(true) {
+            return;
+        }
+        let global = self.get_global_this();
+        if let Some(item) = self.waiting_for_ack.with_mut(|w| w.take()) {
+            item.complete(&global);
+        }
+        // on_write_complete already dequeued everything fully written; the rest was never delivered.
+        for item in self.queue.with_mut(std::mem::take) {
+            item.abort_unsent(&global);
+        }
+        if let Some(owner) = self.owner.get() {
+            owner.handle_ipc_close();
+        }
+    }
+
+    /// The peer process has exited. Closes whatever is left of the channel and reports the close
+    /// right away, so that the owner reports it before the exit, as node does. Left to the deferred
+    /// task, it would come after the exit whenever the loop picked up the exit in the same batch as
+    /// the channel's EOF, or as a task (waiter thread) before even reading it. The task still runs
+    /// afterwards and finds nothing to do.
+    pub fn close_after_peer_exit(&self) {
+        log!("SendQueue#closeAfterPeerExit");
+        if self.socket_is_open() {
+            // A disconnect() still postponed (behind a handle's ack, or on its task) is overtaken.
+            self.close_after_flush.set(false);
+            self.pending_close.set(false);
+            self.close_socket(CloseReason::Normal, CloseFrom::User);
+        }
+        if !self.pending_after_close.get() {
+            return;
+        }
+        let _scope = self.get_global_this().bun_vm().enter_event_loop_scope();
+        self.run_after_close();
     }
 
     /// `uv::open_handles` closes the channel's pipe through here at a thread
@@ -1846,9 +1836,6 @@ impl SendQueue {
         if this.windows.get().try_close_after_write {
             this.close_socket(CloseReason::Normal, CloseFrom::User);
         }
-        // A close this completion caused (write error, or the close that waited for it) is
-        // reported now, like a close observed by the read side.
-        this.deliver_close_event_now();
         // The event-loop exit is handled by `_scope` drop.
     }
     fn get_global_this(&self) -> bun_jsc::GlobalRef {
@@ -1968,14 +1955,11 @@ impl uv::StreamReader for SendQueue {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
     }
     #[inline]
-    unsafe fn on_read_error(this: *mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         // Map the raw libuv errno
         // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
-        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
-        // `read_start_ctx`; a shared reborrow only, as the close delivered below
-        // runs JS that may re-enter the queue.
-        IPCHandlers::WindowsNamedPipe::on_read_error(unsafe { &*this }, e);
+        IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {
@@ -2515,7 +2499,7 @@ pub mod IPCHandlers {
 
         pub fn on_end(send_queue: &SendQueue, _: Socket) {
             log!("onEnd");
-            send_queue.peer_closed();
+            send_queue.close_socket(CloseReason::Failure, CloseFrom::User);
         }
     }
 
@@ -2545,7 +2529,7 @@ pub mod IPCHandlers {
 
         pub(crate) fn on_read_error(send_queue: &SendQueue, err: bun_sys::E) {
             log!("NewNamedPipeIPCHandler#onReadError {:?}", err);
-            send_queue.peer_closed();
+            send_queue.close_socket_next_tick(true);
         }
 
         /// `nread` is the byte count libuv reported into the slice handed out

@@ -19,9 +19,8 @@ test("'disconnect' is emitted before 'exit' when the channel's EOF and the exit 
   // until the child is dead, so it picks up the channel's EOF and the exit together. Node emits
   // 'disconnect' while handling the EOF, before it gets to the exit; the EOF used to be handed to a
   // later event-loop task here, so 'exit' (emitted straight from the exit notification) came first.
-  // The parent blocks from the child's stdout rather than from a 'message' handler: on Windows the
-  // channel's read is only re-armed once a 'message' handler returns, so an EOF arriving while one
-  // blocks is not observed until after the exit.
+  // The parent blocks from the child's stdout rather than from a 'message' handler so that the
+  // channel itself is idle (nothing of it half-dispatched) while it blocks.
   using dir = tempDir("ipc-disconnect-before-exit", {
     "parent.js": `
       const { fork } = require("node:child_process");
@@ -37,11 +36,18 @@ test("'disconnect' is emitted before 'exit' when the channel's EOF and the exit 
       }
       // On Linux the child is dead once /proc shows it as a zombie with no other threads left (the
       // last thread to go is the one that closes its descriptors and signals the exit; a debug
-      // build takes ~15ms to get there). Elsewhere a SIGKILL'd child is gone within a few ms.
+      // build takes ~15ms to get there) or no longer lists it (already reaped). Elsewhere a
+      // SIGKILL'd child is gone within a few ms.
       function blockUntilDead(pid) {
         if (process.platform !== "linux") return Bun.sleepSync(100);
         blockUntil("the child to die", () => {
-          const stat = readFileSync("/proc/" + pid + "/stat", "latin1");
+          let stat;
+          try {
+            stat = readFileSync("/proc/" + pid + "/stat", "latin1");
+          } catch (error) {
+            if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error;
+            return true;
+          }
           return stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync("/proc/" + pid + "/task").length === 1;
         });
       }

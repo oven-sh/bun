@@ -1162,16 +1162,14 @@ impl uv::StreamReader for WindowsNamedPipe {
         &mut spare[..suggested_size]
     }
     #[inline]
-    unsafe fn on_read_error(this: *mut Self, err: core::ffi::c_int) {
+    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
         // The trampoline only reaches this arm when `nreads < 0`, and for any
         // negative code `translate_uv_error_to_e` already
         // yields a concrete `E` (falling back to `UNKNOWN` for unmapped
         // codes). Pass it straight through; do NOT remap UNKNOWN→CANCELED.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
-        // SAFETY: `this` is the live context stashed in `handle.data` by
-        // `read_start_ctx`; a shared reborrow only, as the handlers run JS that
-        // may re-enter this pipe.
-        unsafe { &*this }.on_read_error(e);
+        let this: &Self = this;
+        this.on_read_error(e);
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {

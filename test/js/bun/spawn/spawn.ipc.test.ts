@@ -7,8 +7,9 @@ import path from "path";
 // Kills the child and returns once it is dead without touching the event loop, so that its exit
 // is pending at the same time as whatever its death did to the channel. On Linux the child is dead
 // once /proc shows it as a zombie with no other threads left (the last thread to go is the one
-// that closes its descriptors and signals the exit; a debug build takes ~15ms to get there).
-// Elsewhere a SIGKILL'd child is gone within a few milliseconds.
+// that closes its descriptors and signals the exit; a debug build takes ~15ms to get there), or
+// once it is gone from /proc (already reaped by the waiter thread). Elsewhere a SIGKILL'd child is
+// gone within a few milliseconds.
 function killAndBlockUntilDead(child: Bun.Subprocess) {
   child.kill("SIGKILL");
   if (!isLinux) {
@@ -17,8 +18,17 @@ function killAndBlockUntilDead(child: Bun.Subprocess) {
   }
   const deadline = Date.now() + 30_000;
   for (;;) {
-    const stat = readFileSync(`/proc/${child.pid}/stat`, "latin1");
-    if (stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync(`/proc/${child.pid}/task`).length === 1) return;
+    let dead: boolean;
+    try {
+      const stat = readFileSync(`/proc/${child.pid}/stat`, "latin1");
+      dead = stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync(`/proc/${child.pid}/task`).length === 1;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT" && (error as NodeJS.ErrnoException).code !== "ESRCH") {
+        throw error;
+      }
+      dead = true;
+    }
+    if (dead) return;
     if (Date.now() > deadline) throw new Error("child did not die");
     Bun.sleepSync(1);
   }
@@ -143,10 +153,9 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
   });
 
   // The tests below kill the child and stay off the event loop until it is dead, so the channel
-  // going away and the exit are picked up in the same poll. The channel is dispatched first (a
-  // dying process's descriptors are closed before it can be reaped) and, as in node, has to be
-  // reported before the exit is looked at. It used to be reported from a later event-loop task,
-  // so onExit ran first.
+  // going away and the exit are both pending when the loop resumes. As in node, the channel's close
+  // has to be reported before the exit; it used to be left to a later event-loop task, so onExit
+  // ran first.
   async function killAndReportOrder(child: Bun.Subprocess, events: string[], done: Promise<unknown>) {
     killAndBlockUntilDead(child);
     await done;
@@ -221,6 +230,31 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     ]);
   });
 });
+
+// The waiter thread is the Linux fallback for kernels and sandboxes without pidfd. It hands the
+// exit to the loop as a task, which runs before the loop so much as polls the channel, so the order
+// cannot come from which of the two the loop sees first. Reruns the ordering tests above that way.
+it.skipIf(!isLinux || Boolean(process.env.BUN_FEATURE_FLAG_FORCE_WAITER_THREAD))(
+  "onDisconnect runs before onExit when the exit is reported by the waiter thread",
+  async () => {
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "test",
+        import.meta.path,
+        "-t",
+        "ipc mode json onDisconnect runs before onExit when the child dies",
+      ],
+      // Only honored together with BUN_GARBAGE_COLLECTOR_LEVEL, which bunEnv sets.
+      env: { ...bunEnv, BUN_FEATURE_FLAG_FORCE_WAITER_THREAD: "1" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout + stderr).toContain(" 3 pass");
+    expect(exitCode).toBe(0);
+  },
+);
 
 describe("ipc mode advanced", () => {
   it("unwraps the Buffer envelope before cmd dispatch", async () => {

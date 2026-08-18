@@ -387,8 +387,10 @@ impl ArrayBuffer {
         }
     }
 
-    /// The length is not range-checked here: `to_js*` hands it to
-    /// `Bun__make*WithBytesNoCopy`, which throws a RangeError for anything
+    /// The length is not range-checked here. The C++ side that adopts the bytes
+    /// (`Bun__make*WithBytesNoCopy` behind `to_js*`,
+    /// `JSBuffer__bufferFromPointerAndLengthAndDeinit` behind
+    /// `MarkedArrayBuffer::to_node_buffer`) throws a RangeError for anything
     /// above JSC's `MAX_ARRAY_BUFFER_SIZE` (2^32 bytes on 64-bit targets).
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
@@ -522,7 +524,10 @@ impl ArrayBuffer {
 
     /// Hand this descriptor's bytes to JSC with a caller-supplied finalizer:
     /// `callback(self.ptr, deallocator)` runs on the JS thread when the
-    /// returned object is collected (never, if `callback` is `None`).
+    /// returned object is collected, or before this returns `Err` (never, if
+    /// `callback` is `None`). Fails like [`make_array_buffer_with_bytes_no_copy`]
+    /// when `self.byte_len` is above JSC's limit: the bytes are consumed either
+    /// way, so the caller must not release them again on `Err`.
     ///
     /// # Safety
     ///
@@ -530,8 +535,8 @@ impl ArrayBuffer {
     /// bytes and stay valid (including for writes) for the returned object's
     /// entire lifetime: until `callback` runs, or indefinitely when
     /// `callback` is `None`. `callback`, if `Some`, must be sound to invoke
-    /// exactly once with `(self.ptr, deallocator)` at GC time, and
-    /// `deallocator` must remain valid until then.
+    /// exactly once with `(self.ptr, deallocator)`, either at GC time or when
+    /// this call fails, and `deallocator` must remain valid until then.
     pub unsafe fn to_js_with_context(
         self,
         ctx: &JSGlobalObject,

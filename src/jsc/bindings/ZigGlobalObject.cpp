@@ -1527,28 +1527,12 @@ extern "C" JSC::EncodedJSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject*
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-// ArrayBuffer::createFromBytes RELEASE_ASSERTs above MAX_ARRAY_BUFFER_SIZE, so an
-// oversized length has to be turned into the RangeError `new ArrayBuffer(len)`
-// throws before the bytes reach it. The caller already gave the bytes up, so
-// they are released through the deallocator here, the same as when the
-// returned object is collected.
-static bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
-{
-    if (len <= MAX_ARRAY_BUFFER_SIZE) [[likely]]
-        return false;
-
-    if (deallocator)
-        deallocator(const_cast<void*>(ptr), deallocatorContext);
-    throwOutOfMemoryError(globalObject, scope);
-    return true;
-}
-
 extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
     auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
@@ -1565,7 +1549,7 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
         return {};
 
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {

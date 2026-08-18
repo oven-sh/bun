@@ -1946,9 +1946,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(self.input_source.get_mut())
     }
-    fn done(&self) -> bool {
-        self.done.get()
-    }
 }
 
 // ───────── .then() reactions for a content handler's promise ─────────────

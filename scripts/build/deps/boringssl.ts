@@ -24,7 +24,7 @@ import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
 import { depSourceDir } from "../source.ts";
 
-const BORINGSSL_COMMIT = "1a41b9025c2c0a37edd07ff10f6944f03e028522";
+const BORINGSSL_COMMIT = "2288897e2e716330490893d226b4f079f9da9e0c";
 
 export const boringssl: Dependency = {
   name: "boringssl",
@@ -35,18 +35,6 @@ export const boringssl: Dependency = {
     repo: "oven-sh/boringssl",
     commit: BORINGSSL_COMMIT,
   }),
-
-  // Upstream mem.cc gates OPENSSL_memory_* weak-symbol overrides on __ELF__;
-  // on Mach-O/COFF the hooks compile to static nullptr and OPENSSL_malloc goes
-  // straight to libc. Declare them as plain externs so lib.rs binds everywhere.
-  //
-  // A few allocations deliberately bypass OPENSSL_malloc upstream (the TLS
-  // record buffers in ssl_buffer.cc, the error queue in err.cc, the
-  // thread-local tables) and call libc malloc directly. Only Linux has the
-  // global malloc override (see mimalloc.ts), so on Windows/macOS those would
-  // stay on the CRT heap; the second patch routes them through
-  // OPENSSL_system_{malloc,realloc,free}, also defined in src/boringssl/lib.rs.
-  patches: ["patches/boringssl/require-memory-hooks.patch", "patches/boringssl/system-malloc-hooks.patch"],
 
   build: cfg => {
     // win-x64 uses NASM-syntax .asm; everything else (including win-aarch64)
@@ -60,8 +48,12 @@ export const boringssl: Dependency = {
       includes: ["include"],
       defines: {
         BORINGSSL_IMPLEMENTATION: true,
-        // See `patches:` above. Off under ASAN so BoringSSL allocs stay on the
-        // intercepted libc heap on Mach-O/COFF instead of routing to mimalloc.
+        // The fork (oven-sh/boringssl#11) binds OPENSSL_memory_* as plain externs
+        // on every object format, not just as ELF weak symbols, and routes the
+        // sites upstream keeps on libc malloc (TLS record buffers, error queue,
+        // thread-local tables) through OPENSSL_system_*; src/boringssl/lib.rs
+        // defines all of them. Off under ASAN so BoringSSL stays on the
+        // intercepted libc heap instead of mimalloc.
         ...(!cfg.asan && { BORINGSSL_REQUIRE_MEMORY_HOOKS: true }),
         ...(cfg.windows && {
           _HAS_EXCEPTIONS: 0,

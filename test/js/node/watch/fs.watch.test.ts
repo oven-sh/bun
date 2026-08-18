@@ -1675,7 +1675,7 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
 // on stderr every time ("mimalloc: error: mi_free: invalid pointer"); release
 // builds segfault in roughly half of all processes, depending on where ASLR put
 // the CRT heap relative to mimalloc's page map, hence several children.
-// Fixed in patches/libuv/win-fs-event-split-path-uv-malloc.patch.
+// Fixed in oven-sh/libuv#14.
 test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target does not crash (windows)", async () => {
   using dir = tempDir("fswatch-relative-symlink", { "target.txt": "hello" });
   const base = String(dir);

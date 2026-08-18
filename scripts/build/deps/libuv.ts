@@ -16,9 +16,11 @@ import type { Dependency } from "../source.ts";
 // FileModeInformation error return (oven-sh/libuv#10), error translation /
 // propagation audit fixes (oven-sh/libuv#11), uv_spawn returns an error
 // instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12),
-// and closes the process/thread handles on that error path (oven-sh/libuv#13).
+// closes the process/thread handles on that error path (oven-sh/libuv#13), and
+// uv__split_path allocates with uv__malloc instead of _wcsdup so the buffer
+// can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "89ee34396dc7f5f1bce620e23d9fe6bbd0facd97";
+const LIBUV_COMMIT = "0c89a51e2de5c42cca40e3bccc1e8542e157087c";
 
 // prettier-ignore
 const SHARED = [
@@ -53,19 +55,7 @@ export const libuv: Dependency = {
   // an in-process loopback fetch().abort() can fall into. To upstream:
   // send to libuv/libuv with the wepoll/ReactOS references in the patch
   // comment as the rationale.
-  //
-  // win-fs-event-split-path-uv-malloc: bun installs mimalloc via
-  // uv_replace_allocator() (src/bun_bin/lib.rs), so everything libuv frees
-  // with uv__free() must come from uv__malloc(). uv__split_path() was the one
-  // place still allocating from the CRT (_wcsdup for a path without a
-  // separator, e.g. the relative target of a watched symlink); closing such a
-  // watcher then fed a CRT pointer to mi_free and crashed. Upstream has the
-  // same bug with wcsdup; to upstream as-is.
-  patches: [
-    "patches/libuv/win-poll-rearm-before-callback.patch",
-    "patches/libuv/win-poll-abort-with-disconnect.patch",
-    "patches/libuv/win-fs-event-split-path-uv-malloc.patch",
-  ],
+  patches: ["patches/libuv/win-poll-rearm-before-callback.patch", "patches/libuv/win-poll-abort-with-disconnect.patch"],
 
   build: () => ({
     kind: "direct",

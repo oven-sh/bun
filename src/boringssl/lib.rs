@@ -131,7 +131,7 @@ pub(crate) extern "C" fn OPENSSL_memory_get_size(ptr: *const c_void) -> usize {
     unsafe { bun_alloc::default_alloc::usable_size(ptr) }
 }
 
-// The sites BoringSSL keeps off OPENSSL_malloc: patches/boringssl/system-malloc-hooks.patch.
+// Backs the sites BoringSSL keeps off OPENSSL_malloc; see OPENSSL_system_malloc in crypto/internal.h.
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn OPENSSL_system_malloc(size: usize) -> *mut c_void {
     bun_alloc::default_alloc::malloc(size)

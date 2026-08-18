@@ -348,10 +348,9 @@ impl PathWatcher {
                 resolve_buf[len] = 0;
                 ZStr::from_buf(&resolve_buf[..], len)
             }
-            // The path (or, for a symlink, its target) does not exist.
-            Err(err) if err.get_errno() == sys::E::ENOENT => return Err(err),
-            // Exists but could not be opened (permissions, sharing): libuv only
-            // needs the parent directory to watch a file, so let it try.
+            // Best effort: uv_fs_event_start reports a missing path itself, and it
+            // watches a file through its parent directory, so it can still succeed
+            // on a file that exists but cannot be opened (permissions, sharing).
             Err(_) => path,
         };
 

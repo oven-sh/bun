@@ -489,9 +489,8 @@ impl<T: Copy, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             tail %= self.buf_len();
         }
         // SAFETY: `tail` is in-bounds (capacity reserved by caller). The slot is
-        // logically uninitialized — `ptr::write` does not drop the prior
-        // bit-pattern, which is required for non-`Copy` `T` whose backing
-        // storage is `MaybeUninit<T>`.
+        // logically uninitialized `MaybeUninit<T>` storage; `ptr::write`
+        // initializes it without reading the prior bit-pattern.
         unsafe { ptr::write(self.buf.as_mut_slice().as_mut_ptr().add(tail), item) };
         self.update(1);
     }

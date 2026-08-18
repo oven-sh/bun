@@ -2706,7 +2706,6 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
-
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.
     pub(crate) fn reload_entry_point(

@@ -1137,7 +1137,6 @@ pub(crate) unsafe fn poll(
     }
 }
 
-
 /// `printException` / `printErrorlikeObject` — formats `value` to stderr via
 /// `ConsoleObject::Formatter`. Dispatched here so the high tier owns the
 /// formatter.

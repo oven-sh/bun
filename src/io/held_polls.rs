@@ -75,15 +75,18 @@ pub(crate) fn forget_disarmed(poll: *mut FilePoll) {
 /// JS thread; `loop_` is this thread's live poll loop.
 #[must_use]
 pub unsafe fn release_after_run(loop_: *mut crate::Loop, outer_start: u32) -> bool {
-    // SAFETY (both lists): entries are live — owners route unregister/deinit
-    // through `forget_disarmed` before the slot can be reused.
-    let still_foreign =
-        |poll: *mut FilePoll| crate::run_epoch::is_foreign_to(unsafe { (*poll).epoch }, outer_start);
+    let still_foreign = |poll: *mut FilePoll| {
+        // SAFETY: entries of both lists are live — owners route unregister/deinit
+        // through `forget_disarmed` before the slot can be reused.
+        crate::run_epoch::is_foreign_to(unsafe { (*poll).epoch }, outer_start)
+    };
     let rearm: Vec<*mut FilePoll> = DISARMED.with_borrow_mut(|polls| {
         let mut rearm = Vec::new();
-        polls.retain(|&poll| still_foreign(poll) || {
-            rearm.push(poll);
-            false
+        polls.retain(|&poll| {
+            still_foreign(poll) || {
+                rearm.push(poll);
+                false
+            }
         });
         rearm
     });

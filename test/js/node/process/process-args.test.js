@@ -33,3 +33,13 @@ test("args exclude run", async () => {
     console.count("Run");
   }
 });
+
+// Non-ASCII and quoting edge cases must survive the command line round trip
+// (https://github.com/oven-sh/bun/issues/11610). On Windows this is where the
+// UTF-16 command line gets split and converted.
+test("args round-trip non-ASCII, spaces, quotes and backslashes", async () => {
+  const args = ["🌊 测试", "a b", 'q"uote', "back\\slash\\", "trail\\\\", "", "--", "-e", "äöü"];
+  const [plain, withRun] = await Promise.all([run(args, false), run(args, true)]);
+  expect(plain).toEqual([arg0, arg1, ...args]);
+  expect(withRun).toEqual([arg0, arg1, ...args]);
+});

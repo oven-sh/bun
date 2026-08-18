@@ -8005,13 +8005,12 @@ describe("css tests", () => {
     // When a block fails to parse, the parser skips to its closing token by
     // walking the raw tokens and keeping a stack of the blocks opened on the
     // way (`consume_until_end_of_block` in css_parser.rs). The stack holds 16
-    // blocks inline and moves to the heap past that, so each case runs at a
-    // depth on both sides of that limit. Nothing from inside the skipped
-    // region may survive, and parsing must resume right after it.
-    describe.each([
-      ["skipped blocks nested within the inline stack", 3],
-      ["skipped blocks nested past the inline stack", 64],
-    ])("%s", (_, depth) => {
+    // blocks inline and moves to the heap past that. Each skipped block below
+    // has `depth` more blocks nested inside it, so 16 fills the inline stack,
+    // 17 is the first depth that moves to the heap, and 3 and 64 sit on either
+    // side. Nothing from inside the skipped region may survive, and parsing
+    // must resume right after it.
+    describe.each([3, 16, 17, 64])("skipping a block with %d blocks nested inside it", depth => {
       const unclosed = Buffer.alloc(depth, "(").toString();
       const closers = Buffer.alloc(depth, ")").toString();
       const parens = unclosed + closers;
@@ -8071,8 +8070,14 @@ describe("css tests", () => {
         `.a { color: rgb(1 2 3 ${mixed}); background: blue }`,
         `.a{color:rgb(1 2 3 ${mixed});background:#00f}`,
       );
-      // Reaching the end of input while skipping.
-      skips("an @charset rule that is never closed", `@charset "utf-8" (${unclosed}; .x { color: red }`, "");
+      // Reaching the end of input instead of a closing token. The skip of the
+      // @charset block gives up silently. The custom property parses, so its
+      // open blocks are closed on output. The failed rgb() is reported.
+      skips(
+        "an @charset rule that is never closed swallows the rest of the input",
+        `@charset "utf-8" (${unclosed}; .b`,
+        "",
+      );
       skips("an unclosed value that parses is closed on output", `.a { --x: ${unclosed}`, `.a{--x:${parens}}`);
       test("an unclosed value that fails to parse reports the end of input", () => {
         expect(() => minify_test_with_options(`.a { color: red } .b { color: rgb(1 2 3 ${unclosed}`, "")).toThrow(

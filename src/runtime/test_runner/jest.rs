@@ -795,8 +795,7 @@ pub(crate) fn format_label(
                     )?;
                 }
                 b'j' | b'o' => {
-                    // `json_stringify_fast` stores a +1 WTFStringImpl ref;
-                    // `OwnedString` releases it on scope exit.
+                    // `json_stringify_fast` hands back a +1 WTFStringImpl ref.
                     let mut str = bun_core::OwnedString::default();
                     // Use jsonStringifyFast for SIMD-optimized serialization
                     current_arg.json_stringify_fast(global_this, &mut str)?;

@@ -96,12 +96,8 @@ pub type GenString = bun_core::String;
 /// `release_gen_val_array_buffer` in the owning containers' `Drop` impls.
 pub type GenArrayBuffer = *mut JSCArrayBuffer;
 
-/// `bun.bun_js.webcore.Blob.Ref` — adopted `*mut Blob` (the codegen `m_ctx`
-/// payload). LAYERING: `webcore::Blob` lives in `bun_runtime` (a dependent of
-/// this crate); the bindgen extern struct only ever stores the raw pointer
-/// (filled by C++ `bindgenConvertJSTo*`), so it stays erased as `*mut c_void`
-/// here and is cast to `*mut bun_runtime::webcore::Blob` by its consumer
-/// (`bun_runtime::socket::SSLConfig`).
+/// Adopted `*mut webcore::Blob` (the codegen `m_ctx` payload), erased because
+/// `Blob` lives in `bun_runtime`, which depends on this crate.
 pub type GenBlob = *mut core::ffi::c_void;
 
 // ──────────────────────────────────────────────────────────────────────────

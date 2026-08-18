@@ -1516,17 +1516,6 @@ pub(crate) fn print_coverage_reports(
     opts: &mut CodeCoverageOptions,
     reports: &[CodeCoverageReport<'_>],
 ) -> bun_sys::Result<()> {
-    if Output::enable_ansi_colors_stderr() {
-        print_coverage_reports_::<true>(opts, reports)
-    } else {
-        print_coverage_reports_::<false>(opts, reports)
-    }
-}
-
-fn print_coverage_reports_<const COLORS: bool>(
-    opts: &mut CodeCoverageOptions,
-    reports: &[CodeCoverageReport<'_>],
-) -> bun_sys::Result<()> {
     let relative_dir = FileSystem::get().top_level_dir;
     let thresholds = opts.fractions;
 
@@ -1535,7 +1524,14 @@ fn print_coverage_reports_<const COLORS: bool>(
     opts.fractions.failing = failing;
 
     if opts.reporters.text {
-        print_coverage_table::<COLORS>(relative_dir, &thresholds, reports, &fractions, failing);
+        print_coverage_table(
+            relative_dir,
+            &thresholds,
+            reports,
+            &fractions,
+            failing,
+            Output::enable_ansi_colors_stderr(),
+        );
     }
     if opts.reporters.lcov {
         write_lcov_report(opts, relative_dir, reports)?;
@@ -1543,12 +1539,13 @@ fn print_coverage_reports_<const COLORS: bool>(
     Ok(())
 }
 
-fn print_coverage_table<const COLORS: bool>(
+fn print_coverage_table(
     relative_dir: &[u8],
     thresholds: &Fraction,
     reports: &[CodeCoverageReport<'_>],
     fractions: &[Fraction],
     failing: bool,
+    colors: bool,
 ) {
     use coverage::text;
     let thresholds = *thresholds;
@@ -1582,21 +1579,21 @@ fn print_coverage_table<const COLORS: bool>(
     // Writes below target a Vec and cannot fail.
     let mut out: Vec<u8> = Vec::new();
     let separator = |out: &mut Vec<u8>| {
-        let _ = bun_core::write_pretty!(out, COLORS, "<r><d>");
+        let _ = bun_core::write_pretty!(out, colors, "<r><d>");
         out.resize(out.len() + max_filepath_length + 2, b'-');
         let _ =
-            bun_core::write_pretty!(out, COLORS, "|---------|---------|-------------------<r>\n");
+            bun_core::write_pretty!(out, colors, "|---------|---------|-------------------<r>\n");
     };
     separator(&mut out);
     out.extend_from_slice(b"File");
     out.resize(out.len() + max_filepath_length - b"File".len() + 1, b' ');
     let _ = bun_core::write_pretty!(
         out,
-        COLORS,
+        colors,
         " <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n"
     );
     separator(&mut out);
-    let _ = text::write_format_with_values::<COLORS>(
+    let _ = text::write_format_with_values(
         b"All files",
         max_filepath_length,
         avg,
@@ -1604,16 +1601,18 @@ fn print_coverage_table<const COLORS: bool>(
         failing,
         &mut out,
         false,
+        colors,
     );
-    let _ = bun_core::write_pretty!(out, COLORS, "<r><d> |<r>\n");
+    let _ = bun_core::write_pretty!(out, colors, "<r><d> |<r>\n");
     for (report, fraction) in reports.iter().zip(fractions) {
-        let _ = text::write_format::<COLORS>(
+        let _ = text::write_format(
             report,
             max_filepath_length,
             fraction,
             &thresholds,
             relative_dir,
             &mut out,
+            colors,
         );
         out.push(b'\n');
     }

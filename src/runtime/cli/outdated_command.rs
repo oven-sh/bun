@@ -101,11 +101,12 @@ impl OutdatedCommand {
         let lockfile: &mut bun_install::lockfile::Lockfile = unsafe { &mut *(*pm_ptr).lockfile };
         // SAFETY: `manager.log` is set non-null by `PackageManager::init`.
         let log = unsafe { &mut *log_ptr };
-        match lockfile.load_from_cwd::<true>(
+        match lockfile.load_from_cwd(
             // SAFETY: see comment above — `load_from_cwd` accesses `manager`
             // fields disjoint from `lockfile`.
             Some(unsafe { &mut *pm_ptr }),
             log,
+            true,
         ) {
             LoadResult::NotFound => {
                 if not_silent {

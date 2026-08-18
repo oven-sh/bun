@@ -16,7 +16,7 @@
 //! ## Layout
 //!
 //! `main()`'s callee chain — the C-ABI leaves (`bun_initialize_process`,
-//! `bun_warn_avx_missing`, the `__wrap_*` shims, …) plus `cli::Cli::start`
+//! the `__wrap_*` shims, …) plus `cli::Cli::start`
 //! and everything `bun run` reaches under it — sits on the cold-start
 //! critical path: each call can fault a fresh page run. A
 //! `--symbol-ordering-file` 2-pass relink that clustered these onto shared
@@ -35,7 +35,7 @@
 
 use core::ffi::{c_char, c_int};
 
-mod phase_c_exports;
+mod c_abi_exports;
 
 // Force-link `bun_platform` so its `#[no_mangle]` C exports
 // (`sys_epoll_pwait2`, …) reach the linker.
@@ -69,7 +69,7 @@ static ALLOC: std::alloc::System = std::alloc::System;
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
+pub(crate) extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
     // detect_stack_use_after_return=0: keep stack locals on the real stack so
     //   JSC's conservative GC scan and `StackBounds::contains` see them.
     // detect_leaks=0: off by default (Linux defaults it on); CI opts in via
@@ -105,7 +105,7 @@ pub extern "C" fn __asan_default_options() -> *const core::ffi::c_char {
 #[cold]
 #[inline(never)]
 #[unsafe(no_mangle)]
-pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
+pub(crate) extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
     // One rule per line. Substring match on any frame in the allocation stack.
     //
     // Every entry below is a structural / process-lifetime allocation that has
@@ -150,7 +150,7 @@ pub extern "C" fn __lsan_default_suppressions() -> *const core::ffi::c_char {
 /// `argv` must point to `argc` valid NUL-terminated C strings that live for
 /// the entire process — guaranteed by the C runtime that calls this symbol.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
+pub(crate) unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int {
     // 0. Capture argv FIRST — before the crash handler, whose panic path
     //    dumps the command line via `bun_core::argv()`.
     //    SAFETY: `argc`/`argv` come from the C runtime; the argv block lives
@@ -159,6 +159,8 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
 
     // 1. Crash handler first so anything below gets a usable trace.
     bun_crash_handler::init();
+
+    use_mimalloc_in_dependencies();
 
     // SIGPIPE/SIGXFSZ → SIG_IGN.
     // SAFETY: `SIGPIPE`/`SIGXFSZ` are valid signal numbers and `SIG_IGN` is a
@@ -170,21 +172,10 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
         libc::signal(libc::SIGXFSZ, libc::SIG_IGN);
     }
 
-    // Windows-only startup. Must run BEFORE the first libuv
-    // call (uv allocator) and before anything reads `Bun.env`/`process.env`
-    // (env conversion).
+    // Windows-only startup. Must run before anything reads
+    // `Bun.env`/`process.env` (env conversion).
     #[cfg(windows)]
     {
-        // SAFETY: mimalloc fns match the libuv allocator signatures; called
-        // exactly once before any uv handle is created.
-        unsafe {
-            let _ = bun_sys::windows::libuv::uv_replace_allocator(
-                Some(bun_alloc::mimalloc::mi_malloc),
-                Some(bun_alloc::mimalloc::mi_realloc),
-                Some(bun_alloc::mimalloc::mi_calloc),
-                Some(bun_alloc::mimalloc::mi_free),
-            );
-        }
         // `bun.handleOom(convertEnvToWTF8())` — converts the OS UTF-16 env
         // block to WTF-8 and publishes it via `bun_core::os::set_environ()`.
         // Without this, `Bun.env`/`process.env` see only `.env`-file vars.
@@ -200,34 +191,48 @@ pub unsafe extern "C" fn main(argc: c_int, argv: *const *const c_char) -> c_int 
     output::stdio::init();
     let _flush = output::flush_guard();
 
-    // `bun_warn_avx_missing(...)` — x86_64 + SIMD + posix only.
-    #[cfg(all(target_arch = "x86_64", unix))]
-    if bun_core::Environment::ENABLE_SIMD {
-        unsafe extern "C" {
-            fn bun_warn_avx_missing(url: *const core::ffi::c_char);
-        }
-        // SAFETY: BUN__GITHUB_BASELINE_URL is a NUL-terminated static; the C
-        // side only reads it to print the suggested download URL.
-        unsafe {
-            bun_warn_avx_missing(
-                bun_runtime::cli::upgrade_command::UpgradeCommand::BUN__GITHUB_BASELINE_URL
-                    .as_ptr(),
-            );
-        }
-    }
-
     // 5. Per-thread stack-limit cache for the JS recursion guard.
     StackCheck::configure_thread();
     bun_io::ParentDeathWatchdog::install();
-
-    // 6. Push high-tier allocator vtable addresses into the
-    //    `bun_safety::alloc::has_ptr` registry so debug-only allocator-mismatch
-    //    checks can identify `LinuxMemFdAllocator`/`MimallocArena` instances.
-    //    Runs once; reads are lock-free Relaxed.
-    bun_runtime::allocators::register_safety_vtables();
 
     // 7. CLI dispatch.
     bun_runtime::cli::Cli::start();
     // `Global::exit` is `-> !`; it coerces to the `c_int` return type.
     Global::exit(0)
+}
+
+/// Point the bundled C/C++ dependencies that have an allocator hook at
+/// mimalloc, so the whole process shares one allocator (and, on Windows, one
+/// policy for transient commit-limit failures instead of the UCRT heap's
+/// immediate NULL). Runs first thing in `main()`: these hooks only swap
+/// function pointers, so nothing may have allocated through the library yet.
+///
+/// The two dependencies not switched here:
+/// - c-ares: `ares_library_init_mem(.., mi_malloc, mi_free, mi_realloc)` in
+///   `bun_cares_sys`, because it is part of the (lazy) library init.
+/// - BoringSSL: link-time `OPENSSL_memory_alloc/free/get_size` and
+///   `OPENSSL_system_malloc/realloc/free` definitions in `bun_boringssl`
+///   (`BORINGSSL_REQUIRE_MEMORY_HOOKS`, off under ASAN).
+fn use_mimalloc_in_dependencies() {
+    // ICU: `u_setMemoryFunctions` (bun_icu_malloc.cpp; no-op under ASAN and
+    // on macOS, where ICU is the system libicucore).
+    unsafe extern "C" {
+        safe fn Bun__useMimallocForICU();
+    }
+    Bun__useMimallocForICU();
+
+    // libuv (only linked on Windows). Must precede the first uv call. Left on
+    // the CRT heap under ASAN like ICU and BoringSSL, so the sanitizer sees
+    // its allocations too (the global allocator is `System` there as well).
+    // SAFETY: mimalloc fns match the libuv allocator signatures; called
+    // exactly once before any uv handle is created.
+    #[cfg(all(windows, not(bun_asan)))]
+    unsafe {
+        let _ = bun_sys::windows::libuv::uv_replace_allocator(
+            Some(bun_alloc::mimalloc::mi_malloc),
+            Some(bun_alloc::mimalloc::mi_realloc),
+            Some(bun_alloc::mimalloc::mi_calloc),
+            Some(bun_alloc::mimalloc::mi_free),
+        );
+    }
 }

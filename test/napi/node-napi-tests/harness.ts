@@ -1,5 +1,5 @@
 import { spawn, spawnSync } from "bun";
-import { existsSync, renameSync } from "node:fs";
+import { existsSync, renameSync, statSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -149,7 +149,29 @@ async function tryBuildFast(dir: string): Promise<boolean> {
   return results.every(Boolean);
 }
 
-async function buildWithNodeGyp(dir: string) {
+// `bun x node-gyp@11` installs node-gyp into the shared bunx cache on first use and
+// links its bin dependencies (nopt, which, glob, semver) into the shared bin dir.
+// Several addon builds doing that at once race on those links (EEXIST) and fail,
+// so callers that build concurrently warm the cache once, serially, first.
+export async function warmNodeGyp() {
+  // Best effort: a failed warm-up must never stop the addon builds, which
+  // install node-gyp themselves if the cache is cold.
+  try {
+    const child = spawn({
+      cmd: [bunExe(), "--bun", "x", "node-gyp@11", "--version"],
+      stderr: "pipe",
+      stdout: "ignore",
+      stdin: "ignore",
+      env: bunEnv,
+    });
+    const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
+    if (exitCode !== 0) console.warn(`warming node-gyp failed (builds will install it themselves):\n${stderr}`);
+  } catch (error) {
+    console.warn(`warming node-gyp failed (builds will install it themselves): ${error}`);
+  }
+}
+
+export async function buildWithNodeGyp(dir: string) {
   const child = spawn({
     // `configure build` instead of `rebuild`: `clean` is pure waste (CI checkouts are always
     // cold) and skipping it keeps local re-runs incremental. No `--verbose`/`-j max`: every
@@ -175,13 +197,32 @@ async function buildWithNodeGyp(dir: string) {
   });
   const [stderr, exitCode] = await Promise.all([new Response(child.stderr).text(), child.exited]);
   if (exitCode !== 0) {
-    console.error(`node-gyp build in ${dir} failed:\n${stderr}`);
-    console.error("bailing out!");
-    process.exit(1);
+    throw new Error(`node-gyp build in ${dir} failed:\n${stderr}`);
   }
 }
 
+export async function parseBindingGyp(dir: string): Promise<GypTarget[] | null> {
+  const gypPath = join(dir, "binding.gyp");
+  if (!existsSync(gypPath)) return null;
+  return parseSimpleBindingGyp(await Bun.file(gypPath).text());
+}
+
+export async function isBuilt(dir: string): Promise<boolean> {
+  const targets = await parseBindingGyp(dir);
+  if (targets === null) return false;
+  const mtime = (path: string) => (existsSync(path) ? statSync(path).mtimeMs : Infinity);
+  const gyp = statSync(join(dir, "binding.gyp")).mtimeMs;
+  return targets.every(target => {
+    const artifact = join(dir, "build", "Debug", `${target.target_name}.node`);
+    if (!existsSync(artifact)) return false;
+    const built = statSync(artifact).mtimeMs;
+    return built >= gyp && target.sources.every(source => built >= mtime(join(dir, source)));
+  });
+}
+
+
 export async function build(dir: string) {
+  if (await isBuilt(dir)) return;
   if (await tryBuildFast(dir)) return;
   await buildWithNodeGyp(dir);
 }

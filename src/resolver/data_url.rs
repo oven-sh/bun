@@ -1,23 +1,14 @@
 use bun_core::strings;
 
-pub(crate) struct PercentEncoding;
+struct PercentEncoding;
 
 /// possible errors for decode and encode
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(thiserror::Error, Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError {
     #[error("InvalidCharacter")]
     InvalidCharacter,
     #[error("OutOfMemory")]
     OutOfMemory,
-}
-
-bun_core::named_error_set!(EncodeError);
-
-impl EncodeError {
-    /// Returns the error name string.
-    pub fn name(self) -> &'static str {
-        self.into()
-    }
 }
 
 /// Error set of [`DataURL::parse`] / [`DataURL::parse_without_check`].
@@ -26,8 +17,6 @@ pub enum ParseDataURLError {
     #[error("InvalidDataURL")]
     InvalidDataURL,
 }
-
-bun_core::named_error_set!(ParseDataURLError);
 
 impl ParseDataURLError {
     /// Returns the error name string.
@@ -47,8 +36,6 @@ pub enum DecodeDataError {
     Base64DecodeError,
 }
 
-bun_core::named_error_set!(DecodeDataError);
-
 impl DecodeDataError {
     /// Returns the error name string.
     pub fn name(self) -> &'static str {
@@ -67,10 +54,8 @@ impl From<EncodeError> for DecodeDataError {
 
 impl PercentEncoding {
     /// returns true if str starts with a valid path character or a percent encoded octet
-    pub(crate) fn is_pchar(str: &[u8]) -> bool {
-        if cfg!(debug_assertions) {
-            debug_assert!(!str.is_empty());
-        }
+    fn is_pchar(str: &[u8]) -> bool {
+        debug_assert!(!str.is_empty());
         match str[0] {
             b'a'..=b'z'
             | b'A'..=b'Z'
@@ -98,11 +83,11 @@ impl PercentEncoding {
     }
 
     /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
-    pub(crate) fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
-        Self::_decode(path, false)
+    fn decode_unstrict(path: &[u8]) -> Result<Option<Vec<u8>>, EncodeError> {
+        Self::decode(path, false)
     }
 
-    fn _decode(path: &[u8], strict: bool) -> Result<Option<Vec<u8>>, EncodeError> {
+    fn decode(path: &[u8], strict: bool) -> Result<Option<Vec<u8>>, EncodeError> {
         let mut ret: Option<Vec<u8>> = None;
         // errdefer: `ret` is a Vec — drops automatically on `?` error path
         let mut ret_index: usize = 0;
@@ -149,8 +134,8 @@ impl PercentEncoding {
 pub struct DataURL<'a> {
     pub url: bun_core::String,
     pub mime_type: &'a [u8],
-    pub data: &'a [u8],
-    pub is_base64: bool,
+    pub(crate) data: &'a [u8],
+    pub(crate) is_base64: bool,
 }
 
 impl<'a> DataURL<'a> {
@@ -192,14 +177,12 @@ impl<'a> DataURL<'a> {
         let percent_decoded: &[u8] = percent_decoded_owned.as_deref().unwrap_or(self.data);
 
         if self.is_base64 {
-            let len = bun_base64::decode_len(percent_decoded);
-            let mut buf = vec![0u8; len];
-            // errdefer: `buf` drops automatically on error path
-            let result = bun_base64::decode(&mut buf, percent_decoded);
-            if !result.is_successful() || result.count != len {
+            let decoded = bun_base64::decode_alloc(percent_decoded)
+                .map_err(|_| DecodeDataError::Base64DecodeError)?;
+            if decoded.len() != bun_base64::decode_len(percent_decoded) {
                 return Err(DecodeDataError::Base64DecodeError);
             }
-            return Ok(buf);
+            return Ok(decoded);
         }
 
         Ok(percent_decoded.to_vec())
@@ -236,17 +219,15 @@ impl<'a> DataURL<'a> {
 
         // When the percent-escape path bails, the payload must be
         // base64-encoded for real (the buffer is sized for the encoded form).
-        let mut base64buf = vec![0u8; total_base64_encode_len];
-        let prefix_len = b"data:".len() + mime_type.len() + b";base64,".len();
-        base64buf[..b"data:".len()].copy_from_slice(b"data:");
-        base64buf[b"data:".len()..b"data:".len() + mime_type.len()].copy_from_slice(mime_type);
-        base64buf[b"data:".len() + mime_type.len()..prefix_len].copy_from_slice(b";base64,");
-        let encoded_len = bun_base64::encode(&mut base64buf[prefix_len..], text);
-        base64buf.truncate(prefix_len + encoded_len);
+        let mut base64buf: Vec<u8> = Vec::with_capacity(total_base64_encode_len);
+        base64buf.extend_from_slice(b"data:");
+        base64buf.extend_from_slice(mime_type);
+        base64buf.extend_from_slice(b";base64,");
+        bun_base64::encode_append(&mut base64buf, text);
         base64buf
     }
 
-    pub fn encode_string_as_percent_escaped_data_url(
+    pub(crate) fn encode_string_as_percent_escaped_data_url(
         buf: &mut impl DataUrlBuf,
         mime_type: &[u8],
         text: &[u8],

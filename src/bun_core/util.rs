@@ -38,45 +38,12 @@ pub struct Unaligned<T: Copy>(T);
 
 impl<T: Copy> Unaligned<T> {
     #[inline(always)]
-    pub const fn new(value: T) -> Self {
-        Self(value)
-    }
-
-    #[inline(always)]
     pub fn get(self) -> T {
         // `self` is by-value (already moved into an aligned local), so a plain
         // field read is fine; the `packed` repr only affects in-place borrows.
         self.0
     }
 
-    #[inline(always)]
-    pub fn set(&mut self, value: T) {
-        // SAFETY: `self` points to `size_of::<T>()` writable bytes; alignment
-        // is 1 by `#[repr(packed)]`, hence `write_unaligned`.
-        unsafe { core::ptr::addr_of_mut!(self.0).write_unaligned(value) }
-    }
-
-    /// Reinterpret `&[Unaligned<T>]` as `&[T]` once the caller has proven
-    /// `ptr` is naturally aligned. Panics in debug if not.
-    /// Empty slices need no cast: their dangling pointer has align 1, not
-    /// `align_of::<T>()`, so they are returned as `&[]` directly.
-    #[inline]
-    pub fn slice_align_cast(slice: &[Unaligned<T>]) -> &[T] {
-        if slice.is_empty() {
-            return &[];
-        }
-        debug_assert!(
-            (slice.as_ptr() as usize).is_multiple_of(core::mem::align_of::<T>()),
-            "Unaligned::slice_align_cast: pointer is not {}-byte aligned",
-            core::mem::align_of::<T>(),
-        );
-        // SAFETY: same address, same length, same element size; alignment
-        // precondition asserted above. `Unaligned<T>` is `repr(C, packed)`
-        // around a single `T`, so layout is byte-identical.
-        unsafe { core::slice::from_raw_parts(slice.as_ptr().cast::<T>(), slice.len()) }
-    }
-
-    /// Mutable counterpart of [`slice_align_cast`].
     #[inline]
     pub fn slice_align_cast_mut(slice: &mut [Unaligned<T>]) -> &mut [T] {
         if slice.is_empty() {
@@ -87,7 +54,9 @@ impl<T: Copy> Unaligned<T> {
             "Unaligned::slice_align_cast_mut: pointer is not {}-byte aligned",
             core::mem::align_of::<T>(),
         );
-        // SAFETY: see `slice_align_cast`; `&mut` exclusivity is preserved.
+        // SAFETY: `#[repr(C, packed)]` around a single `T` gives identical size
+        // and field offset 0; the debug-asserted alignment upgrades it to `T`'s
+        // layout. `&mut` exclusivity is preserved.
         unsafe { core::slice::from_raw_parts_mut(slice.as_mut_ptr().cast::<T>(), slice.len()) }
     }
 }
@@ -210,7 +179,7 @@ impl ZStr {
     #[inline]
     pub fn as_cstr(&self) -> &core::ffi::CStr {
         debug_assert!(
-            !self.0.contains(&0),
+            !crate::strings::contains_char(&self.0, 0),
             "ZStr::as_cstr: interior NUL would truncate the C view",
         );
         // SAFETY: `as_bytes_with_nul()` is `[.., 0]` by the ZStr invariant;
@@ -308,10 +277,6 @@ impl ZBox {
         &self.0[..self.len()]
     }
     #[inline]
-    pub fn as_bytes_with_nul(&self) -> &[u8] {
-        &self.0
-    }
-    #[inline]
     pub fn as_ptr(&self) -> *const core::ffi::c_char {
         self.0.as_ptr().cast()
     }
@@ -406,7 +371,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
         let mut p = c_environ();
         while !(*p).is_null() {
             let line = core::slice::from_raw_parts((*p).cast::<u8>(), libc::strlen(*p));
-            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
                 key.as_bytes(),
@@ -438,7 +403,7 @@ pub fn getenv_z_any_case(key: &ZStr) -> Option<&'static [u8]> {
                 }
                 core::slice::from_raw_parts(entry.cast::<u8>(), len)
             };
-            let key_end = line.iter().position(|&b| b == b'=').unwrap_or(line.len());
+            let key_end = crate::strings::index_of_char_usize(line, b'=').unwrap_or(line.len());
             if crate::strings::eql_case_insensitive_ascii_check_length(
                 &line[..key_end],
                 key.as_bytes(),
@@ -631,8 +596,7 @@ macro_rules! opaque_extern {
 // `bun_threading::Guarded` / `bun_threading::RwLock` directly.
 //
 // API parity with the previous `parking_lot` aliases: `const fn new(T)`,
-// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `.get_mut()`,
-// `Default`.
+// `.lock()` → guard (no `Result`), `.try_lock()` → `Option`, `Default`.
 
 /// Poison-free `std::sync::Mutex<T>` wrapper. See module note above for why
 /// this is not `bun_threading::Guarded<T>`.
@@ -641,9 +605,6 @@ pub struct Mutex<T>(std::sync::Mutex<T>);
 /// Guard returned by [`Mutex::lock`] / [`Mutex::try_lock`]. Re-exported so
 /// callers can name it in return types (e.g. `rare_data::ProxyEnvStorage::lock`).
 pub type MutexGuard<'a, T> = std::sync::MutexGuard<'a, T>;
-
-/// Alias for [`Mutex`].
-pub type Guarded<T> = Mutex<T>;
 
 impl<T> Mutex<T> {
     #[inline]
@@ -661,26 +622,12 @@ impl<T> Mutex<T> {
     }
 
     #[inline]
-    pub fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
+    pub(crate) fn try_lock(&self) -> Option<MutexGuard<'_, T>> {
         match self.0.try_lock() {
             Ok(g) => Some(g),
             Err(std::sync::TryLockError::Poisoned(e)) => Some(e.into_inner()),
             Err(std::sync::TryLockError::WouldBlock) => None,
         }
-    }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    #[inline]
-    pub fn into_inner(self) -> T {
-        self.0
-            .into_inner()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
 }
 
@@ -715,13 +662,6 @@ impl<T> RwLock<T> {
             .write()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
     }
-
-    #[inline]
-    pub fn get_mut(&mut self) -> &mut T {
-        self.0
-            .get_mut()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
 }
 
 impl<T: Default> Default for RwLock<T> {
@@ -750,10 +690,6 @@ pub type OSPathChar = u16;
 pub type OSPathChar = u8;
 
 pub type OSPathSlice<'a> = &'a [OSPathChar];
-#[cfg(windows)]
-pub type OSPathSliceZ = WStr;
-#[cfg(not(windows))]
-pub type OSPathSliceZ = ZStr;
 
 pub use bun_alloc::SEP;
 
@@ -839,12 +775,6 @@ impl WPathBuffer {
         // track the written length out-of-band.
         unsafe { core::mem::MaybeUninit::uninit().assume_init() }
     }
-    /// Inherent `as_slice` so `wbuf.as_slice()` resolves here instead of the
-    /// unstable `<[u16]>::as_slice` (`str_as_str` feature) via `Deref`.
-    #[inline]
-    pub fn as_slice(&self) -> &[u16] {
-        &self.0
-    }
     #[inline]
     pub fn as_mut_slice(&mut self) -> &mut [u16] {
         &mut self.0
@@ -869,10 +799,6 @@ impl core::ops::DerefMut for WPathBuffer {
         &mut self.0
     }
 }
-#[cfg(windows)]
-pub type OSPathBuffer = WPathBuffer;
-#[cfg(not(windows))]
-pub type OSPathBuffer = PathBuffer;
 
 /// Directory portion of `path` (handles trailing-sep stripping and root).
 pub fn dirname(path: &[u8]) -> Option<&[u8]> {
@@ -1233,12 +1159,6 @@ impl Fd {
         self.native()
     }
 
-    /// Properly converts `Fd::INVALID` into `FdOptional::NONE`.
-    #[inline]
-    pub const fn to_optional(self) -> FdOptional {
-        FdOptional(self.0)
-    }
-
     pub fn stdio_tag(self) -> Option<Stdio> {
         #[cfg(not(windows))]
         {
@@ -1327,10 +1247,6 @@ impl Stdio {
             _ => None,
         }
     }
-    #[inline]
-    pub fn to_int(self) -> i32 {
-        self as i32
-    }
 }
 
 /// Niche-packed `Option<Fd>`: the invalid-fd bit pattern is the `none` sentinel.
@@ -1341,25 +1257,12 @@ pub struct FdOptional(FdBacking);
 impl FdOptional {
     pub const NONE: FdOptional = FdOptional(Fd::INVALID.0);
     #[inline]
-    pub const fn init(maybe: Option<Fd>) -> FdOptional {
-        match maybe {
-            Some(fd) => fd.to_optional(),
-            None => FdOptional::NONE,
-        }
-    }
-    #[inline]
     pub const fn unwrap(self) -> Option<Fd> {
         if self.0 == FdOptional::NONE.0 {
             None
         } else {
             Some(Fd(self.0))
         }
-    }
-    #[inline]
-    pub fn take(&mut self) -> Option<Fd> {
-        let r = self.unwrap();
-        *self = FdOptional::NONE;
-        r
     }
 }
 
@@ -1556,17 +1459,22 @@ impl core::fmt::Display for Fd {
 /// Fd module-level statics + Windows libuv/PEB FFI shims (T0 → no
 /// crate dep, just `extern` symbols; libuv is linked into the final binary).
 pub mod fd {
+    #[cfg(windows)]
     use super::Fd;
     #[cfg(windows)]
     use core::ffi::{c_int, c_void};
 
     // Written once in windows_stdio::init() during single-threaded startup
     // (S015: write-once → `Once`; readers fall back to `Fd::INVALID`).
-    pub static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
-    pub static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDIN: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDOUT: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
+    pub(crate) static WINDOWS_CACHED_STDERR: crate::Once<Fd> = crate::Once::new();
+    #[cfg(windows)]
     #[cfg(debug_assertions)]
-    pub static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
+    pub(crate) static WINDOWS_CACHED_FD_SET: core::sync::atomic::AtomicBool =
         core::sync::atomic::AtomicBool::new(false);
 
     #[cfg(windows)]
@@ -1586,7 +1494,7 @@ pub mod fd {
     #[cfg(windows)]
     pub use crate::windows_sys::{STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE};
     #[cfg(windows)]
-    pub fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
+    pub(crate) fn is_stdio_handle(id: u32, handle: *mut c_void) -> bool {
         // The `GetStdHandle` wrapper maps both NULL and
         // INVALID_HANDLE_VALUE to `None`, so use the Option-returning
         // wrapper here. Without the INVALID_HANDLE_VALUE filter, a detached
@@ -1604,13 +1512,13 @@ pub mod fd {
     /// read here, so a minimal view is exposed via accessor fns.
     #[cfg(windows)]
     #[repr(C)]
-    pub struct ProcessParametersStdio {
-        pub hStdInput: *mut c_void,
-        pub hStdOutput: *mut c_void,
-        pub hStdError: *mut c_void,
+    pub(crate) struct ProcessParametersStdio {
+        pub(crate) hStdInput: *mut c_void,
+        pub(crate) hStdOutput: *mut c_void,
+        pub(crate) hStdError: *mut c_void,
     }
     #[cfg(windows)]
-    pub fn windows_process_parameters() -> ProcessParametersStdio {
+    pub(crate) fn windows_process_parameters() -> ProcessParametersStdio {
         // PEB → ProcessParameters → {hStdInput,hStdOutput,hStdError}. Snapshot
         // the three handles by value (raw-pointer reads — no `&` formed over
         // OS-mutable memory) so the call site is safe.
@@ -1627,7 +1535,7 @@ pub mod fd {
         }
     }
     #[cfg(windows)]
-    pub fn windows_current_directory_handle() -> *mut c_void {
+    pub(crate) fn windows_current_directory_handle() -> *mut c_void {
         // Reads `peb().ProcessParameters.CurrentDirectory.Handle`. Offset 0x48 on
         // x64, asserted in `bun_core::windows_sys`. The OS updates this handle
         // on `SetCurrentDirectoryW`, so re-read on every call rather than
@@ -1667,20 +1575,16 @@ pub mod S {
     pub const IFDIR: Mode = 0o040000;
     pub const IFCHR: Mode = 0o020000;
     pub const IFIFO: Mode = 0o010000;
-    pub const IFWHT: Mode = 0o160000; // BSD/Darwin whiteout
 
     pub const ISUID: Mode = 0o4000;
     pub const ISGID: Mode = 0o2000;
     pub const ISVTX: Mode = 0o1000;
-    pub const IRWXU: Mode = 0o0700;
     pub const IRUSR: Mode = 0o0400;
     pub const IWUSR: Mode = 0o0200;
     pub const IXUSR: Mode = 0o0100;
-    pub const IRWXG: Mode = 0o0070;
     pub const IRGRP: Mode = 0o0040;
     pub const IWGRP: Mode = 0o0020;
     pub const IXGRP: Mode = 0o0010;
-    pub const IRWXO: Mode = 0o0007;
     pub const IROTH: Mode = 0o0004;
     pub const IWOTH: Mode = 0o0002;
     pub const IXOTH: Mode = 0o0001;
@@ -1696,10 +1600,6 @@ pub mod S {
     #[inline]
     pub const fn ISCHR(m: Mode) -> bool {
         m & IFMT == IFCHR
-    }
-    #[inline]
-    pub const fn ISBLK(m: Mode) -> bool {
-        m & IFMT == IFBLK
     }
     #[inline]
     pub const fn ISFIFO(m: Mode) -> bool {
@@ -1754,19 +1654,19 @@ pub mod io {
     /// is sound (see output.rs `QuietWriterAdapter::new_interface`).
     #[repr(C)]
     pub struct Writer {
-        pub write_all: unsafe fn(*mut Writer, &[u8]) -> Result<(), crate::Error>,
-        pub flush: unsafe fn(*mut Writer) -> Result<(), crate::Error>,
+        pub write_all: unsafe fn(*mut Writer, &[u8]) -> crate::CrateResult<()>,
+        pub flush: unsafe fn(*mut Writer) -> crate::CrateResult<()>,
     }
     impl Writer {
         #[inline]
-        pub fn write_all(&mut self, bytes: &[u8]) -> Result<(), crate::Error> {
+        pub fn write_all(&mut self, bytes: &[u8]) -> crate::CrateResult<()> {
             // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter
             // (see type doc); `self` was produced by upcasting `&mut Adapter`,
             // so the vtable fn receives the same pointer it was registered with.
             unsafe { (self.write_all)(std::ptr::from_mut(self), bytes) }
         }
         #[inline]
-        pub fn flush(&mut self) -> Result<(), crate::Error> {
+        pub fn flush(&mut self) -> crate::CrateResult<()> {
             // SAFETY: `Writer` is the `repr(C)` head of every concrete adapter;
             // `self` is the same pointer the adapter registered its vtable with,
             // so the callee's downcast back to the concrete type is sound.
@@ -1774,13 +1674,13 @@ pub mod io {
         }
         /// Alias for `print` so `write!(w, ...)` works.
         #[inline]
-        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        pub fn write_fmt(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.print(args)
         }
         #[inline]
-        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        pub fn print(&mut self, args: core::fmt::Arguments<'_>) -> crate::CrateResult<()> {
             use core::fmt::Write;
-            struct A<'a>(&'a mut Writer, Result<(), crate::Error>);
+            struct A<'a>(&'a mut Writer, crate::CrateResult<()>);
             impl core::fmt::Write for A<'_> {
                 fn write_str(&mut self, s: &str) -> core::fmt::Result {
                     self.1 = self.0.write_all(s.as_bytes());
@@ -1795,13 +1695,6 @@ pub mod io {
             let _ = a.write_fmt(args);
             a.1
         }
-    }
-    /// WASM-only StreamType (output.rs `#[cfg(wasm32)]`).
-    #[repr(C)]
-    pub struct FixedBufferStream {
-        pub buf: *mut u8,
-        pub len: usize,
-        pub pos: usize,
     }
 
     // ════════════════════════════════════════════════════════════════════════
@@ -1820,12 +1713,12 @@ pub mod io {
     /// helpers that would break object safety carry `where Self: Sized`.
     pub trait Write {
         /// Write the entire buffer.
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error>;
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()>;
 
         /// Flush any internal buffer to the underlying sink.
         /// Unbuffered sinks leave the default no-op.
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             Ok(())
         }
 
@@ -1841,18 +1734,18 @@ pub mod io {
 
         /// Write a single byte.
         #[inline]
-        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+        fn write_byte(&mut self, byte: u8) -> crate::CrateResult<()> {
             self.write_all(core::slice::from_ref(&byte))
         }
 
         /// Convenience for UTF-8 string slices.
         #[inline]
-        fn write_str(&mut self, s: &str) -> Result<(), crate::Error> {
+        fn write_str(&mut self, s: &str) -> crate::CrateResult<()> {
             self.write_all(s.as_bytes())
         }
 
         /// Write `n` copies of `byte`.
-        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             let chunk = [byte; 256];
             let mut remain = n;
             while remain > 0 {
@@ -1864,10 +1757,10 @@ pub mod io {
         }
 
         /// Formatted write. Enables `write!(w, ...)`.
-        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             struct Bridge<'a, W: ?Sized> {
                 sink: &'a mut W,
-                err: Option<crate::Error>,
+                err: Option<crate::CrateError>,
             }
             impl<W: Write + ?Sized> fmt::Write for Bridge<'_, W> {
                 #[inline]
@@ -1887,19 +1780,19 @@ pub mod io {
             };
             match fmt::write(&mut bridge, args) {
                 Ok(()) => Ok(()),
-                Err(_) => Err(bridge.err.unwrap_or_else(|| crate::err!("FmtError"))),
+                Err(_) => Err(bridge.err.unwrap_or(crate::CrateError::FmtError)),
             }
         }
 
         /// Alias for [`write_fmt`](Write::write_fmt).
         #[inline]
-        fn print(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn print(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             self.write_fmt(args)
         }
 
         /// Write an integer in little-endian byte order.
         #[inline]
-        fn write_int_le<I: IntLe>(&mut self, val: I) -> Result<(), crate::Error>
+        fn write_int_le<I: IntLe>(&mut self, val: I) -> crate::CrateResult<()>
         where
             Self: Sized,
         {
@@ -1912,23 +1805,23 @@ pub mod io {
     /// Forward through `&mut W` so `&mut dyn Write` / `&mut impl Write` nest.
     impl<W: Write + ?Sized> Write for &mut W {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             (**self).write_all(buf)
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
         }
         #[inline]
-        fn write_byte(&mut self, byte: u8) -> Result<(), crate::Error> {
+        fn write_byte(&mut self, byte: u8) -> crate::CrateResult<()> {
             (**self).write_byte(byte)
         }
         #[inline]
-        fn splat_byte_all(&mut self, byte: u8, n: usize) -> Result<(), crate::Error> {
+        fn splat_byte_all(&mut self, byte: u8, n: usize) -> crate::CrateResult<()> {
             (**self).splat_byte_all(byte, n)
         }
         #[inline]
-        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> Result<(), crate::Error> {
+        fn write_fmt(&mut self, args: fmt::Arguments<'_>) -> crate::CrateResult<()> {
             (**self).write_fmt(args)
         }
         #[inline]
@@ -1939,11 +1832,11 @@ pub mod io {
 
     impl<W: Write + ?Sized> Write for Box<W> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             (**self).write_all(buf)
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             (**self).flush()
         }
         #[inline]
@@ -1955,7 +1848,7 @@ pub mod io {
     /// In-memory growable sink.
     impl<A: core::alloc::Allocator> Write for Vec<u8, A> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
             Ok(())
         }
@@ -1967,7 +1860,7 @@ pub mod io {
 
     impl<'a> Write for bun_alloc::BabyVec<'a, u8> {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             self.extend_from_slice(buf);
             Ok(())
         }
@@ -1981,13 +1874,13 @@ pub mod io {
     /// printers taking `W: io::Write` accept process stdout/stderr sinks.
     impl Write for Writer {
         #[inline]
-        fn write_all(&mut self, buf: &[u8]) -> Result<(), crate::Error> {
+        fn write_all(&mut self, buf: &[u8]) -> crate::CrateResult<()> {
             // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
             // receives the same pointer it was registered with (see type doc).
             unsafe { (self.write_all)(core::ptr::from_mut(self), buf) }
         }
         #[inline]
-        fn flush(&mut self) -> Result<(), crate::Error> {
+        fn flush(&mut self) -> crate::CrateResult<()> {
             // SAFETY: `self` is the `repr(C)` adapter head; the vtable fn
             // receives the same pointer it was registered with (see type doc).
             unsafe { (self.flush)(core::ptr::from_mut(self)) }
@@ -2030,19 +1923,14 @@ pub struct Version {
 }
 
 impl Version {
-    pub const ZERO: Self = Self {
-        major: 0,
-        minor: 0,
-        patch: 0,
-    };
-
     /// Parse leading `"MAJOR.MINOR.PATCH"` from a byte slice. Per field:
     /// accumulate ASCII digits (wrapping on overflow), stop at the first
     /// non-digit, then advance past a single `'.'` to the next field; missing
     /// or empty fields default to 0. Tolerates trailing junk (e.g. uname's
     /// `"5.10.16-microsoft-standard"` → {5,10,16}). `const fn` so it can
     /// populate `static`/`const` initializers.
-    pub const fn parse_dotted(bytes: &[u8]) -> Self {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub(crate) const fn parse_dotted(bytes: &[u8]) -> Self {
         let mut nums = [0u32; 3];
         let mut idx = 0usize;
         let mut i = 0usize;
@@ -2318,6 +2206,10 @@ unsafe extern "C" {
     /// directly.
     #[cfg(unix)]
     safe fn clock_gettime(clk_id: libc::clockid_t, tp: &mut libc::timespec) -> core::ffi::c_int;
+    /// Bun C++ shim over `QueryPerformanceCounter` (c-bindings.cpp). Infallible
+    /// on Windows XP+; out-params are `&mut i64` so pointer validity is typed.
+    #[cfg(windows)]
+    safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
 impl Default for StackCheck {
     /// `cached_stack_end` defaults to `0`, so
@@ -2476,9 +2368,8 @@ impl Default for Ordinal {
 }
 
 // ── Once ──────────────────────────────────────────────────────────────────
-// One-shot initialization cell. Callers use two shapes:
-//   * `Once<T>` — fn supplied at `.call(f)` / `.get_or_init(f)` time
-//   * `Once<T, fn(A) -> T>` — fn supplied at construction (PackageManagerDirectories.rs)
+// One-shot initialization cell. Callers use `Once<T>` with the init fn
+// supplied at `.call(f)` / `.get_or_init(f)` time.
 //
 // Open-coded double-checked-init (AtomicU8 + UnsafeCell<MaybeUninit<T>>) rather
 // than `std::sync::OnceLock`. The previous `OnceLock` backing produced 157
@@ -2496,27 +2387,22 @@ const ONCE_UNINIT: u8 = 0;
 const ONCE_BUSY: u8 = 1;
 const ONCE_DONE: u8 = 2;
 
-pub struct Once<T, F = ()> {
+pub struct Once<T> {
     state: core::sync::atomic::AtomicU8,
     cell: core::cell::UnsafeCell<core::mem::MaybeUninit<T>>,
-    f: F,
 }
 
 // SAFETY: `T` is published behind a Release store / Acquire load pair; once
 // DONE the cell is immutable and only `&T` is handed out, so the bounds match
 // `std::sync::OnceLock` (`T: Send` because init may happen on a different
 // thread than the reader; `T: Sync` because `&T` crosses threads).
-unsafe impl<T: Send + Sync, F: Sync> Sync for Once<T, F> {}
-// SAFETY: `Once<T, F>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`) and an
-// `F` by value; sending the whole struct to another thread is sound exactly
-// when sending its owned fields is (`T: Send`, `F: Send`).
-unsafe impl<T: Send, F: Send> Send for Once<T, F> {}
-impl<T: core::panic::RefUnwindSafe, F: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe
-    for Once<T, F>
-{
-}
+unsafe impl<T: Send + Sync> Sync for Once<T> {}
+// SAFETY: `Once<T>` owns a `T` (in `UnsafeCell<MaybeUninit<T>>`); sending the
+// whole struct to another thread is sound exactly when sending `T` is.
+unsafe impl<T: Send> Send for Once<T> {}
+impl<T: core::panic::RefUnwindSafe> core::panic::RefUnwindSafe for Once<T> {}
 
-/// Cold contended path shared by every `Once<T, F>` instantiation. Taking
+/// Cold contended path shared by every `Once<T>` instantiation. Taking
 /// `&AtomicU8` (not `&self`) keeps this **non-generic** so exactly one copy
 /// lands in `bun_core`'s CGU regardless of how many `T`s the crate uses.
 /// Returns `true` if the caller won the claim and must initialise + publish;
@@ -2537,7 +2423,21 @@ fn once_claim_slow(state: &core::sync::atomic::AtomicU8) -> bool {
     }
 }
 
-impl<T, F> Once<T, F> {
+impl<T> Once<T> {
+    pub const fn new() -> Self {
+        Self {
+            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
+            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
+        }
+    }
+    /// Run `f` exactly once; subsequent calls return the cached payload.
+    #[inline(always)]
+    pub fn call(&self, f: impl FnOnce() -> T) -> T
+    where
+        T: Copy,
+    {
+        *self.get_or_init(f)
+    }
     /// Fast path: already initialised?
     #[inline(always)]
     pub fn get(&self) -> Option<&T> {
@@ -2549,11 +2449,6 @@ impl<T, F> Once<T, F> {
         } else {
             None
         }
-    }
-
-    #[inline(always)]
-    pub fn done(&self) -> bool {
-        self.state.load(core::sync::atomic::Ordering::Acquire) == ONCE_DONE
     }
 
     /// `OnceLock::get_or_init` equivalent. Hot path is the inlined DONE check;
@@ -2604,7 +2499,7 @@ impl<T, F> Once<T, F> {
     /// `Err(value)` rather than waiting, which is fine for the write-once
     /// startup statics that use it (`START_TIME`, `STD*_DESCRIPTOR_TYPE`, …).
     #[inline]
-    pub fn set(&self, value: T) -> Result<(), T> {
+    pub(crate) fn set(&self, value: T) -> Result<(), T> {
         use core::sync::atomic::Ordering::{Acquire, Release};
         if self
             .state
@@ -2621,7 +2516,7 @@ impl<T, F> Once<T, F> {
     }
 }
 
-impl<T, F> Drop for Once<T, F> {
+impl<T> Drop for Once<T> {
     #[inline]
     fn drop(&mut self) {
         if *self.state.get_mut() == ONCE_DONE {
@@ -2631,40 +2526,7 @@ impl<T, F> Drop for Once<T, F> {
     }
 }
 
-impl<T> Once<T, ()> {
-    pub const fn new() -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
-            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
-            f: (),
-        }
-    }
-    /// Run `f` exactly once; subsequent calls return the cached payload.
-    #[inline(always)]
-    pub fn call(&self, f: impl FnOnce() -> T) -> T
-    where
-        T: Copy,
-    {
-        *self.get_or_init(f)
-    }
-}
-impl<T, A> Once<T, fn(A) -> T> {
-    pub const fn with_fn(f: fn(A) -> T) -> Self {
-        Self {
-            state: core::sync::atomic::AtomicU8::new(ONCE_UNINIT),
-            cell: core::cell::UnsafeCell::new(core::mem::MaybeUninit::uninit()),
-            f,
-        }
-    }
-    /// Run the stored fn exactly once with `arg`; returns a borrow of the cached
-    /// payload. Bound to `&'static self` because every call site is a `static`.
-    #[inline(always)]
-    pub fn call(&'static self, arg: A) -> &'static T {
-        let f = self.f;
-        self.get_or_init(|| f(arg))
-    }
-}
-impl<T> Default for Once<T, ()> {
+impl<T> Default for Once<T> {
     #[inline]
     fn default() -> Self {
         Self::new()
@@ -2696,13 +2558,12 @@ pub enum Pollable {
     NotReady,
     Hup,
 }
-/// Alias for [`Pollable`].
-pub type PollFlag = Pollable;
 
 impl Pollable {
     /// Lowercase tag name for the `[sys]` debug log.
     #[inline]
-    pub const fn tag_name(self) -> &'static str {
+    #[cfg(not(windows))]
+    pub(crate) const fn tag_name(self) -> &'static str {
         match self {
             Pollable::Ready => "ready",
             Pollable::NotReady => "not_ready",
@@ -2818,14 +2679,14 @@ pub fn is_writable(fd: Fd) -> Pollable {
     }
 }
 
-// ── csprng ────────────────────────────────────────────────────────────────
-// bun_core sits below
-// boringssl_sys in the crate graph, so we go to the OS CSPRNG directly:
-// getrandom(2) on Linux, SecRandomCopyBytes/getentropy on Darwin,
-// RtlGenRandom on Windows. All are the same entropy source BoringSSL seeds
-// from. PERF: if a hot path needs the BoringSSL DRBG, install a
-// vtable hook from bun_runtime at startup.
-pub fn csprng(bytes: &mut [u8]) {
+// ── os_entropy ────────────────────────────────────────────────────────────
+// Raw OS entropy source: getrandom(2) on Linux, getentropy on Darwin/BSD,
+// RtlGenRandom on Windows. bun_core sits below boringssl_sys in the crate
+// graph so it cannot reach `RAND_bytes`; this is used only to seed
+// `fast_random()`'s thread-local PRNG once per thread. Every other caller
+// must use `bun_boringssl_sys::rand_bytes` (userspace DRBG, no syscall per
+// call).
+fn os_entropy(bytes: &mut [u8]) {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     {
         let mut filled = 0usize;
@@ -2879,10 +2740,10 @@ pub fn csprng(bytes: &mut [u8]) {
 // ── self_exe_path ─────────────────────────────────────────────────────────
 // Memoized into a process-lifetime
 // static buffer; thread-safe via `Once`. Returns a `&'static ZStr`.
-pub fn self_exe_path() -> Result<&'static ZStr, crate::Error> {
-    static CELL: Once<Result<ZBox, crate::Error>> = Once::new();
+pub fn self_exe_path() -> crate::CrateResult<&'static ZStr> {
+    static CELL: Once<crate::CrateResult<ZBox>> = Once::new();
     let r = CELL.get_or_init(|| {
-        let path = std::env::current_exe().map_err(crate::Error::from)?;
+        let path = std::env::current_exe().map_err(|_| crate::CrateError::Unexpected)?;
         // Symlink resolution: Rust's
         // `current_exe()` already resolves on Linux (`readlink /proc/self/exe`),
         // but on Darwin it returns the raw `_NSGetExecutablePath` result and on
@@ -2984,15 +2845,6 @@ pub fn get_thread_count() -> u16 {
     })
 }
 
-// ── errno_to_zig_err ──────────────────────────────────────────────────────
-// The intern table maps in `Error::from_errno`
-// (errno → tag name → interned code).
-#[inline]
-pub fn errno_to_zig_err(errno: i32) -> crate::Error {
-    debug_assert!(errno != 0);
-    crate::Error::from_errno(errno)
-}
-
 // ── time ──────────────────────────────────────────────────────────────────
 // Time-unit constants plus `{nano,milli,}timestamp()`. Callers `as`-cast at the
 // use-site (`NS_PER_S as i128`, `MS_PER_S as f64`, …). Every value fits in
@@ -3053,59 +2905,19 @@ pub mod time {
     pub fn timestamp() -> i64 {
         (nano_timestamp() / NS_PER_S as i128) as i64
     }
-
-    /// Monotonic stopwatch.
-    #[derive(Clone, Copy, Debug)]
-    pub struct Timer {
-        start: std::time::Instant,
-    }
-    impl Timer {
-        #[inline]
-        pub fn start() -> Result<Self, crate::Error> {
-            Ok(Self {
-                start: std::time::Instant::now(),
-            })
-        }
-        #[inline]
-        pub fn read(&self) -> u64 {
-            self.start.elapsed().as_nanos() as u64
-        }
-        #[inline]
-        pub fn lap(&mut self) -> u64 {
-            let now = std::time::Instant::now();
-            let ns = now.duration_since(self.start).as_nanos() as u64;
-            self.start = now;
-            ns
-        }
-        #[inline]
-        pub fn reset(&mut self) {
-            self.start = std::time::Instant::now();
-        }
-    }
 }
 
 // ── runtime_embed_file ────────────────────────────────────────────────────
 // A per-call-site `static once` cache cannot be manufactured
 // from a plain fn without leaking, so the canonical form is the
 // `runtime_embed_file!` macro below (per-site `OnceLock<String>` — sanctioned
-// by PORTING.md §Forbidden, "true process-lifetime singleton"). The fn form is
-// kept so existing draft callers type-check; it's only reachable when the
-// `codegen_embed` feature is off (debug fast-iteration), where it panics with
-// a migration hint.
+// by PORTING.md §Forbidden, "true process-lifetime singleton").
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum EmbedKind {
     Codegen,
     CodegenEager,
     Src,
     SrcEager,
-}
-
-pub fn runtime_embed_file(_root: EmbedKind, sub_path: &'static str) -> &'static str {
-    panic!(
-        "runtime_embed_file({sub_path}): non-embedded debug load requires a per-site \
-         static cache — migrate this call to `bun_core::runtime_embed_file!` or rebuild \
-         with codegen_embed",
-    );
 }
 
 #[doc(hidden)]
@@ -3225,10 +3037,6 @@ impl StringPointer {
     pub fn slice<'a>(self, buf: &'a [u8]) -> &'a [u8] {
         &buf[self.offset as usize..(self.offset + self.length) as usize]
     }
-    #[inline]
-    pub fn is_empty(self) -> bool {
-        self.length == 0
-    }
 }
 
 // ── ZStr trait sugar (downstream ergonomics) ──────────────────────────────
@@ -3285,16 +3093,6 @@ pub use bytemuck::NoUninit;
 #[inline]
 pub fn bytes_of<T: bytemuck::NoUninit>(v: &T) -> &[u8] {
     bytemuck::bytes_of(v)
-}
-
-/// Mutable counterpart of [`bytes_of`]: reinterpret `&mut T` as `&mut [u8]`.
-///
-/// Safe: the [`bytemuck::Pod`] bound guarantees `T` has no padding bytes and
-/// every bit pattern is a valid `T`, so writing arbitrary bytes through the
-/// returned slice cannot produce an invalid value.
-#[inline]
-pub fn bytes_of_mut<T: bytemuck::Pod>(v: &mut T) -> &mut [u8] {
-    bytemuck::bytes_of_mut(v)
 }
 
 // ─── Slice reinterpretation (canonical) ───────────────────────────────────────
@@ -3533,26 +3331,12 @@ impl<I: GenericIndexInt, M> GenericIndex<I, M> {
     pub fn get_usize(self) -> usize {
         I::to_usize(self.get())
     }
-    /// `init()` from a `usize` source (Vec length etc.). Debug-panics on
-    /// truncation.
-    #[inline]
-    pub fn from_usize(n: usize) -> Self {
-        Self::init(I::from_usize(n))
-    }
     #[inline]
     pub fn to_optional(self) -> GenericIndexOptional<I, M> {
         GenericIndexOptional(self.0, core::marker::PhantomData)
     }
-    #[inline]
-    pub fn sort_fn_asc(_: (), a: &Self, b: &Self) -> bool {
-        a.0 < b.0
-    }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    #[inline]
-    pub fn is_none(self) -> bool {
-        self.0 == I::NULL_VALUE
-    }
     #[inline]
     pub fn is_some(self) -> bool {
         !self.is_none()
@@ -3582,23 +3366,17 @@ impl<I: core::fmt::Debug, M> core::fmt::Debug for GenericIndexOptional<I, M> {
     }
 }
 impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
-    pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
     #[inline]
-    pub fn some(i: GenericIndex<I, M>) -> Self {
-        i.to_optional()
+    pub fn is_none(self) -> bool {
+        self.0 == I::NULL_VALUE
     }
+
+    pub const NONE: Self = Self(I::NULL_VALUE, core::marker::PhantomData);
     /// Alias for `unwrap()` matching the local-newtype API that pre-existed in
     /// `bun_bundler::output_file::IndexOptional`.
     #[inline]
     pub fn get(self) -> Option<GenericIndex<I, M>> {
         self.unwrap()
-    }
-    #[inline]
-    pub fn init(maybe: Option<I>) -> Self {
-        match maybe {
-            Some(i) => GenericIndex::<I, M>::init(i).to_optional(),
-            None => Self::NONE,
-        }
     }
     #[inline]
     pub fn unwrap(self) -> Option<GenericIndex<I, M>> {
@@ -3608,30 +3386,17 @@ impl<I: GenericIndexInt, M> GenericIndexOptional<I, M> {
             Some(GenericIndex(self.0, core::marker::PhantomData))
         }
     }
-    #[inline]
-    pub fn unwrap_get(self) -> Option<I> {
-        if self.0 == I::NULL_VALUE {
-            None
-        } else {
-            Some(self.0)
-        }
-    }
 }
 
 /// Backing-integer bound for `GenericIndex`.
 pub trait GenericIndexInt: Copy + Eq + PartialOrd {
     const NULL_VALUE: Self;
     fn to_usize(self) -> usize;
-    fn from_usize(n: usize) -> Self;
 }
 macro_rules! generic_index_int { ($($t:ty),*) => { $(
     impl GenericIndexInt for $t {
         const NULL_VALUE: Self = <$t>::MAX;
         #[inline] fn to_usize(self) -> usize { self as usize }
-        #[inline] fn from_usize(n: usize) -> Self {
-            debug_assert!(n as u128 <= <$t>::MAX as u128, "GenericIndex::from_usize: truncation");
-            n as Self
-        }
     }
 )* } }
 generic_index_int!(u8, u16, u32, u64, usize, i32, i64);
@@ -3674,10 +3439,8 @@ impl_integer!(
 
 /// Primitive integers transcodable as native-endian raw bytes.
 ///
-/// Explicit trait
-/// bound shared by the peechy wire codec (`bun_analytics::SchemaInt`) and the
-/// MySQL protocol reader (`bun_sql::ReadableInt`), which re-export this under
-/// their local names.
+/// Explicit trait bound used by the MySQL protocol reader
+/// (`bun_sql::ReadableInt`), which re-exports this under its local name.
 pub trait NativeEndianInt: Copy + 'static {
     const SIZE: usize;
     /// Reinterpret `b[..SIZE]` as `Self` (native endian).
@@ -3708,8 +3471,6 @@ impl_native_endian_int!(u8, i8, u16, i16, u32, i32, u64, i64);
 // ── mach_port ─────────────────────────────────────────────────────────────
 #[cfg(target_os = "macos")]
 pub type mach_port = libc::mach_port_t;
-#[cfg(not(target_os = "macos"))]
-pub type mach_port = u32;
 
 // ── rand ──────────────────────────────────────────────────────────────────
 // xoshiro256++; the exact algorithm keeps `bun.fastRandom()` output
@@ -3770,7 +3531,7 @@ pub fn fast_random() -> u64 {
                 return n;
             }
             let mut buf = [0u8; 8];
-            csprng(&mut buf);
+            os_entropy(&mut buf);
             v = u64::from_ne_bytes(buf);
             SEED.store(v, O::Relaxed);
             v = SEED.load(O::Relaxed);
@@ -3791,19 +3552,13 @@ pub fn fast_random() -> u64 {
 }
 
 // ── hash ──────────────────────────────────────────────────────────────────
-// `bun.hash` (Wyhash) lives in deprecated.rs as RapidHash; this module adds
-// the xxhash64 entry point that ETag/bundler need.
+// `bun.hash` one-shot Wyhash / XxHash64 wrappers over `bun_hash`.
 pub mod hash {
     pub use bun_hash::XxHash64;
     /// One-shot seeded XXH64 over `bytes`.
     #[inline]
     pub fn xxhash64(seed: u64, bytes: &[u8]) -> u64 {
         bun_hash::XxHash64::hash(seed, bytes)
-    }
-    /// Wyhash one-shot (`bun.hash`).
-    #[inline]
-    pub fn wyhash(bytes: &[u8]) -> u64 {
-        crate::deprecated::RapidHash::hash(0, bytes)
     }
 }
 
@@ -3927,7 +3682,7 @@ pub fn dupe_z(bytes: &[u8]) -> *const core::ffi::c_char {
         core::ptr::copy_nonoverlapping(bytes.as_ptr(), p, bytes.len());
         *p.add(bytes.len()) = 0;
     }
-    p as *const core::ffi::c_char
+    p.cast_const().cast::<core::ffi::c_char>()
 }
 
 /// Port of `bun.freeSensitive(bun.default_allocator, slice)` for the C-string
@@ -4083,10 +3838,6 @@ impl Argv {
         self.0.len()
     }
     #[inline]
-    pub fn is_empty(&self) -> bool {
-        self.0.is_empty()
-    }
-    #[inline]
     pub fn get(&self, i: usize) -> Option<&'static ZStr> {
         self.0.get(i).copied()
     }
@@ -4155,7 +3906,7 @@ pub fn bun_options_argc() -> usize {
 }
 /// Write accessor (single-threaded startup).
 #[inline]
-pub fn set_bun_options_argc(n: usize) {
+pub(crate) fn set_bun_options_argc(n: usize) {
     BUN_OPTIONS_ARGC.store(n, core::sync::atomic::Ordering::Relaxed);
 }
 
@@ -4353,7 +4104,35 @@ pub fn intern_argv(v: Vec<&'static ZStr>) -> &'static [&'static ZStr] {
 // ── getcwd ────────────────────────────────────────────────────────────────
 /// Writes the current working directory into the caller's `PathBuffer` and
 /// returns the NUL-terminated slice on success.
-pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
+pub fn getcwd(buf: &mut PathBuffer) -> crate::CrateResult<&ZStr> {
+    let len = getcwd_len(buf)?;
+    Ok(ZStr::from_buf(&buf.0, len))
+}
+
+/// `getcwd` tolerating an unreachable cwd (e.g. deleted while we run): falls
+/// back to the executable's directory like Node's `Environment::GetCwd`, so
+/// startup proceeds and `process.cwd()` surfaces the real error later.
+pub fn getcwd_or_exe_dir(buf: &mut PathBuffer) -> &ZStr {
+    let len = match getcwd_len(buf) {
+        Ok(n) => n,
+        Err(_) => {
+            let dir: &[u8] = self_exe_path()
+                .ok()
+                .and_then(|p| dirname(p.as_bytes()))
+                // Reject a dir that can't fit with its NUL (paths from
+                // /proc/self/exe are not bounded by MAX_PATH_BYTES).
+                .filter(|d| d.len() < buf.0.len())
+                .unwrap_or(if cfg!(windows) { b"C:\\" } else { b"/" });
+            buf.0[..dir.len()].copy_from_slice(dir);
+            buf.0[dir.len()] = 0;
+            dir.len()
+        }
+    };
+    ZStr::from_buf(&buf.0, len)
+}
+
+/// Length-returning core of [`getcwd`]; `buf` holds the NUL-terminated path.
+fn getcwd_len(buf: &mut PathBuffer) -> crate::CrateResult<usize> {
     #[cfg(unix)]
     // SAFETY: `buf` provides `MAX_PATH_BYTES` writable bytes for `getcwd`; on
     // success the returned pointer aliases `buf` and is NUL-terminated, so
@@ -4361,10 +4140,12 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
     unsafe {
         let p = libc::getcwd(buf.0.as_mut_ptr().cast(), buf.0.len());
         if p.is_null() {
-            return Err(std::io::Error::last_os_error().into());
+            if crate::ffi::errno() == libc::ENOENT {
+                return Err(crate::CrateError::CurrentWorkingDirectoryUnlinked);
+            }
+            return Err(crate::CrateError::Unexpected);
         }
-        let len = libc::strlen(p);
-        Ok(ZStr::from_buf(&buf.0, len))
+        Ok(libc::strlen(p))
     }
     #[cfg(windows)]
     {
@@ -4377,10 +4158,10 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
         // SAFETY: `wbuf` has `PATH_MAX_WIDE` writable u16 units.
         let n = unsafe { GetCurrentDirectoryW(wbuf.0.len() as u32, wbuf.0.as_mut_ptr()) } as usize;
         if n == 0 {
-            return Err(std::io::Error::last_os_error().into());
+            return Err(crate::CrateError::Unexpected);
         }
         if n >= wbuf.0.len() {
-            return Err(crate::err!(NameTooLong));
+            return Err(crate::CrateError::NameTooLong);
         }
         // WTF-16 → WTF-8 into the caller's `PathBuffer`. Surrogate pairs are
         // combined; unpaired surrogates are encoded as 3-byte WTF-8.
@@ -4394,18 +4175,18 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
             let mut tmp = [0u8; 4];
             let nb = crate::strings::encode_wtf8_rune(&mut tmp, cp);
             if bi + nb >= out.len() {
-                return Err(crate::err!(NameTooLong));
+                return Err(crate::CrateError::NameTooLong);
             }
             out[bi..bi + nb].copy_from_slice(&tmp[..nb]);
             bi += nb;
         }
         out[bi] = 0;
-        Ok(ZStr::from_buf(&buf.0[..], bi))
+        Ok(bi)
     }
     #[cfg(not(any(unix, windows)))]
     {
         let _ = buf;
-        Err(crate::err!(Unexpected))
+        Err(crate::CrateError::Unexpected)
     }
 }
 
@@ -4422,7 +4203,13 @@ pub fn getcwd(buf: &mut PathBuffer) -> Result<&ZStr, crate::Error> {
 /// for an executable named `bin`; returns the NUL-terminated match written
 /// into `buf`. POSIX semantics; Windows `PATHEXT` handling stays in
 /// `bun_which` (tier-2).
-pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -> Option<&'a ZStr> {
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+pub(crate) fn which<'a>(
+    buf: &'a mut PathBuffer,
+    path: &[u8],
+    cwd: &[u8],
+    bin: &[u8],
+) -> Option<&'a ZStr> {
     if bin.is_empty() {
         return None;
     }
@@ -4447,19 +4234,12 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         buf.0[n..n + bin.len()].copy_from_slice(bin);
         n += bin.len();
         buf.0[n] = 0;
-        #[cfg(unix)]
         // SAFETY: `buf.0[n] == 0` was just written, so `buf.0.as_ptr()` is a
         // valid NUL-terminated C string for `access(2)`.
         unsafe {
             if libc::access(buf.0.as_ptr().cast(), libc::X_OK) == 0 {
                 return Some(n);
             }
-        }
-        #[cfg(not(unix))]
-        {
-            // No X_OK probe here: this tier-0 helper is only reached from the
-            // linux/freebsd `spawn_sync_inherit` path. Windows callers resolve
-            // executables via `bun_which` (PATHEXT-aware) instead.
         }
         None
     };
@@ -4481,8 +4261,7 @@ pub fn which<'a>(buf: &'a mut PathBuffer, path: &[u8], cwd: &[u8], bin: &[u8]) -
         return check(buf, cwd, bin).map(|n| ZStr::from_buf(&buf.0, n));
     }
     // Bare names go straight to PATH — do NOT consult cwd.
-    let delim: u8 = if cfg!(windows) { b';' } else { b':' };
-    for dir in path.split(|&b| b == delim) {
+    for dir in crate::strings::split(path, b":") {
         if dir.is_empty() {
             continue;
         }
@@ -4521,7 +4300,7 @@ pub fn is_process_reload_in_progress_on_another_thread() -> bool {
 
 /// Terminate the current OS thread without unwinding.
 /// POSIX `pthread_exit`; Windows `ExitThread`. Called from worker `shutdown()`.
-pub fn exit_thread() -> ! {
+pub(crate) fn exit_thread() -> ! {
     #[cfg(unix)]
     {
         // `retval` is stored opaquely for `pthread_join` and never
@@ -4539,29 +4318,6 @@ pub fn exit_thread() -> ! {
     #[cfg(not(any(unix, windows)))]
     loop {
         core::hint::spin_loop();
-    }
-}
-
-/// Release thread-local pooled
-/// buffers (PathBuffer pool, ObjectPool, …) before the thread terminates so
-/// the backing storage is returned to mimalloc rather than leaked with the
-/// TLS block.
-///
-/// LAYERING: the actual pool registries live in higher-tier crates
-/// (`bun_paths`, `bun_collections`). They register a destructor here at init
-/// via [`register_thread_exit_pool_destructor`]; this fn just walks the list.
-static THREAD_EXIT_POOL_DESTRUCTORS: Mutex<Vec<fn()>> = Mutex::new(Vec::new());
-
-pub fn register_thread_exit_pool_destructor(f: fn()) {
-    THREAD_EXIT_POOL_DESTRUCTORS.lock().push(f);
-}
-
-pub fn delete_all_pools_for_thread_exit() {
-    // Snapshot under the lock so a destructor can't deadlock by
-    // re-registering.
-    let snapshot: Vec<fn()> = THREAD_EXIT_POOL_DESTRUCTORS.lock().clone();
-    for f in snapshot {
-        f();
     }
 }
 
@@ -4602,14 +4358,25 @@ pub fn maybe_handle_panic_during_process_reload() {
     }
 }
 
-/// Port of `bun.reloadProcess`. Allocator param dropped (uses libc malloc via
-/// `dupe_z`). `may_return == true` → returns on failure; `false` → panics.
-/// macOS posix_spawn path is deferred to bun_spawn (tier-4); tier-0 falls
-/// back to plain `execve` on all POSIX which is correct on Linux/BSD and
-/// best-effort on macOS (CLOEXEC handled by `on_before_reload_process_linux`
-/// hook on Linux; Darwin gets the simpler path until tier-4 wires spawn).
+/// Port of `bun.reloadProcess`. `may_return == true` → returns on failure; `false` → panics.
+/// `on_before_reload_process_posix` clears CLOEXEC on stdio/IPC and resets caught signal
+/// dispositions on all POSIX; the close_range sweep is Linux/BSD only.
 pub fn reload_process(clear_terminal: bool, may_return: bool) {
-    RELOAD_IN_PROGRESS.store(true, AOrdering::Relaxed);
+    // Exactly one thread may perform the reload: the JS thread and the watcher's grace-window
+    // fallback can both reach here, and concurrent execve prep crashes on musl. The swap elects a
+    // winner; a loser parks or returns. A thread that already owns the reload may re-enter.
+    let owns_reload = RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.get());
+    if !owns_reload && RELOAD_IN_PROGRESS.swap(true, AOrdering::SeqCst) {
+        if may_return {
+            return;
+        }
+        // Park (not pthread_exit): the loser may be the JS main thread, and
+        // running its TLS destructors concurrently with the winner's execve
+        // preparation is the same hazard class the swap exists to avoid.
+        loop {
+            std::thread::sleep(std::time::Duration::from_secs(3600));
+        }
+    }
     RELOAD_IN_PROGRESS_ON_CURRENT_THREAD.with(|c| c.set(true));
 
     if clear_terminal {
@@ -4650,17 +4417,14 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
     }
 
     #[cfg(unix)]
-    // SAFETY: the FFI calls below (`on_before_reload_process_linux`, `execve`)
-    // receive only locally-built NUL-terminated argv/envp arrays terminated by
-    // a null pointer; on success `execve` never returns, on failure errno is
-    // read. No borrowed Rust state is observed after the exec.
+    // SAFETY: FFI calls receive only locally-built NUL-terminated argv/envp arrays; on success
+    // `execve` never returns, on failure errno is read. No borrowed Rust state observed after.
     unsafe {
-        #[cfg(any(target_os = "linux", target_os = "android", target_os = "freebsd"))]
         {
             unsafe extern "C" {
-                safe fn on_before_reload_process_linux();
+                safe fn on_before_reload_process_posix();
             }
-            on_before_reload_process_linux();
+            on_before_reload_process_posix();
         }
 
         // We clone argv so that the memory address isn't the same as the libc one.
@@ -4716,7 +4480,7 @@ pub fn reload_process(clear_terminal: bool, may_return: bool) {
 /// Full `bun.spawnSync` (with buffered stdio, env, cwd) is in bun_spawn.
 #[derive(Debug, Clone, Copy)]
 pub struct SpawnStatus {
-    pub code: i32,
+    pub(crate) code: i32,
 }
 impl SpawnStatus {
     #[inline]
@@ -4816,6 +4580,8 @@ pub mod spawn_ffi {
         pub gid: u32,
         pub set_uid: bool,
         pub set_gid: bool,
+        /// Linux: directory fd of the cgroup the child starts in. -1 = unset.
+        pub cgroup_fd: c_int,
     }
 
     impl Default for BunSpawnRequest {
@@ -4831,6 +4597,7 @@ pub mod spawn_ffi {
                 gid: 0,
                 set_uid: false,
                 set_gid: false,
+                cgroup_fd: -1,
             }
         }
     }
@@ -4858,22 +4625,22 @@ enum StdinBehavior {
 
 /// Spawn argv, inherit stdout/stderr, **ignore stdin** (fd 0 ← /dev/null),
 /// wait.
-pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit_no_stdin(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Ignore)
 }
 
-pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> Result<SpawnStatus, crate::Error> {
+pub fn spawn_sync_inherit(argv: &[impl AsRef<[u8]>]) -> crate::CrateResult<SpawnStatus> {
     spawn_sync_inherit_impl(argv, StdinBehavior::Inherit)
 }
 
 fn spawn_sync_inherit_impl(
     argv: &[impl AsRef<[u8]>],
     stdin: StdinBehavior,
-) -> Result<SpawnStatus, crate::Error> {
+) -> crate::CrateResult<SpawnStatus> {
     // Empty argv: fail like the Windows path below instead of panicking on
     // the `argv[0]` reads in the per-OS unix arms.
     if argv.is_empty() {
-        return Err(crate::err!("FileNotFound"));
+        return Err(crate::CrateError::FileNotFound);
     }
     #[cfg(unix)]
     // SAFETY: argv strings are owned `ZBox`es (NUL-terminated) kept alive in
@@ -4898,7 +4665,7 @@ fn spawn_sync_inherit_impl(
         let pid: libc::pid_t = {
             let arg0 = argv[0].as_ref();
             let mut pathbuf = PathBuffer::uninit();
-            let exe: *const core::ffi::c_char = if arg0.contains(&b'/') {
+            let exe: *const core::ffi::c_char = if crate::strings::contains_char(arg0, b'/') {
                 // Contains a separator → use as-is (execve resolves relative
                 // to cwd, matching posix_spawnp semantics for non-bare names).
                 ptrs[0]
@@ -4906,7 +4673,7 @@ fn spawn_sync_inherit_impl(
                 let path_env = getenv_z(ZStr::from_static(b"PATH\0")).unwrap_or(b"");
                 match which(&mut pathbuf, path_env, b".", arg0) {
                     Some(z) => z.as_ptr(),
-                    None => return Err(crate::Error::from_errno(libc::ENOENT)),
+                    None => return Err(crate::CrateError::FileNotFound),
                 }
             };
 
@@ -4948,7 +4715,7 @@ fn spawn_sync_inherit_impl(
                 environ,
             );
             if rc != 0 {
-                return Err(crate::Error::from_errno(rc as i32));
+                return Err(crate::CrateError::Unexpected);
             }
             pid as libc::pid_t
         };
@@ -4963,7 +4730,7 @@ fn spawn_sync_inherit_impl(
                 if stdin == StdinBehavior::Ignore {
                     let rc = libc::posix_spawn_file_actions_init(&raw mut actions);
                     if rc != 0 {
-                        return Err(crate::Error::from_errno(rc));
+                        return Err(crate::CrateError::Unexpected);
                     }
                     let rc = libc::posix_spawn_file_actions_addopen(
                         &raw mut actions,
@@ -4974,7 +4741,7 @@ fn spawn_sync_inherit_impl(
                     );
                     if rc != 0 {
                         libc::posix_spawn_file_actions_destroy(&raw mut actions);
-                        return Err(crate::Error::from_errno(rc));
+                        return Err(crate::CrateError::Unexpected);
                     }
                     &raw const actions
                 } else {
@@ -4993,7 +4760,7 @@ fn spawn_sync_inherit_impl(
                 libc::posix_spawn_file_actions_destroy(&raw mut actions);
             }
             if rc != 0 {
-                return Err(crate::Error::from_errno(rc));
+                return Err(crate::CrateError::Unexpected);
             }
             pid
         };
@@ -5005,8 +4772,8 @@ fn spawn_sync_inherit_impl(
             let _ = environ;
             let pid = libc::fork();
             if pid < 0 {
-                let e = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
-                return Err(crate::Error::from_errno(e));
+                let _ = std::io::Error::last_os_error().raw_os_error().unwrap_or(-1);
+                return Err(crate::CrateError::Unexpected);
             }
             if pid == 0 {
                 // Child. execvp inherits stdio + environ, which is exactly the
@@ -5037,7 +4804,7 @@ fn spawn_sync_inherit_impl(
         )))]
         let pid: libc::pid_t = {
             let _ = (&ptrs, environ, stdin);
-            return Err(crate::err!(Unexpected));
+            return Err(crate::CrateError::Unexpected);
         };
 
         let mut status: i32 = 0;
@@ -5048,7 +4815,7 @@ fn spawn_sync_inherit_impl(
                 if e == libc::EINTR {
                     continue;
                 }
-                return Err(crate::Error::from_errno(e));
+                return Err(crate::CrateError::Unexpected);
             }
             break;
         }
@@ -5064,7 +4831,7 @@ fn spawn_sync_inherit_impl(
         // Route through `std::process::Command` (CreateProcessW, no event
         // loop) with inherited stdio — see spawn/lib.rs:307 for the
         // PORTING.md rationale on why off-loop spawns may bypass bun_spawn on
-        // Windows. Do NOT return `err!(Unexpected)` here: that bubbles up as
+        // Windows. Do NOT return `Unexpected` here: that bubbles up as
         // `error: An unknown error occurred (Unexpected)` and fails every
         // `bun init` invocation on Windows (test/cli/init/init.test.ts).
         use std::ffi::OsString;
@@ -5078,7 +4845,7 @@ fn spawn_sync_inherit_impl(
         }
 
         let mut iter = argv.iter();
-        let argv0 = iter.next().ok_or(crate::err!("FileNotFound"))?;
+        let argv0 = iter.next().ok_or(crate::CrateError::FileNotFound)?;
         let mut cmd = std::process::Command::new(to_os(argv0.as_ref()));
         for arg in iter {
             cmd.arg(to_os(arg.as_ref()));
@@ -5089,9 +4856,9 @@ fn spawn_sync_inherit_impl(
             cmd.stdin(std::process::Stdio::null());
         }
         let status = cmd.status().map_err(|e| match e.kind() {
-            std::io::ErrorKind::NotFound => crate::err!("FileNotFound"),
-            std::io::ErrorKind::PermissionDenied => crate::err!("AccessDenied"),
-            _ => crate::Error::from(e),
+            std::io::ErrorKind::NotFound => crate::CrateError::FileNotFound,
+            std::io::ErrorKind::PermissionDenied => crate::CrateError::AccessDenied,
+            _ => crate::CrateError::Unexpected,
         })?;
         let code = status.code().unwrap_or(-1);
         Ok(SpawnStatus { code })
@@ -5099,7 +4866,7 @@ fn spawn_sync_inherit_impl(
     #[cfg(not(any(unix, windows)))]
     {
         let _ = (argv, stdin);
-        Err(crate::err!(Unexpected))
+        Err(crate::CrateError::Unexpected)
     }
 }
 
@@ -5129,11 +4896,6 @@ impl Timespec {
     pub const EPOCH: Timespec = Timespec { sec: 0, nsec: 0 };
     const NS_PER_S: i64 = crate::time::NS_PER_S as i64;
     const NS_PER_MS: i64 = crate::time::NS_PER_MS as i64;
-
-    #[inline]
-    pub const fn new(sec: i64, nsec: i64) -> Self {
-        Self { sec, nsec }
-    }
 
     #[inline]
     pub fn eql(&self, other: &Timespec) -> bool {
@@ -5167,14 +4929,6 @@ impl Timespec {
         // Saturates at i64::MAX (not u64::MAX) on overflow.
         s_ns.checked_add(self.nsec.max(0) as u64)
             .unwrap_or(i64::MAX as u64)
-    }
-
-    /// Signed nanoseconds (wrapping). Port of `bun.timespec.nsSigned`.
-    #[inline]
-    pub fn ns_signed(&self) -> i64 {
-        let ns_per_sec = self.sec.wrapping_mul(Self::NS_PER_S);
-        let ns_from_nsec = self.nsec.div_euclid(Self::NS_PER_MS);
-        ns_per_sec.wrapping_add(ns_from_nsec)
     }
 
     /// Milliseconds (signed, wrapping).
@@ -5232,15 +4986,6 @@ impl Timespec {
         t
     }
 
-    #[inline]
-    pub fn min(a: Timespec, b: Timespec) -> Timespec {
-        if a.order(&b).is_lt() { a } else { b }
-    }
-    #[inline]
-    pub fn max(a: Timespec, b: Timespec) -> Timespec {
-        if a.order(&b).is_gt() { a } else { b }
-    }
-
     /// `bun.timespec.orderIgnoreEpoch` — EPOCH = "no timeout", treated as +∞.
     pub fn order_ignore_epoch(a: Timespec, b: Timespec) -> core::cmp::Ordering {
         if a == b {
@@ -5267,17 +5012,16 @@ impl Timespec {
     /// Construct from a signed nanosecond count. Euclidean division keeps
     /// `nsec ∈ [0, 1e9)` for negative inputs so `ns()`/`order()` round-trip.
     #[inline]
-    pub const fn from_ns(ns: i64) -> Timespec {
+    pub(crate) const fn from_ns(ns: i64) -> Timespec {
         Timespec {
             sec: ns.div_euclid(Self::NS_PER_S),
             nsec: ns.rem_euclid(Self::NS_PER_S),
         }
     }
 
-    /// `bun.timespec.now(.allow_mocked_time)` — monotonic-ish "rough tick".
-    /// Real impl routes through `getRoughTickCount` (jsc); tier-0 reads the
-    /// monotonic clock directly. Test-runner fake-timers write the mocked
-    /// nanosecond value via `mock_time::set` / `mock_time::clear`.
+    /// Monotonic clock (`CLOCK_MONOTONIC` / QPC). Boot-relative on every
+    /// platform; never compare against wall-clock epoch. Fake-timers override
+    /// via `mock_time::set` / `mock_time::clear`.
     #[inline]
     pub fn now(mode: TimespecMockMode) -> Timespec {
         if matches!(mode, TimespecMockMode::AllowMockedTime) {
@@ -5306,13 +5050,14 @@ impl Timespec {
                 nsec: ts.tv_nsec,
             }
         }
-        #[cfg(not(unix))]
+        #[cfg(windows)]
         {
-            let n = crate::time::nano_timestamp();
-            Timespec {
-                sec: (n / 1_000_000_000) as i64,
-                nsec: (n % 1_000_000_000) as i64,
-            }
+            // QPC via the c-bindings.cpp shim: the same monotonic clock libuv
+            // (uv_hrtime), uSockets' sweep and WTF::MonotonicTime::now use.
+            let mut sec: i64 = 0;
+            let mut nsec: i64 = 0;
+            clock_gettime_monotonic(&mut sec, &mut nsec);
+            Timespec { sec, nsec }
         }
     }
 
@@ -5338,7 +5083,6 @@ pub enum TimespecMockMode {
 /// the `Timespec::now_allow_mocked_time()` helper.
 pub mod timespec_mode {
     pub use super::TimespecMockMode::*;
-    pub type Mode = super::TimespecMockMode;
 }
 
 /// Mocked-time storage. The data lives at T0 so `Timespec::now` reads it
@@ -5383,7 +5127,7 @@ pub mod mock_time {
     }
     /// Current mocked wall-clock time in ms, or `None` if not mocked.
     #[inline]
-    pub fn wall_ms() -> Option<f64> {
+    pub(crate) fn wall_ms() -> Option<f64> {
         let v = f64::from_bits(MOCKED_WALL_MS.load(Ordering::Relaxed));
         if v.is_nan() { None } else { Some(v) }
     }
@@ -5397,20 +5141,11 @@ pub mod mock_time {
 #[allow(non_camel_case_types)]
 #[repr(transparent)]
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct f16(pub u16);
+pub struct f16(pub(crate) u16);
 
 impl f16 {
-    #[inline]
-    pub const fn from_bits(bits: u16) -> Self {
-        Self(bits)
-    }
-    #[inline]
-    pub const fn to_bits(self) -> u16 {
-        self.0
-    }
-
     /// Widen to `f64` (exact).
-    pub fn to_f64(self) -> f64 {
+    pub(crate) fn to_f64(self) -> f64 {
         let h = self.0 as u32;
         let sign = (h >> 15) & 1;
         let exp = (h >> 10) & 0x1F;
@@ -5485,7 +5220,7 @@ pub mod perf {
         linux: Option<Linux>,
     }
     impl Ctx {
-        pub const DISABLED: Ctx = Ctx {
+        pub(crate) const DISABLED: Ctx = Ctx {
             #[cfg(any(target_os = "linux", target_os = "android"))]
             linux: None,
         };
@@ -5532,11 +5267,29 @@ pub mod perf {
     }
 
     #[inline]
-    pub fn is_enabled() -> bool {
+    pub(crate) fn is_enabled() -> bool {
         match IS_ENABLED.load(Ordering::Relaxed) {
             DISABLED => false,
             ENABLED => true,
             _ => is_enabled_init(),
+        }
+    }
+
+    /// Single source of truth for the Linux ftrace FFI decls (defined in
+    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
+    /// (the canonical signpost/ftrace entry point) imports these instead of
+    /// re-declaring them.
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    pub mod sys {
+        unsafe extern "C" {
+            /// No preconditions; returns 0/1 based on tracefs availability.
+            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
+            /// No preconditions.
+            pub safe fn Bun__linux_trace_close();
+            pub fn Bun__linux_trace_emit(
+                event_name: *const core::ffi::c_char,
+                duration_ns: i64,
+            ) -> core::ffi::c_int;
         }
     }
 
@@ -5605,24 +5358,6 @@ pub mod perf {
                     i64::try_from(duration).unwrap_or(i64::MAX),
                 )
             };
-        }
-    }
-
-    /// Single source of truth for the Linux ftrace FFI decls (defined in
-    /// `src/jsc/bindings/linux_perf_tracing.cpp`). Re-exported so `bun_perf`
-    /// (the canonical signpost/ftrace entry point) imports these instead of
-    /// re-declaring them.
-    #[cfg(any(target_os = "linux", target_os = "android"))]
-    pub mod sys {
-        unsafe extern "C" {
-            /// No preconditions; returns 0/1 based on tracefs availability.
-            pub safe fn Bun__linux_trace_init() -> core::ffi::c_int;
-            /// No preconditions.
-            pub safe fn Bun__linux_trace_close();
-            pub fn Bun__linux_trace_emit(
-                event_name: *const core::ffi::c_char,
-                duration_ns: i64,
-            ) -> core::ffi::c_int;
         }
     }
 }

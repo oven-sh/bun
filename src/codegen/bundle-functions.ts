@@ -48,7 +48,7 @@ import path from "path";
 import { sliceSourceCode } from "./builtin-parser";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
 import { getJS2NativeDTS } from "./generate-js2native";
-import { addCPPCharArray, cap, low, writeIfNotChanged } from "./helpers";
+import { cap, checkAscii, low, writeIfNotChanged } from "./helpers";
 import { applyGlobalReplacements, define } from "./replacements";
 
 const PARALLEL = false;
@@ -79,11 +79,7 @@ interface ParsedBuiltin {
 interface BundledBuiltin {
   name: string;
   directives: Record<string, any>;
-  isGetter: boolean;
   constructAbility: string;
-  constructKind: string;
-  isLinkTimeConstant: boolean;
-  intrinsic: string;
   overriddenName: string;
   source: string;
   params: string[];
@@ -193,9 +189,6 @@ async function processFileSplit(filename: string): Promise<{ functions: BundledB
       }
       if (name === "constructor") {
         directives.ConstructAbility = "CanConstruct";
-      } else if (name === "nakedConstructor") {
-        directives.ConstructAbility = "CanConstruct";
-        directives.ConstructKind = "Naked";
       } else {
         directives[name] = value;
       }
@@ -328,15 +321,13 @@ $$capture_start$$(${fn.async ? "async " : ""}${
     let usesAssert = output.includes("$assert");
     const captured = output.match(/\$\$capture_start\$\$([\s\S]+)\.\$\$capture_end\$\$/)![1];
     const finalReplacement =
-      (fn.directives.sloppy
-        ? captured
-        : captured.replace(
-            /function\s*\(.*?\)\s*{/,
-            '$&"use strict";' +
-              (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
-              (usesAssert ? createAssertClientJS(fn.name) : ""),
-          )
-      )
+      captured
+        .replace(
+          /function\s*\(.*?\)\s*{/,
+          '$&"use strict";' +
+            (usesDebug ? createLogClientJS("BUILTINS", fn.name) : "") +
+            (usesAssert ? createAssertClientJS(fn.name) : ""),
+        )
         .replace(/^\((async )?function\(/, "($1function (")
         .replace(/__intrinsic__/g, "@")
         .replace(/__no_intrinsic__/g, "") + "\n";
@@ -354,11 +345,7 @@ $$capture_start$$(${fn.async ? "async " : ""}${
       // Async functions automatically get Private visibility because the parser
       // upgrades them when they use await (see Parser.cpp parseFunctionBody)
       visibility: fn.directives.visibility ?? (fn.directives.linkTimeConstant || fn.async ? "Private" : "Public"),
-      isGetter: !!fn.directives.getter,
       constructAbility: fn.directives.ConstructAbility ?? "CannotConstruct",
-      constructKind: fn.directives.ConstructKind ?? "None",
-      isLinkTimeConstant: !!fn.directives.linkTimeConstant,
-      intrinsic: fn.directives.intrinsic ?? "NoIntrinsic",
 
       // Not known yet.
       sourceOffset: 0,
@@ -410,18 +397,14 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     }
   }
 
-  let combinedSourceCodeChars = "";
-  let combinedSourceCodeLength = 0;
+  let combinedSourceCode = "";
   // Compute source offsets
   {
     for (const { basename, functions } of files) {
       for (const fn of functions) {
-        fn.sourceOffset = combinedSourceCodeLength;
-        combinedSourceCodeLength += fn.source.length;
-        if (combinedSourceCodeChars && !combinedSourceCodeChars.endsWith(",")) {
-          combinedSourceCodeChars += ",";
-        }
-        combinedSourceCodeChars += addCPPCharArray(fn.source, false);
+        checkAscii(fn.source);
+        fn.sourceOffset = combinedSourceCode.length;
+        combinedSourceCode += fn.source;
 
         // If you want to see the individual function sources:
         // if (true) {
@@ -430,6 +413,7 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
       }
     }
   }
+  const combinedSourceCodeLength = combinedSourceCode.length;
 
   let additionalPrivateNames = new Set();
 
@@ -449,9 +433,12 @@ export async function bundleBuiltinFunctions({ requireTransformer }: BundleBuilt
     #include <JavaScriptCore/JSObjectInlines.h>
     #include "BunBuiltinNames.h"
 
+    // The builtin function sources are linked at the start of bun_internal_modules_data
+    // (see bundle-modules.ts / InternalModuleRegistryConstants.S).
+    extern "C" const char bun_internal_modules_data[];
+
     namespace WebCore {
-        static const Latin1Character combinedSourceCodeBuffer[${combinedSourceCodeLength + 1}] = { ${combinedSourceCodeChars}, 0 };
-        static const std::span<const Latin1Character> internalCombinedSource = { combinedSourceCodeBuffer, ${combinedSourceCodeLength} };
+        static const std::span<const Latin1Character> internalCombinedSource = { reinterpret_cast<const Latin1Character*>(bun_internal_modules_data), ${combinedSourceCodeLength} };
     `;
 
   for (const { basename, functions } of files) {
@@ -622,7 +609,7 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
     #define WEBCORE_BUILTIN_${basename.toUpperCase()}_${fn.name.toUpperCase()} 1
     static constexpr JSC::ConstructAbility s_${name}ConstructAbility = JSC::ConstructAbility::${fn.constructAbility};
     static constexpr JSC::InlineAttribute s_${name}InlineAttribute = JSC::InlineAttribute::${fn.directives.alwaysInline ? "Always" : "None"};
-    static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::${fn.constructKind};
+    static constexpr JSC::ConstructorKind s_${name}ConstructorKind = JSC::ConstructorKind::None;
     static constexpr JSC::ImplementationVisibility s_${name}ImplementationVisibility = JSC::ImplementationVisibility::${fn.visibility};
 
     `;
@@ -877,4 +864,9 @@ JSBuiltinInternalFunctions::JSBuiltinInternalFunctions(JSC::VM& vm) : m_vm(vm)
   globalThis.internalFunctionJSSize = totalJSSize;
   globalThis.internalFunctionCount = files.reduce((acc, { functions }) => acc + functions.length, 0);
   globalThis.internalFunctionFileCount = files.length;
+
+  // bundle-modules.ts prepends this to InternalModuleRegistryConstants.bin so the
+  // same linked blob carries both the builtin function sources and the internal
+  // module sources.
+  return { combinedSourceCode };
 }

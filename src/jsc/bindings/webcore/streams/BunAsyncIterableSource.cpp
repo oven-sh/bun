@@ -13,6 +13,7 @@
 #include "JSReadableStream.h"
 #include "JSStreamsRuntime.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 
@@ -70,12 +71,22 @@ void JSAsyncIteratorSourceOperation::visitChildrenImpl(JSCell* cell, Visitor& vi
     auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_iterator);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_pullPromise);
+    visitor.appendHidden(thisObject->m_iterator);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_pullPromise);
 }
 
 DEFINE_VISIT_CHILDREN(JSAsyncIteratorSourceOperation);
+
+void JSAsyncIteratorSourceOperation::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSAsyncIteratorSourceOperation>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_iterator, "iterator"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_pullPromise, "pullPromise"_s);
+}
 
 static void driveAsyncIterator(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
 static void asyncIterReturnIteratorAndSettle(JSGlobalObject*, JSAsyncIteratorSourceOperation*);
@@ -112,6 +123,21 @@ static void settlePullPromiseRejected(JSGlobalObject* globalObject, JSAsyncItera
     }
 }
 
+// The pump met an abrupt completion. An ordinary one is delivered through the error tail; the VM's
+// termination (takeAbruptCompletion leaves it pending and returns nothing) has no error to deliver and no
+// script may run over it: drop the iterator and the pull promise unsettled and let it propagate.
+static void asyncIterFinishAbrupt(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op, TopExceptionScope& scope)
+{
+    if (JSValue error = takeAbruptCompletion(globalObject, scope)) [[likely]] {
+        asyncIterFinishWithError(globalObject, op, error);
+        return;
+    }
+    op->m_done = true;
+    op->m_running = false;
+    op->m_iterator.clear();
+    op->m_pullPromise.clear();
+}
+
 // The success tail: controller.end(), then iterator.return(), then resolve the pull promise.
 static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIteratorSourceOperation* op)
 {
@@ -124,8 +150,7 @@ static void asyncIterFinishSuccess(JSGlobalObject* globalObject, JSAsyncIterator
         MarkedArgumentBuffer noArgs;
         endResult = invokeOptionalMethod(globalObject, controller, WebCore::builtinNames(vm).endPublicName(), noArgs);
         if (scope.exception()) [[unlikely]] {
-            JSValue error = takeAbruptCompletion(globalObject, scope);
-            asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+            asyncIterFinishAbrupt(globalObject, op, scope);
             return;
         }
     }
@@ -275,8 +300,13 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
             flushPromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
             return NextStep::Suspended;
         }
-        if (auto* wrotePromise = asPromise(wrote))
+        if (auto* wrotePromise = asPromise(wrote)) {
             markPromiseAsHandled(vm, wrotePromise);
+            if (wrotePromise->status() == JSPromise::Status::Pending) {
+                wrotePromise->performPromiseThenWithContext(vm, globalObject, runtime->onAsyncIterableSourceFlushFulfilled(), runtime->onAsyncIterableSourceErrored(), jsUndefined(), op);
+                return NextStep::Suspended;
+            }
+        }
     }
 
     if (op->m_iteratorDone) {
@@ -286,8 +316,7 @@ static NextStep asyncIterHandleNextResult(JSGlobalObject* globalObject, JSAsyncI
     return NextStep::ContinueLoop;
 
 abrupt:
-    JSValue error = takeAbruptCompletion(globalObject, scope);
-    asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+    asyncIterFinishAbrupt(globalObject, op, scope);
     return NextStep::Finished;
 }
 
@@ -328,8 +357,7 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
                 nextResult = JSC::call(globalObject, nextFunction, iterator, nextArgs, "iterator.next is not a function"_s);
             }
             if (scope.exception()) [[unlikely]] {
-                JSValue error = takeAbruptCompletion(globalObject, scope);
-                asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+                asyncIterFinishAbrupt(globalObject, op, scope);
                 return;
             }
         }
@@ -342,8 +370,7 @@ static void driveAsyncIterator(JSGlobalObject* globalObject, JSAsyncIteratorSour
             // `await` semantics: adopt thenables; plain results become fulfilled promises.
             nextPromise = promiseResolvedWith(globalObject, nextResult);
             if (scope.exception()) [[unlikely]] {
-                JSValue error = takeAbruptCompletion(globalObject, scope);
-                asyncIterFinishWithError(globalObject, op, error ? error : jsUndefined());
+                asyncIterFinishAbrupt(globalObject, op, scope);
                 return;
             }
         }

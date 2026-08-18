@@ -1,12 +1,16 @@
 #include "root.h"
 #include "wtf-bindings.h"
+#include "BunTTYState.h"
 #include <wtf/StackBounds.h>
 #include <wtf/StackCheck.h>
 #include <wtf/StackTrace.h>
 #include <wtf/dtoa.h>
+#include <wtf/DateMath.h>
 #include <wtf/NumberOfCores.h>
 #include <atomic>
 #include <cassert>
+
+static_assert(WTF::maxECMAScriptTime == 8.64e15, "bun_jsc::wtf::MAX_ECMASCRIPT_TIME in WTF.rs must match");
 
 #include "wtf/SIMDUTF.h"
 #if OS(WINDOWS)
@@ -24,9 +28,6 @@ static struct termios orig_termios;
 static std::atomic<int> orig_termios_spinlock;
 static std::once_flag reset_once_flag;
 
-static int current_tty_mode = 0;
-static struct termios orig_tty_termios;
-
 int uv__tcsetattr(int fd, int how, const struct termios* term)
 {
     int rc;
@@ -41,7 +42,7 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
     return 0;
 }
 
-extern "C" int uv_tty_reset_mode(void)
+extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
 {
     int saved_errno;
     int err;
@@ -49,11 +50,11 @@ extern "C" int uv_tty_reset_mode(void)
     saved_errno = errno;
 
     if (atomic_exchange(&orig_termios_spinlock, 1))
-        return 16; // UV_EBUSY; /* In uv_tty_set_mode(). */
+        return -EBUSY; // UV_EBUSY, ttySetMode() is taking the snapshot
 
     err = 0;
     if (orig_termios_fd != -1)
-        err = uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+        err = -uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios); // UV__ERR(errno)
 
     atomic_store(&orig_termios_spinlock, 0);
     errno = saved_errno;
@@ -106,19 +107,28 @@ extern "C" void Bun__atexit(void (*func)(void));
 extern "C" volatile sig_atomic_t bun_stdio_modified[3];
 #endif
 
-extern "C" int Bun__ttySetMode(int fd, int mode)
+extern "C" size_t Bun__ttyStateSize()
 {
+    return sizeof(BunTTYState);
+}
+
 #if !OS(WINDOWS)
+// Port of libuv's uv_tty_set_mode(), with `state` standing in for the
+// per-handle fields of uv_tty_t. The file statics above are only the
+// uv_tty_reset_mode() snapshot, which is process-wide in libuv too.
+// `action` is the tcsetattr() action: TCSADRAIN (libuv's choice) or TCSANOW.
+static int ttySetMode(int fd, int mode, BunTTYState& state, int action)
+{
     struct termios tmp;
     int expected;
     int rc;
 
-    if (current_tty_mode == mode)
+    if (state.mode == mode)
         return 0;
 
-    if (current_tty_mode == 0 && mode != 0) {
+    if (state.mode == 0 && mode != 0) {
         do {
-            rc = tcgetattr(fd, &orig_tty_termios);
+            rc = tcgetattr(fd, &state.orig_termios);
         } while (rc == -1 && errno == EINTR);
 
         if (rc == -1)
@@ -130,14 +140,14 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         } while (!atomic_compare_exchange_strong(&orig_termios_spinlock, &expected, 1));
 
         if (orig_termios_fd == -1) {
-            orig_termios = orig_tty_termios;
+            orig_termios = state.orig_termios;
             orig_termios_fd = fd;
         }
 
         atomic_store(&orig_termios_spinlock, 0);
     }
 
-    tmp = orig_tty_termios;
+    tmp = state.orig_termios;
     switch (mode) {
     case 0: // normal
         break;
@@ -182,16 +192,35 @@ extern "C" int Bun__ttySetMode(int fd, int mode)
         bun_stdio_modified[fd] = 1;
     }
 
-    /* Apply changes after draining */
-    rc = uv__tcsetattr(fd, TCSADRAIN, &tmp);
+    rc = uv__tcsetattr(fd, action, &tmp);
     if (rc == 0) {
-        current_tty_mode = mode;
+        state.mode = mode;
     }
 
     return rc;
-#else
-    return 0;
+}
+#endif
 
+extern "C" int Bun__ttySetMode(int fd, int mode, void* rawState, int drain)
+{
+#if !OS(WINDOWS)
+    // Copied in and out so callers can hand us an unaligned byte buffer: the
+    // JS streams keep theirs in a Uint8Array.
+    BunTTYState state;
+    memcpy(&state, rawState, sizeof(state));
+    // TCSADRAIN matches libuv on real ttys. It must never be used on a PTY
+    // master: draining waits on the slave's write lock, and a child blocked
+    // in write() holds that lock until the master's owner (this caller)
+    // reads the master, so the two deadlock. Those callers pass drain == 0.
+    int rc = ttySetMode(fd, mode, state, drain ? TCSADRAIN : TCSANOW);
+    memcpy(rawState, &state, sizeof(state));
+    return rc;
+#else
+    UNUSED_PARAM(fd);
+    UNUSED_PARAM(mode);
+    UNUSED_PARAM(rawState);
+    UNUSED_PARAM(drain);
+    return 0;
 #endif
 }
 
@@ -268,7 +297,7 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()
@@ -284,11 +313,6 @@ extern "C" void WTF__DumpStackTrace(void** stack, size_t stack_count)
 extern "C" int WTF__numberOfProcessorCores()
 {
     return WTF::numberOfProcessorCores();
-}
-
-extern "C" void WTF__releaseFastMallocFreeMemoryForThisThread()
-{
-    WTF::releaseFastMallocFreeMemoryForThisThread();
 }
 
 }

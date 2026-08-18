@@ -17,6 +17,8 @@
 #include "JSReadableStreamDefaultReader.h"
 #include "JSWritableStream.h"
 #include "WebCoreJSClientData.h"
+#include "WebStreamsHeapAnalyzer.h"
+#include "WebStreamsInspectCustom.h"
 #include "WebStreamsInternals.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -27,6 +29,7 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSPromise.h>
 #include <JavaScriptCore/Lookup.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <JavaScriptCore/TopExceptionScope.h>
@@ -51,10 +54,7 @@ static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_locked);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototypeGetter_constructor);
 static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter);
 static JSC_DECLARE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter);
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototype_nativeTypeGetter);
-static JSC_DECLARE_CUSTOM_SETTER(jsReadableStreamPrototype_nativeTypeSetter);
-static JSC_DECLARE_CUSTOM_GETTER(jsReadableStreamPrototype_disturbedGetter);
-static JSC_DECLARE_CUSTOM_SETTER(jsReadableStreamPrototype_disturbedSetter);
+static JSC_DECLARE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom);
 
 class JSReadableStreamPrototype final : public JSC::JSNonFinalObject {
 public:
@@ -309,18 +309,6 @@ template<> void JSReadableStreamConstructor::finishCreation(VM& vm, JSDOMGlobalO
     m_instanceStructure.set(vm, this, getDOMStructure<JSReadableStream>(vm, globalObject));
 }
 
-static Structure* structureForNewTarget(JSC::VM& vm, JSReadableStreamConstructor* constructor, JSGlobalObject* lexicalGlobalObject, JSObject* newTarget)
-{
-    if (newTarget == constructor) [[likely]]
-        return constructor->instanceStructure();
-
-    auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* newTargetGlobalObject = JSC::getFunctionRealm(lexicalGlobalObject, newTarget);
-    RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* baseStructure = getDOMStructure<JSReadableStream>(vm, *uncheckedDowncast<JSDOMGlobalObject>(newTargetGlobalObject));
-    RELEASE_AND_RETURN(scope, JSC::InternalFunction::createSubclassStructure(lexicalGlobalObject, newTarget, baseStructure));
-}
-
 template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSReadableStreamConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -398,6 +386,33 @@ static const HashTableValue JSReadableStreamPrototypeTableValues[] = {
 
 const ClassInfo JSReadableStreamPrototype::s_info = { "ReadableStream"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamPrototype) };
 
+JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototype_inspectCustom, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue thisValue = callFrame->thisValue();
+    auto* thisObject = dynamicDowncast<JSReadableStream>(thisValue);
+    if (!thisObject) [[unlikely]]
+        return JSValue::encode(thisValue);
+    JSObject* data = constructEmptyObject(lexicalGlobalObject);
+    data->putDirect(vm, Identifier::fromString(vm, "locked"_s), jsBoolean(isReadableStreamLocked(thisObject)), 0);
+    ASCIILiteral state;
+    switch (thisObject->m_state) {
+    case ReadableStreamState::Readable:
+        state = "readable"_s;
+        break;
+    case ReadableStreamState::Closed:
+        state = "closed"_s;
+        break;
+    case ReadableStreamState::Errored:
+        state = "errored"_s;
+        break;
+    }
+    data->putDirect(vm, Identifier::fromString(vm, "state"_s), jsNontrivialString(vm, state), 0);
+    data->putDirect(vm, Identifier::fromString(vm, "supportsBYOB"_s), jsBoolean(thisObject->m_controllerKind == ControllerKind::Byte), 0);
+    RELEASE_AND_RETURN(scope, Bun::WebStreams::customInspect(lexicalGlobalObject, callFrame, thisValue, "ReadableStream"_s, data));
+}
+
 void JSReadableStreamPrototype::finishCreation(VM& vm)
 {
     Base::finishCreation(vm);
@@ -407,12 +422,11 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
     JSValue valuesFunction = getDirect(vm, vm.propertyNames->builtinNames().valuesPublicName());
     putDirectWithoutTransition(vm, vm.propertyNames->asyncIteratorSymbol, valuesFunction, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum));
 
-    // Bun private-name accessors read by surviving builtins (`stream.$bunNativePtr`, ...).
+    // Bun private-name accessor read by surviving builtins (`stream.$bunNativePtr`).
     auto& names = builtinNames(vm);
     putDirectCustomAccessor(vm, names.bunNativePtrPrivateName(), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototype_nativePtrGetter, jsReadableStreamPrototype_nativePtrSetter, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete);
-    putDirectCustomAccessor(vm, names.bunNativeTypePrivateName(), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototype_nativeTypeGetter, jsReadableStreamPrototype_nativeTypeSetter, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete);
-    putDirectCustomAccessor(vm, names.disturbedPrivateName(), DOMAttributeGetterSetter::create(vm, jsReadableStreamPrototype_disturbedGetter, jsReadableStreamPrototype_disturbedSetter, DOMAttributeAnnotation { JSReadableStream::info(), nullptr }), JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::DontDelete);
 
+    Bun::WebStreams::installInspectCustom(vm, this, jsReadableStreamPrototype_inspectCustom);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -481,21 +495,35 @@ void JSReadableStream::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSReadableStream>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_reader);
-    visitor.append(thisObject->m_storedError);
-    visitor.append(thisObject->m_controller);
-    visitor.append(thisObject->m_nativePtr);
-    visitor.append(thisObject->m_directUnderlyingSource);
-    visitor.append(thisObject->m_asyncContext);
-    visitor.append(thisObject->m_closedPromise);
+    visitor.appendHidden(thisObject->m_reader);
+    visitor.appendHidden(thisObject->m_storedError);
+    visitor.appendHidden(thisObject->m_controller);
+    visitor.appendHidden(thisObject->m_nativePtr);
+    visitor.appendHidden(thisObject->m_directUnderlyingSource);
+    visitor.appendHidden(thisObject->m_asyncContext);
+    visitor.appendHidden(thisObject->m_closedPromise);
+}
+
+void JSReadableStream::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadableStream>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_reader, "reader"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_storedError, "storedError"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_controller, "controller"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_nativePtr, "bunNativePtr"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_directUnderlyingSource, "underlyingSource"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_asyncContext, "asyncContext"_s);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_closedPromise, "closedPromise"_s);
 }
 
 void JSReadableStream::materializeIfNeeded(JSGlobalObject* globalObject)
 {
-    if (m_bunMode == BunStreamMode::Default) [[likely]]
+    const auto mode = m_bunMode;
+    if (mode == BunStreamMode::Default) [[likely]]
         return;
     // Clear the mode BEFORE running the thunk so re-entrant consumers see it done.
-    auto mode = m_bunMode;
     m_bunMode = BunStreamMode::Default;
     if (mode == BunStreamMode::DirectPending)
         setUpDirectStreamController(globalObject, this, DirectSinkKind::ArrayBuffer, m_bunHighWaterMark);
@@ -657,7 +685,7 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_tee, (JSGlobalObject 
     auto* stream = dynamicDowncast<JSReadableStream>(callFrame->thisValue());
     if (!stream) [[unlikely]]
         return Bun::ERR::INVALID_THIS(scope, lexicalGlobalObject, "ReadableStream"_s);
-    auto branches = readableStreamTee(lexicalGlobalObject, stream, false);
+    auto branches = readableStreamTee(lexicalGlobalObject, stream);
     RETURN_IF_EXCEPTION(scope, {});
     auto* array = constructEmptyArray(lexicalGlobalObject, nullptr, 2);
     RETURN_IF_EXCEPTION(scope, {});
@@ -751,50 +779,32 @@ JSC_DEFINE_HOST_FUNCTION(jsReadableStreamPrototypeFunction_blob, (JSGlobalObject
     RELEASE_AND_RETURN(scope, JSValue::encode(readableStreamToBlob(lexicalGlobalObject, stream)));
 }
 
-// Bun private-name accessors ($bunNativePtr / $bunNativeType / $disturbed).
+// Bun private-name accessor ($bunNativePtr).
+// JSC brand-checks DOMAttribute getters (PropertySlot::customGetter) but invokes
+// custom setters with any receiver inheriting the accessor, so the setter validates
+// thisValue itself.
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativePtrGetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    auto& vm = JSC::getVM(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]]
+        return throwVMDOMAttributeGetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
     JSValue nativePtr = stream->nativePtrForJS();
     return JSValue::encode(nativePtr.isEmpty() ? jsUndefined() : nativePtr);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
-{
-    auto& vm = JSC::getVM(lexicalGlobalObject);
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
-    stream->m_nativePtr.set(vm, stream, JSValue::decode(encodedValue));
-    return true;
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_nativeTypeGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
-    return JSValue::encode(jsNumber(stream->m_nativeType));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativeTypeSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
+JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_nativePtrSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName propertyName))
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
-    int32_t nativeType = JSValue::decode(encodedValue).toInt32(lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, false);
-    stream->m_nativeType = nativeType;
-    return true;
-}
-
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamPrototype_disturbedGetter, (JSGlobalObject*, JSC::EncodedJSValue thisValue, PropertyName))
-{
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
-    return JSValue::encode(jsBoolean(stream->m_disturbed));
-}
-
-JSC_DEFINE_CUSTOM_SETTER(jsReadableStreamPrototype_disturbedSetter, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName))
-{
-    auto* stream = uncheckedDowncast<JSReadableStream>(JSValue::decode(thisValue));
-    stream->m_disturbed = JSValue::decode(encodedValue).toBoolean(lexicalGlobalObject);
+    auto* stream = dynamicDowncast<JSReadableStream>(JSValue::decode(thisValue));
+    if (!stream) [[unlikely]] {
+        throwDOMAttributeSetterTypeError(lexicalGlobalObject, scope, JSReadableStream::info(), propertyName);
+        return false;
+    }
+    stream->m_nativePtr.set(vm, stream, JSValue::decode(encodedValue));
     return true;
 }
 

@@ -17,17 +17,18 @@
 #include "wtf/Assertions.h"
 #include "napi_macros.h"
 
+#include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
+#include <wtf/Lock.h>
 
 #include <optional>
 #include <unordered_set>
 #include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
-
-static bool equal(napi_async_cleanup_hook_handle, napi_async_cleanup_hook_handle);
 
 namespace Napi {
 
@@ -77,15 +78,7 @@ struct AsyncCleanupHook : CleanupHook {
 
     bool operator==(const AsyncCleanupHook& other) const
     {
-        if (this == &other || (function == other.function && data == other.data)) {
-            if (handle && other.handle) {
-                return equal(handle, other.handle);
-            }
-
-            return !handle && !other.handle;
-        }
-
-        return false;
+        return this == &other || (function == other.function && data == other.data && handle == other.handle);
     }
 };
 
@@ -123,29 +116,20 @@ private:
 
 using HookSet = std::unordered_set<EitherCleanupHook, EitherCleanupHook::Hash>;
 
-void defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, bool isInstance, JSC::ThrowScope& scope);
+napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_descriptor& property, JSC::ThrowScope& scope);
 }
 
+// Owned by the addon: allocated by napi_add_async_cleanup_hook and freed only
+// by napi_remove_async_cleanup_hook, which the addon may call after the hook
+// itself has already run (that call is how it signals completion).
 struct napi_async_cleanup_hook_handle__ {
     napi_env env;
-    Napi::HookSet::iterator iter;
 
-    napi_async_cleanup_hook_handle__(napi_env env, decltype(iter) iter)
+    explicit napi_async_cleanup_hook_handle__(napi_env env)
         : env(env)
-        , iter(iter)
     {
-    }
-
-    bool operator==(const napi_async_cleanup_hook_handle__& other) const
-    {
-        return this == &other || (env == other.env && iter == other.iter);
     }
 };
-
-static bool equal(napi_async_cleanup_hook_handle one, napi_async_cleanup_hook_handle two)
-{
-    return one == two || *one == *two;
-}
 
 #define NAPI_ABORT(message)                                    \
     do {                                                       \
@@ -178,6 +162,7 @@ public:
         : m_globalObject(globalObject)
         , m_napiModule(napiModule)
         , m_vm(JSC::getVM(globalObject))
+        , m_vmHandle(Bun__VmHandle__retainRef(WebCore::clientData(JSC::getVM(globalObject))->vmHandle))
     {
         napi_internal_register_cleanup_zig(this);
     }
@@ -190,43 +175,142 @@ public:
     ~NapiEnv()
     {
         delete[] filename;
+        Bun__VmHandle__release(m_vmHandle);
     }
+
+    // This env's own clone of its VM's handle: how a thread holding an env ref
+    // (a finalizer fired off the JS thread) posts work to the VM. Lives as long
+    // as the env, which can outlive the JSC VM's client data.
+    const ::BunVmHandleRef* vmHandle() const { return m_vmHandle; }
 
     void cleanup()
     {
+        // The VM can already have a pending exception when cleanup starts:
+        // a Worker torn down via terminate() has JSC's TerminationException
+        // set (termination is trap-based, so clearing the exception object
+        // does not cancel the termination request -- re-entering JS
+        // re-throws it). Cleanup hooks and finalizers are native callbacks
+        // with no JS frame above them to catch anything, so, matching
+        // Node.js, each starts from a clean exception state. Without this,
+        // the first napi call in the first callback that checks the VM
+        // (e.g. napi_create_string_utf8 in a node-addon-api ObjectWrap
+        // finalizer) fails with napi_pending_exception and the addon's
+        // error path escalates to napi_fatal_error. See #30286.
+        clearExceptionsBetweenFinalizers();
+
         while (!m_cleanupHooks.empty()) {
             drain();
         }
 
-        // Defer GC during entire finalizer cleanup to prevent iterator invalidation.
-        // This prevents any GC-triggered finalizer execution while m_finalizers is being iterated.
-        JSC::DeferGCForAWhile deferGC(m_vm);
+        // Threadsafe functions hold a raw pointer to this env's event loop,
+        // which a worker's shutdown frees while addon threads keep running.
+        // Neutralize them all before that happens (Node: ThreadSafeFunction::Cleanup).
+        // Their finalizers are native callbacks like the ones below, so they
+        // start from a clean exception state too: a cleanup hook may have left one.
+        clearExceptionsBetweenFinalizers();
+        abortThreadSafeFunctions();
+
+        // A threadsafe function's finalizer can register a cleanup hook of its
+        // own, and the loop above has already run: drain again so it is not
+        // dropped on the floor.
+        while (!m_cleanupHooks.empty()) {
+            drain();
+        }
+        // erase() above leaves the bucket array allocated; release it here
+        // since ~NapiEnv may not run before process exit (late finalizers can
+        // hold the last Ref past GlobalObject teardown).
+        m_cleanupHooks = Napi::HookSet();
+        clearExceptionsBetweenFinalizers();
 
         m_isFinishingFinalizers = true;
-        // Reverse insertion order so children are torn down before parents (Node.js LIFO).
-        // ListHashSet iteration is safe against concurrent inserts, and m_isFinishingFinalizers
-        // routes all removals to active=false, so the only unsafe op (erase-current) can't occur.
-        for (auto it = m_finalizers.rbegin(); it != m_finalizers.rend(); ++it) {
-            Bun::NapiHandleScope handle_scope(m_globalObject);
-            it->call(this);
+        // A cleanup hook may itself have leaked an exception; the first
+        // finalizer starts clean too.
+        clearExceptionsBetweenFinalizers();
+        // Drain to empty, last first, so children are torn down before parents (Node.js
+        // LIFO) and a finalizer that registers another finalizer while running (an addon
+        // creating an external buffer from a finalizer) has it run in this same cleanup
+        // rather than left behind. The entry being called stays in the set until it
+        // returns — its owner (NapiRef / external-buffer destructor) holds a pointer to that
+        // node and may deactivate() it from inside the call — and is removed afterwards; no
+        // iterator is held across a call, so inserts and removals during one are plain.
+        while (!m_finalizers.isEmpty()) {
+            const BoundFinalizer* current = &m_finalizers.last();
+            m_currentFinalizer = current;
+            {
+                Bun::NapiHandleScope handle_scope(m_globalObject);
+                current->call(this);
+            }
+            m_currentFinalizer = nullptr;
+            // Whatever the call appended sits after `current`; remove `current` itself by value
+            // (still a live node: deactivate() only marks the running entry).
+            m_finalizers.remove(*current);
+            // Each finalizer starts from a clean exception state: Node.js
+            // never propagates one finalizer's throw into the next (there
+            // is no JS frame to catch in between). Leaving a pending
+            // exception also breaks later finalizers in subtle ways --
+            // napi_is_exception_pending skips the VM check during cleanup
+            // for safety, so user code thinks there is no exception, but
+            // the next napi call with a throw scope sees it. See #30286.
+            clearExceptionsBetweenFinalizers();
         }
-        m_finalizers.clear();
         m_isFinishingFinalizers = false;
 
         instanceDataFinalizer.call(this, instanceData, true);
         instanceDataFinalizer.clear();
+        clearExceptionsBetweenFinalizers();
     }
 
-    void removeFinalizer(napi_finalize callback, void* hint, void* data)
+    // Threadsafe-function registry. Entries are raw ThreadSafeFunction* owned
+    // by the Rust side, added and removed on the JS thread only: at creation,
+    // by the destroy path (an event-loop task), and by teardown below. The
+    // lock guards the torn-down flag so the "created after teardown" case is
+    // decided in one critical section.
+    bool registerThreadSafeFunction(void* tsfn)
     {
-        m_finalizers.remove({ callback, hint, data });
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        if (m_threadSafeFunctionsTornDown) {
+            return false;
+        }
+        m_threadSafeFunctions.add(tsfn);
+        return true;
+    }
+
+    void unregisterThreadSafeFunction(void* tsfn)
+    {
+        WTF::Locker locker { m_threadSafeFunctionsLock };
+        m_threadSafeFunctions.remove(tsfn);
+    }
+
+    void abortThreadSafeFunctions()
+    {
+        WTF::HashSet<void*> tsfns;
+        {
+            WTF::Locker locker { m_threadSafeFunctionsLock };
+            m_threadSafeFunctionsTornDown = true;
+            tsfns = std::exchange(m_threadSafeFunctions, WTF::HashSet<void*> {});
+        }
+        for (void* tsfn : tsfns) {
+            napi_internal_threadsafe_function_env_teardown(tsfn);
+        }
     }
 
     struct BoundFinalizer;
 
+    // The entry cleanup() is currently calling stays in the set until its call returns (its
+    // owner holds a pointer to that node); asking to remove it marks it instead. Any other
+    // entry is removed outright.
     void removeFinalizer(const BoundFinalizer& finalizer)
     {
+        if (m_currentFinalizer && *m_currentFinalizer == finalizer) {
+            m_currentFinalizer->active = false;
+            return;
+        }
         m_finalizers.remove(finalizer);
+    }
+
+    void removeFinalizer(napi_finalize callback, void* hint, void* data)
+    {
+        removeFinalizer(BoundFinalizer { callback, hint, data });
     }
 
     const auto& addFinalizer(napi_finalize callback, void* hint, void* data)
@@ -279,33 +363,28 @@ public:
             }
         }
 
-        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this, m_cleanupHooks.end());
+        auto handle = std::make_unique<napi_async_cleanup_hook_handle__>(this);
 
-        auto [iter, inserted] = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter));
+        bool inserted = m_cleanupHooks.emplace(Napi::AsyncCleanupHook(function, handle.get(), data, ++m_cleanupHookCounter)).second;
         NAPI_RELEASE_ASSERT(inserted, "Attempted to add a duplicate async NAPI environment cleanup hook");
-        handle->iter = iter;
         return handle.release();
     }
 
-    bool removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
+    // The caller has already rejected null handles (napi_invalid_arg).
+    void removeAsyncCleanupHook(napi_async_cleanup_hook_handle handle)
     {
-        if (handle == nullptr) {
-            return false; // Invalid handle
-        }
-
-        for (const auto& hook : m_cleanupHooks) {
-            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&hook)) {
+        for (auto iter = m_cleanupHooks.begin(), end = m_cleanupHooks.end(); iter != end; ++iter) {
+            if (auto* async = std::get_if<Napi::AsyncCleanupHook>(&*iter)) {
                 if (async->handle == handle) {
-                    m_cleanupHooks.erase(handle->iter);
-                    delete handle;
-                    return true;
+                    m_cleanupHooks.erase(iter);
+                    break;
                 }
             }
         }
 
-        // Node.js silently ignores removal of non-existent handles
-        // See: node/src/node_api.cc:849-855
-        return false;
+        // Freed unconditionally, matching Node: for an already-drained hook
+        // this call is the addon's completion signal.
+        delete handle;
     }
 
     bool inGC() const
@@ -408,12 +487,20 @@ public:
     // Returns true if finalizers from this module need to be scheduled for the next tick after garbage collection, instead of running during garbage collection
     inline bool mustDeferFinalizers() const
     {
-        // Even when we'd normally have to defer the finalizer, if this is happening during the VM's last chance to finalize,
-        // we can't defer the finalizer and have to call it now.
-        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL && !isVMTerminating();
+        // The deferred path (NapiFinalizerTask::schedule) is responsible for the
+        // shutdown case: once is_shutting_down() it either pushes a cleanup hook
+        // (if those haven't run yet) or drops the task (if they have). Running a
+        // non-EXPERIMENTAL finalizer immediately during the final collectNow() is
+        // never safe — by then on_exit() has already run cleanup hooks (including
+        // the napi_set_instance_data finalizer that frees per-addon state the
+        // object finalizer reads), the heap is sweeping (no allocation, no handle
+        // scope), and napi_call_function returns the termination exception.
+        return m_napiModule.nm_version != NAPI_VERSION_EXPERIMENTAL;
     }
 
     inline bool isFinishingFinalizers() const { return m_isFinishingFinalizers; }
+    // The entry cleanup() is currently calling, if any (see BoundFinalizer::deactivate).
+    inline const BoundFinalizer* currentFinalizer() const { return m_currentFinalizer; }
 
     // Almost all NAPI functions should set error_code to the status they're returning right before
     // they return it
@@ -429,13 +516,19 @@ public:
     void* instanceData = nullptr;
     Bun::NapiFinalizer instanceDataFinalizer;
     char* filename = nullptr;
+    // Running total reported via napi_adjust_external_memory. JSC's
+    // deprecatedReportExtraMemory has no decrement path, so we keep a signed
+    // accumulator and only forward positive growth to the JSC heap. Tracked
+    // per env (per loaded module), not per isolate as in V8; the documented
+    // +N/-N addon pattern only observes its own deltas.
+    int64_t m_externalMemory = 0;
 
     struct BoundFinalizer {
         napi_finalize callback = nullptr;
         void* hint = nullptr;
         void* data = nullptr;
-        // Allows bound finalizers to effectively remove themselves during cleanup without breaking iteration.
-        // Safe to be mutable because it's not included in the hash.
+        // The running entry cannot leave the set until its call returns; deactivating it from
+        // inside the call marks it instead. Not part of the hash.
         mutable bool active = true;
 
         BoundFinalizer() = default;
@@ -463,13 +556,9 @@ public:
 
         void deactivate(NapiEnv& env) const
         {
-            if (env.isFinishingFinalizers()) {
-                active = false;
-            } else {
-                env.removeFinalizer(*this);
-                // At this point the BoundFinalizer has been destroyed, but because we're not doing anything else here it's safe.
-                // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
-            }
+            // `*this` may be the set's own node: nothing is touched after the removal.
+            // https://isocpp.org/wiki/faq/freestore-mgmt#delete-this
+            env.removeFinalizer(*this);
         }
 
         bool operator==(const BoundFinalizer& other) const
@@ -496,11 +585,24 @@ private:
     // ListHashSet preserves insertion order so cleanup() can run finalizers in reverse
     // (LIFO), matching Node.js teardown semantics for napi_wrap references.
     WTF::ListHashSet<BoundFinalizer, BoundFinalizer::Hash> m_finalizers;
+    const BoundFinalizer* m_currentFinalizer = nullptr;
     bool m_isFinishingFinalizers = false;
     JSC::VM& m_vm;
+    const ::BunVmHandleRef* m_vmHandle;
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
+
+    WTF::Lock m_threadSafeFunctionsLock;
+    WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
+    bool m_threadSafeFunctionsTornDown WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock) = false;
+
+    // Drop any pending exception -- VM-scope or env-scope -- between
+    // finalizers run from cleanup(). Used by cleanup() only. Defined
+    // out-of-line in napi.cpp so its uses of JSC::TopExceptionScope
+    // (which has JS_EXPORT_PRIVATE ctor/dtor under
+    // ENABLE_EXCEPTION_SCOPE_VERIFICATION) are confined to one TU.
+    void clearExceptionsBetweenFinalizers();
 
     // Returns a vector of hooks in reverse order of insertion.
     std::vector<Napi::EitherCleanupHook> getHooks() const
@@ -530,9 +632,13 @@ private:
             } else {
                 auto& async = std::get<Napi::AsyncCleanupHook>(hook);
                 ASSERT(async.function != nullptr);
+                // The addon owns the handle and frees it via
+                // napi_remove_async_cleanup_hook, possibly after this returns (#37201).
                 async.function(async.handle, async.data);
-                delete async.handle;
             }
+            // Same invariant as the finalizer loop in cleanup(): a hook
+            // that leaked an exception must not poison the next hook.
+            clearExceptionsBetweenFinalizers();
         }
     }
 };
@@ -540,14 +646,7 @@ private:
 extern "C" void napi_internal_cleanup_env_cpp(napi_env);
 extern "C" void napi_internal_remove_finalizer(napi_env, napi_finalize callback, void* hint, void* data);
 
-namespace JSC {
-class JSGlobalObject;
-class JSSourceCode;
-}
-
 namespace Napi {
-
-JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSObject* object, JSC::JSGlobalObject* globalObject);
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
@@ -615,11 +714,6 @@ public:
     void clear();
     bool isClear() const;
 
-    bool isSet() const { return m_tag != WeakTypeTag::NotSet; }
-    bool isPrimitive() const { return m_tag == WeakTypeTag::Primitive; }
-    bool isCell() const { return m_tag == WeakTypeTag::Cell; }
-    bool isString() const { return m_tag == WeakTypeTag::String; }
-
     void setPrimitive(JSValue);
     void setCell(JSCell*, WeakHandleOwner&, void* context);
     void setString(JSString*, WeakHandleOwner&, void* context);
@@ -637,24 +731,6 @@ public:
         default:
             return {};
         }
-    }
-
-    JSCell* cell() const
-    {
-        ASSERT(isCell());
-        return m_value.cell.get();
-    }
-
-    JSValue primitive() const
-    {
-        ASSERT(isPrimitive());
-        return m_value.primitive;
-    }
-
-    JSString* string() const
-    {
-        ASSERT(isString());
-        return m_value.string.get();
     }
 
 private:
@@ -784,10 +860,6 @@ public:
 
     static constexpr unsigned StructureFlags = Base::StructureFlags;
     static constexpr JSC::DestructionMode needsDestruction = DoesNotNeedDestruction;
-    static void destroy(JSCell* cell)
-    {
-        static_cast<NapiClass*>(cell)->NapiClass::~NapiClass();
-    }
 
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -807,7 +879,8 @@ public:
         napi_callback constructor,
         void* data,
         size_t property_count,
-        const napi_property_descriptor* properties);
+        const napi_property_descriptor* properties,
+        napi_status* propertyStatus = nullptr);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -828,7 +901,7 @@ private:
     {
     }
 
-    void finishCreation(VM&, const String& name, napi_callback constructor,
+    napi_status finishCreation(VM&, const String& name, napi_callback constructor,
         void* data,
         size_t property_count,
         const napi_property_descriptor* properties);
@@ -906,18 +979,11 @@ public:
         : m_callFrame(callFrame)
         , m_dataPtr(dataPtr)
     {
-        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict
-        // mode. So if `this` is null or undefined, we use globalThis instead; otherwise, we convert
-        // `this` to an object.
-        // TODO change to global? or find another way to avoid JSGlobalProxy
-        JSC::JSObject* jscThis = globalObject->globalThis();
-        if (!m_callFrame->thisValue().isUndefinedOrNull()) {
-            auto scope = DECLARE_THROW_SCOPE(JSC::getVM(globalObject));
-            jscThis = m_callFrame->thisValue().toObject(globalObject);
-            // https://tc39.es/ecma262/#sec-toobject
-            // toObject only throws for undefined and null, which we checked for
-            scope.assertNoException();
-        }
+        // Node-API function calls always run in "sloppy mode," even if the JS side is in strict mode.
+        // Not a ThrowScope: its simulated throw would reach the addon's first NAPI_PREAMBLE unchecked.
+        auto scope = DECLARE_TOP_EXCEPTION_SCOPE(JSC::getVM(globalObject));
+        JSValue jscThis = m_callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::sloppy());
+        scope.assertNoException();
         m_callFrame->setThisValue(jscThis);
     }
 

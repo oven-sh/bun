@@ -29,9 +29,8 @@ fn js_array_push(arr: JSValue, global: &JSGlobalObject, item: JSValue) -> JsResu
 #[inline]
 fn js_to_parser_err(e: bun_jsc::JsError) -> ParserError {
     match e {
-        bun_jsc::JsError::Thrown => ParserError::JSError,
+        bun_jsc::JsError::Thrown | bun_jsc::JsError::Terminated => ParserError::JSError,
         bun_jsc::JsError::OutOfMemory => ParserError::OutOfMemory,
-        bun_jsc::JsError::Terminated => ParserError::JSTerminated,
     }
 }
 
@@ -48,7 +47,6 @@ fn parser_err_to_js(
         // A renderer callback threw (or the VM is terminating); the exception
         // is already pending on the VM.
         ParserError::JSError => bun_jsc::JsError::Thrown,
-        ParserError::JSTerminated => bun_jsc::JsError::Terminated,
         ParserError::OutOfMemory => global_this.throw_out_of_memory(),
         ParserError::StackOverflow => global_this.throw_stack_overflow(),
         ParserError::InputTooLarge => global_this.throw_range_error(
@@ -134,7 +132,10 @@ pub(crate) fn set_max_markdown_block_bytes_for_testing(
 /// light?, columns? }`. By default colors are enabled, hyperlinks are
 /// disabled (the caller doesn't know if stdout is a TTY), and columns is 80.
 #[bun_jsc::host_fn]
-pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+pub(crate) fn render_to_ansi(
+    global_this: &JSGlobalObject,
+    callframe: &CallFrame,
+) -> JsResult<JSValue> {
     let [input_value, theme_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -190,7 +191,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
     let result = match md::render_to_ansi(input, md::Options::TERMINAL, theme) {
         Ok(Some(r)) => r,
         Ok(None) => {
-            // The parser can only return null via JSError / JSTerminated
+            // The parser can only return null via JSError
             // from a renderer callback; the ANSI renderer has none, so this
             // path is unreachable but handle it safely.
             return Err(global_this.throw_out_of_memory());
@@ -202,10 +203,7 @@ pub fn render_to_ansi(global_this: &JSGlobalObject, callframe: &CallFrame) -> Js
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn render_to_html(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn render_to_html(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, opts_value] = callframe.arguments_as_array::<2>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -308,7 +306,7 @@ fn parse_options(global_this: &JSGlobalObject, opts_value: JSValue) -> JsResult<
 /// metadata object, and returns a string. The final result is the concatenation
 /// of all callback outputs.
 #[bun_jsc::host_fn]
-pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
+fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     let [input_value, callbacks_value, opts_value] = callframe.arguments_as_array::<3>();
 
     if input_value.is_empty_or_undefined_or_null() {
@@ -358,10 +356,7 @@ pub(crate) fn render(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsR
 // The closure scopes a MarkedArgumentBuffer around the impl so every JSValue it
 // accumulates stays GC-visible for the duration of the call.
 #[bun_jsc::host_fn]
-pub(crate) fn render_react(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn render_react(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     MarkedArgumentBuffer::new(|marked_args| render_react_impl(global_this, callframe, marked_args))
 }
 
@@ -1624,7 +1619,7 @@ impl<'a> JsCallbackRenderer<'a> {
 }
 
 /// Slice the language token out of a fenced-code info string.
-pub(crate) fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
+fn extract_language(src_text: &[u8], info_beg: u32) -> &[u8] {
     let mut lang_end = info_beg;
     while (lang_end as usize) < src_text.len() {
         let c = src_text[lang_end as usize];

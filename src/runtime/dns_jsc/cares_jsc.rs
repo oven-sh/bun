@@ -250,12 +250,12 @@ impl_cares_linked!(
 );
 
 fn cares_list_to_js_array<T: CAresLinked>(
-    head: &mut T,
+    head: &T,
     global_this: &JSGlobalObject,
-    mut to_js: impl FnMut(&mut T, &JSGlobalObject) -> JsResult<JSValue>,
+    mut to_js: impl FnMut(&T, &JSGlobalObject) -> JsResult<JSValue>,
 ) -> JsResult<JSValue> {
     let mut count: usize = 0;
-    let mut p: *mut T = head;
+    let mut p: *const T = head;
     while !p.is_null() {
         // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
         unsafe { p = (*p).next() };
@@ -267,8 +267,9 @@ fn cares_list_to_js_array<T: CAresLinked>(
     p = head;
     let mut i: u32 = 0;
     while !p.is_null() {
-        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant).
-        let node = unsafe { &mut *p };
+        // SAFETY: `p` walks the c-ares-owned linked list (CAresLinked invariant);
+        // shared access only — the `to_js` builders never mutate the reply.
+        let node = unsafe { &*p };
         array.put_index(global_this, i, to_js(node, global_this)?)?;
         p = node.next();
         i += 1;
@@ -286,8 +287,8 @@ pub(crate) fn caa_reply_to_js_response(
     cares_list_to_js_array(this, global_this, caa_reply_to_js)
 }
 
-pub(crate) fn caa_reply_to_js(
-    this: &mut c_ares::struct_ares_caa_reply,
+fn caa_reply_to_js(
+    this: &c_ares::struct_ares_caa_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
@@ -298,9 +299,9 @@ pub(crate) fn caa_reply_to_js(
         JSValue::js_number(this.critical as f64),
     );
 
-    let property = this.property_bytes();
+    let property = bstr::String::borrow_utf8(this.property_bytes());
     let value = this.value_bytes();
-    obj.put(global_this, property, utf8_to_js(global_this, value)?);
+    obj.put_may_be_index(global_this, &property, utf8_to_js(global_this, value)?)?;
 
     Ok(obj)
 }
@@ -314,8 +315,8 @@ pub(crate) fn srv_reply_to_js_response(
     cares_list_to_js_array(this, global_this, srv_reply_to_js)
 }
 
-pub(crate) fn srv_reply_to_js(
-    this: &mut c_ares::struct_ares_srv_reply,
+fn srv_reply_to_js(
+    this: &c_ares::struct_ares_srv_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 4);
@@ -348,8 +349,8 @@ pub(crate) fn mx_reply_to_js_response(
     cares_list_to_js_array(this, global_this, mx_reply_to_js)
 }
 
-pub(crate) fn mx_reply_to_js(
-    this: &mut c_ares::struct_ares_mx_reply,
+fn mx_reply_to_js(
+    this: &c_ares::struct_ares_mx_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 2);
@@ -375,8 +376,8 @@ pub(crate) fn txt_reply_to_js_response(
     cares_list_to_js_array(this, global_this, txt_reply_to_js)
 }
 
-pub(crate) fn txt_reply_to_js(
-    this: &mut c_ares::struct_ares_txt_reply,
+fn txt_reply_to_js(
+    this: &c_ares::struct_ares_txt_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let array = JSValue::create_empty_array(global_this, 1)?;
@@ -385,7 +386,7 @@ pub(crate) fn txt_reply_to_js(
     Ok(array)
 }
 
-pub(crate) fn txt_reply_to_js_for_any(
+fn txt_reply_to_js_for_any(
     this: &mut c_ares::struct_ares_txt_reply,
     global_this: &JSGlobalObject,
     _lookup_name: &'static [u8],
@@ -406,8 +407,8 @@ pub(crate) fn naptr_reply_to_js_response(
     cares_list_to_js_array(this, global_this, naptr_reply_to_js)
 }
 
-pub(crate) fn naptr_reply_to_js(
-    this: &mut c_ares::struct_ares_naptr_reply,
+fn naptr_reply_to_js(
+    this: &c_ares::struct_ares_naptr_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
     let obj = JSValue::create_empty_object(global_this, 6);
@@ -452,7 +453,7 @@ pub(crate) fn soa_reply_to_js_response(
     soa_reply_to_js(this, global_this)
 }
 
-pub(crate) fn soa_reply_to_js(
+fn soa_reply_to_js(
     this: &mut c_ares::struct_ares_soa_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -558,7 +559,7 @@ fn any_reply_append_all(
     Ok(())
 }
 
-pub(crate) fn any_reply_to_js(
+fn any_reply_to_js(
     this: &mut c_ares::struct_any_reply,
     global_this: &JSGlobalObject,
 ) -> JsResult<JSValue> {
@@ -647,7 +648,7 @@ pub(crate) struct ErrorDeferred {
 }
 
 impl ErrorDeferred {
-    pub(crate) fn init(
+    fn init(
         errno: c_ares::Error,
         syscall: &'static [u8],
         hostname: Option<bstr::String>,
@@ -661,7 +662,7 @@ impl ErrorDeferred {
         })
     }
 
-    pub(crate) fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
+    fn reject(mut self, global_this: &JSGlobalObject) -> JsResult<()> {
         let code = self.errno.code();
         let message = if let Some(hostname) = &self.hostname {
             bstr::String::create_format(format_args!(
@@ -679,10 +680,10 @@ impl ErrorDeferred {
         };
         let system_error = SystemError {
             errno: self.errno as i32,
-            code: bstr::String::static_(code),
-            message,
-            syscall: bstr::String::clone_utf8(self.syscall),
-            hostname: self.hostname.take().unwrap_or(bstr::String::empty()),
+            code: bstr::String::static_(code).into(),
+            message: message.into(),
+            syscall: bstr::String::clone_utf8(self.syscall).into(),
+            hostname: self.hostname.take().unwrap_or(bstr::String::empty()).into(),
             ..Default::default()
         };
 
@@ -696,7 +697,7 @@ impl ErrorDeferred {
 
         // `self` (and thus self.promise / self.hostname) drops at scope exit;
         // hostname was `take()`n above to avoid double-deref.
-        Ok(self.promise.reject(global_this, Ok(instance))?)
+        self.promise.reject(global_this, Ok(instance))
     }
 
     pub(crate) fn reject_later(self: Box<Self>, global_this: &JSGlobalObject) {
@@ -708,14 +709,24 @@ impl ErrorDeferred {
         }
         impl Context {
             // `bun_event_loop::ManagedTask::new` expects
-            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (low-tier `ErasedJsError`).
+            // `fn(*mut T) -> bun_event_loop::JsResult<()>` (tier-0 `bun_core::JsError`).
             fn callback(this: *mut Context) -> bun_event_loop::JsResult<()> {
                 // SAFETY: `this` is the heap-allocated pointer passed to ManagedTask::new
                 // below; ManagedTask::run calls us exactly once with that pointer.
                 let this = unsafe { bun_core::heap::take(this) };
                 let global = this.global_this.get();
-                this.deferred.reject(global).map_err(Into::into)
+                this.deferred.reject(global)
             }
+        }
+
+        let vm = global_this.bun_vm();
+        // Worker terminate's `stop_dns_for_vm_teardown` fires EDESTRUCTION with
+        // `is_shutting_down` already set; the task queue is about to be
+        // drained-without-run and ManagedTask has no cleanup here, so enqueuing
+        // would leak the `Context` and its `JSPromiseStrong` box. Drop now while
+        // JSC is still live so the Strong handle releases cleanly.
+        if vm.is_shutting_down() {
+            return;
         }
 
         let context = bun_core::heap::into_raw(Box::new(Context {
@@ -725,9 +736,7 @@ impl ErrorDeferred {
         // TODO(@heimskr): new custom Task type
         // SAFETY: `bun_vm()` returns a non-null VM pointer (VM-owned for the lifetime of
         // the JSGlobalObject).
-        global_this
-            .bun_vm()
-            .as_mut()
+        vm.as_mut()
             .enqueue_task(bun_jsc::ManagedTask::ManagedTask::new(
                 context,
                 Context::callback,
@@ -757,13 +766,14 @@ pub(crate) fn error_to_js_with_syscall(
     let code = this.code();
     let instance = SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]),
-        syscall: bstr::String::static_(syscall),
+        code: bstr::String::static_(&code[4..]).into(),
+        syscall: bstr::String::static_(syscall).into(),
         message: bstr::String::create_format(format_args!(
             "{} {}",
             BStr::new(syscall),
             BStr::new(&code[4..])
-        )),
+        ))
+        .into(),
         ..Default::default()
     }
     .to_error_instance(global_this);
@@ -788,15 +798,16 @@ pub(crate) fn system_error_with_syscall_and_hostname(
     let code = this.code();
     SystemError {
         errno: this as i32,
-        code: bstr::String::static_(&code[4..]),
+        code: bstr::String::static_(&code[4..]).into(),
         message: bstr::String::create_format(format_args!(
             "{} {} {}",
             BStr::new(syscall),
             BStr::new(&code[4..]),
             BStr::new(hostname)
-        )),
-        syscall: bstr::String::static_(syscall),
-        hostname: bstr::String::clone_utf8(hostname),
+        ))
+        .into(),
+        syscall: bstr::String::static_(syscall).into(),
+        hostname: bstr::String::clone_utf8(hostname).into(),
         ..Default::default()
     }
 }
@@ -820,10 +831,7 @@ pub(crate) fn error_to_js_with_syscall_and_hostname(
 // ── canonicalizeIP host fn ─────────────────────────────────────────────────
 // `#[bun_jsc::host_fn(export = ...)]` emits the C-ABI shim under that link name.
 #[bun_jsc::host_fn(export = "Bun__canonicalizeIP")]
-pub(crate) fn bun_canonicalize_ip(
-    global_this: &JSGlobalObject,
-    callframe: &CallFrame,
-) -> JsResult<JSValue> {
+fn bun_canonicalize_ip(global_this: &JSGlobalObject, callframe: &CallFrame) -> JsResult<JSValue> {
     bun_jsc::mark_binding!();
 
     let arguments = callframe.arguments();

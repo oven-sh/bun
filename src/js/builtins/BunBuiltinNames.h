@@ -25,7 +25,6 @@ using namespace JSC;
     macro($$typeof) \
     macro(AbortSignal) \
     macro(Buffer) \
-    macro(Loader) \
     macro(ReadableByteStreamController) \
     macro(ReadableStream) \
     macro(ReadableStreamBYOBReader) \
@@ -33,7 +32,6 @@ using namespace JSC;
     macro(ReadableStreamDefaultController) \
     macro(ReadableStreamDefaultReader) \
     macro(SQL) \
-    macro(TextEncoderStreamEncoder) \
     macro(TransformStream) \
     macro(TransformStreamDefaultController) \
     macro(WritableStream) \
@@ -57,17 +55,13 @@ using namespace JSC;
     macro(blob) \
     macro(body) \
     macro(bunNativePtr) \
-    macro(bunNativeType) \
-    macro(byobRequest) \
     macro(bytes) \
     macro(cancel) \
     macro(checkBufferRead) \
     macro(checks) \
-    macro(cloneArrayBuffer) \
     macro(close) \
     macro(cmd) \
     macro(code) \
-    macro(controller) \
     macro(createCommonJSModule) \
     macro(createFIFO) \
     macro(createInternalModuleById) \
@@ -78,10 +72,8 @@ using namespace JSC;
     macro(decode) \
     macro(dest) \
     macro(dirname) \
-    macro(disturbed) \
     macro(domain) \
     macro(drain) \
-    macro(encode) \
     macro(encoding) \
     macro(end) \
     macro(errno) \
@@ -111,12 +103,17 @@ using namespace JSC;
     macro(ignoreBOM) \
     macro(importer) \
     macro(inherits) \
+    macro(internal) \
+    macro(internalMessage) \
     macro(internalModuleRegistry) \
     macro(internalRequire) \
     macro(isAbortSignal) \
     macro(isAbsolute) \
+    macro(isUncloneable) \
+    macro(isUntransferable) \
     macro(join) \
     macro(json) \
+    macro(kResistStopPropagation) \
     macro(key) \
     macro(lazy) \
     macro(lineText) \
@@ -149,13 +146,13 @@ using namespace JSC;
     macro(peekPromiseStatus) \
     macro(pokePromiseAsHandled) \
     macro(port) \
-    macro(post) \
     macro(preventAbort) \
     macro(preventCancel) \
     macro(preventClose) \
     macro(processBindingConstants) \
     macro(props) \
     macro(pull) \
+    macro(rawHeaders) \
     macro(read) \
     macro(readable) \
     macro(readableType) \
@@ -167,24 +164,21 @@ using namespace JSC;
     macro(requireMap) \
     macro(requireNativeModule) \
     macro(resolveSync) \
-    macro(resume) \
     macro(sameSite) \
     macro(secure) \
     macro(self) \
-    macro(setHandlers) \
+    macro(sharedFd) \
     macro(signal) \
     macro(size) \
     macro(specifier) \
     macro(start) \
-    macro(started) \
-    macro(state) \
     macro(status) \
+    macro(statusCode) \
+    macro(statusMessage) \
     macro(statusText) \
     macro(stream) \
-    macro(structuredCloneForStream) \
     macro(syscall) \
     macro(text) \
-    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textEncoderStreamEncoder) \
     macro(toClass) \
@@ -194,10 +188,10 @@ using namespace JSC;
     macro(updateRef) \
     macro(url) \
     macro(validated) \
-    macro(view) \
     macro(vmErrorDecorated) \
     macro(warning) \
     macro(webStreamClosedPromise) \
+    macro(webStreamControllerError) \
     macro(writable) \
     macro(writableType) \
     macro(write) \

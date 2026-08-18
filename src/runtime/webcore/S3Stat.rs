@@ -5,15 +5,15 @@ bun_output::declare_scope!(S3Stat, visible);
 
 #[bun_jsc::JsClass]
 pub struct S3Stat {
-    pub size: u64,
-    pub etag: BunString,
-    pub content_type: BunString,
-    pub last_modified: f64,
+    pub(crate) size: u64,
+    pub(crate) etag: BunString,
+    pub(crate) content_type: BunString,
+    pub(crate) last_modified: f64,
 }
 
 impl S3Stat {
     pub(crate) fn constructor(global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<Box<Self>> {
-        Err(global.throw_illegal_constructor("S3Stat"))
+        Err(global.throw_illegal_constructor())
     }
 
     pub(crate) fn init(

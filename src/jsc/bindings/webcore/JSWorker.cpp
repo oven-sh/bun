@@ -22,6 +22,16 @@
 #include "JSWorker.h"
 
 #include "ActiveDOMObject.h"
+#include "BunCPUProfiler.h"
+#if OS(WINDOWS)
+#include <uv.h>
+#else
+#include <sys/resource.h>
+#if defined(__APPLE__)
+#include <mach/mach.h>
+#endif
+#endif
+
 #include "EventNames.h"
 #include "ExtendedDOMClientIsoSubspaces.h"
 #include "ExtendedDOMIsoSubspaces.h"
@@ -44,7 +54,7 @@
 #include "JSEventListener.h"
 #include "NodeValidator.h"
 #include "StructuredSerializeOptions.h"
-#include "JSWorkerOptions.h"
+#include "WorkerOptions.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/HeapAnalyzer.h>
@@ -62,6 +72,7 @@
 #include <wtf/URL.h>
 #include "SerializedScriptValue.h"
 #include "BunProcess.h"
+#include "JSEnvironmentVariableMap.h"
 #include <JavaScriptCore/JSMap.h>
 
 namespace WebCore {
@@ -74,6 +85,10 @@ static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_postMessage);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_ref);
 static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal);
+static JSC_DECLARE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal);
 
 // Attributes
 
@@ -144,6 +159,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
     EnsureStillAliveScope argument1 = callFrame->argument(1);
 
     WorkerOptions options {};
+    // Founding an env tree swaps the parent's process.env, so it is deferred until
+    // every option has validated (below).
+    bool shareEnv = false;
     JSValue nodeWorkerObject {};
     if (callFrame->argumentCount() == 3) {
         nodeWorkerObject = callFrame->argument(2);
@@ -157,7 +175,10 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         RETURN_IF_EXCEPTION(throwScope, {});
         if (nameValue) {
             if (nameValue.isString()) {
-                options.name = nameValue.toWTFString(lexicalGlobalObject);
+                // isolatedCopy: m_options.name outlives this call and is read from
+                // the worker thread; it must not share a (possibly atomized)
+                // parent-heap StringImpl.
+                options.name = nameValue.toWTFString(lexicalGlobalObject).isolatedCopy();
                 RETURN_IF_EXCEPTION(throwScope, {});
             }
         }
@@ -224,41 +245,58 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
         }
 
+        auto shareEnvValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "shareEnv"_s));
+        RETURN_IF_EXCEPTION(throwScope, {});
+        if (shareEnvValue) {
+            shareEnv = shareEnvValue.toBoolean(lexicalGlobalObject);
+        }
+
         auto envValue = optionsObject->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "env"_s));
         RETURN_IF_EXCEPTION(throwScope, {});
-        // for now, we don't permit SHARE_ENV, because the behavior isn't implemented
-        if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
-            return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
-        }
-        JSObject* envObject = nullptr;
-
-        if (envValue && envValue.isCell()) {
-            envObject = dynamicDowncast<JSC::JSObject>(envValue);
-        } else if (globalObject->m_processEnvObject.isInitialized()) {
-            envObject = globalObject->processEnvObject();
+        // Recognize the SHARE_ENV registry symbol directly so `new globalThis.Worker(url, { env: SHARE_ENV })`
+        // (which bypasses the node:worker_threads wrapper) shares env instead of throwing
+        // ERR_INVALID_ARG_TYPE on its own sentinel.
+        if (envValue && envValue.isSymbol()) {
+            auto key = vm.symbolRegistry().symbolForKey("nodejs.worker_threads.SHARE_ENV"_s);
+            if (&asSymbol(envValue)->uid() == key.ptr()) {
+                shareEnv = true;
+            }
         }
 
-        if (envObject) {
-            if (!envObject->staticPropertiesReified()) {
-                envObject->reifyAllStaticProperties(globalObject);
-                RETURN_IF_EXCEPTION(throwScope, {});
+        if (!shareEnv) {
+            if (envValue && !(envValue.isObject() || envValue.isUndefinedOrNull())) {
+                return Bun::ERR::INVALID_ARG_TYPE(throwScope, globalObject, "options.env"_s, "object or one of undefined, null, or worker_threads.SHARE_ENV"_s, envValue);
+            }
+            JSObject* envObject = nullptr;
+
+            if (envValue && envValue.isCell()) {
+                envObject = dynamicDowncast<JSC::JSObject>(envValue);
+            } else if (globalObject->m_processEnvObject.isInitialized()) {
+                envObject = globalObject->processEnvObject();
             }
 
-            JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
-            envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
-            RETURN_IF_EXCEPTION(throwScope, {});
+            if (envObject) {
+                if (!envObject->staticPropertiesReified()) {
+                    envObject->reifyAllStaticProperties(globalObject);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                }
 
-            HashMap<String, String> env;
+                JSC::PropertyNameArrayBuilder keys(vm, JSC::PropertyNameMode::Strings, JSC::PrivateSymbolMode::Exclude);
+                envObject->methodTable()->getOwnPropertyNames(envObject, lexicalGlobalObject, keys, JSC::DontEnumPropertiesMode::Exclude);
+                RETURN_IF_EXCEPTION(throwScope, {});
 
-            for (const auto& key : keys) {
-                JSValue value = envObject->get(lexicalGlobalObject, key);
-                RETURN_IF_EXCEPTION(throwScope, {});
-                String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
-                RETURN_IF_EXCEPTION(throwScope, {});
-                env.add(key.impl()->isolatedCopy(), str);
+                HashMap<String, String> env;
+
+                for (const auto& key : keys) {
+                    JSValue value = envObject->get(lexicalGlobalObject, key);
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    String str = value.toWTFString(lexicalGlobalObject).isolatedCopy();
+                    RETURN_IF_EXCEPTION(throwScope, {});
+                    env.add(key.impl()->isolatedCopy(), str);
+                }
+
+                options.env.emplace(WTF::move(env));
             }
-
-            options.env.emplace(WTF::move(env));
         }
 
         // needed to match the coercion behavior of `String(value)`, which returns a descriptive
@@ -298,6 +336,14 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
             RETURN_IF_EXCEPTION(throwScope, {});
             options.execArgv.emplace(WTF::move(execArgv));
         }
+    }
+
+    // Resolve the spawning thread's env tree (founding one if needed) so disjoint
+    // SHARE_ENV chains stay isolated. Runs only after every option validated,
+    // because founding a tree swaps this thread's process.env.
+    if (shareEnv) {
+        options.sharedEnvStore = Bun::ensureSharedEnvStoreForWorker(globalObject);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
 
     Vector<RefPtr<MessagePort>> ports;
@@ -377,7 +423,7 @@ JSC_DEFINE_CUSTOM_GETTER(jsWorker_threadIdGetter, (JSGlobalObject * lexicalGloba
         return JSValue::encode(jsUndefined());
 
     auto& worker = castedThis->wrapped();
-    if (worker.wasTerminated()) return JSValue::encode(jsNumber(-1));
+    if (worker.hasExited()) return JSValue::encode(jsNumber(-1));
     // Main thread starts at 1
     //
     // Note that we cannot use posix thread ids here because we don't know their thread id until the thread starts
@@ -398,6 +444,10 @@ static const HashTableValue JSWorkerPrototypeTableValues[] = {
     { "threadId"_s, JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete, NoIntrinsic, { HashTableValue::GetterSetterType, jsWorker_threadIdGetter, nullptr } },
     { "unref"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_unref, 0 } },
     { "getHeapSnapshot"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapSnapshot, 0 } },
+    { "getHeapStatistics"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_getHeapStatistics, 0 } },
+    { "startCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_startCpuProfileInternal, 0 } },
+    { "stopCpuProfileInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_stopCpuProfileInternal, 0 } },
+    { "cpuUsageInternal"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::NativeFunctionType, jsWorkerPrototypeFunction_cpuUsageInternal, 0 } },
 };
 
 const ClassInfo JSWorkerPrototype::s_info = { "Worker"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSWorkerPrototype) };
@@ -416,7 +466,7 @@ JSWorker::JSWorker(Structure* structure, JSDOMGlobalObject& globalObject, Ref<Wo
 {
 }
 
-// static_assert(std::is_base_of<ActiveDOMObject, Worker>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
+static_assert(std::is_base_of<ActiveDOMObject, Worker>::value, "Interface is marked as [ActiveDOMObject] but implementation class does not subclass ActiveDOMObject.");
 
 JSObject* JSWorker::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -640,6 +690,26 @@ JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_unref, (JSGlobalObject * lexi
     return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_unrefBody>(*lexicalGlobalObject, *callFrame, "unref");
 }
 
+// Resolve a cross-VM introspection promise on the parent thread. The promise lives in
+// WorkerMessagingProxy::m_pendingCrossVMRequests keyed by reqId. Nothing is built or settled if it
+// was already drained by workerGlobalScopeDestroyedInternal's rejectAllCrossVMRequests, or if the
+// parent's own VM is being stopped meanwhile (the Strong just drops).
+// createError() comes back empty only with a termination pending on this VM: nothing to settle then.
+static void rejectWorkerNotRunning(VM& vm, Zig::GlobalObject* globalObject, JSPromise* promise)
+{
+    if (auto* error = Bun::createError(globalObject, Bun::ErrorCode::ERR_WORKER_NOT_RUNNING, "Worker instance not running"_s))
+        promise->reject(vm, error);
+}
+
+template<typename BuildValue>
+static void resolveCrossVMRequest(WorkerMessagingProxy& proxy, uint64_t reqId, ScriptExecutionContext& parentCtx, const BuildValue& buildValue)
+{
+    auto handle = proxy.takeCrossVMRequest(reqId);
+    if (!handle || parentCtx.isJSExecutionForbidden())
+        return;
+    handle->resolve(parentCtx.globalObject(), parentCtx.vm(), buildValue(parentCtx.vm(), parentCtx.globalObject()));
+}
+
 static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
@@ -665,31 +735,23 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         }
     }
 
+    // No up-front isOnline() gate: a worker can post to its parent (e.g. from
+    // a microtask the entry module scheduled while it was still loading) while
+    // m_state is still Pending. postTaskToWorkerGlobalScope queues into
+    // m_pendingTasks for Pending and returns false only for Closing/Closed,
+    // which the !accepted reject below handles. If the worker never reaches
+    // Running (entry threw or failed to load), workerGlobalScopeDestroyedInternal
+    // clears m_pendingTasks on the parent thread and rejectAllCrossVMRequests()
+    // rejects + frees the Strong<>.
     auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
-    if (!worker.isOnline()) {
-        promise->reject(vm,
-            Bun::createError(globalObject,
-                Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
-                "Worker instance not running"_s));
-        return JSValue::encode(promise);
-    }
 
-    // Keep the promise alive across the round-trip. Heap-allocate the Strong
-    // and pass only the raw pointer through the cross-thread lambdas so the
-    // worker thread never touches the parent VM's HandleSet (Strong<T> has no
-    // move ctor; capturing it by value would copy-construct/destroy it on the
-    // worker thread, racing the parent VM's "Strong Handles" GC constraint).
-    //
-    // Leak windows (accepted trade-off vs the crash above):
-    //   - task queued but worker terminated before it runs: the lambda is
-    //     destroyed on the worker thread; the raw pointer is dropped and
-    //     promiseHandle leaks in the (still-live) parent VM. Freeing it
-    //     there would be exactly the cross-thread HandleSet mutation we're
-    //     avoiding. Pre-fix the promise already hung in this case.
-    //   - postTaskTo(parentId, …) on the return trip fails: see below.
-    auto* promiseHandle = new Strong<JSPromise>(vm, promise);
+    // The promise is registered in a parent-side map keyed by reqId; only the id
+    // crosses threads, so the worker thread never touches the parent VM's
+    // HandleSet. workerGlobalScopeDestroyedInternal rejects any entries still in
+    // the map (worker terminated mid-round-trip), so the promise always settles.
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
     auto parentId = globalObject->scriptExecutionContext()->identifier();
-    bool accepted = worker.postTaskToWorkerGlobalScope([promiseHandle, parentId](ScriptExecutionContext& workerCtx) {
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
         auto& vm = workerCtx.vm();
         vm.ensureHeapProfiler();
         auto& heapProfiler = *vm.heapProfiler();
@@ -697,26 +759,188 @@ static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapSnapshotBody(
         JSC::BunV8HeapSnapshotBuilder builder(heapProfiler);
         String snapshot = builder.json();
 
-        // Post the result back. If the parent context is gone this returns
-        // false and promiseHandle leaks; we cannot safely destroy a
-        // parent-VM Strong from the worker thread, and the parent VM is
-        // tearing down anyway.
         ScriptExecutionContext::postTaskTo(parentId,
-            [promiseHandle, snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
-                std::unique_ptr<Strong<JSPromise>> handle(promiseHandle);
-                handle->get()->resolve(parentCtx.globalObject(), parentCtx.vm(), jsString(parentCtx.vm(), snapshot));
+            [reqId, protectedProxy = WTF::move(protectedProxy), snapshot = snapshot.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+                resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, snapshot); });
             });
     });
     if (!accepted) {
-        // Worker raced to Closing/Closed between isOnline() and the post.
-        // Still on the parent thread — safe to destroy the handle here.
-        delete promiseHandle;
-        promise->reject(vm,
-            Bun::createError(globalObject,
-                Bun::ErrorCode::ERR_WORKER_NOT_RUNNING,
-                "Worker instance not running"_s));
+        // postTaskToWorkerGlobalScope returns false only for Closing/Closed.
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        rejectWorkerNotRunning(vm, globalObject, promise);
     }
     return JSValue::encode(promise);
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_getHeapStatisticsBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        auto& wvm = workerCtx.vm();
+        double heapSize = static_cast<double>(wvm.heap.size());
+        double capacity = static_cast<double>(wvm.heap.capacity());
+        double extra = static_cast<double>(wvm.heap.extraMemorySize());
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), heapSize, capacity, extra](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
+                JSObject* o = constructEmptyObject(go);
+                auto set = [&](ASCIILiteral k, double v) { o->putDirect(pvm, Identifier::fromString(pvm, k), jsNumber(v)); };
+                double avail = capacity > heapSize ? capacity - heapSize : 0;
+                set("total_heap_size"_s, heapSize);
+                set("total_heap_size_executable"_s, heapSize / 2.0);
+                set("total_physical_size"_s, capacity);
+                set("total_available_size"_s, avail);
+                set("used_heap_size"_s, heapSize);
+                set("heap_size_limit"_s, capacity * 10.0);
+                set("malloced_memory"_s, heapSize);
+                set("peak_malloced_memory"_s, capacity);
+                o->putDirect(pvm, Identifier::fromString(pvm, "does_zap_garbage"_s), jsBoolean(false));
+                set("number_of_native_contexts"_s, 1);
+                set("number_of_detached_contexts"_s, 0);
+                set("total_global_handles_size"_s, 8192);
+                set("used_global_handles_size"_s, 2208);
+                set("external_memory"_s, extra);
+                set("total_allocated_bytes"_s, heapSize);
+                return o;
+            });
+        });
+    });
+    if (!accepted) {
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        rejectWorkerNotRunning(vm, globalObject, promise);
+    }
+    return JSValue::encode(promise);
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_startCpuProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        if (!Bun::isCPUProfilerRunning())
+            Bun::startCPUProfiler(workerCtx.vm());
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy)](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [](VM&, JSGlobalObject*) -> JSValue { return jsUndefined(); });
+        });
+    });
+    if (!accepted) {
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        rejectWorkerNotRunning(vm, globalObject, promise);
+    }
+    return JSValue::encode(promise);
+}
+
+static constexpr ASCIILiteral kEmptyCpuProfileJSON = "{\"nodes\":[],\"startTime\":0,\"endTime\":0,\"samples\":[],\"timeDeltas\":[]}"_s;
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_stopCpuProfileInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext& workerCtx) mutable {
+        WTF::String result;
+        if (Bun::isCPUProfilerRunning())
+            Bun::stopCPUProfiler(workerCtx.vm(), &result, nullptr);
+        if (result.isEmpty())
+            result = kEmptyCpuProfileJSON;
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), result = result.isolatedCopy()](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& vm, JSGlobalObject*) -> JSValue { return jsString(vm, result); });
+        });
+    });
+    if (!accepted) {
+        // Worker already gone: resolve with an empty profile rather than reject,
+        // so a handle.stop() after terminate still yields parseable JSON.
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        promise->resolve(globalObject, vm, jsString(vm, String(kEmptyCpuProfileJSON)));
+    }
+    return JSValue::encode(promise);
+}
+
+static inline JSC::EncodedJSValue jsWorkerPrototypeFunction_cpuUsageInternalBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame, typename IDLOperation<JSWorker>::ClassParameter castedThis)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto& worker = castedThis->wrapped();
+    auto* promise = JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    uint64_t reqId = worker.contextProxy().registerCrossVMRequest(vm, promise);
+    auto parentId = globalObject->scriptExecutionContext()->identifier();
+    bool accepted = worker.contextProxy().postTaskToWorkerGlobalScope([reqId, parentId, protectedProxy = Ref { worker.contextProxy() }](ScriptExecutionContext&) mutable {
+        double user = 0;
+        double sys = 0;
+#if OS(WINDOWS)
+        uv_rusage_t ru;
+        if (uv_getrusage_thread(&ru) == 0) {
+            user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
+            sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
+        }
+#elif defined(__APPLE__)
+        // Darwin has no RUSAGE_THREAD; RUSAGE_SELF would report whole-process
+        // CPU for every worker. Use mach thread_info for this thread only.
+        mach_port_t machThread = mach_thread_self();
+        thread_basic_info_data_t tinfo;
+        mach_msg_type_number_t tcount = THREAD_BASIC_INFO_COUNT;
+        if (thread_info(machThread, THREAD_BASIC_INFO, reinterpret_cast<thread_info_t>(&tinfo), &tcount) == KERN_SUCCESS) {
+            user = static_cast<double>(tinfo.user_time.seconds) * 1e6 + static_cast<double>(tinfo.user_time.microseconds);
+            sys = static_cast<double>(tinfo.system_time.seconds) * 1e6 + static_cast<double>(tinfo.system_time.microseconds);
+        }
+        mach_port_deallocate(mach_task_self(), machThread);
+#else
+        struct rusage ru;
+        memset(&ru, 0, sizeof(ru));
+#if defined(RUSAGE_THREAD)
+        getrusage(RUSAGE_THREAD, &ru);
+#else
+        getrusage(RUSAGE_SELF, &ru);
+#endif
+        user = static_cast<double>(ru.ru_utime.tv_sec) * 1e6 + static_cast<double>(ru.ru_utime.tv_usec);
+        sys = static_cast<double>(ru.ru_stime.tv_sec) * 1e6 + static_cast<double>(ru.ru_stime.tv_usec);
+#endif
+        ScriptExecutionContext::postTaskTo(parentId, [reqId, protectedProxy = WTF::move(protectedProxy), user, sys](ScriptExecutionContext& parentCtx) {
+            resolveCrossVMRequest(protectedProxy.get(), reqId, parentCtx, [&](VM& pvm, JSGlobalObject* go) -> JSValue {
+                JSObject* o = constructEmptyObject(go);
+                o->putDirect(pvm, Identifier::fromString(pvm, "user"_s), jsNumber(user));
+                o->putDirect(pvm, Identifier::fromString(pvm, "system"_s), jsNumber(sys));
+                return o;
+            });
+        });
+    });
+    if (!accepted) {
+        worker.contextProxy().takeCrossVMRequest(reqId);
+        rejectWorkerNotRunning(vm, globalObject, promise);
+    }
+    return JSValue::encode(promise);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_cpuUsageInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_cpuUsageInternalBody>(*lexicalGlobalObject, *callFrame, "cpuUsageInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_startCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_startCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "startCpuProfileInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_stopCpuProfileInternal, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_stopCpuProfileInternalBody>(*lexicalGlobalObject, *callFrame, "stopCpuProfileInternal");
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapStatistics, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    return IDLOperation<JSWorker>::call<jsWorkerPrototypeFunction_getHeapStatisticsBody>(*lexicalGlobalObject, *callFrame, "getHeapStatistics");
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsWorkerPrototypeFunction_getHeapSnapshot, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))

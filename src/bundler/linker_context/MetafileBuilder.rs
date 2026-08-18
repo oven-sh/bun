@@ -34,6 +34,7 @@ use std::io::Write;
 
 use bstr::BStr;
 use bun_collections::VecExt;
+use bun_collections::index_sort;
 use bun_collections::{DynamicBitSet, StringHashMap};
 use bun_core::fmt as bfmt;
 use bun_core::string_joiner::StringJoiner;
@@ -43,7 +44,7 @@ use bun_ast::ExportsKind;
 use bun_ast::ImportKind;
 use bun_ast::ImportRecordFlags;
 
-use crate::chunk::Content as ChunkContent;
+use crate::chunk::{Content as ChunkContent, ReferencePathStyle, SourceMapShiftTracking};
 use crate::options::Loader;
 use crate::{Chunk, Index, LinkerContext};
 
@@ -55,11 +56,11 @@ fn fmt_size(bytes: u64) -> bfmt::SizeFormatter {
 /// Generates the JSON fragment for a single output chunk.
 /// Called during parallel chunk generation in postProcessJSChunk/postProcessCSSChunk.
 /// The result is stored in chunk.metafile_chunk_json and assembled later.
-pub fn generate_chunk_json(
+pub(crate) fn generate_chunk_json(
     c: &LinkerContext,
     chunk: &Chunk,
     chunks: &[Chunk],
-) -> Result<Box<[u8]>, bun_core::Error> {
+) -> crate::Result<Box<[u8]>> {
     let mut json: Vec<u8> = Vec::new();
     // errdefer json.deinit() — handled by Drop on early return
 
@@ -83,7 +84,7 @@ pub fn generate_chunk_json(
         let file_source_index = *file_source_index;
         // Counters are `AtomicUsize` because they're populated by the parallel
         // codegen workers; metafile emission runs strictly after the
-        // `wait_for_all` join in `generate_chunks_in_parallel`, so a relaxed
+        // `group.wait()` join in `generate_chunks_in_parallel`, so a relaxed
         // load observes the final value.
         let bytes_in_output = bytes_in_output.load(core::sync::atomic::Ordering::Relaxed);
         if file_source_index as usize >= sources.len() {
@@ -202,7 +203,7 @@ pub fn generate_chunk_json(
 /// Called after all chunks have been generated in parallel.
 /// Chunk references (unique_keys) are resolved to their final output paths.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>, bun_core::Error> {
+pub(crate) fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> crate::Result<Box<[u8]>> {
     // Use StringJoiner so we can use breakOutputIntoPieces to resolve chunk references
     let mut j = StringJoiner::default();
     // errdefer j.deinit() — handled by Drop
@@ -293,14 +294,29 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
                 first_import = false;
 
                 j.push_static(b"\n        {\n          \"path\": ");
-                // Write path with JSON escaping - chunk references (unique_keys) will be resolved
-                // by breakOutputIntoPieces and code() below
+                // Bundled imports use the target source's pretty path (same string as the
+                // "inputs" key). `record.path.text` is unreliable here: dedup can set
+                // `source_index` without rewriting the path. Externals/chunk refs fall through.
+                let import_path: &[u8] = 'path: {
+                    if record.source_index.is_valid()
+                        && record.source_index.get() != Index::RUNTIME.get()
+                    {
+                        let idx = record.source_index.get() as usize;
+                        if idx < sources.len() {
+                            let pretty = sources[idx].path.pretty;
+                            if !pretty.is_empty() {
+                                break 'path pretty;
+                            }
+                        }
+                    }
+                    record.path.text
+                };
                 {
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
                         buf,
                         "{}",
-                        bfmt::format_json_string_utf8(record.path.text, Default::default())
+                        bfmt::format_json_string_utf8(import_path, Default::default())
                     )?;
                     j.push_owned(buf.into_boxed_slice());
                 }
@@ -309,7 +325,7 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
                 j.push_static(b"\"");
 
                 // Add "original" field if different from path
-                if !record.original_path.is_empty() && record.original_path != record.path.text {
+                if !record.original_path.is_empty() && record.original_path != import_path {
                     j.push_static(b",\n          \"original\": ");
                     let mut buf: Vec<u8> = Vec::new();
                     write!(
@@ -431,9 +447,9 @@ pub fn generate(c: &mut LinkerContext, chunks: &mut [Chunk]) -> Result<Box<[u8]>
         b"", // no import prefix for metafile
         &chunks[0],
         chunks,
-        None,  // no display size
-        false, // not force absolute path
-        false, // no source map shifts
+        None, // no display size
+        ReferencePathStyle::ImporterRelative,
+        SourceMapShiftTracking::Disabled,
     )?;
 
     Ok(code_result.buffer)
@@ -460,7 +476,9 @@ enum JsonValue {
     Null,
     Bool(bool),
     Integer(i64),
-    Float(#[expect(dead_code)] f64),
+    /// The metafile only ever reads integers (byte counts), so a float is
+    /// validated and otherwise ignored.
+    Float,
     String(Box<[u8]>),
     Array(Vec<JsonValue>),
     Object(JsonObject),
@@ -699,7 +717,8 @@ impl<'a> JsonParser<'a> {
         }
         let s = &self.input[start..self.pos];
         if is_float {
-            Ok(JsonValue::Float(bun_core::fmt::parse_f64(s).ok_or(())?))
+            bun_core::fmt::parse_f64(s).ok_or(())?;
+            Ok(JsonValue::Float)
         } else {
             Ok(JsonValue::Integer(
                 bun_core::fmt::parse_int::<i64>(s, 10).map_err(|_| ())?,
@@ -739,15 +758,15 @@ struct PathOnly<'a> {
 /// This is a post-processing step that parses the JSON and produces LLM-friendly output.
 /// Designed to help diagnose bundle bloat, dependency chains, and entry point analysis.
 /// The caller is responsible for freeing the returned slice.
-pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Error> {
+pub fn generate_markdown(metafile_json: &[u8]) -> crate::Result<Box<[u8]>> {
     let root = match JsonParser::parse(metafile_json) {
         Ok(v) => v,
-        Err(_) => return Err(bun_core::err!(InvalidJSON)),
+        Err(_) => return Err(crate::Error::InvalidJSON),
     };
     // defer parsed.deinit() — handled by Drop
 
     let JsonValue::Object(root_obj) = &root else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     let mut md: Vec<u8> = Vec::new();
@@ -755,14 +774,14 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
 
     // Get inputs and outputs
     let Some(inputs) = root_obj.get(b"inputs") else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
     let Some(outputs) = root_obj.get(b"outputs") else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     let (JsonValue::Object(inputs_obj), JsonValue::Object(outputs_obj)) = (inputs, outputs) else {
-        return Err(bun_core::err!(InvalidJSON));
+        return Err(crate::Error::InvalidJSON);
     };
 
     // Header
@@ -1001,7 +1020,9 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
     md.extend_from_slice(b"Modules sorted by bytes contributed to the output bundle. Large modules may indicate bloat.\n\n");
 
     // Sort by bytes_in_output descending
-    input_files.sort_by_key(|b| std::cmp::Reverse(b.bytes_in_output));
+    index_sort::sort_slice_by(&mut input_files, |a, b| {
+        b.bytes_in_output.cmp(&a.bytes_in_output)
+    });
 
     md.extend_from_slice(b"| Output Bytes | % of Total | Module | Format |\n");
     md.extend_from_slice(b"|--------------|------------|--------|--------|\n");
@@ -1188,7 +1209,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
                         }
                     }
 
-                    module_sizes.sort_by_key(|b| std::cmp::Reverse(b.bytes));
+                    index_sort::sort_slice_by(&mut module_sizes, |a, b| b.bytes.cmp(&a.bytes));
 
                     let max_modules: usize = 15;
                     for (i, ms) in module_sizes.iter().enumerate() {
@@ -1225,7 +1246,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         });
     }
 
-    highly_imported.sort_by_key(|b| std::cmp::Reverse(b.count));
+    index_sort::sort_slice_by(&mut highly_imported, |a, b| b.count.cmp(&a.count));
 
     // Show most commonly imported modules
     if !highly_imported.is_empty() {
@@ -1276,7 +1297,7 @@ pub fn generate_markdown(metafile_json: &[u8]) -> Result<Box<[u8]>, bun_core::Er
         sorted_paths.push(PathOnly { path: key });
     }
 
-    sorted_paths.sort_by(|a, b| a.path.cmp(b.path));
+    index_sort::sort_slice_by(&mut sorted_paths, |a, b| a.path.cmp(b.path));
 
     for sp in sorted_paths.iter() {
         let input_path = sp.path;

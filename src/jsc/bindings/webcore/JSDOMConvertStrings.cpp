@@ -76,20 +76,6 @@ String valueToByteString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     return string;
 }
 
-AtomString valueToByteAtomString(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value)
-{
-    VM& vm = lexicalGlobalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    AtomString string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject).data;
-    RETURN_IF_EXCEPTION(scope, {});
-
-    if (throwIfInvalidByteString(lexicalGlobalObject, scope, string.string())) [[unlikely]]
-        return nullAtom();
-
-    return string;
-}
-
 String identifierToUSVString(JSGlobalObject& lexicalGlobalObject, const Identifier& identifier)
 {
     return replaceUnpairedSurrogatesWithReplacementCharacter(identifierToString(lexicalGlobalObject, identifier));
@@ -100,21 +86,16 @@ String valueToUSVString(JSGlobalObject& lexicalGlobalObject, JSValue value)
     VM& vm = lexicalGlobalObject.vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    // Match V8/Node's wording for symbol-to-string coercion errors.
+    if (value.isSymbol()) [[unlikely]] {
+        throwTypeError(&lexicalGlobalObject, scope, "Cannot convert a Symbol value to a string"_s);
+        return {};
+    }
+
     auto string = value.toWTFString(&lexicalGlobalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     return replaceUnpairedSurrogatesWithReplacementCharacter(WTF::move(string));
-}
-
-AtomString valueToUSVAtomString(JSGlobalObject& lexicalGlobalObject, JSValue value)
-{
-    VM& vm = lexicalGlobalObject.vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto string = value.toString(&lexicalGlobalObject)->toAtomString(&lexicalGlobalObject);
-    RETURN_IF_EXCEPTION(scope, {});
-
-    return replaceUnpairedSurrogatesWithReplacementCharacter(AtomString(string));
 }
 
 } // namespace WebCore

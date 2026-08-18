@@ -3,7 +3,7 @@ import { spawn } from "bun";
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import crypto from "crypto";
 import { once } from "events";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { createServer } from "http";
 import { AddressInfo, connect } from "net";
 import path from "node:path";
@@ -475,7 +475,9 @@ function test(label: string, fn: (ws: WebSocket, done: (err?: unknown) => void) 
         })
         .catch(done);
     },
-    { timeout: timeout ?? 1000 },
+    // Each test spawns its own echo-server subprocess; debug builds take
+    // well over 1s to spawn + connect on slow CI runners.
+    { timeout: timeout ?? (isDebug ? 10000 : 1000) },
   );
 }
 
@@ -800,10 +802,12 @@ it("Server should be able to send empty pings", async () => {
   }
 
   {
-    // should not be equal because is bigger than 125 bytes
+    // > 125 bytes throws RangeError synchronously, matching npm ws
     const pingPayload = Buffer.alloc(126, "b").toString();
-    const pingMessage = await checkPing("Hello, World", pingPayload);
-    expect(pingMessage).not.toBe(pingPayload);
+    let err: unknown;
+    await checkPing("Hello, World", pingPayload).catch(e => (err = e));
+    expect(err).toBeInstanceOf(RangeError);
+    expect((err as Error).message).toContain("must not be greater than 125 bytes");
   }
 });
 
@@ -904,5 +908,104 @@ describe("ping/pong no-arg payload", () => {
     const ws = new WebSocket("ws://localhost:" + (wss.address() as AddressInfo).port);
     ws.on("open", () => ws.pong(Buffer.from("hello")));
     await promise;
+  });
+});
+
+describe("handleUpgrade without an Upgrade header", () => {
+  it("responds with 400 Invalid Upgrade header instead of throwing", () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const written: { code?: number; headers?: Record<string, unknown>; body?: string; ended: boolean } = {
+      ended: false,
+    };
+    const response = {
+      writeHead(code: number, headers: Record<string, unknown>) {
+        written.code = code;
+        written.headers = headers;
+      },
+      write(body: string) {
+        written.body = body;
+      },
+      end() {
+        written.ended = true;
+      },
+    };
+    const socket = { _httpMessage: response };
+    const request = {
+      method: "GET",
+      headers: {
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "sec-websocket-version": "13",
+      },
+    };
+    let called = false;
+    expect(() =>
+      wss.handleUpgrade(request as any, socket as any, Buffer.alloc(0), () => {
+        called = true;
+      }),
+    ).not.toThrow();
+    expect(called).toBe(false);
+    expect(written.code).toBe(400);
+    expect(written.body).toBe("Invalid Upgrade header");
+    expect(written.headers).toEqual({
+      Connection: "close",
+      "Content-Type": "text/html",
+      "Content-Length": Buffer.byteLength("Invalid Upgrade header"),
+    });
+    expect(written.ended).toBe(true);
+  });
+
+  it("emits wsClientError with the Invalid Upgrade header message", () => {
+    const wss = new WebSocketServer({ noServer: true });
+    const socket = {};
+    const request = {
+      method: "GET",
+      headers: {
+        "sec-websocket-key": "dGhlIHNhbXBsZSBub25jZQ==",
+        "sec-websocket-version": "13",
+      },
+    };
+    let received: { err?: Error; socket?: unknown; req?: unknown } = {};
+    wss.on("wsClientError", (err: Error, sock: unknown, req: unknown) => {
+      received = { err, socket: sock, req };
+    });
+    let called = false;
+    expect(() =>
+      wss.handleUpgrade(request as any, socket as any, Buffer.alloc(0), () => {
+        called = true;
+      }),
+    ).not.toThrow();
+    expect(called).toBe(false);
+    expect(received.err).toBeInstanceOf(Error);
+    expect(received.err?.message).toBe("Invalid Upgrade header");
+    expect(received.socket).toBe(socket);
+    expect(received.req).toBe(request);
+  });
+});
+
+describe("module loading", () => {
+  it("require('ws') does not load node:http eagerly", async () => {
+    // Loading node:http materializes the HTTPParser binding; requiring only
+    // the ws client must not pay that cost.
+    await using proc = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const { heapStats } = require("bun:jsc");
+         require("ws");
+         const afterWs = heapStats().objectTypeCounts.HTTPParser ?? 0;
+         require("node:http");
+         const afterHttp = heapStats().objectTypeCounts.HTTPParser ?? 0;
+         console.log(JSON.stringify({ afterWs, httpMarkerWorks: afterHttp > 0 }));`,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    // httpMarkerWorks guards the detector: if node:http ever stops creating
+    // HTTPParser structures at load time, this test needs a new marker.
+    expect(JSON.parse(stdout)).toEqual({ afterWs: 0, httpMarkerWorks: true });
+    expect(exitCode).toBe(0);
   });
 });

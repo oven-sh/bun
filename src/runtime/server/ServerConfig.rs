@@ -19,53 +19,58 @@ use bun_core::fmt as bun_fmt;
 
 pub use crate::socket::ssl_config::SSLConfig;
 use crate::socket::ssl_config::SSLConfigFromJs;
+use bun_collections::index_sort;
 
 pub struct ServerConfig {
-    pub address: Address,
-    pub idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
-    pub has_idle_timeout: bool,
+    pub(crate) address: Address,
+    pub(crate) idle_timeout: u8, // TODO: should we match websocket default idleTimeout of 120?
+    pub(crate) has_idle_timeout: bool,
     // TODO: use webkit URL parser instead of bun's
     // NOTE: only the owned buffer is stored; callers parse on
     // demand via [`ServerConfig::base_url`] so the borrow lifetime is tied to
     // `&self` instead of erased to `'static`.
-    pub base_uri: Box<[u8]>,
+    pub(crate) base_uri: Box<[u8]>,
 
-    pub ssl_config: Option<SSLConfig>,
+    pub(crate) ssl_config: Option<SSLConfig>,
     // Vec drop runs each element's `Drop`, and `SSLConfig: Drop` calls
     // `deinit()` (frees the owned C strings).
-    pub sni: Option<Vec<SSLConfig>>,
-    pub max_request_body_size: usize,
-    pub development: DevelopmentOption,
-    pub broadcast_console_log_from_browser_to_server_for_bake: bool,
+    pub(crate) sni: Option<Vec<SSLConfig>>,
+    pub(crate) max_request_body_size: usize,
+    pub(crate) development: DevelopmentOption,
+    pub(crate) broadcast_console_log_from_browser_to_server_for_bake: bool,
 
     /// Enable automatic workspace folders for Chrome DevTools
     /// https://chromium.googlesource.com/devtools/devtools-frontend/+/main/docs/ecosystem/automatic_workspace_folders.md
     /// https://github.com/ChromeDevTools/vite-plugin-devtools-json/blob/76080b04422b36230d4b7a674b90d6df296cbff5/src/index.ts#L60-L77
     ///
     /// If HMR is not enabled, then this field is ignored.
-    pub enable_chrome_devtools_automatic_workspace_folders: bool,
+    pub(crate) enable_chrome_devtools_automatic_workspace_folders: bool,
 
-    pub on_error: Option<Strong>,
-    pub on_request: Option<Strong>,
-    pub on_node_http_request: Option<Strong>,
+    /// Raw shadow of the wrapper's `onError`/`onRequest`/`onNodeHTTPRequest`
+    /// WriteBarrier slots. The wrapper JSCell is the GC root; these are
+    /// `JSValue::ZERO` when unset and copied for hot-path dispatch reads.
+    pub(crate) on_error: JSValue,
+    pub(crate) on_request: JSValue,
+    pub(crate) on_node_http_request: JSValue,
+    /// Created with `onNodeHTTPRequest`; unlike the handler above, `reload()` never clears this.
+    pub(crate) is_node_http_server: bool,
 
-    pub websocket: Option<WebSocketServerContext>,
+    pub(crate) websocket: Option<WebSocketServerContext>,
 
-    pub reuse_port: bool,
-    pub id: Box<[u8]>,
-    pub allow_hot: bool,
-    pub ipv6_only: bool,
-    pub http3: bool,
-    pub http1: bool,
+    pub(crate) reuse_port: bool,
+    pub(crate) id: Box<[u8]>,
+    pub(crate) allow_hot: bool,
+    pub(crate) ipv6_only: bool,
+    pub(crate) http3: bool,
+    pub(crate) http1: bool,
 
-    pub is_node_http: bool,
-    pub had_routes_object: bool,
+    pub(crate) had_routes_object: bool,
 
-    pub static_routes: Vec<StaticRouteEntry>,
-    pub negative_routes: Vec<ZBox>,
-    pub user_routes_to_build: Vec<UserRouteBuilder>,
+    pub(crate) static_routes: Vec<StaticRouteEntry>,
+    pub(crate) negative_routes: Vec<ZBox>,
+    pub(crate) user_routes_to_build: Vec<UserRouteBuilder>,
 
-    pub bake: Option<crate::bake::UserOptions>,
+    pub(crate) bake: Option<crate::bake::UserOptions>,
 }
 
 impl Default for ServerConfig {
@@ -81,9 +86,10 @@ impl Default for ServerConfig {
             development: DevelopmentOption::Development,
             broadcast_console_log_from_browser_to_server_for_bake: false,
             enable_chrome_devtools_automatic_workspace_folders: true,
-            on_error: None,
-            on_request: None,
-            on_node_http_request: None,
+            on_error: JSValue::ZERO,
+            on_request: JSValue::ZERO,
+            on_node_http_request: JSValue::ZERO,
+            is_node_http_server: false,
             websocket: None,
             reuse_port: false,
             id: Box::default(),
@@ -91,7 +97,6 @@ impl Default for ServerConfig {
             ipv6_only: false,
             http3: false,
             http1: true,
-            is_node_http: false,
             had_routes_object: false,
             static_routes: Vec::new(),
             negative_routes: Vec::new(),
@@ -129,7 +134,7 @@ pub enum DevelopmentOption {
 }
 
 impl DevelopmentOption {
-    pub(crate) fn is_hmr_enabled(self) -> bool {
+    fn is_hmr_enabled(self) -> bool {
         self == DevelopmentOption::Development
     }
 
@@ -139,19 +144,11 @@ impl DevelopmentOption {
 }
 
 impl ServerConfig {
-    pub fn is_development(&self) -> bool {
+    pub(crate) fn is_development(&self) -> bool {
         self.development.is_development()
     }
 
-    /// Parsed view over [`Self::base_uri`].
-    // PERF: re-parses on each call. The only out-of-module reader takes
-    // `href` (== `base_uri`) directly; in-module reads happen once in `from_js`.
-    #[inline]
-    pub fn base_url(&self) -> URL<'_> {
-        URL::parse(&self.base_uri)
-    }
-
-    pub fn memory_cost(&self) -> usize {
+    pub(crate) fn memory_cost(&self) -> usize {
         // ignore size_of::<ServerConfig>(), assume already included.
         let mut cost: usize = 0;
         for entry in self.static_routes.iter() {
@@ -178,6 +175,17 @@ pub enum RouteMethod {
     Specific(Method),
 }
 
+impl RouteMethod {
+    /// `None` for [`RouteMethod::Any`]: the method is not known until it is
+    /// read off the request.
+    pub(crate) fn specific(&self) -> Option<Method> {
+        match self {
+            RouteMethod::Any => None,
+            RouteMethod::Specific(method) => Some(*method),
+        }
+    }
+}
+
 impl Default for RouteDeclaration {
     fn default() -> Self {
         Self {
@@ -190,12 +198,12 @@ impl Default for RouteDeclaration {
 // TODO: rename to StaticRoute.Entry
 pub struct StaticRouteEntry {
     pub path: Box<[u8]>,
-    pub route: AnyRoute,
+    pub(crate) route: AnyRoute,
     pub method: MethodOptional,
 }
 
 impl StaticRouteEntry {
-    pub(crate) fn memory_cost(&self) -> usize {
+    fn memory_cost(&self) -> usize {
         self.path.len() + self.route.memory_cost()
     }
 }
@@ -208,7 +216,7 @@ impl Drop for StaticRouteEntry {
 }
 
 impl ServerConfig {
-    fn normalize_static_routes_list(&mut self) -> Result<(), bun_core::Error> {
+    fn normalize_static_routes_list(&mut self) -> Result<(), crate::Error> {
         fn hash(route: &StaticRouteEntry) -> u64 {
             let mut hasher = Wyhash::init(0);
             match &route.method {
@@ -249,12 +257,14 @@ impl ServerConfig {
 
         // sort the cloned static routes by name for determinism
         // (descending by path: `order(b, a)`).
-        list.sort_by(|a, b| strings::order(&b.path, &a.path));
+        index_sort::sort_slice_by(list, |a, b| strings::order(&b.path, &a.path));
 
         Ok(())
     }
 
-    pub fn clone_for_reloading_static_routes(&mut self) -> Result<ServerConfig, bun_core::Error> {
+    pub(crate) fn clone_for_reloading_static_routes(
+        &mut self,
+    ) -> Result<ServerConfig, crate::Error> {
         // The sole caller is
         // `self.config = self.config.clone_for_reloading_static_routes()?;`.
         // Move every owning field into `that` and leave the Copy scalars in
@@ -274,9 +284,10 @@ impl ServerConfig {
                 .broadcast_console_log_from_browser_to_server_for_bake,
             enable_chrome_devtools_automatic_workspace_folders: self
                 .enable_chrome_devtools_automatic_workspace_folders,
-            on_error: self.on_error.take(),
-            on_request: self.on_request.take(),
-            on_node_http_request: self.on_node_http_request.take(),
+            on_error: self.on_error,
+            on_request: self.on_request,
+            on_node_http_request: self.on_node_http_request,
+            is_node_http_server: self.is_node_http_server,
             websocket: self.websocket.take(),
             reuse_port: self.reuse_port,
             id: core::mem::take(&mut self.id),
@@ -284,7 +295,6 @@ impl ServerConfig {
             ipv6_only: self.ipv6_only,
             http3: self.http3,
             http1: self.http1,
-            is_node_http: self.is_node_http,
             had_routes_object: self.had_routes_object,
             static_routes: core::mem::take(&mut self.static_routes),
             negative_routes: core::mem::take(&mut self.negative_routes),
@@ -297,12 +307,12 @@ impl ServerConfig {
         Ok(that)
     }
 
-    pub fn append_static_route(
+    pub(crate) fn append_static_route(
         &mut self,
         path: &[u8],
         route: AnyRoute,
         method: MethodOptional,
-    ) -> Result<(), bun_core::Error> {
+    ) -> Result<(), crate::Error> {
         self.static_routes.push(StaticRouteEntry {
             path: Box::<[u8]>::from(path),
             route,
@@ -497,12 +507,6 @@ pub(crate) trait StaticRouteLike<const SSL: bool>: 'static {
     );
 }
 
-// NOTE (layering): the original `RequestUnion`/`ResponseUnion` placeholders
-// were duplicates of `bun_uws_sys::AnyRequest`/`AnyResponse`. Re-export the
-// real types so any straggler reference resolves to the canonical opaque.
-pub use bun_uws_sys::AnyRequest as RequestUnion;
-pub use bun_uws_sys::AnyResponse as ResponseUnion;
-
 impl<const SSL: bool> StaticRouteLike<SSL> for super::StaticRoute {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live; `server` is a Cell so &mut
@@ -548,6 +552,27 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::FileRoute {
     }
 }
 
+impl<const SSL: bool> StaticRouteLike<SSL> for super::DirectoryRoute {
+    unsafe fn set_server(this: *mut Self, server: AnyServer) {
+        // SAFETY: caller guarantees `this` is live.
+        unsafe { (*this).set_server(Some(server)) };
+    }
+    unsafe fn on_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
+        Self::on_request(this, req, resp)
+    }
+    unsafe fn on_head_request(
+        this: *mut Self,
+        req: bun_uws_sys::AnyRequest,
+        resp: bun_uws_sys::AnyResponse,
+    ) {
+        Self::on_head_request(this, req, resp)
+    }
+}
+
 impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
     unsafe fn set_server(this: *mut Self, server: AnyServer) {
         // SAFETY: caller guarantees `this` is live.
@@ -570,7 +595,7 @@ impl<const SSL: bool> StaticRouteLike<SSL> for super::html_bundle::Route {
 }
 
 impl ServerConfig {
-    pub fn compute_id(&self) -> Vec<u8> {
+    pub(crate) fn compute_id(&self) -> Vec<u8> {
         let mut arraylist: Vec<u8> = Vec::new();
 
         let _ = arraylist.write_all(b"[http]-");
@@ -595,7 +620,7 @@ impl ServerConfig {
         arraylist
     }
 
-    pub fn get_usockets_options(&self) -> i32 {
+    pub(crate) fn get_usockets_options(&self) -> i32 {
         // Unlike Node.js, we set exclusive port in case reuse port is not set
         let mut out: i32 = if self.reuse_port {
             bun_uws_sys::LIBUS_LISTEN_REUSE_PORT | bun_uws_sys::LIBUS_LISTEN_REUSE_ADDR
@@ -1163,12 +1188,29 @@ impl ServerConfig {
         }
 
         if let Some(port_) = arg.get_truthy(global, "port")? {
-            let p = u16::try_from(
-                (port_.coerce::<i32>(global)?)
-                    .max(0)
-                    .min(i32::from(u16::MAX)),
-            )
-            .unwrap();
+            let number = port_.to_number(global)?;
+            if !number.is_finite() || number.fract() != 0.0 {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"options.port",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
+            if !(0.0..=65535.0).contains(&number) {
+                return Err(global.throw_range_error(
+                    number,
+                    bun_fmt::OutOfRangeOptions {
+                        min: 0,
+                        max: 65535,
+                        field_name: b"options.port",
+                        ..Default::default()
+                    },
+                ));
+            }
+            let p = number as u16;
             if let Address::Tcp { port: tp, .. } = &mut args.address {
                 *tp = p;
             }
@@ -1313,8 +1355,10 @@ impl ServerConfig {
                     global.throw_invalid_arguments(format_args!("Expected error to be a function"))
                 );
             }
-            let on_error_snapshot = on_error.with_async_context_if_needed(global);
-            args.on_error = Some(Strong::create(on_error_snapshot, global));
+            // Raw value — async-context wrapping is deferred to the slot-write
+            // site (`serve_with!` / `on_reload_from_zig`) so the wrapped fn is
+            // rooted by the wrapper's WriteBarrier slot the moment it exists.
+            args.on_error = on_error;
         }
         if global.has_exception() {
             return Err(JsError::Thrown);
@@ -1326,8 +1370,8 @@ impl ServerConfig {
                     "Expected onNodeHTTPRequest to be a function",
                 )));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_node_http_request = Some(Strong::create(on_request, global));
+            args.on_node_http_request = on_request_;
+            args.is_node_http_server = true;
         }
 
         if let Some(on_request_) = arg.get_truthy(global, "fetch")? {
@@ -1335,12 +1379,12 @@ impl ServerConfig {
                 return Err(global
                     .throw_invalid_arguments(format_args!("Expected fetch() to be a function")));
             }
-            let on_request = on_request_.with_async_context_if_needed(global);
-            args.on_request = Some(Strong::create(on_request, global));
+            args.on_request = on_request_;
         } else if args.bake.is_none()
-            && args.on_node_http_request.is_none()
-            && ((args.static_routes.len() + args.user_routes_to_build.len()) == 0
-                && !opts.has_user_routes)
+            && !args.is_node_http_server
+            && (args.static_routes.len() + args.user_routes_to_build.len()) == 0
+            && !opts.previous_fetch
+            && !(opts.previous_routes && !args.had_routes_object)
             && opts.is_fetch_required
         {
             if global.has_exception() {
@@ -1469,7 +1513,7 @@ impl ServerConfig {
                 };
                 let hostname = base_url.hostname;
                 let needs_brackets: bool =
-                    strings::is_ipv6_address(hostname) && hostname[0] != b'[';
+                    bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
                 let pathname = strings::trim_leading_char(base_url.pathname, b'/');
                 let mut buf: Vec<u8> = Vec::new();
                 if needs_brackets {
@@ -1530,7 +1574,8 @@ impl ServerConfig {
                 b"0.0.0.0"
             };
 
-            let needs_brackets: bool = strings::is_ipv6_address(hostname) && hostname[0] != b'[';
+            let needs_brackets: bool =
+                bun_core::ip_address::is_ipv6_address(hostname) && hostname[0] != b'[';
 
             let protocol: &[u8] = if args.ssl_config.is_some() {
                 b"https"
@@ -1615,9 +1660,16 @@ impl ServerConfig {
 
 #[derive(Clone, Copy)]
 pub struct FromJSOptions {
-    pub allow_bake_config: bool,
-    pub is_fetch_required: bool,
-    pub has_user_routes: bool,
+    pub(crate) allow_bake_config: bool,
+    pub(crate) is_fetch_required: bool,
+    /// What the running server keeps answering with when a `reload()` config
+    /// names no handler, as `on_reload_from_zig` applies it: `fetch` stays
+    /// unless the new config replaces it, and callback routes stay as long as
+    /// the new config has no `routes` object at all (`routes: {}` replaces
+    /// them). Static routes and the node:http handler are replaced on every
+    /// reload, so they count for nothing here. Both are false for `Bun.serve()`.
+    pub(crate) previous_fetch: bool,
+    pub(crate) previous_routes: bool,
 }
 
 impl Default for FromJSOptions {
@@ -1625,12 +1677,13 @@ impl Default for FromJSOptions {
         Self {
             allow_bake_config: true,
             is_fetch_required: true,
-            has_user_routes: false,
+            previous_fetch: false,
+            previous_routes: false,
         }
     }
 }
 
 pub struct UserRouteBuilder {
-    pub route: RouteDeclaration,
+    pub(crate) route: RouteDeclaration,
     pub callback: Strong, // jsc.Strong.Optional
 }

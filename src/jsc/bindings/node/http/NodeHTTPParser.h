@@ -124,6 +124,8 @@ const uint32_t kLenientOptionalLFAfterCR = 1 << 6;
 const uint32_t kLenientOptionalCRLFAfterChunk = 1 << 7;
 const uint32_t kLenientOptionalCRBeforeLF = 1 << 8;
 const uint32_t kLenientSpacesAfterChunkSize = 1 << 9;
+// Node's httpValidation:'relaxed' maps to this alias (only header-value bytes are relaxed).
+const uint32_t kLenientHeaderValueRelaxed = kLenientHeaders;
 const uint32_t kLenientAll = kLenientHeaders | kLenientChunkedLength | kLenientKeepAlive | kLenientTransferEncoding | kLenientVersion | kLenientDataAfterClose | kLenientOptionalLFAfterCR | kLenientOptionalCRLFAfterChunk | kLenientOptionalCRBeforeLF | kLenientSpacesAfterChunkSize;
 
 struct HTTPParser {
@@ -176,14 +178,17 @@ public:
     JSC::JSGlobalObject* m_globalObject;
     JSHTTPParser* m_thisParser = nullptr;
 
-    llhttp_t m_parserData;
+    // Zeroed until initialize(); `m_parserData.settings == nullptr` means uninitialised.
+    llhttp_t m_parserData {};
     StringPtr m_fields[kMaxHeaderFieldsCount];
     StringPtr m_values[kMaxHeaderFieldsCount];
     StringPtr m_url;
     StringPtr m_statusMessage;
-    size_t m_numFields;
-    size_t m_numValues;
-    bool m_haveFlushed;
+    size_t m_numFields = 0;
+    size_t m_numValues = 0;
+    bool m_haveFlushed = false;
+
+    inline bool isInitialized() const { return m_parserData.settings != nullptr; }
 
     // We don't use m_gotException. Instead, we use RETURN_IF_EXCEPTION
     // bool m_gotException;

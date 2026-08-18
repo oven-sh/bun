@@ -22,6 +22,7 @@ bytemuck = "1"
 thiserror.workspace = true
 strum.workspace = true
 bstr.workspace = true
+encoding_rs.workspace = true
 scopeguard.workspace = true
 const_format.workspace = true
 enum-map.workspace = true
@@ -33,7 +34,9 @@ bun_base64.workspace = true
 bun_boringssl.workspace = true
 bun_boringssl_sys.workspace = true
 bun_brotli.workspace = true
+bun_lsquic_sys.workspace = true
 bun_alloc.workspace = true
+bun_errno.workspace = true
 bun_core.workspace = true
 bun_bundler.workspace = true
 bun_bundler_jsc.workspace = true
@@ -41,8 +44,8 @@ bun_clap.workspace = true
 bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_csrf.workspace = true
-bun_cares_sys.workspace = true
 bun_css.workspace = true
+bun_cares_sys.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true
@@ -55,7 +58,6 @@ bun_install.workspace = true
 bun_install_types.workspace = true
 bun_parsers.workspace = true
 bun_io.workspace = true
-bun_js.workspace = true
 bun_js_parser.workspace = true
 bun_js_parser_jsc.workspace = true
 bun_js_printer.workspace = true
@@ -92,7 +94,6 @@ bun_sys_jsc.workspace = true
 bun_libuv_sys.workspace = true
 bun_tcc_sys.workspace = true
 bun_threading.workspace = true
-bun_transpiler.workspace = true
 bun_url.workspace = true
 bun_uws.workspace = true
 bun_uws_sys.workspace = true
@@ -109,10 +110,3 @@ bun_css_jsc.workspace = true
 
 [features]
 default = []
-# Mirrors Zig `Environment.show_crash_trace` — extra debug breakpoints / params.
-show_crash_trace = ["bun_bundler/show_crash_trace"]
-# Mirrors Zig `builtin.have_error_return_tracing` (`--verbose-error-trace`).
-# Rust has no error-return tracing, so this is opt-in only.
-error_return_tracing = []
-# Mirrors Zig `bun.FeatureFlags.bake_debugging_features` — DevServer dump flags.
-bake_debugging_features = []

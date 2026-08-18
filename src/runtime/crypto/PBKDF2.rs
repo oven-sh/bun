@@ -2,11 +2,11 @@ use core::ffi::c_uint;
 
 use bun_boringssl_sys as boringssl;
 use bun_jsc::{
-    AnyTaskJob, AnyTaskJobCtx, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, JsResult,
-    ZigStringSlice,
+    ArrayBuffer, CallFrame, JSGlobalObject, JSPromiseStrong, JSValue, Job, JobContext, JsResult,
+    JsThread,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 
 use crate::crypto::evp::{self, Algorithm};
 
@@ -14,22 +14,8 @@ pub(crate) struct PBKDF2 {
     pub password: StringOrBuffer,
     pub salt: StringOrBuffer,
     pub iteration_count: u32,
-    pub length: i32,
-    pub algorithm: Algorithm,
-}
-
-impl Default for PBKDF2 {
-    fn default() -> Self {
-        Self {
-            password: StringOrBuffer::default(),
-            salt: StringOrBuffer::default(),
-            iteration_count: 1,
-            length: 0,
-            // Callers always set `algorithm`; Sha256 is an arbitrary placeholder
-            // so `Default` compiles.
-            algorithm: Algorithm::Sha256,
-        }
-    }
+    pub length: usize,
+    algorithm: Algorithm,
 }
 
 impl PBKDF2 {
@@ -41,7 +27,7 @@ impl PBKDF2 {
         let length = self.length;
 
         output.fill(0);
-        debug_assert!(self.length <= i32::try_from(output.len()).expect("int cast"));
+        debug_assert!(self.length <= output.len());
         // Node.js (OpenSSL) rejects a zero-length derivation; BoringSSL accepts it.
         if length == 0 {
             return false;
@@ -61,7 +47,7 @@ impl PBKDF2 {
                 salt.len(),
                 iteration_count as c_uint,
                 algorithm.md().unwrap(),
-                usize::try_from(length).expect("int cast"),
+                length,
                 output.as_mut_ptr(),
             )
         };
@@ -82,7 +68,7 @@ impl PBKDF2 {
     pub(crate) fn from_js(
         global_this: &JSGlobalObject,
         call_frame: &CallFrame,
-        is_async: bool,
+        flavor: Flavor,
     ) -> JsResult<PBKDF2> {
         let [arg0, arg1, arg2, arg3, arg4, arg5] = call_frame.arguments_as_array::<6>();
 
@@ -115,7 +101,8 @@ impl PBKDF2 {
             ));
         }
 
-        let keylen: i32 = keylen_num as i32;
+        // 0..=i32::MAX was checked above.
+        let keylen = keylen_num as usize;
 
         if !arg2.is_number() {
             return Err(global_this.throw_invalid_argument_type_value(
@@ -194,17 +181,16 @@ impl PBKDF2 {
         };
         // Non-async path: `StringOrBuffer` fields drop with `out` on early return — no explicit call needed.
         let mut guard = scopeguard::guard(&mut out, |out| {
-            if global_this.has_exception() && is_async {
+            if global_this.has_exception() && flavor == Flavor::Async {
                 bun_jsc::Unprotect::unprotect(out);
             }
         });
 
-        let allow_string_object = true;
         guard.salt = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg1,
-            is_async,
-            allow_string_object,
+            flavor,
+            StringObjects::Allow,
         )? {
             Some(v) => v,
             None => {
@@ -223,8 +209,8 @@ impl PBKDF2 {
         guard.password = match StringOrBuffer::from_js_maybe_async(
             global_this,
             arg0,
-            is_async,
-            allow_string_object,
+            flavor,
+            StringObjects::Allow,
         )? {
             Some(v) => v,
             None => {
@@ -240,7 +226,13 @@ impl PBKDF2 {
             return Err(global_this.throw_invalid_arguments(format_args!("password is too long")));
         }
 
-        if is_async {
+        if flavor == Flavor::Sync {
+            if let StringOrBuffer::Buffer(buffer) = &mut guard.salt {
+                buffer.buffer = ArrayBuffer::from_typed_array(global_this, buffer.buffer.value);
+            }
+        }
+
+        if flavor == Flavor::Async {
             if !arg5.is_function() {
                 return Err(global_this.throw_invalid_argument_type_value(
                     b"callback",
@@ -265,95 +257,70 @@ impl bun_jsc::Unprotect for PBKDF2 {
     }
 }
 
-pub(crate) struct Pbkdf2Ctx {
-    /// Wrapped in [`bun_jsc::ThreadSafe`] so the paired `unprotect()` runs on
-    /// drop — `Job` is only constructed on the async path
-    /// (`from_js(.., is_async=true)` already protected the buffers).
+/// `crypto.pbkdf2` off the JS thread.
+pub(crate) struct Pbkdf2Job {
+    /// `from_js(.., Flavor::Async)` protected the input buffers; the
+    /// [`bun_jsc::ThreadSafe`] releases that with the job.
     pub pbkdf2: bun_jsc::ThreadSafe<PBKDF2>,
     pub output: Vec<u8>,
     pub err: bool,
-    pub promise: JSPromiseStrong,
 }
 
-impl AnyTaskJobCtx for Pbkdf2Ctx {
-    fn run(&mut self, _global: *mut JSGlobalObject) {
-        let len = usize::try_from(self.pbkdf2.length).expect("int cast");
+impl JobContext for Pbkdf2Job {
+    type OffThread = Self;
+    type Js = JSPromiseStrong;
+
+    fn run(this: &mut Self, done: bun_jsc::Completion<Self>) -> Option<bun_jsc::Completion<Self>> {
+        let len = this.pbkdf2.length;
         // `Vec` allocation aborts on OOM; use try_reserve to surface an error instead.
         let mut buf = Vec::new();
         if buf.try_reserve_exact(len).is_err() {
-            self.err = true;
-            return;
+            this.err = true;
+            return Some(done);
         }
         buf.resize(len, 0);
-        self.output = buf;
+        this.output = buf;
 
-        if !self.pbkdf2.run(&mut self.output) {
-            self.err = true;
+        if !this.pbkdf2.run(&mut this.output) {
+            this.err = true;
             boringssl::ERR_clear_error();
-
-            self.output = Vec::new();
+            this.output = Vec::new();
         }
+        Some(done)
     }
 
-    fn then(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        let promise = self.promise.swap();
-        if self.err {
+    fn then(mut this: Self, mut promise: JSPromiseStrong, cx: &JsThread<'_>) -> JsResult<()> {
+        let global_this = cx.global();
+        let promise = promise.swap();
+        if this.err {
             let err = global_this.create_error_instance(format_args!("PBKDF2 derivation failed"));
             promise.reject_with_async_stack(global_this, Ok(err))?;
             return Ok(());
         }
 
-        let output_slice = core::mem::take(&mut self.output);
-        debug_assert!(output_slice.len() == usize::try_from(self.pbkdf2.length).expect("int cast"));
+        let output_slice = core::mem::take(&mut this.output);
+        debug_assert!(output_slice.len() == this.pbkdf2.length);
         // Ownership transfers to JSC (freed via MarkedArrayBuffer_deallocator → mimalloc free).
         let buffer_value = JSValue::create_buffer(global_this, output_slice.leak());
-        promise.resolve(global_this, buffer_value)?;
+        promise.settle(global_this, buffer_value)?;
         Ok(())
     }
 }
 
-pub(crate) type Job = AnyTaskJob<Pbkdf2Ctx>;
-
-/// Heap-allocate, init the promise, ref the loop, and hand
-/// to the work pool. Returns the live job so the caller can read
-/// `(*job).ctx.promise.value()` before the JS-thread completion fires.
-/// Free fn (not `impl Job`) because `AnyTaskJob<_>` is a foreign type.
-pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> *mut Job {
-    let job = AnyTaskJob::create(
-        global_this,
-        Pbkdf2Ctx {
-            // `from_js(.., is_async=true)` already protected — adopt, don't re-protect.
+/// Schedule the derivation on the work pool; returns its promise.
+pub(crate) fn create_job(global_this: &JSGlobalObject, data: PBKDF2) -> JSValue {
+    let cx = global_this.js_thread();
+    let promise = JSPromiseStrong::init(global_this);
+    let value = promise.value();
+    Job::<Pbkdf2Job>::schedule(
+        &cx,
+        Pbkdf2Job {
+            // `from_js(.., Flavor::Async)` already protected — adopt, don't re-protect.
             pbkdf2: bun_jsc::ThreadSafe::adopt(data),
             output: Vec::new(),
             err: false,
-            promise: JSPromiseStrong::init(global_this),
         },
-    )
-    .expect("Pbkdf2Ctx::init is infallible");
-    // SAFETY: `job` is a freshly-created live pointer.
-    unsafe { AnyTaskJob::schedule(job) };
-    job
-}
-
-/// For usage in Rust
-pub fn pbkdf2<'a>(
-    output: &'a mut [u8],
-    password: &[u8],
-    salt: &[u8],
-    iteration_count: u32,
-    algorithm: Algorithm,
-) -> Option<&'a [u8]> {
-    let mut pbk = PBKDF2 {
-        algorithm,
-        password: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(password)),
-        salt: StringOrBuffer::EncodedSlice(ZigStringSlice::from_utf8_never_free(salt)),
-        iteration_count,
-        length: i32::try_from(output.len()).expect("int cast"),
-    };
-
-    if !pbk.run(output) {
-        return None;
-    }
-
-    Some(output)
+        promise,
+    );
+    value
 }

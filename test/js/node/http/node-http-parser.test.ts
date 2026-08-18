@@ -1,9 +1,24 @@
 import { describe, expect, test } from "bun:test";
-const { HTTPParser, ConnectionsList } = process.binding("http_parser");
+const { HTTPParser, ConnectionsList, methods, allMethods } = process.binding("http_parser");
 const { parsers } = require("node:_http_common");
 
 const kOnHeaders = HTTPParser.kOnHeaders;
 const kOnHeadersComplete = HTTPParser.kOnHeadersComplete;
+
+describe("method lists", () => {
+  // oven-sh/bun#35273: the vendored llhttp method table had been reformatted
+  // into `M - SEARCH`, which the preprocessor stringizes with the spaces.
+  test("contain M-SEARCH, not a malformed token", () => {
+    expect(methods).toContain("M-SEARCH");
+    expect(allMethods).toContain("M-SEARCH");
+  });
+
+  test("contain no whitespace in any method token", () => {
+    for (const method of [...methods, ...allMethods]) {
+      expect(method).toMatch(/^[A-Z_-]+$/);
+    }
+  });
+});
 
 describe("HTTPParser.prototype.close", () => {
   test("does not double free", () => {
@@ -33,6 +48,40 @@ describe("HTTPParser.prototype.close", () => {
     expect(parser.getCurrentBuffer()).toBeUndefined();
     expect(parser.duration()).toBeUndefined();
     expect(parser.headersCompleted()).toBeUndefined();
+  });
+});
+
+describe("HTTPParser before initialize()", () => {
+  test("execute() and finish() throw instead of running over uninitialised state", () => {
+    // Churn the parser heap first so a fresh cell is likely to land on reused memory.
+    let junk = [];
+    for (let i = 0; i < 500; i++) {
+      const q = new HTTPParser();
+      q.initialize(HTTPParser.REQUEST, {});
+      q.execute(Buffer.from(`GET /${"a".repeat(i % 50)} HTTP/1.1\r\nHost: a\r\nX: b\r\n\r\n`));
+      junk.push(q);
+    }
+    junk = null;
+    Bun.gc(true);
+
+    for (let i = 0; i < 50; i++) {
+      const parser = new HTTPParser();
+      expect(() => parser.execute(Buffer.from("GET / HTTP/1.1\r\nHost: a\r\n\r\n"))).toThrow(
+        expect.objectContaining({ code: "ERR_INVALID_STATE" }),
+      );
+      expect(() => parser.finish()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+      expect(parser.pause()).toBeUndefined();
+      expect(parser.resume()).toBeUndefined();
+      expect(parser.getCurrentBuffer()).toEqual(Buffer.alloc(0));
+      expect(parser.headersCompleted()).toBe(false);
+    }
+
+    // and the parser is still usable once initialised
+    const parser = new HTTPParser();
+    expect(() => parser.finish()).toThrow(expect.objectContaining({ code: "ERR_INVALID_STATE" }));
+    parser.initialize(HTTPParser.REQUEST, {});
+    const input = Buffer.from("GET / HTTP/1.1\r\nHost: a\r\n\r\n");
+    expect(parser.execute(input)).toBe(input.length);
   });
 });
 

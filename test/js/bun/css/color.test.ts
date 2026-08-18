@@ -183,6 +183,49 @@ test.each(bad)("color(%s, 'css') === null", input => {
   expect(color(input)).toBeNull();
 });
 
+test("invalid format string lists the accepted values", () => {
+  let message!: string;
+  try {
+    // @ts-expect-error
+    color("red", "nope");
+    expect.unreachable();
+  } catch (e) {
+    message = (e as Error).message;
+  }
+  // Must not leak the internal Rust enum name.
+  expect(message).not.toContain("OutputColorFormat");
+  expect(message).toStartWith("format must be one of ");
+  // Every accepted spelling should appear in the message, so a user can copy one.
+  for (const ok of [
+    "ansi",
+    "ansi_16",
+    "ansi-16",
+    "ansi_16m",
+    "ansi-16m",
+    "ansi-24bit",
+    "ansi-truecolor",
+    "ansi_256",
+    "ansi-256",
+    "ansi256",
+    "css",
+    "hex",
+    "HEX",
+    "hsl",
+    "lab",
+    "number",
+    "rgb",
+    "rgba",
+    "[rgb]",
+    "[rgba]",
+    "[r,g,b,a]",
+    "{rgb}",
+    "{r,g,b}",
+    "{rgba}",
+  ]) {
+    expect(message).toContain(`'${ok}'`);
+  }
+});
+
 const weird = [
   ["rgb(-255, 0, 0)", "#000"],
   ["rgb(256, 0, 0)", "red"],
@@ -534,5 +577,190 @@ describe("input forms", () => {
     expect(color("#f00", "[rgba]")).toEqual([255, 0, 0, 255]);
     expect(color("#f00", "{rgb}")).toEqual({ r: 255, g: 0, b: 0 });
     expect(color("#f00", "[rgb]")).toEqual([255, 0, 0]);
+  });
+
+  // The r/g/b keys of an object input and the CSS rgba() parser both clamp
+  // out-of-range values; the object's `a` key must too (it used to wrap mod 256,
+  // so a: 1.004 became fully transparent).
+  test("out-of-range object alpha clamps to [0, 1]", () => {
+    expect(color({ r: 10, g: 20, b: 30, a: 1.004 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 2 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 100 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: -1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+    expect(color({ r: 10, g: 20, b: 30, a: -0.5 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+    expect(color({ r: 10, g: 20, b: 30, a: Infinity }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: -Infinity }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 0 });
+  });
+
+  test("object alpha agrees with the CSS parser's clamping", () => {
+    for (const a of [1.5, 2, -0.5, -1, 1.004]) {
+      expect(color({ r: 10, g: 20, b: 30, a }, "{rgba}")).toEqual(color(`rgba(10, 20, 30, ${a})`, "{rgba}"));
+    }
+  });
+
+  test("in-range object alpha is unchanged", () => {
+    expect(color({ r: 10, g: 20, b: 30, a: 1 }, "{rgba}")).toEqual({ r: 10, g: 20, b: 30, a: 1 });
+    expect(color({ r: 10, g: 20, b: 30, a: 0.5 }, "[rgba]")).toEqual([10, 20, 30, 127]);
+  });
+});
+
+// https://drafts.csswg.org/css-color-5/#color-mix — the grammar is
+// <percentage [0,100]>, so a value outside that range is a parse error.
+describe("color-mix() percentage range", () => {
+  // fuzz repro: -9% drove HSL saturation negative and tripped a debug assertion
+  // in hsl_to_rgb; release builds produced out-of-gamut garbage.
+  test("does not crash on a negative mix percentage", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.stdout.write(String(Bun.color("color-mix(in hsl,red -9%,color(display-p3 0 0 0)", "lab")))`,
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, exitCode, stderr: exitCode === 0 ? undefined : stderr }).toEqual({ stdout: "null", exitCode: 0 });
+  });
+
+  test.each([
+    "color-mix(in hsl, red -9%, blue)",
+    "color-mix(in hsl, red 150%, blue)",
+    "color-mix(in hsl, -10% red, blue)",
+    "color-mix(in hsl, red, blue -9%)",
+    "color-mix(in hsl, red, blue 150%)",
+    "color-mix(in hsl, red, 150% blue)",
+    "color-mix(in srgb, red -1%, blue)",
+    "color-mix(in srgb, red 100.001%, blue)",
+    "color-mix(in lab, red -9%, blue)",
+    "color-mix(in hwb, red -9%, blue)",
+    "color-mix(in oklch, red 150%, blue)",
+  ])("rejects %s", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+
+  test.each([
+    ["color-mix(in hsl, red 0%, blue)", "#00f"],
+    ["color-mix(in hsl, red 100%, blue)", "red"],
+    ["color-mix(in hsl, red 50%, blue 50%)", "#f0f"],
+    ["color-mix(in hsl, red, blue 0%)", "red"],
+    ["color-mix(in hsl, red, blue 100%)", "#00f"],
+  ])("accepts %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+});
+
+describe("rgb() channel order and legacy syntax", () => {
+  // Distinct channel values, so any two channels ending up in each other's
+  // place shows in the output. The legacy comma syntax gives the channels on a
+  // 0-255 scale and takes its alpha after another comma; the modern syntax
+  // takes its alpha after a slash and is the only one that allows `none`.
+  test.each([
+    ["rgb(12 34 56)", "#0c2238"],
+    ["rgb(12, 34, 56)", "#0c2238"],
+    ["rgb(4.7% 13.3% 22%)", "#0c2238"],
+    ["rgb(4.7%, 13.3%, 22%)", "#0c2238"],
+    ["rgb(12 13.3% 56)", "#0c2238"],
+    ["rgb(12 34 56 / 0.5)", "#0c223880"],
+    ["rgb(12, 34, 56, 0.5)", "#0c223880"],
+    ["rgba(12, 34, 56, 0.5)", "#0c223880"],
+    ["rgb(12 none 56)", "#0c0038"],
+    ["rgb(none 34 56)", "#002238"],
+  ])("%s is %s", (input, expected) => {
+    expect(color(input, "css")).toBe(expected);
+  });
+
+  test.each([
+    "rgb(12, 34, 56 / 0.5)",
+    "rgb(12 34 56, 0.5)",
+    "rgb(12, 13.3%, 56)",
+    "rgb(12, none, 56)",
+    "rgb(none, 34, 56)",
+  ])("%s mixes the two syntaxes and is rejected", input => {
+    expect(color(input, "css")).toBeNull();
+  });
+});
+
+describe("conversions between color spaces", () => {
+  // Each case converts a color whose channels all differ, so a channel landing
+  // in another channel's place shows up in the output. Mixing a color with
+  // itself is how a color is converted into a space Bun.color has no output
+  // format for: color-mix() converts both operands into the interpolation
+  // space and prints the result in it.
+  const same = (space: string, value: string) => color(`color-mix(in ${space}, ${value}, ${value})`, "css") as string;
+  const channels = (css: string) =>
+    css
+      .slice(css.indexOf("(") + 1)
+      .match(/-?\d*\.?\d+(?:e[+-]?\d+)?/g)!
+      .map(Number);
+  const expectChannels = (css: string, expected: number[], digits: number) => {
+    const actual = channels(css);
+    expect(actual).toHaveLength(expected.length);
+    for (let i = 0; i < expected.length; i++) {
+      expect(actual[i]).toBeCloseTo(expected[i], digits);
+    }
+  };
+
+  // Transcendental functions differ in the last f32 digit between platforms,
+  // so the polar conversions are compared numerically.
+  test.each([
+    ["lch(50% 30 0)", [50, 30, 0]],
+    ["lch(50% 30 90)", [50, 0, 30]],
+    ["lch(50% 30 180)", [50, -30, 0]],
+    ["lch(50% 30 270)", [50, 0, -30]],
+  ])("%s has the lab channels %p", (input, expected) => {
+    expectChannels(color(input, "lab") as string, expected as number[], 4);
+  });
+
+  test.each([
+    ["oklch(60% 0.1 0)", "oklab(60% 0.1 0)"],
+    ["oklch(60% 0.1 90)", "oklab(60% 0 0.1)"],
+  ])("%s is the same color as %s", (polar, rectangular) => {
+    expectChannels(color(polar, "lab") as string, channels(color(rectangular, "lab") as string), 3);
+  });
+
+  test.each([
+    ["lch", "lab(50% 30 40)", [50, 50, 53.1301]],
+    ["lch", "lab(50% 0 30)", [50, 30, 90]],
+    ["lch", "lab(50% -30 0)", [50, 30, 180]],
+    ["lch", "lab(50% 0 -30)", [50, 30, 270]],
+    ["oklch", "oklab(60% 0.03 0.04)", [60, 0.05, 53.1301]],
+  ])("converted to %s, %s has the channels %p", (space, input, expected) => {
+    const out = same(space as string, input as string);
+    expect(out).toStartWith(`${space}(`);
+    expectChannels(out, expected as number[], 3);
+  });
+
+  // https://www.w3.org/TR/css-color-4/#color-conversion-code
+  const linear = (v: number) => (v <= 0.04045 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4);
+
+  test("srgb to srgb-linear applies the transfer function to each channel", () => {
+    const out = same("srgb-linear", "#ff8005");
+    expect(out).toStartWith("color(srgb-linear ");
+    expectChannels(out, [1, linear(128 / 255), linear(5 / 255)], 5);
+  });
+
+  test("srgb-linear to srgb applies the inverse to each channel", () => {
+    // 1 -> 255, 0.2 -> 1.055 * 0.2^(1/2.4) - 0.055 = 0.4845 -> 124, and 0.001
+    // is on the linear segment: 12.92 * 0.001 -> 3.
+    expect(same("srgb", "color(srgb-linear 1 0.2 0.001)")).toBe("#ff7c03");
+  });
+
+  test("display-p3 to xyz linearizes each channel before the matrix", () => {
+    // XYZ of the display-p3 primaries, i.e. the columns of the matrix in
+    // https://www.w3.org/TR/css-color-4/#color-conversion-code. The matrix is
+    // linear, so a color is the sum of its linearized channels times these.
+    const red = [0.486571, 0.228975, 0];
+    const green = [0.265668, 0.691739, 0.045113];
+    const blue = [0.198217, 0.079287, 1.043944];
+    const g = linear(0.5);
+    const b = linear(0.002);
+    const out = same("xyz", "color(display-p3 1 0.5 0.002)");
+    expect(out).toStartWith("color(xyz ");
+    expectChannels(
+      out,
+      [0, 1, 2].map(i => red[i] + g * green[i] + b * blue[i]),
+      4,
+    );
   });
 });

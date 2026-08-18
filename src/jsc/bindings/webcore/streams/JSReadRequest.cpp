@@ -13,6 +13,7 @@
 #include "JSStreamPipeToOperation.h"
 #include "JSStreamTeeState.h"
 #include "JSStreamsRuntime.h"
+#include "WebStreamsHeapAnalyzer.h"
 #include "WebStreamsInternals.h"
 #include <JavaScriptCore/InternalFieldTuple.h>
 #include <JavaScriptCore/IteratorOperations.h>
@@ -27,19 +28,6 @@ namespace WebCore {
 
 using namespace JSC;
 using namespace Bun::WebStreams;
-
-// The tee state's branches always carry the controller kind their tee installed.
-static JSReadableStreamDefaultController* defaultControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Default);
-    return uncheckedDowncast<JSReadableStreamDefaultController>(stream->m_controller.get());
-}
-
-static JSReadableByteStreamController* byteControllerOf(JSReadableStream* stream)
-{
-    ASSERT(stream->m_controllerKind == ControllerKind::Byte);
-    return uncheckedDowncast<JSReadableByteStreamController>(stream->m_controller.get());
-}
 
 // [reaction-convention] deferral: runs handler(value, context) as its own microtask,
 // carrying the current async context, without allocating a promise.
@@ -97,7 +85,15 @@ void JSReadRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSReadRequest>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_context);
+    visitor.appendHidden(thisObject->m_context);
+}
+
+void JSReadRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadRequest>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_context, "context"_s);
 }
 
 void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
@@ -117,6 +113,8 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onDefaultTeeReadChunkMicrotask(), chunk, m_context.get());
     case ReadRequestKind::ByteTee:
         return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onByteTeeReadChunkMicrotask(), chunk, m_context.get());
+    case ReadRequestKind::ReadStreamIntoSink:
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkChunk(), chunk, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* promise = uncheckedDowncast<JSPromise>(context->getInternalField(1));
@@ -126,6 +124,8 @@ void JSReadRequest::chunkSteps(JSGlobalObject* globalObject, JSValue chunk)
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
         return;
     }
+    case ReadRequestKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodeReadRequestChunkSteps(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get()), chunk));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -146,12 +146,14 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     case ReadRequestKind::DefaultTee: {
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(m_context.get());
         teeState->m_reading = false;
-        if (!teeState->m_canceled1) {
-            readableStreamDefaultControllerClose(globalObject, defaultControllerOf(teeState->m_branch1.get()));
+        auto* controller1 = teeBranchDefaultController(teeState->m_branch1.get());
+        auto* controller2 = teeBranchDefaultController(teeState->m_branch2.get());
+        if (!teeState->m_canceled1 && controller1) {
+            readableStreamDefaultControllerClose(globalObject, controller1);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!teeState->m_canceled2) {
-            readableStreamDefaultControllerClose(globalObject, defaultControllerOf(teeState->m_branch2.get()));
+        if (!teeState->m_canceled2 && controller2) {
+            readableStreamDefaultControllerClose(globalObject, controller2);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (!teeState->m_canceled1 || !teeState->m_canceled2)
@@ -161,26 +163,30 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
     case ReadRequestKind::ByteTee: {
         auto* teeState = uncheckedDowncast<JSStreamTeeState>(m_context.get());
         teeState->m_reading = false;
-        if (!teeState->m_canceled1) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(teeState->m_branch1.get()));
+        auto* controller1 = teeBranchByteController(teeState->m_branch1.get());
+        auto* controller2 = teeBranchByteController(teeState->m_branch2.get());
+        if (!teeState->m_canceled1 && controller1) {
+            readableByteStreamControllerClose(globalObject, controller1);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!teeState->m_canceled2) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(teeState->m_branch2.get()));
+        if (!teeState->m_canceled2 && controller2) {
+            readableByteStreamControllerClose(globalObject, controller2);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!byteControllerOf(teeState->m_branch1.get())->m_pendingPullIntos.isEmpty()) {
-            readableByteStreamControllerRespond(globalObject, byteControllerOf(teeState->m_branch1.get()), 0);
+        if (controller1 && !controller1->m_pendingPullIntos.isEmpty()) {
+            readableByteStreamControllerRespond(globalObject, controller1, 0);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!byteControllerOf(teeState->m_branch2.get())->m_pendingPullIntos.isEmpty()) {
-            readableByteStreamControllerRespond(globalObject, byteControllerOf(teeState->m_branch2.get()), 0);
+        if (controller2 && !controller2->m_pendingPullIntos.isEmpty()) {
+            readableByteStreamControllerRespond(globalObject, controller2, 0);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (!teeState->m_canceled1 || !teeState->m_canceled2)
             resolvePromise(globalObject, teeState->m_cancelPromise.get(), jsUndefined());
         return;
     }
+    case ReadRequestKind::ReadStreamIntoSink:
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkClose(), jsUndefined(), m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -193,6 +199,8 @@ void JSReadRequest::closeSteps(JSGlobalObject* globalObject)
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorResolveMicrotask(), result, promise);
         return;
     }
+    case ReadRequestKind::TextDecode:
+        RELEASE_AND_RETURN(scope, textDecodeReadRequestCloseSteps(globalObject, uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get())));
     }
     RELEASE_ASSERT_NOT_REACHED();
 }
@@ -210,6 +218,8 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
     case ReadRequestKind::ByteTee:
         uncheckedDowncast<JSStreamTeeState>(m_context.get())->m_reading = false;
         return;
+    case ReadRequestKind::ReadStreamIntoSink:
+        return queueReactionJob(vm, globalObject, JSStreamsRuntime::from(globalObject)->onReadStreamIntoSinkRejected(), error, m_context.get());
     case ReadRequestKind::AsyncIterator: {
         auto* context = uncheckedDowncast<InternalFieldTuple>(m_context.get());
         auto* iterator = uncheckedDowncast<JSReadableStreamAsyncIterator>(context->getInternalField(0));
@@ -218,6 +228,17 @@ void JSReadRequest::errorSteps(JSGlobalObject* globalObject, JSValue error)
         readableStreamDefaultReaderRelease(globalObject, iterator->m_reader.get());
         RETURN_IF_EXCEPTION(scope, void());
         queueStreamsMicrotask(globalObject, JSStreamsRuntime::from(globalObject)->onAsyncIteratorRejectMicrotask(), error, promise);
+        return;
+    }
+    case ReadRequestKind::TextDecode: {
+        auto* controller = uncheckedDowncast<JSReadableStreamDefaultController>(m_context.get());
+        auto* reader = dynamicDowncast<JSReadableStreamDefaultReader>(controller->m_algorithms.algorithmContext.get());
+        readableStreamDefaultControllerError(globalObject, controller, error);
+        RETURN_IF_EXCEPTION(scope, void());
+        if (reader && reader->m_stream) {
+            readableStreamDefaultReaderRelease(globalObject, reader);
+            RETURN_IF_EXCEPTION(scope, void());
+        }
         return;
     }
     }
@@ -269,7 +290,15 @@ void JSReadIntoRequest::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = uncheckedDowncast<JSReadIntoRequest>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.append(thisObject->m_context);
+    visitor.appendHidden(thisObject->m_context);
+}
+
+void JSReadIntoRequest::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
+{
+    auto* thisObject = uncheckedDowncast<JSReadIntoRequest>(cell);
+    auto& vm = cell->vm();
+    Base::analyzeHeap(cell, analyzer);
+    analyzeBarrierEdge(vm, analyzer, cell, thisObject->m_context, "context"_s);
 }
 
 void JSReadIntoRequest::chunkSteps(JSGlobalObject* globalObject, JSArrayBufferView* chunk)
@@ -307,24 +336,26 @@ void JSReadIntoRequest::closeSteps(JSGlobalObject* globalObject, JSArrayBufferVi
         teeState->m_reading = false;
         auto* byobBranch = forBranch2 ? teeState->m_branch2.get() : teeState->m_branch1.get();
         auto* otherBranch = forBranch2 ? teeState->m_branch1.get() : teeState->m_branch2.get();
+        auto* byobController = teeBranchByteController(byobBranch);
+        auto* otherController = teeBranchByteController(otherBranch);
         bool byobCanceled = forBranch2 ? teeState->m_canceled2 : teeState->m_canceled1;
         bool otherCanceled = forBranch2 ? teeState->m_canceled1 : teeState->m_canceled2;
-        if (!byobCanceled) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(byobBranch));
+        if (!byobCanceled && byobController) {
+            readableByteStreamControllerClose(globalObject, byobController);
             RETURN_IF_EXCEPTION(scope, void());
         }
-        if (!otherCanceled) {
-            readableByteStreamControllerClose(globalObject, byteControllerOf(otherBranch));
+        if (!otherCanceled && otherController) {
+            readableByteStreamControllerClose(globalObject, otherController);
             RETURN_IF_EXCEPTION(scope, void());
         }
         if (chunkOrNull) {
             ASSERT(!chunkOrNull->byteLength());
-            if (!byobCanceled) {
-                readableByteStreamControllerRespondWithNewView(globalObject, byteControllerOf(byobBranch), chunkOrNull);
+            if (!byobCanceled && byobController) {
+                readableByteStreamControllerRespondWithNewView(globalObject, byobController, chunkOrNull);
                 RETURN_IF_EXCEPTION(scope, void());
             }
-            if (!otherCanceled && !byteControllerOf(otherBranch)->m_pendingPullIntos.isEmpty()) {
-                readableByteStreamControllerRespond(globalObject, byteControllerOf(otherBranch), 0);
+            if (!otherCanceled && otherController && !otherController->m_pendingPullIntos.isEmpty()) {
+                readableByteStreamControllerRespond(globalObject, otherController, 0);
                 RETURN_IF_EXCEPTION(scope, void());
             }
         }

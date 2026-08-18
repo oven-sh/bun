@@ -8,6 +8,7 @@
 #include "ErrorStackTrace.h"
 
 #include <JavaScriptCore/JSObject.h>
+#include <JavaScriptCore/DebuggerPrimitives.h>
 #include "BunClientData.h"
 #include "wtf/text/OrdinalNumber.h"
 
@@ -37,6 +38,7 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
     OrdinalNumber m_lineNumber;
     OrdinalNumber m_columnNumber;
+    intptr_t m_sourceID;
     unsigned int m_flags;
 
 public:
@@ -46,7 +48,7 @@ public:
     {
         auto& vm = JSC::getVM(globalObject);
         CallSite* callSite = new (NotNull, JSC::allocateCell<CallSite>(vm)) CallSite(vm, structure);
-        callSite->finishCreation(vm, globalObject, stackFrame, encounteredStrictFrame);
+        callSite->finishCreation(vm, stackFrame, encounteredStrictFrame);
         return callSite;
     }
 
@@ -76,6 +78,7 @@ public:
     JSC::JSValue sourceURL() const { return m_sourceURL.get(); }
     OrdinalNumber lineNumber() const { return m_lineNumber; }
     OrdinalNumber columnNumber() const { return m_columnNumber; }
+    intptr_t sourceID() const { return m_sourceID; }
     bool isEval() const { return m_flags & static_cast<unsigned int>(Flags::IsEval); }
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
@@ -93,11 +96,12 @@ private:
         : Base(vm, structure)
         , m_lineNumber(OrdinalNumber::beforeFirst())
         , m_columnNumber(OrdinalNumber::beforeFirst())
+        , m_sourceID(JSC::noSourceID)
         , m_flags(0)
     {
     }
 
-    void finishCreation(VM& vm, JSC::JSGlobalObject* globalObject, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
+    void finishCreation(VM& vm, JSCStackFrame& stackFrame, bool encounteredStrictFrame);
 
     DECLARE_VISIT_CHILDREN;
 };

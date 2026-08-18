@@ -1,5 +1,5 @@
 use crate::mal_prelude::*;
-use bun_collections::VecExt;
+use bun_collections::{VecExt, index_sort};
 use core::cmp::Ordering;
 
 use crate::bundled_ast::Flags as AstFlags;
@@ -35,11 +35,11 @@ use crate::{Chunk, LinkerContext, StableRef, WrapKind};
 /// `c` must point to a live `LinkerContext` for the duration of the call;
 /// caller (the `each_ptr` dispatch) guarantees the link step outlives all
 /// renamer tasks.
-pub unsafe fn rename_symbols_in_chunk(
+pub(crate) unsafe fn rename_symbols_in_chunk(
     c: *mut LinkerContext,
     chunk: &mut Chunk,
     files_in_order: &[u32],
-) -> Result<ChunkRenamer, bun_core::Error> {
+) -> Result<ChunkRenamer, crate::Error> {
     let _trace = bun_core::perf::trace("Bundler.renameSymbolsInChunk");
 
     // Derive the `symbols` pointer from the raw `*mut LinkerContext` *before*
@@ -157,7 +157,7 @@ pub unsafe fn rename_symbols_in_chunk(
             }
         }
 
-        list.sort_unstable_by(|a, b| {
+        index_sort::sort_slice_unstable_by(&mut list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 Ordering::Less
             } else if StableRef::is_less_than((), *b, *a) {
@@ -416,7 +416,3 @@ pub unsafe fn rename_symbols_in_chunk(
 
     Ok(ChunkRenamer::Number(r))
 }
-
-pub use crate::DeferredBatchTask;
-pub use crate::ParseTask;
-pub use crate::ThreadPool;

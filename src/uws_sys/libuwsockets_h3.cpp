@@ -161,6 +161,11 @@ void uws_h3_res_mark_wrote_content_length_header(uws_h3_res_t* res)
     ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_CONTENT_LENGTH_HEADER;
 }
 
+void uws_h3_res_mark_wrote_date_header(uws_h3_res_t* res)
+{
+    ((Http3Response*)res)->getHttpResponseData()->state |= Http3ResponseData::HTTP_WROTE_DATE_HEADER;
+}
+
 void uws_h3_res_write_mark(uws_h3_res_t* res) { ((Http3Response*)res)->writeMark(); }
 void uws_h3_res_flush_headers(uws_h3_res_t* res, bool) { ((Http3Response*)res)->flushHeaders(); }
 
@@ -295,11 +300,6 @@ size_t uws_h3_req_get_query(uws_h3_req_t* req, const char* key, size_t key_len, 
     return ffi_sv(key ? ((Http3Request*)req)->getQuery(sv(key, key_len))
                       : ((Http3Request*)req)->getQuery(),
         dest);
-}
-
-size_t uws_h3_req_get_parameter(uws_h3_req_t* req, unsigned short index, const char** dest)
-{
-    return ffi_sv(((Http3Request*)req)->getParameter(index), dest);
 }
 
 #pragma clang attribute pop

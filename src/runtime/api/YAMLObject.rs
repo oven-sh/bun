@@ -9,7 +9,7 @@ use bun_jsc::{
     self as jsc, CallFrame, JSGlobalObject, JSPropertyIterator, JSPropertyIteratorOptions, JSValue,
     JsError, JsResult, MarkedArgumentBuffer, wtf,
 };
-use bun_parsers::yaml::{YAML, YamlParseError};
+use bun_parsers::yaml::{CyclicAliases, YAML, YamlParseError};
 
 pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
     jsc::create_host_function_object(
@@ -22,7 +22,7 @@ pub(crate) fn create(global_this: &JSGlobalObject) -> JSValue {
 }
 
 #[bun_jsc::host_fn]
-pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
     let [value, replacer, space_value] = call_frame.arguments_as_array::<3>();
 
     value.ensure_still_alive();
@@ -39,28 +39,18 @@ pub(crate) fn stringify(global: &JSGlobalObject, call_frame: &CallFrame) -> JsRe
 
     let mut stringifier = Stringifier::init(global, space_value)?;
 
-    if let Err(err) = stringifier.find_anchors_and_aliases(global, value, ValueOrigin::Root) {
-        return match err {
-            StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
-            StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::JsTerminated => Err(JsError::Terminated),
-            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
-        };
-    }
+    stringifier
+        .find_anchors_and_aliases(global, value, ValueOrigin::Root)
+        .map_err(|err| err.to_js_error(global))?;
 
-    if let Err(err) = stringifier.stringify(global, value) {
-        return match err {
-            StringifyError::OutOfMemory => Err(JsError::OutOfMemory),
-            StringifyError::JsError => Err(JsError::Thrown),
-            StringifyError::JsTerminated => Err(JsError::Terminated),
-            StringifyError::StackOverflow => Err(global.throw_stack_overflow()),
-        };
-    }
+    stringifier
+        .stringify(global, value)
+        .map_err(|err| err.to_js_error(global))?;
 
     stringifier.builder.to_string(global)
 }
 
-pub(crate) struct Stringifier {
+struct Stringifier {
     stack_check: StackCheck,
     builder: wtf::StringBuilder,
     indent: usize,
@@ -72,7 +62,7 @@ pub(crate) struct Stringifier {
     space: Space,
 }
 
-pub(crate) enum Space {
+enum Space {
     Minified,
     Number(u32),
     /// +1 WTF ref owned for the lifetime of the `Stringifier`.
@@ -80,7 +70,7 @@ pub(crate) enum Space {
 }
 
 impl Space {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Space> {
         let space = space_value.unwrap_boxed_primitive(global)?;
         if space.is_number() {
             // Clamp on the float to match the spec's min(10, ToIntegerOrInfinity(space)).
@@ -125,7 +115,7 @@ impl Default for AnchorAlias {
 }
 
 impl AnchorAlias {
-    pub(crate) fn init(origin: ValueOrigin) -> AnchorAlias {
+    fn init(origin: ValueOrigin) -> AnchorAlias {
         AnchorAlias {
             anchored: false,
             used: false,
@@ -165,8 +155,6 @@ pub(crate) enum StringifyError {
     OutOfMemory,
     #[error("JSError")]
     JsError,
-    #[error("JSTerminated")]
-    JsTerminated,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -175,8 +163,21 @@ impl From<JsError> for StringifyError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => StringifyError::OutOfMemory,
-            JsError::Thrown => StringifyError::JsError,
-            JsError::Terminated => StringifyError::JsTerminated,
+            JsError::Thrown | JsError::Terminated => StringifyError::JsError,
+        }
+    }
+}
+
+impl StringifyError {
+    /// `OutOfMemory` and `JsError` are already JS-shaped (the host-fn wrapper
+    /// throws the former, the latter's exception is pending); only
+    /// `StackOverflow` still has to be thrown here.
+    #[cold]
+    fn to_js_error(self, global: &JSGlobalObject) -> JsError {
+        match self {
+            StringifyError::OutOfMemory => JsError::OutOfMemory,
+            StringifyError::JsError => JsError::Thrown,
+            StringifyError::StackOverflow => global.throw_stack_overflow(),
         }
     }
 }
@@ -184,7 +185,7 @@ impl From<JsError> for StringifyError {
 bun_core::oom_from_alloc!(StringifyError);
 
 impl Stringifier {
-    pub(crate) fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
+    fn init(global: &JSGlobalObject, space_value: JSValue) -> JsResult<Stringifier> {
         let mut prop_names: StringHashMap<usize> = StringHashMap::default();
         // always rename anchors named "root" to avoid collision with
         // root anchor/alias
@@ -204,7 +205,7 @@ impl Stringifier {
     // deinit: all fields have Drop (`space: Space::Str` holds an
     // `OwnedString`); no explicit impl needed.
 
-    pub(crate) fn find_anchors_and_aliases(
+    fn find_anchors_and_aliases(
         &mut self,
         global: &JSGlobalObject,
         value: JSValue,
@@ -315,11 +316,7 @@ impl Stringifier {
         Ok(())
     }
 
-    pub(crate) fn stringify(
-        &mut self,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) -> Result<(), StringifyError> {
+    fn stringify(&mut self, global: &JSGlobalObject, value: JSValue) -> Result<(), StringifyError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(StringifyError::StackOverflow);
         }
@@ -1028,16 +1025,18 @@ fn is_inf_suffix(str: &BunString, i: usize) -> bool {
 }
 
 #[bun_jsc::host_fn]
-pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-    // reject_nullish=false preserves YAML's coerce-undefined-to-"undefined" behavior.
+pub(crate) fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
+    // `NullishInput::ToString` preserves YAML's coerce-undefined-to-"undefined" behavior.
     super::with_text_format_source(
         global,
         call_frame,
         b"input.yaml",
-        true,
-        false,
+        super::BlobOrBufferInput::Bytes,
+        super::NullishInput::ToString,
         |arena, log, source| {
-            let root = match YAML::parse(source, log, arena) {
+            // `ParserCtx::to_js` materializes each `E::Array`/`E::Object`
+            // once by pointer identity, so a cyclic graph is fine here.
+            let root = match YAML::parse(source, log, arena, CyclicAliases::Allow) {
                 Ok(root) => root,
                 Err(YamlParseError::OutOfMemory) => return Err(JsError::OutOfMemory),
                 Err(YamlParseError::StackOverflow) => return Err(global.throw_stack_overflow()),
@@ -1070,7 +1069,7 @@ pub fn parse(global: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValu
     )
 }
 
-pub(crate) struct ParserCtx<'a> {
+struct ParserCtx<'a> {
     seen_objects: HashMap<*const c_void, JSValue>,
     stack_check: StackCheck,
 
@@ -1086,8 +1085,6 @@ pub(crate) enum ToJsError {
     OutOfMemory,
     #[error("JSError")]
     JsError,
-    #[error("JSTerminated")]
-    JsTerminated,
     #[error("StackOverflow")]
     StackOverflow,
 }
@@ -1096,8 +1093,7 @@ impl From<JsError> for ToJsError {
     fn from(e: JsError) -> Self {
         match e {
             JsError::OutOfMemory => ToJsError::OutOfMemory,
-            JsError::Thrown => ToJsError::JsError,
-            JsError::Terminated => ToJsError::JsTerminated,
+            JsError::Thrown | JsError::Terminated => ToJsError::JsError,
         }
     }
 }
@@ -1110,12 +1106,10 @@ impl From<bun_ast::ToJSError> for ToJsError {
         match e {
             Up::OutOfMemory => ToJsError::OutOfMemory,
             Up::JSError => ToJsError::JsError,
-            Up::JSTerminated => ToJsError::JsTerminated,
-            // `value_string_to_js` never yields the macro/identifier variants
-            // (those come from the full `data_to_js` walker); map defensively.
-            Up::CannotConvertArgumentTypeToJS
-            | Up::CannotConvertIdentifierToJS
-            | Up::MacroError => ToJsError::JsError,
+            // `value_string_to_js` never yields these; map defensively.
+            Up::CannotConvertArgumentTypeToJS | Up::CannotConvertIdentifierToJS => {
+                ToJsError::JsError
+            }
         }
     }
 }
@@ -1133,7 +1127,7 @@ impl<'a> ParserCtx<'a> {
                 ctx.result = ctx.global.throw_out_of_memory_value();
                 return;
             }
-            Err(ToJsError::JsError) | Err(ToJsError::JsTerminated) => {
+            Err(ToJsError::JsError) => {
                 ctx.result = JSValue::ZERO;
                 return;
             }
@@ -1145,11 +1139,7 @@ impl<'a> ParserCtx<'a> {
         };
     }
 
-    pub(crate) fn to_js(
-        &mut self,
-        args: &mut MarkedArgumentBuffer,
-        expr: Expr,
-    ) -> Result<JSValue, ToJsError> {
+    fn to_js(&mut self, args: &mut MarkedArgumentBuffer, expr: Expr) -> Result<JSValue, ToJsError> {
         if !self.stack_check.is_safe_to_recurse() {
             return Err(ToJsError::StackOverflow);
         }

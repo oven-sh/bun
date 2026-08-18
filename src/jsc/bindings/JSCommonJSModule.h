@@ -21,6 +21,10 @@ namespace Bun {
 
 using namespace JSC;
 
+// What `require("module").wrapper` reports and every CommonJS module body is wrapped in unless that is overridden.
+static constexpr ASCIILiteral commonJSDefaultWrapperStart = "(function(exports,require,module,__filename,__dirname){"_s;
+static constexpr ASCIILiteral commonJSDefaultWrapperEnd = "})"_s;
+
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionEvaluateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(functionJSCommonJSModule_compile);
@@ -76,12 +80,8 @@ public:
 
     static size_t estimatedSize(JSC::JSCell* cell, JSC::VM& vm);
 
-    void setSourceCode(JSC::SourceCode&& sourceCode);
-
     static void destroy(JSC::JSCell*);
     ~JSCommonJSModule();
-
-    void clearSourceCode() { sourceCode = JSC::SourceCode(); }
 
     void finishCreation(JSC::VM& vm, const JSC::SourceCode& sourceCode);
 
@@ -127,7 +127,6 @@ public:
         return this->get(globalObject(), JSC::PropertyName(WebCore::clientData(vm())->builtinNames().exportsPublicName()));
     }
     void setExportsObject(JSC::JSValue exportsObject);
-    JSValue idOrDot() { return m_id.get(); }
     JSValue filename() { return m_filename.get(); }
 
     bool load(JSC::VM& vm, Zig::GlobalObject* globalObject);

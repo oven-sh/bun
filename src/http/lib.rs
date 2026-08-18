@@ -124,16 +124,6 @@ pub struct HTTPResponseMetadata {
     pub response: bun_picohttp::Response<'static>,
 }
 
-impl Default for HTTPResponseMetadata {
-    fn default() -> Self {
-        Self {
-            url: bun_ptr::RawSlice::EMPTY,
-            owned_buf: Box::default(),
-            response: bun_picohttp::Response::default(),
-        }
-    }
-}
-
 impl HTTPResponseMetadata {
     /// Accessors tied to `&self`: `response` is typed `'static` but its slices
     /// borrow the sibling `owned_buf` / header slice that `Drop` frees, so
@@ -157,10 +147,7 @@ impl HTTPResponseMetadata {
 }
 
 impl Drop for HTTPResponseMetadata {
-    // `owned_buf` is freed by
-    // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in
-    // `clone_metadata` and must be reclaimed here. `Default` / zero-header
-    // responses have an empty static slice, guarded by the len check.
+    // `response.headers.list` is `Box::leak`'d by `clone_metadata`; reclaim it here.
     fn drop(&mut self) {
         let list = self.response.headers.list;
         if !list.is_empty() {

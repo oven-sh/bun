@@ -42,10 +42,6 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
     return 0;
 }
 
-// Part of the uv_* surface napi addons link against (see uv-posix-polyfills.c).
-// Listing it in linker.lds/symbols.txt is not enough under -fvisibility=hidden.
-// Like every uv_* function, it reports failure as a negative errno (UV_E*);
-// uv__tcsetattr() above returns a positive one for ttySetMode()'s callers.
 extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
 {
     int saved_errno;
@@ -54,11 +50,11 @@ extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
     saved_errno = errno;
 
     if (atomic_exchange(&orig_termios_spinlock, 1))
-        return -EBUSY; // UV_EBUSY: a ttySetMode() is taking the snapshot.
+        return -EBUSY; // UV_EBUSY, ttySetMode() is taking the snapshot
 
     err = 0;
     if (orig_termios_fd != -1)
-        err = -uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios);
+        err = -uv__tcsetattr(orig_termios_fd, TCSANOW, &orig_termios); // UV__ERR(errno)
 
     atomic_store(&orig_termios_spinlock, 0);
     errno = saved_errno;

@@ -32,6 +32,8 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSString> m_cachedCwd;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
+    // process.stdin/stdout/stderr, built on first read (or whatever was last assigned).
+    WriteBarrier<Unknown> m_stdio[3];
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
     WriteBarrier<JSObject> m_onWarning;
 
@@ -69,6 +71,7 @@ public:
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    JSObject* nextTickFunction() const { return m_nextTickFunction.get(); }
     void queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& args);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue);
     void queueNextTick(JSC::JSGlobalObject* globalObject, JSValue, JSValue);
@@ -94,6 +97,9 @@ public:
 
     JSValue getExecArgv(JSGlobalObject* globalObject);
     void setExecArgv(JSGlobalObject* globalObject, JSValue execArgv);
+
+    JSValue getStdio(JSGlobalObject* globalObject, int fd);
+    void setStdio(JSC::VM& vm, int fd, JSValue value) { m_stdio[fd].set(vm, this, value); }
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

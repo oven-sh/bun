@@ -1322,6 +1322,46 @@ describe.concurrent(() => {
     });
   }
 
+  it("process.stdin/stdout/stderr are accessors, like Node", () => {
+    for (const name of ["stdin", "stdout", "stderr"]) {
+      const d = Object.getOwnPropertyDescriptor(process, name);
+      expect(typeof d.get).toBe("function");
+      expect(d.enumerable).toBe(true);
+      expect(d.configurable).toBe(true);
+    }
+    // nextTick stays a data property, like Node.
+    expect(Object.getOwnPropertyDescriptor(process, "nextTick").value).toBe(process.nextTick);
+  });
+
+  it("deleting a lazy process property keeps stdio, nextTick and assignment working", async () => {
+    // `delete` reifies process's whole static property table; the streams and the
+    // tick queue must still be built (once) on first use afterwards, and assignment
+    // must keep replacing them.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `delete process.release;
+         const order = [];
+         process.nextTick(() => order.push("tick"));
+         Promise.resolve().then(() => order.push("microtask"));
+         const out = process.stdout;
+         const same = out === process.stdout && process.stdin === process.stdin;
+         const fake = { write() {} };
+         process.stderr = fake;
+         const assigned = process.stderr === fake;
+         process.nextTick = 1;
+         setImmediate(() => out.write(JSON.stringify({ same, assigned, nextTick: process.nextTick, order: order.sort(), release: "release" in process }) + "\\n"));`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(
+      JSON.stringify({ same: true, assigned: true, nextTick: 1, order: ["microtask", "tick"], release: false }) + "\n",
+    );
+    expect(await proc.exited).toBe(0);
+  });
+
   it("dlopen args parsing", () => {
     const notFound = join(tmpdirSync(), "not-found.so");
     expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();

@@ -2971,23 +2971,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     return resultObject->getIndex(globalObject, 0);
 }
 
-static JSValue constructStdout(VM& vm, JSObject* processObject)
-{
-    return constructStdioWriteStream(processObject->globalObject(), processObject, 1);
-}
-
-static JSValue constructStderr(VM& vm, JSObject* processObject)
-{
-    return constructStdioWriteStream(processObject->globalObject(), processObject, 2);
-}
-
 #if OS(WINDOWS)
 #define STDIN_FILENO 0
 #endif
 
-static JSValue constructStdin(VM& vm, JSObject* processObject)
+static JSValue constructStdin(JSC::JSGlobalObject* globalObject, JSObject* processObject)
 {
-    auto* globalObject = processObject->globalObject();
+    auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSFunction* getStdinStream = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -3006,6 +2996,44 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     }
     return result;
 }
+
+// process.stdin/stdout/stderr are accessors (as in Node) rather than lazily
+// reified values: building them runs JS and loads the fs/tty/net stream stack,
+// so it must only happen on an actual read — not when the property is merely
+// redefined, deleted, or enumerated (any of which reifies the static table).
+JSValue Process::getStdio(JSGlobalObject* globalObject, int fd)
+{
+    ASSERT(fd >= 0 && fd <= 2);
+    if (JSValue existing = m_stdio[fd].get())
+        return existing;
+    JSValue stream = fd == 0 ? constructStdin(globalObject, this) : constructStdioWriteStream(globalObject, this, fd);
+    // The getter may have re-entered (or the stream been assigned) while JS ran.
+    if (JSValue existing = m_stdio[fd].get())
+        return existing;
+    if (stream)
+        m_stdio[fd].set(globalObject->vm(), this, stream);
+    return stream;
+}
+
+static EncodedJSValue processStdioGetter(JSGlobalObject* globalObject, EncodedJSValue thisValue, int fd)
+{
+    Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
+    return JSValue::encode(process ? process->getStdio(globalObject, fd) : jsUndefined());
+}
+
+static bool processStdioSetter(JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, int fd)
+{
+    if (Process* process = getProcessObject(globalObject, JSValue::decode(thisValue)))
+        process->setStdio(globalObject->vm(), fd, JSValue::decode(encodedValue));
+    return true;
+}
+
+JSC_DEFINE_CUSTOM_GETTER(processStdin, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) { return processStdioGetter(globalObject, thisValue, 0); }
+JSC_DEFINE_CUSTOM_GETTER(processStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) { return processStdioGetter(globalObject, thisValue, 1); }
+JSC_DEFINE_CUSTOM_GETTER(processStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) { return processStdioGetter(globalObject, thisValue, 2); }
+JSC_DEFINE_CUSTOM_SETTER(setProcessStdin, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName)) { return processStdioSetter(globalObject, thisValue, value, 0); }
+JSC_DEFINE_CUSTOM_SETTER(setProcessStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName)) { return processStdioSetter(globalObject, thisValue, value, 1); }
+JSC_DEFINE_CUSTOM_SETTER(setProcessStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName)) { return processStdioSetter(globalObject, thisValue, value, 2); }
 
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
@@ -3701,6 +3729,8 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_cachedCwd);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
+    for (auto& stream : thisObject->m_stdio)
+        visitor.append(stream);
     visitor.append(thisObject->m_onWarning);
 
     thisObject->m_cpuUsageStructure.visit(visitor);
@@ -4481,11 +4511,31 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     return nextTickFunction;
 }
 
-static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+// process.nextTick sets up the JS tick queue (loads internal modules) when built,
+// so it is a self-replacing custom value rather than a lazily reified one:
+// reifying the static table (delete / defineProperty on any process property)
+// leaves it unbuilt, and the first read turns it into a plain data property.
+JSC_DEFINE_CUSTOM_GETTER(processNextTick, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName propertyName))
 {
-    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
-    Zig::GlobalObject* globalObject = uncheckedDowncast<Zig::GlobalObject>(lexicalGlobalObject);
-    return uncheckedDowncast<Process>(processObject)->constructNextTickFn(JSC::getVM(globalObject), globalObject);
+    Process* process = getProcessObject(lexicalGlobalObject, JSValue::decode(thisValue));
+    if (!process)
+        return JSValue::encode(jsUndefined());
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    // queueNextTick() may already have built it without going through the property.
+    JSValue nextTick = process->nextTickFunction();
+    if (!nextTick)
+        nextTick = process->constructNextTickFn(vm, globalObject);
+    if (nextTick)
+        process->putDirect(vm, propertyName, nextTick, 0);
+    return JSValue::encode(nextTick);
+}
+
+JSC_DEFINE_CUSTOM_SETTER(setProcessNextTick, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName propertyName))
+{
+    if (auto* thisObject = JSValue::decode(thisValue).getObject())
+        thisObject->putDirect(JSC::getVM(globalObject), propertyName, JSValue::decode(encodedValue), 0);
+    return true;
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -4911,7 +4961,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   mainModule                       constructMainModuleProperty                         PropertyCallback
   memoryUsage                      constructMemoryUsage                                PropertyCallback
   moduleLoadList                   Process_stubEmptyArray                              PropertyCallback
-  nextTick                         constructProcessNextTickFn                          PropertyCallback
+  nextTick                         processNextTick                                     CustomValue
   openStdin                        Process_functionOpenStdin                           Function 0
   pid                              constructPid                                        PropertyCallback
   platform                         constructPlatform                                   PropertyCallback
@@ -4925,9 +4975,9 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   send                             constructProcessSend                                PropertyCallback
   setSourceMapsEnabled             Process_setSourceMapsEnabled                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
-  stderr                           constructStderr                                     PropertyCallback
-  stdin                            constructStdin                                      PropertyCallback
-  stdout                           constructStdout                                     PropertyCallback
+  stderr                           processStderr                                       CustomAccessor
+  stdin                            processStdin                                        CustomAccessor
+  stdout                           processStdout                                       CustomAccessor
   title                            processTitle                                        CustomAccessor
   umask                            Process_functionUmask                               Function 1
   unref                            Process_unref                                       Function 1

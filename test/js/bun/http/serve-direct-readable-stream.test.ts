@@ -386,6 +386,232 @@ test.concurrent(
   60_000,
 );
 
+// The request context used to arm its uWS onAborted callback only once the
+// fetch handler had returned (toAsync). A direct stream runs pull() before
+// that, while the request is still being dispatched, which left two gaps:
+//
+// - pull() writes and close()s: the auto-flusher completes the response before
+//   the dispatch returns, uWS markDone() drops its callbacks, and toAsync then
+//   armed onAborted anyway. The keep-alive socket outlives the request, so the
+//   callback pointed at a context already returned to the pool; closing the
+//   connection later (server.stop(true) here, a client disconnect in general)
+//   invoked it on the freed slot:
+//     panic: infallible: server bound            (RequestContext::server)
+//     AddressSanitizer: use-after-poison          RequestContext::ref_ <- on_abort
+//                                                 <- uWS::HttpContext::onClose
+// - pull() calls server.stop(true): the socket is closed on the spot, but with
+//   nothing armed neither the context nor its sink heard about it. uSockets
+//   frees the socket at the end of the tick and the sink's next write()/end()
+//   used it:
+//     AddressSanitizer: heap-use-after-free       uws_res_has_responded
+//                                                 <- HTTPServerWritable::end_from_js
+//
+// The callbacks are now armed before the stream is attached, so markDone()
+// disarming them is final and a stop() from inside pull() aborts the sink.
+// The remaining tests pin down what follows from markDone() being final: while
+// pull() is still parked after the response completed, nothing tells the
+// request when its socket goes away, so both a later stop() and the Request
+// based APIs have to cope with that on their own.
+describe("direct stream whose pull() runs while the request is still being dispatched", () => {
+  // Raw socket so the test decides when the connection goes away (it stays
+  // open after the response until the test or server.stop(true) closes it).
+  const client = `
+    const net = require("node:net");
+    const socket = net.connect(server.port, "127.0.0.1", () => {
+      socket.write("GET / HTTP/1.1\\r\\nHost: x\\r\\n\\r\\n");
+    });
+    socket.on("error", () => {});
+    const closed = new Promise(resolve => socket.once("close", resolve));
+    const responseBody = () =>
+      new Promise(resolve => {
+        let buf = "";
+        socket.on("data", chunk => {
+          buf += chunk.toString("latin1");
+          // Content-Length: 4, so the response is complete once "seed" is in.
+          if (buf.endsWith("seed")) resolve(buf.slice(buf.indexOf("\\r\\n\\r\\n") + 4));
+        });
+      });
+  `;
+
+  // pull() parks after close(): the response completes inside the dispatch,
+  // the request itself stays pending until the gate opens.
+  const closeThenPark = `
+    const gate = Promise.withResolvers();
+    let request;
+    const server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      idleTimeout: 0,
+      fetch(req) {
+        if (new URL(req.url).pathname === "/probe") return new Response("probe");
+        request = req;
+        return new Response(
+          new ReadableStream({
+            type: "direct",
+            async pull(controller) {
+              controller.write("seed");
+              controller.close();
+              await gate.promise;
+            },
+          }),
+        );
+      },
+    });
+  `;
+
+  async function run(fixture: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test.concurrent("closing the connection after the request was released does not reach the request", async () => {
+    const result = await run(`
+      ${closeThenPark}
+      ${client}
+      const body = await responseBody();
+      gate.resolve();
+      // The parked pull() settles and the request is released; the keep-alive
+      // connection is still open.
+      while (server.pendingRequests > 0) await Bun.sleep(0);
+      server.stop(true);
+      await closed;
+      console.log(JSON.stringify({ body, pendingRequests: server.pendingRequests }));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ body: "seed", pendingRequests: 0 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Companion to the above: once the response has completed, closing the
+  // connection no longer notifies the request, so a server.stop(true) issued
+  // while pull() is still parked must not keep the request (and so the stop()
+  // promise) pending forever once pull() settles.
+  test.concurrent("stop(true) after the response completed still releases the parked request", async () => {
+    const result = await run(`
+      ${closeThenPark}
+      ${client}
+      const body = await responseBody();
+      const stopped = server.stop(true);
+      await closed;
+      const pendingWhileParked = server.pendingRequests;
+      gate.resolve();
+      await stopped;
+      console.log(JSON.stringify({ body, pendingWhileParked, pendingRequests: server.pendingRequests }));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ body: "seed", pendingWhileParked: 1, pendingRequests: 0 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // Same window, reached through the Request object: the client is gone and
+  // uSockets has freed the socket, but pull() still holds the request, so the
+  // APIs that look at its socket must treat it as gone instead of reading it
+  // (heap-use-after-free in us_get_remote_address_info <- requestIP).
+  test.concurrent("requestIP()/timeout() after the response completed and the client left", async () => {
+    const result = await run(`
+      ${closeThenPark}
+      ${client}
+      const body = await responseBody();
+      socket.destroy();
+      await closed;
+      // A round trip through the server proves it has run the event loop turn
+      // that processed the close above; uSockets frees the socket at the end
+      // of that turn.
+      const probe = await (await fetch(new URL("/probe", server.url))).text();
+      const requestIP = server.requestIP(request);
+      server.timeout(request, 1);
+      const pendingWhileParked = server.pendingRequests;
+      gate.resolve();
+      while (server.pendingRequests > 0) await Bun.sleep(0);
+      server.stop(true);
+      console.log(JSON.stringify({ body, probe, requestIP, pendingWhileParked }));
+    `);
+    expect(result).toEqual({
+      stdout: JSON.stringify({ body: "seed", probe: "probe", requestIP: null, pendingWhileParked: 1 }) + "\n",
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
+  // A sync handler's Response is attached inside the request's dispatch (the
+  // context is kept alive by the dispatch frame); an async handler's from its
+  // promise reaction (kept alive by the reaction's ref). Both must survive the
+  // request being aborted out from under them while pull() runs.
+  test.concurrent.each(["fetch()", "async fetch()"])(
+    "server.stop(true) from inside pull() aborts the stream before the socket is freed (%s)",
+    async handler => {
+      const result = await run(`
+      const events = [];
+      const pulled = Promise.withResolvers();
+      const server = Bun.serve({
+        port: 0,
+        hostname: "127.0.0.1",
+        idleTimeout: 0,
+        ${handler} {
+          return new Response(
+            new ReadableStream({
+              type: "direct",
+              async pull(controller) {
+                controller.write("seed");
+                events.push("stop(true)");
+                server.stop(true);
+                events.push("stop(true) returned");
+                // uSockets frees the closed socket at the end of this event
+                // loop turn; the calls below must not be able to reach it.
+                await Bun.sleep(0);
+                try {
+                  controller.write("late");
+                  events.push("write() returned");
+                } catch (error) {
+                  events.push("write() threw: " + error.message);
+                }
+                controller.end();
+                events.push("end() returned");
+                pulled.resolve();
+              },
+              cancel() {
+                events.push("cancel()");
+              },
+            }),
+          );
+        },
+      });
+      ${client}
+      await closed;
+      // The request was released as soon as the Response had been attached,
+      // i.e. before the timer above resumed pull().
+      await pulled.promise;
+      console.log(JSON.stringify({ events, pendingRequests: server.pendingRequests }));
+    `);
+      expect(result).toEqual({
+        stdout:
+          JSON.stringify({
+            events: [
+              "stop(true)",
+              "cancel()",
+              "stop(true) returned",
+              'write() threw: This HTTPResponseSink has already been closed. A "direct" ReadableStream terminates its underlying socket once `async pull()` returns.',
+              "end() returned",
+            ],
+            pendingRequests: 0,
+          }) + "\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    },
+  );
+});
+
 // The HTTP/3 sibling must NOT take the ended_response short-circuit.
 // Http3Response::markDone() deliberately leaves onAborted armed (unlike
 // HTTP/1's markDone()) so that Http3Context's on_stream_close can notify the

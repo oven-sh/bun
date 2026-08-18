@@ -6952,6 +6952,12 @@ pub fn plugin_runner_on_resolve_jsc(
 /// Bumped by [`VirtualMachine::set_process_cwd`] on any thread. Each `Bun::Process` tags its
 /// cached `process.cwd()` string with the value it saw, so a chdir anywhere invalidates every
 /// thread's cache (Node's worker `cwdCounter`). Starts at 1 so a zero-initialized tag is stale.
+///
+/// Both accesses are `Relaxed`: the counter publishes no memory of its own (a reader that sees
+/// a new value re-queries the OS), so only its value matters, and a thread that learns of
+/// another thread's chdir does so through a `postMessage` or similar, whose acquire already
+/// orders the increment before the reader's load. An unsynchronized reader racing the chdir
+/// could equally have read just before it, whatever the ordering.
 static CWD_GENERATION: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(1);
 
 #[unsafe(no_mangle)]

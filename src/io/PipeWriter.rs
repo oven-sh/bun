@@ -146,6 +146,52 @@ pub trait PosixPipeWriter {
                 // The next buffered write re-registers via register_poll().
                 _ = poll.unregister(crate::Loop::get(), true);
             }
+            // Some kernels (observed on HongMeng/OHOS) keep delivering ready
+            // events for `fd` even after the CTL_DEL above reports success:
+            // a *second*, unconditional CTL_DEL attempt on the very next
+            // empty wake gets ENOENT ("not registered"), yet the fd is
+            // reported ready again on the next epoll_pwait regardless.
+            // Userspace cannot make the kernel actually stop, so detect the
+            // storm -- the same fd hitting this branch repeatedly within a
+            // few milliseconds -- and yield the core instead of hammering
+            // epoll_pwait as fast as the syscall allows. A healthy
+            // drain-then-idle cycle recurring over a long-running process's
+            // lifetime is ms-to-seconds apart even when it happens many
+            // times, so the time window keeps this from misfiring there.
+            // Reduced idle CPU on an affected OHOS build from ~100% to
+            // ~6-8% (measured via /proc/<pid>/stat ground truth).
+            {
+                use core::sync::atomic::{AtomicI32, AtomicU32, Ordering};
+                use std::sync::Mutex;
+                use std::time::Instant;
+                static LAST_FD: AtomicI32 = AtomicI32::new(i32::MIN);
+                static STREAK: AtomicU32 = AtomicU32::new(0);
+                static LAST_SEEN: Mutex<Option<Instant>> = Mutex::new(None);
+                const THRESHOLD: u32 = 20;
+                const SLEEP_MS: u64 = 2;
+                const STORM_WINDOW_MS: u128 = 10;
+
+                let fd: i32 = self.get_fd().native();
+                let now = Instant::now();
+                let prev_fd = LAST_FD.swap(fd, Ordering::Relaxed);
+                let within_window = {
+                    let mut guard = LAST_SEEN.lock().unwrap();
+                    let within = guard
+                        .map(|t| now.duration_since(t).as_millis() <= STORM_WINDOW_MS)
+                        .unwrap_or(false);
+                    *guard = Some(now);
+                    within
+                };
+                let streak = if prev_fd == fd && within_window {
+                    STREAK.fetch_add(1, Ordering::Relaxed) + 1
+                } else {
+                    STREAK.store(1, Ordering::Relaxed);
+                    1
+                };
+                if streak > THRESHOLD {
+                    std::thread::sleep(std::time::Duration::from_millis(SLEEP_MS));
+                }
+            }
             return;
         }
 

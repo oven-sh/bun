@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isASAN, isDebug, tempDir } from "harness";
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
+import { SourceMapConsumer } from "source-map";
 import { itBundled } from "./expectBundled";
 
 const env = {
@@ -402,4 +403,95 @@ describe("bundler", () => {
     }
     expect(runOut.trim()).toBe(`${(N * (N - 1)) / 2} 0 ${N - 1}`);
   }, 60_000);
+
+  // Chunks are printed with placeholders where they refer to other chunks and
+  // assets; the placeholders are replaced once every output path is known.
+  // These pin the two per-chunk decisions of that step: what the written paths
+  // are relative to, and whether the chunk's source map is corrected for the
+  // replacements (which is also what adds the `//# debugId` comment).
+  describe.concurrent("splitting/ChunkReferencePaths", () => {
+    const adminSource = `import { util } from "../../shared/util.js";\nexport const page = [import("../site/index.js"), util("admin")];\n`;
+    const files = {
+      "pages/admin/index.js": adminSource,
+      "pages/site/index.js": `import { util } from "../../shared/util.js";\nexport const page = util("site");\n`,
+      "shared/util.js": `export function util(x) {\n  return "util:" + x;\n}\n`,
+    };
+
+    async function buildAdminEntry(
+      root: string,
+      options: { sourcemap: "none" | "linked"; publicPath?: string; outdir?: string },
+    ) {
+      const result = await Bun.build({
+        entrypoints: [join(root, "pages/admin/index.js"), join(root, "pages/site/index.js")],
+        root,
+        splitting: true,
+        ...options,
+      });
+      expect(result.logs).toBeEmpty();
+      const admin = result.outputs.find(o => o.path.replaceAll("\\", "/").endsWith("pages/admin/index.js"))!;
+      const map = result.outputs.find(o => o.path === admin.path + ".map");
+      return { code: await admin.text(), map: map && JSON.parse(await map.text()) };
+    }
+
+    // `util("admin")` follows the dynamic import on the same line, so the map
+    // only points at it if the mappings were shifted by the difference between
+    // the placeholder and the path written over it.
+    async function expectUtilCallToBeMapped(code: string, map: object) {
+      const generatedLines = code.split("\n");
+      const line = generatedLines.findIndex(l => l.includes('util("admin")')) + 1;
+      expect(line).toBeGreaterThan(0);
+      const column = generatedLines[line - 1].indexOf('util("admin")');
+      const original = await SourceMapConsumer.with(map, null, consumer =>
+        consumer.originalPositionFor({ line, column }),
+      );
+      expect({
+        source: original.source?.replaceAll("\\", "/").split("/").slice(-3).join("/"),
+        line: original.line,
+        column: original.column,
+      }).toEqual({
+        source: "pages/admin/index.js",
+        line: 2,
+        column: adminSource.split("\n")[1].indexOf('util("admin")'),
+      });
+    }
+
+    test("references are relative to the directory of the importing chunk", async () => {
+      using dir = tempDir("splitting-reference-paths", files);
+      const { code, map } = await buildAdminEntry(String(dir), { sourcemap: "none" });
+      expect(code).toMatch(/from "\.\.\/\.\.\/chunk-[a-z0-9]+\.js"/);
+      expect(code).toContain('import("../site/index.js")');
+      expect(code).not.toContain("//# debugId=");
+      expect(map).toBeUndefined();
+    });
+
+    test("a public path makes references outdir-relative regardless of the importing chunk's directory", async () => {
+      using dir = tempDir("splitting-reference-paths-public", files);
+      const { code, map } = await buildAdminEntry(String(dir), {
+        sourcemap: "linked",
+        publicPath: "https://cdn.example/app/",
+      });
+      expect(code).toMatch(/from "https:\/\/cdn\.example\/app\/chunk-[a-z0-9]+\.js"/);
+      expect(code).toContain('import("https://cdn.example/app/pages/site/index.js")');
+      expect(code).toContain("//# debugId=");
+      await expectUtilCallToBeMapped(code, map);
+    });
+
+    test("the source map accounts for the paths written over the placeholders", async () => {
+      using dir = tempDir("splitting-reference-paths-sourcemap", files);
+      const { code, map } = await buildAdminEntry(String(dir), { sourcemap: "linked" });
+      expect(code).toContain('import("../site/index.js")');
+      expect(code).toContain("//# debugId=");
+      await expectUtilCallToBeMapped(code, map);
+    });
+
+    test("writing to an outdir resolves references the same way as an in-memory build", async () => {
+      using dir = tempDir("splitting-reference-paths-outdir", files);
+      const inMemory = await buildAdminEntry(String(dir), { sourcemap: "linked" });
+      const onDisk = await buildAdminEntry(String(dir), { sourcemap: "linked", outdir: join(String(dir), "out") });
+      expect(onDisk.code).toBe(inMemory.code);
+      expect(onDisk.map.mappings).toBe(inMemory.map.mappings);
+      expect(readFileSync(join(String(dir), "out", "pages", "admin", "index.js"), "utf8")).toBe(inMemory.code);
+      await expectUtilCallToBeMapped(onDisk.code, onDisk.map);
+    });
+  });
 });

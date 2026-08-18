@@ -1997,9 +1997,10 @@ void EncodeHexLowerImpl(const uint8_t* HWY_RESTRICT input, size_t len, uint8_t* 
 // --- Hex decoding (Buffer.from(str, "hex"), buf.write(str, "hex")) ---
 //
 // Helpers shared by DecodeHex8Impl / DecodeHex16Impl. `D` is a u8 or u16 tag;
-// code units outside [0-9A-Fa-f] (including UTF-16 units > 0xFF) are invalid.
-// Both helpers are inlined into the same loop body, so the common
-// subexpressions (case fold, alpha classification) are computed once.
+// a UTF-16 code unit is classified by its low byte (what Node's hex decoder
+// does, so U+FF41 counts as 'A'), and anything outside [0-9A-Fa-f] after that
+// narrowing is invalid. Both helpers are inlined into the same loop body, so
+// the common subexpressions (case fold, alpha classification) are computed once.
 
 template<class D>
 static HWY_INLINE hn::Mask<D> IsAsciiHexAlpha(D d, hn::Vec<D> chars)
@@ -2055,8 +2056,13 @@ static HWY_INLINE size_t DecodeHexVectorLoop(D d, const hn::TFromD<D>* HWY_RESTR
 
     const size_t simd_out = out + ((out_len - out) - ((out_len - out) % N));
     for (; out < simd_out; out += N) {
-        const auto chars0 = hn::LoadU(d, input + out * 2);
-        const auto chars1 = hn::LoadU(d, input + out * 2 + N);
+        auto chars0 = hn::LoadU(d, input + out * 2);
+        auto chars1 = hn::LoadU(d, input + out * 2 + N);
+        if constexpr (sizeof(hn::TFromD<D>) == 2) {
+            const auto low_byte = hn::Set(d, hn::TFromD<D> { 0xFF });
+            chars0 = hn::And(chars0, low_byte);
+            chars1 = hn::And(chars1, low_byte);
+        }
 
         const auto valid = hn::And(IsAsciiHexDigit(d, chars0), IsAsciiHexDigit(d, chars1));
         if (!hn::AllTrue(d, valid)) {
@@ -2108,9 +2114,10 @@ size_t DecodeHex8Impl(const uint8_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT o
     return out_len;
 }
 
-// UTF-16 variant of DecodeHex8Impl (for two-byte JS strings). Code units above
-// 0xFF never classify as hex digits, so they stop decoding like any other
-// invalid character.
+// UTF-16 variant of DecodeHex8Impl (for two-byte JS strings). Each code unit
+// is decoded by its low byte, like Node: U+FF41 decodes as 'A', while a unit
+// whose low byte is not a hex digit stops decoding like any other invalid
+// character.
 size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT output, size_t out_len)
 {
     const hn::ScalableTag<uint16_t> d16;
@@ -2121,8 +2128,8 @@ size_t DecodeHex16Impl(const uint16_t* HWY_RESTRICT input, uint8_t* HWY_RESTRICT
 #endif
 
     for (; out < out_len; out++) {
-        const uint8_t hi = ScalarHexNibble(input[out * 2]);
-        const uint8_t lo = ScalarHexNibble(input[out * 2 + 1]);
+        const uint8_t hi = ScalarHexNibble(static_cast<uint8_t>(input[out * 2]));
+        const uint8_t lo = ScalarHexNibble(static_cast<uint8_t>(input[out * 2 + 1]));
         if (hi == 0xFF || lo == 0xFF) {
             return out;
         }

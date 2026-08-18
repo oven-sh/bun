@@ -10,7 +10,7 @@ use bun_jsc::{
     JsThread, Protected, Strong,
 };
 
-use crate::node::StringOrBuffer;
+use crate::node::{Flavor, StringObjects, StringOrBuffer};
 
 // `&JSGlobalObject` is ABI-identical to a non-null pointer; remaining params
 // are by-value `JSValue`, so no caller-side preconditions remain.
@@ -208,8 +208,12 @@ pub mod random {
         /// which keeps its VM alive).
         InPlace { bytes: JsPtr<u8>, length: usize },
         /// `randomFill`: the caller's buffer stays untouched until completion;
-        /// fill `scratch` off-thread and copy it in at `offset` on the JS thread.
-        Scratch { scratch: Vec<u8>, offset: u32 },
+        /// `scratch` (empty, `size` bytes reserved) is filled off-thread and copied in at `offset` on the JS thread.
+        Scratch {
+            scratch: Vec<u8>,
+            size: usize,
+            offset: u32,
+        },
     }
 
     #[derive(bun_jsc::JsAffine)]
@@ -234,7 +238,16 @@ pub mod random {
             done: bun_jsc::Completion<Self>,
         ) -> Option<bun_jsc::Completion<Self>> {
             match this {
-                RandomFillJob::Scratch { scratch, .. } => boringssl::rand_bytes(scratch),
+                RandomFillJob::Scratch { scratch, size, .. } => {
+                    let size = *size;
+                    // SAFETY: `rand_bytes` only writes, and fills every byte of the slice it is given.
+                    unsafe {
+                        bun_core::vec::fill_spare(scratch, 0, |spare| {
+                            boringssl::rand_bytes(&mut spare[..size]);
+                            (size, ())
+                        })
+                    }
+                }
                 RandomFillJob::InPlace { bytes, length } => {
                     // SAFETY: `bytes` points into the ArrayBuffer `value` keeps alive;
                     // the ticket keeps the VM (and so that buffer) alive; `length` is
@@ -253,7 +266,10 @@ pub mod random {
 
         fn then(this: Self, js: RandomFillJs, cx: &JsThread<'_>) -> JsResult<()> {
             let global = cx.global();
-            if let RandomFillJob::Scratch { scratch, offset } = this {
+            if let RandomFillJob::Scratch {
+                scratch, offset, ..
+            } = this
+            {
                 if let Some(mut buf) = js.value.value().as_array_buffer(global) {
                     let off = offset as usize;
                     let dst = buf.slice_mut();
@@ -713,12 +729,15 @@ pub mod random {
             if scratch.try_reserve_exact(size).is_err() {
                 return Err(global.throw_out_of_memory());
             }
-            scratch.resize(size, 0);
 
             schedule(
                 global,
                 callback,
-                RandomFillJob::Scratch { scratch, offset },
+                RandomFillJob::Scratch {
+                    scratch,
+                    size,
+                    offset,
+                },
                 buf_value,
             );
 
@@ -735,7 +754,8 @@ pub mod random {
 pub(crate) struct Scrypt {
     // Plain `StringOrBuffer` — NOT `ThreadSafe<_>`. The struct serves both
     // `scryptSync` (no protect taken) and async `scrypt` (protect taken in
-    // `from_js_maybe_async(.., true)`, adopted into a `ThreadSafe` by the job).
+    // `from_js_maybe_async(.., Flavor::Async, ..)`, adopted into a `ThreadSafe`
+    // by the job).
     password: StringOrBuffer,
     salt: StringOrBuffer,
     n: u32,
@@ -768,6 +788,11 @@ mod _impl {
             ] = call_frame.arguments_as_array::<5>();
             let mut maybe_options_value: Option<JSValue> = Some(options_arg);
             let mut callback = callback_arg;
+            let flavor = if IS_ASYNC {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
 
             if IS_ASYNC {
                 if callback.is_undefined() {
@@ -776,8 +801,12 @@ mod _impl {
                 }
             }
 
-            let Some(password) =
-                StringOrBuffer::from_js_maybe_async(global, password_value, IS_ASYNC, true)?
+            let Some(password) = StringOrBuffer::from_js_maybe_async(
+                global,
+                password_value,
+                flavor,
+                StringObjects::Allow,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"password",
@@ -795,8 +824,12 @@ mod _impl {
                 }
             });
 
-            let Some(salt) =
-                StringOrBuffer::from_js_maybe_async(global, salt_value, IS_ASYNC, true)?
+            let Some(salt) = StringOrBuffer::from_js_maybe_async(
+                global,
+                salt_value,
+                flavor,
+                StringObjects::Allow,
+            )?
             else {
                 return Err(global.throw_invalid_argument_type_value(
                     b"salt",
@@ -1028,8 +1061,8 @@ mod _impl {
     }
 
     impl bun_jsc::Unprotect for Scrypt {
-        /// Release the `protect()` taken by `from_js_maybe_async(.., true)` on the
-        /// async path (via the job's `ThreadSafe`). The sync path never calls this.
+        /// Release the `protect()` taken by `from_js_maybe_async(.., Flavor::Async, ..)`
+        /// on the async path (via the job's `ThreadSafe`). The sync path never calls this.
         #[inline]
         fn unprotect(&mut self) {
             bun_jsc::Unprotect::unprotect(&mut self.password);
@@ -1109,14 +1142,14 @@ mod _impl {
 
     #[bun_jsc::host_fn]
     fn pbkdf2(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, true)?;
+        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Async)?;
 
         Ok(pbkdf2::create_job(global_this, data))
     }
 
     #[bun_jsc::host_fn]
     fn pbkdf2_sync(global_this: &JSGlobalObject, call_frame: &CallFrame) -> JsResult<JSValue> {
-        let data = PBKDF2::from_js(global_this, call_frame, false)?;
+        let data = PBKDF2::from_js(global_this, call_frame, Flavor::Sync)?;
         // `PBKDF2`'s `StringOrBuffer` fields release on `Drop`, so the local
         // just goes out of scope.
         let mut data = data;

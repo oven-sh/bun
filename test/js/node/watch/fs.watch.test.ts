@@ -933,15 +933,18 @@ describe("fs.promises.watch", () => {
     const watcher = fs.promises.watch(filepath, { signal: ac.signal });
 
     const promise = (async () => {
-      try {
-        for await (const _ of watcher);
-      } catch (e: any) {
-        expect(e.message).toBe("The operation was aborted.");
-      }
+      for await (const _ of watcher);
     })();
     await Bun.sleep(10);
     ac.abort();
-    await promise;
+    await expect(promise).rejects.toThrow(
+      expect.objectContaining({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        message: "The operation was aborted",
+        cause: ac.signal.reason,
+      }),
+    );
   });
 
   test("Signal aborted before creating the watcher", async () => {
@@ -949,13 +952,18 @@ describe("fs.promises.watch", () => {
 
     const signal = AbortSignal.abort();
     const watcher = fs.promises.watch(filepath, { signal });
-    await (async () => {
-      try {
+    await expect(
+      (async () => {
         for await (const _ of watcher);
-      } catch (e: any) {
-        expect(e.message).toBe("The operation was aborted.");
-      }
-    })();
+      })(),
+    ).rejects.toThrow(
+      expect.objectContaining({
+        name: "AbortError",
+        code: "ABORT_ERR",
+        message: "The operation was aborted",
+        cause: signal.reason,
+      }),
+    );
   });
 
   test("Signal aborted before creating the watcher does not keep the process alive", async () => {
@@ -1658,3 +1666,47 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// Watching a file symlink makes bun hand libuv the readlink() result, which for
+// a relative link target is a bare file name. libuv's uv__split_path() used to
+// _wcsdup() that name from the CRT heap while everything else it owns comes
+// from uv__malloc(), i.e. from mimalloc (uv_replace_allocator in main), so
+// closing the watcher handed a CRT pointer to mi_free. Debug builds report that
+// on stderr every time ("mimalloc: error: mi_free: invalid pointer"); release
+// builds segfault in roughly half of all processes, depending on where ASLR put
+// the CRT heap relative to mimalloc's page map, hence several children.
+// Fixed in oven-sh/libuv#14.
+test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target does not crash (windows)", async () => {
+  using dir = tempDir("fswatch-relative-symlink", { "target.txt": "hello" });
+  const base = String(dir);
+  // The target must be relative. File symlinks need the symlink privilege,
+  // which the Windows CI agents have (fs.test.ts creates them too).
+  fs.symlinkSync("target.txt", path.join(base, "link.txt"), "file");
+  expect(fs.readlinkSync(path.join(base, "link.txt"))).toBe("target.txt");
+
+  const fixture = /* js */ `
+    const { watch } = require("node:fs");
+    const watcher = watch("link.txt", () => {});
+    watcher.once("close", () => console.log("OK"));
+    watcher.close();
+  `;
+
+  const runs = await Promise.all(
+    Array.from({ length: 6 }, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        // libuv resolves the bare target name against the cwd, so the watch
+        // only reaches the affected code path when started from the link's
+        // directory.
+        cwd: base,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }),
+  );
+
+  expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
+});

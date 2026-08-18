@@ -253,15 +253,6 @@ pub(crate) fn run_task(
             };
             holder.run()?;
         }
-        task_tag::FileResponseStreamEof => {
-            let stream = cast_ptr!(crate::server::FileResponseStream);
-            // SAFETY: tag identifies pointee; `on_read_chunk` took a ref for
-            // this task at enqueue time which this guard adopts.
-            let _pin =
-                unsafe { bun_ptr::ScopedRef::<crate::server::FileResponseStream>::adopt(stream) };
-            // SAFETY: `stream` is live for this call (pinned above).
-            unsafe { (*stream).on_reader_done() };
-        }
         task_tag::DuplexUpgradeContext => {
             // SAFETY: tag identifies pointee; `run_event` may free the context,
             // so it takes the raw pointer (no `&mut` at this boundary).
@@ -600,7 +591,7 @@ fn run_task_cold(task: Task) {
 /// `release_task_unrun` track `bun_event_loop::task_tag::COUNT`. Bump when
 /// adding a variant — and give it an arm in both.
 const _: () = assert!(
-    task_tag::COUNT == 62,
+    task_tag::COUNT == 61,
     "dispatch::run_task / release_task_unrun arm count out of sync with bun_event_loop::task_tag",
 );
 
@@ -1250,7 +1241,6 @@ fn __bun_release_task_unrun(task: bun_event_loop::Task) {
         task_tag::FetchTaskletPromiseSettle => {
             release!(crate::webcore::fetch::fetch_tasklet::FetchTaskletPromiseSettle)
         }
-        task_tag::FileResponseStreamEof => release!(crate::server::FileResponseStream),
         task_tag::FSWatchTask => release!(FSWatchTask),
         task_tag::HotReloadTask => release!(hot_reloader::HotReloadTask),
         task_tag::WatchReloadTask => release!(hot_reloader::WatchReloadTask),

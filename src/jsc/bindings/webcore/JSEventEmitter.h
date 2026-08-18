@@ -64,11 +64,6 @@ inline JSC::WeakHandleOwner* wrapperOwner(DOMWrapperWorld&, EventEmitter*)
     return &owner.get();
 }
 
-inline void* wrapperKey(EventEmitter* wrappableObject)
-{
-    return wrappableObject;
-}
-
 JSC::JSValue toJS(JSC::JSGlobalObject*, JSDOMGlobalObject*, EventEmitter&);
 inline JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* globalObject, EventEmitter* impl) { return impl ? toJS(lexicalGlobalObject, globalObject, *impl) : JSC::jsNull(); }
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject*, Ref<EventEmitter>&&);

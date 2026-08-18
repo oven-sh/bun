@@ -140,7 +140,7 @@ pub enum ReadState {
     /// Neither EOF nor EAGAIN
     Progress,
 
-    /// Received a 0-byte read
+    /// Received a 0-byte read, or the reader's limit or byte budget is used up: nothing more will be read
     Eof,
 
     /// Received an EAGAIN
@@ -153,7 +153,7 @@ pub enum Chunk<'a> {
     Scratch(&'a [u8]),
     /// The reader's own buffer, which it clears and reuses after the call. Copy what you keep, or `take()` it when moving beats copying.
     Buffer(&'a mut Vec<u8>),
-    /// The reader is finished with these bytes (EOF, error, budget): yours to move.
+    /// The reader is finished with these bytes (EOF, limit, error, budget): yours to move.
     Owned(Vec<u8>),
 }
 
@@ -169,14 +169,6 @@ impl Chunk<'_> {
 
     pub fn is_owned(&self) -> bool {
         matches!(self, Chunk::Owned(_))
-    }
-
-    pub fn truncate(&mut self, len: usize) {
-        match self {
-            Chunk::Scratch(bytes) => *bytes = &bytes[..len.min(bytes.len())],
-            Chunk::Buffer(buffer) => buffer.truncate(len),
-            Chunk::Owned(buffer) => buffer.truncate(len),
-        }
     }
 }
 

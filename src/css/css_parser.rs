@@ -625,12 +625,6 @@ pub trait QualifiedRuleParser {
 #[derive(Default, Clone, Copy, crate::DeepClone)]
 pub struct DefaultAtRule;
 
-impl DefaultAtRule {
-    pub fn to_css(self, dest: &mut Printer) -> Result<(), PrintErr> {
-        dest.new_error(PrinterErrorKind::fmt_error, None)
-    }
-}
-
 /// Same as `AtRuleParser` but modified to provide parser options.
 /// Also added: `on_import_rule` to handle `@import` rules.
 pub trait CustomAtRuleParser {
@@ -5232,11 +5226,6 @@ pub enum TokenKind {
 pub use crate::Token;
 
 impl Token {
-    pub fn eql(lhs: &Token, rhs: &Token) -> bool {
-        // TODO: derive PartialEq once payload lifetimes settle.
-        generic::implement_eql(lhs, rhs)
-    }
-
     /// Return whether this token represents a parse error.
     pub(crate) fn is_parse_error(&self) -> bool {
         matches!(
@@ -5481,22 +5470,16 @@ pub use bun_io::Write as WriteAll;
 // Num/Dimension data layouts hoisted at crate root (lib.rs).
 pub use crate::{Dimension, Num};
 
-// Num/Dimension eql/hash gated until generics::CssEql/CssHash blanket impls
+// Num/Dimension hash gated until generics::CssHash blanket impls
 // cover the float/slice payloads.
 
 impl Num {
-    pub fn eql(lhs: &Num, rhs: &Num) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
 }
 
 impl Dimension {
-    pub fn eql(lhs: &Self, rhs: &Self) -> bool {
-        generic::implement_eql(lhs, rhs)
-    }
     pub(crate) fn hash(&self, hasher: &mut bun_wyhash::Wyhash) {
         generic::implement_hash(self, hasher)
     }
@@ -5537,8 +5520,10 @@ impl<'a> CopyOnWriteStr<'a> {
 // ───────────────────────────── color ─────────────────────────────
 
 pub mod color {
-    /// The opaque alpha value of 1.0.
-    pub(crate) const OPAQUE: f32 = 1.0;
+    use crate::values::color::RGBA;
+
+    /// The alpha channel of a fully opaque color.
+    pub(crate) const OPAQUE: u8 = 255;
 
     #[derive(Debug, strum::IntoStaticStr)]
     pub enum ColorError {
@@ -5727,29 +5712,39 @@ pub mod color {
     }
 
     /// Parse a color hash, without the leading '#' character.
-    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<(u8, u8, u8, f32)> {
+    pub(crate) fn parse_hash_color(value: &[u8]) -> Option<RGBA> {
         parse_hash_color_impl(value).ok()
     }
 
-    pub(crate) fn parse_hash_color_impl(value: &[u8]) -> Result<(u8, u8, u8, f32), ColorError> {
+    pub(crate) fn parse_hash_color_impl(value: &[u8]) -> Result<RGBA, ColorError> {
         let pair = |i: usize| {
             bun_core::fmt::hex_pair_value(value[i], value[i + 1]).ok_or(ColorError::Parse)
         };
         match value.len() {
-            8 => Ok((pair(0)?, pair(2)?, pair(4)?, pair(6)? as f32 / 255.0)),
-            6 => Ok((pair(0)?, pair(2)?, pair(4)?, OPAQUE)),
-            4 => Ok((
-                from_hex(value[0])? * 17,
-                from_hex(value[1])? * 17,
-                from_hex(value[2])? * 17,
-                (from_hex(value[3])? * 17) as f32 / 255.0,
-            )),
-            3 => Ok((
-                from_hex(value[0])? * 17,
-                from_hex(value[1])? * 17,
-                from_hex(value[2])? * 17,
-                OPAQUE,
-            )),
+            8 => Ok(RGBA {
+                red: pair(0)?,
+                green: pair(2)?,
+                blue: pair(4)?,
+                alpha: pair(6)?,
+            }),
+            6 => Ok(RGBA {
+                red: pair(0)?,
+                green: pair(2)?,
+                blue: pair(4)?,
+                alpha: OPAQUE,
+            }),
+            4 => Ok(RGBA {
+                red: from_hex(value[0])? * 17,
+                green: from_hex(value[1])? * 17,
+                blue: from_hex(value[2])? * 17,
+                alpha: from_hex(value[3])? * 17,
+            }),
+            3 => Ok(RGBA {
+                red: from_hex(value[0])? * 17,
+                green: from_hex(value[1])? * 17,
+                blue: from_hex(value[2])? * 17,
+                alpha: OPAQUE,
+            }),
             _ => Err(ColorError::Parse),
         }
     }

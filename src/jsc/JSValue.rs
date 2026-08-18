@@ -181,12 +181,6 @@ impl JSValue {
     ) {
         self.then2(global, ctx, resolve, reject)
     }
-
-    /// Reinterpret a raw pointer's address as a JSValue bit-pattern.
-    #[inline]
-    pub fn cast<T>(ptr: *const T) -> JSValue {
-        JSValue(ptr as usize, PhantomData)
-    }
 }
 
 // `pub fn format(...) !void { @compileError(...) }` — intentionally NOT
@@ -226,6 +220,14 @@ impl JSValue {
         // NotCellMask = NumberTag | OtherTag (0xfffe_0000_0000_0000 | 0x2).
         const NOT_CELL_MASK: usize = 0xfffe_0000_0000_0002;
         !self.is_empty() && (self.0 & NOT_CELL_MASK) == 0
+    }
+    /// False for a cell the last completed GC found dead but the sweeper has not destroyed yet.
+    #[inline]
+    pub fn is_live_cell(self) -> bool {
+        unsafe extern "C" {
+            safe fn JSC__JSValue__isLiveCell(this: JSValue) -> bool;
+        }
+        JSC__JSValue__isLiveCell(self)
     }
     #[inline]
     pub fn is_int32(self) -> bool {
@@ -2326,9 +2328,9 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `JSValue.getPrototype`.
-    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
-        JSC__JSValue__getPrototype(self, global)
+    /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__getPrototype(self, global))
     }
 
     // ── Reflection / naming. ───────────────

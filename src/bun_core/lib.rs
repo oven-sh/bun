@@ -130,16 +130,6 @@ impl<T> RawSlice<T> {
     pub const fn new(s: &[T]) -> Self {
         RawSlice(core::ptr::from_ref(s))
     }
-    /// Wrap a raw slice pointer.
-    ///
-    /// # Safety
-    /// `p` must either be a (dangling, len 0) empty slice or point to `len`
-    /// initialized `T` that remain live and stable for the lifetime of every
-    /// `RawSlice` copied from the result.
-    #[inline]
-    pub const unsafe fn from_raw(p: *const [T]) -> Self {
-        RawSlice(p)
-    }
     #[inline]
     pub const fn as_ptr(self) -> *const [T] {
         self.0
@@ -549,6 +539,38 @@ pub mod vec {
             let (n, r) = f(spare_bytes_mut(v));
             commit_spare(v, n);
             r
+        }
+    }
+
+    /// The stack-array form of [`spare_bytes_mut`]: `N` uninitialized bytes for a producer that reports how many it wrote.
+    pub struct UninitBuf<const N: usize>(core::mem::MaybeUninit<[u8; N]>);
+
+    impl<const N: usize> UninitBuf<N> {
+        #[inline(always)]
+        pub const fn uninit() -> Self {
+            Self(core::mem::MaybeUninit::uninit())
+        }
+
+        #[inline(always)]
+        pub fn as_mut_ptr(&mut self) -> *mut u8 {
+            self.0.as_mut_ptr().cast::<u8>()
+        }
+
+        /// # Safety
+        /// Write-only view, same contract as [`spare_bytes_mut`]: only a producer may store into it, and only the prefix it reports may be read back.
+        #[inline(always)]
+        pub unsafe fn as_bytes_mut(&mut self) -> &mut [u8] {
+            // SAFETY: `MaybeUninit<[u8; N]>` has the layout of `[u8; N]`; the caller upholds the write-only contract.
+            unsafe { core::slice::from_raw_parts_mut(self.as_mut_ptr(), N) }
+        }
+
+        /// # Safety
+        /// A producer must have written every byte of `[0..len]` (`len <= N`).
+        #[inline(always)]
+        pub unsafe fn filled(&self, len: usize) -> &[u8] {
+            assert!(len <= N);
+            // SAFETY: `[0..len]` is inside the array (asserted above) and initialized (caller contract).
+            unsafe { core::slice::from_raw_parts(self.0.as_ptr().cast::<u8>(), len) }
         }
     }
 }
@@ -962,11 +984,15 @@ pub type OOM = AllocError;
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum JsError {
-    /// A JavaScript exception is pending in the VM's exception scope (a termination is just such an
-    /// exception): unwind to the native/JS boundary.
+    /// A JavaScript exception is pending in the VM's exception scope: unwind to the native/JS boundary.
+    /// (Beneath script, the VM's TerminationException is carried this way too — JSC unwinds it.)
     Thrown = 0,
     /// Allocation failure; caller must throw an `OutOfMemoryError`.
     OutOfMemory = 1,
+    /// The VM has been terminated (a worker's `terminate()` / `process.exit()`), and its
+    /// TerminationException was taken where it unwound past the outermost script frame: nothing is
+    /// pending. Stand down — no more script runs on this VM.
+    Terminated = 2,
 }
 
 bun_alloc::oom_from_alloc!(JsError);
@@ -990,18 +1016,6 @@ pub fn concat_into<'b, T: Copy>(dest: &'b mut [T], parts: &[&[T]]) -> &'b mut [T
         off += p.len();
     }
     &mut dest[..off]
-}
-
-/// Allocate a fresh `Box<[T]>` holding all `parts` joined. No zero-init: `extend_from_slice`
-/// is `memcpy`-specialized for `T: Copy`, so no `Default` bound is required.
-#[inline]
-pub fn concat_boxed<T: Copy>(parts: &[&[T]]) -> Box<[T]> {
-    let len: usize = parts.iter().map(|p| p.len()).sum();
-    let mut v: Vec<T> = Vec::with_capacity(len);
-    for p in parts {
-        v.extend_from_slice(p);
-    }
-    v.into_boxed_slice()
 }
 
 /// Back-compat alias for the original `u8`-only buffer-concat. New code should
@@ -1210,8 +1224,8 @@ pub use crate::string::immutable::{
     decode_hex_to_bytes_truncate, encode_bytes_to_hex, ends_with_any, ends_with_char,
     ends_with_char_or_is_zero_length, eql_any_comptime, eql_comptime, eql_comptime_utf16,
     format_escapes, has_prefix, has_prefix_case_insensitive, has_prefix_comptime,
-    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, index_of_t,
-    is_all_whitespace, is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
+    has_prefix_comptime_utf16, has_suffix_comptime, index_of, index_of_scalar, is_all_whitespace,
+    is_npm_package_name, is_npm_package_name_ignore_length, is_on_char_boundary,
     is_utf8_char_boundary, is_valid_utf8, last_index_of, last_index_of_t,
     length_of_leading_whitespace_ascii, memmem, order, order_t, percent_encode_write, sort_asc,
     sort_desc, split, starts_with_case_insensitive_ascii, starts_with_char, str_utf8,

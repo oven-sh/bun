@@ -3315,7 +3315,7 @@ pub(crate) mod __gated_printer {
                 ExprData::ERequireString(e) => {
                     self.print_require_or_import_expr(
                         e.import_record_index,
-                        e.unwrapped_id != u32::MAX,
+                        e.unwrapped_id.is_some(),
                         &[],
                         Expr::EMPTY,
                         level,

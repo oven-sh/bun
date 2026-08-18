@@ -60,9 +60,7 @@ pub use bun_windows_sys::{
     LARGE_INTEGER, LONG, OVERLAPPED, SHORT, ULONG, ULONG_PTR, WCHAR, WORD,
 };
 // Kept local — NOT re-exported from `bun_windows_sys`:
-// • CHAR: libuv wants u8, `bun_windows_sys::CHAR` is c_char (i8 on MSVC).
-// • NTSTATUS: libuv wants plain i32, `bun_windows_sys::NTSTATUS` is a newtype.
-pub type CHAR = u8;
+// libuv wants plain i32, `bun_windows_sys::NTSTATUS` is a newtype.
 pub type NTSTATUS = i32;
 /// Win32 `SOCKET` is `UINT_PTR` (an integer), not a pointer. A raw-pointer type would give
 /// `Option<SOCKET>` an unwanted niche (None ↔ 0 collides with socket 0) and
@@ -530,24 +528,6 @@ impl Loop {
         log!("dec");
         self.active_handles = self.active_handles.saturating_sub(1);
     }
-    /// `ref`/`unref` aliases for `inc`/`dec`.
-    #[inline]
-    pub fn ref_(&mut self) {
-        self.inc();
-    }
-    #[inline]
-    pub fn unref(&mut self) {
-        self.dec();
-    }
-    #[inline]
-    pub fn unref_count(&mut self, count: i32) {
-        log!("unrefCount({})", count);
-        // A bare `count as u32` would silently wrap a
-        // negative to ~4 billion and zero out `active_handles`:
-        // assert in debug, clamp in release so we never wrap.
-        debug_assert!(count >= 0, "unref_count: count must be non-negative");
-        self.active_handles = self.active_handles.saturating_sub(count.max(0) as u32);
-    }
     #[inline]
     pub fn stop(&mut self) {
         log!("stop");
@@ -563,23 +543,6 @@ impl Loop {
     pub fn tick(&mut self) {
         // SAFETY: self is a live loop.
         let _ = unsafe { uv_run(self, RunMode::Default) };
-    }
-    #[inline]
-    pub fn run(&mut self) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::Default) };
-    }
-    /// Signature matches the uSockets loop's so callers need no `cfg`. Both args are ignored:
-    /// libuv derives its own deadline, and the Windows park hook is driven from `us_loop_run`
-    /// (libuv.c), which reuses libuv's already-refreshed clock via `uv_now`.
-    #[inline]
-    pub fn tick_with_timeout(&mut self, _: i64, _now_ns: u64) {
-        // SAFETY: self is a live loop.
-        let _ = unsafe { uv_run(self, RunMode::NoWait) };
-    }
-    #[inline]
-    pub fn wakeup(&mut self) {
-        self.wq_async.send();
     }
 }
 
@@ -983,17 +946,6 @@ pub struct uv_write_t {
     pub wait_handle: HANDLE,
 }
 impl uv_write_t {
-    /// Thin wrapper over `uv_write` for a single buffer.
-    #[inline]
-    pub fn write_raw(
-        &mut self,
-        stream: *mut uv_stream_t,
-        input: &uv_buf_t,
-        cb: uv_write_cb,
-    ) -> ReturnCode {
-        // SAFETY: caller initialized `self`; `stream` is a live stream handle.
-        unsafe { uv_write(self, stream, input, 1, cb) }
-    }
     /// Context-aware `uv_write`. Stores `context` in `req.data`;
     /// the trampoline recovers it and dispatches to `on_write` as a plain Rust
     /// `&mut`. Generic monomorphisation gives one `extern "C"` thunk per `<T>`.
@@ -1003,8 +955,7 @@ impl uv_write_t {
     /// (fn-ptr ↔ integer is well-defined; fn-ptr ↔ data-ptr is not — Miri
     /// rejects the latter), and (b) returns the raw [`ReturnCode`]; callers
     /// apply `.to_error(Tag::write)` themselves. The `bun.sys.syslog` line is
-    /// emitted via this crate's `[uv]` log scope. The null-callback path is
-    /// [`write_raw`].
+    /// emitted via this crate's `[uv]` log scope.
     #[inline]
     pub fn write<T>(
         &mut self,
@@ -1112,7 +1063,6 @@ pub struct uv_tcp_t {
     pub delayed_error: c_int,
     tcp: tcp_u,
 }
-pub type Tcp = uv_tcp_t;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `uv_udp_t`.
@@ -1400,7 +1350,6 @@ pub struct uv_tty_t {
     pub handle: HANDLE,
     tty: tty_u,
 }
-pub type Tty = uv_tty_t;
 impl uv_tty_t {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop, file: uv_file) -> ReturnCode {
@@ -1461,7 +1410,6 @@ pub struct uv_poll_t {
     pub mask_events_2: u8,
     pub events: u8,
 }
-pub type Poll = uv_poll_t;
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Timer` (`uv_timer_t`).
@@ -1483,7 +1431,6 @@ pub struct Timer {
     pub start_id: u64,
     pub timer_cb: uv_timer_cb,
 }
-pub type uv_timer_t = Timer;
 impl Timer {
     #[inline]
     pub fn init(&mut self, loop_: *mut Loop) {
@@ -1588,14 +1535,6 @@ pub struct uv_async_t {
     pub async_cb: uv_async_cb,
     pub async_sent: u8,
 }
-pub type Async = uv_async_t;
-impl uv_async_t {
-    #[inline]
-    pub fn send(&mut self) {
-        // SAFETY: async was `init`ed.
-        let _ = unsafe { uv_async_send(self) };
-    }
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // `Process` (`uv_process_t`) + spawn options.
@@ -1643,11 +1582,6 @@ impl Process {
     pub fn kill(&mut self, signum: c_int) -> ReturnCode {
         // SAFETY: process was spawned.
         unsafe { uv_process_kill(self, signum) }
-    }
-    #[inline]
-    pub fn get_pid(&self) -> c_int {
-        // SAFETY: process was spawned.
-        unsafe { uv_process_get_pid(self) }
     }
 }
 
@@ -1847,16 +1781,8 @@ pub struct uv_stat_t {
 }
 impl uv_stat_t {
     #[inline]
-    pub fn atime(&self) -> uv_timespec_t {
-        self.atim
-    }
-    #[inline]
     pub fn mtime(&self) -> uv_timespec_t {
         self.mtim
-    }
-    #[inline]
-    pub fn ctime(&self) -> uv_timespec_t {
-        self.ctim
     }
     // Un-prefixed accessors so cross-platform code that pattern-matches on
     // POSIX `stat.mode`/`stat.size` can call
@@ -2308,10 +2234,6 @@ impl ReturnCode {
         ReturnCode(0)
     }
     #[inline]
-    pub const fn from_raw(v: c_int) -> ReturnCode {
-        ReturnCode(v)
-    }
-    #[inline]
     pub const fn int(self) -> c_int {
         self.0
     }
@@ -2370,10 +2292,6 @@ impl fmt::Display for ReturnCode {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct ReturnCodeI64(pub(crate) i64);
 impl ReturnCodeI64 {
-    #[inline]
-    pub const fn init(i: i64) -> ReturnCodeI64 {
-        ReturnCodeI64(i)
-    }
     #[inline]
     pub const fn int(self) -> i64 {
         self.0
@@ -2813,7 +2731,6 @@ unsafe extern "C" {
     pub fn uv_idle_init(loop_: *mut Loop, idle: *mut uv_idle_t) -> c_int;
     pub fn uv_idle_start(idle: *mut uv_idle_t, cb: uv_idle_cb) -> c_int;
     pub fn uv_idle_stop(idle: *mut uv_idle_t) -> c_int;
-    pub fn uv_async_send(async_: *mut uv_async_t) -> c_int;
 
     // timer
     pub fn uv_timer_init(loop_: *mut Loop, handle: *mut Timer) -> c_int;
@@ -2839,7 +2756,6 @@ unsafe extern "C" {
         options: *const uv_process_options_t,
     ) -> ReturnCode;
     pub fn uv_process_kill(handle: *mut Process, signum: c_int) -> ReturnCode;
-    pub fn uv_process_get_pid(handle: *const Process) -> uv_pid_t;
 
     // misc
     pub fn uv_uptime(uptime: *mut f64) -> c_int;

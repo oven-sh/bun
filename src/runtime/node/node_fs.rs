@@ -154,11 +154,13 @@ use super::stat::Stats;
 use super::time_like::TimeLike;
 use super::types::{
     ArgumentsSlice, Dirent, Encoding, FdArgExt as _, FileSystemFlags, FileSystemFlagsKind,
-    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringOrBuffer, VectorArrayBuffer,
+    NameTooLong, PathLike, PathLikeExt as _, PathOrFdExt as _, StringObjects, StringOrBuffer,
+    VectorArrayBuffer,
 };
 // Re-exported publicly: `crate::node::fs::PathOrFileDescriptor` is the
-// canonical path used by `cli/build_command.rs` et al.
-pub use super::types::PathOrFileDescriptor;
+// canonical path used by `cli/build_command.rs` et al., and `node_fs::Flavor`
+// by every caller that runs an operation directly (`read_file(.., Flavor::Sync)`).
+pub use super::types::{Flavor, PathOrFileDescriptor};
 
 /// Local alias for the many `node::foo` call sites below, routing to `super::*`.
 mod node {
@@ -181,7 +183,6 @@ mod node {
 // `validators::*` — `super::util::validators` is a `pub use` of a
 // crate-private module, which trips E0365 if we `pub use` it again. Import it
 // privately at file scope instead and call as `validators::foo` directly.
-use super::MaybeTodo as _;
 use super::util::validators;
 
 // Trait imports for inherent-looking method calls on upstream types:
@@ -472,15 +473,6 @@ pub(crate) const DEFAULT_PERMISSION: Mode = 0;
 // `signal.pending_activity_ref()` / `signal.aborted()` resolve directly to the
 // `&AbortSignal` inherent methods — the former `AbortSignalRefExt` shim with
 // per-call `unsafe { self.as_ref() }` is gone. `unref()` is handled by `Drop`.
-
-/// All async FS functions are run in a thread pool, but some implementations may
-/// decide to do something slightly different. For example, reading a file has
-/// an extra stack buffer in the async case.
-#[derive(Copy, Clone, PartialEq, Eq, core::marker::ConstParamTy)]
-pub enum Flavor {
-    Sync,
-    Async,
-}
 
 // ──────────────────────────────────────────────────────────────────────────
 // Async task type aliases
@@ -4213,11 +4205,14 @@ pub mod args {
                     }
                 }
             }
+            let flavor = if arguments.will_be_async {
+                Flavor::Async
+            } else {
+                Flavor::Sync
+            };
             // String objects not allowed (typeof new String("hi") === "object")
             // https://github.com/nodejs/node/blob/6f946c95b9da75c70e868637de8161bc8d048379/lib/internal/fs/utils.js#L916
-            let allow_string_object = false;
-            let is_async = arguments.will_be_async;
-            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, is_async, allow_string_object)?
+            let data = StringOrBuffer::from_js_with_encoding_maybe_async(ctx, data_value, encoding, flavor, StringObjects::Reject)?
                 .ok_or_else(|| validators::throw_err_invalid_arg_type_with_message(ctx, format_args!("The \"data\" argument must be of type string or an instance of Buffer, TypedArray, or DataView")))?;
             let abort_signal = scopeguard::ScopeGuard::into_inner(abort_signal);
             Ok(WriteFile {
@@ -4385,7 +4380,6 @@ pub mod args {
         }
     }
 
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch<'a> = super::Watcher::Arguments<'a>;
     // `StatWatcher::Arguments` owns its `PathLike` (no borrowed slice), so it
     // has no lifetime parameter — unlike `Watcher::Arguments<'a>` above.
@@ -4557,7 +4551,6 @@ pub mod ret {
     pub(crate) type Symlink = ();
     pub(crate) type Truncate = ();
     pub(crate) type Unlink = ();
-    pub(crate) type UnwatchFile = ();
     pub(crate) type Watch = JSValue;
     pub(crate) type WatchFile = JSValue;
     pub(crate) type Utimes = ();
@@ -4718,13 +4711,14 @@ impl NodeFS {
                 unsafe { libc::posix_fadvise(src_fd.native(), 0, 0, libc::POSIX_FADV_SEQUENTIAL) };
         }
 
-        let mut stack_buf = [0u8; 64 * 1024];
-        let stack_buf_len = stack_buf.len();
+        const STACK_BUF_LEN: usize = 64 * 1024;
+        let mut stack_buf = bun_core::vec::UninitBuf::<STACK_BUF_LEN>::uninit();
         let mut buf_to_free: Vec<u8> = Vec::new();
-        let mut buf: &mut [u8] = &mut stack_buf;
+        // SAFETY: `Syscall::read` is the only writer of `buf`; each iteration reads back only `buf[..amt]`.
+        let mut buf: &mut [u8] = unsafe { stack_buf.as_bytes_mut() };
 
         'maybe_allocate_large_temp_buf: {
-            if stat_size > stack_buf_len * 16 {
+            if stat_size > STACK_BUF_LEN * 16 {
                 // Don't allocate more than 8 MB at a time
                 let clamped_size: usize = stat_size.min(8 * 1024 * 1024);
                 // The slab must stay uninitialised: `Vec::resize` here was a
@@ -5482,7 +5476,7 @@ impl NodeFS {
         #[cfg(windows)]
         {
             let _ = args;
-            return Maybe::<ret::Lchmod>::todo();
+            return Err(sys::Error::todo());
         }
         #[cfg(target_os = "android")]
         {
@@ -8100,14 +8094,6 @@ impl NodeFS {
         }
     }
 
-    pub(crate) fn unwatch_file(
-        &mut self,
-        _: args::UnwatchFile,
-        _: Flavor,
-    ) -> Maybe<ret::UnwatchFile> {
-        Maybe::<ret::UnwatchFile>::todo()
-    }
-
     pub(crate) fn utimes(&mut self, args: &args::Utimes, _: Flavor) -> Maybe<ret::Utimes> {
         #[cfg(windows)]
         {
@@ -8689,7 +8675,7 @@ impl NodeFS {
             let _ = reuse_stat;
             // https://manpages.debian.org/testing/manpages-dev/ioctl_ficlone.2.en.html
             if mode.is_force_clone() {
-                return Maybe::<ret::CopyFile>::todo();
+                return Err(sys::Error::todo());
             }
 
             let src_fd = match Syscall::open(src, sys::O::RDONLY | sys::O::NOFOLLOW, 0o644) {
@@ -8985,7 +8971,7 @@ impl NodeFS {
                 // fall back to a non-CoW `CopyFileW`, per
                 // Node.js' documented FICLONE_FORCE contract and matching the
                 // Linux/FreeBSD arms above. Return a concrete ENOSYS rather
-                // than `Maybe::todo()` so debug builds do not panic.
+                // than `sys::Error::todo()` so debug builds do not panic.
                 return Err(sys::Error {
                     errno: SystemErrno::ENOSYS as _,
                     syscall: sys::Tag::copyfile,
@@ -9132,7 +9118,7 @@ impl NodeFS {
         )))]
         {
             let _ = (src, dest, mode, reuse_stat);
-            Maybe::<ret::CopyFile>::todo()
+            Err(sys::Error::todo())
         }
     }
 

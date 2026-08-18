@@ -804,6 +804,13 @@ function getTestBunStep(platform, options, testOptions = {}) {
     args.push("--exclude=internal/source-lints");
   }
 
+  // The untiered darwin lane PR builds get (see prDarwinTestPlatforms) skips
+  // the ~1% of files that take 10s or more; they are ~60% of a shard's wall
+  // time and still run on every other PR lane and on main's darwin lanes.
+  if (os === "darwin" && !platform.tier) {
+    args.push("--skip-slower-than=10000");
+  }
+
   const depends = [];
   if (!buildId) {
     depends.push(`${getTargetKey(platform)}-build-bun`);
@@ -1547,8 +1554,7 @@ async function getPipeline(options = {}) {
   // Untiered: any arm64 mac agent, whatever macOS it runs, can take it.
   /** @type {Platform[]} */
   const prDarwinTestPlatforms = [{ os: "darwin", arch: "aarch64", release: "any" }];
-  const darwinTestsEnabled =
-    isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
+  const darwinTestsEnabled = isMainBranch() || isBuildManual() || /\[(macos|darwin) tests?\]/i.test(getCommitMessage());
   const relevantTestPlatforms = (
     includeASAN ? testPlatforms : testPlatforms.filter(({ profile }) => profile !== "asan")
   )

@@ -24,7 +24,7 @@ use bun_jsc::SysErrorJsc;
 // struct directly so `VirtualMachine::get()` resolves as an associated fn.
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
-use crate::node::{BlobOrStringOrBuffer, StringOrBuffer};
+use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
@@ -186,7 +186,7 @@ extern "C" fn select_alpn_callback(
                         // The selection's ToString threw (a Symbol or a throwing
                         // toString): hand it to `error` like the callback's own
                         // throw, then refuse the protocol.
-                        let err_value = global.take_exception(err);
+                        let err_value = global.take_error(err);
                         crate::dispatch::fold(
                             handlers.call_error_handler(this_value, &[this_value, err_value]),
                         );
@@ -2171,7 +2171,7 @@ impl<const SSL: bool> NewSocket<SSL> {
         let output_value = match handlers.binary_type.get().to_js(data, &global) {
             Ok(v) => v,
             Err(err) => {
-                return this.handle_error(global.take_exception(err));
+                return this.handle_error(global.take_error(err));
             }
         };
 
@@ -2594,7 +2594,6 @@ impl<const SSL: bool> NewSocket<SSL> {
             return self.write_or_end::<IS_END>(global, &mut values, true);
         }
 
-        let allow_string_object = true;
         let buffer: StringOrBuffer = if data_value.is_undefined() {
             StringOrBuffer::EMPTY
         } else {
@@ -2603,7 +2602,7 @@ impl<const SSL: bool> NewSocket<SSL> {
                 // allocator dropped (global mimalloc)
                 data_value,
                 encoding_value,
-                allow_string_object,
+                StringObjects::Allow,
             ) {
                 Ok(Some(b)) => b,
                 Ok(None) => {

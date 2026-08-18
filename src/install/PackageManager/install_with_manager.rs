@@ -1,6 +1,7 @@
 use core::sync::atomic::Ordering;
 
-use bun_collections::DynamicBitSet;
+use bun_ast::Source;
+use bun_collections::{DynamicBitSet, index_sort};
 use bun_core::UnwrapOrOom as _;
 use bun_core::time::nano_timestamp;
 use bun_core::{Global, Output};
@@ -160,36 +161,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-                let root_package_json_entry =
-                    match manager.workspace_package_json_cache.get_with_path(
-                        manager.log_mut(),
-                        root_package_json_path.as_bytes(),
-                        Default::default(),
-                    ) {
-                        WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-                        WorkspacePackageJsonCacheResult::ReadErr(err) => {
-                            return Err(exit_for_root_package_json(
-                                manager,
-                                err,
-                                "read",
-                                root_package_json_path,
-                            ));
-                        }
-                        WorkspacePackageJsonCacheResult::ParseErr(err) => {
-                            return Err(exit_for_root_package_json(
-                                manager,
-                                err,
-                                "parse",
-                                root_package_json_path,
-                            ));
-                        }
-                    };
-
-                // `Source` is not `Copy`, so
-                // clone it (cheap — `Source` is a few `Box<[u8]>` handles) so the
-                // `&mut *mgr` reborrow below doesn't conflict with the cache borrow.
-                let source_copy = root_package_json_entry.source.clone();
+                let source_copy = root_package_json_source(manager, root_package_json_path)?;
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -354,7 +326,7 @@ pub fn install_with_manager(
                         let mut v = Vec::new();
                         lf.overrides.append_overridden_name_hashes(&mut v);
                         lockfile.overrides.append_overridden_name_hashes(&mut v);
-                        v.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut v, |a, b| a.cmp(b));
                         v.dedup();
                         v
                     };
@@ -547,7 +519,9 @@ pub fn install_with_manager(
                             .lockfile
                             .overrides
                             .append_catalog_valued_name_hashes(&mut catalog_overridden);
-                        catalog_overridden.sort_unstable();
+                        index_sort::sort_slice_unstable_by(&mut catalog_overridden, |a, b| {
+                            a.cmp(b)
+                        });
                         catalog_overridden.dedup();
                         let dependencies_len = manager.lockfile.buffers.dependencies.len();
                         for _dep_id in 0..dependencies_len {
@@ -1875,20 +1849,23 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     }
 }
 
-/// Returns only when printing the log itself fails; otherwise exits.
-fn exit_for_root_package_json(
-    manager: &PackageManager,
-    err: crate::Error,
-    verb: &str,
+fn root_package_json_source(
+    manager: &mut PackageManager,
     root_package_json_path: &ZStr,
-) -> crate::Error {
+) -> crate::Result<Source> {
+    let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
+        manager.log_mut(),
+        root_package_json_path.as_bytes(),
+        Default::default(),
+    ) {
+        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
+        WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
+    };
     if manager.log_mut().errors > 0 {
-        if let Err(print_err) = manager
+        manager
             .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))
-        {
-            return print_err.into();
-        }
+            .print(std::ptr::from_mut(Output::error_writer()))?;
     }
     Output::err(
         err,
@@ -1935,32 +1912,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    // SAFETY: `manager.log` is a non-null backref to the CLI log set at init().
-    let root_package_json_entry = match manager.workspace_package_json_cache.get_with_path(
-        manager.log_mut(),
-        root_package_json_path.as_bytes(),
-        Default::default(),
-    ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => entry,
-        WorkspacePackageJsonCacheResult::ReadErr(err) => {
-            return Err(exit_for_root_package_json(
-                manager,
-                err,
-                "read",
-                root_package_json_path,
-            ));
-        }
-        WorkspacePackageJsonCacheResult::ParseErr(err) => {
-            return Err(exit_for_root_package_json(
-                manager,
-                err,
-                "parse",
-                root_package_json_path,
-            ));
-        }
-    };
-
-    let source_copy = root_package_json_entry.source.clone();
+    let source_copy = root_package_json_source(manager, root_package_json_path)?;
 
     let mut resolver: () = ();
     {
@@ -2069,7 +2021,7 @@ fn refresh_children_of_named(
             })
             .collect()
     };
-    package_ids.sort_unstable();
+    index_sort::sort_indices_unstable(&mut package_ids, &mut |a, b| a.cmp(&b));
     package_ids.dedup();
     if package_ids.is_empty() {
         return Ok(Vec::new());

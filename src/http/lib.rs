@@ -147,10 +147,7 @@ impl HTTPResponseMetadata {
 }
 
 impl Drop for HTTPResponseMetadata {
-    // `owned_buf` is freed by
-    // `Box`'s own Drop; `response.headers.list` was `Box::leak`'d in
-    // `clone_metadata` and must be reclaimed here. Zero-header responses
-    // have an empty static slice, guarded by the len check.
+    // `response.headers.list` is `Box::leak`'d by `clone_metadata`; reclaim it here.
     fn drop(&mut self) {
         let list = self.response.headers.list;
         if !list.is_empty() {

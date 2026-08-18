@@ -75,9 +75,6 @@ pub struct MySQLConnection {
     full_auth_requested: bool,
 
     auth_data: Vec<u8>,
-    // PERF: database/user/password could be ranges into one backing allocation
-    // (as the Postgres connection does with its `options_buf`), turning the
-    // three caller-side allocations in init() into one.
     database: Box<[u8]>,
     user: Box<[u8]>,
     password: Box<[u8]>,

@@ -2184,9 +2184,6 @@ impl<'a> PackageInstaller<'a> {
                     .unwrap_or_oom();
             }
 
-            // `defer increment_tree_install_count` — no early returns after this
-            // point, so the manual call at the end is equivalent.
-
             let dep = &self.lockfile().buffers.dependencies.as_slice()[dependency_id as usize];
             let dep_behavior = dep.behavior;
             let truncated_dep_name_hash: TruncatedPackageNameHash =

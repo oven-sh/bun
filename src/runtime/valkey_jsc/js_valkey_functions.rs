@@ -1,4 +1,4 @@
-use crate::node::BlobOrStringOrBuffer as JSArgument;
+use crate::node::{BlobOrStringOrBuffer as JSArgument, FileBlobs};
 use bun_collections::VecExt as _;
 use bun_core::OwnedString;
 use bun_jsc::{
@@ -70,10 +70,10 @@ fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Option<JSArgumen
     if value.is_number() {
         // Allow numbers to be passed as strings.
         let str = value.to_js_string(global)?;
-        return JSArgument::from_js_maybe_file(global, str.to_js(), true);
+        return JSArgument::from_js_maybe_file(global, str.to_js(), FileBlobs::Reject);
     }
 
-    JSArgument::from_js_maybe_file(global, value, false)
+    JSArgument::from_js_maybe_file(global, value, FileBlobs::Allow)
 }
 
 /// Shim around `protocol::valkey_error_to_js` that:
@@ -1720,6 +1720,77 @@ impl JSValkeyClient {
         "newkey",
         NotSubscriber
     );
+
+    // Bitmap commands
+    cmd_strings_varargs!(bitop, b"bitop", "BITOP", NotSubscriber);
+    cmd_strings_varargs!(bitpos, b"bitpos", "BITPOS", NotSubscriber);
+    cmd_strings_varargs!(bitfield, b"bitfield", "BITFIELD", NotSubscriber);
+
+    // HyperLogLog commands
+    cmd_strings_varargs!(pfcount, b"pfcount", "PFCOUNT", NotSubscriber);
+    cmd_strings_varargs!(pfmerge, b"pfmerge", "PFMERGE", NotSubscriber);
+
+    // Geo commands
+    cmd_strings_varargs!(geoadd, b"geoadd", "GEOADD", NotSubscriber);
+    cmd_strings_varargs!(geodist, b"geodist", "GEODIST", NotSubscriber);
+    cmd_strings_varargs!(geohash, b"geohash", "GEOHASH", NotSubscriber);
+    cmd_strings_varargs!(geopos, b"geopos", "GEOPOS", NotSubscriber);
+    cmd_strings_varargs!(geosearch, b"geosearch", "GEOSEARCH", NotSubscriber);
+    cmd_strings_varargs!(
+        geosearchstore,
+        b"geosearchstore",
+        "GEOSEARCHSTORE",
+        NotSubscriber
+    );
+
+    // Scripting commands
+    cmd_strings_varargs!(eval, b"eval", "EVAL", NotSubscriber);
+    cmd_strings_varargs!(evalsha, b"evalsha", "EVALSHA", NotSubscriber);
+    cmd_strings_varargs!(fcall, b"fcall", "FCALL", NotSubscriber);
+    cmd_strings_varargs!(function, b"function", "FUNCTION", NotSubscriber);
+
+    // Server / connection commands
+    cmd_noargs!(dbsize, b"dbsize", "DBSIZE", NotSubscriber);
+    cmd_strings_varargs!(flushdb, b"flushdb", "FLUSHDB", NotSubscriber);
+    cmd_strings_varargs!(flushall, b"flushall", "FLUSHALL", NotSubscriber);
+    cmd_strings_varargs!(info, b"info", "INFO", NotSubscriber);
+    cmd_noargs!(time, b"time", "TIME", NotSubscriber);
+    cmd_key!(echo, b"echo", "ECHO", "message", NotSubscriber);
+    cmd_noargs!(lastsave, b"lastsave", "LASTSAVE", NotSubscriber);
+    cmd_strings_varargs!(js_client, b"client", "CLIENT", DontCare);
+    cmd_strings_varargs!(config, b"config", "CONFIG", NotSubscriber);
+    cmd_strings_varargs!(debug, b"debug", "DEBUG", NotSubscriber);
+    cmd_strings_varargs!(command, b"command", "COMMAND", NotSubscriber);
+
+    // Generic key commands
+    cmd_strings_varargs!(object, b"object", "OBJECT", NotSubscriber);
+    cmd_strings_varargs!(sort, b"sort", "SORT", NotSubscriber);
+    cmd_key_value!(
+        wait,
+        b"wait",
+        "WAIT",
+        "numreplicas",
+        "timeout",
+        NotSubscriber
+    );
+    cmd_strings_varargs!(lcs, b"lcs", "LCS", NotSubscriber);
+
+    // Stream commands
+    cmd_strings_varargs!(xadd, b"xadd", "XADD", NotSubscriber);
+    cmd_key!(xlen, b"xlen", "XLEN", "key", NotSubscriber);
+    cmd_strings_varargs!(xrange, b"xrange", "XRANGE", NotSubscriber);
+    cmd_strings_varargs!(xrevrange, b"xrevrange", "XREVRANGE", NotSubscriber);
+    cmd_strings_varargs!(xread, b"xread", "XREAD", NotSubscriber);
+    cmd_strings_varargs!(xreadgroup, b"xreadgroup", "XREADGROUP", NotSubscriber);
+    cmd_strings_varargs!(xdel, b"xdel", "XDEL", NotSubscriber);
+    cmd_strings_varargs!(xtrim, b"xtrim", "XTRIM", NotSubscriber);
+    cmd_strings_varargs!(xack, b"xack", "XACK", NotSubscriber);
+    cmd_strings_varargs!(xclaim, b"xclaim", "XCLAIM", NotSubscriber);
+    cmd_strings_varargs!(xautoclaim, b"xautoclaim", "XAUTOCLAIM", NotSubscriber);
+    cmd_strings_varargs!(xpending, b"xpending", "XPENDING", NotSubscriber);
+    cmd_strings_varargs!(xinfo, b"xinfo", "XINFO", NotSubscriber);
+    cmd_strings_varargs!(xgroup, b"xgroup", "XGROUP", NotSubscriber);
+    cmd_strings_varargs!(xsetid, b"xsetid", "XSETID", NotSubscriber);
 
     #[bun_jsc::host_fn(method)]
     pub(crate) fn publish(

@@ -347,7 +347,7 @@ pub mod Runtime {
             // so sort the inputs first; the resulting `keys()` iteration order
             // is then byte-lexicographic.
             let mut sorted: Vec<&[u8]> = feature_flags.to_vec();
-            sorted.sort_unstable();
+            bun_collections::index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.cmp(b));
             let mut set = StringSet::new();
             for flag in sorted {
                 let _ = set.insert(flag);
@@ -682,6 +682,13 @@ pub struct VisitArgsOpts<'a> {
     pub(crate) has_rest_arg: bool,
     /// This is true if the function is an arrow function or a method
     pub(crate) is_unique_formal_parameters: bool,
+}
+
+#[derive(Clone, Copy)]
+pub struct VisitDeclOpts {
+    pub(crate) was_anonymous_named_expr: bool,
+    pub(crate) could_be_const_value: bool,
+    pub(crate) could_be_macro: bool,
 }
 
 #[derive(Clone, Copy)]

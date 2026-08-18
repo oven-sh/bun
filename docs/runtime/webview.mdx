@@ -17,7 +17,7 @@ const title = await view.evaluate("document.title");
 await Bun.write("page.png", await view.screenshot());
 ```
 
-On macOS, `Bun.WebView` uses the system's `WKWebView` — nothing to install. On Linux and Windows it drives an installed Chrome, Chromium, Edge, or Brave over the Chrome DevTools Protocol.
+On macOS, `Bun.WebView` uses the system's `WKWebView` — nothing to install. On Linux and Windows it drives an installed Chrome, Chromium, Edge, or Brave over the Chrome DevTools Protocol; on Windows the preinstalled Edge is enough.
 
 Each view runs its page in a separate renderer process. All input methods (`click`, `type`, `press`, `scroll`) dispatch **native** browser events, so the page sees `isTrusted: true` — the same as a real user.
 
@@ -77,12 +77,12 @@ Views that share the same `directory` share cookies and storage. Pass `dataStore
 
 `Bun.WebView` supports two rendering engines. The default depends on your platform:
 
-| Backend    | Engine    | Platforms     | Requirements                                                                         |
-| ---------- | --------- | ------------- | ------------------------------------------------------------------------------------ |
-| `"webkit"` | WKWebView | macOS only    | None — uses the system `WebKit.framework`                                            |
-| `"chrome"` | Blink     | macOS / Linux | Chrome, Chromium, Edge, or Brave installed (or Playwright's `chrome-headless-shell`) |
+| Backend    | Engine    | Platforms               | Requirements                                                                         |
+| ---------- | --------- | ----------------------- | ------------------------------------------------------------------------------------ |
+| `"webkit"` | WKWebView | macOS only              | None — uses the system `WebKit.framework`                                            |
+| `"chrome"` | Blink     | macOS / Linux / Windows | Chrome, Chromium, Edge, or Brave installed (or Playwright's `chrome-headless-shell`) |
 
-On macOS the default is `"webkit"`; elsewhere it's `"chrome"`. Requesting `backend: "webkit"` on a non-macOS platform throws.
+On macOS the default is `"webkit"`; elsewhere it's `"chrome"`. Requesting `backend: "webkit"` on a non-macOS platform throws. The `"chrome"` backend drives one browser per process and can only be used from the main thread; constructing it inside a `Worker` throws.
 
 ```ts
 // Force Chrome on macOS
@@ -105,11 +105,17 @@ When Bun needs to spawn Chrome, it searches in this order:
 
 1. The `path` you passed in `backend: { type: "chrome", path: "..." }`
 2. The `BUN_CHROME_PATH` environment variable
-3. `$PATH` (`google-chrome-stable`, `google-chrome`, `chromium-browser`, `chromium`, `brave-browser`, `microsoft-edge`, `chrome`)
-4. Standard install locations (`/Applications/Google Chrome.app`, `~/Applications/...`, `/usr/bin/...`, `/snap/bin/...`)
-5. Playwright's cache (`~/Library/Caches/ms-playwright` or `~/.cache/ms-playwright`) for `chrome-headless-shell`
+3. `$PATH` (`google-chrome-stable`, `google-chrome`, `chromium-browser`, `chromium`, `brave-browser`, `microsoft-edge`, `chrome`; on Windows `chrome`, `chromium`, `brave`, `msedge`)
+4. Standard install locations (`/Applications/Google Chrome.app`, `~/Applications/...`, `/usr/bin/...`, `/snap/bin/...`; on Windows the `Application\*.exe` directories under `%ProgramFiles%`, `%ProgramFiles(x86)%`, and `%LOCALAPPDATA%`)
+5. Playwright's cache (`~/Library/Caches/ms-playwright`, `~/.cache/ms-playwright`, or `%LOCALAPPDATA%\ms-playwright`) for `chrome-headless-shell`
 
 If Bun finds none, the constructor throws.
+
+<Note>
+  Microsoft Edge refuses to start under the Windows `LocalSystem` account: it exits immediately and the first operation
+  rejects with "Chrome process closed the pipe". A service or CI agent that only has Edge available needs to run Bun as
+  a regular user account.
+</Note>
 
 #### Connecting to an already-running Chrome {#existing-chrome}
 

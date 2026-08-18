@@ -867,6 +867,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("handles accessor properties when filtering by napi_key_writable", async () => {
       await checkSameOutput("test_get_all_property_names_accessor", []);
     });
+    it("returns napi_pending_exception when a Proxy trap throws during the descriptor walk", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_throwing_proxy_traps", []);
+      expect(output).toContain("own_only gopd throws: status=10 keys=undefined exception=gopd trap");
+      expect(output).toContain(
+        "include_prototypes gopd throws on prototype: status=10 keys=undefined exception=gopd trap",
+      );
+    });
+    it("returns napi_pending_exception when getPrototypeOf throws during the descriptor walk", async () => {
+      // Not checkSameOutput: V8 filters proxy keys while collecting them and
+      // only calls getPrototypeOf once, so a trap that throws on the second
+      // call never throws under Node.
+      const output = (await runOn(bunExe(), "test_get_all_property_names_get_prototype_throws_in_descriptor_walk", []))
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim();
+      expect(output).toBe("status=10 keys=undefined exception=getPrototypeOf trap calls=2");
+    });
     it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
       const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
       expect(output).toContain(`proxy own_only writable: status=0 keys=["x","y"]`);
@@ -1776,6 +1792,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("check_object_type_tag(null): status=10 pending=1");
       expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
       expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
+    });
+  });
+
+  describe("napi_get_prototype", () => {
+    it("returns null for a Proxy without running its getPrototypeOf trap, like Node", async () => {
+      // Before this was special-cased, Bun ran the trap: a proxy without traps
+      // reported its target's prototype, and a throwing trap reported napi_ok
+      // with a NULL handle written to *result and the exception left pending.
+      const output = await checkSameOutput("test_napi_get_prototype_proxy", []);
+      // checkSameOutput already asserted parity with Node; pin the values so a
+      // shared failure cannot pass.
+      expect(output.split(/\r?\n/)).toEqual([
+        "plain object: status=0 pending=false result=Object.prototype exception=none",
+        "null prototype: status=0 pending=false result=null exception=none",
+        "proxy without traps: status=0 pending=false result=null exception=none",
+        "callable proxy: status=0 pending=false result=null exception=none",
+        "trap returns Array.prototype: status=0 pending=false result=null exception=none",
+        "getPrototypeOf trap calls: 0",
+        "trap throws: status=0 pending=false result=null exception=none",
+        "trap returns a number: status=0 pending=false result=null exception=none",
+        "revoked proxy: status=0 pending=false result=null exception=none",
+        "object whose prototype is a proxy: status=0 pending=false result=the proxy exception=none",
+        "plain object again: status=0 pending=false result=Object.prototype exception=none",
+      ]);
     });
   });
 

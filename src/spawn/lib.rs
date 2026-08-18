@@ -35,8 +35,6 @@ pub mod posix_spawn {
         pub use crate::process::{WindowsSpawnOptions, WindowsSpawnResult};
         pub use bun_spawn_sys::posix_spawn::bun_spawn::*;
     }
-    pub use bun_spawn as BunSpawn;
-    pub use bun_spawn_sys::posix_spawn::posix_spawn as PosixSpawn;
 }
 
 /// `Process` / `Poller` / `WaiterThread` / `spawn_process` / `sync` /

@@ -49,11 +49,6 @@ TextEncoding::TextEncoding(StringView name)
 {
 }
 
-TextEncoding::TextEncoding(const String& name)
-    : TextEncoding(StringView { name })
-{
-}
-
 String TextEncoding::decode(std::span<const uint8_t> data, bool stopOnError, bool& sawError) const
 {
     if (m_name.isNull())

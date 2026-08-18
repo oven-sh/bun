@@ -34,20 +34,37 @@ JSStreamsRuntime* JSStreamsRuntime::from(JSGlobalObject* globalObject)
     return defaultGlobalObject(globalObject)->streamsRuntime();
 }
 
+struct HandlerTableEntry {
+    ASCIILiteral name;
+    JSC::NativeFunction function;
+};
+
+#define WEB_STREAMS_HANDLER_TABLE_ENTRY(name) { #name ""_s, jsWebStreamsHandler_##name },
+// clang-format off
+static constexpr HandlerTableEntry handlerTable[] = {
+    FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_HANDLER_TABLE_ENTRY)
+    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_HANDLER_TABLE_ENTRY)
+};
+// clang-format on
+#undef WEB_STREAMS_HANDLER_TABLE_ENTRY
+static_assert(std::size(handlerTable) == static_cast<size_t>(JSStreamsRuntime::Handler::Count));
+
 void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
 {
     m_globalObject = globalObject;
 
     using HandlerProperty = JSC::LazyProperty<JSGlobalObject, JSC::JSFunction>;
 
-#define WEB_STREAMS_INIT_HANDLER(name)                                       \
-    m_##name.initLater([](const HandlerProperty::Initializer& init) {        \
-        init.set(JSFunction::create(init.vm, init.owner, 2, #name ""_s,      \
-            jsWebStreamsHandler_##name, ImplementationVisibility::Private)); \
-    });
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_INIT_HANDLER)
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_INIT_HANDLER)
-#undef WEB_STREAMS_INIT_HANDLER
+    for (auto& handler : m_handlers) {
+        handler.initLater([](const HandlerProperty::Initializer& init) {
+            auto* self = JSStreamsRuntime::from(init.owner);
+            size_t i = &init.property - self->m_handlers;
+            ASSERT(i < std::size(self->m_handlers));
+            auto& entry = handlerTable[i];
+            init.set(JSFunction::create(init.vm, init.owner, 2, String(entry.name),
+                entry.function, ImplementationVisibility::Private));
+        });
+    }
 
     // Spec: `%FooQueuingStrategy%.prototype.size` is ONE user-visible function object per realm.
     m_byteLengthQueuingStrategySizeFunction.initLater([](const HandlerProperty::Initializer& init) {
@@ -84,10 +101,8 @@ void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
 template<typename Visitor>
 void JSStreamsRuntime::visit(Visitor& visitor)
 {
-#define WEB_STREAMS_VISIT_HANDLER(name) m_##name.visit(visitor);
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_VISIT_HANDLER)
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_VISIT_HANDLER)
-#undef WEB_STREAMS_VISIT_HANDLER
+    for (auto& handler : m_handlers)
+        handler.visit(visitor);
 
     m_byteLengthQueuingStrategySizeFunction.visit(visitor);
     m_countQueuingStrategySizeFunction.visit(visitor);

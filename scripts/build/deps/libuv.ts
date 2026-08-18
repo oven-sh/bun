@@ -9,6 +9,7 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 
 // Tip of oven-sh/libuv's `bun` branch: upstream f3ce527e + win-pipe CancelIoEx
 // fix, ConPTY uv_spawn, AppContainer pipe namespace (oven-sh/libuv#7), fs/tty
@@ -16,9 +17,11 @@ import type { Dependency } from "../source.ts";
 // FileModeInformation error return (oven-sh/libuv#10), error translation /
 // propagation audit fixes (oven-sh/libuv#11), uv_spawn returns an error
 // instead of aborting on AssignProcessToJobObject failure (oven-sh/libuv#12),
-// and closes the process/thread handles on that error path (oven-sh/libuv#13).
+// closes the process/thread handles on that error path (oven-sh/libuv#13), and
+// uv__split_path allocates with uv__malloc instead of _wcsdup so the buffer
+// can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "89ee34396dc7f5f1bce620e23d9fe6bbd0facd97";
+const LIBUV_COMMIT = "0c89a51e2de5c42cca40e3bccc1e8542e157087c";
 
 // prettier-ignore
 const SHARED = [
@@ -72,6 +75,11 @@ export const libuv: Dependency = {
       "-Wno-int-conversion",
       "/wd4996",
     ],
+    // bun swaps in mimalloc with uv_replace_allocator (src/bun_bin/lib.rs), so
+    // everything has to allocate through uv__malloc and friends; uv-common.c
+    // is the default table that swap replaces. The one stray CRT call there
+    // was got uv__free'd and crashed (oven-sh/libuv#14).
+    forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS, except: ["src/uv-common.c"] },
   }),
 
   provides: () => ({

@@ -255,17 +255,6 @@ fn parser_options_from_js(
         }
     }
 
-    // if (try jsobj.getTruthy(globalThis, "css_modules")) |val| {
-    //     opts.css_modules = bun.css.css_modules.Config{
-    //
-    //     };
-    //     if (val.isObject()) {
-    //         if (try val.getTruthy(globalThis, "pure")) |pure_val| {
-    //             opts.css_modules.pure = pure_val.toBoolean();
-    //         }
-    //     }
-    // }
-
     Ok(())
 }
 

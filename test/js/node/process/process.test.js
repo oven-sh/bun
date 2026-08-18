@@ -574,7 +574,7 @@ it("process.versions", () => {
   // These are the ACTUAL commits built into bun (not derived values, so
   // bumping a dep requires updating this test too).
   const expectedVersions = {
-    boringssl: "1a41b9025c2c0a37edd07ff10f6944f03e028522",
+    boringssl: "2288897e2e716330490893d226b4f079f9da9e0c",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
     mimalloc: "6e891cbe4790982ca9f3f9a60319a72e61b5d725",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
@@ -1382,6 +1382,41 @@ describe.concurrent(() => {
   it("process.report", () => {
     // TODO: write better tests
     JSON.stringify(process.report.getReport(), null, 2);
+  });
+
+  // A pending worker.terminate() is delivered at the exception checks inside the
+  // report builders, so a worker looping on getReport() is always interrupted in
+  // the middle of one. The host must see every worker exit, with no crash.
+  it("process.report.getReport() interrupted by worker.terminate()", async () => {
+    const workers = 3;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const source = 'require("worker_threads").parentPort.postMessage("busy"); for (;;) process.report.getReport();';
+          let exited = 0;
+          for (let i = 0; i < ${workers}; i++) {
+            const worker = new Worker(source, { eval: true });
+            worker.on("message", () => worker.terminate());
+            worker.on("exit", () => {
+              if (++exited === ${workers}) console.log("exited", exited);
+            });
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `exited ${workers}`,
+      stderr: "",
+      exitCode: 0,
+    });
   });
 
   it("process.exit with jsDoubleNumber that is an integer", async () => {

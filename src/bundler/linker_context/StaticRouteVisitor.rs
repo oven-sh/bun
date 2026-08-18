@@ -17,7 +17,7 @@ pub(crate) fn mark_chunks_with_transitive_use_client(
     if c.dev_server.is_some()
         || !c
             .framework
-            .is_some_and(|framework| framework.is_built_in_react)
+            .is_some_and(|framework| framework.server_components.is_some())
     {
         return Ok(());
     }

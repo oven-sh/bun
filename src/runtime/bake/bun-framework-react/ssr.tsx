@@ -97,16 +97,31 @@ export function renderToHtml(
 
 // Static builds can not stream suspense boundaries as they finish, but instead
 // produce a single HTML blob. The approach is otherwise similar to `renderToHtml`.
-export function renderToStaticHtml(rscPayload: Readable, bootstrapModules: readonly string[]): Promise<Blob> {
-  const stream = new StaticRscInjectionStream(rscPayload);
+export function renderToStaticHtml(
+  rscPayload: Readable,
+  bootstrapModules: readonly string[],
+  signal: MiniAbortSignal,
+): Promise<Blob> {
+  const stream = new StaticRscInjectionStream(rscPayload, signal);
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
-  const { pipe } = renderToPipeableStream(<Root />, {
+  let pipe: (stream: any) => void;
+  let abort: ((reason?: any) => void) | undefined;
+  ({ pipe, abort } = renderToPipeableStream(<Root />, {
     bootstrapModules,
     // Only begin flowing HTML once all of it is ready. This tells React
     // to not emit the flight chunks, just the entire HTML.
     onAllReady: () => pipe(stream),
-  });
+    // `onAllReady` never fires after an error, so abort the render and reject the result here.
+    onError(error) {
+      if (!signal.aborted) {
+        signal.aborted = error;
+        signal.abort?.();
+      }
+      abort?.();
+      stream.destroy(signal.aborted ?? error);
+    },
+  }));
   return stream.result;
 }
 
@@ -266,7 +281,7 @@ class StaticRscInjectionStream extends EventEmitter {
   finalize: (blob: Blob) => void;
   reject: (error: Error) => void;
 
-  constructor(rscPayload: Readable) {
+  constructor(rscPayload: Readable, signal?: MiniAbortSignal) {
     super();
     const { resolve, promise, reject } = Promise.withResolvers<Blob>();
     this.result = promise;
@@ -274,6 +289,8 @@ class StaticRscInjectionStream extends EventEmitter {
     this.reject = reject;
 
     rscPayload.on("data", chunk => this.rscPayloadChunks.push(chunk));
+    // A flight payload error means no HTML; reject with the original error rather than leave the result pending.
+    rscPayload.on("error", err => this.reject(signal?.aborted ?? err));
   }
 
   write(chunk) {

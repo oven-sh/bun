@@ -641,14 +641,19 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             Some(NonNull::from(&mut any_loop)),
         ) {
             Ok(outputs) => outputs,
-            // The bundler's diagnostics are in the log; `BuildFailed` with an empty log stays an internal error.
-            Err(bun_bundler::Error::BuildFailed)
-                if vm.log_ref().is_some_and(bun_ast::Log::has_errors) =>
-            {
-                print_log(vm);
+            // Out of memory stays an internal error; every other failure is reported here.
+            Err(
+                e @ (bun_bundler::Error::Alloc(_)
+                | bun_bundler::Error::Js(bun_core::JsError::OutOfMemory)),
+            ) => return Err(e.into()),
+            Err(e) => {
+                if vm.log_ref().is_some_and(bun_ast::Log::has_errors) {
+                    print_log(vm);
+                } else {
+                    Output::err(e, "Failed to bundle routes", ());
+                }
                 return Err(crate::Error::BakeBuildFailed);
             }
-            Err(e) => return Err(e.into()),
         }
     };
     if bundled_outputs_list.is_empty() {
@@ -798,13 +803,8 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             }
         }
     }
-    // Write the runtime file to disk if there are any client chunks
-    {
-        let Some(runtime_file_index) = maybe_runtime_file_index else {
-            Output::panic(format_args!(
-                "Runtime file not found. This is an unexpected bug in Bun. Please file a bug report on GitHub."
-            ));
-        };
+    // Write the runtime file to disk if there are any client chunks; there is no runtime chunk when no module uses its helpers.
+    if let Some(runtime_file_index) = maybe_runtime_file_index {
         let any_client_chunks = bundled_outputs_list.iter().any(|file| {
             file.side == Some(bun_bundler::options::Side::Client)
                 && file.src_path.text != b"bun-framework-react/client.tsx"

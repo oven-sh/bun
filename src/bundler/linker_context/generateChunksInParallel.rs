@@ -1236,10 +1236,10 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         crate::chunk::Content::Html => Box::default(),
                     },
                     bake_extra: 'brk: {
-                        if c.framework.is_none() || IS_DEV_SERVER {
+                        let Some(framework) = c.framework else {
                             break 'brk BakeExtra::default();
-                        }
-                        if !c.framework.unwrap().is_built_in_react {
+                        };
+                        if IS_DEV_SERVER {
                             break 'brk BakeExtra::default();
                         }
 
@@ -1252,13 +1252,15 @@ pub(crate) fn generate_chunks_in_parallel<const IS_DEV_SERVER: bool>(
                         if output_kind == options::OutputKind::EntryPoint
                             && side == options::Side::Server
                         {
-                            extra.route = if chunk
-                                .flags
-                                .contains(crate::chunk::Flags::HAS_TRANSITIVE_USE_CLIENT)
+                            // Without server components there are no "use client" boundaries, so every route would read as static.
+                            extra.route = if framework.server_components.is_some()
+                                && !chunk
+                                    .flags
+                                    .contains(crate::chunk::Flags::HAS_TRANSITIVE_USE_CLIENT)
                             {
-                                BakeRouteKind::Route
-                            } else {
                                 BakeRouteKind::FullyStaticRoute
+                            } else {
+                                BakeRouteKind::Route
                             };
                         }
 

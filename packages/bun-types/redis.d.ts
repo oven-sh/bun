@@ -22,8 +22,9 @@ declare module "bun" {
     autoReconnect?: boolean;
 
     /**
-     * Maximum number of reconnection attempts
-     * @default 10
+     * Maximum number of reconnection attempts before the client gives up and
+     * runs `onclose`.
+     * @default 20
      */
     maxRetries?: number;
 

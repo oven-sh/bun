@@ -1491,10 +1491,12 @@ impl ValkeyClient {
     pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
-        if self.status == Status::Connected || self.status == Status::Connecting {
-            return self.close(uws::CloseCode::FastShutdown);
+        match self.status {
+            Status::Connected | Status::Connecting => self.close(uws::CloseCode::FastShutdown),
+            // Between retries: the manual flag makes the close terminal.
+            Status::Disconnected if self.flags.is_reconnecting => self.parent().cancel_reconnect(),
+            Status::NeverConnected | Status::Disconnected => Ok(()),
         }
-        Ok(())
     }
 
     /// Get a writer for the connected socket

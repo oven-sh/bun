@@ -1105,6 +1105,46 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  test("a rejected SELECT after an accepted HELLO fails the connection once and connect() from onclose dials again", async () => {
+    // HELLO and SELECT are written together, and both replies come back in one
+    // read: connection 1 accepts HELLO and rejects SELECT, connection 2 accepts both.
+    const fake = helloServer({
+      HELLO: connection => (connection === 1 ? "+OK\r\n-ERR DB index is out of range\r\n" : "+OK\r\n+OK\r\n"),
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}/1`, { autoReconnect: true });
+    try {
+      const closes: { message: string; connected: boolean; connections: number }[] = [];
+      let secondConnect: Promise<string> | undefined;
+      client.onclose = err => {
+        closes.push({ message: err.message, connected: client.connected, connections: fake.connections });
+        secondConnect ??= client.connect().then(
+          () => "connected",
+          (err: Error) => `rejected: ${err.message}`,
+        );
+      };
+      // Queued behind the handshake, so it is still pending when SELECT is rejected.
+      const queued = client.get("key").then(
+        () => "resolved",
+        (err: Error & { code: string }) => `${err.code}: ${err.message}`,
+      );
+      // connect() settles on the accepted HELLO, before the SELECT reply is
+      // read, so it resolves; the failure that follows is reported by onclose.
+      await client.connect();
+      expect(await queued).toBe("ERR_REDIS_INVALID_COMMAND: ERR DB index is out of range");
+      // The rejection is a failure the client detected, so there is no retry
+      // even with autoReconnect on: onclose fires once and the only second
+      // connection is the one dialed from it.
+      expect(closes).toEqual([{ message: "Connection closed", connected: false, connections: 1 }]);
+      expect(await secondConnect).toBe("connected");
+      expect(await client.ping()).toBe("PONG");
+      expect(fake.connections).toBe(2);
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
   test("a message listener that closes and reconnects is not fed the pushes buffered behind its message", async () => {
     // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
     const push = (...items: (string | number)[]) =>

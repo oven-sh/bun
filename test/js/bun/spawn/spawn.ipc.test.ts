@@ -120,6 +120,84 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
           : { name: "DataCloneError", message: "The object can not be cloned." },
     });
   });
+
+  // Both tests below kill the child and stay off the event loop until it is dead, so the channel
+  // going away and the exit are picked up in the same poll. The channel is dispatched first (a
+  // dying process's descriptors are closed before it can be reaped) and, as in node, has to be
+  // reported before the exit is looked at. It used to be reported from a later event-loop task,
+  // so onExit ran first.
+  async function killAndReportOrder(child: Bun.Subprocess, events: string[], done: Promise<unknown>) {
+    child.kill("SIGKILL");
+    // SIGKILL takes effect within about a millisecond; by the time this returns the exit is ready
+    // to be picked up together with the channel's close.
+    Bun.sleepSync(50);
+    await done;
+    return events;
+  }
+
+  it.concurrent("onDisconnect runs before onExit when the child dies with the channel drained", async () => {
+    const events: string[] = [];
+    const ready = Promise.withResolvers<void>();
+    const disconnected = Promise.withResolvers<void>();
+    const exited = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("message", () => console.log("received")); setInterval(() => {}, 1000); process.send("ready");`,
+      ],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization: mode,
+      ipc: () => ready.resolve(),
+      onDisconnect() {
+        events.push("disconnect");
+        disconnected.resolve();
+      },
+      onExit() {
+        events.push("exit");
+        exited.resolve();
+      },
+    });
+    await ready.promise;
+    child.send("read me");
+    // Once this is printed the child has read everything we sent, so its end closes cleanly (EOF).
+    await child.stdout.getReader().read();
+    expect(await killAndReportOrder(child, events, Promise.all([disconnected.promise, exited.promise]))).toEqual([
+      "disconnect",
+      "exit",
+    ]);
+  });
+
+  it.concurrent("onDisconnect runs before onExit when the child dies with our message unread", async () => {
+    const events: string[] = [];
+    const disconnected = Promise.withResolvers<void>();
+    const exited = Promise.withResolvers<void>();
+    await using child = spawn({
+      cmd: [bunExe(), "-e", `console.log("ready"); setInterval(() => {}, 1000);`],
+      env: bunEnv,
+      stdio: ["ignore", "pipe", "inherit"],
+      serialization: mode,
+      ipc() {},
+      onDisconnect() {
+        events.push("disconnect");
+        disconnected.resolve();
+      },
+      onExit() {
+        events.push("exit");
+        exited.resolve();
+      },
+    });
+    await child.stdout.getReader().read();
+    // The child never reads its end of the channel, so this stays unread; on Linux our end then
+    // reports ECONNRESET instead of EOF when the child dies, which closes the channel through a
+    // different path than the test above.
+    child.send("never read");
+    expect(await killAndReportOrder(child, events, Promise.all([disconnected.promise, exited.promise]))).toEqual([
+      "disconnect",
+      "exit",
+    ]);
+  });
 });
 
 describe("ipc mode advanced", () => {

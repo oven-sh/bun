@@ -1,5 +1,5 @@
 import { $ } from "bun";
-import { bunExe } from "harness";
+import { bunEnv, bunExe, tempDir } from "harness";
 
 test("child_process ipc", async () => {
   const output = await $`${bunExe()} ${import.meta.dir}/fixtures/ipc_fixture.js`.text();
@@ -12,4 +12,62 @@ test("child_process ipc", async () => {
     cb ERR_IPC_CHANNEL_CLOSED
     "
   `);
+});
+
+test("'disconnect' is emitted before 'exit' when the channel's EOF and the exit are seen in the same poll", async () => {
+  // The parent stays off its event loop from the moment it asks the child to close the channel
+  // until the child is dead, so it picks up the channel's EOF and the exit together. Node emits
+  // 'disconnect' while handling the EOF, before it gets to the exit; the EOF used to be handed to a
+  // later event-loop task here, so 'exit' (emitted straight from the exit notification) came first.
+  using dir = tempDir("ipc-disconnect-before-exit", {
+    "parent.js": `
+      const { fork } = require("node:child_process");
+      const { existsSync } = require("node:fs");
+      const path = require("node:path");
+
+      const closed = path.join(__dirname, "channel-closed");
+      const child = fork(path.join(__dirname, "child.js"), [closed], {
+        stdio: ["ignore", "inherit", "inherit", "ipc"],
+      });
+      const events = [];
+      child.on("message", () => {
+        child.send("close-your-end");
+        const deadline = Date.now() + 30_000;
+        while (!existsSync(closed)) {
+          if (Date.now() > deadline) throw new Error("child never closed the channel");
+          Bun.sleepSync(1);
+        }
+        child.kill("SIGKILL");
+        // SIGKILL takes effect within about a millisecond; by the time this returns the exit is
+        // ready to be picked up together with the EOF.
+        Bun.sleepSync(50);
+      });
+      child.on("disconnect", () => events.push("disconnect"));
+      child.on("exit", () => events.push("exit"));
+      child.on("close", () => console.log(JSON.stringify(events)));
+    `,
+    "child.js": `
+      const { writeFileSync } = require("node:fs");
+      process.on("message", () => {
+        process.disconnect();
+        writeFileSync(process.argv[2], "");
+      });
+      setInterval(() => {}, 1000); // stay alive until the parent kills us
+      process.send("ready");
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "parent.js"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ events: stdout.trim(), stderr, exitCode }).toEqual({
+    events: JSON.stringify(["disconnect", "exit"]),
+    stderr: "",
+    exitCode: 0,
+  });
 });

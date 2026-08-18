@@ -720,8 +720,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
           mod.state = State.Stale;
           mod.failure = null;
         }
-        if (mod.importers.size === 0) {
-          // The server applies the update anyway, so the other importers of `key` are still walked.
+        // A client root is the page: reload it. A server root (a route or the framework entry) is evaluated again like any importer.
+        if (mod.importers.size === 0 && side === "client") {
           failures ??= new Set();
           failures.add(key);
         } else {
@@ -748,6 +748,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   // If roots were hit, print a nice message before reloading.
   if (failures) {
+    DEBUG.ASSERT(side === "client");
     let message =
       "[Bun] Hot update was not accepted because it or its importers do not call `import.meta.hot.accept`. To prevent full page reloads, call `import.meta.hot.accept` in one of the following files to handle the update:\n\n";
 
@@ -783,19 +784,15 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
       }
     }
     message = message.trim();
-    if (side === "client") {
-      sessionStorage?.setItem?.(
-        "bun:hmr:message",
-        JSON.stringify?.({
-          message,
-          kind: "warn",
-        }),
-      );
-      fullReload();
-      return;
-    }
-    // The server has no page to reload; the update is applied as far as it goes.
-    console.warn(message);
+    sessionStorage?.setItem?.(
+      "bun:hmr:message",
+      JSON.stringify?.({
+        message,
+        kind: "warn",
+      }),
+    );
+    fullReload();
+    return;
   }
 
   // Hooks stay until beginEvaluation clears them, so a module a failing update never reaches keeps them; a load arriving during a pending dispose evaluates the new version and the reload loop then finds it Loaded or in flight.

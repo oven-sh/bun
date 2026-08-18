@@ -530,6 +530,28 @@ devTest("server: modules between the updated module and the route are evaluated 
     await dev.fetch("/").equals("v2 derived(v2)");
   },
 });
+devTest("server: the route module is evaluated again so its module-level state matches its imports", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "routes/index.ts": `
+      import { value } from "../config";
+      const banner = "banner(" + value + ")";
+      export default function () {
+        return new Response(value + " " + banner);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1 banner(v1)");
+    await dev.write("config.ts", `export const value = "v2";`);
+    await dev.fetch("/").equals("v2 banner(v2)");
+    await dev.write("config.ts", `export const value = "v3";`);
+    await dev.fetch("/").equals("v3 banner(v3)");
+  },
+});
 devTest("server: modules an update never got to evaluate keep their hooks for the next update", {
   framework: minimalFramework,
   files: {

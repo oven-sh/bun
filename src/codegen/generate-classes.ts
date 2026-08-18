@@ -1752,9 +1752,7 @@ const rustModuleResolver = (() => {
         const asMatch = item.match(/^(\S+)\s+as\s+(\w+)$/);
         const source = asMatch ? asMatch[1] : item;
         const exported = asMatch ? asMatch[2] : item;
-        // Skip module re-exports: `pub use hash_object as HashObject` re-exports
-        // a *module* (lowercase source leaf), not a type — `crate::api::HashObject`
-        // wouldn't name a struct.
+        // A module re-export (lowercase source leaf) does not name a type.
         const sourceLeaf = source.split("::").pop()!;
         if (!/^[A-Z]/.test(sourceLeaf)) continue;
         if (!/^[A-Z]\w*$/.test(exported)) continue;

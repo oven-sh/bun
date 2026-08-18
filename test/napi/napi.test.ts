@@ -140,23 +140,30 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
               stderr: "inherit",
             });
             expect(build.success).toBeTrue();
-            await using tmpdir = tempDir("should-be-empty-except", {});
-            const result = spawnSync({
-              cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir },
-              stdin: "inherit",
-              stderr: "inherit",
-              stdout: "pipe",
-            });
+            // Since #29587 each extracted `.node` persists at a content-hashed
+            // path shared across runs (pre-#29587 it was unlinked per load,
+            // see #19550), so a second run must not extract new copies.
+            await using tmpdir = tempDir("napi-compile-extract-" + format, {});
+            const runEnv = { ...bunEnv, BUN_TMPDIR: String(tmpdir), TMPDIR: String(tmpdir) };
+            const runSelf = () =>
+              spawnSync({
+                cmd: [exe, "self"],
+                env: runEnv,
+                stdin: "inherit",
+                stderr: "inherit",
+                stdout: "pipe",
+              });
+            const result = runSelf();
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            if (process.platform !== "win32") {
-              expect(readdirSync(tmpdir), "bun should clean up .node files").toBeEmpty();
-            } else {
-              // On Windows, we have to mark it for deletion on reboot.
-              // Not clear how to test for that.
-            }
+            const extractedCount = () => readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length;
+            const count = extractedCount();
+            expect(count).toBeGreaterThan(0);
+            const again = runSelf();
+            expect(again.stdout.toString().trim()).toBe("hello world!");
+            expect(again.success).toBeTrue();
+            expect(extractedCount()).toBe(count);
           },
           // CI runs tests under bun-profile (~700 MB on linux with ThinLTO
           // DWARF); --compile copies+reads+rewrites the whole thing to /tmp,
@@ -867,6 +874,22 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     it("handles accessor properties when filtering by napi_key_writable", async () => {
       await checkSameOutput("test_get_all_property_names_accessor", []);
     });
+    it("returns napi_pending_exception when a Proxy trap throws during the descriptor walk", async () => {
+      const output = await checkSameOutput("test_get_all_property_names_throwing_proxy_traps", []);
+      expect(output).toContain("own_only gopd throws: status=10 keys=undefined exception=gopd trap");
+      expect(output).toContain(
+        "include_prototypes gopd throws on prototype: status=10 keys=undefined exception=gopd trap",
+      );
+    });
+    it("returns napi_pending_exception when getPrototypeOf throws during the descriptor walk", async () => {
+      // Not checkSameOutput: V8 filters proxy keys while collecting them and
+      // only calls getPrototypeOf once, so a trap that throws on the second
+      // call never throws under Node.
+      const output = (await runOn(bunExe(), "test_get_all_property_names_get_prototype_throws_in_descriptor_walk", []))
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim();
+      expect(output).toBe("status=10 keys=undefined exception=getPrototypeOf trap calls=2");
+    });
     it("matches Node for Proxy and String wrapper with napi_key_writable/napi_key_configurable", async () => {
       const output = await checkSameOutput("test_get_all_property_names_proxy_and_string_wrapper", []);
       expect(output).toContain(`proxy own_only writable: status=0 keys=["x","y"]`);
@@ -1114,6 +1137,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
 
     it("does not crash with Reflect.construct when newTarget has no prototype", async () => {
       await checkSameOutput("test_reflect_construct_no_prototype_crash", []);
+    });
+  });
+
+  describe("napi_get_cb_info this_arg", () => {
+    it("is globalThis for a bare call resolved through a closure scope", async () => {
+      const output = await checkSameOutput("test_this_value_of_bare_call_through_closure", []);
+      expect(output).toContain("bare call through closure returned globalThis: true");
     });
   });
 
@@ -1776,6 +1806,30 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
       expect(output).toContain("check_object_type_tag(null): status=10 pending=1");
       expect(output).toContain("node_api_set_prototype(number): status=0 pending=0");
       expect(output).toContain("node_api_set_prototype(null): status=2 pending=1");
+    });
+  });
+
+  describe("napi_get_prototype", () => {
+    it("returns null for a Proxy without running its getPrototypeOf trap, like Node", async () => {
+      // Before this was special-cased, Bun ran the trap: a proxy without traps
+      // reported its target's prototype, and a throwing trap reported napi_ok
+      // with a NULL handle written to *result and the exception left pending.
+      const output = await checkSameOutput("test_napi_get_prototype_proxy", []);
+      // checkSameOutput already asserted parity with Node; pin the values so a
+      // shared failure cannot pass.
+      expect(output.split(/\r?\n/)).toEqual([
+        "plain object: status=0 pending=false result=Object.prototype exception=none",
+        "null prototype: status=0 pending=false result=null exception=none",
+        "proxy without traps: status=0 pending=false result=null exception=none",
+        "callable proxy: status=0 pending=false result=null exception=none",
+        "trap returns Array.prototype: status=0 pending=false result=null exception=none",
+        "getPrototypeOf trap calls: 0",
+        "trap throws: status=0 pending=false result=null exception=none",
+        "trap returns a number: status=0 pending=false result=null exception=none",
+        "revoked proxy: status=0 pending=false result=null exception=none",
+        "object whose prototype is a proxy: status=0 pending=false result=the proxy exception=none",
+        "plain object again: status=0 pending=false result=Object.prototype exception=none",
+      ]);
     });
   });
 

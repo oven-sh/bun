@@ -18,6 +18,7 @@ use bun_resolver::fs as Fs;
 use bun_sys::{self, Dir, Fd, File};
 
 use crate::cli::Command;
+use crate::cli::pm_diff_command as PmDiffCommand;
 use crate::cli::pm_licenses_command::{LicensesFlags, PmLicensesCommand};
 use crate::cli::pm_pkg_command::PmPkgCommand;
 use crate::cli::pm_trusted_command::{DefaultTrustedCommand, TrustCommand, UntrustedCommand};
@@ -189,6 +190,13 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile\n\
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies\n\
   <b><green>bun pm<r> <blue>why<r> <d>\\<pkg\\><r>            show dependency tree explaining why a package is installed\n\
+  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>           show what changed between two versions of a package (or vs a folder/tarball)\n\
+  <d>├<r> <d>bun pm diff react<r>            installed version → latest\n\
+  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>\n\
+  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>\n\
+  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks\n\
+  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)\n\
+  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)\n\
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license\n\
   <d>├<r> <cyan>--json<r>                    output as JSON\n\
   <d>├<r> <cyan>--prod<r>                    omit devDependencies\n\
@@ -242,6 +250,17 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
             dev_only: cli.dev_only,
             long: cli.long,
         };
+        let diff_flags = PmDiffCommand::DiffFlags {
+            raw: cli.diff_raw,
+            json: cli.json_output,
+            unminify: cli.diff_unminify,
+            minify: cli.diff_minify,
+            ignore_space: cli.diff_ignore_space,
+            name_only: cli.diff_name_only,
+            stat: cli.diff_stat,
+            context: cli.diff_context.unwrap_or(3),
+        };
+        let diff_args: Vec<&'static [u8]> = cli.diff_args.clone();
         let (pm, cwd) = match PackageManager::init(&mut *ctx, cli, Subcommand::Pm) {
             Ok(v) => v,
             Err(err) => {
@@ -748,6 +767,10 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         } else if strings::eql_comptime(subcommand, b"why") {
             let positionals: &[&[u8]] = pm.options.positionals;
             PmWhyCommand::exec(&&mut *ctx, pm, positionals)?;
+            Global::exit(0);
+        } else if strings::eql_comptime(subcommand, b"diff") {
+            let positionals: Vec<&[u8]> = pm.options.positionals.to_vec();
+            PmDiffCommand::exec(pm, &positionals, &diff_args, diff_flags, &cwd)?;
             Global::exit(0);
         } else if strings::eql_comptime(subcommand, b"licenses") {
             let positionals: &[&[u8]] = pm.options.positionals;

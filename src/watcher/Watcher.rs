@@ -8,7 +8,6 @@ use bun_core::{ThreadLock, ZStr, feature_flags, output as Output, strings, zstr}
 use bun_sys::{self as sys, Fd};
 use bun_threading::Mutex;
 
-use crate::Loader;
 use crate::watcher_trace as WatcherTrace;
 
 // Android: same kernel inotify ABI as glibc/musl Linux, so list both.
@@ -439,7 +438,8 @@ impl Watcher {
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
             }
-            self.watchlist.swap_remove(item as usize);
+            // Frees an owned `file_path`; the fd was closed in the first pass.
+            drop(self.watchlist.swap_remove(item as usize));
 
             // swapRemove put a different entry at `item`, but its kqueue registration still
             // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
@@ -517,7 +517,6 @@ impl Watcher {
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
-        loader: Loader,
         parent_hash: HashType,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
@@ -576,7 +575,6 @@ impl Watcher {
             fd,
             hash,
             count: 0,
-            loader,
             parent_hash,
             package_json,
             kind: WatchItemKind::File,
@@ -661,7 +659,6 @@ impl Watcher {
             fd,
             hash,
             count: 0,
-            loader: Loader::File,
             parent_hash,
             kind: WatchItemKind::Directory,
             package_json: None,
@@ -678,7 +675,6 @@ impl Watcher {
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
-        loader: Loader,
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
@@ -742,7 +738,6 @@ impl Watcher {
             fd,
             file_path,
             hash,
-            loader,
             parent_dir_hash,
             package_json,
         ) {
@@ -814,7 +809,7 @@ impl Watcher {
     /// Returns:
     /// - true if the file is successfully added to the watchlist or already watched
     /// - false if the file cannot be opened or added to the watchlist
-    pub fn add_file_by_path_slow(&mut self, file_path: &[u8], loader: Loader) -> bool {
+    pub fn add_file_by_path_slow(&mut self, file_path: &[u8]) -> bool {
         if file_path.is_empty() {
             return false;
         }
@@ -851,7 +846,7 @@ impl Watcher {
         #[cfg(not(any(target_os = "macos", target_os = "freebsd")))]
         let fd: Fd = Fd::INVALID;
 
-        let res = self.add_file::<true>(fd, file_path, hash, loader, Fd::INVALID, None);
+        let res = self.add_file::<true>(fd, file_path, hash, Fd::INVALID, None);
         match res {
             Ok(ownership) => {
                 // Not adopted (another thread won the add race); close the
@@ -875,7 +870,6 @@ impl Watcher {
         fd: Fd,
         file_path: &[u8],
         hash: HashType,
-        loader: Loader,
         dir_fd: Fd,
         package_json: Option<&'static PackageJSON>,
     ) -> sys::Result<FdOwnership> {
@@ -904,7 +898,6 @@ impl Watcher {
             fd,
             file_path,
             hash,
-            loader,
             dir_fd,
             package_json,
         );
@@ -1052,10 +1045,10 @@ impl fmt::Display for Op {
 // ─── WatchItem ────────────────────────────────────────────────────────────
 
 pub struct WatchItem {
+    /// Freed by `flush_evictions` when `Owned`; borrowed bytes must outlive the entry.
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,
-    pub loader: Loader,
     pub fd: Fd,
     pub count: u32,
     pub parent_hash: u32,

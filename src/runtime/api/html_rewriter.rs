@@ -798,9 +798,8 @@ impl RewriterPipe {
     /// `JSHTMLRewriterTransform` finalizer. Runs during GC sweep: nothing
     /// here may touch other GC cells, and the other ref holders may still
     /// dispatch into the pipe after this cell is swept. So only release the
-    /// cell's ref; the last holder frees the Box. At VM shutdown deferred
-    /// releases never run, so a pipe with refs outstanding leaks instead of
-    /// being freed under a live ref.
+    /// cell's ref; the last holder frees the Box (once the VM's task queue
+    /// has closed, `DeferredDerefTask::schedule` releases inline instead).
     pub fn finalize(this: Box<Self>) {
         bun_ptr::finalize_js_box(this, |pipe| pipe.cell.set(JSValue::ZERO));
     }
@@ -843,17 +842,28 @@ impl RewriterPipe {
     /// cell was swept with the promise (`cell` is zeroed), every source that
     /// could have held a backref died with the cell, so clear the handles
     /// raw and fail the body through the Response native `+1`.
+    ///
+    /// Once the VM has stopped (a worker torn down with the handler still
+    /// parked; this may then be reached mid-sweep from `~VM`) nothing is
+    /// failed: script is over and the streams die with the VM, so the handles
+    /// are cleared raw and only the ref is released, so the pipe and its
+    /// rewriter do not outlive the worker.
     pub(crate) fn abandon_suspension(pipe: bun_ptr::BackRef<Self>) {
         let this = &*pipe;
-        let cell_alive = this.cell.get().is_cell();
-        this.release_suspended_wrapper();
-        if !cell_alive {
+        this.end_suspension();
+        let vm_stopped = !VirtualMachine::get().script_allowed();
+        if vm_stopped || !this.cell.get().is_cell() {
             this.input_source.set(SourceHandle::None);
             this.output.set(None);
         }
-        this.fail(webcore::body::ValueError::Message(BunString::static_(
-            "HTMLRewriter content handler returned a Promise that will never settle",
-        )));
+        if vm_stopped {
+            this.phase.set(RewritePhase::Done);
+            this.done.set(true);
+        } else {
+            this.fail(webcore::body::ValueError::Message(BunString::static_(
+                "HTMLRewriter content handler returned a Promise that will never settle",
+            )));
+        }
         Self::deref_nn(pipe.into());
     }
 
@@ -1110,7 +1120,7 @@ impl RewriterPipe {
 
         // ── wire input ──────────────────────────────────────────────────────
         let value = original.get_body_value();
-        let owned_readable_stream = original.get_body_readable_stream(&this.global);
+        let owned_readable_stream = original.get_body_readable_stream();
 
         Self::wire_input(this, global, value, owned_readable_stream);
 
@@ -1729,8 +1739,9 @@ impl RewriterPipe {
         let pipe = core::ptr::from_ref(self).cast_mut();
         let context = native_promise_context::create(&self.global, pipe, cell);
         // The context destructor (promise GC'd unsettled) queues
-        // `abandon_suspension`; this ref keeps the pipe alive until that
-        // task or the settle reaction releases it.
+        // `abandon_suspension` (`DeferredDerefTask::schedule` runs it inline
+        // once the VM's task queue has closed); this ref keeps the pipe alive
+        // until that or the settle reaction releases it.
         self.ref_();
         promise.then_with_value(
             &self.global,
@@ -1748,7 +1759,9 @@ impl RewriterPipe {
         );
     }
 
-    fn release_suspended_wrapper(&self) {
+    /// The suspension begun by `begin_suspension` is over: the settle reaction or the abandonment
+    /// (whichever holds the promise context) releases the parked wrapper and then owns the ref.
+    fn end_suspension(&self) {
         if let Some(wrapper) = self.suspended_wrapper.take() {
             wrapper.release();
         }
@@ -1933,9 +1946,6 @@ impl crate::webcore::sink::JsSinkType for RewriterPipe {
     fn source(&mut self) -> Option<&mut SourceHandle> {
         Some(self.input_source.get_mut())
     }
-    fn done(&self) -> bool {
-        self.done.get()
-    }
 }
 
 // ───────── .then() reactions for a content handler's promise ─────────────
@@ -1948,7 +1958,6 @@ bun_jsc::jsc_promise_handler!(
 );
 
 fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
-    let _ = global;
     let args = frame.arguments();
     // `take` nulls the context so its destructor is a no-op; `None` means the
     // suspension was already abandoned.
@@ -1956,10 +1965,16 @@ fn on_handler_resolve(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JS
         return Ok(JSValue::UNDEFINED);
     };
     let pipe = BackRef::from(pipe);
-    pipe.release_suspended_wrapper();
+    pipe.end_suspension();
+    // Runs the rest of the transform: more handlers (script), sink writes, stream delivery.
     pipe.resume_rewrite();
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
+    // Handler errors are captured into the stream by the pipe; what can still be pending here is
+    // what cannot be captured — a termination — and this reaction reports it rather than a value.
+    if global.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -1970,12 +1985,16 @@ fn on_handler_reject(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSV
         return Ok(JSValue::UNDEFINED);
     };
     let pipe = BackRef::from(pipe);
-    pipe.release_suspended_wrapper();
+    pipe.end_suspension();
+    // Fails the output stream: delivers the error to its reader (script may run).
     pipe.fail(webcore::body::ValueError::JSValue(
         jsc::strong::Optional::create(reason, global),
     ));
     // Balances the `ref_()` in `begin_suspension`.
     RewriterPipe::deref_nn(pipe.into());
+    if global.has_exception() {
+        return Err(jsc::JsError::Thrown);
+    }
     Ok(JSValue::UNDEFINED)
 }
 
@@ -2262,17 +2281,23 @@ where
     let result = match cb.call(global, this.this_object(), &[Z::to_js(wrapper, global)]) {
         Ok(v) => v,
         Err(_) => {
-            if let Some(exc) = scope.exception() {
+            // A termination (a worker's stop, an enclosing vm run's timeout) is not this handler's
+            // error: it stays pending to unwind whatever drives the rewriter.
+            if let Some(exc) = scope.exception()
+                && !JSValue::from_cell(exc.as_ptr()).is_termination_exception()
+            {
                 record_handler_error(&sink, exception_value(exc));
             }
-            scope.clear_exception();
+            scope.clear_exception_except_termination();
             return HandlerOutcome::Stop;
         }
     };
 
     if let Some(exc) = scope.exception() {
-        record_handler_error(&sink, exception_value(exc));
-        scope.clear_exception();
+        if !JSValue::from_cell(exc.as_ptr()).is_termination_exception() {
+            record_handler_error(&sink, exception_value(exc));
+        }
+        scope.clear_exception_except_termination();
         return HandlerOutcome::Stop;
     }
 

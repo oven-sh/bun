@@ -288,6 +288,13 @@ void setUpReadableByteStreamControllerFromUnderlyingSource(JSC::JSGlobalObject*,
 // JSReadableStreamDefaultReader.cpp
 
 void readableStreamDefaultReaderRead(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*, JSReadRequest*); // userJS: yes ([[PullSteps]] → user pull; the TOTAL ControllerKind dispatch) — JSReadableStreamDefaultReader.cpp
+// A tee branch's controller, or nullptr if the branch is terminal: torn down (Bun's native-sink pumps clear
+// a consumed stream's controller slot in their finally step, so a tee reaction queued before that can see a
+// branch with no controller) or never recorded (a branch's start reaction is queued by its construction,
+// before the tee records it, so a tee whose construction was cut short after that leaves reactions that run
+// against unset branch slots). Callers skip a terminal branch.
+JSReadableStreamDefaultController* teeBranchDefaultController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
+JSReadableByteStreamController* teeBranchByteController(JSReadableStream* branch); // userJS: no — ReadableStreamOperations.cpp
 void queueStreamsMicrotask(JSC::JSGlobalObject*, JSC::JSFunction* handler, JSC::JSValue value, JSC::JSValue context); // userJS: no — WebStreamsMisc.cpp
 JSC::JSValue readableStreamDefaultReaderTryReadFromQueue(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (a drained queue can pull) — JSReadableStreamDefaultReader.cpp
 void readableStreamDefaultReaderRelease(JSC::JSGlobalObject*, JSReadableStreamDefaultReader*); // userJS: yes (error-steps dispatch) — JSReadableStreamDefaultReader.cpp
@@ -597,6 +604,8 @@ JSC::JSValue readableStreamIntoText(JSC::JSGlobalObject*, JSReadableStream*); //
 JSC::JSValue readableStreamIntoArray(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp
 // Drop ONE leading U+FEFF, and only on the generic toText path.
 WTF::String withoutUTF8BOM(const WTF::String&); // userJS: no — BunStreamConsumers.cpp
+// Appends `string` UTF-8 encoded (lone surrogates become U+FFFD); false = over the string limit or allocation failed.
+bool appendUTF8WithinStringLimit(const WTF::String&, WTF::Vector<uint8_t>& bytes); // userJS: no — BunStreamConsumers.cpp
 
 // The three *Direct conversion paths.
 JSC::JSValue readableStreamToTextDirect(JSC::JSGlobalObject*, JSReadableStream*); // userJS: yes — BunStreamConsumers.cpp

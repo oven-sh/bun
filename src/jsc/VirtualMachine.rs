@@ -1389,6 +1389,9 @@ impl VirtualMachine {
         result: JSValue,
         exception_list: Option<&mut ExceptionList>,
     ) {
+        if result.is_termination_exception() {
+            return;
+        }
         // Save/restore `had_errors` around
         // the print, then route the value through `printException` /
         // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
@@ -1520,7 +1523,9 @@ impl VirtualMachine {
         err: JSValue,
         is_rejection: bool,
     ) -> bool {
-        if self.is_shutting_down() {
+        // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
+        // to be an error may be its termination.
+        if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
             return true;
         }
 
@@ -3629,7 +3634,7 @@ impl VirtualMachine {
     ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
-        if self.is_shutting_down() {
+        if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
             return;
         }
@@ -3772,8 +3777,6 @@ impl VirtualMachine {
         if main.is_empty() {
             return;
         }
-        let ext = bun_paths::extension(main);
-        let loader = self.transpiler.options.loader(ext);
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
             // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
@@ -3783,7 +3786,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
         }
     }
 
@@ -6813,12 +6816,8 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-/// LAYERING: moved DOWN from `bun_bundler_jsc::PluginRunner` so
-/// `resolve_maybe_needs_trailing_slash` can consult `Bun.plugin()` resolvers
-/// without a `bun_jsc → bun_bundler_jsc` cycle. The body only touches
-/// `JSGlobalObject`/`JSValue`/`bun_core::String`, all of which live at this
-/// tier; `bun_bundler_jsc` re-exports this fn for its own callers.
-pub fn plugin_runner_on_resolve_jsc(
+/// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
+pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
     namespace: bun_core::String,
     specifier: bun_core::String,

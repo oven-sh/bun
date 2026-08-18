@@ -1225,7 +1225,6 @@ pub enum ToJSError {
     CannotConvertArgumentTypeToJS,
     #[strum(serialize = "Cannot convert identifier to JS. Try a statically-known value")]
     CannotConvertIdentifierToJS,
-    MacroError,
     OutOfMemory,
     JSError,
 }

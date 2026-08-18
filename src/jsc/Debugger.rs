@@ -523,7 +523,7 @@ impl Debugger {
             );
         }
 
-        this.global().handle_rejected_promises();
+        let _ = this.global().handle_rejected_promises();
 
         if let Some(log) = this.log_ref() {
             if !log.msgs.is_empty() {

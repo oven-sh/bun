@@ -4,6 +4,8 @@ import {
   bunExe,
   bunRun,
   bunRunAsScript,
+  isASAN,
+  isDebug,
   isLinux,
   isMacOS,
   isWindows,
@@ -834,6 +836,129 @@ describe("fs.watch", () => {
       }
     },
   );
+
+  // A directory can sit deeper than PATH_MAX: every component is legal, it just
+  // has to be created relative to a cwd that is itself below the limit. The
+  // recursive walk used to join such an entry's path into a fixed PATH_MAX
+  // buffer and abort the process with a bounds panic, both during the initial
+  // walk inside fs.watch() and later on the inotify reader thread when an entry
+  // appeared under a watched directory that is close to the limit. inotify
+  // cannot watch a path that long (ENAMETOOLONG), so that subtree is reported
+  // through the 'error' event like any other registration failure; events whose
+  // relative path exceeds PATH_MAX are still delivered and the rest of the tree
+  // stays watched. Runs in a subprocess because the unfixed behavior is an abort.
+  test.skipIf(!isLinux)("recursive watch survives directories deeper than PATH_MAX", async () => {
+    const PATH_MAX = 4096;
+    // Absolute length of the deepest directory inotify can still watch. Any
+    // entry inside it (names below are NAME_MAX bytes) ends up beyond PATH_MAX.
+    const deepLength = PATH_MAX - 16;
+    const existingDir = Buffer.alloc(255, "e").toString();
+    const createdDir = Buffer.alloc(255, "d").toString();
+    const createdFile = Buffer.alloc(255, "f").toString();
+    // Only there to dump what did arrive when an event goes missing; the whole
+    // scenario takes about a second under ASAN, and CI's per-test timeout is
+    // well above this.
+    const deadlineMs = isASAN || isDebug ? 30_000 : 10_000;
+
+    using dir = tempDir("fs-watch-deeper-than-path-max", {});
+
+    const fixture = /* js */ `
+      const fs = require("fs"), path = require("path");
+      const deepLength = ${deepLength};
+      const existingDir = ${JSON.stringify(existingDir)};
+      const createdDir = ${JSON.stringify(createdDir)};
+      const createdFile = ${JSON.stringify(createdFile)};
+      const root = fs.realpathSync(process.env.WATCH_ROOT);
+
+      // root/ccc…/ccc…/ppp… with an absolute length of exactly deepLength.
+      process.chdir(root);
+      const segment = Buffer.alloc(200, "c").toString();
+      let length = root.length;
+      while (deepLength - length > 1 + 255) {
+        fs.mkdirSync(segment);
+        process.chdir(segment);
+        length += 1 + segment.length;
+      }
+      const last = Buffer.alloc(deepLength - length - 1, "p").toString();
+      fs.mkdirSync(last);
+      process.chdir(last);
+      const deep = process.cwd();
+      const deepRel = path.relative(root, deep);
+      // Exists before the watch starts, so the initial walk meets it.
+      fs.mkdirSync(existingDir);
+      process.chdir(root);
+
+      const events = [], errors = [], waiters = [];
+      const settle = () => {
+        for (const waiter of waiters.splice(0)) {
+          if (waiter.ready()) waiter.resolve();
+          else waiters.push(waiter);
+        }
+      };
+      const until = ready => new Promise(resolve => { waiters.push({ ready, resolve }); settle(); });
+      const delivered = name => () => events.some(event => event.name === name);
+
+      const watcher = fs.watch(root, { recursive: true }, (type, name) => {
+        events.push({ type, name });
+        settle();
+      });
+      watcher.on("error", error => {
+        errors.push({ code: error.code, syscall: error.syscall, path: error.path });
+        settle();
+      });
+
+      const deadline = setTimeout(() => {
+        console.log(JSON.stringify({
+          timedOut: true,
+          errors,
+          events: events.map(event => [event.type, String(event.name).length]),
+        }));
+        process.exit(1);
+      }, ${deadlineMs});
+
+      (async () => {
+        await until(() => errors.length === 1);
+
+        // Created under a running watch: the absolute path is beyond PATH_MAX
+        // (reported), and so is the relative path (delivered).
+        process.chdir(deep);
+        fs.mkdirSync(createdDir);
+        process.chdir(root);
+        await until(() => errors.length === 2);
+        await until(delivered(path.join(deepRel, createdDir)));
+
+        // Nothing to register for a file; only its relative path is over the limit.
+        process.chdir(deep);
+        fs.writeFileSync(createdFile, "x");
+        process.chdir(root);
+        await until(delivered(path.join(deepRel, createdFile)));
+
+        fs.writeFileSync(path.join(root, "shallow.txt"), "x");
+        await until(delivered("shallow.txt"));
+
+        clearTimeout(deadline);
+        watcher.close();
+        console.log(JSON.stringify({ deep, relativeLength: path.join(deepRel, createdFile).length, errors }));
+      })();
+    `;
+
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: { ...bunEnv, WATCH_ROOT: String(dir) },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    const result = JSON.parse(stdout.trim());
+    expect(result.deep).toHaveLength(deepLength);
+    expect(result.relativeLength).toBeGreaterThan(PATH_MAX);
+    expect(result.errors).toEqual([
+      { code: "ENAMETOOLONG", syscall: "watch", path: `${result.deep}/${existingDir}` },
+      { code: "ENAMETOOLONG", syscall: "watch", path: `${result.deep}/${createdDir}` },
+    ]);
+    expect(exitCode).toBe(0);
+  });
 });
 
 describe("fs.promises.watch", () => {
@@ -1666,3 +1791,47 @@ test("fs.watch wrapper reference survives GC across event, abort and close paths
   expect(stdout.trim()).toBe("OK");
   expect(exitCode).toBe(0);
 }, 30_000);
+
+// Watching a file symlink makes bun hand libuv the readlink() result, which for
+// a relative link target is a bare file name. libuv's uv__split_path() used to
+// _wcsdup() that name from the CRT heap while everything else it owns comes
+// from uv__malloc(), i.e. from mimalloc (uv_replace_allocator in main), so
+// closing the watcher handed a CRT pointer to mi_free. Debug builds report that
+// on stderr every time ("mimalloc: error: mi_free: invalid pointer"); release
+// builds segfault in roughly half of all processes, depending on where ASLR put
+// the CRT heap relative to mimalloc's page map, hence several children.
+// Fixed in oven-sh/libuv#14.
+test.skipIf(!isWindows)("closing a watcher on a symlink with a relative target does not crash (windows)", async () => {
+  using dir = tempDir("fswatch-relative-symlink", { "target.txt": "hello" });
+  const base = String(dir);
+  // The target must be relative. File symlinks need the symlink privilege,
+  // which the Windows CI agents have (fs.test.ts creates them too).
+  fs.symlinkSync("target.txt", path.join(base, "link.txt"), "file");
+  expect(fs.readlinkSync(path.join(base, "link.txt"))).toBe("target.txt");
+
+  const fixture = /* js */ `
+    const { watch } = require("node:fs");
+    const watcher = watch("link.txt", () => {});
+    watcher.once("close", () => console.log("OK"));
+    watcher.close();
+  `;
+
+  const runs = await Promise.all(
+    Array.from({ length: 6 }, async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", fixture],
+        // libuv resolves the bare target name against the cwd, so the watch
+        // only reaches the affected code path when started from the link's
+        // directory.
+        cwd: base,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      return { stdout: stdout.trim(), stderr, exitCode };
+    }),
+  );
+
+  expect(runs).toEqual(runs.map(() => ({ stdout: "OK", stderr: "", exitCode: 0 })));
+});

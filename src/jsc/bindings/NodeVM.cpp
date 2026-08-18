@@ -989,7 +989,7 @@ const JSC::GlobalObjectMethodTable& NodeVMGlobalObject::globalObjectMethodTable(
         nullptr, // defaultLanguage
         nullptr, // compileStreaming
         nullptr, // instantiateStreaming
-        nullptr,
+        &Zig::GlobalObject::deriveShadowRealmGlobalObject,
         &codeForEval,
         &canCompileStrings,
         &trustedScriptStructure,

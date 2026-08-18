@@ -1175,16 +1175,11 @@ where
     /// (`us_internal_free_closed_sockets`) or recycled it onto the next
     /// keep-alive request. Release the handle without dereferencing it. The
     /// `clear_on_data()`/`clear_aborted()`/`clear_timeout()` calls
-    /// `detach_response()` would make are already covered by `markDone()`:
-    /// `do_render_stream` arms the callbacks before the sink can end the
-    /// response, and nothing arms them after (`to_async()` finds
-    /// `has_abort_handler` set), so uWS never points at this context again
-    /// once it is back in the pool.
-    ///
-    /// The same `markDone()` means a `server.stop(true)` issued after the end
-    /// closes the socket without reaching `on_abort`, so the callers must get
-    /// here even when `is_aborted_or_ended()` already reports the server as
-    /// terminated: this is the only remaining release of the base ref.
+    /// `detach_response()` would make are already covered by `markDone()`
+    /// (`do_render_stream` arms them before the sink can end the response, and
+    /// nothing arms them afterwards). For the same reason a later
+    /// `server.stop(true)` does not reach `on_abort`, so callers get here even
+    /// when the server is already terminated: nothing else releases the ref.
     ///
     /// HTTP/3 must never reach this. `Http3Response::markDone()` deliberately
     /// leaves `onAborted` armed so `on_stream_close` can notify the holder,
@@ -1522,12 +1517,11 @@ where
     /// Forward uWS's drain notification to the streaming response sink so it
     /// can resend any `try_end` tail and signal the JS writer to resume.
     ///
-    /// Registered once in `do_render_stream` (before the stream is attached)
-    /// for the lifetime of the streaming response, so the sink itself never
-    /// touches uWS callback registration — it only tracks `has_backpressure`.
-    /// uWS only invokes the handler once its own send buffer has fully
-    /// drained, so an always-armed registration costs nothing on the
-    /// no-backpressure path.
+    /// Registered once in `do_render_stream` (before assign_to_stream) for the
+    /// lifetime of the streaming response, so the sink itself never touches
+    /// uWS callback registration — it only tracks `has_backpressure`. uWS only
+    /// invokes the handler once its own send buffer has fully drained, so an
+    /// always-armed registration costs nothing on the no-backpressure path.
     fn on_writable_response_stream(
         this: *mut Self,
         write_offset: u64,
@@ -1923,16 +1917,12 @@ where
         );
     }
 
-    /// `do_render_stream` found `resp` detached once the user code it ran
-    /// returned: `on_abort` ran from inside it (`server.stop(true)` in `pull()`
-    /// closes this request's socket), aborted the sink and took over the base
-    /// ref, so all that is left is dropping the sink and the stream.
-    ///
-    /// Not for a stop that did not reach `on_abort` because the stream had
-    /// already completed the response (uWS `markDone()` dropped the callback):
-    /// `resp` is still set then, the request still owns its base ref, and the
-    /// regular arms release it (`end_stream()` right away, or the settle paths
-    /// once `pull()` finishes).
+    /// `on_abort` ran from inside the user code `do_render_stream` invoked
+    /// (`server.stop(true)` in `pull()`): it aborted the sink, detached `resp`
+    /// and took over the base ref, leaving only the sink and stream to drop.
+    /// Keyed on `resp` being gone, not on `is_aborted_or_ended()`: a stop that
+    /// found the response already complete never reaches `on_abort`, and that
+    /// request still owns its ref, which the regular arms release.
     fn discard_stream_after_abort(
         &self,
         stream: &WebCore::ReadableStream,
@@ -2000,17 +1990,11 @@ where
             this.render_metadata();
         }
 
-        // Armed here, before the sink gets to run user code, rather than in
-        // `to_async()` once the handler has returned: `server.stop(true)` from
-        // inside `pull()` closes the socket right there, and `on_abort` is what
-        // stops the sink from using the freed socket later. Conversely, if the
-        // stream already completes the response inside this frame (an
-        // auto-flush in the drain below), uWS `markDone()` drops both
-        // callbacks, and nothing may arm them again: the context is released
-        // to the pool by `end_already_responded_stream()` while the keep-alive
-        // socket lives on (`set_abort_handler()` is a no-op once armed).
-        // The drain callback stays armed for the whole response; the sink only
-        // tracks `has_backpressure` (see `on_writable_response_stream`).
+        // Armed before `pull()` can run, not in `to_async()`: a `server.stop(true)`
+        // inside `pull()` must reach `on_abort` before the sink uses the freed
+        // socket, and if the stream completes the response within this frame,
+        // uWS `markDone()` drops both callbacks for good (`to_async()` then
+        // finds `has_abort_handler` set); see `end_already_responded_stream`.
         this.set_abort_handler();
         resp.on_writable(
             |this, off, resp| Self::on_writable_response_stream(this, off, resp),
@@ -2033,7 +2017,6 @@ where
         let aborted = this.flags.aborted() || response_stream.sink.is_aborted();
         this.flags.set_aborted(aborted);
 
-        // Deliberately not `is_aborted_or_ended()`; see the helper.
         if this.resp.get().is_none() {
             this.discard_stream_after_abort(stream, global_this);
             return;
@@ -2093,10 +2076,7 @@ where
                 if this.drain_microtasks().is_err() {
                     return;
                 }
-                // The drained microtasks ran user code too: a `server.stop(true)`
-                // in one of them reaches `on_abort` just like one in `pull()`
-                // (unless the drain completed the response first; then the
-                // request stays owned and the settle paths release it).
+                // The drain ran user code too (same as right after assign_to_stream).
                 if this.resp.get().is_none() {
                     this.discard_stream_after_abort(stream, global_this);
                     return;
@@ -2732,11 +2712,10 @@ where
         if let Some(wrapper) = self.sink_mut() {
             if !self.flags.aborted() && !wrapper.sink.is_aborted() {
                 // Only defer when there is still a live response to drain the
-                // flush through: the on_writable `do_render_stream` armed on
-                // `resp` is what resolves the flush (via flush_promise). With
-                // no response the flush can never settle, so taking a ref and
-                // attaching here would leak the ref and hang the request; fall
-                // through to teardown.
+                // flush through: on_writable (which resolves the flush via
+                // flush_promise) is armed on `resp`. With no response the flush
+                // can never settle, so taking a ref and attaching here would
+                // leak the ref and hang the request; fall through to teardown.
                 if let Some(flush) = wrapper.sink.pending_flush
                     && self.resp.get().is_some()
                 {
@@ -2804,8 +2783,7 @@ where
         }
 
         if self.is_aborted_or_ended() {
-            // A `server.stop(true)` in the meantime did not reach `on_abort`
-            // (see `end_already_responded_stream`), so the release is still ours.
+            // Still ours to release after a stop; see `end_already_responded_stream`.
             if !HTTP3 && ended_response {
                 self.end_already_responded_stream();
             }
@@ -2915,8 +2893,7 @@ where
 
         // aborted so call finalizeForAbort
         if self.is_aborted_or_ended() {
-            // A `server.stop(true)` in the meantime did not reach `on_abort`
-            // (see `end_already_responded_stream`), so the release is still ours.
+            // Still ours to release after a stop; see `end_already_responded_stream`.
             if !HTTP3 && ended_response {
                 self.end_already_responded_stream();
             }
@@ -4189,14 +4166,10 @@ where
         }
     }
 
-    /// `resp` for the uses that can come in from JS at any time while the
-    /// request is pending (`server.requestIP()`, `server.timeout()`, resuming
-    /// the request body): `None` once a streaming sink has set
-    /// `ended_response`. From then on `markDone()` has dropped `onAborted` and
-    /// `resp` may point at a freed `us_socket_t` (see
-    /// `end_already_responded_stream`); the sink already resumed the socket.
-    /// The end/abort paths read `resp` directly: they learn the same thing
-    /// from the sink they tear down.
+    /// `resp` for everything outside the end/abort paths (`server.requestIP()`,
+    /// `server.timeout()`, request-body resume): `None` once a streaming sink
+    /// has set `ended_response`, after which `resp` may point at a freed
+    /// `us_socket_t` (see `end_already_responded_stream`; the sink resumed it).
     #[inline]
     fn live_resp(&self) -> Option<uws::AnyResponse> {
         if let Some(sink) = self.sink.get() {

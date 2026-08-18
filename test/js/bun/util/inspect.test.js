@@ -672,13 +672,12 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
 });
 
 // Formatting an object with [util.inspect.custom] loads node:util on first use. When that load
-// throws (here: the stack is exhausted), the error has to propagate to the caller and the next
-// call has to retry the load. It used to abort the process in the lazy property initializer.
+// throws (the stack is exhausted, or a global that the internal modules read while loading has
+// been replaced), the error has to propagate to the caller and the next call has to retry the
+// load. It used to abort the process in the lazy property initializer. Each case runs in a fresh
+// child so that nothing has loaded node:util yet.
 describe.concurrent("Bun.inspect when loading util.inspect for inspect.custom throws", () => {
-  it.each([
-    ["without colors", "Bun.inspect(obj)", '"custom"'],
-    ["with colors", "Bun.inspect(obj, { colors: true })", '"\\u001b[36mcustom\\u001b[39m"'],
-  ])("%s", async (_, call, expected) => {
+  async function inspectInChild(code) {
     await using proc = Bun.spawn({
       cmd: [
         bunExe(),
@@ -687,22 +686,7 @@ describe.concurrent("Bun.inspect when loading util.inspect for inspect.custom th
           const obj = {
             [Symbol.for("nodejs.util.inspect.custom")]: (depth, options) => options.stylize("custom", "special"),
           };
-          let deep;
-          function recurse() {
-            try {
-              recurse();
-            } catch {
-              // Only the frame whose call overflowed gets here.
-              try {
-                deep = ${call};
-              } catch (e) {
-                deep = e;
-              }
-            }
-          }
-          recurse();
-          console.log(String(deep));
-          console.log(JSON.stringify(${call}));
+          ${code}
         `,
       ],
       env: bunEnv,
@@ -710,11 +694,52 @@ describe.concurrent("Bun.inspect when loading util.inspect for inspect.custom th
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({
+    return { stdout, stderr, exitCode };
+  }
+
+  it.each([
+    ["without colors", "Bun.inspect(obj)", '"custom"'],
+    ["with colors", "Bun.inspect(obj, { colors: true })", '"\\u001b[36mcustom\\u001b[39m"'],
+  ])("with the stack exhausted, %s", async (_, call, expected) => {
+    const result = await inspectInChild(`
+      let deep;
+      function recurse() {
+        try {
+          recurse();
+        } catch {
+          // Only the frame whose call overflowed gets here.
+          try {
+            deep = ${call};
+          } catch (e) {
+            deep = e;
+          }
+        }
+      }
+      recurse();
+      console.log(String(deep));
+      console.log(JSON.stringify(${call}));
+    `);
+    expect(result).toEqual({
       stdout: `RangeError: Maximum call stack size exceeded.\n${expected}\n`,
       stderr: "",
       exitCode: 0,
     });
+  });
+
+  // internal/primordials reads the global Reflect when it loads.
+  it("with a global used by the internal modules replaced", async () => {
+    const result = await inspectInChild(`
+      const realReflect = Reflect;
+      globalThis.Reflect = new Proxy({}, { get() { throw new Error("tampered Reflect"); } });
+      try {
+        console.log(Bun.inspect(obj));
+      } catch (e) {
+        console.log(String(e));
+      }
+      globalThis.Reflect = realReflect;
+      console.log(Bun.inspect(obj));
+    `);
+    expect(result).toEqual({ stdout: "Error: tampered Reflect\ncustom\n", stderr: "", exitCode: 0 });
   });
 });
 

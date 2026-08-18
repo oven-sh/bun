@@ -122,9 +122,6 @@ pub enum OutputFormat {
 // allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
 
-pub type SymbolCallback =
-    unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
-
 bun_opaque::opaque_ffi! {
     /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
     pub struct State;

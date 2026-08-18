@@ -10,6 +10,8 @@ const { SQLiteAdapter } = require("internal/sql/sqlite");
 const { SQLHelper, parseOptions } = require("internal/sql/shared");
 
 const { SQLError, PostgresError, SQLiteError, MySQLError } = require("internal/sql/errors");
+const { validateAbortSignal } = require("internal/validators");
+const { resistStopPropagation } = require("internal/shared");
 
 const defineProperties = Object.defineProperties;
 
@@ -25,6 +27,15 @@ interface TransactionState {
   reject: (err: Error) => void;
   storedError?: Error | null | undefined;
   queries: Set<Query<any, any>>;
+}
+
+/// Bound as `this` to both callbacks of a reserve({ signal }) call, so each can
+/// reach the other without a per-call closure.
+interface ReserveAbortState {
+  signal: AbortSignal;
+  promiseWithResolvers: { promise: Promise<any>; resolve: (value: any) => void; reject: (reason?: any) => void };
+  onConnected: ((err: Error | null, pooledConnection: any) => void) | null;
+  onAbort: (() => void) | null;
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -352,7 +363,7 @@ const SQL: typeof Bun.SQL = function SQL(
 
     // reserve is allowed to be called inside reserved connection but will return a new reserved connection from the pool
     // this matchs the behavior of the postgres package
-    reserved_sql.reserve = () => sql.reserve();
+    reserved_sql.reserve = (options?: { signal?: AbortSignal }) => sql.reserve(options);
     reserved_sql.array = sql.array;
     reserved_sql.listen = listen;
     reserved_sql.notify = makeNotify(reserved_sql);
@@ -490,6 +501,19 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.distributed = reserved_sql.beginDistributed;
     reserved_sql.end = reserved_sql.close;
     resolve(reserved_sql);
+  }
+
+  function onReserveConnectedWithSignal(this: ReserveAbortState, err: Error | null, pooledConnection) {
+    this.signal.removeEventListener("abort", this.onAbort!);
+    onReserveConnected.$call(this.promiseWithResolvers, err, pooledConnection);
+  }
+
+  function onReserveAbort(this: ReserveAbortState) {
+    // Once the callback left the queue a connection was handed out; the
+    // caller owns it and must release() it, so abort becomes a no-op.
+    if (pool.cancelReserve && pool.cancelReserve(this.onConnected!)) {
+      this.promiseWithResolvers.reject(this.signal.reason);
+    }
   }
   async function onTransactionConnected(
     callback,
@@ -629,7 +653,7 @@ const SQL: typeof Bun.SQL = function SQL(
     };
     // reserve is allowed to be called inside transaction connection but will return a new reserved connection from the pool and will not be part of the transaction
     // this matchs the behavior of the postgres package
-    transaction_sql.reserve = () => sql.reserve();
+    transaction_sql.reserve = (options?: { signal?: AbortSignal }) => sql.reserve(options);
     transaction_sql.array = sql.array;
     transaction_sql.listen = listen;
     transaction_sql.notify = makeNotify(transaction_sql);
@@ -859,7 +883,7 @@ const SQL: typeof Bun.SQL = function SQL(
       });
   };
 
-  sql.reserve = () => {
+  sql.reserve = (options?: { signal?: AbortSignal }) => {
     if (pool.closed) {
       return Promise.$reject(pool.connectionClosedError());
     }
@@ -869,9 +893,38 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$reject(new Error("This adapter doesn't support connection reservation"));
     }
 
+    const signal = options?.signal;
+    if (signal !== undefined) {
+      try {
+        validateAbortSignal(signal, "options.signal");
+      } catch (err) {
+        return Promise.$reject(err);
+      }
+      if (signal.aborted) {
+        return Promise.$reject(signal.reason);
+      }
+    }
+
     // Try to reserve a connection - adapters that support it will handle appropriately
     const promiseWithResolvers = Promise.withResolvers();
-    pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
+    if (signal === undefined) {
+      pool.connect(onReserveConnected.bind(promiseWithResolvers), true);
+      return promiseWithResolvers.promise;
+    }
+
+    const state: ReserveAbortState = { signal, promiseWithResolvers, onConnected: null, onAbort: null };
+    state.onConnected = onReserveConnectedWithSignal.bind(state);
+    state.onAbort = onReserveAbort.bind(state);
+    // resistStopPropagation: a user listener on the same signal calling
+    // stopImmediatePropagation() must not starve the cancellation.
+    signal.addEventListener("abort", state.onAbort, resistStopPropagation({ __proto__: null, once: true }));
+    pool.connect(state.onConnected, true);
+    // connect() can run user code synchronously (e.g. a function-valued
+    // password) before queueing the callback; an abort from inside that window
+    // finds nothing to cancel, so re-check. onReserveAbort is idempotent.
+    if (signal.aborted) {
+      onReserveAbort.$call(state);
+    }
     return promiseWithResolvers.promise;
   };
 

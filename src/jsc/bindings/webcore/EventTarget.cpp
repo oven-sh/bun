@@ -74,11 +74,6 @@ EventTarget::~EventTarget()
         data->clear();
 }
 
-bool EventTarget::isNode() const
-{
-    return false;
-}
-
 bool EventTarget::addEventListener(const AtomString& eventType, Ref<EventListener>&& listener, const AddEventListenerOptions& options)
 {
 #if ASSERT_ENABLED
@@ -232,7 +227,6 @@ void EventTarget::dispatchEvent(Event& event)
     event.setTarget(this);
     event.setCurrentTarget(this);
     event.setEventPhase(Event::AT_TARGET);
-    event.resetBeforeDispatch();
     event.setEventPath(eventPath);
     fireEventListeners(event, EventInvokePhase::Capturing);
     fireEventListeners(event, EventInvokePhase::Bubbling);

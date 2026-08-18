@@ -1441,7 +1441,7 @@ where
             // on this (single-threaded) JS thread for the call's duration.
             return match unsafe { &mut *p.as_ptr() }.get_or_start_load(&global, callback) {
                 Ok(r) => r,
-                Err(JsError::Thrown) => {
+                Err(JsError::Thrown | JsError::Terminated) => {
                     panic!("unhandled exception from ServePlugins.getStartOrLoad")
                 }
                 Err(JsError::OutOfMemory) => bun_core::out_of_memory(),
@@ -1540,14 +1540,19 @@ where
         if topic_value.is_undefined_or_null() {
             return Err(global.throw_invalid_arguments(format_args!("Expected string")));
         }
-        let topic = topic_value.get_zig_string(global)?;
+        // Converting `message_value` can run user JS / GC; the JSString keeps the
+        // topic bytes alive across it.
+        let topic_string = topic_value.to_js_string(global)?;
+        let topic = topic_string.view(global).to_slice();
         // jsc.JSValue
         let message_value = iter
             .next_eat()
             .ok_or_else(|| global.throw_invalid_arguments(format_args!("Missing argument")))?;
         // ?jsc.JSValue
         let compress_value = iter.next_eat();
-        self.publish(global, topic, message_value, compress_value)
+        let result = self.publish(global, topic.slice(), message_value, compress_value);
+        topic_string.ensure_still_alive();
+        result
     }
 
     /// `pub const doRequestIP = host_fn.wrapInstanceMethod(ThisServer, "requestIP", false)`
@@ -1656,7 +1661,7 @@ where
     pub(crate) fn publish(
         &mut self,
         global: &JSGlobalObject,
-        topic: ZigString,
+        topic: &[u8],
         message_value: JSValue,
         compress_value: Option<JSValue>,
     ) -> JsResult<JSValue> {
@@ -1664,87 +1669,53 @@ where
             return Ok(JSValue::js_number(0.0));
         }
 
-        let app = self.app.unwrap().cast::<c_void>();
-
-        if topic.len == 0 {
+        if topic.is_empty() {
             httplog!("publish() topic invalid");
             return Err(global.throw(format_args!("publish requires a topic string")));
-        }
-
-        let topic_slice = topic.to_slice();
-        if topic_slice.slice().is_empty() {
-            return Err(global.throw(format_args!("publish requires a non-empty topic")));
         }
 
         // compress defaults to true when the argument is omitted.
         let compress_js = compress_value.unwrap_or(JSValue::TRUE);
         let compress = compress_js.to_boolean();
 
-        if let Some(buffer) = message_value.as_array_buffer(global) {
-            let status = AnyWebSocket::publish_with_options(
-                SSL,
-                app,
-                topic_slice.slice(),
-                buffer.slice(),
-                uws_sys::Opcode::Binary,
-                compress,
-            );
-            return Ok(super::server_web_socket::send_status_to_js(
-                status,
-                buffer.slice().len(),
-                "publish",
-                "bytes",
-            ));
-        }
-
-        if let Some(slice) =
+        // Resolve the payload before reading `self.app`: `to_js_string` can run
+        // user JS that stops the server.
+        let array_buffer = message_value.as_array_buffer(global);
+        let mut js_string: Option<&jsc::JSString> = None;
+        let string_slice;
+        let (buffer, opcode): (&[u8], uws_sys::Opcode) = if let Some(buffer) = &array_buffer {
+            (buffer.slice(), uws_sys::Opcode::Binary)
+        } else if let Some(slice) =
             super::server_web_socket::blob_payload(global, "publish", message_value)?
         {
-            let status = AnyWebSocket::publish_with_options(
-                SSL,
-                app,
-                topic_slice.slice(),
-                slice,
-                uws_sys::Opcode::Binary,
-                compress,
-            );
-            let result = super::server_web_socket::send_status_to_js(
-                status,
-                slice.len(),
-                "publish",
-                "bytes",
-            );
-            message_value.ensure_still_alive();
-            return Ok(result);
-        }
+            (slice, uws_sys::Opcode::Binary)
+        } else {
+            let js_str = message_value.to_js_string(global)?;
+            js_string = Some(js_str);
+            string_slice = js_str.view(global).to_slice();
+            (string_slice.slice(), uws_sys::Opcode::Text)
+        };
 
-        {
-            let js_string = message_value.to_js_string(global)?;
-            let view = js_string.view(global);
-            let slice = view.to_slice();
-            // Keep `js_string` alive, not `message_value`:
-            // when the input was not already a JSString, `to_js_string` allocates
-            // a fresh GC cell that is *not* reachable from `message_value`, so a
-            // GC during `publish_with_options` could otherwise reclaim the bytes
-            // `slice` borrows.
-            let buffer = slice.slice();
-            let status = AnyWebSocket::publish_with_options(
-                SSL,
-                app,
-                topic_slice.slice(),
-                buffer,
-                uws_sys::Opcode::Text,
-                compress,
-            );
-            let result = super::server_web_socket::send_status_to_js(
-                status,
-                buffer.len(),
-                "publish",
-                "bytes",
-            );
+        let Some(app) = self.app else {
+            return Ok(JSValue::js_number(0.0));
+        };
+        let status = AnyWebSocket::publish_with_options(
+            SSL,
+            app.cast::<c_void>(),
+            topic,
+            buffer,
+            opcode,
+            compress,
+        );
+        let result =
+            super::server_web_socket::send_status_to_js(status, buffer.len(), "publish", "bytes");
+        // When the input was not already a JSString, `to_js_string` allocates a
+        // fresh GC cell not reachable from `message_value`; keep both alive.
+        message_value.ensure_still_alive();
+        if let Some(js_string) = js_string {
             js_string.ensure_still_alive();
-            return Ok(result);
         }
+        Ok(result)
     }
 
     pub(crate) fn on_upgrade(
@@ -2606,7 +2577,7 @@ where
         if self.app.is_none() || self.deinit_running.get() {
             return Ok(JSValue::js_number(0.0));
         }
-        // Each close reaches `on_connection_filter(-1)` synchronously; hold
+        // Each close reaches `on_connection_filter(-2)` synchronously; hold
         // the guard so it cannot re-derive `&mut self` while this frame owns
         // it. One-shot sweep (Node semantics): busy connections are spared
         // and are NOT marked to close later.
@@ -3746,54 +3717,6 @@ bun_jsc::impl_js_class_via_generated!(DebugHTTPServer => crate::generated_classe
 bun_jsc::impl_js_class_via_generated!(DebugHTTPSServer => crate::generated_classes::js_DebugHTTPSServer, no_constructor);
 
 // ─── Exported fns ────────────────────────────────────────────────────────────
-#[unsafe(no_mangle)]
-extern "C" fn Server__setIdleTimeout(server: JSValue, seconds: JSValue, global: &JSGlobalObject) {
-    match server_set_idle_timeout(server, seconds, global) {
-        Ok(()) => {}
-        Err(JsError::Thrown) => {}
-        Err(JsError::OutOfMemory) => {
-            let _ = global.throw_out_of_memory_value();
-        }
-    }
-}
-
-fn server_set_idle_timeout(
-    server: JSValue,
-    seconds: JSValue,
-    global: &JSGlobalObject,
-) -> JsResult<()> {
-    if !server.is_object() {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    }
-
-    if !seconds.is_number() {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The provided value is not of type 'number'."
-        )));
-    }
-    let value = seconds.to_u32();
-    if let Some(this) = server.as_::<HTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<HTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else if let Some(this) = server.as_::<DebugHTTPSServer>() {
-        // SAFETY: `as_` returned a non-null `*mut` to a live JS-wrapped server.
-        unsafe { &mut *this }.set_idle_timeout(value);
-    } else {
-        return Err(global.throw(format_args!(
-            "Failed to set timeout: The 'this' value is not a Server."
-        )));
-    }
-    Ok(())
-}
-
 fn server_set_on_client_error(
     global: &JSGlobalObject,
     server: JSValue,

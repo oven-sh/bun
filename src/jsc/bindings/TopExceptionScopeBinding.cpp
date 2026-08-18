@@ -1,4 +1,5 @@
 #include <root.h>
+#include "BunClientData.h"
 
 using JSC::TopExceptionScope;
 
@@ -38,21 +39,11 @@ extern "C" void TopExceptionScope__construct(
 #endif
 }
 
-// A stopped worker keeps draining its tick with its TerminationException pending, past the outermost
-// VMEntryScope that reset VM::hasTerminationRequest(); every Rust exception check lands in one of these, so
-// re-mark the request where the exception is observed (see Bun__VM__keepTerminationRequestWithPendingException).
-static inline JSC::Exception* keepTerminationRequest(JSC::VM& vm, JSC::Exception* exception)
-{
-    if (exception && vm.isTerminationException(exception) && !vm.hasTerminationRequest()) [[unlikely]]
-        vm.setHasTerminationRequest();
-    return exception;
-}
-
 extern "C" JSC::Exception* TopExceptionScope__pureException(void* ptr)
 {
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     auto* scope = static_cast<TopExceptionScope*>(ptr);
-    return keepTerminationRequest(scope->vm(), scope->exception());
+    return scope->exception();
 }
 
 extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
@@ -62,8 +53,15 @@ extern "C" JSC::Exception* TopExceptionScope__exceptionIncludingTraps(void* ptr)
     // this is different than `return scope->exception()` because `RETURN_IF_EXCEPTION` also checks
     // if there are traps that should throw an exception (like a termination request from another
     // thread)
-    RETURN_IF_EXCEPTION(*scope, keepTerminationRequest(scope->vm(), scope->exception()));
+    RETURN_IF_EXCEPTION(*scope, scope->exception());
     return nullptr;
+}
+
+extern "C" bool TopExceptionScope__takeTerminationOutsideScript(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
+    auto* scope = static_cast<TopExceptionScope*>(ptr);
+    return Bun::takeTerminationOutsideScript(scope->vm(), *scope);
 }
 
 extern "C" void TopExceptionScope__clearException(void* ptr)
@@ -71,6 +69,12 @@ extern "C" void TopExceptionScope__clearException(void* ptr)
     ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
     auto* scope = static_cast<TopExceptionScope*>(ptr);
     scope->clearException();
+}
+
+extern "C" void TopExceptionScope__clearExceptionExceptTermination(void* ptr)
+{
+    ASSERT((uintptr_t)ptr % alignof(TopExceptionScope) == 0);
+    static_cast<TopExceptionScope*>(ptr)->clearExceptionExceptTermination();
 }
 
 extern "C" void TopExceptionScope__destruct(void* ptr)

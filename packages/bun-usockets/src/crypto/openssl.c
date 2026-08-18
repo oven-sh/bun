@@ -2663,11 +2663,6 @@ void us_socket_sni_resolve(struct us_socket_t *s, struct ssl_ctx_st *ctx, int er
   ssl_update_handshake(s);
 }
 
-void us_internal_ssl_handshake_abort(struct us_socket_t *s) {
-  s->ssl_fatal_error = 1;
-  ssl_close(s, 0, NULL);
-}
-
 /* ── Adopt-TLS (STARTTLS / Bun.connect upgrade) ──────────────────────────── */
 
 /* Feed bytes that were already read off the wire (e.g. a ClientHello consumed
@@ -3074,10 +3069,6 @@ void us_socket_on_server_name(struct us_socket_t *s, us_socket_server_name_cb cb
 void *us_socket_server_name_userdata(struct us_socket_t *s) {
   if (!s->ssl || !s_ssl(s) || us_sni_ex_idx < 0) return NULL;
   return SSL_CTX_get_ex_data(SSL_get_SSL_CTX(s_ssl(s)), us_sni_ex_idx);
-}
-
-void *us_internal_ssl_sni_userdata(struct us_socket_t *s) {
-  return us_socket_server_name_userdata(s);
 }
 
 const char *us_internal_ssl_sni_servername(struct us_socket_t *s) {

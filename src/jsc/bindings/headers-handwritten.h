@@ -68,8 +68,6 @@ typedef struct BunString {
     // If it's not a WTFStringImpl, this does nothing
     inline void deref();
 
-    static size_t utf8ByteLength(const WTF::String&);
-
     // Zero copy is kind of a lie.
     // We clone it if it's non-ASCII UTF-8.
     // We don't clone it if it was marked as static
@@ -384,11 +382,6 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 // Used in process.version
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
-
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from native code
-extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_usockets;
 
 extern "C" const char* Bun__version_sha;
 

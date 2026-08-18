@@ -426,6 +426,14 @@ export function cargoBuildInvocation(cfg: Config): CargoInvocation {
     //          `-Zsanitizer=address` so OOB/UAF inside Vec/String/HashMap are
     //          visible instead of stopping at the std boundary.
     args.push(cargoBuildStdArg);
+    if (cfg.release && !cfg.asan) {
+      // Cargo's default build-std feature set is `panic-unwind,backtrace,default`.
+      // `backtrace` links std's symbolizer (gimli, addr2line, miniz_oxide,
+      // rustc-demangle, ~200 KB on linux-x64) for `std::backtrace` and the
+      // default panic hook; bun installs its own panic hook and symbolizes
+      // crash traces out of process, so nothing reads it.
+      args.push("-Zbuild-std-features=panic-unwind,default");
+    }
   }
 
   // ─── rustflags ───

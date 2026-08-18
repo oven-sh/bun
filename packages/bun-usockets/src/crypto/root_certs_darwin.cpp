@@ -13,7 +13,6 @@ typedef struct OpaqueSecTrustRef* SecTrustRef;
 typedef struct OpaqueSecPolicyRef* SecPolicyRef;
 typedef int32_t OSStatus;
 typedef uint32_t SecTrustSettingsDomain;
-typedef uint32_t SecTrustSettingsResult;
 
 // Security framework constants
 enum {
@@ -562,14 +561,6 @@ extern "C" void us_load_system_certificates_macos(STACK_OF(X509) **system_certs)
     }
 
     security->CFRelease(certificates);
-}
-
-// Cleanup function for Security framework
-extern "C" void us_cleanup_security_framework() {
-    SecurityFramework* framework = g_security_framework.exchange(nullptr);
-    if (framework) {
-        delete framework;
-    }
 }
 
 #endif // __APPLE__

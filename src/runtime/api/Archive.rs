@@ -816,18 +816,10 @@ enum BlobOutputType {
     Bytes,
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum BlobError {
-    #[error("GzipInitFailed")]
-    GzipInitFailed,
-    #[error("GzipCompressFailed")]
-    GzipCompressFailed,
-}
-
 enum BlobResult {
     Compressed(Vec<u8>),
     Uncompressed,
-    Err(BlobError),
+    Err(CompressError),
 }
 
 pub struct BlobContext {
@@ -842,7 +834,7 @@ impl TaskContext for BlobContext {
         self.result = match &self.compress {
             Compression::Gzip(opts) => match compress_gzip(self.store.shared_view(), opts.level) {
                 Ok(data) => BlobResult::Compressed(data),
-                Err(e) => BlobResult::Err(e.into()),
+                Err(e) => BlobResult::Err(e),
             },
             Compression::None => BlobResult::Uncompressed,
         };
@@ -850,9 +842,7 @@ impl TaskContext for BlobContext {
 
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         match core::mem::replace(&mut self.result, BlobResult::Uncompressed) {
-            BlobResult::Err(e) => Ok(PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(&e))),
-            )),
+            BlobResult::Err(e) => Ok(PromiseResult::Reject(e.to_js(global))),
             BlobResult::Compressed(data) => {
                 // self.result already replaced with Uncompressed above — ownership transferred
                 Ok(PromiseResult::Resolve(match self.output_type {
@@ -917,17 +907,9 @@ fn start_blob_task(
     ))
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-enum WriteError {
-    #[error("GzipInitFailed")]
-    GzipInitFailed,
-    #[error("GzipCompressFailed")]
-    GzipCompressFailed,
-}
-
 enum WriteResult {
     Success,
-    Err(WriteError),
+    Err(CompressError),
     SysErr(bun_sys::Error),
 }
 
@@ -951,9 +933,7 @@ impl TaskContext for WriteContext {
     fn run_from_js(&mut self, global: &JSGlobalObject) -> JsResult<PromiseResult> {
         Ok(match &self.result {
             WriteResult::Success => PromiseResult::Resolve(JSValue::UNDEFINED),
-            WriteResult::Err(e) => PromiseResult::Reject(
-                global.create_error_instance(format_args!("{}", <&'static str>::from(e))),
-            ),
+            WriteResult::Err(e) => PromiseResult::Reject(e.to_js(global)),
             WriteResult::SysErr(sys_err) => PromiseResult::Reject(sys_err.to_js(global)),
         })
     }
@@ -970,7 +950,7 @@ impl WriteContext {
             Compression::Gzip(opts) => {
                 compressed_buf = match compress_gzip(source_data, opts.level) {
                     Ok(v) => v,
-                    Err(e) => return WriteResult::Err(e.into()),
+                    Err(e) => return WriteResult::Err(e),
                 };
                 &compressed_buf
             }
@@ -1103,31 +1083,29 @@ impl FilesContext {
 
             // Read data incrementally so untrusted entry sizes don't drive allocation.
             let mut data: Vec<u8> = Vec::new();
-            if size > 0 {
-                let mut total_read: usize = 0;
-                let mut buf = [0u8; 64 * 1024];
-                while total_read < size {
-                    let to_read = (size - total_read).min(buf.len());
-                    let read = archive.read_data(&mut buf[..to_read]);
-                    if read < 0 {
-                        // Read error.
-                        // NOTE: both `data` and `entries` drop automatically here.
-                        // SAFETY: `archive` is the live `read_new()` handle opened above.
-                        return Ok(if let Some(err) = Self::clone_error_string(&archive) {
-                            FilesResult::LibarchiveErr(err)
-                        } else {
-                            FilesResult::Err(FilesError::ReadError)
-                        });
-                    }
-                    if read == 0 {
-                        break;
-                    }
-                    let bytes_read = usize::try_from(read).expect("int cast");
-                    data.try_reserve(bytes_read)
-                        .map_err(|_| bun_alloc::AllocError)?;
-                    data.extend_from_slice(&buf[..bytes_read]);
-                    total_read += bytes_read;
+            while data.len() < size {
+                let to_read = (size - data.len()).min(64 * 1024);
+                data.try_reserve(to_read)
+                    .map_err(|_| bun_alloc::AllocError)?;
+                // SAFETY: `archive_read_data` only stores into the slice; the written prefix is committed below.
+                let dest = unsafe { &mut bun_core::vec::spare_bytes_mut(&mut data)[..to_read] };
+                let read = archive.read_data(dest);
+                if read < 0 {
+                    // Read error.
+                    // NOTE: both `data` and `entries` drop automatically here.
+                    // SAFETY: `archive` is the live `read_new()` handle opened above.
+                    return Ok(if let Some(err) = Self::clone_error_string(&archive) {
+                        FilesResult::LibarchiveErr(err)
+                    } else {
+                        FilesResult::Err(FilesError::ReadError)
+                    });
                 }
+                if read == 0 {
+                    break;
+                }
+                let bytes_read = usize::try_from(read).expect("int cast");
+                // SAFETY: `archive_read_data` returns exactly the byte count it wrote (`<= to_read`).
+                unsafe { bun_core::vec::commit_spare(&mut data, bytes_read) };
             }
             // errdefer free(data) — handled by Drop
 
@@ -1224,22 +1202,16 @@ enum CompressError {
     GzipInitFailed,
     #[error("GzipCompressFailed")]
     GzipCompressFailed,
+    /// The output buffer (sized by the data being compressed) could not be allocated.
+    #[error("OutOfMemory")]
+    OutOfMemory,
 }
 
-impl From<CompressError> for BlobError {
-    fn from(e: CompressError) -> Self {
-        match e {
-            CompressError::GzipInitFailed => BlobError::GzipInitFailed,
-            CompressError::GzipCompressFailed => BlobError::GzipCompressFailed,
-        }
-    }
-}
-
-impl From<CompressError> for WriteError {
-    fn from(e: CompressError) -> Self {
-        match e {
-            CompressError::GzipInitFailed => WriteError::GzipInitFailed,
-            CompressError::GzipCompressFailed => WriteError::GzipCompressFailed,
+impl CompressError {
+    fn to_js(&self, global: &JSGlobalObject) -> JSValue {
+        match self {
+            CompressError::OutOfMemory => global.create_out_of_memory_error(),
+            other => global.create_error_instance(format_args!("{}", <&'static str>::from(other))),
         }
     }
 }
@@ -1251,12 +1223,10 @@ fn compress_gzip(data: &[u8], level: u8) -> Result<Vec<u8>, CompressError> {
     let mut compressor =
         libdeflate::OwnedCompressor::new(i32::from(level)).ok_or(CompressError::GzipInitFailed)?;
 
-    let max_size = compressor.max_bytes_needed(data, libdeflate::Encoding::Gzip);
-
-    // The scratch is heap-allocated either way, so a small-input threshold is
-    // dead weight — just size the Vec to `max_size` once.
-    let mut output = Vec::with_capacity(max_size);
-    let result = compressor.compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip);
+    let mut output = Vec::new();
+    let result = compressor
+        .compress_to_vec(data, &mut output, libdeflate::Encoding::Gzip)
+        .map_err(|_| CompressError::OutOfMemory)?;
     if result.status != libdeflate::Status::Success {
         return Err(CompressError::GzipCompressFailed);
     }
@@ -1366,6 +1336,9 @@ fn extract_to_disk_filtered(
 
     let mut count: u32 = 0;
     let mut entry: *mut lib::Entry = core::ptr::null_mut();
+    let mut stack_buf = bun_core::vec::UninitBuf::<{ 64 * 1024 }>::uninit();
+    // SAFETY: `archive_read_data` is the only writer of `buf`; each chunk reads back only `buf[..bytes_read]`.
+    let buf = unsafe { stack_buf.as_bytes_mut() };
 
     while archive.read_next_header(&mut entry).succeeded() {
         let entry_ref = lib::Entry::opaque_ref(entry);
@@ -1455,7 +1428,6 @@ fn extract_to_disk_filtered(
                 if size > 0 {
                     // Read archive data and write to file
                     let mut remaining = size;
-                    let mut buf = [0u8; 64 * 1024];
                     while remaining > 0 {
                         let to_read = remaining.min(buf.len());
                         let read = archive.read_data(&mut buf[..to_read]);

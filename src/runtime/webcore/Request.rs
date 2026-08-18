@@ -924,9 +924,8 @@ impl Request {
 
         // Join straight into a WTF string: parsing one is a refcount bump and an
         // already-canonical URL comes back as the same string, so this is one allocation
-        // per request regardless of target length. Joining into a scratch buffer first adds
-        // a second target-sized allocation per request (req-url-leak.test.ts catches it).
-        // The host is ASCII by construction, so only the path decides the encoding.
+        // per request regardless of target length. The host is ASCII by construction, so
+        // only the path decides the encoding.
         let joined = if strings::is_all_ascii(&path) {
             let (joined, bytes) =
                 BunString::create_uninitialized_latin1(protocol.len() + host.len() + path.len());

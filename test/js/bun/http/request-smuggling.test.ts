@@ -1726,6 +1726,33 @@ describe("Host header field values in request.url", () => {
     expect(response.slice(response.indexOf("\r\n\r\n") + 4)).toBe(url);
   });
 
+  // Targets with bytes >= 0x80 take the UTF-8 join and are percent-encoded by
+  // the URL parser; an invalid byte becomes U+FFFD. The long one exercises the
+  // same branch past the length where the old code switched strategies.
+  test.each([
+    ["/caf\xC3\xA9?q=\xE2\x9C\x93", "example.com", "http://example.com/caf%C3%A9?q=%E2%9C%93"],
+    ["/\xFF", "example.com", "http://example.com/%EF%BF%BD"],
+    ["/" + "a".repeat(200) + "\xC3\xA9", "example.com", "http://example.com/" + "a".repeat(200) + "%C3%A9"],
+    // A Host inside the byte set that the URL parser still rejects: the bare
+    // target, decoded the same way.
+    ["/\xFF", "example.com:abc", "/\uFFFD"],
+  ])("request.url with a non-ASCII target %j and Host %j", async (target, host, url) => {
+    await using server = Bun.serve({
+      port: 0,
+      hostname: "127.0.0.1",
+      fetch(req) {
+        return new Response(req.url);
+      },
+    });
+
+    const response = await sendRawRequest(
+      server,
+      `GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`,
+    );
+    expect(response).toStartWith("HTTP/1.1 200");
+    expect(Buffer.from(response.slice(response.indexOf("\r\n\r\n") + 4), "latin1").toString()).toBe(url);
+  });
+
   test.each([
     [" \t foo\tcom\t", "foo\tcom"],
     [" example com ", "example com"],

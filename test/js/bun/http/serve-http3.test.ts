@@ -223,10 +223,10 @@ describe("Bun.serve HTTP/3", () => {
     });
   });
 
-  // request.url is synthesized from Host + target. A Host that can't be a URL
-  // authority must not be pasted into it (HTTP/1 already refused; HTTP/3 used
-  // to produce "https://evil.example/x#/admin/secret" here), and a valid one is
-  // canonicalized the same way on both transports.
+  // request.url is synthesized from Host + target through the same code on
+  // both transports: a Host that can't be a URL authority is refused, a valid
+  // one is canonicalized (HTTP/3 used to paste it in verbatim), and one the URL
+  // parser still rejects falls back to the target.
   test("request.url applies the same Host policy as HTTP/1", async () => {
     await withServer(async port => {
       const viaH1 = (path: string, headers: Record<string, string>) =>
@@ -251,6 +251,11 @@ describe("Bun.serve HTTP/3", () => {
         expect(await viaH3("/p", hdrs)).toBe("/p");
         expect(await viaH1("/p", hdrs)).toBe("/p");
       }
+
+      // A non-ASCII path takes the UTF-8 join on both transports.
+      const plain = { host: "example.com", "x-raw-url": "1" };
+      expect(await viaH3("/caf%C3%A9?q=%E2%9C%93", plain)).toBe("https://example.com/caf%C3%A9?q=%E2%9C%93");
+      expect(await viaH1("/caf%C3%A9?q=%E2%9C%93", plain)).toBe("https://example.com/caf%C3%A9?q=%E2%9C%93");
     });
   });
 

@@ -56,11 +56,21 @@ public:
 
     static JSC_DECLARE_HOST_FUNCTION(jsCreateInternalModuleById);
 
+    // process.moduleLoadList: the modules this global has loaded, in load order,
+    // named like Node ("NativeModule node:fs", "Internal Binding ..."). The array
+    // is created on first access and appended to on later loads.
+    JSArray* moduleLoadList(JSGlobalObject* globalObject);
+
 private:
     JS_EXPORT_PRIVATE InternalModuleRegistry(VM&, Structure*);
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
     JSValue createInternalModuleById(JSGlobalObject* globalObject, VM& vm, Field id);
+    void didLoad(JSGlobalObject* globalObject, VM& vm, Field id);
     void finishCreation(VM&);
+
+    WriteBarrier<JSArray> m_moduleLoadList;
+    uint16_t m_loadCount { 0 };
+    uint8_t m_loadOrder[BUN_INTERNAL_MODULE_COUNT];
 };
 
 } // namespace Bun

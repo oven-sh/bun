@@ -2844,3 +2844,23 @@ describe("no JS entry after a worker's termination has been thrown", () => {
     });
   }
 });
+
+// Startup-cost guard: a node worker's bootstrap must stay off the events /
+// streams / util stacks (each builtin is re-parsed per thread). If this list
+// grows, worker startup got slower — make the new dependency lazy instead.
+test("a Worker loads only its bootstrap modules before user code", async () => {
+  const w = new Worker("self.postMessage(process.moduleLoadList)", { eval: true });
+  const [list] = await once(w, "message");
+  await w.terminate();
+  expect(list).toEqual(["NativeModule internal:worker/messaging", "NativeModule internal:worker/bootstrap"]);
+});
+
+test("requiring node:worker_threads in a Worker does not load streams or util", async () => {
+  const w = new Worker(
+    "require('node:worker_threads').parentPort.postMessage(process.moduleLoadList.filter(m => m.includes('stream') || m.includes('node:util') || m.includes('node:fs')))",
+    { eval: true },
+  );
+  const [list] = await once(w, "message");
+  await w.terminate();
+  expect(list).toEqual(["Internal Binding node:util/types"]);
+});

@@ -9,8 +9,8 @@
 // `workerMessage` listeners are invoked directly because Bun's process.emit cannot
 // report no-listeners or a throwing listener (see receiveMessageFromWorker).
 
-const { validateNumber } = require("internal/validators");
-const { SafeMap } = require("internal/primordials");
+// Loaded by internal/worker/bootstrap on every node worker's startup path: keep
+// module evaluation dependency-free (validators/primordials are pulled on use).
 
 const messageTypes = {
   REGISTER_MAIN_THREAD_PORT: "registerMainThreadPort",
@@ -26,7 +26,10 @@ let isMainThread = true;
 // Only populated on the main thread (the hub); always empty elsewhere.
 // SafeMap: its prototype is a frozen null-proto snapshot taken at bootstrap, so the
 // cross-thread routing table can't be broken by user code replacing Map.prototype.
-const threadsPorts = new SafeMap<number, any>();
+let threadsPorts: Map<number, any> | undefined;
+function getThreadsPorts(): Map<number, any> {
+  return (threadsPorts ??= new (require("internal/primordials").SafeMap)());
+}
 
 // Only populated on child threads; always undefined on the main thread.
 let mainThreadPort: any;
@@ -54,16 +57,17 @@ function handleMessageFromThread(message) {
       const { threadId, port } = message;
 
       // Register the port.
+      const threadsPorts = getThreadsPorts();
       threadsPorts.set(threadId, port);
 
       // Handle messages on this port. When another thread wants to register a
       // child, this takes care of relaying it, so any thread links to the main one.
-      port.on("message", handleMessageFromThread);
+      port.addEventListener("message", onMessageFromThread);
 
       // Self-clean when the peer dies without an UNREGISTER (e.g. a grandchild
       // whose intermediate parent was terminated, so that parent's Worker#onClose
       // never ran); otherwise the stale entry lingers in the hub forever.
-      port.on("close", () => {
+      port.addEventListener("close", () => {
         if (threadsPorts.get(threadId) === port) threadsPorts.delete(threadId);
       });
 
@@ -72,10 +76,10 @@ function handleMessageFromThread(message) {
       break;
     }
     case messageTypes.UNREGISTER_MAIN_THREAD_PORT: {
-      const port = threadsPorts.get(message.threadId);
+      const port = threadsPorts?.get(message.threadId);
       if (port) {
         port.close();
-        threadsPorts.delete(message.threadId);
+        threadsPorts!.delete(message.threadId);
       }
       break;
     }
@@ -85,6 +89,10 @@ function handleMessageFromThread(message) {
       break;
     }
   }
+}
+
+function onMessageFromThread(event: MessageEvent) {
+  handleMessageFromThread(event.data);
 }
 
 function handleMessageFromMainThread(message) {
@@ -103,7 +111,7 @@ function sendMessageToWorker(source, destination, value, transferList, memory) {
   }
 
   // Find the port to the target thread.
-  const port = threadsPorts.get(destination);
+  const port = threadsPorts?.get(destination);
 
   if (!port) {
     const status = new Int32Array(memory);
@@ -204,7 +212,8 @@ function destroyMainThreadPort(threadId: number) {
 let entryEvaluated = false;
 let pendingMainPortMessages: any[] | null = null;
 
-function handleMessageFromMainThreadGated(message) {
+function handleMessageFromMainThreadGated(event: MessageEvent) {
+  const message = event.data;
   if (!entryEvaluated) {
     (pendingMainPortMessages ??= []).push(message);
     return;
@@ -214,7 +223,7 @@ function handleMessageFromMainThreadGated(message) {
 
 function setupMainThreadPort(port: any, setEntryEvaluatedHook: (hook: () => void) => void) {
   mainThreadPort = port;
-  mainThreadPort.on("message", handleMessageFromMainThreadGated);
+  mainThreadPort.addEventListener("message", handleMessageFromMainThreadGated);
 
   // Stored on ZigGlobalObject (WriteBarrier), not on globalThis, so user code
   // can't observe or clobber it. WebWorker__entrySettled calls it once.
@@ -241,7 +250,7 @@ async function postMessageToThread(threadId, value, transferList, timeout) {
   }
 
   if (typeof timeout !== "undefined") {
-    validateNumber(timeout, "timeout", 0);
+    require("internal/validators").validateNumber(timeout, "timeout", 0);
   }
 
   if (threadId === currentThreadId) {

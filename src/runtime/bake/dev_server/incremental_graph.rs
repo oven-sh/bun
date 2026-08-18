@@ -20,7 +20,9 @@ use super::{
     SerializedFailure, TraceImportGoal, packed_map, route_bundle, serialized_failure,
     source_map_store,
 };
-use crate::bake::dev_server_body::{CachedFileIndex, HotUpdateContext};
+use crate::bake::dev_server_body::{
+    CachedFileIndex, HotUpdateContext, dump_bundle, dump_bundle_for_chunk,
+};
 use crate::bake::{self, Side};
 
 /// `bun.GenericIndex(u30, File)` — file index into `bundled_files`.
@@ -613,24 +615,26 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         let path = &ctx.sources[index.get() as usize].path;
         let key = path.key_for_incremental_graph();
         let loader = ctx.loaders[index.get() as usize];
+        let graph = match SIDE {
+            Side::Client => bake::Graph::Client,
+            Side::Server if is_ssr_graph => bake::Graph::Ssr,
+            Side::Server => bake::Graph::Server,
+        };
 
-        if cfg!(debug_assertions) {
-            if let ReceiveChunkContent::Js { code, .. } = &content {
-                if strings::is_all_whitespace(code) {
-                    bun_core::Output::panic(format_args!(
-                        "Empty chunk is impossible: {} {}",
-                        bstr::BStr::new(key),
-                        match SIDE {
-                            Side::Client => "client",
-                            Side::Server =>
-                                if is_ssr_graph {
-                                    "ssr"
-                                } else {
-                                    "server"
-                                },
-                        },
-                    ));
-                }
+        if let ReceiveChunkContent::Js { code, .. } = &content {
+            if cfg!(debug_assertions) && strings::is_all_whitespace(code) {
+                bun_core::Output::panic(format_args!(
+                    "Empty chunk is impossible: {} {}",
+                    bstr::BStr::new(key),
+                    <&'static str>::from(graph),
+                ));
+            }
+
+            // SAFETY: `dump_dir` and `root` are sibling fields of this graph (see `owner()`), not borrowed elsewhere.
+            if let Some(dump_dir) = unsafe { (*dev).dump_dir.as_ref() } {
+                // SAFETY: as above.
+                let root: &[u8] = unsafe { &(*dev).root };
+                dump_bundle_for_chunk(dump_dir, root, graph, key, code);
             }
         }
 
@@ -1832,7 +1836,16 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(&end_list);
 
-        let _ = start;
+        // SAFETY: `dump_dir` is a sibling field of this graph (see `owner()`).
+        if let Some(dump_dir) = unsafe { (*dev).dump_dir.as_ref() } {
+            dump_bundle(
+                dump_dir,
+                bake::Graph::Client,
+                kind.dump_file_name(false),
+                &list[start..],
+                false,
+            );
+        }
         Ok(())
     }
 
@@ -1865,7 +1878,18 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
         }
         list.extend_from_slice(end);
 
-        let _ = start;
+        // SAFETY: see `owner()`.
+        let dev = unsafe { self.owner() };
+        // SAFETY: `dump_dir` is a sibling field of this graph (see `owner()`).
+        if let Some(dump_dir) = unsafe { (*dev).dump_dir.as_ref() } {
+            dump_bundle(
+                dump_dir,
+                bake::Graph::Server,
+                options.kind.dump_file_name(false),
+                &list[start..],
+                false,
+            );
+        }
         Ok(())
     }
 

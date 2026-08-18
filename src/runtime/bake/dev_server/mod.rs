@@ -62,6 +62,18 @@ pub enum ChunkKind {
     HmrChunk = 1,
 }
 
+impl ChunkKind {
+    /// Name under which `dump_bundle` writes the most recent chunk of this kind, or its source map.
+    pub(crate) fn dump_file_name(self, source_map: bool) -> &'static [u8] {
+        match (self, source_map) {
+            (ChunkKind::InitialResponse, false) => b"latest_chunk.js",
+            (ChunkKind::InitialResponse, true) => b"latest_chunk.js.map",
+            (ChunkKind::HmrChunk, false) => b"latest_hmr.js",
+            (ChunkKind::HmrChunk, true) => b"latest_hmr.js.map",
+        }
+    }
+}
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum TraceImportGoal {
     FindCss,

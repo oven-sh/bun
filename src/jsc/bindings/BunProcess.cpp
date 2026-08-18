@@ -3020,9 +3020,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
 #endif
     JSC::EncodedJSValue sink = JSValue::encode(resultObject->getIndex(globalObject, 1));
     RETURN_IF_EXCEPTION(scope, jsUndefined());
-    // Under `bun test --isolate`, each test file's global re-creates these
-    // sinks over a fresh dup of the stdio fd; track them so the isolation swap
-    // can end the outgoing file's sinks. No-op otherwise.
+    // No-op outside `bun test --isolate`, where the swap must end this sink.
     Bun__trackProcessStdioSinkForTestIsolation(globalObject, sink);
     if (forceSync) {
         Bun__ForceFileSinkToBeSynchronousForProcessObjectStdio(globalObject, sink);

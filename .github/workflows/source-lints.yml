@@ -13,8 +13,10 @@ on:
     branches: [main]
     paths:
       - "src/**/*.rs"
+      - "src/**/*.h"
+      - "src/**/*.cpp"
       - "src/**/*.classes.ts"
-      - "src/codegen/class-definitions.ts"
+      - "src/codegen/**"
       - "src/js/builtins.d.ts"
       - "src/jsc/bindings/**"
       - "packages/bun-types/redis.d.ts"
@@ -34,8 +36,10 @@ on:
   pull_request:
     paths:
       - "src/**/*.rs"
+      - "src/**/*.h"
+      - "src/**/*.cpp"
       - "src/**/*.classes.ts"
-      - "src/codegen/class-definitions.ts"
+      - "src/codegen/**"
       - "src/js/builtins.d.ts"
       - "src/jsc/bindings/**"
       - "packages/bun-types/redis.d.ts"

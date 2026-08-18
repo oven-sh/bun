@@ -1453,11 +1453,12 @@ describe("Valkey: Offline Queue", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       await releaseReplies;
-      expect({ getsInFirstRead, stdout, exitCode }).toEqual({
+      expect({ getsInFirstRead, stdout, stderr, exitCode }).toEqual({
         getsInFirstRead: 5,
         stdout: "5 replies\n",
+        stderr: "",
         exitCode: 0,
       });
     } finally {

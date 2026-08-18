@@ -878,7 +878,7 @@ impl Expect {
         let mut return_value: JSValue = JSValue::ZERO;
 
         // Drain existing unhandled rejections
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
 
         let scope = vm.unhandled_rejection_scope();
         let prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
@@ -890,7 +890,7 @@ impl Expect {
         };
         vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
-        vm.global().handle_rejected_promises();
+        let _ = vm.global().handle_rejected_promises();
 
         if return_value.is_empty() {
             return_value = return_value_from_function;
@@ -1427,7 +1427,6 @@ impl Expect {
                         &raw const matcher_name,
                         host_fn_ptr,
                         matcher_fn,
-                        true,
                     )
                 };
 
@@ -3257,7 +3256,6 @@ unsafe extern "C" {
         // Rust's `JSHostFn` is already the pointer type, so no extra `*const`.
         function_pointer: bun_jsc::JSHostFn,
         wrapped_fn: JSValue,
-        strong: bool,
     ) -> JSValue;
     fn Bun__JSWrappingFunction__getWrappedFunction(this: JSValue, global_this: *const JSGlobalObject) -> JSValue;
 

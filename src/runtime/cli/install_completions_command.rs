@@ -40,26 +40,26 @@ impl InstallCompletionsCommand {
 
         // first try installing the symlink into the same directory as the bun executable
         let exe = bun_core::self_exe_path()?;
-        let mut target_buf = PathBuffer::uninit();
-        let target = buf_print_z(
-            &mut target_buf,
+        let mut link_buf = PathBuffer::uninit();
+        let link_path = buf_print_z(
+            &mut link_buf,
             format_args!(
                 "{}/{}",
                 bstr::BStr::new(bun_core::dirname(exe).expect("exe has dirname")),
                 Self::BUNX_NAME
             ),
         );
-        if bun_sys::symlink(exe, target).is_ok() {
+        if bun_sys::symlink(exe, link_path).is_ok() {
             return Ok(());
         }
 
         'outer: {
             if let Some(install_dir) = env_var::BUN_INSTALL.get() {
-                let target = buf_print_z(
-                    &mut target_buf,
+                let link_path = buf_print_z(
+                    &mut link_buf,
                     format_args!("{}/bin/{}", bstr::BStr::new(install_dir), Self::BUNX_NAME),
                 );
-                if bun_sys::symlink(exe, target).is_err() {
+                if bun_sys::symlink(exe, link_path).is_err() {
                     break 'outer;
                 }
                 return Ok(());
@@ -69,11 +69,11 @@ impl InstallCompletionsCommand {
         // if that fails, try $HOME/.bun/bin
         'outer: {
             if let Some(home_dir) = env_var::HOME.get() {
-                let target = buf_print_z(
-                    &mut target_buf,
+                let link_path = buf_print_z(
+                    &mut link_buf,
                     format_args!("{}/.bun/bin/{}", bstr::BStr::new(home_dir), Self::BUNX_NAME),
                 );
-                if bun_sys::symlink(exe, target).is_err() {
+                if bun_sys::symlink(exe, link_path).is_err() {
                     break 'outer;
                 }
                 return Ok(());
@@ -83,15 +83,15 @@ impl InstallCompletionsCommand {
         // if that fails, try $HOME/.local/bin
         'outer: {
             if let Some(home_dir) = env_var::HOME.get() {
-                let target = buf_print_z(
-                    &mut target_buf,
+                let link_path = buf_print_z(
+                    &mut link_buf,
                     format_args!(
                         "{}/.local/bin/{}",
                         bstr::BStr::new(home_dir),
                         Self::BUNX_NAME
                     ),
                 );
-                if bun_sys::symlink(exe, target).is_err() {
+                if bun_sys::symlink(exe, link_path).is_err() {
                     break 'outer;
                 }
                 return Ok(());

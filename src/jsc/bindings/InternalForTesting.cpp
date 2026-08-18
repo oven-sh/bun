@@ -9,10 +9,6 @@
 #include <wtf/text/StringImpl.h>
 #include <wtf/text/WTFString.h>
 
-#if ASAN_ENABLED
-#include <sanitizer/lsan_interface.h>
-#endif
-
 extern "C" void BunString__toThreadSafe(BunString* str);
 
 namespace Bun {
@@ -52,17 +48,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_hasReifiedStatic, (JSC::JSGlobalObject * glo
     return JSValue::encode(jsBoolean(false));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_lsanDoLeakCheck, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
-{
-#if ASAN_ENABLED
-    return JSValue::encode(jsNumber(__lsan_do_recoverable_leak_check()));
-#endif
-    return encodedJSUndefined();
-}
-
 // Side-effect-free report of whether this binary was compiled with
-// AddressSanitizer. Lets the test harness detect ASAN without running a
-// stop-the-world leak check (see jsFunction_lsanDoLeakCheck).
+// AddressSanitizer. Lets the test harness detect ASAN cheaply.
 JSC_DEFINE_HOST_FUNCTION(jsFunction_isASANEnabled, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 #if ASAN_ENABLED

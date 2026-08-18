@@ -228,13 +228,10 @@ fn update_package_json_and_install_with_manager_with_updates(
                 if log_level != LogLevel::Silent
                     && !crate::migration::reported_unsupported_lockfile_version(&cause)
                 {
-                    let what: &str = match cause.step {
-                        crate::lockfile::LoadStep::OpenFile => "open",
-                        crate::lockfile::LoadStep::ReadFile => "read",
-                        crate::lockfile::LoadStep::ParseFile => "parse",
-                        crate::lockfile::LoadStep::Migrating => "migrate",
-                    };
-                    Output::err_generic("failed to {s} lockfile: {s}", (what, cause.value.name()));
+                    Output::err_generic(
+                        "failed to {s} lockfile: {s}",
+                        (cause.step.verb(), cause.value.name()),
+                    );
                     if manager.log_mut().has_errors() {
                         let _ = manager
                             .log_mut()

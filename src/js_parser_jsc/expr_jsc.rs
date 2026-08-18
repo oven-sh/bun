@@ -13,7 +13,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 #[inline]
 fn js_err(e: JsError) -> ToJSError {
     match e {
-        JsError::Thrown => ToJSError::JSError,
+        JsError::Thrown | JsError::Terminated => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,
     }
 }
@@ -70,7 +70,12 @@ fn data_to_js_with_check(
         ExprData::EObject(e) => object_to_js(e, global, stack_check),
         ExprData::EObjectJSON(e) => object_json_to_js(e, global),
         ExprData::EArrayJSON(e) => array_json_to_js(e, global),
-        ExprData::EString(e) => string_to_js(e, global),
+        ExprData::EString(e) => {
+            if let Some(kind) = e.toml_datetime {
+                return toml_datetime_to_js(global, e.slice8(), kind).map_err(js_err);
+            }
+            string_to_js(e, global)
+        }
         ExprData::ENull(_) => Ok(JSValue::NULL),
         ExprData::EUndefined(_) => Ok(JSValue::UNDEFINED),
         ExprData::EBoolean(boolean) | ExprData::EBranchBoolean(boolean) => Ok(if boolean.value {
@@ -213,6 +218,25 @@ fn array_json_to_js(this: &E::ArrayJSON, global: &JSGlobalObject) -> Result<JSVa
         core::ptr::from_ref(this).cast_mut(),
     ));
     json_rows_to_js(root, this.tape(), global)
+}
+
+/// A TOML date/time literal as the Temporal object of its kind. `text` must
+/// be ASCII that `Temporal.*.from` accepts verbatim.
+pub fn toml_datetime_to_js(
+    global: &JSGlobalObject,
+    text: &[u8],
+    kind: E::TomlDateTimeKind,
+) -> bun_jsc::JsResult<JSValue> {
+    debug_assert!(text.is_ascii());
+    // SAFETY: `text` is a live slice for the duration of the call.
+    unsafe {
+        bun_jsc::cpp::Bun__Temporal__fromDateTimeLiteral(
+            global,
+            text.as_ptr(),
+            text.len(),
+            kind as u8,
+        )
+    }
 }
 
 fn utf8_bytes_to_js(bytes: &[u8], global: &JSGlobalObject) -> Result<JSValue, ToJSError> {

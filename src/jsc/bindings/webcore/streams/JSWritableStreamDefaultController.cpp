@@ -564,8 +564,10 @@ void writableStreamDefaultControllerError(JSGlobalObject* globalObject, JSWritab
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* stream = controller->m_stream.get();
     ASSERT(stream->m_state == WritableStreamState::Writable);
+    writableStreamStartErroring(globalObject, stream, error);
+    // After StartErroring, not before as in the spec: it reaches an in-flight codec chunk through the algorithms.
     writableStreamDefaultControllerClearAlgorithms(controller);
-    RELEASE_AND_RETURN(scope, writableStreamStartErroring(globalObject, stream, error));
+    RETURN_IF_EXCEPTION(scope, );
 }
 
 void writableStreamDefaultControllerErrorIfNeeded(JSGlobalObject* globalObject, JSWritableStreamDefaultController* controller, JSValue error)

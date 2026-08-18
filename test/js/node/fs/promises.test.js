@@ -419,8 +419,9 @@ it("teardown waits for every concurrent in-flight write", async () => {
 });
 
 // node rejects abortable fs APIs with an AbortError (an Error whose code is the
-// string "ABORT_ERR" and whose cause is signal.reason), never with the raw
-// DOMException held in signal.reason (whose .code is the number 20).
+// string "ABORT_ERR", whose message has no trailing period, and whose cause is
+// signal.reason), never with the raw DOMException held in signal.reason (whose
+// .code is the number 20 and whose message ends in a period).
 describe("AbortSignal rejections use node's AbortError shape", () => {
   function expectNodeAbortError(err, reason) {
     expect(err).toBeInstanceOf(Error);
@@ -428,7 +429,7 @@ describe("AbortSignal rejections use node's AbortError shape", () => {
     expect({ name: err.name, code: err.code, message: err.message }).toEqual({
       name: "AbortError",
       code: "ABORT_ERR",
-      message: "The operation was aborted.",
+      message: "The operation was aborted",
     });
     expect(err.cause).toBe(reason);
   }

@@ -129,9 +129,9 @@ pub enum Source {
 unsafe extern "C" {
     fn JSC__JSValue__unpinArrayBuffer(v: JSValue);
     /// 0 = detached/null, 1 = FastTypedArray (≤~1 KB, GC-movable — dupe),
-    /// 2 = pinned ArrayBuffer (caller must unpin). For OversizeTypedArray the
-    /// helper adopts the storage in-place (createAdopted — no byte copy) and
-    /// pins; once adopted it's detachable, so it MUST be pinned, not borrowed.
+    /// 2 = pinned an existing ArrayBuffer (caller must unpin). 3 = held a
+    /// bufferless OversizeTypedArray: valid for the op, nothing to unpin (the
+    /// caller roots the value as it does for 2).
     fn JSC__JSValue__borrowBytesForOffThread(
         v: JSValue,
         out_ptr: *mut *const u8,
@@ -758,15 +758,14 @@ impl Image {
                             ))
                         }
                     }
-                    // Oversize/Wasteful/DataView/JSArrayBuffer: pinned by the
-                    // helper. For Oversize, possiblySharedBuffer() adopts the
-                    // existing fastMalloc storage in-place (zero byte copy);
-                    // pinning then keeps it alive even if JS does `.buffer` →
-                    // `transfer()` while the worker reads.
-                    2 => {
+                    // 2: Wasteful/DataView/JSArrayBuffer, pinned by the helper (unpin when done).
+                    // 3: OversizeTypedArray held without adopting an ArrayBuffer; nothing to unpin.
+                    kind @ (2 | 3) => {
                         if len == 0 {
-                            // SAFETY: helper pinned `v`; unpin before erroring.
-                            unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            if kind == 2 {
+                                // SAFETY: helper pinned `v`; unpin before erroring.
+                                unsafe { JSC__JSValue__unpinArrayBuffer(v) };
+                            }
                             Err(PinError::Detached)
                         } else {
                             // SAFETY: pinned until the returned `Pin` drops (with the job's
@@ -777,7 +776,7 @@ impl Image {
                                     bytes: bun_ptr::RawSlice::new(bytes),
                                     ..Default::default()
                                 },
-                                Pin(v),
+                                if kind == 2 { Pin(v) } else { Pin::NONE },
                             ))
                         }
                     }
@@ -1897,12 +1896,12 @@ impl PipelineTask {
                         // valid for the JS thread; `ArgumentsSlice::init` wants `&`.
                         let args = [dest_js];
                         let mut arg_slice = jsc::ArgumentsSlice::init(global.bun_vm(), &args);
-                        let mut path_or_blob = match crate::node::PathOrBlob::from_js_no_copy(
+                        let mut path_or_blob = match crate::webcore::blob::write_destination_from_js(
                             global,
                             &mut arg_slice,
                         ) {
                             Ok(p) => p,
-                            Err(_) => return promise.reject(global, Err(jsc::JsError::Thrown)),
+                            Err(e) => return promise.reject(global, Err(e)),
                         };
                         // `PathOrBlob::Path` owns its `PathOrFileDescriptor`
                         // and frees on Drop — no explicit `path.deinit()` needed.

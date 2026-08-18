@@ -46,7 +46,7 @@ pub struct ThreadSafe<T: Unprotect>(T);
 
 impl<T: Unprotect> ThreadSafe<T> {
     /// Wrap an **already-protected** `T`. Use when the protect was taken
-    /// elsewhere (e.g. inside `from_js_maybe_async(.., is_async=true)`).
+    /// elsewhere (e.g. inside `from_js_maybe_async(.., Flavor::Async, ..)`).
     #[inline]
     pub fn adopt(value: T) -> Self {
         Self(value)

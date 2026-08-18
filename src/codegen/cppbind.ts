@@ -451,6 +451,7 @@ const rustSharedTypes: Record<string, string> = {
 
   // JSC / Bun
   "BunString": "bun_core::String",
+  "JSC::TemporalType": "crate::TemporalType",
   "JSC::EncodedJSValue": "crate::JSValue",
   "EncodedJSValue": "crate::JSValue",
   "JSC::JSGlobalObject": "crate::JSGlobalObject",
@@ -900,9 +901,6 @@ async function renderError(position: Srcloc, message: string, label: string, col
   console.error(`\x1b[m${" ".repeat(Bun.stringWidth(before))}${color}^${"~".repeat(Math.max(length - 1, 0))}\x1b[m`);
 }
 
-type Cfg = {
-  dstDir: string;
-};
 async function readFileOrEmpty(file: string): Promise<string> {
   try {
     const fileContents = await Bun.file(file).text();

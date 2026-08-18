@@ -100,6 +100,7 @@ impl TimerObjectInternals {
     /// lives in exactly one place.
     #[inline]
     fn parent_ptr(&self) -> TimerParent {
+        bun_core::assert_not_freeze!(TimerObjectInternals, TimerParent);
         let this = std::ptr::from_ref::<Self>(self).cast_mut();
         match self.flags.get().kind() {
             // SAFETY: `kind == SetImmediate` ⇒ `self` is the `internals` field

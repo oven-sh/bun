@@ -641,6 +641,28 @@ test.concurrent("isolated linker: removes unused store entries and their links",
   await expectProductionInstallIsNoop(dir);
 });
 
+test.concurrent("isolated linker: --verbose does not print the store build timings", async () => {
+  const dir = await setup(
+    { name: "foo", dependencies: { "no-deps": "1.0.0" }, devDependencies: { "one-dep": "1.0.0" } },
+    { linker: "isolated" },
+  );
+
+  // `--production` makes prune build the store twice (once with every
+  // dependency type, once with the production set); `bun install --verbose`
+  // prints a timing line per store build, prune must print none.
+  const { stdout, stderr, exitCode } = await prune(dir, "--production", "--verbose");
+  expect(out(stdout)).toMatchInlineSnapshot(`
+    "bun prune <version> (<revision>)
+
+    - no-deps@1.0.1
+    - one-dep@1.0.0
+    2 packages removed (checked 5)"
+  `);
+  expect(stderr).not.toContain("Resolved peers");
+  expect(stderr).not.toContain("Created store");
+  expect(exitCode).toBe(0);
+});
+
 test.concurrent("isolated linker: prune removes the peer-hash variants a peer bump left behind", async () => {
   const dir = await setupWithLinker("isolated", {
     name: "foo",
@@ -839,6 +861,54 @@ test.concurrent("hoisted: a symlinked scope dir is unlinked, not followed", asyn
   expect(existsSync(inner)).toBeTrue();
   expect(existsSync(join(nm, "@real"))).toBeFalse();
 });
+
+test.concurrent(
+  "hoisted: a workspace's nested folder is pruned where bun.lock says the workspace is, not through node_modules/<name>",
+  async () => {
+    const dir = await setupWorkspaces("hoisted", {
+      root: { dependencies: { "no-deps": "2.0.0" } },
+      packages: { a: { dependencies: { "no-deps": "1.0.0" } } },
+    });
+    const link = join(dir, "node_modules", "a");
+    const workspaceNoDeps = join(dir, "packages", "a", "node_modules", "no-deps", "package.json");
+    expect(isSymlink(link)).toBeTrue();
+    expect(existsSync(workspaceNoDeps)).toBeTrue();
+    const junk = plant(dir, "packages/a/node_modules/junk");
+
+    // `bun link a` run from another checkout leaves node_modules/a pointing at that checkout, which has a node_modules of its own.
+    rmSync(link);
+    const other = linkOutside(dir, "node_modules/a", {
+      "package.json": JSON.stringify({ name: "a", version: "1.0.0" }),
+    });
+    const victim = plant(other, "node_modules/victim");
+    const otherNoDeps = plant(other, "node_modules/no-deps");
+
+    const dryRun = await prune(dir, "--dry-run", "--linker", "hoisted");
+    expect(out(dryRun.stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - junk (node_modules/a/node_modules)
+      1 package can be removed (checked 4)
+        bun prune --linker hoisted"
+    `);
+    expect(dryRun.exitCode).toBe(0);
+
+    // bun.lock records workspace folders relative to the root; prune chdirs there first, so running it from inside a workspace resolves them the same way.
+    const { stdout, exitCode } = await prune({ dir, cwd: join(dir, "packages", "a") }, "--linker", "hoisted");
+    expect(out(stdout)).toMatchInlineSnapshot(`
+      "bun prune <version> (<revision>)
+
+      - junk (node_modules/a/node_modules)
+      1 package removed (checked 4)"
+    `);
+    expect(exitCode).toBe(0);
+    expect(existsSync(junk)).toBeFalse();
+    expect(existsSync(workspaceNoDeps)).toBeTrue();
+    expect(existsSync(join(victim, "package.json"))).toBeTrue();
+    expect(existsSync(join(otherNoDeps, "package.json"))).toBeTrue();
+    expect(isSymlink(link)).toBeTrue();
+  },
+);
 
 test.concurrent.skipIf(isWindows)("a symlinked .bin directory is never cleaned through", async () => {
   const dir = await setup({ name: "foo", dependencies: { "no-deps": "1.0.0" } });

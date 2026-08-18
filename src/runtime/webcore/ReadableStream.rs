@@ -64,7 +64,7 @@ impl Strong {
     }
 
     pub(crate) fn is_disturbed(&self, global: &JSGlobalObject) -> bool {
-        if let Some(stream) = self.get(global) {
+        if let Some(stream) = self.get() {
             return stream.is_disturbed(global);
         }
         false
@@ -87,16 +87,14 @@ impl Strong {
         *self = Self::Empty;
     }
 
-    pub(crate) fn get(&self, global: &JSGlobalObject) -> Option<ReadableStream> {
-        if let Some(value) = self.value() {
-            // TODO: properly propagate exception upwards
-            return ReadableStream::from_js(value, global).ok().flatten();
-        }
-        None
+    /// The held stream, re-tagged. Pure: no script, no exception, no trap poll (unlike
+    /// [`ReadableStream::from_js`], which converts arbitrary values).
+    pub(crate) fn get(&self) -> Option<ReadableStream> {
+        self.value().and_then(ReadableStream::from_js_direct)
     }
 
     pub(crate) fn tee(&mut self, global: &JSGlobalObject) -> JsResult<Option<ReadableStream>> {
-        if let Some(stream) = self.get(global) {
+        if let Some(stream) = self.get() {
             let Some((first, second)) = stream.tee(global)? else {
                 return Ok(None);
             };
@@ -124,6 +122,8 @@ unsafe extern "C" {
         out1: &mut JSValue,
         out2: &mut JSValue,
     ) -> bool;
+    /// A held `JSReadableStream`'s tag and native source (`Invalid` if `value` is anything else). Pure.
+    safe fn ReadableStreamTag__taggedStream(value: JSValue, ptr: &mut *mut c_void) -> Tag;
     /// `possible_readable_stream` is read+overwritten in place; `ptr` is a
     /// stack out-param. Reference params discharge the only preconditions.
     safe fn ReadableStreamTag__tagged(
@@ -145,13 +145,6 @@ unsafe extern "C" {
     safe fn ReadableStream__errored(global: &JSGlobalObject, reason: JSValue) -> JSValue;
     safe fn ReadableStream__fromDecodedText(global: &JSGlobalObject, string: JSValue) -> JSValue;
     safe fn ReadableStream__textDecodeFrom(global: &JSGlobalObject, source: JSValue) -> JSValue;
-    safe fn ReadableStream__cancel(stream: JSValue, global: &JSGlobalObject);
-    safe fn ReadableStream__cancelWithReason(
-        stream: JSValue,
-        global: &JSGlobalObject,
-        reason: JSValue,
-    );
-    safe fn ReadableStream__error(stream: JSValue, global: &JSGlobalObject, reason: JSValue);
     safe fn ReadableStream__detach(stream: JSValue, global: &JSGlobalObject);
     safe fn ReadableStream__lockNative(stream: JSValue, global: &JSGlobalObject);
     safe fn ZigGlobalObject__createNativeReadableStream(
@@ -178,10 +171,10 @@ impl ReadableStream {
         if !ok {
             return Ok(None);
         }
-        let Some(out_stream2) = ReadableStream::from_js(out2, global_this)? else {
-            return Ok(None);
-        };
-        let Some(out_stream1) = ReadableStream::from_js(out1, global_this)? else {
+        let (Some(out_stream1), Some(out_stream2)) = (
+            ReadableStream::from_js_direct(out1),
+            ReadableStream::from_js_direct(out2),
+        ) else {
             return Ok(None);
         };
         Ok(Some((out_stream1, out_stream2)))
@@ -191,16 +184,12 @@ impl ReadableStream {
         self.value
     }
 
-    pub fn reload_tag(&mut self, global_this: &JSGlobalObject) -> JsResult<()> {
-        if let Some(stream) = ReadableStream::from_js(self.value, global_this)? {
-            *self = stream;
-        } else {
-            *self = ReadableStream {
-                ptr: Source::Invalid,
-                value: JSValue::ZERO,
-            };
-        }
-        Ok(())
+    /// Re-read this stream's tag (its native source may have changed hands). Pure, like `from_js_direct`.
+    pub fn reload_tag(&mut self) {
+        *self = ReadableStream::from_js_direct(self.value).unwrap_or(ReadableStream {
+            ptr: Source::Invalid,
+            value: JSValue::ZERO,
+        });
     }
 
     pub fn to_any_blob(&mut self, global_this: &JSGlobalObject) -> Option<webcore::blob::Any> {
@@ -208,8 +197,7 @@ impl ReadableStream {
             return None;
         }
 
-        // TODO: properly propagate exception upwards
-        let _ = self.reload_tag(global_this);
+        self.reload_tag();
 
         match self.ptr {
             Source::Blob(blobby) => {
@@ -255,43 +243,49 @@ impl ReadableStream {
         // this will resolve any pending promises to done: true
         match self.ptr {
             // SAFETY: ptrs came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Blob(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::Blob(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::File(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::File(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             // SAFETY: ptr came from ReadableStreamTag__tagged; valid while stream alive.
-            Source::Bytes(source) => unsafe { (*(*source).parent()).cancel() },
+            Source::Bytes(source) => unsafe { (*NewSource::from_context_ptr(source)).cancel() },
             _ => {}
         }
         self.detach_if_possible(global_this);
     }
 
-    pub fn cancel(&self, global_this: &JSGlobalObject) {
-        // cancel the stream
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__cancel(self.value, global_this);
-        // mark the stream source as done
+    /// Cancel the stream (an `AbortError` reason) and mark its native source done. The source's own
+    /// cancel failure is the cancel promise's (handled) rejection; `Err` is a termination met in there.
+    pub fn cancel(&self, global_this: &JSGlobalObject) -> JsResult<()> {
+        let result = bun_jsc::cpp::ReadableStream__cancel(self.value, global_this);
         self.done(global_this);
+        result
     }
 
     /// Cancel the stream and forward `reason` verbatim to the underlying source's
     /// cancel algorithm (the spec's ReadableStreamCancel). Unlike `cancel()`,
     /// this does not synthesize a DOMException — fetch() uses it to surface
     /// `AbortSignal.reason` to the request body's cancel callback.
-    pub fn cancel_with_reason(&self, global_this: &JSGlobalObject, reason: JSValue) {
-        // SAFETY: FFI call; value is a valid ReadableStream JSValue.
-        ReadableStream__cancelWithReason(self.value, global_this, reason);
+    pub fn cancel_with_reason(
+        &self,
+        global_this: &JSGlobalObject,
+        reason: JSValue,
+    ) -> JsResult<()> {
+        let result =
+            bun_jsc::cpp::ReadableStream__cancelWithReason(self.value, global_this, reason);
         self.done(global_this);
+        result
     }
 
-    pub fn abort(&self, global_this: &JSGlobalObject) {
+    pub fn abort(&self, global_this: &JSGlobalObject) -> JsResult<()> {
         // for now we are just calling cancel should be fine
-        self.cancel(global_this);
+        self.cancel(global_this)
     }
 
     /// Like [`Self::cancel`] but pending reads reject with `reason` instead of resolving `{done: true}`.
-    pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) {
-        ReadableStream__error(self.value, global_this, reason);
+    pub(crate) fn error(&self, global_this: &JSGlobalObject, reason: JSValue) -> JsResult<()> {
+        let result = bun_jsc::cpp::ReadableStream__error(self.value, global_this, reason);
         self.done(global_this);
+        result
     }
 
     pub(crate) fn force_detach(&self, global_object: &JSGlobalObject) {
@@ -416,6 +410,39 @@ impl ReadableStream {
         ReadableStream__is(value)
     }
 
+    /// As [`from_js`](Self::from_js), but only matches a value that already is a `ReadableStream`
+    /// (no async-iterable conversion): pure — no script, no exception, no trap poll.
+    pub fn from_js_direct(value: JSValue) -> Option<ReadableStream> {
+        let mut ptr: *mut c_void = core::ptr::null_mut();
+        let tag = ReadableStreamTag__taggedStream(value, &mut ptr);
+        Self::from_tag(tag, value, ptr)
+    }
+
+    fn from_tag(tag: Tag, value: JSValue, ptr: *mut c_void) -> Option<ReadableStream> {
+        match tag {
+            Tag::JavaScript => Some(ReadableStream {
+                value,
+                ptr: Source::JavaScript,
+            }),
+            Tag::Blob => Some(ReadableStream {
+                value,
+                // SAFETY: tag == Blob ⇒ ptr is a non-null *ByteBlobLoader from C++.
+                ptr: Source::Blob(ptr.cast::<ByteBlobLoader>()),
+            }),
+            Tag::File => Some(ReadableStream {
+                value,
+                // SAFETY: tag == File ⇒ ptr is a non-null *FileReader from C++.
+                ptr: Source::File(ptr.cast::<FileReader>()),
+            }),
+            Tag::Bytes => Some(ReadableStream {
+                value,
+                // SAFETY: tag == Bytes ⇒ ptr is a non-null *ByteStream from C++.
+                ptr: Source::Bytes(ptr.cast::<ByteStream>()),
+            }),
+            _ => None,
+        }
+    }
+
     pub fn from_js(
         value: JSValue,
         global_this: &JSGlobalObject,
@@ -427,29 +454,7 @@ impl ReadableStream {
         let tag = bun_jsc::from_js_host_call_generic(global_this, || {
             ReadableStreamTag__tagged(global_this, &mut out, &mut ptr)
         })?;
-
-        Ok(match tag {
-            Tag::JavaScript => Some(ReadableStream {
-                value: out,
-                ptr: Source::JavaScript,
-            }),
-            Tag::Blob => Some(ReadableStream {
-                value: out,
-                // SAFETY: tag == Blob ⇒ ptr is a non-null *ByteBlobLoader from C++.
-                ptr: Source::Blob(ptr.cast::<ByteBlobLoader>()),
-            }),
-            Tag::File => Some(ReadableStream {
-                value: out,
-                // SAFETY: tag == File ⇒ ptr is a non-null *FileReader from C++.
-                ptr: Source::File(ptr.cast::<FileReader>()),
-            }),
-            Tag::Bytes => Some(ReadableStream {
-                value: out,
-                // SAFETY: tag == Bytes ⇒ ptr is a non-null *ByteStream from C++.
-                ptr: Source::Bytes(ptr.cast::<ByteStream>()),
-            }),
-            _ => None,
-        })
+        Ok(Self::from_tag(tag, out, ptr))
     }
 
     pub fn from_native(global_this: &JSGlobalObject, native: JSValue) -> JsResult<JSValue> {
@@ -850,8 +855,9 @@ pub struct NewSource<C: SourceContext> {
     /// `Finalized` so [`Self::on_js_close`] reads `None` instead of a
     /// dead-but-unswept cell.
     pub this_jsvalue: jsc::JsRef,
-    /// R-2: written by `&self` context methods (`ByteStream::to_any_blob`,
-    /// `ByteBlobLoader::to_any_blob`) via `parent_const()`, so interior-mutable.
+    /// R-2: written by context methods (`ByteStream::to_any_blob`,
+    /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
+    /// interior-mutable.
     pub is_closed: Cell<bool>,
 }
 
@@ -1037,6 +1043,16 @@ impl<C: SourceContext> NewSource<C> {
     /// the JS cell still points at it (UAF), so this returns `*mut Self`.
     pub fn new(init: Self) -> *mut Self {
         bun_core::heap::into_raw(Box::new(init))
+    }
+
+    /// Inverse of the `*mut Self as *mut C` cast [`ReadableStream::from_js`]
+    /// performs: `ctx` must be that pointer (whole-allocation provenance), not
+    /// one derived from a `&C`/`&mut C` — use the context's
+    /// `impl_field_parent!` accessors for those.
+    #[inline]
+    pub unsafe fn from_context_ptr(ctx: *mut C) -> *mut Self {
+        // SAFETY: caller contract.
+        unsafe { bun_core::from_field_ptr!(Self, context, ctx) }
     }
 
     /// [`Self::new`] returning the leaked allocation as an unbounded `&mut`.

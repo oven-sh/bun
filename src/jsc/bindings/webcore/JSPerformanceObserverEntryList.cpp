@@ -248,21 +248,6 @@ void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& ana
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSPerformanceObserverEntryListOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
-{
-    UNUSED_PARAM(handle);
-    UNUSED_PARAM(visitor);
-    UNUSED_PARAM(reason);
-    return false;
-}
-
-void JSPerformanceObserverEntryListOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* context)
-{
-    auto* jsPerformanceObserverEntryList = static_cast<JSPerformanceObserverEntryList*>(handle.slot()->asCell());
-    auto& world = *static_cast<DOMWrapperWorld*>(context);
-    uncacheWrapper(world, &jsPerformanceObserverEntryList->wrapped(), jsPerformanceObserverEntryList);
-}
-
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
 #pragma warning(disable : 4483)

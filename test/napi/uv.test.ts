@@ -1,5 +1,7 @@
 import { afterEach, beforeAll, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, isWindows, tempDirWithFiles } from "harness";
+import { existsSync, readFileSync } from "node:fs";
+import { constants } from "node:os";
 import path from "node:path";
 import { symbols, test_skipped } from "../../src/jsc/bindings/libuv/generate_uv_posix_stubs_constants";
 import source from "./uv-stub-stuff/uv_impl.c";
@@ -129,6 +131,51 @@ describe.if(!isWindows)("uv stubs", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
     expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("uv_tty_reset_mode after setRawMode", async () => {
+    // The child runs in a pty so that setRawMode() takes the termios snapshot
+    // uv_tty_reset_mode() restores. Restoring it succeeds (0); once the fd it
+    // was taken on is closed, the failure comes back libuv-style, as -errno.
+    // The child reports through a file because all of its stdio is the pty.
+    const resultPath = path.join(tempdir, "tty-reset-result.json");
+    const decoder = new TextDecoder();
+    let output = "";
+    const proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const fs = require("node:fs");
+          const addon = require(${JSON.stringify(addonPath)});
+          const isTTY = process.stdin.isTTY;
+          process.stdin.setRawMode(true);
+          const afterRaw = addon.testTtyResetMode();
+          fs.closeSync(0);
+          const afterClose = addon.testTtyResetMode();
+          fs.writeFileSync(${JSON.stringify(resultPath)}, JSON.stringify({ isTTY, afterRaw, afterClose }));
+        `,
+      ],
+      env: bunEnv,
+      terminal: {
+        data(_terminal, chunk: Uint8Array) {
+          output += decoder.decode(chunk, { stream: true });
+        },
+      },
+    });
+    const exitCode = await proc.exited;
+    proc.terminal?.close();
+    if (!existsSync(resultPath)) {
+      throw new Error(
+        `child exited with ${exitCode} without writing a result; terminal output: ${JSON.stringify(output)}`,
+      );
+    }
+    expect(JSON.parse(readFileSync(resultPath, "utf8"))).toEqual({
+      isTTY: true,
+      afterRaw: 0,
+      afterClose: -constants.errno.EBADF,
+    });
     expect(exitCode).toBe(0);
   });
 });

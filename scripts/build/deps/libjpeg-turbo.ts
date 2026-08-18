@@ -116,7 +116,6 @@ export const libjpegTurbo: Dependency = {
             cfg.windows ? "-fwin64" : cfg.darwin ? "-fmacho64" : "-felf64",
             cfg.windows ? "-DWIN64" : cfg.darwin ? "-DMACHO" : "-DELF",
             "-D__x86_64__",
-            ...(cfg.windows ? [] : ["-DPIC"]),
             `-I${quote(srcDir + "/simd/nasm/", hostWin)}`,
             `-I${quote(srcDir + "/simd/x86_64/", hostWin)}`,
           ]

@@ -1052,14 +1052,27 @@ impl JSValkeyClient {
         // which derefs. Hold a ref so `&self` stays live across the call.
         let _guard = self.ref_scope();
 
-        if matches!(
-            self.client.get().status,
-            valkey::Status::NeverConnected | valkey::Status::Disconnected
-        ) {
-            return Ok(JSValue::UNDEFINED);
+        match self.client.get().status {
+            valkey::Status::NeverConnected => return Ok(JSValue::UNDEFINED),
+            valkey::Status::Disconnected if !self.client.get().flags.is_reconnecting => {
+                return Ok(JSValue::UNDEFINED);
+            }
+            _ => {}
         }
         self.client_mut().disconnect()?;
         Ok(JSValue::UNDEFINED)
+    }
+
+    /// Cancels the retry a `Disconnected` client is waiting on and runs the
+    /// close path for it, since no socket exists to dispatch a close event.
+    pub(crate) fn cancel_reconnect(&self) -> JsResult<()> {
+        debug_assert!(self.client.get().status == valkey::Status::Disconnected);
+        // The timer's ref goes back with the disarm; there is no socket ref
+        // to give back (`connect()` forgets it only once it has a socket) and
+        // `on_valkey_close` adopts none. The caller's scoped ref covers the
+        // call.
+        self.reconnect_timer.disarm(self);
+        self.client_mut().on_close()
     }
 
     // `onconnect`/`onclose` are declared with `this: true` in
@@ -1171,7 +1184,17 @@ impl JSValkeyClient {
     }
 
     pub(crate) fn reconnect(&self) -> JsResult<()> {
+        // Whether the retry timer fired or connect() got here first, this is
+        // the one dial: a retry still armed would open a second socket.
+        self.reconnect_timer.disarm(self);
         if !self.client.get().flags.is_reconnecting {
+            return Ok(());
+        }
+        // A dial (or the deferred close of one that failed outright) is
+        // already in flight and owns the retry policy from here.
+        if self.client.get().status != valkey::Status::Disconnected
+            || !self.client.get().socket.is_closed()
+        {
             return Ok(());
         }
 
@@ -1379,6 +1402,10 @@ impl JSValkeyClient {
         let global_object = self.global_object;
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
+        // Bounded the attempt that just ended; a dial that fails outright
+        // arms no timer of its own, so left armed this one would fire into it.
+        self.timer.disarm(self);
+
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
             return Ok(());
         };
@@ -1455,6 +1482,9 @@ impl JSValkeyClient {
     }
 
     fn connect(&self) -> Result<(), crate::Error> {
+        // Overwriting a live socket below would leave its callbacks driving
+        // this client alongside the new one's.
+        debug_assert!(self.client.get().socket.is_closed());
         if self.client.get().status == valkey::Status::NeverConnected {
             self.client_mut().status = valkey::Status::Disconnected;
         }
@@ -2030,12 +2060,9 @@ impl ValkeyDeferredClose {
                 crate::dispatch::fold(this.client_mut().close(uws::CloseCode::FastShutdown))
             }
             DeferredClose::WithoutSocket => {
-                // Holding Connecting (see `close_without_socket_next_tick`) is
-                // what keeps a dial from starting in between; if one did, its
-                // own callbacks own the close path now, so only drop our ref.
-                if !this.client.get().socket.is_closed() {
-                    return;
-                }
+                // Holding Connecting (see `close_without_socket_next_tick`)
+                // and the gate in `reconnect()` keep every dial entry out.
+                debug_assert!(this.client.get().socket.is_closed());
                 // No socket ref to give back: `connect()` forgets it only once
                 // it has a socket, and this task exists because it never did.
                 this.client_mut().status = valkey::Status::Disconnected;

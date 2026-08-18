@@ -47,7 +47,9 @@ const helper = `
 // transpiler into a read of globalThis.Bun and never loads the module; the module is what `export ... from "bun"`
 // and a non-literal import() specifier go through. Imports of node:process and node:module always load the module.
 const WATCHED = ["$", "CryptoHasher", "Glob", "S3Client", "SQL", "TOML", "Transpiler", "secrets", "write"] as const;
-const PROCESS_WATCHED = ["allowedNodeEnvironmentFlags", "config", "release", "stderr", "stdin", "stdout", "versions"];
+// process.stdin/stdout/stderr are accessors backed by a slot on the object, so building them never shows up as an own
+// data property; they are checked by identity below instead.
+const PROCESS_WATCHED = ["allowedNodeEnvironmentFlags", "config", "release", "versions"];
 const MODULE_WATCHED = [
   "SourceMap",
   "_cache",
@@ -450,6 +452,7 @@ test.concurrent("node:process: linking constructs the linked bindings, not the s
       exportListMatches,
       afterListing,
       stdout: stdout === process.stdout && typeof stdout.write === "function",
+      // Reading stdout runs JS that loads node:events etc., but constructs no other watched process property.
       afterStdoutRead: constructedOnProcess(),
       argv: ns.argv === process.argv,
     });
@@ -462,7 +465,7 @@ test.concurrent("node:process: linking constructs the linked bindings, not the s
     exportListMatches: true,
     afterListing: ["release"],
     stdout: true,
-    afterStdoutRead: ["release", "stdout"],
+    afterStdoutRead: ["release"],
     argv: true,
   });
 });

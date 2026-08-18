@@ -215,8 +215,8 @@ pub fn run_tasks(
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
                             installer.install_package_with_name_and_resolution(
-                                false,
-                                false,
+                                /* needs_verify */ false,
+                                /* is_pending_package_install */ false,
                                 ctx.dependency_id,
                                 pkg_id,
                                 log_level,

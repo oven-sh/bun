@@ -2944,6 +2944,43 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     return resultObject->getIndex(globalObject, 0);
 }
 
+extern "C" void Bun__Process__writeToStdioStream(JSC::JSGlobalObject* lexicalGlobalObject, int fd, const uint8_t* bytes, size_t length)
+{
+    // A node:worker_threads worker's native console writes through process.stdout /
+    // process.stderr (streams to the parent) rather than the fds. The stream is looked up
+    // per call, so a reassigned process.stdout is honoured. As with Node's Console
+    // (ignoreErrors), a failing or ended stream never turns console.log() into a throw.
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto ignoreErrors = [&] { (void)scope.tryClearException(); };
+
+    JSValue stream = globalObject->processObject()->get(globalObject, Identifier::fromString(vm, fd == 2 ? "stderr"_s : "stdout"_s));
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    if (!stream.isObject())
+        return;
+    JSValue writable = stream.get(globalObject, WebCore::clientData(vm)->builtinNames().writablePublicName());
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    if (writable.isFalse())
+        return;
+    JSValue write = stream.get(globalObject, WebCore::clientData(vm)->builtinNames().writePublicName());
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    auto callData = JSC::getCallData(write);
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        return;
+    auto* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(bytes, length));
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    MarkedArgumentBuffer args;
+    args.append(buffer);
+    JSC::call(globalObject, write, callData, stream, args);
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+}
+
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
     return constructStdioWriteStream(processObject->globalObject(), processObject, 1);

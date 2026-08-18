@@ -203,6 +203,7 @@ extern "C" void WebWorker__dispatchError(Zig::GlobalObject* globalObject, Worker
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetParentPort);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts);
+JSC_DECLARE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio);
 
 JSC_DEFINE_HOST_FUNCTION(jsReceiveMessageOnPort, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
@@ -345,7 +346,7 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
 
     bool isNodeWorker = proxy && proxy->options().kind == WorkerOptions::Kind::Node;
 
-    JSObject* array = constructEmptyArray(globalObject, nullptr, 13);
+    JSObject* array = constructEmptyArray(globalObject, nullptr, 14);
     RETURN_IF_EXCEPTION(scope, {});
     array->putDirectIndex(globalObject, 0, workerData);
     array->putDirectIndex(globalObject, 1, threadId);
@@ -360,7 +361,18 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 0, "routeConsoleToProcessStdio"_s, jsFunctionRouteConsoleToProcessStdio, ImplementationVisibility::Public, NoIntrinsic));
     return array;
+}
+
+extern "C" void Bun__ConsoleObject__routeToProcessStdio(JSC::JSGlobalObject*);
+
+// worker_threads (worker side): the global console writes through process.stdout /
+// process.stderr from now on (Node routes a worker's console through them).
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+{
+    Bun__ConsoleObject__routeToProcessStdio(defaultGlobalObject(lexicalGlobalObject));
+    return JSValue::encode(jsUndefined());
 }
 
 // worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.

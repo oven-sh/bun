@@ -131,6 +131,16 @@ static napi_value test_hrtime(napi_env env, napi_callback_info info) {
   return obj;
 }
 
+// Test uv_tty_reset_mode, the one implemented uv_* function that lives in bun's
+// C++ (wtf-bindings.cpp) instead of uv-posix-polyfills.c, so the one that can
+// end up missing from bun's export table. Referenced directly, like a real
+// addon would.
+static napi_value test_tty_reset_mode(napi_env env, napi_callback_info info) {
+  napi_value ret;
+  napi_create_int32(env, uv_tty_reset_mode(), &ret);
+  return ret;
+}
+
 napi_value Init(napi_env env, napi_value exports) {
   // Register all test functions
   napi_value fn;
@@ -152,6 +162,9 @@ napi_value Init(napi_env env, napi_value exports) {
 
   napi_create_function(env, NULL, 0, test_hrtime, NULL, &fn);
   napi_set_named_property(env, exports, "testHrtime", fn);
+
+  napi_create_function(env, NULL, 0, test_tty_reset_mode, NULL, &fn);
+  napi_set_named_property(env, exports, "testTtyResetMode", fn);
 
   return exports;
 }

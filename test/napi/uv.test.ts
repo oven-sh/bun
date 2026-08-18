@@ -11,6 +11,7 @@ describe.if(!isWindows)("uv stubs", () => {
   const cwd = process.cwd();
   let tempdir: string = "";
   let outdir: string = "";
+  let addonPath: string = "";
   let nativeModule: any;
 
   beforeAll(async () => {
@@ -57,7 +58,8 @@ describe.if(!isWindows)("uv stubs", () => {
     // root binding.gyp package; build:napi below is the single, explicit gyp build.
     await Bun.$`${bunExe()} i --ignore-scripts && ${bunExe()} build:napi`.env(bunEnv).cwd(tempdir);
 
-    nativeModule = require(path.join(tempdir, "./build/Release/uv_test.node"));
+    addonPath = path.join(tempdir, "./build/Release/uv_test.node");
+    nativeModule = require(addonPath);
   });
 
   afterEach(() => {
@@ -111,5 +113,22 @@ describe.if(!isWindows)("uv stubs", () => {
     // 3. The difference shouldn't be unreasonably large
     // Let's say not more than 100ms (100,000,000 ns)
     expect(diff <= 100_000_000n).toBe(true);
+  });
+
+  test("uv_tty_reset_mode", async () => {
+    // Returns 0 because nothing put a tty into raw mode, so there is nothing to
+    // restore. Runs in a child process because when bun does not export the
+    // symbol, the lazily bound call kills the process on Linux (on macOS the
+    // require() throws), and that should fail this test, not the test runner.
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", `console.log(require(${JSON.stringify(addonPath)}).testTtyResetMode())`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(stdout).toBe("0\n");
+    expect(exitCode).toBe(0);
   });
 });

@@ -42,7 +42,9 @@ int uv__tcsetattr(int fd, int how, const struct termios* term)
     return 0;
 }
 
-extern "C" int uv_tty_reset_mode(void)
+// Part of the uv_* surface napi addons link against (see uv-posix-polyfills.c).
+// Listing it in linker.lds/symbols.txt is not enough under -fvisibility=hidden.
+extern "C" BUN_EXPORT int uv_tty_reset_mode(void)
 {
     int saved_errno;
     int err;

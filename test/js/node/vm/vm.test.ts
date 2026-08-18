@@ -1119,13 +1119,27 @@ describe("importModuleDynamically", () => {
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toBe("");
-    expect(JSON.parse(stdout)).toEqual(["sync", "async", "ns", "rejected: ERR_VM_MODULE_NOT_MODULE", "rejected: thrown"]);
+    expect(JSON.parse(stdout)).toEqual([
+      "sync",
+      "async",
+      "ns",
+      "rejected: ERR_VM_MODULE_NOT_MODULE",
+      "rejected: thrown",
+    ]);
     expect(exitCode).toBe(0);
   });
 
   test("callback exceptions and rejections reject the import()", async () => {
-    await expect(importV(() => { throw new RangeError("thrown"); })).rejects.toThrow("thrown");
-    await expect(importV(async () => { throw new RangeError("rejected"); })).rejects.toThrow("rejected");
+    await expect(
+      importV(() => {
+        throw new RangeError("thrown");
+      }),
+    ).rejects.toThrow("thrown");
+    await expect(
+      importV(async () => {
+        throw new RangeError("rejected");
+      }),
+    ).rejects.toThrow("rejected");
   });
 });
 

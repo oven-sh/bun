@@ -104,13 +104,6 @@ impl InternalStateFlags {
     }
 }
 
-impl Default for InternalStateFlags {
-    /// `allow_keepalive` defaults to true.
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Default for InternalState<'_> {
     fn default() -> Self {
         Self {

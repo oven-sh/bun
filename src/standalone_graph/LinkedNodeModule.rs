@@ -28,9 +28,11 @@
 //!
 //! Not detectable at build time, so such addons need
 //! `BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK=1`: a statically linked (`/MT`) C++
-//! throw, a `DllMain` that relies on `DLL_THREAD_ATTACH`/`DETACH` (never delivered
-//! to a merged addon), and static initializers that `dlopen` another merged addon
-//! (V8-style `NODE_MODULE` Init functions run inside `DllMain`, under `LOCK`).
+//! throw, a `DllMain` that relies on `DLL_THREAD_ATTACH`/`DETACH` or on
+//! `DLL_PROCESS_DETACH` at exit (neither is delivered to a merged addon, so its
+//! `atexit` handlers and static destructors do not run when the process exits),
+//! and static initializers that `dlopen` another merged addon (V8-style
+//! `NODE_MODULE` Init functions run inside `DllMain`, under `LOCK`).
 
 #![cfg(windows)]
 

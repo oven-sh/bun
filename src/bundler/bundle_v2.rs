@@ -5407,7 +5407,6 @@ pub mod bv2_impl {
                 let all_import_records = asts.items_import_records();
                 let targets = asts.items_target();
 
-                // Seeded before the loop so its removals of failed roots are final.
                 for entry_point in &self.graph.entry_points {
                     if css_asts[entry_point.get() as usize].is_some() {
                         start.css_entry_points.put(
@@ -5422,6 +5421,7 @@ pub mod bv2_impl {
                 let input_files = self.graph.input_files.slice();
                 let loaders = input_files.items_loader();
                 let sources = input_files.items_source();
+                let mut failed_css_roots: Vec<Index> = Vec::new();
                 for index in 1..self.graph.ast.len() {
                     let import_records = &all_import_records[index];
                     let target = targets[index];
@@ -5451,9 +5451,8 @@ pub mod bv2_impl {
                                         self,
                                     )
                                     .map_err(|_| AllocError)?;
-                                let _ = start.css_entry_points.swap_remove(&Index::init(
-                                    u32::try_from(index).expect("int cast"),
-                                ));
+                                failed_css_roots
+                                    .push(Index::init(u32::try_from(index).expect("int cast")));
                             }
                         } else {
                             // HTML files are routes in DevServer; they have a JS chunk derived off the import records.
@@ -5496,6 +5495,10 @@ pub mod bv2_impl {
                             .css_entry_points
                             .swap_remove(&Index::init(u32::try_from(index).expect("int cast")));
                     }
+                }
+                // Removed after the loop so a later JS/HTML importer cannot re-add a failed root.
+                for index in failed_css_roots {
+                    let _ = start.css_entry_points.swap_remove(&index);
                 }
 
                 // SAFETY: `alloc_slice_copy` returns into the bundler arena which outlives

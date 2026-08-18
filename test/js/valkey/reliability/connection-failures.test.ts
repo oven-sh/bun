@@ -505,7 +505,9 @@ describe("Valkey: Recovering After fail()", () => {
   // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
   const push = (...items: (string | number)[]) =>
     `>${items.length}\r\n` +
-    items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
+    items
+      .map(item => (typeof item === "number" ? `:${item}\r\n` : `$${Buffer.byteLength(item)}\r\n${item}\r\n`))
+      .join("");
 
   // Calls connect() from the first onclose and reports how that attempt ended.
   function connectFromOnclose(client: RedisClient): Promise<string> {
@@ -1675,7 +1677,11 @@ describe("Valkey: Recovering After fail()", () => {
       await client.connect();
       await closed.promise;
       const delivered: string[] = [];
-      const listener = (message: string) => delivered.push(message);
+      const firstDelivered = Promise.withResolvers<void>();
+      const listener = (message: string) => {
+        delivered.push(message);
+        firstDelivered.resolve();
+      };
       await expect(client.subscribe("ch", listener)).rejects.toMatchObject({
         code: "ERR_REDIS_CONNECTION_CLOSED",
         message: "Connection has failed",
@@ -1694,7 +1700,9 @@ describe("Valkey: Recovering After fail()", () => {
         }
       });
       await client.subscribe("ch", listener);
-      while (delivered.length === 0) await delay(1);
+      await firstDelivered.promise;
+      // PONG comes back after anything else the stub wrote, so a second
+      // delivery of m0 would be in `delivered` by now.
       await client.ping();
       expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 2 });
     } finally {

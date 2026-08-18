@@ -37,7 +37,6 @@ test/cli/install/bun-pack.test.ts
 test/cli/install/bun-pm-pkg.test.ts
 test/cli/install/bun-pm-version.test.ts
 test/cli/install/bun-pm.test.ts
-test/cli/install/bun-repl.test.ts
 test/cli/run/filter-workspace.test.ts
 test/js/bun/repl/repl.test.ts
 test/cli/install/bun-update.test.ts
@@ -337,7 +336,7 @@ test/napi/node-napi-tests/test/js-native-api/6_object_wrap/do.test.ts
 # LSAN per-spawn adds no coverage and slows the file significantly.
 test/napi/uv_stub.test.ts
 
-# "use client" components still leak a ServerComponentParseTask (#38004); remove once it lands.
+# New dev-server tests not yet measured under LSan (#38004 fix included); remove once the ASAN lane is green.
 test/bake/dev/production.test.ts
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
@@ -353,24 +352,10 @@ test/regression/issue/10139.test.ts
 test/js/bun/udp/udp_socket.test.ts
 test/cli/init/init.test.ts
 
-# There are some leaks related to the dev server closing on process exit, the fix is to
-# tick the event loop on globalExit but this breaks like 50 tests. Since the
-# leak is when process exits it should be fine for now but it should be fixed at
-# some point.
-test/bake/dev/react-response.test.ts
-test/bake/dev/react-cookies.test.ts
-test/bake/dev/server-sourcemap.test.ts
-
-# Watcher Thread
-test/bake/dev-and-prod.test.ts
+# bundle.test.ts: new dev-server tests not yet measured under LSan (#38004 fix included).
 test/bake/dev/bundle.test.ts
+# css.test.ts: evicted watch entry path leak (#39197) is not in this branch.
 test/bake/dev/css.test.ts
-test/bake/dev/esm.test.ts
-test/bake/dev/hot.test.ts
-test/bake/dev/react-spa.test.ts
-test/bake/dev/sourcemap.test.ts
-test/bake/dev/ssg-pages-router.test.ts
-test/bake/dev/deinitialization.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts

@@ -170,7 +170,7 @@ const ref = ($ref: string, name?: string): Property => ({ name, type: undefined,
 const debuggerDomain: Domain = {
   domain: "Debugger",
   debuggableTypes: ["javascript", "web-page"],
-  types: [{ id: "Location", type: "object", properties: [ref("Page.FrameId", "frameId"), ref("Process.Id", "pid")] }],
+  types: [{ id: "Location", type: "object", properties: [ref("Page.Frame", "frame"), ref("Process.Id", "pid")] }],
   commands: [
     { name: "searchInContent", returns: [{ name: "result", type: "array", items: ref("GenericTypes.SearchMatch") }] },
   ],
@@ -190,10 +190,14 @@ const combinedDomains: Domain[] = [
     domain: "Page",
     debuggableTypes: ["web-page"],
     types: [
-      // Referred to by Debugger; refers on to a primitive and, by its bare name, to LoaderId, which refers on
-      // to a third domain.
-      { id: "FrameId", type: "object", properties: [ref("boolean", "isMainFrame"), ref("LoaderId", "loaderId")] },
-      { id: "LoaderId", type: "array", items: ref("Network.RequestId") },
+      // Referred to by Debugger. Refers on to a primitive, to itself (the walk has to notice that to
+      // terminate) and, by bare name, to RequestIds, which refers on to a third domain.
+      {
+        id: "Frame",
+        type: "object",
+        properties: [ref("boolean", "isMainFrame"), ref("Frame", "parent"), ref("RequestIds", "requests")],
+      },
+      { id: "RequestIds", type: "array", items: ref("Network.RequestId") },
       { id: "PauseReason", type: "string", enum: ["breakpoint", "exception"] },
       { id: "Unreferenced", type: "string" },
     ],
@@ -229,7 +233,7 @@ test("generate-protocol.ts carries along the types that the JavaScript domains r
       domain: "Page",
       description: expect.any(String),
       debuggableTypes: ["web-page"],
-      types: ["FrameId", "LoaderId", "PauseReason"],
+      types: ["Frame", "RequestIds", "PauseReason"],
     },
     { domain: "Process", description: expect.any(String), debuggableTypes: ["javascript"], types: ["Id"] },
   ]);

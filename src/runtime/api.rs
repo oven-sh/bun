@@ -157,9 +157,8 @@ pub mod bun {
 
     pub mod h2_frame_parser {
         pub use crate::api::h2_frame_parser_body::H2FrameParser;
-        // js2native thunks (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
+        // js2native thunk (`$rust(h2_frame_parser.rs, …)` in generated_js2native.rs).
         pub(crate) use crate::api::h2_frame_parser_body::h2_frame_parser_constructor;
-        pub(crate) use crate::api::h2_frame_parser_body::js_assert_settings;
     }
     pub use h2_frame_parser::H2FrameParser;
 }

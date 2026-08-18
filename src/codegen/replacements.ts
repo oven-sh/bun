@@ -61,7 +61,6 @@ export const globalsToPrefix = [
   "ArrayBuffer",
   "Buffer",
   "Infinity",
-  "Loader",
   "Promise",
   "ReadableByteStreamController",
   "ReadableStream",
@@ -73,7 +72,6 @@ export const globalsToPrefix = [
   "TransformStreamDefaultController",
   "Uint8Array",
   "String",
-  "Buffer",
   "RegExp",
   "WritableStream",
   "WritableStreamDefaultController",
@@ -134,13 +132,6 @@ const debug = process.argv[2] === "--debug=ON";
 export const define: Record<string, string> = {
   "process.env.NODE_ENV": JSON.stringify(debug ? "development" : "production"),
   "IS_BUN_DEVELOPMENT": String(debug),
-
-  $streamClosed: "1",
-  $streamClosing: "2",
-  $streamErrored: "3",
-  $streamReadable: "4",
-  $streamWaiting: "5",
-  $streamWritable: "6",
 
   "process.platform": JSON.stringify(Bun.env.TARGET_PLATFORM ?? process.platform),
   "process.arch": JSON.stringify(Bun.env.TARGET_ARCH ?? process.arch),

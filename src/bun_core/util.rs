@@ -2211,16 +2211,6 @@ unsafe extern "C" {
     #[cfg(windows)]
     safe fn clock_gettime_monotonic(sec: &mut i64, nsec: &mut i64);
 }
-impl Default for StackCheck {
-    /// `cached_stack_end` defaults to `0`, so
-    /// `is_safe_to_recurse()` always reports true; use `init()` for a real bound.
-    #[inline]
-    fn default() -> Self {
-        Self {
-            cached_stack_end: 0,
-        }
-    }
-}
 impl StackCheck {
     #[inline]
     pub fn configure_thread() {

@@ -102,6 +102,8 @@ pub struct FormatOptions {
     pub(crate) add_newline: bool,
     pub flush: bool,
     pub(crate) quote_strings: bool,
+    /// Fail with the stack overflow error instead of returning the truncated
+    /// output of a value deeper than the native stack allows.
     pub(crate) can_throw_stack_overflow: bool,
 }
 
@@ -122,7 +124,6 @@ impl JestPrettyFormat {
         if len == 1 {
             fmt = Formatter::new(global);
             fmt.quote_strings = options.quote_strings;
-            fmt.can_throw_stack_overflow = options.can_throw_stack_overflow;
             let tag = Tag::get(vals[0], global)?;
 
             if tag.tag == Tag::String {
@@ -161,7 +162,7 @@ impl JestPrettyFormat {
             }
 
             let _ = writer.flush();
-            return Ok(());
+            return fmt.finish(options);
         }
 
         // The flush must fire on every exit including `?` propagation from
@@ -169,7 +170,6 @@ impl JestPrettyFormat {
         fmt = Formatter::new(global);
         fmt.remaining_values = &vals[..len][1..];
         fmt.quote_strings = options.quote_strings;
-        fmt.can_throw_stack_overflow = options.can_throw_stack_overflow;
 
         let result: JsResult<()> = (|| {
             let mut this_value: JSValue = vals[0];
@@ -233,7 +233,8 @@ impl JestPrettyFormat {
         }
 
         // map_node release handled by `impl Drop for Formatter`.
-        result
+        result?;
+        fmt.finish(options)
     }
 }
 
@@ -297,7 +298,9 @@ pub struct Formatter<'a> {
     pub(crate) estimated_line_length: usize,
     pub(crate) always_newline_scope: bool,
     stack_check: StackCheck,
-    can_throw_stack_overflow: bool,
+    /// `stack_check` cut the walk short (and set `failed`, which makes the
+    /// rest of the walk unwind without printing).
+    hit_stack_limit: bool,
 }
 
 impl<'a> Formatter<'a> {
@@ -313,8 +316,18 @@ impl<'a> Formatter<'a> {
             estimated_line_length: 0,
             always_newline_scope: false,
             stack_check: StackCheck::init(),
-            can_throw_stack_overflow: false,
+            hit_stack_limit: false,
         }
+    }
+
+    /// Thrown once the walk has unwound rather than where the limit was hit,
+    /// so it does not depend on the C++ property/entry walks in between (whose
+    /// callbacks cannot return an error) carrying a pending exception back out.
+    fn finish(&self, options: FormatOptions) -> JsResult<()> {
+        if self.hit_stack_limit && options.can_throw_stack_overflow {
+            return Err(self.global_this.throw_stack_overflow());
+        }
+        Ok(())
     }
 
     pub(crate) fn good_time_for_a_new_line(&mut self) -> bool {
@@ -1036,9 +1049,7 @@ impl<'a> Formatter<'a> {
         }
         if !self.stack_check.is_safe_to_recurse() {
             self.failed = true;
-            if self.can_throw_stack_overflow {
-                return Err(self.global_this.throw_stack_overflow());
-            }
+            self.hit_stack_limit = true;
             return Ok(());
         }
         // reshaped for borrowck — `WrappedWriter` borrows both writer_

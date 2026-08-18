@@ -1186,10 +1186,7 @@ impl Expect {
             }
         }
 
-        if let Err(err) = value.jest_snapshot_pretty_format(pretty_value, global_this) {
-            if global_this.has_exception() {
-                return Err(err);
-            }
+        if value.jest_snapshot_pretty_format(pretty_value, global_this).is_err() {
             let mut formatter = ConsoleObject::Formatter::new(global_this);
             return Err(global_this.throw(format_args!(
                 "Failed to pretty format value: {}",

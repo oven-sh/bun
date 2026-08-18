@@ -1047,17 +1047,12 @@ impl Drop for DevServer {
         }
 
         {
-            let mut r = self.next_bundle.requests.first;
-            while !r.is_null() {
-                // SAFETY: `r` is a live intrusive-list node linked by `defer_request`;
-                // read the link before `deref_` may reclaim the node.
-                let next = unsafe { (*r).next };
-                // SAFETY: `data` was initialized by `defer_request` before being
-                // linked; this exclusive borrow ends at `deref_` below.
+            // Unlinked before `deref_`: the list's own `Drop` would free still-linked nodes as heap nodes, but these are hive slots inside `*self`.
+            while let Some(r) = self.next_bundle.requests.pop_first() {
+                // SAFETY: `pop_first` returns a live node whose `data` was initialized by `defer_request`.
                 let data = unsafe { (*r).data.assume_init_mut() };
                 debug_assert!(!matches!(data.handler, Handler::ServerHandler(_)));
                 data.deref_();
-                r = next;
             }
             self.next_bundle.promise.deinit_idempotently();
         }
@@ -1920,15 +1915,15 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                 };
                                 dev.has_tailwind_plugin_hack = has_tailwind;
 
-                                let load_result: crate::server::GetOrStartLoadResult = dev
-                                    .server
-                                    .as_ref()
-                                    .expect("infallible: server bound")
+                                let mut server = dev.server.expect("infallible: server bound");
+                                let load_result: crate::server::GetOrStartLoadResult = server
                                     .get_or_load_plugins(
                                         crate::server::ServePluginsCallback::DevServer(dev),
                                     );
                                 match load_result {
                                     crate::server::GetOrStartLoadResult::Pending => {
+                                        // `ServePlugins` will call back into this DevServer; like a bundle in flight, hold a pending request so `stop()` cannot free it first.
+                                        server.on_pending_request();
                                         dev.plugin_state = PluginState::Pending;
                                         plugin = PluginState::Pending;
                                         continue 'plugin;
@@ -6171,6 +6166,7 @@ impl DevServer {
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
+        debug_assert!(matches!(self.plugin_state, PluginState::Pending));
         // Only reached when the app declared no plugins of its own, so this never replaces an `Owned` cell.
         debug_assert!(self.bundler_options.plugin.is_none());
         self.bundler_options.plugin = plugins
@@ -6178,10 +6174,12 @@ impl DevServer {
             .map(bake::DevServerPlugin::Borrowed);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
+        self.on_plugin_load_settled();
         Ok(())
     }
 
     pub(crate) fn on_plugins_rejected(&mut self) -> crate::Result<()> {
+        debug_assert!(matches!(self.plugin_state, PluginState::Pending));
         self.plugin_state = PluginState::Err;
         while let Some(item) = self.next_bundle.requests.pop_first() {
             // SAFETY: `pop_first` returns a valid `*mut Node<DeferredRequest>`;
@@ -6194,7 +6192,15 @@ impl DevServer {
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
         // TODO: allow recovery from this state
+        self.on_plugin_load_settled();
         Ok(())
+    }
+
+    /// Releases the pending request taken in `ensure_route_is_bundled`; may drop `*self`, so it must be the caller's last use of `self`.
+    fn on_plugin_load_settled(&mut self) {
+        if let Some(mut server) = self.server {
+            server.on_static_request_complete();
+        }
     }
 }
 

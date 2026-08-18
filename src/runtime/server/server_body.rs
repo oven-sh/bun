@@ -903,13 +903,8 @@ pub enum ServePluginsState {
         plugin: Box<JSBundler::Plugin>,
         promise: jsc::JSPromiseStrong,
         html_bundle_routes: Vec<*mut html_bundle::Route>,
-        // LIFETIMES.tsv classifies this BORROW_PARAM (`Option<&'a DevServer>`),
-        // but `ServePlugins` is a refcounted heap object handed across FFI as
-        // a raw promise-context pointer with dynamic lifetime, so a borrowed
-        // `&'a DevServer` cannot be expressed here. Back-reference invariant:
-        // the DevServer outlives the pending plugin load (see the SAFETY
-        // comments at the deref sites in `on_plugins_resolved`/`_rejected`).
-        dev_server: Option<NonNull<DevServer>>,
+        // BACKREF: `ServePlugins` is a raw promise-context pointer across FFI, so no borrow fits; the DevServer holds a server pending request until the load settles, and `Mut` because settling writes through it.
+        dev_server: Option<bun_ptr::BackRef<DevServer, bun_ptr::Mut>>,
     },
     Loaded(Box<JSBundler::Plugin>),
     /// Error information is not stored as it is already reported.
@@ -923,7 +918,6 @@ pub enum GetOrStartLoadResult<'a> {
     Err,
 }
 
-#[derive(Clone, Copy)]
 pub enum ServePluginsCallback<'a> {
     /// Raw `*mut` because the route is stored in
     /// `ServePluginsState::Pending.html_bundle_routes` and later resolved via
@@ -931,7 +925,8 @@ pub enum ServePluginsCallback<'a> {
     /// (mutation goes through `Cell`/`JsCell`), so the `*mut` spelling is
     /// signature-only; callers pass `Route::as_ctx_ptr(&self)`.
     HtmlBundleRoute(*mut html_bundle::Route),
-    DevServer(&'a DevServer),
+    /// `&mut` because settling the load writes through the stored `BackRef<_, Mut>`.
+    DevServer(&'a mut DevServer),
 }
 
 impl ServePlugins {
@@ -1007,12 +1002,9 @@ impl ServePlugins {
                             html_bundle_routes.push(route);
                         }
                         ServePluginsCallback::DevServer(server) => {
-                            debug_assert!(
-                                dev_server.is_none()
-                                    || dev_server.map(|p| p.as_ptr().cast_const())
-                                        == Some(std::ptr::from_ref(server))
-                            ); // one dev server per server
-                            *dev_server = Some(NonNull::from(server));
+                            let server = bun_ptr::BackRef::new_mut(server);
+                            debug_assert!(dev_server.is_none_or(|existing| existing == server)); // one dev server per server
+                            *dev_server = Some(server);
                         }
                     }
                     return Ok(GetOrStartLoadResult::Pending);
@@ -1155,10 +1147,8 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load (stored as a back-reference
-            // by `get_or_start_load`; the owning Box<DevServer> is held by the
-            // server instance, which itself holds a counted ref on `self`).
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_resolved(Some(
+            // SAFETY: the DevServer holds a pending request on its server until this call, which may free it, so nothing touches `server` afterwards.
+            bun_core::handle_oom(unsafe { server.get_mut() }.on_plugins_resolved(Some(
                 std::ptr::from_ref::<JSBundler::Plugin>(plugin_ref).cast_mut(),
             )));
         }
@@ -1187,8 +1177,8 @@ impl ServePlugins {
             unsafe { bun_ptr::RefCount::<html_bundle::Route>::deref(route) };
         }
         if let Some(mut server) = dev_server {
-            // SAFETY: dev_server outlives plugin load
-            bun_core::handle_oom(unsafe { server.as_mut() }.on_plugins_rejected());
+            // SAFETY: same as the `dev_server` arm of `handle_on_resolve`.
+            bun_core::handle_oom(unsafe { server.get_mut() }.on_plugins_rejected());
         }
 
         Output::err_generic("Failed to load plugins for Bun.serve:", ());

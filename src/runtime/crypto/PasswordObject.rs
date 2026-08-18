@@ -279,27 +279,14 @@ impl PasswordObject {
     // This is purposely simple because nobody asked to make it more complicated
     pub(crate) fn hash(password: &[u8], algorithm: AlgorithmValue) -> Result<Box<[u8]>, HashError> {
         match algorithm {
-            AlgorithmValue::Argon2i(argon)
-            | AlgorithmValue::Argon2d(argon)
-            | AlgorithmValue::Argon2id(argon) => {
-                let mut outbuf = [0u8; 4096];
-                let hash_options = pwhash::argon2::HashOptions {
-                    params: argon.to_params(),
-                    // allocator dropped — global mimalloc
-                    mode: match algorithm {
-                        AlgorithmValue::Argon2i(_) => pwhash::argon2::Mode::Argon2i,
-                        AlgorithmValue::Argon2d(_) => pwhash::argon2::Mode::Argon2d,
-                        AlgorithmValue::Argon2id(_) => pwhash::argon2::Mode::Argon2id,
-                        _ => unreachable!(),
-                    },
-                    encoding: pwhash::Encoding::Phc,
-                };
-                // warning: argon2's code may spin up threads if paralellism is set to > 0
-                // we don't expose this option
-                // but since it parses from phc format, it's possible that it will be set
-                // eventually we should do something that about that.
-                let out_bytes = pwhash::argon2::str_hash(password, hash_options, &mut outbuf)?;
-                Ok(Box::<[u8]>::from(out_bytes))
+            AlgorithmValue::Argon2i(argon) => {
+                Self::hash_argon2(password, argon, pwhash::argon2::Mode::Argon2i)
+            }
+            AlgorithmValue::Argon2d(argon) => {
+                Self::hash_argon2(password, argon, pwhash::argon2::Mode::Argon2d)
+            }
+            AlgorithmValue::Argon2id(argon) => {
+                Self::hash_argon2(password, argon, pwhash::argon2::Mode::Argon2id)
             }
             AlgorithmValue::Bcrypt(cost) => {
                 let mut outbuf = [0u8; 4096];
@@ -320,19 +307,29 @@ impl PasswordObject {
                     outbuf_slice = &mut outbuf[..];
                 }
 
-                let hash_options = pwhash::bcrypt::HashOptions {
-                    params: pwhash::bcrypt::Params {
-                        rounds_log: cost,
-                        silently_truncate_password: true,
-                    },
-                    // allocator dropped
-                    encoding: pwhash::Encoding::Crypt,
-                };
-                let out_bytes =
-                    pwhash::bcrypt::str_hash(password_to_use, hash_options, outbuf_slice)?;
+                let params = pwhash::bcrypt::Params { rounds_log: cost };
+                let out_bytes = pwhash::bcrypt::str_hash(password_to_use, params, outbuf_slice)?;
                 Ok(Box::<[u8]>::from(out_bytes))
             }
         }
+    }
+
+    fn hash_argon2(
+        password: &[u8],
+        argon: Argon2Params,
+        mode: pwhash::argon2::Mode,
+    ) -> Result<Box<[u8]>, HashError> {
+        let mut outbuf = [0u8; 4096];
+        let hash_options = pwhash::argon2::HashOptions {
+            params: argon.to_params(),
+            mode,
+        };
+        // warning: argon2's code may spin up threads if paralellism is set to > 0
+        // we don't expose this option
+        // but since it parses from phc format, it's possible that it will be set
+        // eventually we should do something that about that.
+        let out_bytes = pwhash::argon2::str_hash(password, hash_options, &mut outbuf)?;
+        Ok(Box::<[u8]>::from(out_bytes))
     }
 
     pub(crate) fn verify(
@@ -359,7 +356,7 @@ impl PasswordObject {
     ) -> Result<bool, HashError> {
         match algorithm {
             Algorithm::Argon2id | Algorithm::Argon2d | Algorithm::Argon2i => {
-                match pwhash::argon2::str_verify(previous_hash, password, Default::default()) {
+                match pwhash::argon2::str_verify(previous_hash, password) {
                     Ok(()) => Ok(true),
                     Err(crate::Error::PasswordVerificationFailed) => Ok(false),
                     Err(err) => Err(err),
@@ -377,13 +374,7 @@ impl PasswordObject {
                     sha_512.r#final(&mut outbuf);
                     password_to_use = &outbuf;
                 }
-                match pwhash::bcrypt::str_verify(
-                    previous_hash,
-                    password_to_use,
-                    pwhash::bcrypt::VerifyOptions {
-                        silently_truncate_password: true,
-                    },
-                ) {
+                match pwhash::bcrypt::str_verify(previous_hash, password_to_use) {
                     Ok(()) => Ok(true),
                     Err(crate::Error::PasswordVerificationFailed) => Ok(false),
                     Err(err) => Err(err),

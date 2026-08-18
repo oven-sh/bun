@@ -383,11 +383,8 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
-// toString()/toStringCopy() return a null String when a non-empty `source` is over
-// the string length limit (or the copy failed to allocate). The error constructors
-// taking a ZigString message cannot throw, and their callers throw, reject with, or
-// put properties on the result unconditionally, so the error is still created and
-// carries this message instead.
+// Null means the message is over the string length limit. Callers throw, reject
+// with, or put properties on the error unconditionally, so it is still created.
 static WTF::String errorMessageOrFallback(WTF::String message, const ZigString& source)
 {
     if (message.isNull() && source.len > 0) [[unlikely]]

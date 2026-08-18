@@ -898,7 +898,7 @@ describe("Valkey: Recovering After fail()", () => {
       duplicate = await client.duplicate();
       // A duplicate carries no close history from its source, so the drop of
       // connection 2 goes through the retry policy: no onclose, a second
-      // onconnect, and the queued PING answered by connection 3.
+      // onconnect, and the next PING answered by connection 3.
       const reconnected = Promise.withResolvers<void>();
       let connects = 0;
       duplicate.onconnect = () => {

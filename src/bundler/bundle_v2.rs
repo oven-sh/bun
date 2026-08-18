@@ -2539,10 +2539,12 @@ pub mod bv2_impl {
             }
         }
 
+        /// `loader`: the file's `File::rebundle_loader()`, passed in since the caller is inside the graph.
         pub fn enqueue_file_from_dev_server_incremental_graph_invalidation(
             &mut self,
             path_slice: &[u8],
             target: options::Target,
+            loader: Option<Loader>,
         ) -> Result<(), Error> {
             // TODO: plugins with non-file namespaces
             // borrowck: get-then-put (instead of a single get-or-put) so the map
@@ -2564,9 +2566,10 @@ pub mod bv2_impl {
             let mut path = result.path_pair.primary;
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = loader.unwrap_or_else(|| {
+                path.loader(&self.transpiler.options.loaders)
+                    .unwrap_or(Loader::File)
+            });
 
             path = self.path_with_pretty_initialized(&path, target)?;
             path.assert_pretty_is_valid();
@@ -2621,6 +2624,22 @@ pub mod bv2_impl {
             Ok(())
         }
 
+        /// Dev server rebundles reuse the file's recorded loader: an importer's `with { type }` may have chosen it.
+        pub(crate) fn entry_point_loader(
+            &self,
+            path: &Fs::Path,
+            target: options::Target,
+        ) -> Loader {
+            self.dev_server_handle()
+                .and_then(|dev| {
+                    dev.bundled_loader(path.key_for_incremental_graph(), target.bake_graph())
+                })
+                .unwrap_or_else(|| {
+                    path.loader(&self.transpiler.options.loaders)
+                        .unwrap_or(Loader::File)
+                })
+        }
+
         pub(crate) fn enqueue_entry_item(
             &mut self,
             resolve: &mut _resolver::Result,
@@ -2647,9 +2666,7 @@ pub mod bv2_impl {
             self.increment_scan_counter();
             let source_index = Index::source(self.graph.input_files.len() as u32);
 
-            let loader = path
-                .loader(&self.transpiler.options.loaders)
-                .unwrap_or(Loader::File);
+            let loader = self.entry_point_loader(&path, target);
 
             // SAFETY: `path_with_pretty_initialized` allocates into `self.graph.heap`, which
             // outlives the bundle pass; erase the arena lifetime back to the resolver's
@@ -3110,6 +3127,7 @@ pub mod bv2_impl {
                                 bake::Graph::Server
                             },
                             abs_path,
+                            None,
                             // SAFETY: `transpiler` points at one of self's transpilers, live for `'a`.
                             unsafe { (*transpiler).log }.cast_const(),
                             std::ptr::from_mut(self),
@@ -4434,10 +4452,13 @@ pub mod bv2_impl {
                             // Attributed to this module like the `Err` arm; not `ModuleNotFound`, which means the file was deleted.
                             let mut temp_log = bun_ast::Log::init();
                             add_module_not_found(&mut temp_log, source);
+                            let loader = this.graph.input_files.items_loader()
+                                [load.source_index.get() as usize];
                             dev.handle_parse_task_failure(
                                 crate::Error::Plugin,
                                 load.bake_graph(),
                                 source.path.key_for_incremental_graph(),
+                                Some(loader),
                                 &raw const temp_log,
                                 this,
                             )
@@ -4536,6 +4557,8 @@ pub mod bv2_impl {
                     if let Some(dev) = this.dev_server {
                         let source = &this.graph.input_files.items_source()
                             [load.source_index.get() as usize];
+                        let loader =
+                            this.graph.input_files.items_loader()[load.source_index.get() as usize];
                         // A stack-allocated Log object containing the singular message
                         let kind = msg.kind;
                         let temp_log = bun_ast::Log {
@@ -4549,6 +4572,7 @@ pub mod bv2_impl {
                             crate::Error::Plugin,
                             load.bake_graph(),
                             source.path.key_for_incremental_graph(),
+                            Some(loader),
                             &raw const temp_log,
                             this,
                         )
@@ -4748,9 +4772,16 @@ pub mod bv2_impl {
                             unsafe { *value_ptr = source_index.get() };
                             out_source_index = Some(source_index);
                             let _ = this.graph.ast.append(JSAst::empty_in(this.graph.heap)); // OOM/capacity: fire-and-forget
-                            let loader = path
-                                .loader(&this.transpiler.options.loaders)
-                                .unwrap_or(Loader::File);
+                            let loader =
+                                if resolve.import_record.kind == ImportKind::EntryPointBuild {
+                                    this.entry_point_loader(
+                                        &path,
+                                        resolve.import_record.original_target,
+                                    )
+                                } else {
+                                    path.loader(&this.transpiler.options.loaders)
+                                        .unwrap_or(Loader::File)
+                                };
 
                             this.graph
                                 .input_files
@@ -5301,6 +5332,7 @@ pub mod bv2_impl {
                                         crate::Error::InvalidCssImport,
                                         bake::Graph::Client,
                                         sources[index].path.text,
+                                        Some(loaders[index]),
                                         &raw const log,
                                         self,
                                     )
@@ -6376,10 +6408,14 @@ pub mod bv2_impl {
 
                 if let Some(dev_server) = self.dev_server_handle() {
                     'brk: {
-                        if path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
-                            && (import_record.loader.is_none()
-                                || import_record.loader.unwrap() == Loader::Html)
-                        {
+                        // `with { type: "html" }` makes the import html regardless of the extension.
+                        let imported_as_html = match import_record.loader {
+                            Some(loader) => loader == Loader::Html,
+                            None => {
+                                path.loader(&self.transpiler.options.loaders) == Some(Loader::Html)
+                            }
+                        };
+                        if imported_as_html {
                             // This use case is currently not supported. This error
                             // blocks an assertion failure because the DevServer
                             // reserves the HTML file's spot in IncrementalGraph for the
@@ -7246,11 +7282,14 @@ pub mod bv2_impl {
                                 [err.source_index.get() as usize]
                                 .path
                                 .text;
+                            let loader = this.graph.input_files.items_loader()
+                                [err.source_index.get() as usize];
                             dev_server
                                 .handle_parse_task_failure(
                                     err.err,
                                     err.target.bake_graph(),
                                     abs_path,
+                                    Some(loader),
                                     &raw const err.log,
                                     std::ptr::from_mut(this),
                                 )

@@ -3315,11 +3315,13 @@ impl DevServer {
                     match owner.side() {
                         bake::Side::Client => self.client_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
+                            None,
                             log,
                             false,
                         )?,
                         bake::Side::Server => self.server_graph.insert_failure(
                             incremental_graph::InsertFailureKey::Index(index),
+                            None,
                             log,
                             true,
                         )?,
@@ -4097,6 +4099,29 @@ pub(super) fn finalize_bundle(
             unreachable!()
         };
         let compile_result_offset = *compile_result_offset;
+        let source = &input_file_sources[index.get() as usize];
+        let key = source.path.key_for_incremental_graph();
+        let Some(route_bundle_index) = dev
+            .client_graph
+            .bundled_files
+            .get(key)
+            .and_then(|file| file.html_route_bundle_index)
+        else {
+            // Not a route: an `onLoad` plugin returned `loader: "html"` for an import.
+            let mut log = Log::init();
+            log.add_error(
+                Some(source),
+                bun_ast::Loc::EMPTY,
+                "Only the HTML files served as routes can be bundled with the html loader in development.",
+            );
+            dev.client_graph.insert_failure(
+                incremental_graph::InsertFailureKey::AbsPath(key),
+                Some(Loader::Html),
+                &log,
+                false,
+            )?;
+            continue;
+        };
         let generated_js = dev.generate_javascript_code_for_html_file(
             index,
             import_records,
@@ -4116,7 +4141,6 @@ pub(super) fn finalize_bundle(
             .get_cached_index(bake::Side::Client, index)
             .unwrap::<{ bake::Side::Client }>()
             .expect("unresolved index");
-        let route_bundle_index = dev.client_graph.html_route_bundle_index(client_index);
         let route_bundle = dev.route_bundle_ptr(route_bundle_index);
         debug_assert!(route_bundle.data.html().bundled_file == client_index);
         // Note: split borrow — `invalidate_client_bundle` needs `&mut RouteBundle`
@@ -4179,6 +4203,14 @@ pub(super) fn finalize_bundle(
     }
     for chunk in html_chunks_mut.iter() {
         let index = bun_ast::Index::init(chunk.entry_point.source_index());
+        // Not a route; reported as a failure in Pass 1 instead of received.
+        if ctx
+            .get_cached_index(bake::Side::Client, index)
+            .unwrap::<{ bake::Side::Client }>()
+            .is_none()
+        {
+            continue;
+        }
         dev.client_graph.process_chunk_dependencies(
             &mut ctx,
             incremental_graph::ProcessMode::Normal,
@@ -4976,6 +5008,7 @@ impl DevServer {
         err: &crate::Error,
         graph: bake::Graph,
         abs_path: &[u8],
+        loader: Option<Loader>,
         log: &Log,
         bv2: &mut BundleV2,
     ) -> Result<(), AllocError> {
@@ -5001,16 +5034,19 @@ impl DevServer {
             match graph {
                 bake::Graph::Server => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    loader,
                     log,
                     false,
                 )?,
                 bake::Graph::Ssr => self.server_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    loader,
                     log,
                     true,
                 )?,
                 bake::Graph::Client => self.client_graph.insert_failure(
                     incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                    loader,
                     log,
                     false,
                 )?,
@@ -5102,6 +5138,17 @@ impl DevServer {
         match side {
             bake::Graph::Client => check!(&self.client_graph),
             bake::Graph::Server | bake::Graph::Ssr => check!(&self.server_graph),
+        }
+    }
+
+    /// `File::rebundle_loader` of `path` in `side`'s graph, for the bundler's `entry_point_loader`.
+    pub(crate) fn bundled_loader(&self, path: &[u8], side: bake::Graph) -> Option<Loader> {
+        let _g = self.graph_safety_lock.guard();
+        match side {
+            bake::Graph::Client => self.client_graph.bundled_files.get(path)?.rebundle_loader(),
+            bake::Graph::Server | bake::Graph::Ssr => {
+                self.server_graph.bundled_files.get(path)?.rebundle_loader()
+            }
         }
     }
 

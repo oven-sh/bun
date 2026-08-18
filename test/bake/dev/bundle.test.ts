@@ -1275,3 +1275,285 @@ devTest("re-bundling a watched file does not leak a file descriptor (counted thr
     expect(descriptorsForOther()).toBe(before);
   },
 });
+devTest("importing a file with the html loader through an import attribute", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./partial.mustache" with { type: "html" };
+      console.log(html);
+    `,
+    "partial.mustache": "<div>{{hello}}</div>",
+  },
+  async test(dev) {
+    // Used to pass the extension-only check and crash the dev server with an html chunk for a non-route file.
+    await using c = await dev.client("/", {
+      errors: ["index.ts:1:18: error: Browser builds cannot import HTML files."],
+    });
+  },
+});
+devTest("plugin loading an imported file with the html loader", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    "plugin.ts": `
+      export default {
+        name: "tpl-as-html",
+        setup(build) {
+          build.onLoad({ filter: /\\.tpl$/ }, () => ({ contents: "<div>hello</div>", loader: "html" }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./partial.tpl";
+    `,
+    "partial.tpl": "hello",
+  },
+  async test(dev) {
+    // Nothing rejects the loader before the bundle finishes; it used to crash the dev server.
+    await using c = await dev.client("/", {
+      errors: [
+        "partial.tpl: error: Only the HTML files served as routes can be bundled with the html loader in development.",
+      ],
+    });
+  },
+});
+devTest("editing an html file imported with the text loader (#22533, #24893)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+      body: "<p>root document</p>",
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    // The rebundle used to pick the loader from the extension: crash as an html route (#22533) or served as the root document (#24893).
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>third</div>");
+    });
+    await c.expectMessage("<div>third</div>");
+    await dev.fetch("/").expect.toInclude("<p>root document</p>");
+  },
+});
+devTest("editing a text-imported html file that an onResolve plugin claims (#22533)", {
+  files: {
+    "bunfig.toml": `
+      [serve.static]
+      plugins = ["./plugin.ts"]
+    `,
+    // Entry points are resolved by the plugin, so the rebundle takes the plugin resolution path.
+    "plugin.ts": `
+      export default {
+        name: "resolve-html-entry-points",
+        setup(build) {
+          build.onResolve({ filter: /\\.html$/ }, args => (args.importer ? undefined : { path: args.path }));
+        },
+      };
+    `,
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import html from "./app.html" with { type: "text" };
+      console.log(html);
+    `,
+    "app.html": "<div>first</div>",
+  },
+  htmlFiles: ["index.html"],
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("<div>first</div>");
+
+    await c.expectReload(async () => {
+      await dev.write("app.html", "<div>second</div>");
+    });
+    await c.expectMessage("<div>second</div>");
+  },
+});
+devTest("editing files imported with a loader other than their extension's keeps that loader (#24893, #23299)", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import template from "./template.mustache" with { type: "text" };
+      import data from "./data.json" with { type: "text" };
+      import snippet from "./snippet.ts" with { type: "text" };
+      console.log(template);
+      console.log(typeof data + ":" + data);
+      console.log(snippet);
+    `,
+    "template.mustache": "{{first}}",
+    "data.json": `{"version":1}`,
+    "snippet.ts": `console.log("snippet ran");`,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("{{first}}", 'string:{"version":1}', 'console.log("snippet ran");');
+
+    // The rebundle used to use the extension's loader: an asset URL, an object and a module that runs.
+    await c.expectReload(async () => {
+      await dev.write("template.mustache", "{{second}}");
+    });
+    await c.expectMessage("{{second}}", 'string:{"version":1}', 'console.log("snippet ran");');
+
+    await c.expectReload(async () => {
+      await dev.write("data.json", `{"version":2}`);
+    });
+    await c.expectMessage("{{second}}", 'string:{"version":2}', 'console.log("snippet ran");');
+
+    await c.expectReload(async () => {
+      await dev.write("snippet.ts", `console.log("snippet ran again");`);
+    });
+    await c.expectMessage("{{second}}", 'string:{"version":2}', 'console.log("snippet ran again");');
+  },
+});
+devTest("deleting a file imported by a module loaded through an import attribute", {
+  skip: [
+    "win32", // unlinkSync is having weird behavior
+  ],
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import "./app.txt" with { type: "js" };
+    `,
+    "app.txt": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 123;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage(123);
+
+    // The importer's rebundle must keep the js loader for the unresolved import to be reported.
+    await dev.delete("other.ts", {
+      errors: ['app.txt:1:23: error: Could not resolve: "./other"'],
+    });
+  },
+});
+devTest("editing an html file imported with the text loader on the server (#22533)", {
+  framework: minimalFramework,
+  // Keep template.html from being registered as an HTML route.
+  htmlFiles: [],
+  files: {
+    "template.html": "<p>template</p>",
+    "routes/index.ts": `
+      import template from '../template.html' with { type: 'text' };
+      export default function (req, meta) {
+        return new Response(template);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("<p>template</p>");
+
+    // The rebundle used to crash the dev server (`dev.write` rejects); the updated text is a separate HMR runtime bug.
+    await dev.write("template.html", "<p>template 2</p>");
+    await dev.write("template.html", "<p>template 3</p>");
+    await dev.fetch("/").expect.toStartWith("<p>template");
+  },
+});
+devTest("editing a server file imported with a loader other than its extension's keeps that loader", {
+  framework: minimalFramework,
+  files: {
+    "message.txt": `export const message = "first";`,
+    "routes/index.ts": `
+      import { message } from '../message.txt' with { type: 'js' };
+      export default function (req, meta) {
+        return new Response(message);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("first");
+    // The rebundle used to use the text loader, leaving no "message" export.
+    await dev.write("message.txt", `export const message = "second";`);
+    await dev.fetch("/").equals("second");
+    await dev.write("message.txt", `export const message = "third";`);
+    await dev.fetch("/").equals("third");
+  },
+});
+devTest("a file whose first bundle fails is still rebundled with the loader its import chose", {
+  framework: minimalFramework,
+  files: {
+    "message.txt": `export const message = ;`,
+    "routes/index.ts": `
+      import { message } from '../message.txt' with { type: 'js' };
+      export default function (req, meta) {
+        return new Response(message);
+      }
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(500);
+    // The failed attempt is the only bundle so far; the fix must still use the js loader.
+    await dev.write("message.txt", `export const message = "first";`);
+    await dev.fetch("/").equals("first");
+    await dev.write("message.txt", `export const message = "second";`);
+    await dev.fetch("/").equals("second");
+  },
+});
+devTest("an html route that client code also imports as text is still bundled as the route", {
+  files: {
+    "main.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["main.ts"],
+    }),
+    "main.ts": `
+      import about from "./about.html" with { type: "text" };
+      console.log(typeof about);
+    `,
+    "about.html": emptyHtmlFile({
+      styles: [],
+      scripts: [],
+      body: "<p>about, first</p>",
+    }),
+  },
+  async test(dev) {
+    // Bundling /main records about.html as a text module before the route is requested; the route must not pick up that loader.
+    await dev.fetch("/main").expect.toInclude("<script");
+    await dev.fetch("/about").expect.toInclude("<p>about, first</p>");
+
+    await dev.write(
+      "about.html",
+      emptyHtmlFile({
+        styles: [],
+        scripts: [],
+        body: "<p>about, second</p>",
+      }),
+    );
+    await dev.fetch("/about").expect.toInclude("<p>about, second</p>");
+  },
+});

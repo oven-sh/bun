@@ -321,6 +321,75 @@ nativeTests.test_get_all_property_names_proxy_and_string_wrapper = () => {
   show("frozen writable:", apn(Object.freeze({ a: 1, b: 2 }), napi_key_writable));
 };
 
+nativeTests.test_get_all_property_names_throwing_proxy_traps = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_own_only = 1;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  const show = (label, { status, keys, exception }) =>
+    console.log(label, `status=${status}`, `keys=${JSON.stringify(keys)}`, `exception=${exception?.message}`);
+
+  // ownKeys succeeds so key collection completes; the per-key descriptor walk
+  // required by napi_key_enumerable is what invokes the throwing trap.
+  const throwingDescriptor = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getOwnPropertyDescriptor() {
+        throw new Error("gopd trap");
+      },
+    },
+  );
+  show(
+    "own_only gopd throws:",
+    nativeTests.get_all_property_names(
+      throwingDescriptor,
+      napi_key_own_only,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+  show(
+    "include_prototypes gopd throws on prototype:",
+    nativeTests.get_all_property_names(
+      Object.create(throwingDescriptor),
+      napi_key_include_prototypes,
+      napi_key_enumerable,
+      napi_key_keep_numbers,
+    ),
+  );
+
+};
+
+nativeTests.test_get_all_property_names_get_prototype_throws_in_descriptor_walk = () => {
+  const napi_key_include_prototypes = 0;
+  const napi_key_enumerable = 1 << 1;
+  const napi_key_keep_numbers = 0;
+
+  // Key collection asks the proxy for its prototype once and must succeed so
+  // the descriptor walk is reached; the walk asks again (the target does not
+  // own "a") and that second call throws.
+  let calls = 0;
+  const proxy = new Proxy(
+    {},
+    {
+      ownKeys: () => ["a"],
+      getPrototypeOf() {
+        if (calls++ > 0) throw new Error("getPrototypeOf trap");
+        return null;
+      },
+    },
+  );
+  const { status, keys, exception } = nativeTests.get_all_property_names(
+    Object.create(proxy),
+    napi_key_include_prototypes,
+    napi_key_enumerable,
+    napi_key_keep_numbers,
+  );
+  console.log(`status=${status} keys=${JSON.stringify(keys)} exception=${exception?.message} calls=${calls}`);
+};
+
 nativeTests.test_set_property = () => {
   const objects = [
     {},

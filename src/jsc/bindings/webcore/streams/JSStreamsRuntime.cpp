@@ -58,7 +58,9 @@ void JSStreamsRuntime::initialize(Zig::GlobalObject* globalObject)
     for (auto& handler : m_handlers) {
         handler.initLater([](const HandlerProperty::Initializer& init) {
             auto* self = JSStreamsRuntime::from(init.owner);
-            auto& entry = handlerTable[&init.property - self->m_handlers];
+            size_t i = &init.property - self->m_handlers;
+            ASSERT(i < std::size(self->m_handlers));
+            auto& entry = handlerTable[i];
             init.set(JSFunction::create(init.vm, init.owner, 2, String(entry.name),
                 entry.function, ImplementationVisibility::Private));
         });

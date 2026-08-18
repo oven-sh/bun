@@ -420,7 +420,8 @@ static napi_value create_latin1_string(const Napi::CallbackInfo &info) {
 }
 
 // get_all_property_names(object, key_mode, key_filter, key_conversion)
-// returns { status, keys }
+// returns { status, keys, exception }; a pending exception is cleared and
+// returned as `exception` so callers can observe `status` alongside it.
 static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
   napi_env env = info.Env();
   napi_value object = info[0];
@@ -435,6 +436,15 @@ static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
       static_cast<napi_key_filter>(key_filter),
       static_cast<napi_key_conversion>(key_conversion), &keys);
 
+  bool is_pending = false;
+  NODE_API_CALL(env, napi_is_exception_pending(env, &is_pending));
+  napi_value exception;
+  if (is_pending) {
+    NODE_API_CALL(env, napi_get_and_clear_last_exception(env, &exception));
+  } else {
+    NODE_API_CALL(env, napi_get_undefined(env, &exception));
+  }
+
   napi_value result;
   NODE_API_CALL(env, napi_create_object(env, &result));
   napi_value status_val;
@@ -444,6 +454,8 @@ static napi_value get_all_property_names(const Napi::CallbackInfo &info) {
     NODE_API_CALL(env, napi_get_undefined(env, &keys));
   }
   NODE_API_CALL(env, napi_set_named_property(env, result, "keys", keys));
+  NODE_API_CALL(env,
+                napi_set_named_property(env, result, "exception", exception));
   return result;
 }
 

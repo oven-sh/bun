@@ -42,6 +42,7 @@ HTTPHeaderIdentifiers::HTTPHeaderIdentifiers()
         string.initLater([](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSString>::Initializer& init) {
             auto& ids = WebCore::clientData(init.vm)->httpHeaderIdentifiers();
             size_t i = &init.property - ids.m_strings;
+            ASSERT(i < std::size(ids.m_strings));
             init.set(jsOwnedString(init.vm, ids.identifierAt(init.vm, i).string()));
         });
     }

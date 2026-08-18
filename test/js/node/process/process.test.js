@@ -1386,6 +1386,41 @@ describe.concurrent(() => {
     JSON.stringify(process.report.getReport(), null, 2);
   });
 
+  // A pending worker.terminate() is delivered at the exception checks inside the
+  // report builders, so a worker looping on getReport() is always interrupted in
+  // the middle of one. The host must see every worker exit, with no crash.
+  it("process.report.getReport() interrupted by worker.terminate()", async () => {
+    const workers = 3;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const { Worker } = require("worker_threads");
+          const source = 'require("worker_threads").parentPort.postMessage("busy"); for (;;) process.report.getReport();';
+          let exited = 0;
+          for (let i = 0; i < ${workers}; i++) {
+            const worker = new Worker(source, { eval: true });
+            worker.on("message", () => worker.terminate());
+            worker.on("exit", () => {
+              if (++exited === ${workers}) console.log("exited", exited);
+            });
+          }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: `exited ${workers}`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+
   it("process.exit with jsDoubleNumber that is an integer", async () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), join(import.meta.dir, "./process-exit-decimal-fixture.js")],

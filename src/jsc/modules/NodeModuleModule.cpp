@@ -682,6 +682,15 @@ static JSValue getGlobalPathsObject(VM& vm, JSObject* moduleObject)
         static_cast<ArrayAllocationProfile*>(nullptr), 0);
 }
 
+// Like the _resolveFilename / runMain setters: writing back the default (e.g. copying Module's statics onto a
+// subclass, as jest-runtime does) is not an override.
+static void setModuleWrapper(Zig::GlobalObject* global, String&& start, String&& end)
+{
+    global->hasOverriddenModuleWrapper = start != "(function(exports,require,module,__filename,__dirname){"_s || end != "})"_s;
+    global->m_moduleWrapperStart = WTF::move(start);
+    global->m_moduleWrapperEnd = WTF::move(end);
+}
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
@@ -692,9 +701,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetCJSWrapperItem, (JSGlobalObject * globalOb
     RETURN_IF_EXCEPTION(scope, {});
     String bString = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
-    global->m_moduleWrapperStart = aString;
-    global->m_moduleWrapperEnd = bString;
-    global->hasOverriddenModuleWrapper = true;
+    setModuleWrapper(global, WTF::move(aString), WTF::move(bString));
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
@@ -749,10 +756,7 @@ JSC_DEFINE_CUSTOM_SETTER(setNodeModuleWrapper,
     auto bstring = b.toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, false);
 
-    globalObject->m_moduleWrapperStart = astring;
-    globalObject->m_moduleWrapperEnd = bstring;
-    globalObject->hasOverriddenModuleWrapper = true;
-
+    setModuleWrapper(globalObject, WTF::move(astring), WTF::move(bstring));
     return true;
 }
 

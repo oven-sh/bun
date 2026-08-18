@@ -1006,7 +1006,9 @@ devTest("importers bundled alongside a failing stylesheet serve correctly once i
       await expectBuildFailed(dev, "/html");
       await dev.write("html.css", `.a { color: blue; }`);
       const recovered = await routeHtml();
-      expect(recovered.match(/<link [^>]*>/g)).toEqual([expect.stringMatching(/^<link rel="stylesheet" href="\/_bun\/asset\/[0-9a-f]{16}\.css">$/)]);
+      expect(recovered.match(/<link [^>]*>/g)).toEqual([
+        expect.stringMatching(/^<link rel="stylesheet" href="\/_bun\/asset\/[0-9a-f]{16}\.css">$/),
+      ]);
       expect(await servedCss(dev, "/html")).toMatch(/color:\s*#00f/);
 
       // Syntax error, route requested while broken, then recovery.

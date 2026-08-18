@@ -301,7 +301,23 @@ const SQL: typeof Bun.SQL = function SQL(
       queries: new Set(),
     };
 
-    const onClose = onTransactionDisconnected.bind(state);
+    // The reserve counted one hold on the connection (queryCount/totalQueries).
+    // Return it exactly once: from an explicit release(), or here when the
+    // underlying connection closes first (e.g. the server dropped it), so a
+    // graceful close() of the pool can still settle.
+    let released = false;
+    function releaseConnection() {
+      if (released) return;
+      released = true;
+      if (pool.detachConnectionCloseHandler) {
+        pool.detachConnectionCloseHandler(pooledConnection, onClose);
+      }
+      pool.release(pooledConnection);
+    }
+    function onClose(err: Error) {
+      onTransactionDisconnected.$call(state, err);
+      releaseConnection();
+    }
     if (pooledConnection.onClose) {
       pooledConnection.onClose(onClose);
     }
@@ -476,20 +492,20 @@ const SQL: typeof Bun.SQL = function SQL(
       return Promise.$resolve(undefined);
     };
     reserved_sql.release = () => {
+      // release() is declared as returning void, so callers never await it; a
+      // rejected promise here would always be an unhandled rejection. Already
+      // released, closed, or dead connections make release() a no-op.
       if (
+        released ||
         state.connectionState & ReservedConnectionState.closed ||
         !(state.connectionState & ReservedConnectionState.acceptQueries)
       ) {
-        return Promise.$reject(pool.connectionClosedError());
+        return Promise.$resolve(undefined);
       }
       // just release the connection back to the pool
       state.connectionState |= ReservedConnectionState.closed;
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      // Use adapter method to detach connection close handler
-      if (pool.detachConnectionCloseHandler) {
-        pool.detachConnectionCloseHandler(pooledConnection, onClose);
-      }
-      pool.release(pooledConnection);
+      releaseConnection();
       return Promise.$resolve(undefined);
     };
     // this dont need to be async dispose only disposable but we keep compatibility with other types of sql functions

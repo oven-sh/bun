@@ -1094,7 +1094,12 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
 
   release(connection: PooledConnection, connectingEvent: boolean = false) {
     if (!connectingEvent) {
-      connection.queryCount--;
+      // #finishClose zeroes queryCount when the connection dies with holds
+      // still out; the holder's release must not push it negative, or the
+      // slot's bookkeeping stays off by one after a reconnect.
+      if (connection.queryCount > 0) {
+        connection.queryCount--;
+      }
       this.totalQueries--;
     }
     const currentQueryCount = connection.queryCount;

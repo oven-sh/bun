@@ -102,14 +102,6 @@ exports[`most types: Array2 1`] = `
 
 exports[`most types: ArrayBuffer 1`] = `ArrayBuffer []`;
 
-exports[`most types: ArrayBuffer with elements 1`] = `
-ArrayBuffer [
-  1,
-  2,
-  3,
-]
-`;
-
 exports[`most types: Boolean 1`] = `Boolean {}`;
 
 exports[`most types: Buffer 1`] = `
@@ -213,16 +205,6 @@ Map {
 exports[`most types: Number 1`] = `Number {}`;
 
 exports[`most types: Object 1`] = `{}`;
-
-exports[`most types: Object with ArrayBuffer 1`] = `
-{
-  "a": 1,
-  "b": ArrayBuffer [
-    4,
-    5,
-  ],
-}
-`;
 
 exports[`most types: Object with Buffer 1`] = `
 {

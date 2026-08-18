@@ -7,7 +7,6 @@ use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::{MutableString, OwnedString, String as BunString, ZigStringSlice};
 use bun_event_loop::{
     ConcurrentTask::{AutoDeinit, ConcurrentTask},
-    ManagedTask::ManagedTask,
     Task, Taskable,
 };
 use bun_http as http;
@@ -118,7 +117,7 @@ pub struct FetchTasklet {
     /// `producer`: the body is delivered and unhooked through native memory, not through JS
     /// wrappers that GC destroys in any order. It does not keep the stream reachable
     /// (`SourceContext::native_ref_roots_wrapper`); once the stream's consumers are gone, the
-    /// source reports that through `on_response_stream_collected`.
+    /// source cancels us through `SourceHandle::consumer_collected`.
     pub(crate) response_stream_source: Option<NonNull<crate::webcore::byte_stream::Source>>,
     pub(crate) request_headers: Headers,
     pub(crate) promise: jsc::JSPromiseStrong,
@@ -1723,34 +1722,17 @@ impl FetchTasklet {
         }
     }
 
+    /// `reader.cancel()` / `body.cancel()`, and the stream's wrapper being collected
+    /// (`SourceHandle::consumer_collected`). The latter runs inside a GC sweep: everything
+    /// here is native state, as in `on_response_finalize`.
     pub(crate) fn on_stream_cancelled(&mut self) {
         if self.signal_store.body_receive_mode() == BodyReceiveMode::Ignore {
             return;
         }
-        // reader.cancel() / body.cancel() aborts the fetch so the server sees the
-        // close (Node/Deno/browsers abort unconditionally). abort_task() is idempotent.
+        // Abort so the server sees the close (Node/Deno/browsers abort unconditionally).
+        // abort_task() is idempotent.
         self.abort_task();
         self.ignore_remaining_response_body();
-    }
-
-    /// `ByteStream::on_wrapper_finalized`: nothing can read the rest of this body, so cancel
-    /// it as `reader.cancel()` would. Runs inside a GC sweep, possibly under a delivery on
-    /// this tasklet, so the cancel is queued. `this` is the source's `producer` pointer,
-    /// live until `clear_stream_handlers`.
-    pub(crate) fn on_response_stream_collected(this: NonNull<FetchTasklet>) {
-        // SAFETY: `this` is live (see above). A `&mut` to it can be on the stack, so no
-        // reference is formed: a `Copy` field is read and the atomic count is bumped.
-        let global_this: GlobalRef = unsafe { (*this.as_ptr()).global_this };
-        let vm = global_this.bun_vm();
-        if vm.is_shutting_down() {
-            // Teardown aborts every fetch still in flight (`stop_for_vm_teardown`).
-            return;
-        }
-        // SAFETY: as above.
-        unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this.as_ptr()) };
-        let hop = bun_core::heap::into_raw(Box::new(CollectedResponseStreamHop(this)));
-        vm.as_mut()
-            .enqueue_task(ManagedTask::new_owned(hop, CollectedResponseStreamHop::run));
     }
 
     /// The ByteStream handed bytes to a consumer: re-arm the transport, and hold the loop
@@ -1904,9 +1886,10 @@ impl FetchTasklet {
         // we should not keep the process alive if we are ignoring the body
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
-        // Also fine from `on_response_finalize` (a JSC Weak finalizer inside
-        // `WeakBlock::sweep`), which only gets here with no source held. The request-body
-        // sink is left for `clear_sink()` in `deinit()` (an event-loop task, outside sweep).
+        // Also reached from GC sweeps (`on_response_finalize`, `consumer_collected`): this
+        // touches no JS cell. Inside the source wrapper's own finalize, the release below
+        // leaves the wrapper's ref to free the source. The request-body sink is left for
+        // `clear_sink()` in `deinit()` (an event-loop task, outside sweep).
         self.clear_stream_handlers();
         self.response.clear();
 
@@ -2686,7 +2669,7 @@ impl FetchTasklet {
             // Inside a finalizer: decide from native state only.
             if !matches!(body, BodyValue::Locked(_)) || this.response_stream_source.is_some() {
                 // Scenario 1: the stream outlives its Response while something consumes it;
-                // once it is collected too, `on_response_stream_collected` cancels the body.
+                // its own collection cancels the body (`SourceHandle::consumer_collected`).
                 return;
             }
 
@@ -2799,30 +2782,5 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     unsafe fn release_unrun(this: *mut Self) {
         // SAFETY: fn contract — the box the completion queued.
         drop(unsafe { bun_core::heap::take(this) });
-    }
-}
-
-/// `ManagedTask::new_owned` context queued by `on_response_stream_collected`. Owns one ref
-/// on the tasklet, released on drop: after running, or unrun at VM teardown.
-struct CollectedResponseStreamHop(NonNull<FetchTasklet>);
-
-impl CollectedResponseStreamHop {
-    fn run(this: *mut Self) -> ElJsResult<()> {
-        // SAFETY: the queued box; `cleanup` only runs for a task released unrun.
-        let hop = unsafe { bun_core::heap::take(this) };
-        // SAFETY: the ref `hop` owns keeps the tasklet live; between tasks, no other borrow.
-        let tasklet = unsafe { &mut *hop.0.as_ptr() };
-        // The body can have ended or been cancelled since the sweep that queued this.
-        if tasklet.response_stream_source.is_some() {
-            tasklet.on_stream_cancelled();
-        }
-        drop(hop);
-        Ok(())
-    }
-}
-
-impl Drop for CollectedResponseStreamHop {
-    fn drop(&mut self) {
-        FetchTasklet::deref(self.0.as_ptr());
     }
 }

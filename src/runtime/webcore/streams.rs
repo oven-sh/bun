@@ -1013,14 +1013,11 @@ impl SourceHandle {
 
     /// The source's JS wrapper was collected and no native consumer is attached:
     /// nothing can read what the producer delivers from now on. Called from a GC
-    /// sweep: arms may schedule work, not run JS.
+    /// sweep: arms must not run JS.
     pub fn consumer_collected(&mut self) {
         match *self {
-            SourceHandle::FetchResponseBody(p) => {
-                crate::webcore::fetch::fetch_tasklet::FetchTasklet::on_response_stream_collected(
-                    p.into(),
-                );
-            }
+            // SAFETY: live backref; cleared before the pointee is freed.
+            SourceHandle::FetchResponseBody(mut p) => unsafe { p.get_mut() }.on_stream_cancelled(),
             // Remaining variants do not act on this signal.
             SourceHandle::None
             | SourceHandle::JSController(_)

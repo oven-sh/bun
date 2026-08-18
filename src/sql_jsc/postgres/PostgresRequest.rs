@@ -169,7 +169,17 @@ pub(crate) fn write_bind<Context: WriterContext>(
             match crate::postgres::types::tag_jsc::from_js(global, value)
                 .map_err(js_error_to_postgres)?
             {
-                types::Tag::json => effective_tag = types::Tag::json,
+                // An object with its own toString() (decimal.js, sql.array(), ...) still binds as
+                // that string. Arrays and plain objects have no text form other than JSON.
+                types::Tag::json => {
+                    if value.is_array()
+                        || !value
+                            .implements_to_string(global)
+                            .map_err(js_error_to_postgres)?
+                    {
+                        effective_tag = types::Tag::json;
+                    }
+                }
                 types::Tag::timestamptz => {
                     let mut buf = [0u8; 64];
                     // An invalid Date has no ISO form and falls through to toString().

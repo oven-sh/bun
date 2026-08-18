@@ -1,4 +1,5 @@
 import { describe, expect, it } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 
 const NUMBERS = [
   [1, 1, 2],
@@ -56,4 +57,46 @@ describe.each(["some", "cool", "strings"])("works with describe: %s", s => {
 
 describe("does not return zero", () => {
   expect(it.each([1, 2])("wat", () => {})).toBeUndefined();
+});
+
+describe("%j title memory", () => {
+  // The %j/%o title formatter used to leak one WTFStringImpl copy of the
+  // stringified JSON per registered test (jest.rs format_label).
+  it(
+    "does not retain a second copy of each stringified title",
+    async () => {
+      const fixture = new URL("./jest-each-json-title-leak-fixture.ts", import.meta.url).pathname;
+
+      async function rssWithRows(rows: number): Promise<number> {
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "test", fixture],
+          env: {
+            ...bunEnv,
+            LEAK_FIXTURE_ROWS: String(rows),
+            // ASAN's quarantine keeps freed allocations in RSS; without this
+            // the fixed build measures the same as the leaky one.
+            ASAN_OPTIONS: ["quarantine_size_mb=0", "thread_local_quarantine_size_kb=0", bunEnv.ASAN_OPTIONS]
+              .filter(Boolean)
+              .join(":"),
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        const match = (out + err).match(/RSS_BYTES:(\d+)/);
+        expect(match).not.toBeNull();
+        expect(code).toBe(0);
+        return Number(match![1]);
+      }
+
+      // 128 extra rows x ~512KB stringified title: the titles themselves
+      // retain ~64MB in every build. The unfixed build leaked a second copy
+      // per title (~132MB delta measured on both release and debug-asan);
+      // the fixed build stays at ~66MB.
+      const small = await rssWithRows(8);
+      const large = await rssWithRows(136);
+      expect(large - small).toBeLessThan(100 * 1024 * 1024);
+    },
+    120_000,
+  );
 });

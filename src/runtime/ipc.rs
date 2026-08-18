@@ -1136,12 +1136,9 @@ impl SendQueue {
         self.deliver_close_event_now();
     }
 
-    /// The peer closed its end (EOF; a read error on Windows).
+    /// The peer closed its end (EOF; a read error on Windows). A write still in flight on Windows
+    /// postpones the close to its completion, which delivers the event instead.
     fn peer_closed(&self) {
-        // Nothing can be written to it any more, so a write still in flight is cancelled, not waited for.
-        #[cfg(windows)]
-        self.windows_close(true);
-        #[cfg(not(windows))]
         self.close_socket(CloseReason::Failure, CloseFrom::User);
         self.deliver_close_event_now();
     }

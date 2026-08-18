@@ -2903,7 +2903,9 @@ impl JestPrettyFormat {
                 else {
                     return Ok(true);
                 };
-                let matcher_name = matcher_fn.get_name(this.amf_global_this())?;
+                // `get_name` hands back a +1 WTFStringImpl ref.
+                let matcher_name =
+                    bun_core::OwnedString::new(matcher_fn.get_name(this.amf_global_this())?);
 
                 Self::print_asymmetric_matcher_promise_prefix(flags, this, writer);
                 if flags.not() {

@@ -4326,6 +4326,32 @@ pub(super) fn finalize_bundle(
 
     let mut has_route_bits_set = false;
 
+    // Unlike the payload below, this must not depend on anybody listening for hot updates.
+    let mut framework_route_bits = DynamicBitSet::init_empty(dev.route_bundles.len())?;
+    for request in &dev.incremental_result.framework_routes_affected {
+        let route = dev.router.route_ptr(request.route_index());
+        if let Some(id) = route.bundle {
+            framework_route_bits.set(id.get() as usize);
+        }
+        if request.should_recurse_when_visiting() {
+            mark_all_route_children(
+                &dev.router,
+                &mut [&mut framework_route_bits],
+                request.route_index(),
+            );
+        }
+    }
+    {
+        let mut it = framework_route_bits.iterator::<true, true>();
+        while let Some(bundled_route_index) = it.next() {
+            dev.route_bundles[bundled_route_index]
+                .data
+                .framework_mut()
+                .cached_css_file_array
+                .clear_without_deallocation();
+        }
+    }
+
     let mut hot_update_payload: Vec<u8> = Vec::with_capacity(65536);
     hot_update_payload.push(MessageId::HotUpdate.char());
 
@@ -4356,15 +4382,7 @@ pub(super) fn finalize_bundle(
     {
         has_route_bits_set = true;
 
-        for request in &dev.incremental_result.framework_routes_affected {
-            let route = dev.router.route_ptr(request.route_index());
-            if let Some(id) = route.bundle {
-                route_bits.set(id.get() as usize);
-            }
-            if request.should_recurse_when_visiting() {
-                mark_all_route_children(&dev.router, &mut [&mut route_bits], request.route_index());
-            }
-        }
+        framework_route_bits.copy_into(&mut route_bits);
         for route_bundle_index in &dev.incremental_result.html_routes_hard_affected {
             route_bits.set(route_bundle_index.get() as usize);
             route_bits_client.set(route_bundle_index.get() as usize);
@@ -4443,7 +4461,7 @@ pub(super) fn finalize_bundle(
     }
 
     // `route_bits` will have all of the routes that were modified.
-    if has_route_bits_set && (will_hear_hot_update || dev.incremental_result.had_adjusted_edges) {
+    if has_route_bits_set && will_hear_hot_update {
         // Note: copy out before the loop so the `&mut RouteBundle` borrow
         // below doesn't overlap a `&dev.incremental_result` read.
         let had_adjusted_edges = dev.incremental_result.had_adjusted_edges;
@@ -4456,24 +4474,14 @@ pub(super) fn finalize_bundle(
             let route_bundle: *mut RouteBundle = dev.route_bundle_ptr(route_bundle::Index::init(
                 u32::try_from(i).expect("int cast"),
             ));
-            if had_adjusted_edges {
-                // SAFETY: `route_bundle` points into `dev.route_bundles` (not
-                // resized in this loop); the exclusive borrow is scoped to this match.
-                match unsafe { &mut (*route_bundle).data } {
-                    route_bundle::Data::Framework(fw_bundle) => {
-                        fw_bundle.cached_css_file_array.clear_without_deallocation()
-                    }
-                    route_bundle::Data::Html(html) => html.cached_response = None,
-                }
-            }
             // SAFETY: statement-scoped read; no `&mut` into `*route_bundle` is live.
-            if unsafe { (*route_bundle).active_viewers } == 0 || !will_hear_hot_update {
+            if unsafe { (*route_bundle).active_viewers } == 0 {
                 continue;
             }
             w_int!(i32, i32::try_from(i).expect("int cast"));
 
             // If no edges were changed, then it is impossible to
-            // change the list of CSS files.
+            // change the set of CSS files.
             if had_adjusted_edges {
                 ctx.gts.clear();
                 dev.client_graph.current_css_files.clear();

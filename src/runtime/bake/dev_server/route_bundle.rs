@@ -27,6 +27,7 @@ pub enum State {
 
 pub struct Framework {
     pub(crate) route_index: framework_router::RouteIndex,
+    /// Only depends on the router, which does not change after startup.
     pub(crate) cached_module_list: jsc::StrongOptional,
     pub(crate) cached_client_bundle_url: jsc::StrongOptional,
     pub(crate) cached_css_file_array: jsc::StrongOptional,
@@ -100,6 +101,12 @@ impl Data {
             Data::Html(_) => unreachable!("expected .framework"),
         }
     }
+    pub(crate) fn framework_mut(&mut self) -> &mut Framework {
+        match self {
+            Data::Framework(f) => f,
+            Data::Html(_) => unreachable!("expected .framework"),
+        }
+    }
     /// `Html` payload accessor (asserts active variant).
     pub(crate) fn html(&self) -> &Html {
         match self {
@@ -133,7 +140,11 @@ impl RouteBundle {
             u32::from_ne_bytes(buf)
         };
         match &mut self.data {
-            Data::Framework(fw) => fw.cached_client_bundle_url.clear_without_deallocation(),
+            Data::Framework(fw) => {
+                fw.cached_client_bundle_url.clear_without_deallocation();
+                // `meta.styles` includes the CSS imported by client components.
+                fw.cached_css_file_array.clear_without_deallocation();
+            }
             Data::Html(html) => html.cached_response = None,
         }
     }

@@ -1267,3 +1267,166 @@ function extractCssUrl(backgroundImage: string): string {
   }
   return url[2];
 }
+
+const cssImports = (...files: string[]) => files.map(file => `import "../${file}";`).join("\n");
+const routeRespondingWithStyles = (...cssFiles: string[]) => `
+  ${cssImports(...cssFiles)}
+  export default function (req, meta) {
+    return Response.json(meta.styles);
+  }
+`;
+
+// Nothing subscribes to hot updates until the last part, which used to leave the cached `meta.styles` in place forever.
+devTest("framework route styles follow the css imports of the route and its layout", {
+  framework: {
+    ...minimalFramework,
+    fileSystemRouterTypes: [{ ...minimalFramework.fileSystemRouterTypes[0], layouts: true }],
+  },
+  files: {
+    "routes/_layout.ts": ``,
+    "routes/index.ts": routeRespondingWithStyles("one.css"),
+    "routes/other.ts": routeRespondingWithStyles(),
+    "one.css": `.one { color: red; }`,
+    "two.css": `.two { color: red; }`,
+    "three.css": `.three { color: red; }`,
+    "four.css": `.four { color: red; }`,
+  },
+  async test(dev) {
+    expect(await routeStyles(dev, "/")).toStrictEqual(["one.css"]);
+    expect(await routeStyles(dev, "/other")).toStrictEqual([]);
+
+    await dev.write("routes/index.ts", routeRespondingWithStyles("one.css", "two.css"));
+    const withTwo = await routeStyles(dev, "/");
+    expect(withTwo.toSorted()).toEqual(["one.css", "two.css"]);
+
+    // Same edges, only their order changes.
+    await dev.write("routes/index.ts", routeRespondingWithStyles("two.css", "one.css"));
+    expect(await routeStyles(dev, "/")).toEqual(withTwo.toReversed());
+
+    await dev.write("routes/index.ts", routeRespondingWithStyles("two.css"));
+    expect(await routeStyles(dev, "/")).toEqual(["two.css"]);
+
+    // The layout's stylesheets belong to both routes, and both have a cached list by now.
+    await dev.write("routes/_layout.ts", cssImports("three.css"));
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["three.css", "two.css"]);
+    expect(await routeStyles(dev, "/other")).toEqual(["three.css"]);
+
+    // Now with a hot update subscriber looking at "/"; every rebuild publishes one hot update to it.
+    using hmr = await viewRouteOverHmr(dev, "/");
+    await dev.write("routes/other.ts", `export default function (`);
+    await hmr.nextHotUpdate();
+    await dev.write("routes/index.ts", routeRespondingWithStyles("four.css"));
+    // While another route has a bundling error viewers only see the error, but the server-side styles are refreshed all the same.
+    expect(await hmr.nextHotUpdate()).toEqual({ reloadedRoutes: [], routeCss: {} });
+    expect((await routeStyles(dev, "/")).toSorted()).toEqual(["four.css", "three.css"]);
+
+    await dev.write("routes/other.ts", routeRespondingWithStyles("one.css"));
+    await hmr.nextHotUpdate();
+    expect((await routeStyles(dev, "/other")).toSorted()).toEqual(["one.css", "three.css"]);
+
+    // With the error gone, the viewer of "/" is told to reload it and which stylesheets it has now.
+    await dev.write("routes/index.ts", routeRespondingWithStyles());
+    const update = await hmr.nextHotUpdate();
+    const hrefs: string[] = await dev.fetch("/").json();
+    expect(await stylesheetFileNames(dev, hrefs)).toEqual(["three.css"]);
+    expect(update).toEqual({
+      reloadedRoutes: [hmr.routeBundleIndex],
+      routeCss: { [hmr.routeBundleIndex]: hrefs.map(href => href.match(/^\/_bun\/asset\/([0-9a-f]{16})\.css$/)![1]) },
+    });
+  },
+});
+
+/** Fetches a route written with `routeRespondingWithStyles` and resolves the stylesheets to file names. */
+async function routeStyles(dev: Dev, route: string): Promise<string[]> {
+  return stylesheetFileNames(dev, await dev.fetch(route).json());
+}
+
+/** The route lists at the start of a hot update payload (see "List 1" and "List 2" in DevServer.rs's finalize_bundle). */
+interface HotUpdateRouteLists {
+  /** Route bundles whose server-side code changed; viewers re-request them. */
+  reloadedRoutes: number[];
+  /** For each viewed route bundle that changed, its stylesheet ids, or `null` if no import was added or removed. */
+  routeCss: Record<number, string[] | null>;
+}
+
+function decodeRouteLists(payload: ArrayBuffer): HotUpdateRouteLists {
+  const view = new DataView(payload);
+  let offset = 1; // MessageId.hot_update
+  const i32 = () => {
+    const value = view.getInt32(offset, true);
+    offset += 4;
+    return value;
+  };
+  const reloadedRoutes: number[] = [];
+  for (let route = i32(); route !== -1; route = i32()) {
+    reloadedRoutes.push(route);
+  }
+  const routeCss: Record<number, string[] | null> = {};
+  for (let route = i32(); route !== -1; route = i32()) {
+    const count = i32();
+    if (count === -1) {
+      routeCss[route] = null;
+      continue;
+    }
+    const ids: string[] = [];
+    for (let i = 0; i < count; i++) {
+      ids.push(Buffer.from(payload, offset, 16).toString());
+      offset += 16;
+    }
+    routeCss[route] = ids;
+  }
+  return { reloadedRoutes, routeCss };
+}
+
+/** Performs the browser HMR handshake (subscribe to hot updates and errors, set the viewed route); resolves once the route is acknowledged. */
+async function viewRouteOverHmr(dev: Dev, route: string) {
+  const ws = new WebSocket(dev.baseUrl + "/_bun/hmr");
+  ws.binaryType = "arraybuffer";
+  const viewing = Promise.withResolvers<number>();
+  const unreadHotUpdates: ArrayBuffer[] = [];
+  let reader: PromiseWithResolvers<ArrayBuffer> | null = null;
+  let failure: Error | null = null;
+  const fail = (reason: string) => {
+    failure = new Error(reason);
+    viewing.reject(failure);
+    reader?.reject(failure);
+  };
+  ws.onerror = () => fail("hmr websocket errored");
+  ws.onclose = () => fail("hmr websocket closed");
+  ws.onmessage = event => {
+    const payload = event.data as ArrayBuffer;
+    switch (new Uint8Array(payload)[0]) {
+      case "V".charCodeAt(0): // version
+        ws.send("she"); // subscribe to hot updates and errors
+        ws.send("n" + route); // set_url
+        break;
+      case "n".charCodeAt(0): // set_url_response
+        viewing.resolve(new DataView(payload).getUint32(1, true));
+        break;
+      case "u".charCodeAt(0): // hot_update
+        if (reader) {
+          reader.resolve(payload);
+          reader = null;
+        } else {
+          unreadHotUpdates.push(payload);
+        }
+        break;
+    }
+  };
+  return {
+    routeBundleIndex: await viewing.promise,
+    async nextHotUpdate(): Promise<HotUpdateRouteLists> {
+      let payload = unreadHotUpdates.shift();
+      if (!payload) {
+        if (failure) throw failure;
+        reader = Promise.withResolvers<ArrayBuffer>();
+        payload = await reader.promise;
+      }
+      return decodeRouteLists(payload);
+    },
+    [Symbol.dispose]() {
+      ws.onclose = null;
+      ws.close();
+    },
+  };
+}

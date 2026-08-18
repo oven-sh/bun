@@ -1333,16 +1333,32 @@ describe.concurrent(() => {
          const before = list.length;
          require("node:zlib");
          if (process.moduleLoadList !== list) throw new Error("identity");
-         const afterRequire = { hadZlib: list.slice(0, before).includes("NativeModule zlib"), last: list.at(-1), grew: list.length > before };
+         const result = { hadZlib: list.slice(0, before).includes("NativeModule zlib"), last: list.at(-1), grew: list.length > before };
          // A native module reached through the ES module loader is listed too.
-         await import("node:buffer");
-         console.log(JSON.stringify({ ...afterRequire, buffer: list.includes("Internal Binding buffer") }));`,
+         const beforeImport = list.length;
+         await import("bun:jsc");
+         result.esmNative = list.slice(beforeImport);
+         // Each thread has its own list: a Worker sees what it loaded, not the parent's zlib.
+         const { Worker } = require("node:worker_threads");
+         const worker = new Worker("const l = process.moduleLoadList; require('node:worker_threads').parentPort.postMessage({ zlib: l.includes('NativeModule zlib'), wt: l.includes('NativeModule worker_threads') })", { eval: true });
+         worker.once("message", inWorker => {
+           result.inWorker = inWorker;
+           console.log(JSON.stringify(result));
+           worker.terminate();
+         });`,
       ],
       env: bunEnv,
-      stderr: "inherit",
+      stderr: "pipe",
     });
-    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
-    expect(stdout).toBe(JSON.stringify({ hadZlib: false, last: "NativeModule zlib", grew: true, buffer: true }) + "\n");
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout)).toEqual({
+      hadZlib: false,
+      last: "NativeModule zlib",
+      grew: true,
+      esmNative: ["Internal Binding bun:jsc"],
+      inWorker: { zlib: false, wt: true },
+    });
     expect(exitCode).toBe(0);
   });
 

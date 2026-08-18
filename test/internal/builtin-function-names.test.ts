@@ -8,6 +8,7 @@
 // without an $overriddenName gets name === "".
 import { describe, expect, test } from "bun:test";
 import Module from "node:module";
+import { inspect } from "node:util";
 
 describe("functions implemented in src/js/builtins", () => {
   test("are named after the exported function", () => {
@@ -45,21 +46,36 @@ describe("functions implemented in src/js/builtins", () => {
   });
 
   test("use $overriddenName when the exported name differs from the exposed one", () => {
+    // UtilInspect.ts stylizeWithNoColor is the `stylize` Bun.inspect hands to inspect.custom.
+    let stylizeName: string | undefined;
+    Bun.inspect({
+      [inspect.custom](_depth: number, options: { stylize: Function }) {
+        stylizeName = options.stylize.name;
+        return "";
+      },
+    });
+
     expect({
+      "Bun.inspect stylize": stylizeName,
       // Peek.ts peekStatus
       "Bun.peek.status": Bun.peek.status.name,
       // ProcessObjectInternals.ts rawDebug
       "process._rawDebug": process._rawDebug.name,
       // CommonJS.ts overridableRequire
       "Module.prototype.require": Module.prototype.require.name,
+      // CommonJS.ts requireResolve. `require.resolve` itself is a bound function that
+      // JSCommonJSModule.cpp names "resolve", so its name is "bound resolve" either way.
+      "Object.getPrototypeOf(require).resolve": Object.getPrototypeOf(require).resolve.name,
       // ConsoleObject.ts asyncIterator
       "console[Symbol.asyncIterator]": console[Symbol.asyncIterator].name,
       // JSBufferPrototype.ts offset, a $getter
       "get Buffer.prototype.offset": Object.getOwnPropertyDescriptor(Buffer.prototype, "offset")!.get!.name,
     }).toEqual({
+      "Bun.inspect stylize": "stylizeNoColor",
       "Bun.peek.status": "status",
       "process._rawDebug": "_rawDebug",
       "Module.prototype.require": "require",
+      "Object.getPrototypeOf(require).resolve": "resolve",
       "console[Symbol.asyncIterator]": "[Symbol.asyncIterator]",
       "get Buffer.prototype.offset": "get offset",
     });

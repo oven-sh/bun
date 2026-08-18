@@ -14,6 +14,9 @@ export function getStylizeWithColor(inspect: Inspect) {
   };
 }
 
+// Bun.inspect passes this as `stylize` too. util.inspect (internal/util/inspect.js)
+// and Node name theirs stylizeNoColor.
+$overriddenName = "stylizeNoColor";
 export function stylizeWithNoColor(str: string) {
   return str;
 }

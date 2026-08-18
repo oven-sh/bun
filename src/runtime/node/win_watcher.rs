@@ -338,9 +338,8 @@ impl PathWatcher {
         path: &ZStr,
         recursive: bool,
     ) -> sys::Result<*mut PathWatcher> {
-        // Watch (and dedup on) the resolved path, like the posix backend. Not the
-        // raw readlink target: a symlink's stored target may be relative to the
-        // link's directory, and libuv resolves relative paths against the cwd.
+        // Resolve symlinks here rather than passing libuv the readlink() target:
+        // a relative target is relative to the link's directory, not the cwd.
         let mut resolve_buf = bun_paths::path_buffer_pool::get();
         let event_path: &ZStr = match sys::realpath(path, &mut resolve_buf) {
             Ok(resolved) => {
@@ -348,9 +347,7 @@ impl PathWatcher {
                 resolve_buf[len] = 0;
                 ZStr::from_buf(&resolve_buf[..], len)
             }
-            // Best effort: uv_fs_event_start reports a missing path itself, and it
-            // watches a file through its parent directory, so it can still succeed
-            // on a file that exists but cannot be opened (permissions, sharing).
+            // Missing or unopenable: uv_fs_event_start decides, as it does for node.
             Err(_) => path,
         };
 

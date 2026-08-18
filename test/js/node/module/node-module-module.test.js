@@ -29,12 +29,16 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
-  test("Module.prototype is not enumerable", () => {
+  test("Module.prototype is not enumerable", async () => {
     const Module = require("module");
     const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");
     expect(descriptor).toEqual({ writable: true, enumerable: false, configurable: false });
     expect(value).toBe(Module.prototype);
     expect(Object.keys(Module)).not.toContain("prototype");
+    // and so, as in Node, it is not a named export of the ES module either
+    const ns = await import("node:module");
+    expect(Object.keys(ns)).not.toContain("prototype");
+    expect(ns.default.prototype).toBe(Module.prototype);
   });
 
   // jest-runtime builds the `Module` it hands to tests this way. Assigning a class's `prototype` throws, so this

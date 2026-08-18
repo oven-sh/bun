@@ -1216,11 +1216,14 @@ JSC::JSObject* generateNativeModule_NodeModule(JSC::JSGlobalObject* lexicalGloba
     auto& vm = JSC::getVM(globalObject);
     auto* constructor = globalObject->m_nodeModuleConstructor.getInitializedOnMainThread(globalObject);
 
-    // The exports are the static table's entries, not the constructor's own properties (`length`, `name`,
-    // whatever user code assigned onto Module).
+    // The exports are the static table's enumerable entries, not the constructor's own properties (`length`,
+    // `name`, `prototype`, whatever user code assigned onto Module).
     PropertyNameArrayBuilder properties(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    for (const auto& entry : Bun::nodeModuleObjectTableValues)
+    for (const auto& entry : Bun::nodeModuleObjectTableValues) {
+        if (entry.attributes() & PropertyAttribute::DontEnum)
+            continue;
         properties.add(Identifier::fromString(vm, entry.m_key));
+    }
 
     return exportObjectProperties(vm, constructor, properties, exportNames, exportValues);
 }

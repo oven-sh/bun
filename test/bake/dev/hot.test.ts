@@ -656,6 +656,40 @@ devTest("server: a sync throw during an update with a reload in flight leaves no
     await dev.fetch("/").equals("slow(v3) sync(v3)");
   },
 });
+devTest("server: an accept callback that throws does not stop the others", {
+  framework: minimalFramework,
+  files: {
+    "d.ts": `
+      export const d = "d1";
+    `,
+    "a.ts": `
+      import "./d";
+      import.meta.hot.accept("./d", () => {
+        throw new Error("a accept boom");
+      });
+    `,
+    "b.ts": `
+      import "./d";
+      import.meta.hot.accept("./d", newModule => (globalThis.log ??= []).push("b accepted " + newModule.d));
+    `,
+    "routes/index.ts": `
+      import "../a";
+      import "../b";
+      export default function () {
+        return Response.json(globalThis.log ?? []);
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toStrictEqual([]);
+    await dev.write("d.ts", `export const d = "d2";`);
+    await dev.output.waitForLine(/a accept boom/);
+    expect(await dev.fetch("/").json()).toStrictEqual(["b accepted d2"]);
+    await dev.write("d.ts", `export const d = "d3";`);
+    await dev.output.waitForLine(/a accept boom/);
+    expect(await dev.fetch("/").json()).toStrictEqual(["b accepted d2", "b accepted d3"]);
+  },
+});
 devTest("import.meta.hot.accept specifier callbacks run once per update, dispose once per module", {
   files: {
     // once: index -> d, index -> a -> d, index -> b -> c -> d, index -> other -> d, other -> a. `index` and `other` are reached once per path; each callback runs once, with every accepted module the update replaced.

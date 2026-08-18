@@ -824,6 +824,15 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   const promises: Promise<HMRModule>[] = [];
   const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];
+  // Like dispose: every accept callback runs, the first failure fails the update once it is applied.
+  let acceptError: { error: unknown } | null = null;
+  const runAccept = (cb: HotAcceptFunction | HotArrayAcceptFunction, arg: any) => {
+    try {
+      cb(arg);
+    } catch (error) {
+      acceptError ??= { error };
+    }
+  };
   let syncError: { error: unknown } | null = null;
   try {
     for (const [mod, selfAccept] of selfAccepts) {
@@ -832,15 +841,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         DEBUG.ASSERT(modOrPromise instanceof Promise);
         promises.push(
           (modOrPromise as Promise<HMRModule>).then(mod => {
-            if (selfAccept) {
-              selfAccept(getEsmExports(mod));
-            }
+            if (selfAccept) runAccept(selfAccept, getEsmExports(mod));
             return mod;
           }),
         );
       } else if (selfAccept) {
         if (mod.state === State.Loaded) {
-          selfAccept(getEsmExports(mod));
+          runAccept(selfAccept, getEsmExports(mod));
         } else {
           acceptsAfterLoad.push([mod, selfAccept]);
         }
@@ -860,9 +867,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     throw syncError.error;
   }
   for (const [mod, selfAccept] of acceptsAfterLoad) {
-    if (mod.state === State.Loaded) {
-      selfAccept(getEsmExports(mod));
-    }
+    if (mod.state === State.Loaded) runAccept(selfAccept, getEsmExports(mod));
   }
   for (const mod of toReload) {
     const { selfAccept } = mod;
@@ -874,7 +879,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   for (const [{ cb, modules, single }, { importer, keys }] of toAccept) {
     // The importer was itself re-evaluated in this update, so its old callback is stale.
     if (toReload.has(importer)) continue;
-    cb(single ? getEsmExports(registry.get(modules[0])!) : createAcceptArray(modules, keys));
+    runAccept(cb, single ? getEsmExports(registry.get(modules[0])!) : createAcceptArray(modules, keys));
   }
 
   if (refreshRuntime) {
@@ -882,6 +887,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   emitEvent("bun:afterUpdate", null);
+  if (acceptError) throw acceptError.error;
 }
 
 function patchImporters(mod: HMRModule) {

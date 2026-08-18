@@ -1802,6 +1802,45 @@ pub mod js_bundler {
         }
     }
 
+    /// Owner of a protected `JSBundlerPlugin` cell; `Drop` releases it via [`PluginJscExt::destroy`]. JS thread only.
+    pub struct OwnedPlugin(core::ptr::NonNull<Plugin>);
+
+    impl OwnedPlugin {
+        pub fn create(global: &JSGlobalObject, target: jsc::BunPluginTarget) -> Self {
+            Self(
+                core::ptr::NonNull::new(Plugin::create(global, target))
+                    .expect("JSBundlerPlugin__create returns a non-null cell"),
+            )
+        }
+
+        /// Borrowed handle, valid until `self` drops.
+        #[inline]
+        pub fn as_non_null(&self) -> core::ptr::NonNull<Plugin> {
+            self.0
+        }
+    }
+
+    impl core::ops::Deref for OwnedPlugin {
+        type Target = Plugin;
+        #[inline]
+        fn deref(&self) -> &Plugin {
+            Plugin::opaque_ref(self.0.as_ptr())
+        }
+    }
+
+    impl core::ops::DerefMut for OwnedPlugin {
+        #[inline]
+        fn deref_mut(&mut self) -> &mut Plugin {
+            Plugin::opaque_mut(self.0.as_ptr())
+        }
+    }
+
+    impl Drop for OwnedPlugin {
+        fn drop(&mut self) {
+            Plugin::destroy(self.0.as_ptr());
+        }
+    }
+
     /// Convert a JS exception value into a `logger.Msg`. If the conversion itself
     /// throws (e.g. `Symbol.toPrimitive` on the thrown object throws), clear that
     /// secondary exception and return a generic fallback message so
@@ -1889,6 +1928,7 @@ pub mod js_bundler {
 
 pub use js_bundler as JSBundler;
 pub use js_bundler::Config;
+pub(crate) use js_bundler::OwnedPlugin;
 /// `jsc.API.JSBundler.Plugin` — re-exported for `crate::bake` (`SplitBundlerOptions.plugin`).
 pub use js_bundler::Plugin;
 pub(crate) use js_bundler::PluginJscExt;

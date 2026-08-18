@@ -5,7 +5,6 @@
 #![allow(unexpected_cfgs)] // `bun_codegen_embed` is set via RUSTFLAGS (scripts/build/rust.ts) for release/CI builds.
 
 use bun_alloc::ArenaVecExt as _;
-use core::ptr::NonNull;
 
 use bun_alloc::Arena; // = bumpalo::Bump
 use bun_collections::ArrayHashMap;
@@ -15,10 +14,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, JsResult, ZigStringSlice};
 use bun_options_types::schema as bun_schema;
 use bun_paths::{self as paths, PathBuffer};
 
-// `jsc.API.JSBundler.Plugin` — opaque FFI handle for the C++ JSBundlerPlugin.
-// Re-exported from `crate::api::js_bundler` so `SplitBundlerOptions.plugin`
-// shares the same type the bundler pipeline uses.
-pub(crate) use crate::api::js_bundler::Plugin;
+use crate::api::js_bundler::OwnedPlugin;
 use crate::api::js_bundler::js_bundler::PluginJscExt as _;
 
 // Note: parent `mod.rs` already declares `dev_server` / `framework_router`
@@ -143,20 +139,6 @@ pub struct UserOptions {
     pub(crate) root: &'static ZStr, // TODO(lifetime): arena-owned, self-referential with .arena
     pub(crate) framework: Framework,
     pub(crate) bundler_options: SplitBundlerOptions,
-}
-
-impl Drop for UserOptions {
-    fn drop(&mut self) {
-        // arena: dropped by Bump's Drop
-        // allocations: dropped by StringRefList's Drop
-        if let Some(p) = self.bundler_options.plugin {
-            // `p` is the FFI handle returned by `Plugin::create` in
-            // `parse_plugin_array`; `PluginJscExt::destroy` is its paired
-            // (safe) destructor — it null-checks via `opaque_ref` and
-            // unprotect()s the JSCell / tombstones the C++ object.
-            Plugin::destroy(p.as_ptr());
-        }
-    }
 }
 
 impl UserOptions {
@@ -296,7 +278,8 @@ impl StringRefList {
 
 #[derive(Default)]
 pub struct SplitBundlerOptions {
-    pub plugin: Option<NonNull<Plugin>>,
+    /// One cell for `framework.plugins` + `app.plugins`; released on drop unless `NewServer::init` moves it into the `DevServer`.
+    pub plugin: Option<OwnedPlugin>,
     pub client: BuildConfigSubset,
     pub server: BuildConfigSubset,
     pub ssr: BuildConfigSubset,
@@ -312,18 +295,10 @@ impl SplitBundlerOptions {
         plugin_array: JSValue,
         global: &JSGlobalObject,
     ) -> JsResult<()> {
-        // Create the Plugin and assign it to `opts.plugin` BEFORE iterating,
-        // so `plugins: []` still leaves `self.plugin = Some(_)`.
-        let plugin: NonNull<Plugin> = match self.plugin {
-            Some(p) => p,
-            None => {
-                let p = Plugin::create(global, bun_jsc::BunPluginTarget::Bun);
-                let p = NonNull::new(p)
-                    .expect("JSBundlerPlugin__create returns a non-null protected JSCell");
-                self.plugin = Some(p);
-                p
-            }
-        };
+        // Created before iterating so `plugins: []` still leaves `self.plugin = Some(_)`.
+        let plugin: &mut OwnedPlugin = self
+            .plugin
+            .get_or_insert_with(|| OwnedPlugin::create(global, bun_jsc::BunPluginTarget::Bun));
         let empty_object = JSValue::create_empty_object(global, 0);
 
         let mut iter = plugin_array.array_iterator(global)?;
@@ -356,15 +331,8 @@ impl SplitBundlerOptions {
                 }
             };
 
-            // `Plugin` is an `opaque_ffi!` ZST — `opaque_mut` is the safe
-            // deref. Handle held live in `self.plugin` (protected JSCell).
-            let plugin_result = Plugin::opaque_mut(plugin.as_ptr()).add_plugin(
-                function,
-                empty_object,
-                JSValue::NULL,
-                false,
-                true,
-            )?;
+            let plugin_result =
+                plugin.add_plugin(function, empty_object, JSValue::NULL, false, true)?;
 
             if let Some(promise) = plugin_result.as_any_promise() {
                 promise.set_handled(global.vm());

@@ -153,3 +153,112 @@ test("dev server deinitializes itself when its initialization fails", async () =
   // Under ASAN, LeakSanitizer turns anything the failed servers left behind into a non-zero exit.
   expect(exitCode).toBe(0);
 });
+
+// `app.plugins` are held by one native BundlerPlugin cell that the dev server takes over from the serve options; each case releases the cell's owner differently and reports how many cells survive a full GC.
+async function runAppPluginsCase(name: string) {
+  using dir = tempDir("app-plugins-release", {
+    "server.ts": `export function render() { return new Response("unused"); }`,
+    "app-plugins-release.ts": `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { heapStats } from "bun:jsc";
+
+      const liveCells = () => heapStats().objectTypeCounts.BundlerPlugin ?? 0;
+
+      // A released cell still has to be collected; a protected one survives every collection.
+      async function liveCellsAfterGC(expected) {
+        for (let attempt = 0; attempt < 10 && liveCells() !== expected; attempt++) {
+          Bun.gc(true);
+          await new Promise(resolve => setTimeout(resolve, 0));
+        }
+        return liveCells();
+      }
+
+      function serveOptions(setup, serverEntryPoint = "./server.ts") {
+        return {
+          port: 0,
+          development: true,
+          fetch: () => new Response("unused"),
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint }],
+            },
+            plugins: [{ name: "probe", setup }],
+          },
+        };
+      }
+
+      function registerOnLoad(build) {
+        build.onLoad({ filter: /\\.probe$/ }, () => ({ contents: "", loader: "js" }));
+      }
+
+      function serveError(options) {
+        try {
+          Bun.serve(options).stop(true);
+          return "did not throw";
+        } catch (error) {
+          return error.message;
+        }
+      }
+
+      let report;
+      switch (process.argv[2]) {
+        case "stopped-server": {
+          const server = Bun.serve(serveOptions(registerOnLoad));
+          const cellsWhileServing = await liveCellsAfterGC(1);
+          server.stop(true);
+          report = { cellsWhileServing };
+          break;
+        }
+        case "setup-throws": {
+          report = { error: serveError(serveOptions(() => { throw new Error("setup failed on purpose"); })) };
+          break;
+        }
+        case "init-fails": {
+          report = { error: serveError(serveOptions(registerOnLoad, "./does-not-exist.ts")) };
+          break;
+        }
+      }
+
+      report.leakedCells = await liveCellsAfterGC(0);
+      report.devServersDeinitialized = getDevServerDeinitCount();
+      console.log(JSON.stringify(report));
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "app-plugins-release.ts", name],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout, stderr).toStartWith("{");
+  return { ...JSON.parse(stdout), exitCode };
+}
+
+test("a stopped dev server releases the cell holding its app plugins", async () => {
+  expect(await runAppPluginsCase("stopped-server")).toStrictEqual({
+    cellsWhileServing: 1,
+    devServersDeinitialized: 1,
+    leakedCells: 0,
+    exitCode: 0,
+  });
+});
+
+test("serve options rejected by a plugin's setup() release the cell", async () => {
+  expect(await runAppPluginsCase("setup-throws")).toStrictEqual({
+    error: "setup failed on purpose",
+    devServersDeinitialized: 0,
+    leakedCells: 0,
+    exitCode: 0,
+  });
+});
+
+test("a dev server that fails to initialize releases the cell", async () => {
+  expect(await runAppPluginsCase("init-fails")).toStrictEqual({
+    error: "Framework is missing required files!",
+    devServersDeinitialized: 1,
+    leakedCells: 0,
+    exitCode: 0,
+  });
+});

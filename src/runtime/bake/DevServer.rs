@@ -198,8 +198,7 @@ pub enum Magic {
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub enum PluginState {
-    /// Should ask server for plugins. Once plugins are loaded, the plugin
-    /// pointer is written into `server_transpiler.options.plugin`
+    /// Should ask server for plugins (unless the app brought its own); the loaded cell lands in `bundler_options.plugin`.
     Unknown,
     // These two states mean that `server.getOrLoadPlugins()` was called.
     Pending,
@@ -1941,8 +1940,11 @@ fn ensure_route_is_bundled<Ctx: EnsureRouteCtx>(
                                     }
                                     crate::server::GetOrStartLoadResult::Ready(ready) => {
                                         dev.plugin_state = PluginState::Loaded;
-                                        dev.bundler_options.plugin =
-                                            ready.map(::core::ptr::NonNull::from);
+                                        dev.bundler_options.plugin = ready.map(|plugin| {
+                                            bake::DevServerPlugin::Borrowed(
+                                                ::core::ptr::NonNull::from(plugin),
+                                            )
+                                        });
                                     }
                                 }
                             }
@@ -3147,7 +3149,11 @@ impl DevServer {
                 client_transpiler: unsafe { ::core::ptr::NonNull::new_unchecked(client_ptr) },
                 // SAFETY: same as above.
                 ssr_transpiler: unsafe { ::core::ptr::NonNull::new_unchecked(ssr_ptr) },
-                plugins: self.bundler_options.plugin,
+                plugins: self
+                    .bundler_options
+                    .plugin
+                    .as_ref()
+                    .map(bake::DevServerPlugin::as_non_null),
             }),
             // SAFETY: see `heap_ptr` note above.
             unsafe { &*heap_ptr },
@@ -6165,7 +6171,11 @@ impl DevServer {
         &mut self,
         plugins: Option<*mut crate::api::js_bundler::Plugin>,
     ) -> crate::Result<()> {
-        self.bundler_options.plugin = plugins.and_then(::core::ptr::NonNull::new);
+        // Only reached when the app declared no plugins of its own, so this never replaces an `Owned` cell.
+        debug_assert!(self.bundler_options.plugin.is_none());
+        self.bundler_options.plugin = plugins
+            .and_then(::core::ptr::NonNull::new)
+            .map(bake::DevServerPlugin::Borrowed);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
         Ok(())

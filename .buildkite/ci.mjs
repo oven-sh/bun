@@ -517,14 +517,11 @@ function getBuildCommand(target, options, mode) {
  */
 function getBuildBunStep(platform, options) {
   const { os, arch } = platform;
-  // BoringSSL's win-x64 assembly is NASM syntax. The agent images bake nasm
-  // (.buildkite/Dockerfile); best-effort install covers older images, and
-  // `|| true` keeps a missing package manager from failing the step — the
-  // build's own "nasm not found" error is clearer.
+  // Best-effort nasm for x64 (BoringSSL win-x64, libjpeg-turbo SIMD); images bake it, and the build's own error is clearer.
   const nasmSetup =
-    os === "windows" && arch === "x64"
+    arch === "x64"
       ? [
-          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || true",
+          "which nasm || (apt-get update -qq && apt-get install -y -qq nasm) || dnf install -y -q nasm || yum install -y -q nasm || brew install nasm || true",
         ]
       : [];
   return {

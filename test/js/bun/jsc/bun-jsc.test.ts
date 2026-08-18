@@ -15,6 +15,7 @@ import {
   memoryUsage,
   numberOfDFGCompiles,
   optimizeNextInvocation,
+  percentAvailableMemoryInUse,
   profile,
   releaseWeakRefs,
   reoptimizationRetryCount,
@@ -24,7 +25,7 @@ import {
   totalCompileTime,
 } from "bun:jsc";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isBuildKite, isWindows } from "harness";
+import { bunEnv, bunExe, isBuildKite, isFreeBSD, isMacOS, isWindows } from "harness";
 
 describe("bun:jsc", () => {
   function count() {
@@ -64,6 +65,22 @@ describe("bun:jsc", () => {
     const usage = memoryUsage();
     expect(usage.current).toBeGreaterThan(0);
     expect(usage.peak).toBeGreaterThan(0);
+  });
+  it("percentAvailableMemoryInUse", () => {
+    const inUse = percentAvailableMemoryInUse();
+    if (isWindows || isFreeBSD) {
+      // JavaScriptCore does not take this reading (USE(MEMORY_FOOTPRINT_API)) there.
+      expect(inUse).toBeNull();
+      return;
+    }
+    // The process footprint divided by process.constrainedMemory(), clamped to 1.
+    expect(inUse).toBeNumber();
+    expect(inUse).toBeGreaterThanOrEqual(0);
+    expect(inUse).toBeLessThanOrEqual(1);
+    // On Linux, WTF currently parses the footprint out of /proc/self/statm as 0
+    // (oven-sh/WebKit#449); on macOS it comes from task_info and a running
+    // process always has one.
+    if (isMacOS) expect(inUse).toBeGreaterThan(0);
   });
   it("getRandomSeed", () => {
     expect(getRandomSeed()).toBeDefined();

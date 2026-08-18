@@ -33,6 +33,7 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <algorithm>
 #include <cstddef>
+#include <wtf/AvailableMemory.h>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
@@ -956,23 +957,17 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     return JSValue::encode(jsNumber(0));
 }
 
-#if USE(BMALLOC_MEMORY_FOOTPRINT_API)
-
-#include <bmalloc/bmalloc.h>
-
-JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
+// Same gate and same reading as JSC::Heap::overCriticalMemoryThreshold().
+JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject*, CallFrame*))
 {
-    return JSValue::encode(jsDoubleNumber(bmalloc::api::percentAvailableMemoryInUse()));
-}
-
-#else
-
-JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
+#if USE(MEMORY_FOOTPRINT_API)
+    return JSValue::encode(jsNumber(WTF::percentAvailableMemoryInUse()));
+#elif OS(WINDOWS) || OS(FREEBSD)
     return JSValue::encode(jsNull());
-}
-
+#else
+#error "USE(MEMORY_FOOTPRINT_API) is off on a platform that had it: WebKit renamed the gate again, or this platform belongs in the null branch above"
 #endif
+}
 
 // clang-format off
 /* Source for BunJSCModuleTable.lut.h

@@ -13,6 +13,7 @@ import {
   noOSRExitFuzzing,
   numberOfDFGCompiles,
   optimizeNextInvocation,
+  percentAvailableMemoryInUse,
   profile,
   reoptimizationRetryCount,
   serialize,
@@ -45,6 +46,7 @@ expectType(stats.protectedObjectTypeCounts).is<Record<string, number>>();
 
 expectType(memoryUsage().current).is<number>();
 expectType(memoryUsage().pageFaults).is<number>();
+expectType(percentAvailableMemoryInUse()).is<number | null>();
 
 expectType(callerSourceOrigin()).is<string | null>();
 

@@ -139,6 +139,18 @@ declare module "bun:jsc" {
   function memoryUsage(): MemoryUsage;
 
   /**
+   * Returns the reading JavaScriptCore's garbage collector compares against its
+   * critical memory threshold (0.8 by default; `BUN_JSC_criticalGCMemoryThreshold`
+   * changes it) to decide whether to collect more aggressively: the process's
+   * memory footprint divided by `process.constrainedMemory()`, clamped to `1`.
+   *
+   * Returns `null` on Windows and FreeBSD, where JavaScriptCore does not take
+   * this reading. To monitor a program's own memory use, prefer
+   * `process.memoryUsage()` or {@link memoryUsage}.
+   */
+  function percentAvailableMemoryInUse(): number | null;
+
+  /**
    * Returns the seed of the pseudo-random number generator behind
    * `Math.random()`. The seed is chosen at random when Bun starts; see
    * {@link setRandomSeed}.

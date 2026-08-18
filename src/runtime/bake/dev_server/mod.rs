@@ -243,6 +243,8 @@ impl IncrementalResult {
 pub struct GraphTraceState {
     pub(crate) client_bits: DynamicBitSet,
     pub(crate) server_bits: DynamicBitSet,
+    /// Filled by `TraceImportGoal::FindErrors`.
+    pub(crate) failures: Vec<SerializedFailure>,
 }
 impl GraphTraceState {
     #[inline]
@@ -256,6 +258,7 @@ impl GraphTraceState {
     pub(crate) fn clear(&mut self) {
         self.server_bits.unmanaged.set_all(false);
         self.client_bits.unmanaged.set_all(false);
+        self.failures.clear();
     }
 
     pub(crate) fn resize(&mut self, side: Side, new_size: usize) -> Result<(), crate::Error> {

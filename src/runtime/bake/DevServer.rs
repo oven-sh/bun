@@ -2234,9 +2234,6 @@ fn check_route_failures(
     resp: DevResponse,
 ) -> crate::Result<CheckResult> {
     let mut gts = dev.init_graph_trace_state(0)?;
-    // Still holds the last bundle's failures, which this route may not import.
-    dev.incremental_result.failures_added.clear();
-    let dev_ptr = std::ptr::from_mut::<DevServer>(dev);
     let _lock_guard = dev.graph_safety_lock.guard();
     let route_bundle = std::ptr::from_mut::<RouteBundle>(dev.route_bundle_ptr(route_bundle_index));
     // SAFETY: `trace_all_route_imports` reads `route_bundle.data` but never
@@ -2248,7 +2245,7 @@ fn check_route_failures(
         &mut gts,
         TraceImportGoal::FindErrors,
     )?;
-    if !dev.incremental_result.failures_added.is_empty() {
+    if !gts.failures.is_empty() {
         let assume_perfect_incremental_bundling = dev.assume_perfect_incremental_bundling;
         let rb = dev.route_bundle_ptr(route_bundle_index);
         // See `assume_perfect_incremental_bundling`.
@@ -2270,11 +2267,7 @@ fn check_route_failures(
             return Ok(CheckResult::Rebuild);
         }
 
-        // SAFETY: `send_serialized_failures` does not mutate
-        // `incremental_result.failures_added`; reborrow through raw ptr to
-        // satisfy borrowck.
-        let failures = unsafe { &(*dev_ptr).incremental_result.failures_added };
-        dev.send_serialized_failures(resp, failures, None)?;
+        dev.send_serialized_failures(resp, &gts.failures, None)?;
         Ok(CheckResult::Stop)
     } else {
         // Failures are unreachable by this route, so it is OK to load.
@@ -3895,6 +3888,7 @@ pub(super) fn finalize_bundle(
     let mut gts_storage = GraphTraceState {
         server_bits: DynamicBitSet::default(),
         client_bits: DynamicBitSet::default(),
+        failures: Vec::new(),
     };
     let mut ctx = HotUpdateContext {
         import_records,
@@ -5521,6 +5515,7 @@ impl DevServer {
         Ok(GraphTraceState {
             server_bits,
             client_bits,
+            failures: Vec::new(),
         })
     }
 }

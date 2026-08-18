@@ -1247,7 +1247,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .get(&owner)
                         .cloned()
                         .expect("Failed to get bundling failure");
-                    self.dev_incremental_result().failures_added.push(fail);
+                    gts.failures.push(fail);
                 }
             }
             Side::Client => {
@@ -1288,7 +1288,7 @@ impl<const SIDE: bake::Side> IncrementalGraph<SIDE> {
                         .get(&owner)
                         .cloned()
                         .expect("Failed to get bundling failure");
-                    self.dev_incremental_result().failures_added.push(fail);
+                    gts.failures.push(fail);
                     return Ok(());
                 }
             }

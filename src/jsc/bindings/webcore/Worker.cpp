@@ -28,6 +28,7 @@
 #include "Worker.h"
 
 #include "InternalModuleRegistry.h"
+#include "JSBuffer.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
 #include "Event.h"
@@ -361,18 +362,58 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
-    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 0, "routeConsoleToProcessStdio"_s, jsFunctionRouteConsoleToProcessStdio, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 2, "routeConsoleToProcessStdio"_s, jsFunctionRouteConsoleToProcessStdio, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 
 extern "C" void Bun__ConsoleObject__routeToProcessStdio(JSC::JSGlobalObject*);
 
-// worker_threads (worker side): the global console writes through process.stdout /
-// process.stderr from now on (Node routes a worker's console through them).
-JSC_DEFINE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio, (JSGlobalObject * lexicalGlobalObject, CallFrame*))
+// worker_threads (worker side): from now on the global console writes through the given
+// process.stdout / process.stderr (port-backed streams to the parent) instead of the fds,
+// as Node routes a worker's console through them.
+JSC_DEFINE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    Bun__ConsoleObject__routeToProcessStdio(defaultGlobalObject(lexicalGlobalObject));
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* stdoutStream = callFrame->argument(0).getObject();
+    auto* stderrStream = callFrame->argument(1).getObject();
+    ASSERT(stdoutStream && stderrStream);
+    globalObject->setNodeWorkerConsoleStreams(stdoutStream, stderrStream);
+    Bun__ConsoleObject__routeToProcessStdio(globalObject);
     return JSValue::encode(jsUndefined());
+}
+
+// The routed console's sink: `stream.write(Buffer)` on the stream registered above. As with
+// Node's Console (ignoreErrors), a failing or ended stream never makes console.log() throw.
+extern "C" void Bun__NodeWorker__writeConsoleStream(JSC::JSGlobalObject* lexicalGlobalObject, int fd, const uint8_t* bytes, size_t length)
+{
+    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto& vm = JSC::getVM(globalObject);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    auto ignoreErrors = [&] { (void)scope.tryClearException(); };
+
+    JSObject* stream = globalObject->nodeWorkerConsoleStream(fd);
+    if (!stream)
+        return;
+    auto& names = WebCore::clientData(vm)->builtinNames();
+    JSValue writable = stream->get(globalObject, names.writablePublicName());
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    if (writable.isFalse())
+        return;
+    JSValue write = stream->get(globalObject, names.writePublicName());
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    auto callData = JSC::getCallData(write);
+    if (callData.type == CallData::Type::None) [[unlikely]]
+        return;
+    auto* buffer = WebCore::createBuffer(globalObject, std::span<const uint8_t>(bytes, length));
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
+    MarkedArgumentBuffer args;
+    args.append(buffer);
+    JSC::call(globalObject, write, callData, stream, args);
+    if (scope.exception()) [[unlikely]]
+        return ignoreErrors();
 }
 
 // worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.

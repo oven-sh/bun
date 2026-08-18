@@ -95,7 +95,7 @@ const {
   boolean,
   (port: MessagePort) => void,
   (ports: object) => void,
-  () => void,
+  (stdout: object, stderr: object) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -337,18 +337,14 @@ const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
 // thread would get); read them here so they exist before user code, as in node.
 function setupWorkerStdio(stdio) {
   _setStdioPorts(stdio);
-  // Built now, as node does: their creation attaches the port listeners that ack
-  // the parent's writes and registers the exit-time flush.
-  void process.stdout;
-  void process.stderr;
+  // node routes a worker's console through its process.stdout/stderr (so the parent's
+  // worker.stdout sees it); the native console writes through these two streams from
+  // here on instead of the fds. It stays the same console the main thread has.
+  _routeConsoleToProcessStdio(process.stdout, process.stderr);
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).
   void process.stdin;
-  // node routes a worker's console through process.stdout/stderr (so the parent's
-  // worker.stdout sees it); the native console does the same from here on instead
-  // of writing the fds. It stays the same console the main thread has.
-  _routeConsoleToProcessStdio();
 }
 
 // Emulation of Node's JSTransferable protocol (kTransfer/kTransferList/kDeserialize) for

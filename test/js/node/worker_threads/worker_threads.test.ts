@@ -499,6 +499,86 @@ describe("stdio is flushed when the worker exits synchronously", () => {
     expect(code).toBe(0);
   });
 
+  // The worker keeps the same (native) console as the main thread; it writes through the
+  // worker's process.stdout / process.stderr, so every method lands in the captured stream
+  // it belongs to, in order with raw writes, formatted as the main thread formats.
+  test("captured stdio: every console method is routed, split and ordered like the main thread's", async () => {
+    const body = `
+      console.log("log %s %d", "s", 42, { a: 1, nested: { b: [1, 2] } });
+      process.stdout.write("raw out\\n");
+      console.info("info");
+      console.table([{ x: 1 }]);
+      console.count("c"); console.count("c");
+      console.group("g"); console.log("in group"); console.groupEnd(); console.log("after group");
+      console.dir({ deep: { deeper: {} } }, { depth: 0 });
+      console.log();
+      console.error("err");
+      process.stderr.write("raw err\\n");
+      console.warn("warn");
+      console.assert(false, "assert %s", "msg"); console.assert(false); console.assert(true, "nope");
+      console.time("t"); console.timeLog("t", "mid"); console.timeEnd("t");
+      console.error();
+      console.clear();
+      require("node:worker_threads").parentPort.postMessage({ mainThreadFormat: Bun.inspect({ a: 1, nested: { b: [1, 2] } }) });`;
+    const worker = new Worker(body, { eval: true, stdout: true, stderr: true });
+    let out = "",
+      err = "";
+    worker.stdout.setEncoding("utf8").on("data", d => (out += d));
+    worker.stderr.setEncoding("utf8").on("data", d => (err += d));
+    const [{ mainThreadFormat }] = await once(worker, "message");
+    const [code] = await once(worker, "exit");
+    expect(out).toBe(
+      `log s 42 ${mainThreadFormat}\n` +
+        "raw out\n" +
+        "info\n" +
+        "┌───┬───┐\n│   │ x │\n├───┼───┤\n│ 0 │ 1 │\n└───┴───┘\n" +
+        "c: 1\nc: 2\n" +
+        "g\n  in group\nafter group\n" +
+        "{\n  deep: [Object ...],\n}\n" +
+        "\n",
+    );
+    expect(err.replace(/\[\d+\.\d+ms\]/g, "[#ms]")).toBe(
+      "err\n" + "raw err\n" + "warn\n" + "assert msg\nAssertion failed\n" + "[#ms] t mid\n[#ms] t\n" + "\n",
+    );
+    expect(code).toBe(0);
+  });
+
+  // As with Node's Console (ignoreErrors): an ended, destroyed or throwing stream drops
+  // console output instead of throwing, and the console stays bound to the streams it
+  // was given at startup even if process.stdout is reassigned.
+  test("console output to a broken or replaced process.stdout is dropped, never thrown", async () => {
+    const worker = new Worker(
+      `console.log("1 reaches the parent");
+       const original = process.stdout;
+       process.stdout = { write() { throw new Error("not this one"); } };
+       console.log("2 still reaches the parent through the original stream");
+       process.stdout = original;
+       original.write = () => { throw new Error("write threw"); };
+       let threw = false;
+       try { console.log("dropped"); console.count("dropped"); } catch { threw = true; }
+       delete original.write;
+       original.end();
+       try { console.log("dropped after end"); } catch { threw = true; }
+       process.stderr.destroy();
+       try { console.error("dropped after destroy"); console.timeEnd("never started"); } catch { threw = true; }
+       require("node:worker_threads").parentPort.postMessage({ threw });`,
+      { eval: true, stdout: true, stderr: true },
+    );
+    let out = "",
+      err = "";
+    worker.stdout.setEncoding("utf8").on("data", d => (out += d));
+    worker.stderr.setEncoding("utf8").on("data", d => (err += d));
+    const errors: unknown[] = [];
+    worker.on("error", e => errors.push(e));
+    const [message] = await once(worker, "message");
+    const [code] = await once(worker, "exit");
+    expect(message).toEqual({ threw: false });
+    expect(errors).toEqual([]);
+    expect(out).toBe("1 reaches the parent\n2 still reaches the parent through the original stream\n");
+    expect(err).toBe("");
+    expect(code).toBe(0);
+  });
+
   test.concurrent.each([
     ["process.exit", "process.exit(0);", 0],
     ["uncaught exception", 'throw new Error("boom");', 1],

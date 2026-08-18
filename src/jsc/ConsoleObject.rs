@@ -593,7 +593,7 @@ fn write_message(
 /// `process.stdout` / `process.stderr` (streams to the parent thread). Stream
 /// errors are dropped, like Node's Console with `ignoreErrors`.
 fn write_to_process_stdio(global: &JSGlobalObject, to_stderr: bool, bytes: &[u8]) {
-    Bun__Process__writeToStdioStream(
+    Bun__NodeWorker__writeConsoleStream(
         global,
         if to_stderr { 2 } else { 1 },
         bytes.as_ptr(),
@@ -602,8 +602,9 @@ fn write_to_process_stdio(global: &JSGlobalObject, to_stderr: bool, bytes: &[u8]
 }
 
 unsafe extern "C" {
-    /// `process[fd == 2 ? "stderr" : "stdout"].write(Buffer)`; never leaves an exception pending.
-    safe fn Bun__Process__writeToStdioStream(
+    /// `stream.write(Buffer)` on the worker's bootstrap-time process.stdout/stderr;
+    /// swallows stream errors, so it never leaves a (non-termination) exception pending.
+    safe fn Bun__NodeWorker__writeConsoleStream(
         global: &JSGlobalObject,
         fd: i32,
         bytes: *const u8,

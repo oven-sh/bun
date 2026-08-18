@@ -548,6 +548,10 @@ public:
     /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
     /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
+    /* node:worker_threads worker: the process.stdout / process.stderr the native console writes through */ \
+    /* (bound once at bootstrap, as Node's Console is bound to its streams). */                              \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerConsoleStdout)                                            \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerConsoleStderr)                                            \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \
@@ -787,6 +791,8 @@ public:
     JSMap* nodeWorkerEnvironmentData() { return m_nodeWorkerEnvironmentData.get(); }
     JSObject* nodeWorkerStdioPorts() { return m_nodeWorkerStdioPorts.get(); }
     void setNodeWorkerStdioPorts(JSObject* ports);
+    JSObject* nodeWorkerConsoleStream(int fd) { return (fd == 2 ? m_nodeWorkerConsoleStderr : m_nodeWorkerConsoleStdout).get(); }
+    void setNodeWorkerConsoleStreams(JSObject* stdoutStream, JSObject* stderrStream);
     void setNodeWorkerEnvironmentData(JSMap* data);
     // node:worker_threads parentPort — the transferred MessagePort entangled with the parent
     // Worker's public port. Messages it dispatches are mirrored onto globalEventScope so the

@@ -670,6 +670,10 @@ impl ValkeyClient {
     pub fn on_close(&mut self) -> JsResult<()> {
         self.unregister_auto_flusher();
         self.write_buffer.clear_and_free();
+        // A partial reply can never complete now; left in place it counts as
+        // pending activity in `update_poll_ref` and keeps the event loop alive.
+        self.read_buffer.clear_and_free();
+        self.reply_scanner.reset();
 
         // A manual close or a failure the client detected itself: no retry.
         if self.flags.is_manually_closed || self.flags.failed {

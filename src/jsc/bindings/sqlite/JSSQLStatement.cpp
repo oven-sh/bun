@@ -1005,16 +1005,12 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
 
             if (trimLeadingPrefix && name[0] >= '0' && name[0] <= '9') {
                 if (isPositional) {
-                    // "?NNN" is the 1-based position NNN, bound from array-like 0-based
-                    // keys ({ 0: ..., 1: ... }). SQLite rejects "?0" when preparing.
                     auto integer = WTF::parseInteger<int32_t>(str, 10);
-                    if (integer.has_value() && integer.value() > 0) {
+                    if (integer.has_value()) {
                         return target->getDirectIndex(globalObject, integer.value() - 1);
                     }
                 } else if (auto index = JSC::parseIndex(*str.impl())) {
-                    // "$1" / ":1" / "@1" are names, so the key is the name without the
-                    // prefix. A canonical numeric key is an index property, which the
-                    // named lookup below cannot see.
+                    // A canonical numeric key is an index property; getOwnNonIndexPropertySlot below cannot see it.
                     return target->getDirectIndex(globalObject, *index);
                 }
             }

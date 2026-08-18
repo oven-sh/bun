@@ -572,15 +572,15 @@ Operations on **different views** are fully independent and run in parallel — 
 
 #### `backend` object form
 
-| Option   | Type                      | Description                                                                                                                                            |
-| -------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `type`   | `"chrome"` \| `"webkit"`  | **Required.** Which engine to use.                                                                                                                     |
-| `path`   | `string`                  | (`chrome` only) Path to the Chrome/Chromium executable. Forces spawn mode.                                                                             |
-| `argv`   | `string[]`                | (`chrome` only) Extra launch flags, appended after the defaults. Forces spawn mode.                                                                    |
-| `url`    | `string` \| `false`       | (`chrome` only) `ws://` URL of an existing Chrome's DevTools endpoint, or `false` to skip auto-detect and always spawn. See [above](#existing-chrome). |
-| `stdout` | `"inherit"` \| `"ignore"` | Route the subprocess's stdout to Bun's. Default `"ignore"`.                                                                                            |
-| `stderr` | `"inherit"` \| `"ignore"` | Route the subprocess's stderr to Bun's. Default `"ignore"`.                                                                                            |
-| `detached` | `boolean`               | Spawn the subprocess in its own session, with no controlling terminal. See [above](#detaching-the-subprocess). Default `false`.                       |
+| Option     | Type                      | Description                                                                                                                                            |
+| ---------- | ------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `type`     | `"chrome"` \| `"webkit"`  | **Required.** Which engine to use.                                                                                                                     |
+| `path`     | `string`                  | (`chrome` only) Path to the Chrome/Chromium executable. Forces spawn mode.                                                                             |
+| `argv`     | `string[]`                | (`chrome` only) Extra launch flags, appended after the defaults. Forces spawn mode.                                                                    |
+| `url`      | `string` \| `false`       | (`chrome` only) `ws://` URL of an existing Chrome's DevTools endpoint, or `false` to skip auto-detect and always spawn. See [above](#existing-chrome). |
+| `stdout`   | `"inherit"` \| `"ignore"` | Route the subprocess's stdout to Bun's. Default `"ignore"`.                                                                                            |
+| `stderr`   | `"inherit"` \| `"ignore"` | Route the subprocess's stderr to Bun's. Default `"ignore"`.                                                                                            |
+| `detached` | `boolean`                 | Spawn the subprocess in its own session, with no controlling terminal. See [above](#detaching-the-subprocess). Default `false`.                        |
 
 ### Instance properties
 

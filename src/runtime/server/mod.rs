@@ -1,7 +1,6 @@
 //! `Bun.serve()`: `NewServer` struct + lifecycle (start/stop/listen),
 //! `AnyServer` dispatch, `AnyRoute`, and per-file submodules.
 
-use bun_collections::VecExt;
 use core::ffi::{c_char, c_int, c_void};
 use core::sync::atomic::Ordering;
 
@@ -310,8 +309,8 @@ pub struct NewServer<const SSL: bool, const DEBUG: bool> {
 
     pub(crate) dev_server: Option<Box<crate::bake::DevServer::DevServer>>,
 
-    /// Route → index in RouteList.cpp. User routes may be applied multiple
-    /// times due to SNI, so we have to store them.
+    /// Route → index in RouteList.cpp. uWS route handlers hold pointers into
+    /// this Vec, so it must outlive the registrations.
     pub(crate) user_routes: Vec<UserRoute<SSL, DEBUG>>,
 
     /// Raw shadow of the wrapper's `m_onClientError` WriteBarrier slot.
@@ -2759,12 +2758,12 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
         // reshaped for borrowck (PORTING.md §Forbidden — aliased
         // `&mut`). No long-lived `&mut Self` is held across re-derives from
         // `this`; each use site reborrows fresh and the borrow ends before the
-        // next derive. The serverName / SNI loop extracts raw `(ptr, len)` so
-        // no `&self.config` outlives the per-domain `set_routes()` call.
+        // next derive.
         //
         // SAFETY (applies to every `&mut *this` below): `this` was produced by
-        // `init()` and is live for this call; only one reference derived from
-        // it is alive at a time. Read-only access goes through `this_ref`
+        // `init()` and is live for this call; no reference derived from it is
+        // used across a `&mut *this` re-derive or after `deinit(this)`.
+        // Read-only access goes through `this_ref`
         // (`BackRef<Self>`) — each `Deref` materialises a fresh short-lived
         // `&Self` from the same raw provenance, so the listen-trampoline /
         // `set_routes()` `&mut *this` re-derives never overlap an outstanding
@@ -2835,24 +2834,44 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
             // borrow is live — `&mut` scoped to this call.
             route_list_value = unsafe { (*this).set_routes() };
 
-            // add serverName to the SSL context using the default ssl options
-            // extract raw (ptr, len) so no `&self.config` borrow
-            // outlives the `set_routes()` call below. set_routes() does not
-            // touch `config.ssl_config`, so the bytes remain valid.
-            let server_name_raw = this_ref
+            // Register the default `tls.serverName` and each SNI entry. Only
+            // SNI entries get their own client-certificate policy and H3
+            // registration.
+            let tls_configs = this_ref
                 .config
                 .ssl_config
-                .as_ref()
-                .and_then(|c| c.server_name_cstr())
-                .filter(|n| !n.to_bytes().is_empty())
-                .map(|n| (n.as_ptr(), n.to_bytes().len()));
-            if let Some((name_ptr, name_len)) = server_name_raw {
-                // SAFETY: name_ptr/name_len were just extracted from the live
-                // `config.ssl_config.server_name` CString; valid + NUL-terminated.
-                let server_name = unsafe { bun_core::ffi::cstr(name_ptr) };
+                .iter()
+                .map(|c| (c, false))
+                .chain(this_ref.config.sni.iter().flatten().map(|c| (c, true)));
+            for (tls_config, is_sni) in tls_configs {
+                let Some(server_name) = tls_config.server_name_cstr().filter(|n| !n.is_empty())
+                else {
+                    continue;
+                };
+                let options = tls_config.as_usockets();
+
+                if is_sni && Self::HAS_H3 {
+                    if let Some(h3_app) = this_ref.h3_app {
+                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
+                        if bun_opaque::opaque_deref_mut(h3_app)
+                            .add_server_name_with_options(server_name, &options)
+                            .is_err()
+                        {
+                            if !global.has_exception() {
+                                let _ = global.throw(format_args!(
+                                    "Failed to add serverName \"{}\" for HTTP/3",
+                                    bstr::BStr::new(server_name.to_bytes())
+                                ));
+                            }
+                            // SAFETY: caller contract — `this` is the live boxed server from `init()`.
+                            Self::deinit(this);
+                            return JSValue::ZERO;
+                        }
+                    }
+                }
                 // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
                 if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(server_name, &ssl_options, false)
+                    .add_server_name_with_options(server_name, &options, is_sni)
                     .is_err()
                 {
                     if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
@@ -2870,94 +2889,6 @@ impl<const SSL: bool, const DEBUG: bool> NewServer<SSL, DEBUG> {
                     Self::deinit(this);
                     return JSValue::ZERO;
                 }
-
-                // SAFETY: server_name is a CStr; ZStr::from_raw upholds the NUL invariant.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-
-                // Ensure routes are set for that domain name.
-                // SAFETY: `this` is the live boxed server from `init()`; no
-                // other borrow is live — `&mut` scoped to this call.
-                let _ = unsafe { (*this).set_routes() };
-            }
-
-            // SNI: per-hostname contexts
-            // iterate by index and reborrow `&*this` per iteration so
-            // the `set_routes()` `&mut` at the bottom of the loop body never
-            // overlaps an outstanding `&self.config.sni` borrow.
-            let sni_len = this_ref.config.sni.as_ref().map_or(0, |s| s.slice().len());
-            for i in 0..sni_len {
-                let (name_ptr, name_len, sni_opts) = {
-                    let cfg = this_ref.get();
-                    let sni_ssl_config = &cfg.config.sni.as_ref().unwrap().slice()[i];
-                    let Some(sni_name) = sni_ssl_config.server_name_cstr() else {
-                        continue;
-                    };
-                    if sni_name.to_bytes().is_empty() {
-                        continue;
-                    }
-                    (
-                        sni_name.as_ptr(),
-                        sni_name.to_bytes().len(),
-                        sni_ssl_config.as_usockets(),
-                    )
-                };
-                // SAFETY: name_ptr/name_len point into config.sni[i].server_name;
-                // set_routes() does not mutate config.sni so the bytes are valid.
-                let sni_name = unsafe { bun_core::ffi::cstr(name_ptr) };
-                // SAFETY: sni_name is a CStr; NUL invariant holds for ZStr.
-                let z = unsafe { bun_core::ZStr::from_raw(name_ptr.cast(), name_len) };
-
-                if Self::HAS_H3 {
-                    if let Some(h3_app) = this_ref.h3_app {
-                        // S008: `h3::App` is an `opaque_ffi!` ZST — safe deref.
-                        if bun_opaque::opaque_deref_mut(h3_app)
-                            .add_server_name_with_options(z, &sni_opts)
-                            .is_err()
-                        {
-                            if !global.has_exception() {
-                                let _ = global.throw(format_args!(
-                                    "Failed to add serverName \"{}\" for HTTP/3",
-                                    bstr::BStr::new(sni_name.to_bytes())
-                                ));
-                            }
-                            // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                            Self::deinit(this);
-                            return JSValue::ZERO;
-                        }
-                    }
-                }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                if bun_opaque::opaque_deref_mut(app)
-                    .add_server_name_with_options(sni_name, &sni_opts, true)
-                    .is_err()
-                {
-                    if !global.has_exception() && !throw_ssl_error_if_necessary(global) {
-                        let _ = global.throw(format_args!(
-                            "Failed to add serverName: {}",
-                            bstr::BStr::new(sni_name.to_bytes())
-                        ));
-                    }
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-                // S012: `NewApp<SSL>` is a ZST opaque — safe `*mut → &mut` deref.
-                bun_opaque::opaque_deref_mut(app).domain(z);
-                if throw_ssl_error_if_necessary(global) {
-                    // SAFETY: caller contract — `this` is the live boxed server from `init()`.
-                    Self::deinit(this);
-                    return JSValue::ZERO;
-                }
-                // SAFETY: `this` is the live boxed server from `init()`; no
-                // other borrow is live — `&mut` scoped to this call.
-                let _ = unsafe { (*this).set_routes() };
             }
         } else {
             app = match uws_sys::NewApp::<SSL>::create(&uws_sys::BunSocketContextOptions::default())

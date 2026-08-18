@@ -106,11 +106,12 @@ private:
      * once in the constructor; the listener up_ref's it; SSL_CTX_free in dtor. */
     struct ssl_ctx_st *sslCtx = nullptr;
     /* SNI: the tree hangs off the listen socket, but addServerName() is allowed
-     * before listen(). Queue them and replay onto each us_listen_socket_t. */
+     * before listen(). Queue them and replay onto each us_listen_socket_t.
+     * Every server name shares the one HttpRouter in HttpContextData; only the
+     * SSL_CTX differs per name. */
     struct PendingServerName {
         std::string hostname;
         struct ssl_ctx_st *ctx;
-        HttpRouter<typename HttpContextData<SSL>::RouterData> *router;
     };
     std::vector<PendingServerName> pendingServerNames;
     /* No raw us_listen_socket_t* cache here. src/runtime/server/mod.rs's non-abrupt stop calls
@@ -151,26 +152,19 @@ public:
             if (applyClientCertPolicy) {
                 us_ssl_ctx_set_sni_policy(domainCtx, options.request_cert, options.reject_unauthorized);
             }
-            auto *domainRouter = new HttpRouter<typename HttpContextData<SSL>::RouterData>();
             int result = 0;
             forEachListenSocket([&](us_listen_socket_t *ls) {
-                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx, domainRouter);
+                result |= us_listen_socket_add_server_name(ls, hostname_pattern.c_str(), domainCtx);
             });
             if (result != 0) {
-                /* At least one listener rejected the entry (duplicate hostname).
-                 * Roll back any that succeeded so we don't leave the SNI tree
-                 * pointing at a router we're about to delete. */
-                forEachListenSocket([&](us_listen_socket_t *ls) {
-                    us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
-                });
+                /* Duplicate hostname; sni_add() left the existing entry in place. */
                 us_internal_ssl_ctx_unref(domainCtx);
-                delete domainRouter;
                 if (success) *success = false;
                 return std::move(*this);
             }
             /* Queue for any listeners not yet created. We hold one SSL_CTX ref;
              * each listen socket took its own via SSL_CTX_up_ref. */
-            pendingServerNames.push_back({hostname_pattern, domainCtx, domainRouter});
+            pendingServerNames.push_back({hostname_pattern, domainCtx});
             if (success) *success = true;
         }
 
@@ -179,17 +173,14 @@ public:
 
     TemplatedApp &&removeServerName(const std::string &hostname_pattern) {
         if constexpr (SSL) {
-            /* The SNI tree on each listener stores a *borrowed* router pointer
-             * (and its own SSL_CTX_up_ref). pendingServerNames is the single
-             * owner — drop the borrowers first, then free the owner exactly
-             * once. The old loop deleted the router once per listener. */
+            /* Each listener's SNI tree holds its own SSL_CTX_up_ref; drop those,
+             * then our own ref from addServerName(). */
             forEachListenSocket([&](us_listen_socket_t *ls) {
                 us_listen_socket_remove_server_name(ls, hostname_pattern.c_str());
             });
             for (auto it = pendingServerNames.begin(); it != pendingServerNames.end(); ) {
                 if (it->hostname == hostname_pattern) {
                     us_internal_ssl_ctx_unref(it->ctx);
-                    delete it->router;
                     it = pendingServerNames.erase(it);
                 } else ++it;
             }
@@ -290,14 +281,10 @@ public:
         }
 
         if constexpr (SSL) {
-            /* pendingServerNames is the single owner of each domain router; the
-             * SNI trees on listen sockets hold borrowed pointers. The caller
-             * must have already run TemplatedApp::close() (which close_all()'s
-             * the http group → us_listen_socket_close() → sni_free()) before
-             * destroying us — httpContext->free() above only deinit()'s. */
+            /* Our refs from addServerName(); each listener's SNI tree took and
+             * drops its own in sni_free(). */
             for (auto &p : pendingServerNames) {
                 us_internal_ssl_ctx_unref(p.ctx);
-                delete p.router;
             }
             us_internal_ssl_ctx_unref(sslCtx);
         }
@@ -599,23 +586,6 @@ public:
         return std::move(*this);
     }
 
-    /* Browse to a server name, changing the router to this domain */
-    TemplatedApp &&domain(const std::string &serverName) {
-        HttpContextData<SSL> *httpContextData = httpContext->getSocketContextData();
-
-        void *domainRouter = nullptr;
-        for (auto &p : pendingServerNames) {
-            if (p.hostname == serverName) { domainRouter = p.router; break; }
-        }
-        if (domainRouter) {
-            httpContextData->currentRouter = (decltype(httpContextData->currentRouter)) domainRouter;
-        } else {
-            httpContextData->currentRouter = &httpContextData->router;
-        }
-
-        return std::move(*this);
-    }
-
     TemplatedApp &&get(std::string_view pattern, MoveOnlyFunction<void(HttpResponse<SSL> *, HttpRequest *)> &&handler) {
         if (httpContext) {
             httpContext->onHttp("GET", pattern, std::move(handler));
@@ -702,7 +672,7 @@ private:
         if (!ls) return nullptr;
         if constexpr (SSL) {
             for (auto &p : pendingServerNames) {
-                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx, p.router);
+                us_listen_socket_add_server_name(ls, p.hostname.c_str(), p.ctx);
             }
             if (httpContext->getSocketContextData()->missingServerNameHandler) {
                 us_listen_socket_on_server_name(ls, &onMissingServerName);

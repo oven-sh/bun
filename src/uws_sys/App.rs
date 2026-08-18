@@ -226,17 +226,6 @@ impl<const SSL: bool> App<SSL> {
         }
     }
 
-    pub fn domain(&mut self, pattern: &ZStr) {
-        // SAFETY: pattern is NUL-terminated; self is a valid app.
-        unsafe {
-            c::uws_app_domain(
-                Self::SSL_FLAG,
-                std::ptr::from_mut::<Self>(self).cast::<uws_app_t>(),
-                pattern.as_ptr().cast(),
-            )
-        }
-    }
-
     pub fn run(&mut self) {
         c::uws_app_run(Self::SSL_FLAG, self.as_raw())
     }
@@ -582,7 +571,6 @@ pub mod c {
             user_data: *mut c_void,
         );
         pub(crate) safe fn uws_app_run(ssl: i32, app: &mut uws_app_t);
-        pub(crate) fn uws_app_domain(ssl: i32, app: *mut uws_app_t, domain: *const c_char);
         // safe: handle-only + value `port`; `handler`/`user_data` are stored
         // opaquely — no preconditions on this call.
         pub(crate) safe fn uws_app_listen(

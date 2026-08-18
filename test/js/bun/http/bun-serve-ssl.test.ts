@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "fs";
+import { tempDir } from "harness";
 import tls from "node:tls";
 import { join } from "path";
 import privateKey from "../../third_party/jsonwebtoken/priv.pem" with { type: "text" };
@@ -151,6 +152,77 @@ describe("Bun.serve SSL validations", () => {
       });
     }
   }
+});
+
+// Connections whose SNI matched a serverName must see the same route table as
+// everything else, including after routes are (re)registered post-listen.
+describe("Bun.serve routes across serverNames", () => {
+  const tlsConfigs = [
+    { key: privateKey, cert: publicKey, serverName: "localhost" },
+    { key: privateKey, cert: publicKey, serverName: "sni.example.com" },
+  ];
+  const hosts = ["localhost", "sni.example.com", "unmatched.example.com"];
+  const get = (port: number, host: string, path: string) =>
+    fetch(`https://127.0.0.1:${port}${path}`, {
+      headers: { Host: host },
+      tls: { rejectUnauthorized: false },
+    });
+  const bodies = async (port: number, path: string) =>
+    Object.fromEntries(await Promise.all(hosts.map(async host => [host, await (await get(port, host, path)).text()])));
+  const all = (body: string) => Object.fromEntries(hosts.map(host => [host, body]));
+
+  test("reload()", async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsConfigs,
+      routes: {
+        "/static-old": new Response("static-old"),
+        "/fn-old": () => new Response("fn-old"),
+      },
+      fetch: () => new Response("fetch-old"),
+    });
+    expect(await bodies(server.port, "/static-old")).toEqual(all("static-old"));
+    expect(await bodies(server.port, "/fn-old")).toEqual(all("fn-old"));
+
+    server.reload({
+      routes: {
+        "/static-new": new Response("static-new"),
+        "/fn-new": () => new Response("fn-new"),
+      },
+      fetch: () => new Response("fetch-new"),
+    });
+    expect(await bodies(server.port, "/static-new")).toEqual(all("static-new"));
+    expect(await bodies(server.port, "/fn-new")).toEqual(all("fn-new"));
+    expect(await bodies(server.port, "/static-old")).toEqual(all("fetch-new"));
+    expect(await bodies(server.port, "/fn-old")).toEqual(all("fetch-new"));
+  });
+
+  // HTML imports register their chunk routes after the first bundle completes.
+  test("HTML import chunks", async () => {
+    using dir = tempDir("bun-serve-ssl-html", {
+      "index.html": `<!DOCTYPE html><html><head><script type="module" src="script.js"></script></head><body></body></html>`,
+      "script.js": `console.log("hi");`,
+    });
+    const { default: html } = await import(join(String(dir), "index.html"));
+    using server = Bun.serve({
+      port: 0,
+      tls: tlsConfigs,
+      development: false,
+      routes: { "/": html },
+      fetch: () => new Response("fallback", { status: 404 }),
+    });
+    for (const host of hosts) {
+      const page = await (await get(server.port, host, "/")).text();
+      const src = page.match(/src="([^"]+\.js)"/)?.[1];
+      expect({ host, src }).toEqual({ host, src: expect.stringMatching(/\.js$/) });
+      const res = await get(server.port, host, src!);
+      expect({ host, status: res.status, type: res.headers.get("content-type") }).toEqual({
+        host,
+        status: 200,
+        type: expect.stringContaining("javascript"),
+      });
+    }
+  });
 });
 
 describe("Bun.serve per-serverName client certificate policy", () => {

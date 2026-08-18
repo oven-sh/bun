@@ -402,14 +402,11 @@ struct us_listen_socket_t *us_socket_group_listen_fd(us_socket_group_r group,
     __attribute__((nonnull(1, 8)));  /* ssl_ctx nullable */
 void us_listen_socket_close(struct us_listen_socket_t *ls) nonnull_fn_decl;
 
-/* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd; user is opaque
- * (uWS stores a per-domain HttpRouter*). user may be NULL. */
+/* SNI: tree hangs off the listen socket. ssl_ctx is up_ref'd. Returns non-zero
+ * if hostname_pattern is already registered. */
 int us_listen_socket_add_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx, void *user)
-    __attribute__((nonnull(1, 2, 3)));
+    const char *hostname_pattern, struct ssl_ctx_st *ssl_ctx) nonnull_fn_decl;
 void us_listen_socket_remove_server_name(struct us_listen_socket_t *ls,
-    const char *hostname_pattern) nonnull_fn_decl;
-void *us_listen_socket_find_server_name_userdata(struct us_listen_socket_t *ls,
     const char *hostname_pattern) nonnull_fn_decl;
 /* Returns an owned reference; the caller must release it. */
 struct ssl_ctx_st *us_listen_socket_find_server_name_ctx(struct us_listen_socket_t *ls,
@@ -426,7 +423,6 @@ void us_listen_socket_on_server_name(struct us_listen_socket_t *ls,
  * call consumes the reference. `error` != 0 aborts the handshake. Safe to call
  * after the socket closed (no-op). */
 void us_socket_sni_resolve(us_socket_r s, struct ssl_ctx_st *ctx, int error);
-void *us_socket_server_name_userdata(us_socket_r s);
 /* Records a per-serverName entry's client-certificate policy on its SSL_CTX
  * so the SNI switch adds it to the connection's inherited one, and gives the
  * context its own session-id context so sessions from other contexts are not

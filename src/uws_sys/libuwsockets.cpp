@@ -504,19 +504,6 @@ extern "C"
     }
   }
 
-  void uws_app_domain(int ssl, uws_app_t *app, const char *server_name)
-  {
-    if (ssl)
-    {
-      uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->domain(server_name);
-    }
-    else
-    {
-      uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->domain(server_name);
-    }
-  }
   void uws_app_set_max_http_header_size(int ssl, uws_app_t *app, uint64_t max_header_size) {
     if (ssl) {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;

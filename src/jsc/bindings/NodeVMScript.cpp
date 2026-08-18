@@ -559,6 +559,12 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     JSObject* context = asObject(contextObjectValue);
+    // Like vm.createContext(), an object that already is a context is used as it is.
+    if (NodeVM::isContext(globalObject, context)) {
+        auto* existingContext = NodeVM::getGlobalObjectFromContext(globalObject, context, true);
+        RETURN_IF_EXCEPTION(scope, {});
+        RELEASE_AND_RETURN(scope, runInContext(existingContext, script, context, callFrame->argument(1)));
+    }
     auto* targetContext = NodeVMGlobalObject::create(vm,
         zigGlobalObject->NodeVMGlobalObjectStructure(),
         contextOptions, importer);

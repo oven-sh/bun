@@ -1020,6 +1020,11 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
+    // In a contextified context, global variable reads, writes and declarations must reach getOwnPropertySlot / put /
+    // defineOwnProperty below (which put the sandbox object in front of them) instead of being linked straight to a
+    // symbol-table slot.
+    if (!m_contextOptions.notContextified)
+        setInterceptsGlobalScope();
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
@@ -1126,6 +1131,13 @@ void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject
     m_sandbox.set(vm(), this, contextifiedObject);
 }
 
+void NodeVMGlobalObject::setSpecialSandbox(NodeVMSpecialSandbox* sandbox)
+{
+    m_specialSandbox.set(vm(), this, sandbox);
+    // Code in the context sees the stand-in as `globalThis` (an ordinary, freezable data property, as in Node).
+    putDirect(vm(), vm().propertyNames->globalThis, sandbox, static_cast<unsigned>(PropertyAttribute::DontEnum));
+}
+
 void NodeVMGlobalObject::drainOwnMicrotasks()
 {
     if (!m_contextOptions.ownMicrotaskQueue)
@@ -1140,54 +1152,69 @@ void NodeVMGlobalObject::drainOwnMicrotasks()
 bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-
-    if (!thisObject->m_sandbox) {
+    JSObject* sandbox = thisObject->sandbox();
+    if (!sandbox)
         return Base::put(cell, globalObject, propertyName, value, slot);
-    }
 
-    auto* sandbox = thisObject->m_sandbox.get();
-
+    // Node's PropertySetterCallback.
     VM& vm = JSC::getVM(globalObject);
-    JSValue thisValue = slot.thisValue();
-    bool isContextualStore = thisValue != JSValue(globalObject);
-    if (auto* proxy = dynamicDowncast<JSGlobalProxy>(thisValue); proxy && proxy->target() == globalObject) {
-        isContextualStore = false;
-    }
-    bool isDeclaredOnGlobalObject = slot.type() == JSC::PutPropertySlot::NewProperty;
     auto scope = DECLARE_THROW_SCOPE(vm);
-    PropertySlot getter(sandbox, PropertySlot::InternalMethodType::Get, nullptr);
-    bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, getter);
+
+    PropertySlot onGlobal(thisObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnGlobal = Base::getOwnPropertySlot(thisObject, globalObject, propertyName, onGlobal);
     RETURN_IF_EXCEPTION(scope, false);
+    bool readOnly = isDeclaredOnGlobal && (onGlobal.attributes() & PropertyAttribute::ReadOnly) && !onGlobal.isAccessor();
 
-    bool isDeclared = isDeclaredOnGlobalObject || isDeclaredOnSandbox;
-    bool isFunction = value.isCallable();
-
-    if (slot.isStrictMode() && !isDeclared && isContextualStore && !isFunction) {
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
-    }
-
-    if (!isDeclared && value.isSymbol()) {
-        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
-    }
-
-    if (thisObject->m_contextOptions.notContextified) {
-        JSObject* specialSandbox = thisObject->specialSandbox();
-        slot.setThisValue(specialSandbox);
-        RELEASE_AND_RETURN(scope, specialSandbox->putInline(globalObject, propertyName, value, slot));
-    }
-
-    slot.setThisValue(sandbox);
-
-    bool result = sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, slot);
+    PropertySlot onSandbox(sandbox, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnSandbox = sandbox->getPropertySlot(globalObject, propertyName, onSandbox);
     RETURN_IF_EXCEPTION(scope, false);
-    if (!result) return false;
+    readOnly = readOnly || (isDeclaredOnSandbox && (onSandbox.attributes() & PropertyAttribute::ReadOnly) && !onSandbox.isAccessor());
 
-    if (isDeclaredOnSandbox && getter.isAccessor() and (getter.attributes() & PropertyAttribute::DontEnum) == 0) {
+    if (readOnly) {
+        if (slot.isStrictMode())
+            throwTypeError(globalObject, scope, ReadonlyPropertyWriteError);
+        return false;
+    }
+
+    // An undeclared symbol-keyed property goes on the global only.
+    if (!isDeclaredOnGlobal && !isDeclaredOnSandbox && propertyName.isSymbol())
+        RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+
+    // The sandbox gets the value with plain (sloppy) [[Set]] semantics, whatever the caller's mode.
+    {
+        PutPropertySlot sandboxSlot(sandbox, false);
+        sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, sandboxSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+
+    // An accessor on the sandbox itself has fully handled the store; anything else is also stored behind it, on
+    // the global (where a declared `var` / function binding lives).
+    if (isDeclaredOnSandbox && onSandbox.isAccessor() && onSandbox.slotBase() == sandbox)
         return true;
-    }
 
-    slot.setThisValue(thisValue);
+    // (JSObject::put hands index names back to the method table's putByIndex, which is this function again.)
+    if (std::optional<uint32_t> index = parseIndex(propertyName))
+        RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, *index, value, slot.isStrictMode()));
     RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+}
+
+bool NodeVMGlobalObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    if (!thisObject->sandbox())
+        return Base::putByIndex(cell, globalObject, index, value, shouldThrow);
+    VM& vm = JSC::getVM(globalObject);
+    PutPropertySlot slot(thisObject, shouldThrow);
+    return put(cell, globalObject, Identifier::from(vm, index), value, slot);
+}
+
+bool NodeVMGlobalObject::preventExtensions(JSObject* object, JSGlobalObject* globalObject)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(object);
+    if (!thisObject->sandbox())
+        return Base::preventExtensions(object, globalObject);
+    // Like V8 for an object with interceptors: Object.preventExtensions / seal / freeze of the context's global throw.
+    return false;
 }
 
 // This is copy-pasted from JSC's ProxyObject.cpp
@@ -1195,27 +1222,65 @@ static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already
 
 bool NodeVMSpecialSandbox::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
-    VM& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->getOwnPropertySlot(parentGlobal, globalObject, propertyName, slot);
+}
 
+bool NodeVMSpecialSandbox::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->getOwnPropertySlotByIndex(parentGlobal, globalObject, index, slot);
+}
+
+bool NodeVMSpecialSandbox::put(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSValue value, PutPropertySlot& slot)
+{
     auto* thisObject = uncheckedDowncast<NodeVMSpecialSandbox>(cell);
     NodeVMGlobalObject* parentGlobal = thisObject->parentGlobal();
+    if (slot.thisValue() == JSValue(thisObject))
+        slot.setThisValue(parentGlobal);
+    return parentGlobal->methodTable()->put(parentGlobal, globalObject, propertyName, value, slot);
+}
 
-    if (propertyName == vm.propertyNames->globalThis) [[unlikely]] {
-        slot.disableCaching();
-        slot.setThisValue(thisObject);
-        slot.setValue(thisObject, slot.attributes(), thisObject);
-        return true;
-    }
+bool NodeVMSpecialSandbox::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->putByIndex(parentGlobal, globalObject, index, value, shouldThrow);
+}
 
-    bool result = parentGlobal->getOwnPropertySlot(parentGlobal, globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
+bool NodeVMSpecialSandbox::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->defineOwnProperty(parentGlobal, globalObject, propertyName, descriptor, shouldThrow);
+}
 
-    if (result) {
-        return true;
-    }
+bool NodeVMSpecialSandbox::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->deleteProperty(parentGlobal, globalObject, propertyName, slot);
+}
 
-    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
+bool NodeVMSpecialSandbox::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->deletePropertyByIndex(parentGlobal, globalObject, index);
+}
+
+void NodeVMSpecialSandbox::getOwnPropertyNames(JSObject* cell, JSGlobalObject* globalObject, JSC::PropertyNameArrayBuilder& propertyNames, JSC::DontEnumPropertiesMode mode)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    parentGlobal->methodTable()->getOwnPropertyNames(parentGlobal, globalObject, propertyNames, mode);
+}
+
+bool NodeVMSpecialSandbox::preventExtensions(JSObject* cell, JSGlobalObject* globalObject)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->preventExtensions(parentGlobal, globalObject);
+}
+
+bool NodeVMSpecialSandbox::isExtensible(JSObject* cell, JSGlobalObject* globalObject)
+{
+    NodeVMGlobalObject* parentGlobal = uncheckedDowncast<NodeVMSpecialSandbox>(cell)->parentGlobal();
+    return parentGlobal->methodTable()->isExtensible(parentGlobal, globalObject);
 }
 
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
@@ -1225,16 +1290,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
-    bool notContextified = thisObject->isNotContextified();
-
-    if (notContextified && propertyName == vm.propertyNames->globalThis) [[unlikely]] {
-        slot.disableCaching();
-        slot.setThisValue(thisObject);
-        slot.setValue(thisObject, slot.attributes(), thisObject->specialSandbox());
-        return true;
-    }
-
-    if (JSObject* contextifiedObject = thisObject->contextifiedObject()) {
+    if (JSObject* contextifiedObject = thisObject->sandbox()) {
         slot.setThisValue(contextifiedObject);
         // Unfortunately we must special case ProxyObjects. Why?
         //
@@ -1307,7 +1363,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
             goto try_from_global;
         }
 
-        if (!notContextified) {
+        {
             if (slot.internalMethodType() == JSC::PropertySlot::InternalMethodType::Get) {
                 bool result = contextifiedObject->getPropertySlot(globalObject, propertyName, slot);
                 RETURN_IF_EXCEPTION(scope, false);
@@ -1342,19 +1398,7 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
         RETURN_IF_EXCEPTION(scope, false);
     }
 
-    bool result = Base::getOwnPropertySlot(cell, globalObject, propertyName, slot);
-    RETURN_IF_EXCEPTION(scope, false);
-
-    if (result) {
-        return true;
-    }
-
-    if (thisObject->m_contextOptions.notContextified) {
-        JSObject* specialSandbox = thisObject->specialSandbox();
-        RELEASE_AND_RETURN(scope, JSObject::getOwnPropertySlot(specialSandbox, globalObject, propertyName, slot));
-    }
-
-    return false;
+    RELEASE_AND_RETURN(scope, Base::getOwnPropertySlot(cell, globalObject, propertyName, slot));
 }
 
 bool NodeVMGlobalObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObject* globalObject, unsigned index, PropertySlot& slot)
@@ -1365,50 +1409,26 @@ bool NodeVMGlobalObject::getOwnPropertySlotByIndex(JSObject* cell, JSGlobalObjec
 
 bool NodeVMGlobalObject::defineOwnProperty(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow)
 {
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    JSObject* sandbox = thisObject->sandbox();
+    if (!sandbox)
+        return Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow);
+
+    // Node's PropertyDefinerCallback.
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-    if (!thisObject->m_sandbox) [[likely]] {
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
-    }
-
-    auto* contextifiedObject = thisObject->isNotContextified() ? thisObject->specialSandbox() : thisObject->m_sandbox.get();
-
-    PropertySlot slot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
-    bool isDeclaredOnGlobalProxy = globalObject->JSC::JSGlobalObject::getOwnPropertySlot(globalObject, globalObject, propertyName, slot);
-
-    // If the property is set on the global as neither writable nor
-    // configurable, don't change it on the global or sandbox.
-    if (isDeclaredOnGlobalProxy && (slot.attributes() & PropertyAttribute::ReadOnly) != 0 && (slot.attributes() & PropertyAttribute::DontDelete) != 0) {
-        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
-    }
-
-    // Dispatch through the method table so exotic sandboxes (e.g. Proxy objects)
-    // observe the [[DefineOwnProperty]] exactly once, like V8's contextify
-    // PropertyDefinerCallback.
-    if (descriptor.isAccessorDescriptor()) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
-    }
-
-    // The lookup above may have filled `slot` as cacheable (e.g. a lazy global
-    // stored as a CustomGetterSetter on a non-dictionary structure). Reusing it
-    // here would trip PropertySlot's CachingDisallowed asserts if the sandbox
-    // resolves the same name via setGetterSlot/setCustom/setValue(3-arg), which
-    // happens once the sandbox has transitioned to an uncacheable dictionary.
-    PropertySlot sandboxSlot(globalObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
-    bool isDeclaredOnSandbox = contextifiedObject->getPropertySlot(globalObject, propertyName, sandboxSlot);
+    PropertySlot onGlobal(thisObject, PropertySlot::InternalMethodType::GetOwnProperty, nullptr);
+    bool isDeclaredOnGlobal = Base::getOwnPropertySlot(thisObject, globalObject, propertyName, onGlobal);
     RETURN_IF_EXCEPTION(scope, false);
+    // A property the global itself has as neither writable nor configurable (undefined, NaN, Infinity, ...) is not
+    // redefined on either; the global reports the failure.
+    if (isDeclaredOnGlobal && (onGlobal.attributes() & PropertyAttribute::ReadOnly) && (onGlobal.attributes() & PropertyAttribute::DontDelete))
+        RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
 
-    if (isDeclaredOnSandbox && !isDeclaredOnGlobalProxy) {
-        RELEASE_AND_RETURN(scope, contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow));
-    }
-
-    auto did = contextifiedObject->methodTable()->defineOwnProperty(contextifiedObject, contextifiedObject->globalObject(), propertyName, descriptor, shouldThrow);
-    RETURN_IF_EXCEPTION(scope, false);
-    if (!did) return false;
-
-    RELEASE_AND_RETURN(scope, Base::defineOwnProperty(cell, globalObject, propertyName, descriptor, shouldThrow));
+    // Everything else is defined on the sandbox only, and an exotic sandbox (Proxy) observes exactly one
+    // [[DefineOwnProperty]].
+    RELEASE_AND_RETURN(scope, sandbox->methodTable()->defineOwnProperty(sandbox, globalObject, propertyName, descriptor, shouldThrow));
 }
 
 DEFINE_VISIT_CHILDREN(NodeVMGlobalObject);
@@ -1623,20 +1643,30 @@ const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_
 bool NodeVMGlobalObject::deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot)
 {
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
-    if (!thisObject->m_sandbox) [[unlikely]] {
+    JSObject* sandbox = thisObject->sandbox();
+    if (!sandbox)
         return Base::deleteProperty(cell, globalObject, propertyName, slot);
-    }
 
+    // Node's PropertyDeleterCallback: a sandbox that refuses the delete decides the result; otherwise the global's
+    // own binding (if any) is deleted too and decides it.
     VM& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* sandbox = thisObject->m_sandbox.get();
-    if (!sandbox->deleteProperty(sandbox, globalObject, propertyName, slot)) {
-        return false;
-    }
-
+    bool deleted = sandbox->methodTable()->deleteProperty(sandbox, globalObject, propertyName, slot);
     RETURN_IF_EXCEPTION(scope, false);
-    return Base::deleteProperty(cell, globalObject, propertyName, slot);
+    if (!deleted)
+        return false;
+    if (std::optional<uint32_t> index = parseIndex(propertyName))
+        RELEASE_AND_RETURN(scope, Base::deletePropertyByIndex(cell, globalObject, *index));
+    RELEASE_AND_RETURN(scope, Base::deleteProperty(cell, globalObject, propertyName, slot));
+}
+
+bool NodeVMGlobalObject::deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index)
+{
+    auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
+    if (!thisObject->sandbox())
+        return Base::deletePropertyByIndex(cell, globalObject, index);
+    VM& vm = JSC::getVM(globalObject);
+    return JSCell::deleteProperty(thisObject, globalObject, Identifier::from(vm, index));
 }
 
 static JSPromise* moduleLoaderImportModuleInner(NodeVMGlobalObject* globalObject, JSC::JSModuleLoader* moduleLoader, JSC::JSString* moduleName, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin& sourceOrigin)
@@ -1692,8 +1722,8 @@ void NodeVMGlobalObject::getOwnPropertyNames(JSObject* cell, JSGlobalObject* glo
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = uncheckedDowncast<NodeVMGlobalObject>(cell);
 
-    if (thisObject->m_sandbox) {
-        thisObject->m_sandbox->getOwnPropertyNames(thisObject->m_sandbox.get(), globalObject, propertyNames, mode);
+    if (JSObject* sandbox = thisObject->sandbox()) {
+        sandbox->methodTable()->getOwnPropertyNames(sandbox, globalObject, propertyNames, mode);
         RETURN_IF_EXCEPTION(scope, );
     }
 

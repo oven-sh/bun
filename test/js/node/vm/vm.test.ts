@@ -1188,8 +1188,9 @@ describe("context options with throwing getters", () => {
   // the process, so run the matrix in a subprocess.
   test.concurrent("the getter's exception propagates to the caller", async () => {
     // Each entry point tests the context-option keys it actually reads:
-    // createContext takes codeGeneration, Script#runInNewContext takes
-    // contextCodeGeneration, and vm.runInNewContext goes through both.
+    // createContext takes codeGeneration, Script#runInNewContext and
+    // vm.runInNewContext take contextCodeGeneration (vm.runInNewContext also
+    // spreads the options object, so every top-level getter runs there).
     // A dotted key puts the throwing getter on the nested object.
     const codeGenerationKeys = (key: string) => [key, `${key}.strings`, `${key}.wasm`];
     const contextKeys = (...codeGenerationKeyNames: string[]) => [
@@ -1201,7 +1202,7 @@ describe("context options with throwing getters", () => {
     ];
     const matrix = {
       createContext: contextKeys("codeGeneration"),
-      runInNewContext: contextKeys("codeGeneration", "contextCodeGeneration"),
+      runInNewContext: ["codeGeneration", ...contextKeys("contextCodeGeneration")],
       scriptRunInNewContext: contextKeys("contextCodeGeneration"),
     };
     const code = `
@@ -1245,6 +1246,168 @@ describe("context options with throwing getters", () => {
     expect(stderr).toBe("");
     expect(stdout).toBe(expected);
     expect(exitCode).toBe(0);
+  });
+});
+
+// A contextified context stands the sandbox object in front of its global object the way Node's contextify
+// interceptors do: reads consult the sandbox first, writes / definitions / deletions go to it, and declared `var`s
+// and functions live behind it on the global. Each case here differs from Node on a build where global variables
+// resolve straight to symbol-table slots.
+describe("global object and its sandbox", () => {
+  test("a global var reads what was last written to the sandbox, from inside or outside", () => {
+    const sandbox: any = {};
+    const context = createContext(sandbox);
+    runInContext("var v = 1; function f() { return 1 }", context);
+    expect([sandbox.v, typeof sandbox.f]).toEqual([1, "function"]);
+    sandbox.v = 5;
+    sandbox.f = () => 2;
+    expect(runInContext("[v, (function () { return v })(), (() => eval('v'))(), globalThis.v, f()]", context)).toEqual([
+      5, 5, 5, 5, 2,
+    ]);
+  });
+
+  test("every write of a global var reaches the sandbox, not just the first one", () => {
+    const sandbox: any = {};
+    const context = createContext(sandbox);
+    runInContext("var w = 1; for (var i = 0; i < 5; i++) w = i * 10; (function () { w = w + 1 })();", context);
+    expect([sandbox.w, sandbox.i]).toEqual([41, 5]);
+    expect(runInContext("'use strict'; var sv = 1; sv = 2; sv", context)).toBe(2);
+    expect(sandbox.sv).toBe(2);
+  });
+
+  test("var / function declarations over an existing read-only property", () => {
+    const sandbox: any = {};
+    Object.defineProperty(sandbox, "ro", { value: 1, writable: false, enumerable: true, configurable: true });
+    const context = createContext(sandbox);
+    // sloppy: the assignment is dropped, the binding keeps reading the sandbox's value
+    expect(runInContext("var ro = 2; [ro, globalThis.ro]", context)).toEqual([1, 1]);
+    expect(sandbox.ro).toBe(1);
+    // strict: assigning a read-only property throws
+    expect(() => runInContext("'use strict'; ro = 3", context)).toThrow(expect.objectContaining({ name: "TypeError" }));
+    expect(() => runInContext("'use strict'; var ro = 3", context)).toThrow(
+      expect.objectContaining({ name: "TypeError" }),
+    );
+    // the same when the read-only property was defined on globalThis by an earlier script, or earlier in the same one
+    expect(
+      runInContext(
+        "Object.defineProperty(globalThis, 'g', { value: 1, writable: false, configurable: true }); var g = 2; g",
+        createContext({}),
+      ),
+    ).toBe(1);
+    const context2 = createContext({});
+    runInContext("Object.defineProperty(globalThis, 'g', { value: 1, writable: false, configurable: true })", context2);
+    expect(runInContext("var g = 2; [g, typeof g]", context2)).toEqual([1, "number"]);
+    // a function declaration over a non-configurable, non-writable property is an error (CanDeclareGlobalFunction)
+    const context3 = createContext({});
+    runInContext(
+      "Object.defineProperty(globalThis, 'NC', { value: 1, writable: false, configurable: false })",
+      context3,
+    );
+    expect(() => runInContext("function NC() {}", context3)).toThrow(expect.objectContaining({ name: "TypeError" }));
+    expect(runInContext("NC", context3)).toBe(1);
+  });
+
+  test("a var the sandbox refuses (frozen sandbox) still exists on the global", () => {
+    const sandbox = Object.freeze({ a: 1 });
+    const context = createContext(sandbox);
+    runInContext("var b = 2; a = 5;", context);
+    expect(runInContext("[typeof b, b, a, 'b' in globalThis]", context)).toEqual(["number", 2, 1, true]);
+    expect(Object.keys(sandbox)).toEqual(["a"]);
+  });
+
+  test("sandbox accessors: setters receive stores, a getter-only property swallows them (even in strict code)", () => {
+    let stored;
+    const sandbox: any = {
+      set onlySet(v) {
+        stored = v;
+      },
+      get onlyGet() {
+        return 1;
+      },
+    };
+    const context = createContext(sandbox);
+    runInContext("onlySet = 5; onlyGet = 2;", context);
+    expect([stored, runInContext("onlyGet", context)]).toEqual([5, 1]);
+    expect(() => runInContext("'use strict'; onlyGet = 3", context)).not.toThrow();
+    expect(Object.keys(sandbox).sort()).toEqual(["onlyGet", "onlySet"]);
+  });
+
+  test("indexed properties of globalThis are sandbox properties too", () => {
+    const sandbox: any = { 0: "zero" };
+    const context = createContext(sandbox);
+    runInContext("globalThis[1] = 'one'; globalThis['2'] = 'two';", context);
+    expect([sandbox[1], sandbox[2]]).toEqual(["one", "two"]);
+    expect(runInContext("[globalThis[0], 1 in globalThis, delete globalThis[1], 1 in globalThis]", context)).toEqual([
+      "zero",
+      true,
+      true,
+      false,
+    ]);
+    expect(1 in sandbox).toBe(false);
+  });
+
+  test("Object.defineProperty(globalThis) defines on the sandbox only, and shows up in its keys (also for a Proxy sandbox)", () => {
+    for (const sandbox of [{} as any, new Proxy({}, {})]) {
+      const context = createContext(sandbox);
+      runInContext(
+        "var v = 1; Object.defineProperty(globalThis, 'd', { value: 2, enumerable: true, configurable: true, writable: true })",
+        context,
+      );
+      expect(
+        runInContext("[d, Object.keys(globalThis).includes('d'), Object.hasOwn(globalThis, 'd')]", context),
+      ).toEqual([2, true, true]);
+      expect(Object.getOwnPropertyDescriptor(sandbox, "d")).toEqual({
+        value: 2,
+        enumerable: true,
+        configurable: true,
+        writable: true,
+      });
+      // redefining a declared (non-configurable on the global) var is fine: it lands on the sandbox
+      expect(runInContext("Object.defineProperty(globalThis, 'v', { value: 9 }); v", context)).toBe(9);
+    }
+  });
+
+  test("delete: the sandbox decides; a declared var stays on the global", () => {
+    const sandbox: any = {};
+    const context = createContext(sandbox);
+    runInContext("var v = 1; globalThis.g = 2;", context);
+    expect(runInContext("[delete globalThis.v, typeof v, delete globalThis.g, typeof g]", context)).toEqual([
+      false,
+      "number",
+      true,
+      "undefined",
+    ]);
+    expect(Object.keys(sandbox)).toEqual([]);
+    delete sandbox.v;
+    expect(runInContext("[typeof v, 'v' in globalThis]", context)).toEqual(["number", true]);
+  });
+
+  test("an undeclared symbol-keyed property goes on the global, not the sandbox", () => {
+    const sandbox = {};
+    const context = createContext(sandbox);
+    expect(
+      runInContext(
+        "const sym = Symbol('k'); globalThis[sym] = 1; [globalThis[sym], Object.getOwnPropertySymbols(globalThis).includes(sym)]",
+        context,
+      ),
+    ).toEqual([1, true]);
+    expect(Object.getOwnPropertySymbols(sandbox)).toEqual([]);
+  });
+
+  test("the global of a contextified context cannot be made non-extensible", () => {
+    const context = createContext({ a: 1 });
+    expect(() => runInContext("Object.preventExtensions(globalThis)", context)).toThrow(
+      expect.objectContaining({ name: "TypeError" }),
+    );
+    expect(() => runInContext("Object.seal(globalThis)", context)).toThrow(
+      expect.objectContaining({ name: "TypeError" }),
+    );
+    expect(() => runInContext("Object.freeze(globalThis)", context)).toThrow(
+      expect.objectContaining({ name: "TypeError" }),
+    );
+    expect(runInContext("Reflect.preventExtensions(globalThis)", context)).toBe(false);
+    // and is still fully usable afterwards
+    expect(runInContext("var q = Object.keys({ x: 1 }).length + a; q", context)).toBe(2);
   });
 });
 
@@ -1304,6 +1467,68 @@ describe("DONT_CONTEXTIFY", () => {
 
     ctx.fromOutside = 456;
     expect(runInContext("fromOutside", ctx)).toBe(456);
+  });
+
+  // The returned object is a stand-in for the context's global object: everything (declared vars included) lives on
+  // that one global and is visible through the stand-in, which is also what `globalThis` evaluates to inside.
+  test("declarations, deletes and freezing go through to the global object", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    runInContext(
+      "var u; var dc = 1; function df() {} let dl = 2; globalThis.dg = 3; this.dt = 4; Object.defineProperty(globalThis, 'dd', { value: 5, enumerable: true, configurable: true })",
+      ctx,
+    );
+    expect([ctx.u, ctx.dc, typeof ctx.df, ctx.dl, ctx.dg, ctx.dt, ctx.dd]).toEqual([
+      undefined,
+      1,
+      "function",
+      undefined,
+      3,
+      4,
+      5,
+    ]);
+    expect(
+      Object.keys(ctx)
+        .filter(k => ["u", "dc", "df", "dl", "dg", "dt", "dd"].includes(k))
+        .sort(),
+    ).toEqual(["dc", "dd", "df", "dg", "dt", "u"]);
+    runInContext("for (var i = 0; i < 3; i++) dc = i * 10", ctx);
+    expect(ctx.dc).toBe(20);
+    ctx.dc = 7;
+    expect(runInContext("[dc, (function(){ return dc })()]", ctx)).toEqual([7, 7]);
+    // a var is not configurable, a plain global property is
+    expect([
+      Reflect.deleteProperty(ctx, "dg"),
+      runInContext("typeof dg", ctx),
+      Reflect.deleteProperty(ctx, "dc"),
+      runInContext("typeof dc", ctx),
+    ]).toEqual([true, "undefined", false, "number"]);
+    const { value, ...globalThisDescriptor } = Object.getOwnPropertyDescriptor(ctx, "globalThis")!;
+    expect(value).toBe(ctx);
+    expect(globalThisDescriptor).toEqual({ writable: true, enumerable: false, configurable: true });
+    // Unlike a contextified global, this one can be frozen, from either side.
+    runInContext("Object.freeze(globalThis)", ctx);
+    expect([runInContext("Object.isFrozen(globalThis)", ctx), Object.isFrozen(ctx)]).toEqual([true, true]);
+    runInContext("newAfterFreeze = 1", ctx);
+    expect(() => runInContext("newAfterFreeze", ctx)).toThrow(expect.objectContaining({ name: "ReferenceError" }));
+    const ctx2 = createContext(constants.DONT_CONTEXTIFY);
+    Object.freeze(ctx2);
+    expect(runInContext("Object.isFrozen(globalThis)", ctx2)).toBe(true);
+  });
+
+  test("Script.prototype.runInNewContext / vm.runInNewContext run in the context they were given, with its context* options", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    // an existing context is used as is (previously a second, contextified global was wrapped around it)
+    expect(new Script("Object.freeze(globalThis); typeof process").runInNewContext(ctx)).toBe("undefined");
+    expect(Object.isFrozen(ctx)).toBe(true);
+    expect(() => runInNewContext("eval('1')", {}, { contextCodeGeneration: { strings: false } })).toThrow(
+      expect.objectContaining({ name: "EvalError" }),
+    );
+    expect(() => runInNewContext("1", {}, { contextName: null as any })).toThrow(
+      expect.objectContaining({
+        code: "ERR_INVALID_ARG_TYPE",
+        message: expect.stringContaining("options.contextName"),
+      }),
+    );
   });
 });
 

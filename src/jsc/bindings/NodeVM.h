@@ -89,11 +89,13 @@ public:
 
 class NodeVMGlobalObject;
 
+// What `globalThis` evaluates to inside a DONT_CONTEXTIFY context, and the object createContext() returns for one:
+// a same-realm stand-in for the context's global object that forwards every property operation to it.
 class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::ProhibitsPropertyCaching;
 
     static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
 
@@ -103,6 +105,15 @@ public:
     static Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
+    static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned, JSC::PropertySlot&);
+    static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned, JSC::JSValue, bool shouldThrow);
+    static bool defineOwnProperty(JSObject*, JSGlobalObject*, JSC::PropertyName, const JSC::PropertyDescriptor&, bool shouldThrow);
+    static bool deleteProperty(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::DeletePropertySlot&);
+    static bool deletePropertyByIndex(JSCell*, JSGlobalObject*, unsigned);
+    static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
+    static bool isExtensible(JSObject*, JSGlobalObject*);
 
     NodeVMGlobalObject* parentGlobal() const { return m_parentGlobal.get(); }
 
@@ -137,21 +148,30 @@ public:
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
     bool isNotContextified() const { return m_contextOptions.notContextified; }
+    // The object standing in front of this global's properties, or null for a DONT_CONTEXTIFY context (whose
+    // properties simply live on the global object).
+    JSObject* sandbox() const { return m_contextOptions.notContextified ? nullptr : m_sandbox.get(); }
     bool hasOwnMicrotaskQueue() const { return m_contextOptions.ownMicrotaskQueue; }
     // Performs a microtask checkpoint on this context's own queue
     // (microtaskMode: "afterEvaluate" contexts only; no-op otherwise).
     void drainOwnMicrotasks();
     NodeVMSpecialSandbox* specialSandbox() const { return m_specialSandbox.get(); }
-    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox) { m_specialSandbox.set(vm(), this, sandbox); }
+    void setSpecialSandbox(NodeVMSpecialSandbox* sandbox);
     JSValue dynamicImportCallback() const { return m_dynamicImportCallback.get(); }
 
     // Override property access to delegate to contextified object
+    // With a sandbox object (a contextified context) these implement Node's contextify interceptors
+    // (node_contextify.cc): the sandbox is consulted first and receives writes, definitions and deletions; the
+    // global object itself keeps the builtins and the declared-variable bindings behind it.
     static bool getOwnPropertySlot(JSObject*, JSGlobalObject*, JSC::PropertyName, JSC::PropertySlot&);
     static bool getOwnPropertySlotByIndex(JSObject*, JSGlobalObject*, unsigned index, JSC::PropertySlot&);
     static bool put(JSCell*, JSGlobalObject*, JSC::PropertyName, JSC::JSValue, JSC::PutPropertySlot&);
+    static bool putByIndex(JSCell*, JSGlobalObject*, unsigned index, JSC::JSValue, bool shouldThrow);
     static void getOwnPropertyNames(JSObject*, JSGlobalObject*, JSC::PropertyNameArrayBuilder&, JSC::DontEnumPropertiesMode);
     static bool defineOwnProperty(JSObject* object, JSGlobalObject* globalObject, PropertyName propertyName, const PropertyDescriptor& descriptor, bool shouldThrow);
     static bool deleteProperty(JSCell* cell, JSGlobalObject* globalObject, PropertyName propertyName, JSC::DeletePropertySlot& slot);
+    static bool deletePropertyByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index);
+    static bool preventExtensions(JSObject*, JSGlobalObject*);
     static JSC::JSPromise* moduleLoaderImportModule(JSGlobalObject*, JSC::JSModuleLoader*, JSC::JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const JSC::SourceOrigin&, bool deferred);
 
 private:

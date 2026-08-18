@@ -1287,7 +1287,7 @@ describe.concurrent(() => {
   }
 
   const emptyObjectStubs = [];
-  const emptyArrayStubs = ["moduleLoadList", "_preload_modules"];
+  const emptyArrayStubs = ["_preload_modules"];
 
   for (const stub of emptyObjectStubs) {
     it(`process.${stub}`, () => {
@@ -1321,6 +1321,28 @@ describe.concurrent(() => {
       expect(process[stub]).toHaveLength(0);
     });
   }
+
+  it("process.moduleLoadList", async () => {
+    // Lists the builtin modules this thread has loaded, in load order, and keeps
+    // growing as more load (same array). Run in a fresh process so the list is small.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const list = process.moduleLoadList;
+         const before = list.length;
+         require("node:zlib");
+         if (process.moduleLoadList !== list) throw new Error("identity");
+         console.log(JSON.stringify({ hadZlib: list.slice(0, before).includes("NativeModule node:zlib"), last: list.at(-1), grew: list.length > before }));`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    expect(await proc.stdout.text()).toBe(
+      JSON.stringify({ hadZlib: false, last: "NativeModule node:zlib", grew: true }) + "\n",
+    );
+    expect(await proc.exited).toBe(0);
+  });
 
   it("dlopen args parsing", () => {
     const notFound = join(tmpdirSync(), "not-found.so");

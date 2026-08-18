@@ -484,6 +484,25 @@ ${moduleSpans
 `,
 );
 
+// process.moduleLoadList names, indexed by Field. Node reports "NativeModule <id>" /
+// "Internal Binding <id>"; JS builtins use their public specifier, native modules their id.
+writeIfNotChanged(
+  path.join(CODEGEN_DIR, "InternalModuleRegistry+names.h"),
+  `// clang-format off
+static constexpr ASCIILiteral internalModuleNames[] = {
+  ${moduleList
+    .map(
+      (id, n) =>
+        JSON.stringify(
+          (n >= nativeStartIndex ? "Internal Binding " : "NativeModule ") +
+            (n >= nativeStartIndex ? id : idToPublicSpecifierOrEnumName(id)),
+        ) + "_s,",
+    )
+    .join("\n  ")}
+};
+`,
+);
+
 // This code slice is used in InternalModuleRegistry.cpp. It defines the loading function for modules.
 writeIfNotChanged(
   path.join(CODEGEN_DIR, "InternalModuleRegistry+createInternalModuleById.h"),

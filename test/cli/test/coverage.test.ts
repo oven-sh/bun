@@ -1,6 +1,6 @@
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
-import { readFileSync } from "node:fs";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { closeSync, openSync, readFileSync } from "node:fs";
 import path from "path";
 
 test("coverage crash", () => {
@@ -640,4 +640,33 @@ test("only imports the function", () => {
 
   expect(stderr).toMatch(/ subject\.ts +\| +100\.00 +\| +100\.00 +\| +\n/);
   expect(exitCode).toBe(0);
+});
+
+test.skipIf(isWindows)("coverage still writes lcov and fails the threshold when stderr cannot be written", async () => {
+  using dir = tempDir("cov-ebadf", {
+    "demo.ts": `export function covered() { return 1; }\nexport function uncovered() { return 2; }\ncovered();\n`,
+    "demo.test.ts": `import { test, expect } from "bun:test"; import { covered } from "./demo"; test("x", () => { expect(covered()).toBe(1); });`,
+    "bunfig.toml": `[test]\ncoverageThreshold = 0.99\n`,
+  });
+  // A read-only descriptor as stderr makes the coverage table's write(2) fail with EBADF.
+  const stderrFd = openSync("/dev/null", "r");
+  try {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "test", "--coverage", "--coverage-reporter=text", "--coverage-reporter=lcov"],
+      cwd: String(dir),
+      env: bunEnv,
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: stderrFd,
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    const lcov = readFileSync(path.join(String(dir), "coverage", "lcov.info"), "utf-8");
+    expect(lcov).toContain("SF:demo.ts");
+    // Only the version banner goes to stdout; the table went to the dead stderr.
+    expect(stdout.trim()).toMatch(/^bun test v\S+ \([0-9a-f]+\)$/);
+    // The threshold miss is still reported through the exit code.
+    expect(exitCode).toBe(1);
+  } finally {
+    closeSync(stderrFd);
+  }
 });

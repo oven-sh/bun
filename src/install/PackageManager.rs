@@ -102,9 +102,11 @@ pub mod options {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Only the `printHelp` text is needed by `CommandLineArguments::parse`. The
-// `exec()` body remains in bun_cli (it depends on tier-6 ScanCommand /
-// PackCommand etc. and is the *consumer* of install, not a dependency).
+// The only copy of the `bun pm` help text: `bun pm --help` prints it via
+// `CommandLineArguments::print_help`, and the bun_cli `PackageManagerCommand`
+// (bare `bun pm`, unknown subcommand) forwards there as well. The `exec()` body
+// remains in bun_cli (it depends on tier-6 ScanCommand / PackCommand etc. and is
+// the *consumer* of install, not a dependency).
 // ──────────────────────────────────────────────────────────────────────────
 pub(crate) struct PackageManagerCommand;
 
@@ -118,8 +120,7 @@ impl PackageManagerCommand {
         let intro_text = r"
 <b>Usage<r>: <b><green>bun pm<r> <cyan>[flags]<r> <blue>[\<command\>]<r>
 
-  Run package manager utilities.
-";
+  Run package manager utilities.";
         let outro_text = r"
 
 <b>Commands:<r>
@@ -138,6 +139,13 @@ impl PackageManagerCommand {
   <d>├<r> <cyan>--all<r>                     list the entire dependency tree according to the current lockfile
   <d>└<r> <cyan>--trusted<r>                 list only trusted dependencies
   <b><green>bun pm<r> <blue>why<r> <d>\<pkg\><r>            show dependency tree explaining why a package is installed
+  <b><green>bun pm<r> <blue>diff<r> <d>[a] [b]<r>         show what changed between two versions of a package (or vs a folder/tarball)
+  <d>├<r> <d>bun pm diff react<r>            installed version → latest
+  <d>├<r> <d>bun pm diff react@18.2.0 19.0.0<r>
+  <d>├<r> <d>bun pm diff axios@1.6.0:lib 1.6.1<r>  only files under lib/ <d>(also<r> <d>:file.js<r><d>, or paths after the two sides)<r>
+  <d>├<r> <cyan>--stat<r>, <cyan>--name-only<r>       summarize instead of printing hunks
+  <d>├<r> <cyan>-U<r> <d>n<r>                      lines of context (default 3)
+  <d>└<r> <cyan>--json<r>                    one JSON document (files, patch text, notes, totals)
   <b><green>bun pm<r> <blue>licenses<r>             list installed packages grouped by license
   <d>├<r> <cyan>--json<r>                    output as JSON
   <d>├<r> <cyan>--prod<r>                    omit devDependencies

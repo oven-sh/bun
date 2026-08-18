@@ -1172,7 +1172,7 @@ impl ValkeyClient {
             match value {
                 RESPValue::Error(err) => {
                     if self.parent().is_subscriber() {
-                        self.fail(err, RedisError::InvalidResponse)?;
+                        self.fail(err, RedisError::ServerError)?;
                         return Ok(());
                     }
                     // A raw subscription request from a client that is not (yet) a

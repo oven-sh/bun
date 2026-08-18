@@ -43,6 +43,7 @@ pub(crate) fn valkey_error_to_js(
         RedisError::IdleTimeout => JscError::REDIS_IDLE_TIMEOUT,
         RedisError::NestingDepthExceeded => JscError::REDIS_INVALID_RESPONSE,
         RedisError::LineTooLong => JscError::REDIS_INVALID_RESPONSE,
+        RedisError::ServerError => JscError::REDIS_SERVER_ERROR,
         RedisError::JSError => return global.take_exception(JsError::Thrown),
         RedisError::OutOfMemory => {
             let _ = global.throw_out_of_memory();
@@ -91,11 +92,7 @@ pub(crate) fn resp_value_to_js_with_options(
 ) -> JsResult<JSValue> {
     match this {
         RESPValue::SimpleString(str) => valkey_str_to_js_value(global, str, options),
-        RESPValue::Error(str) => Ok(valkey_error_to_js(
-            global,
-            &**str,
-            RedisError::InvalidResponse,
-        )),
+        RESPValue::Error(str) => Ok(valkey_error_to_js(global, &**str, RedisError::ServerError)),
         RESPValue::Integer(int) => Ok(JSValue::js_number(*int as f64)),
         RESPValue::BulkString(maybe_str) => {
             if let Some(str) = maybe_str {

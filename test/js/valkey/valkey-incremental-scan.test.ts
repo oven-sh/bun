@@ -14,12 +14,13 @@ type PerSocket = { buf: Buffer; replied: boolean };
  * Mock server: answers HELLO, then answers the first GET with `reply`. When
  * `splitAt` is inside the reply it is split there across two event-loop turns
  * so the client's empty-read-buffer stack path sees a partial frame.
- * Subsequent commands get `+OK`.
+ * Subsequent commands get the entry in `replies` for their name, else `+OK`.
  */
 function createReplyServer(
   reply: string,
   splitAt: number = reply.length,
   hello: string = HELLO,
+  replies: Record<string, string> = {},
 ): TCPSocketListener<PerSocket> {
   return Bun.listen<PerSocket>({
     hostname: "127.0.0.1",
@@ -73,7 +74,7 @@ function createReplyServer(
               setImmediate(() => setImmediate(() => s.write(reply.slice(splitAt))));
             }
           } else {
-            s.write(`+OK${CRLF}`);
+            s.write(replies[cmd] ?? `+OK${CRLF}`);
           }
         }
       },
@@ -167,12 +168,13 @@ describe.concurrent("Valkey reply decoding", () => {
       const result = (await client.get("k")) as unknown as [string, Error];
       expect(result[0]).toBe("OK");
       expect(result[1]).toBeInstanceOf(Error);
+      expect((result[1] as Error & { code: string }).code).toBe("ERR_REDIS_SERVER_ERROR");
       expect(result[1].message).toBe("WRONGTYPE wrong kind");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });
 
-  test("simple error (-ERR) rejects with ERR_REDIS_INVALID_RESPONSE", async () => {
+  test("simple error (-ERR) rejects with ERR_REDIS_SERVER_ERROR", async () => {
     const server = createReplyServer(`-ERR unknown command${CRLF}`);
     await withClient(server, async client => {
       const err = await client.get("k").then(
@@ -180,13 +182,34 @@ describe.concurrent("Valkey reply decoding", () => {
         e => e,
       );
       expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
       expect(err.message).toBe("ERR unknown command");
       expect(await client.send("PING", [])).toBe("OK");
     });
   });
 
-  test("blob error (!) rejects with ERR_REDIS_INVALID_RESPONSE and the server text", async () => {
+  test("simple error (-ERR) in subscriber mode fails the connection with ERR_REDIS_SERVER_ERROR", async () => {
+    const server = createReplyServer(`+OK${CRLF}`, undefined, HELLO, {
+      SUBSCRIBE: `>3${CRLF}$9${CRLF}subscribe${CRLF}$2${CRLF}ch${CRLF}:1${CRLF}`,
+      BOGUS: `-ERR unknown command 'BOGUS'${CRLF}`,
+    });
+    await withClient(server, async client => {
+      await client.subscribe("ch", () => {});
+      // The command that drew the error is not awaited: in subscriber mode a
+      // server error fails the whole connection, and every other in-flight
+      // command is rejected with the server's text.
+      client.send("BOGUS", []).catch(() => {});
+      const err = await client.send("PING", []).then(
+        () => null,
+        e => e,
+      );
+      expect(err).toBeInstanceOf(Error);
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
+      expect(err.message).toBe("ERR unknown command 'BOGUS'");
+    });
+  });
+
+  test("blob error (!) rejects with ERR_REDIS_SERVER_ERROR and the server text", async () => {
     const server = createReplyServer(`!21${CRLF}SYNTAX invalid syntax${CRLF}`);
     await withClient(server, async client => {
       const err = await client.get("k").then(
@@ -194,7 +217,7 @@ describe.concurrent("Valkey reply decoding", () => {
         e => e,
       );
       expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
       expect(err.message).toBe("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });
@@ -238,7 +261,7 @@ describe.concurrent("Valkey reply torn across socket reads", () => {
         e => e,
       );
       expect(err).toBeInstanceOf(Error);
-      expect(err.code).toBe("ERR_REDIS_INVALID_RESPONSE");
+      expect(err.code).toBe("ERR_REDIS_SERVER_ERROR");
       expect(err.message).toBe("SYNTAX invalid syntax");
       expect(await client.send("PING", [])).toBe("OK");
     });

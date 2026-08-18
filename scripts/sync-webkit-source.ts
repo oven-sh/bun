@@ -1,106 +1,45 @@
-import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
-
-export type PinnedCommit =
-  /** A 40-hex sha, with or without the `autobuild-` prefix of the release built from it. */
-  | { sha: string }
-  /**
-   * `autobuild-preview-pr-<n>-<sha8>`: the first 8 hex of the commit the preview was built from,
-   * and the two refs on origin that can reach it. The PR ref does while the commit is the PR's
-   * head or an ancestor of it, whatever the tag says (every tag made before oven-sh/WebKit#461
-   * points at main), and after the PR's branch is merged or deleted; the tag does once it points
-   * at the commit it is named after, which is the only ref left once the PR has been force-pushed.
-   */
-  | { shaPrefix: string; pullRef: string; tagRef: string };
+import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 
 /**
- * WEBKIT_VERSION is a 40-hex sha or the name of an oven-sh/WebKit release.
- * Both release workflows name the release after the commit they built
- * (build.yml: `autobuild-<sha>`, build-preview.yml:
- * `autobuild-preview-pr-<n>-<first 8 hex of the PR head>`), so the name says
- * what the tarballs contain. The tag object behind the release only does so
- * since oven-sh/WebKit#461: before it, the release job tagged whatever main's
- * HEAD was at the time, which is never the PR head for a preview and is the
- * next commit on main for about one main release in six. So the name decides
- * which commit is wanted; a tag is at most one of the places to fetch it from.
+ * What a WEBKIT_VERSION names. Both oven-sh/WebKit release workflows name the
+ * release after the commit they built (build.yml: `autobuild-<sha>`,
+ * build-preview.yml: `autobuild-preview-pr-<n>-<first 8 hex of the PR head>`)
+ * and write that commit's full sha into every tarball as BUN_WEBKIT_VERSION.
+ * The tag object behind the release is not consulted: until oven-sh/WebKit#461
+ * it was created at whatever main's HEAD was when the release job ran, which is
+ * never the PR head for a preview and is the next commit on main for about one
+ * main release in six.
  */
+export type PinnedCommit =
+  | { sha: string }
+  /** A preview names only 8 hex; the full sha is read from the downloaded prebuilt, whose cache directory starts with `webkit-<prebuiltKey>`. */
+  | { shaPrefix: string; prebuiltKey: string };
+
 export function pinnedCommit(version: string): PinnedCommit | undefined {
-  const preview = /^autobuild-preview-pr-(\d+)-([0-9a-f]{8})$/.exec(version);
-  if (preview) {
-    return { shaPrefix: preview[2], pullRef: `refs/pull/${preview[1]}/head`, tagRef: `refs/tags/${version}` };
-  }
+  const preview = /^autobuild-(preview-pr-\d+-([0-9a-f]{8}))$/.exec(version);
+  if (preview) return { shaPrefix: preview[2], prebuiltKey: preview[1] };
   const sha = /^(?:autobuild-)?([0-9a-f]{40})$/.exec(version);
   if (sha) return { sha: sha[1] };
   return undefined;
 }
 
-/** How far down a PR's history an earlier push of it is looked for when the clone is shallow. */
-const SHALLOW_PULL_REQUEST_DEPTH = 50;
-
 /**
- * `git fetch origin <what>` (a commit id or a ref), best effort: whether the wanted commit arrived
- * is judged afterwards by looking for it. Fetching by id rather than `git fetch origin` works in
- * every clone shape, including --single-branch and --depth clones whose refspec covers only main's
- * tip. A shallow clone is kept shallow and given `depth` commits of history; without --depth, a
- * ref whose history does not connect to the few commits such a clone has brings in all of
- * WebKit's history, tens of GB.
+ * The commit that the prebuilt extracted under `<cacheDir>/webkit-<key>...` was built from. The
+ * directory name is prebuiltDestDir() in build/deps/webkit.ts; every variant (debug, asan, lto,
+ * other platforms) of one version carries the same sha, so the first one found will do.
  */
-async function fetchFromOrigin(webkitRepo: string, what: string, depth: number): Promise<void> {
-  const shallow = (await Bun.$`git rev-parse --is-shallow-repository`.cwd(webkitRepo).quiet().text()).trim();
-  const depthFlag = shallow === "true" ? [`--depth=${depth}`] : [];
-  await Bun.$`git fetch ${depthFlag} origin ${what}`.cwd(webkitRepo).nothrow();
-}
-
-async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
-  const out = await Bun.$`git rev-parse --verify ${rev}^{commit}`.cwd(webkitRepo).quiet().nothrow();
-  return out.exitCode === 0 ? out.text().trim() : "";
-}
-
-/** The commit objects in the repo whose sha starts with `prefix`. */
-async function commitsWithPrefix(webkitRepo: string, prefix: string): Promise<string[]> {
-  const ids = (await Bun.$`git rev-parse --disambiguate=${prefix}`.cwd(webkitRepo).quiet().text()).split("\n");
-  const commits: string[] = [];
-  for (const id of ids.filter(Boolean)) {
-    const type = (await Bun.$`git cat-file -t ${id}`.cwd(webkitRepo).quiet().text()).trim();
-    if (type === "commit") commits.push(id);
-  }
-  return commits;
-}
-
-async function commitBuiltFrom(webkitRepo: string, version: string, pin: PinnedCommit): Promise<string> {
-  if ("sha" in pin) {
-    let sha = await resolveCommit(webkitRepo, pin.sha);
-    if (!sha) {
-      await fetchFromOrigin(webkitRepo, pin.sha, 1);
-      sha = await resolveCommit(webkitRepo, pin.sha);
-    }
+export function commitOfDownloadedPrebuilt(cacheDir: string, key: string): string | undefined {
+  if (!existsSync(cacheDir)) return undefined;
+  for (const header of new Bun.Glob(`webkit-${key}*/include/cmakeconfig.h`).scanSync({ cwd: cacheDir })) {
+    const sha = /^#define BUN_WEBKIT_VERSION "([0-9a-f]{40})"/m.exec(readFileSync(join(cacheDir, header), "utf8"))?.[1];
     if (sha) return sha;
-    throw new Error(
-      `commit ${pin.sha} (${version}) is not in ${webkitRepo}, and origin did not serve it\n` +
-        "check that the commit exists on https://github.com/oven-sh/WebKit",
-    );
   }
-
-  // The prefix is only ever compared against whole object ids, never resolved as a name:
-  // `git rev-parse <prefix>` would accept a ref called that, or an unrelated commit sharing the
-  // prefix, while the built commit itself has not been fetched yet. Fetching both refs first puts
-  // it among the candidates whenever either still reaches it.
-  await fetchFromOrigin(webkitRepo, pin.pullRef, SHALLOW_PULL_REQUEST_DEPTH);
-  await fetchFromOrigin(webkitRepo, pin.tagRef, 1);
-  const commits = await commitsWithPrefix(webkitRepo, pin.shaPrefix);
-  if (commits.length === 1) return commits[0];
-  if (commits.length === 0) {
-    throw new Error(
-      `no commit starting with ${pin.shaPrefix} (${version}) in ${webkitRepo}: neither ${pin.pullRef} nor ${pin.tagRef} ` +
-        "on origin reaches one\nthe PR has replaced the push this preview was built from, and its tag does not point " +
-        "at that push (tags made before oven-sh/WebKit#461 point at main instead)",
-    );
-  }
-  throw new Error(`${pin.shaPrefix} (${version}) matches more than one commit in ${webkitRepo}: ${commits.join(", ")}`);
+  return undefined;
 }
 
-/** Checks `webkitRepo` out at the commit `version` was built from, fetching it first if needed. */
-export async function syncWebKitSource(webkitRepo: string, version: string): Promise<string> {
+function shaBuiltFrom(version: string, cacheDir: string): string {
   const pin = pinnedCommit(version);
   if (!pin) {
     throw new Error(
@@ -108,7 +47,58 @@ export async function syncWebKitSource(webkitRepo: string, version: string): Pro
         "autobuild-<sha>, or autobuild-preview-pr-<n>-<first 8 hex of the sha>",
     );
   }
-  const expectedSha = await commitBuiltFrom(webkitRepo, version, pin);
+  if ("sha" in pin) return pin.sha;
+  const sha = commitOfDownloadedPrebuilt(cacheDir, pin.prebuiltKey);
+  if (!sha) {
+    throw new Error(
+      `${version} names only the first 8 hex of its commit; the full sha is read from the downloaded prebuilt, ` +
+        `and there is none under ${cacheDir}\nbuild bun once with this pin (any profile downloads it), or pin the full sha`,
+    );
+  }
+  if (!sha.startsWith(pin.shaPrefix)) {
+    throw new Error(
+      `the prebuilt under ${cacheDir} for ${version} was built from ${sha}, which is not the commit in the name`,
+    );
+  }
+  return sha;
+}
+
+async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
+  const out = await Bun.$`git rev-parse --verify ${rev}^{commit}`.cwd(webkitRepo).quiet().nothrow();
+  return out.exitCode === 0 ? out.text().trim() : "";
+}
+
+/**
+ * Fetches one commit by id, best effort (whether it arrived is checked afterwards). By id rather
+ * than `git fetch origin`, whose refspec in a --single-branch or --depth clone covers only main's
+ * tip; GitHub serves any commit it still has this way, a preview's included, even one the PR has
+ * since force-pushed away. A shallow clone is kept shallow: fetching into one without --depth
+ * downloads everything below the commit that the clone does not have, which for a commit older
+ * than its boundary is all of WebKit's history.
+ */
+async function fetchFromOrigin(webkitRepo: string, sha: string): Promise<void> {
+  const shallow = (await Bun.$`git rev-parse --is-shallow-repository`.cwd(webkitRepo).quiet().text()).trim();
+  const depth = shallow === "true" ? ["--depth=1"] : [];
+  await Bun.$`git fetch ${depth} origin ${sha}`.cwd(webkitRepo).nothrow();
+}
+
+/**
+ * Checks `webkitRepo` out at the commit `version` was built from, fetching it first if needed.
+ * `cacheDir` is the build cache holding the downloaded prebuilts; only a preview pin consults it.
+ */
+export async function syncWebKitSource(webkitRepo: string, version: string, cacheDir: string): Promise<string> {
+  const sha = shaBuiltFrom(version, cacheDir);
+  let expectedSha = await resolveCommit(webkitRepo, sha);
+  if (!expectedSha) {
+    await fetchFromOrigin(webkitRepo, sha);
+    expectedSha = await resolveCommit(webkitRepo, sha);
+  }
+  if (!expectedSha) {
+    throw new Error(
+      `commit ${sha} (${version}) is not in ${webkitRepo}, and origin did not serve it\n` +
+        "check that the commit exists on https://github.com/oven-sh/WebKit",
+    );
+  }
 
   const checkedOutCommit = (await Bun.$`git rev-parse HEAD`.cwd(webkitRepo).quiet().text()).trim();
   if (checkedOutCommit === expectedSha) {
@@ -135,8 +125,10 @@ if (import.meta.main) {
   // matches the build's entry order so WEBKIT_VERSION initializes before use.
   await import("./build/config.ts");
   const { WEBKIT_VERSION } = await import("./build/deps/webkit.ts");
+  // Where resolveConfig() in build/config.ts puts a local build's cache (a --cache-dir override is not seen here).
+  const bunInstall = process.env.BUN_INSTALL ? resolve(bunRepo, process.env.BUN_INSTALL) : join(homedir(), ".bun");
   try {
-    await syncWebKitSource(webkitRepo, WEBKIT_VERSION);
+    await syncWebKitSource(webkitRepo, WEBKIT_VERSION, join(bunInstall, "build-cache"));
   } catch (error) {
     console.log(error instanceof Error ? error.message : String(error));
     process.exit(1);

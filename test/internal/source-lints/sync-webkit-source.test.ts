@@ -1,17 +1,16 @@
 /**
  * `bun sync-webkit-source` (scripts/sync-webkit-source.ts) checks vendor/WebKit
- * out at the commit the pinned prebuilt WebKit was built from. When the pin is
- * an oven-sh/WebKit release name, that commit is the one in the name: the tag
- * object behind the release was, until oven-sh/WebKit#461, created at whatever
- * main's HEAD was when the release job ran (see pinnedCommit). Unless a test says
- * otherwise, the release tags below point at the wrong commit the way the real
- * ones do; resolving through the tag lands there, resolving the name lands on
- * the commit that was built.
+ * out at the commit the pinned prebuilt WebKit was built from. That commit is
+ * the one in the release's name (and, for a preview, which names only 8 hex of
+ * it, the one recorded inside the downloaded prebuilt), never the one the
+ * release's tag points at: until oven-sh/WebKit#461 the tag was created at
+ * whatever main's HEAD was when the release job ran. The release tags below
+ * therefore point at the wrong commit, the way the real ones do; resolving
+ * through the tag lands there.
  *
  * Clones come in two shapes: a plain clone, and `--depth=1`, which is what a
  * developer cloning a repo the size of WebKit is likely to have and whose only
- * refspec is the tip of one branch; whatever the script fetches has to arrive
- * in both.
+ * refspec is the tip of one branch; the pinned commit has to arrive in both.
  */
 import { $, spawnSync } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
@@ -20,7 +19,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { pinnedCommit, syncWebKitSource } from "../../../scripts/sync-webkit-source.ts";
+import { commitOfDownloadedPrebuilt, pinnedCommit, syncWebKitSource } from "../../../scripts/sync-webkit-source.ts";
 
 // Keep this file's git and the script's git (Bun.$) away from the developer's
 // config: signing, hooks, url rewrites. GIT_CONFIG_GLOBAL has to be a real
@@ -94,36 +93,50 @@ function originAndClone(dir: string, shape: CloneShape = "full"): { origin: stri
 }
 
 /**
- * Pushes to PR 7 on origin, oldest first: commits on top of `base` that only refs/pull/7/head
- * reaches, which is all that is left of them once the PR's branch is gone. Calling it again is a
- * force-push: refs/pull/7/head moves to the new commits and stops reaching the earlier ones.
+ * A push to PR 7 on origin: a commit on top of `base` that only refs/pull/7/head reaches, which
+ * is all that is left of it once the PR's branch is gone. Pushing again replaces it: the ref
+ * moves to the new commit and the earlier one is reachable from nothing.
  */
-function pushesToPullRequest(origin: string, base: string, names: string[]): string[] {
+function pushToPullRequest(origin: string, base: string, name: string): string {
   git(origin, "checkout", "-q", "--detach", base);
-  const pushes = names.map(name => commit(origin, name));
-  git(origin, "update-ref", "refs/pull/7/head", pushes[pushes.length - 1]);
+  const push = commit(origin, name);
+  git(origin, "update-ref", "refs/pull/7/head", push);
   git(origin, "checkout", "-q", "--detach", base);
-  return pushes;
+  return push;
 }
 
-/** The release name build-preview.yml derives from a push to PR 7. */
-function previewName(push: string): string {
-  return `autobuild-preview-pr-7-${push.slice(0, 8)}`;
-}
-
-/**
- * Publishes the preview release of `built` (a push to PR 7) on origin, tagged at `taggedAt`,
- * which for every release made before oven-sh/WebKit#461 is whatever main's HEAD was rather
- * than `built`.
- */
-function publishPreview(origin: string, built: string, taggedAt: string): string {
-  const name = previewName(built);
-  git(origin, "tag", name, taggedAt);
+/** The release name build-preview.yml derives from a push to PR 7, with its tag on origin created the way GitHub created them before oven-sh/WebKit#461: at main's HEAD. */
+function publishPreview(origin: string, push: string, mainHead: string): string {
+  const name = `autobuild-preview-pr-7-${push.slice(0, 8)}`;
+  git(origin, "tag", name, mainHead);
+  expect(tagTarget(origin, name)).toBe(mainHead);
   return name;
 }
 
+/**
+ * A build cache holding one extracted prebuilt of `version`, recording `builtFrom` the way
+ * oven-sh/WebKit's release scripts append it to the tarball's cmakeconfig.h.
+ */
+function cacheWithPrebuilt(dir: string, version: string, builtFrom: string): string {
+  const cacheDir = join(dir, "build-cache");
+  const include = join(cacheDir, `webkit-${version.replace(/^autobuild-/, "")}-debug-asan`, "include");
+  mkdirSync(include, { recursive: true });
+  writeFileSync(
+    join(include, "cmakeconfig.h"),
+    `#define ENABLE_FTL_JIT 1\n#define USE_BUN_JSC_ADDITIONS 1\n#define BUN_WEBKIT_VERSION "${builtFrom}"\n`,
+  );
+  return cacheDir;
+}
+
+/** A build cache nothing has been downloaded into. */
+function emptyCache(dir: string): string {
+  const cacheDir = join(dir, "build-cache");
+  mkdirSync(cacheDir);
+  return cacheDir;
+}
+
 describe.concurrent("sync-webkit-source", () => {
-  test("pinnedCommit takes the commit from the release name", () => {
+  test("pinnedCommit reads the release name", () => {
     const sha = "781d6abb94b9eaee825e95ef700a83d8cf576f55";
     expect({
       sha: pinnedCommit(sha),
@@ -138,17 +151,24 @@ describe.concurrent("sync-webkit-source", () => {
     }).toEqual({
       sha: { sha },
       main: { sha },
-      preview: {
-        shaPrefix: "9203122d",
-        pullRef: "refs/pull/459/head",
-        tagRef: "refs/tags/autobuild-preview-pr-459-9203122d",
-      },
+      preview: { shaPrefix: "9203122d", prebuiltKey: "preview-pr-459-9203122d" },
       abbreviatedSha: undefined,
       previewWithoutSha: undefined,
       previewWith7Hex: undefined,
       previewWith9Hex: undefined,
       unknown: undefined,
     });
+  });
+
+  test("commitOfDownloadedPrebuilt reads BUN_WEBKIT_VERSION out of whichever variant was downloaded", () => {
+    using dir = tempDir("sync-webkit-source-cache", {});
+    const builtFrom = "9203122d6ea77efaa415f6dcf116f8cecfea88f0";
+    const cacheDir = cacheWithPrebuilt(String(dir), "autobuild-preview-pr-459-9203122d", builtFrom);
+    expect({
+      downloaded: commitOfDownloadedPrebuilt(cacheDir, "preview-pr-459-9203122d"),
+      otherPush: commitOfDownloadedPrebuilt(cacheDir, "preview-pr-459-b5fc3025"),
+      noCacheAtAll: commitOfDownloadedPrebuilt(join(String(dir), "never-built"), "preview-pr-459-9203122d"),
+    }).toEqual({ downloaded: builtFrom, otherPush: undefined, noCacheAtAll: undefined });
   });
 
   test("autobuild-<sha> checks out <sha>, not the commit its tag points at", async () => {
@@ -163,20 +183,21 @@ describe.concurrent("sync-webkit-source", () => {
       head: landedDuringBuild,
     });
 
-    expect(await syncWebKitSource(repo, name)).toBe(built);
+    expect(await syncWebKitSource(repo, name, emptyCache(String(dir)))).toBe(built);
     expect(head(repo)).toBe(built);
   });
 
   test("a sha the clone does not have yet is fetched from origin", async () => {
     using dir = tempDir("sync-webkit-source-fetch", {});
     const { origin, clone, base } = originAndClone(String(dir));
+    const cacheDir = emptyCache(String(dir));
     const later = commit(origin, "later");
     expect(head(clone)).toBe(base);
 
-    expect(await syncWebKitSource(clone, later)).toBe(later);
+    expect(await syncWebKitSource(clone, later, cacheDir)).toBe(later);
     expect(head(clone)).toBe(later);
     // The same commit under its release name is already checked out.
-    expect(await syncWebKitSource(clone, `autobuild-${later}`)).toBe(later);
+    expect(await syncWebKitSource(clone, `autobuild-${later}`, cacheDir)).toBe(later);
     expect(head(clone)).toBe(later);
   });
 
@@ -188,7 +209,7 @@ describe.concurrent("sync-webkit-source", () => {
     const clone = cloneOf(String(dir), origin, "depth-1");
     expect(head(clone)).toBe(tip);
 
-    expect(await syncWebKitSource(clone, `autobuild-${built}`)).toBe(built);
+    expect(await syncWebKitSource(clone, `autobuild-${built}`, emptyCache(String(dir)))).toBe(built);
     expect(head(clone)).toBe(built);
     expect(isShallow(clone)).toBe(true);
     expect(git(clone, "rev-list", "--count", built)).toBe("1");
@@ -199,82 +220,63 @@ describe.concurrent("sync-webkit-source", () => {
     const { clone, base } = originAndClone(String(dir));
     const missing = "0badc0de0badc0de0badc0de0badc0de0badc0de";
 
-    await expect(syncWebKitSource(clone, missing)).rejects.toThrow(
+    await expect(syncWebKitSource(clone, missing, emptyCache(String(dir)))).rejects.toThrow(
       `commit ${missing} (${missing}) is not in ${clone}, and origin did not serve it`,
     );
     expect(head(clone)).toBe(base);
   });
 
   describe.each<CloneShape>(["full", "depth-1"])("in a %s clone", shape => {
-    test("a preview of the PR's head checks it out through the PR ref, whatever its tag points at", async () => {
+    test("a preview checks out the commit its downloaded prebuilt was built from, not the commit its tag points at", async () => {
       using dir = tempDir(`sync-webkit-source-preview-${shape}`, {});
       const { origin, clone, base } = originAndClone(String(dir), shape);
-      const [prHead] = pushesToPullRequest(origin, base, ["pr-head"]);
-      const name = publishPreview(origin, prHead, base);
-      // The clone's own copy of the tag is as wrong as origin's.
-      git(clone, "fetch", "-q", "origin", `refs/tags/${name}:refs/tags/${name}`);
-      expect({ tag: tagTarget(clone, name), head: head(clone) }).toEqual({ tag: base, head: base });
+      const push = pushToPullRequest(origin, base, "pr-head");
+      const name = publishPreview(origin, push, base);
+      const cacheDir = cacheWithPrebuilt(String(dir), name, push);
 
-      expect(await syncWebKitSource(clone, name)).toBe(prHead);
-      expect(head(clone)).toBe(prHead);
-    });
-
-    test("a preview of an earlier push of the PR checks out that push, not the PR's current head", async () => {
-      using dir = tempDir(`sync-webkit-source-preview-earlier-push-${shape}`, {});
-      const { origin, clone, base } = originAndClone(String(dir), shape);
-      const [firstPush] = pushesToPullRequest(origin, base, ["first-push", "second-push", "third-push"]);
-      const name = publishPreview(origin, firstPush, base);
-
-      expect(await syncWebKitSource(clone, name)).toBe(firstPush);
-      expect(head(clone)).toBe(firstPush);
-    });
-
-    test("a preview of a push the PR replaced is checked out through its tag once the tag points at it", async () => {
-      using dir = tempDir(`sync-webkit-source-preview-replaced-push-${shape}`, {});
-      const { origin, clone, base } = originAndClone(String(dir), shape);
-      const [replacedPush] = pushesToPullRequest(origin, base, ["replaced-push"]);
-      pushesToPullRequest(origin, base, ["force-pushed-replacement"]);
-      // A tag made after oven-sh/WebKit#461 (or moved to where its name says) is the only ref left reaching the push.
-      const name = publishPreview(origin, replacedPush, replacedPush);
-
-      expect(await syncWebKitSource(clone, name)).toBe(replacedPush);
-      expect(head(clone)).toBe(replacedPush);
+      expect(await syncWebKitSource(clone, name, cacheDir)).toBe(push);
+      expect(head(clone)).toBe(push);
+      expect(isShallow(clone)).toBe(shape === "depth-1");
     });
   });
 
-  test("a preview whose release is gone is still checked out through the PR ref", async () => {
-    using dir = tempDir("sync-webkit-source-preview-release-gone", {});
+  test("a preview of a push the PR has since replaced is still checked out", async () => {
+    using dir = tempDir("sync-webkit-source-preview-replaced", {});
     const { origin, clone, base } = originAndClone(String(dir));
-    const [prHead] = pushesToPullRequest(origin, base, ["pr-head"]);
+    // GitHub serves a commit by id for as long as it has the object, reachable or not; this is the
+    // upload-pack setting that makes a local origin behave the same way.
+    git(origin, "config", "uploadpack.allowAnySHA1InWant", "true");
+    const replaced = pushToPullRequest(origin, base, "replaced-push");
+    pushToPullRequest(origin, base, "replacement");
+    expect(git(origin, "for-each-ref", "--contains", replaced)).toBe("");
+    const name = publishPreview(origin, replaced, base);
+    const cacheDir = cacheWithPrebuilt(String(dir), name, replaced);
 
-    expect(await syncWebKitSource(clone, previewName(prHead))).toBe(prHead);
-    expect(head(clone)).toBe(prHead);
+    expect(await syncWebKitSource(clone, name, cacheDir)).toBe(replaced);
+    expect(head(clone)).toBe(replaced);
   });
 
-  test("a preview's 8 hex are matched against commit ids, not resolved as a name", async () => {
-    using dir = tempDir("sync-webkit-source-preview-shadowed", {});
+  test("a preview whose prebuilt has not been downloaded says what to do, rather than guessing from the tag", async () => {
+    using dir = tempDir("sync-webkit-source-preview-not-downloaded", {});
     const { origin, clone, base } = originAndClone(String(dir));
-    const [prHead] = pushesToPullRequest(origin, base, ["pr-head"]);
-    const name = publishPreview(origin, prHead, base);
-    // `git rev-parse <8 hex>` prefers a ref of that name, and a clone that does not have the PR head
-    // yet would resolve it without ever fetching. Same shape as an unrelated local commit sharing
-    // the 8 hex, which a test cannot arrange on purpose.
-    git(clone, "branch", prHead.slice(0, 8), base);
-    expect(git(clone, "rev-parse", "--verify", `${prHead.slice(0, 8)}^{commit}`)).toBe(base);
+    const name = publishPreview(origin, pushToPullRequest(origin, base, "pr-head"), base);
+    const cacheDir = emptyCache(String(dir));
 
-    expect(await syncWebKitSource(clone, name)).toBe(prHead);
-    expect(head(clone)).toBe(prHead);
+    await expect(syncWebKitSource(clone, name, cacheDir)).rejects.toThrow(
+      `${name} names only the first 8 hex of its commit; the full sha is read from the downloaded prebuilt, and there is none under ${cacheDir}`,
+    );
+    expect(head(clone)).toBe(base);
   });
 
-  test("a preview of a replaced push whose tag predates the fix fails rather than checking out the tag", async () => {
-    using dir = tempDir("sync-webkit-source-preview-unreachable", {});
+  test("a downloaded prebuilt that was not built from the commit in the name is refused", async () => {
+    using dir = tempDir("sync-webkit-source-preview-mismatch", {});
     const { origin, clone, base } = originAndClone(String(dir));
-    git(origin, "update-ref", "refs/pull/7/head", base);
-    const name = "autobuild-preview-pr-7-0badc0de";
-    git(origin, "tag", name, base);
+    const push = pushToPullRequest(origin, base, "pr-head");
+    const name = publishPreview(origin, push, base);
+    const cacheDir = cacheWithPrebuilt(String(dir), name, base);
 
-    await expect(syncWebKitSource(clone, name)).rejects.toThrow(
-      `no commit starting with 0badc0de (${name}) in ${clone}: neither refs/pull/7/head nor refs/tags/${name} on origin reaches one`,
+    await expect(syncWebKitSource(clone, name, cacheDir)).rejects.toThrow(
+      `the prebuilt under ${cacheDir} for ${name} was built from ${base}, which is not the commit in the name`,
     );
     expect(head(clone)).toBe(base);
   });
@@ -285,7 +287,7 @@ describe.concurrent("sync-webkit-source", () => {
     const only = commit(repo, "only");
     git(repo, "tag", "autobuild-nightly", only);
 
-    await expect(syncWebKitSource(repo, "autobuild-nightly")).rejects.toThrow(
+    await expect(syncWebKitSource(repo, "autobuild-nightly", emptyCache(String(dir)))).rejects.toThrow(
       'cannot tell which commit WEBKIT_VERSION "autobuild-nightly" was built from',
     );
     expect(head(repo)).toBe(only);

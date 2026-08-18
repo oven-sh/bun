@@ -479,6 +479,17 @@ ${moduleSpans
   )
   .join("\n")}
 
+// { offset, length } of each JS module's source in bun_internal_modules_data, indexed by Field.
+static constexpr uint32_t moduleSourceSpans[][2] = {
+  ${moduleList
+    .slice(0, nativeStartIndex)
+    .map(id => {
+      const span = moduleSpans.find(m => m.enumName === idToEnumName(id))!;
+      return `{ ${span.offset}, ${span.length} },`;
+    })
+    .join("\n  ")}
+};
+
 } // namespace InternalModuleRegistryConstants
 } // namespace Bun
 `,

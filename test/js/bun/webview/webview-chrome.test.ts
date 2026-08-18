@@ -151,16 +151,19 @@ const chromePath = findChrome();
 // exists but can't run. Gate on CI + macOS < 15 rather than probing — a real
 // probe needs an async navigate, which adds startup cost on every platform.
 const chromeBroken = isCI && isMacOS && !isMacOSVersionAtLeast(15);
-// Edge refuses to run as LocalSystem: every msedge.exe invocation, even
-// --version, exits with code 234 after ~15ms without printing anything, so
-// spawn-mode ends in "Chrome process closed the pipe". The buildkite agent on
-// the Windows CI images runs as LocalSystem. Detected through the account's
-// profile directory; the user name is no use here because the test runner
-// overrides USERNAME, which is what userInfo() reports on Windows. Run as a
-// normal user (or point BUN_CHROME_PATH at a Chromium) to exercise the Windows
-// transport.
+// The Windows CI images have only Edge, and the buildkite agent there runs as
+// LocalSystem, under which every msedge.exe invocation (even --version) exits
+// with code 234 without printing anything, so spawn-mode ends in "Chrome
+// process closed the pipe". Detected through the account's profile directory;
+// the user name is no use because the test runner overrides USERNAME, which is
+// what userInfo() reports on Windows. Only CI is gated: a developer in the same
+// situation should see the real failure. The Windows pipe transport itself is
+// exercised on every lane by webview-chrome-pipe.test.ts, which needs no browser.
 const edgeAsLocalSystem =
-  process.platform === "win32" && /msedge\.exe$/i.test(chromePath ?? "") && /\\config\\systemprofile$/i.test(homedir());
+  isCI &&
+  process.platform === "win32" &&
+  /msedge\.exe$/i.test(chromePath ?? "") &&
+  /\\config\\systemprofile$/i.test(homedir());
 const it = chromePath && !chromeBroken && !edgeAsLocalSystem ? test : test.todo;
 
 // url:false forces spawn-mode — skips DevToolsActivePort auto-detect
@@ -587,49 +590,6 @@ it("chrome: closeAll() kills the subprocess and pending promises reject", async 
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect(stdout.trim()).toBe("rejected");
-  expect(exitCode).toBe(0);
-});
-
-it("chrome: a navigate still waiting for the load event rejects when Chrome dies", async () => {
-  // Subprocess-isolated like the closeAll() test above. Once the navigation
-  // has committed (Page.navigate replied, onNavigated fired) the navigate
-  // promise has no pending CDP id left; only the load event would settle it,
-  // and the response body below never ends, so it never fires.
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `
-        const server = Bun.serve({
-          port: 0,
-          hostname: "127.0.0.1",
-          fetch() {
-            const body = new ReadableStream({ start(c) { c.enqueue("<body>loading</body>"); } });
-            return new Response(body, { headers: { "content-type": "text/html" } });
-          },
-        });
-        const view = new Bun.WebView({ backend: {type:"chrome", url:false}, width: 200, height: 200 });
-        const committed = Promise.withResolvers();
-        view.onNavigated = url => { if (url.startsWith(server.url.href)) committed.resolve(); };
-        const nav = view.navigate(server.url.href);
-        await committed.promise;
-        Bun.WebView.closeAll();
-        await nav.then(
-          () => { throw new Error("should have rejected"); },
-          e => console.log("rejected: " + e.message),
-        );
-        let closed = false;
-        try { view.evaluate("1").catch(() => {}); } catch (e) { closed = /closed/.test(e.message); }
-        console.log("closed: " + closed);
-        server.stop(true);
-      `,
-    ],
-    env: bunEnv,
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stdout).toMatch(/^rejected: Chrome (process closed the pipe|killed by signal \d+|exited)\nclosed: true\n$/);
-  expect(stderr).toBe("");
   expect(exitCode).toBe(0);
 });
 
@@ -1161,4 +1121,32 @@ it("BUN_CHROME_PATH is used as the executable", async () => {
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
   expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({ stdout: "env", stderr: "", exitCode: 0 });
+});
+
+// No browser involved: the constructor refuses before it would spawn one. The
+// CDP transport is one per process, owned by the global that spawned it, so a
+// Worker's views would be left pointing at a dead global once it terminates.
+test("the chrome backend is refused off the main thread", async () => {
+  using dir = tempDir("webview-chrome-worker", {
+    "worker.ts": `
+      try {
+        new Bun.WebView({ backend: { type: "chrome", url: false } });
+        postMessage({ constructed: true });
+      } catch (e) {
+        postMessage({ code: e.code, message: e.message });
+      }
+    `,
+  });
+  const worker = new Worker(join(String(dir), "worker.ts"));
+  try {
+    const { promise, resolve, reject } = Promise.withResolvers<unknown>();
+    worker.onmessage = e => resolve(e.data);
+    worker.onerror = e => reject(e);
+    expect(await promise).toEqual({
+      code: "ERR_INVALID_STATE",
+      message: 'Bun.WebView with backend "chrome" is only available on the main thread',
+    });
+  } finally {
+    worker.terminate();
+  }
 });

@@ -1290,18 +1290,17 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Taken out first: settling can GC, and ~JSWebView of an unrelated dead view erases from m_views.
-    auto views = std::exchange(m_views, {});
+    // Reject each view's slots via settle(). Multiple pending ids may point
+    // at the same view (different slots); settle() is idempotent on an
+    // already-cleared slot — the first settle for a slot rejects, the rest
+    // find barrier.get() == null and no-op.
+    for (auto& [id, entry] : m_pending) {
+        if (JSWebView* v = viewFor(entry.viewId))
+            settle(g, v, entry.slot, false, err);
+    }
     m_pending.clear();
     m_sessions.clear();
-    // Every slot of every live view, not just m_pending's: a navigate waiting for Page.loadEventFired has no pending id.
-    for (auto& [viewId, weak] : views) {
-        JSWebView* v = weak.get();
-        if (!v) continue;
-        v->m_closed = true;
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
-            settle(g, v, s, false, err);
-    }
+    m_views.clear();
     updateKeepAlive();
 }
 

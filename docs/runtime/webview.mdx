@@ -82,7 +82,7 @@ Views that share the same `directory` share cookies and storage. Pass `dataStore
 | `"webkit"` | WKWebView | macOS only              | None — uses the system `WebKit.framework`                                            |
 | `"chrome"` | Blink     | macOS / Linux / Windows | Chrome, Chromium, Edge, or Brave installed (or Playwright's `chrome-headless-shell`) |
 
-On macOS the default is `"webkit"`; elsewhere it's `"chrome"`. Requesting `backend: "webkit"` on a non-macOS platform throws.
+On macOS the default is `"webkit"`; elsewhere it's `"chrome"`. Requesting `backend: "webkit"` on a non-macOS platform throws. The `"chrome"` backend drives one browser per process and can only be used from the main thread; constructing it inside a `Worker` throws.
 
 ```ts
 // Force Chrome on macOS

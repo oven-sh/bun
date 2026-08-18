@@ -163,38 +163,23 @@ impl ChromeProcess {
     /// Safety: `this` is the pointer published in INSTANCE (freed here); `process` is the exit callback's own argument, which carries the `&mut Process` already live in its frame (as in `SyncWindowsProcess::on_process_exit`).
     unsafe fn on_exit(this: *mut ChromeProcess, process: *mut Process, status: &Status) {
         scoped_log!(Chrome, "chrome exited: {}", status);
-        #[cfg(windows)]
-        // SAFETY: caller contract; read before `release` frees it.
-        let generation = unsafe { (*this).generation };
-        // SAFETY: caller contract.
-        unsafe { ChromeProcess::release(this, process) };
-        let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
-        #[cfg(windows)]
-        PipeEvent::Exited { signo }.post(generation);
-        #[cfg(not(windows))]
-        // SAFETY: plain FFI call; takes no pointers.
-        unsafe {
-            Bun__Chrome__died(signo)
-        };
-    }
-
-    /// Safety: `this` is the pointer published in INSTANCE; `process` is its Process via a pointer the caller may use (see the two callers). The first of exit and teardown to get here frees everything.
-    unsafe fn release(this: *mut ChromeProcess, process: *mut Process) {
         debug_assert_eq!(INSTANCE.load(Ordering::Relaxed), this);
         INSTANCE.store(ptr::null_mut(), Ordering::Relaxed);
-        // SAFETY: caller contract; nothing else references the allocation.
+        // SAFETY: caller contract; nothing else references the allocation once INSTANCE is cleared.
         let mut chrome = unsafe { bun_core::heap::take(this) };
         debug_assert_eq!(process, chrome.process.as_ptr());
         chrome.close_transport();
-        // SAFETY: caller contract. After an exit `detach` is a no-op
-        // (`Process::on_exit` already did it); on teardown it closes the
-        // still-open handle, so no exit callback can outlive the strong ref
-        // dropped next.
-        unsafe {
-            (*process).detach();
-            Process::deref(process);
+        // SAFETY: caller contract; this drops the strong ref taken by to_process.
+        unsafe { Process::deref(process) };
+        let signo: i32 = status.signal_code().map_or(0, |s| s as i32);
+        #[cfg(windows)]
+        PipeEvent::Exited { signo }.post(chrome.generation);
+        #[cfg(not(windows))]
+        {
+            drop(chrome);
+            // SAFETY: plain FFI call; takes no pointers.
+            unsafe { Bun__Chrome__died(signo) };
         }
-        drop(chrome);
     }
 
     /// On POSIX C++ owns the socket.
@@ -842,7 +827,7 @@ impl Endpoints {
             return Err(err.into());
         }
 
-        // SAFETY: `self_ptr` is live until `release`.
+        // SAFETY: `self_ptr` is live until `on_exit`.
         unsafe {
             let p = process.as_ptr();
             (*p).set_exit_handler(ProcessExit::new(ProcessExitKind::ChromeProcess, self_ptr));
@@ -850,8 +835,6 @@ impl Endpoints {
         }
         INSTANCE.store(self_ptr, Ordering::Relaxed);
         GENERATION.store(generation, Ordering::Relaxed);
-        // SAFETY: just published.
-        unsafe { ChromeProcess::register_teardown(self_ptr) };
         Ok(0)
     }
 }
@@ -865,25 +848,6 @@ impl Drop for Endpoints {
                 // SAFETY: still ours; `attach` nulls the fields it takes over.
                 unsafe { uv::Pipe::close_and_destroy(pipe) };
             }
-        }
-    }
-}
-
-#[cfg(windows)]
-impl ChromeProcess {
-    /// Safety: `this` is published. A thread teardown closes the process handle without an exit callback, so it releases the instance through the pipes instead.
-    unsafe fn register_teardown(this: *mut ChromeProcess) {
-        unsafe fn close_via_owner(owner: *mut core::ffi::c_void) {
-            let this: *mut ChromeProcess = owner.cast();
-            // SAFETY: `release` unlists both pipes, so this runs at most once.
-            // The teardown loop holds no `&mut Process`, so the stored root
-            // pointer is the one to use here.
-            unsafe { ChromeProcess::release(this, (*this).process.as_ptr()) };
-        }
-        // SAFETY: caller contract.
-        let pipes = unsafe { &(*this).pipes };
-        for pipe in [pipes.cmd, pipes.reply] {
-            uv::open_handles::set_owner(pipe.cast(), this.cast(), Some(close_via_owner));
         }
     }
 }
@@ -1042,9 +1006,9 @@ impl WriteReq {
 unsafe extern "C" fn Bun__Chrome__writePipe(data: *const u8, len: usize) {
     let instance = INSTANCE.load(Ordering::Relaxed);
     if instance.is_null() {
-        return; // `release` ran; its Exited event is on its way to C++
+        return; // Chrome already exited; the Exited event is on its way to C++
     }
-    // SAFETY: INSTANCE is live until `release` clears it; raw field reads, so
+    // SAFETY: INSTANCE is live until `on_exit` clears it; raw field reads, so
     // nothing aliases the `&mut` the read callbacks form.
     let (pipe, generation) = unsafe { ((*instance).pipes.cmd, (*instance).generation) };
     debug_assert!(

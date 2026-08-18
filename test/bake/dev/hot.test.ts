@@ -1032,6 +1032,37 @@ devTest("import.meta.hot.data persistence", {
     await c.expectMessage("Initial count: 3");
   },
 });
+devTest("a dispose callback writing to import.meta.hot.data does not make its module a boundary", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid);
+      import.meta.hot.accept();
+    `,
+    // Only the body reading `import.meta.hot.data` opts a module into taking updates itself.
+    "mid.ts": `
+      import { d } from "./d";
+      export const mid = "mid(" + d + ")";
+      import.meta.hot.dispose(data => {
+        data.disposed = (data.disposed ?? 0) + 1;
+        console.log("mid disposed " + data.disposed);
+      });
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index mid(d1)");
+    await dev.write("d.ts", `export const d = "d2";`);
+    await c.expectMessage("mid disposed 1", "index mid(d2)");
+    // The second save used to stop at `mid` because its data was no longer empty.
+    await dev.write("d.ts", `export const d = "d3";`);
+    await c.expectMessage("mid disposed 2", "index mid(d3)");
+  },
+});
 devTest("import.meta.hot.dispose cleanup", {
   files: {
     "index.html": emptyHtmlFile({

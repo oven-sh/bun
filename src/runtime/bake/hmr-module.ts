@@ -96,8 +96,10 @@ export class HMRModule {
   depAccepts: Record<Id, HotAccept> | null = null;
   /** All modules that have imported this module */
   importers = new Set<HMRModule>();
-  /** import.meta.hot.data rewrites to this */
-  data: any = {};
+  /** Persists across evaluations; `import.meta.hot.data` reads it through `data`. */
+  hotData: any = {};
+  /** The current evaluation touched `import.meta.hot.data`, so it takes the update itself. */
+  usesData = false;
 
   constructor(id: Id, isCommonJS: boolean) {
     this.id = id;
@@ -109,6 +111,11 @@ export class HMRModule {
           require: this.require.bind(this),
         }
       : null;
+  }
+
+  get data() {
+    this.usesData = true;
+    return this.hotData;
   }
 
   // Module Ids are pre-resolved by the bundler
@@ -489,6 +496,7 @@ function beginEvaluation(mod: HMRModule): number {
   mod.selfAccept = null;
   mod.depAccepts = null;
   mod.onDispose = null;
+  mod.usesData = false;
   return ++mod.generation;
 }
 
@@ -694,9 +702,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         visited.add(mod);
         propagates = false;
       }
-      // Modules that mutate data are implied to handle updates via reusing their `data` property
-      else if (Object.keys(mod.data).length > 0) {
-        mod.selfAccept ??= implicitAcceptFunction;
+      // Modules that use `import.meta.hot.data` are implied to handle updates by reusing it
+      else if (mod.usesData) {
         toReload.add(mod);
         visited.add(mod);
         propagates = false;
@@ -799,7 +806,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     mod.onDispose = null;
     for (const fn of onDispose) {
       try {
-        const p = fn(mod.data);
+        const p = fn(mod.hotData);
         if (p && p instanceof Promise) {
           disposePromises.push(p);
         }

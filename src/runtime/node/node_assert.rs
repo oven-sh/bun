@@ -149,7 +149,6 @@ impl<T: FromAny + Copy> PojoFields for Diff<T> {
 
 fn map_diff_error(global: &JSGlobalObject, err: MyersDiff::Error) -> JsError {
     match err {
-        MyersDiff::Error::OutOfMemory => JsError::OutOfMemory,
         MyersDiff::Error::DiffTooLarge => global.throw_invalid_arguments(format_args!(
             "Diffing these two values would create a string that is too large. If this was intentional, please open a bug report on GitHub.",
         )),

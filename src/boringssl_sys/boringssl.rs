@@ -331,10 +331,6 @@ impl GeneralNames {
         unsafe { sk_num(self.0.as_ptr().cast::<OPENSSL_STACK>()) }
     }
 
-    pub fn is_empty(&self) -> bool {
-        self.len() == 0
-    }
-
     /// Borrows the `i`th entry; `None` past the end.
     pub(crate) fn get(&self, i: usize) -> Option<&GENERAL_NAME> {
         if i >= self.len() {
@@ -1098,10 +1094,6 @@ opaque!(
 
 /// `TLS1_3_VERSION` (`openssl/tls1.h`).
 pub const TLS1_3_VERSION: u16 = 0x0304;
-/// `X509_V_OK` (`openssl/x509.h`).
-pub const X509_V_OK: c_long = 0;
-/// `SSL_SESS_CACHE_CLIENT` (`openssl/ssl.h`).
-pub const SSL_SESS_CACHE_CLIENT: c_int = 1;
 
 unsafe extern "C" {
     pub safe fn TLS_method() -> *const SSL_METHOD;

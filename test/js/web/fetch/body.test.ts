@@ -1,4 +1,4 @@
-import { file, spawn, version } from "bun";
+import { file, spawn, version, type Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunEnv, bunExe, exampleSite } from "harness";
 import net from "net";
@@ -229,6 +229,18 @@ for (const { body, fn } of bodyTypes) {
             },
             content: /Example Domain/,
           },
+          // Blob-backed streams are not wrapped: the constructor takes the
+          // blob out of the stream and stores it as the body itself.
+          {
+            label: "Blob.stream()",
+            stream: () => new Blob(["bye\n"]).stream(),
+            content: "bye\n",
+          },
+          {
+            label: ".body of an unread in-memory body",
+            stream: () => new Response("bye\n").body as ReadableStream,
+            content: "bye\n",
+          },
         ];
         for (const { label, stream, content, skip } of streams) {
           const it = skip ? test.skip : test;
@@ -250,6 +262,30 @@ for (const { body, fn } of bodyTypes) {
           }).not.toThrow();
           expect(await fn(buffer).text()).toBe(string);
         }
+      });
+    });
+    // Two places move a blob out of a blob-backed stream and into the body:
+    // the constructor (above), and the readers, when the body getter has
+    // already turned an in-memory body into a stream that nothing has read.
+    // Either way the body ends up holding the blob again, type included.
+    describe("blob-backed stream bodies", () => {
+      test("the constructor keeps the type of the Blob behind the stream", async () => {
+        const blob = await fn(new Blob(["bye"], { type: "text/x-bun" }).stream()).blob();
+        expect([blob.type, await blob.text()]).toEqual(["text/x-bun", "bye"]);
+      });
+
+      test("blob() after the body getter returns the original Blob's type and bytes", async () => {
+        const subject = fn(new Blob(["bye"], { type: "text/x-bun" }));
+        expect(subject.body).toBeInstanceOf(ReadableStream);
+        const blob = await subject.blob();
+        expect([blob.type, await blob.text(), subject.bodyUsed]).toEqual(["text/x-bun", "bye", true]);
+      });
+
+      test("text() after the body getter returns a string body's bytes", async () => {
+        const subject = fn("bye");
+        expect(subject.body).toBeInstanceOf(ReadableStream);
+        expect(await subject.text()).toBe("bye");
+        expect(subject.bodyUsed).toBe(true);
       });
     });
     for (const { string, buffer } of utf8) {
@@ -1260,4 +1296,35 @@ describe("constructing a body from an unusable ReadableStream", () => {
     expect(() => new Response(rs)).toThrow(TypeError);
     expect(() => new Request("http://example.com/", { method: "POST", body: rs, duplex: "half" })).toThrow(TypeError);
   });
+});
+
+// Until the body arrives, a fetch() Response's size (the number Bun.inspect
+// prints) is the upstream Content-Length. The body getter creates the stream
+// from that size alone when no bytes have been received yet, and the size has
+// to be carried over onto the stream, which reports it from then on.
+test("a fetch() Response still reports the Content-Length after .body created the stream", async () => {
+  const payload = "0123456789";
+  const { promise: upstream, resolve: gotUpstream } = Promise.withResolvers<Socket>();
+  using listener = Bun.listen({
+    hostname: "127.0.0.1",
+    port: 0,
+    socket: {
+      open(socket) {
+        socket.write(`HTTP/1.1 200 OK\r\nContent-Length: ${payload.length}\r\nConnection: close\r\n\r\n`);
+        gotUpstream(socket);
+      },
+      data() {},
+    },
+  });
+
+  const response = await fetch(`http://127.0.0.1:${listener.port}/`);
+  expect(Bun.inspect(response)).toStartWith(`Response (${payload.length} bytes)`);
+
+  // The upstream socket has not written any of the body yet, so this stream
+  // starts out empty and only knows the size.
+  const stream = response.body!;
+  expect(Bun.inspect(response)).toStartWith(`Response (${payload.length} bytes)`);
+
+  (await upstream).end(payload);
+  expect(await stream.text()).toBe(payload);
 });

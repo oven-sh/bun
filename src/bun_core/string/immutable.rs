@@ -280,8 +280,7 @@ pub fn memmem(haystack: &[u8], needle: &[u8]) -> Option<usize> {
 
 /// How the width-generic (`_t`) scanners below hand a `&[T]` to highway: as
 /// the 8- or 16-bit lanes the kernels take, or `Wide` for element types they
-/// don't (e.g. diff-match-patch's `usize` line hashes), which keep a scalar
-/// arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
+/// don't, which keep a scalar arm. Safe via [`crate::cast_slice`]: `NoUninit` proves every byte of `T` is
 /// initialized; the `u16` view additionally requires `T`'s own alignment.
 enum Lanes<'a> {
     U8(&'a [u8]),
@@ -354,8 +353,6 @@ pub fn contains_char_t<T: crate::NoUninit + Eq + Into<u32>>(self_: &[T], char: u
 
 #[inline]
 pub fn contains(self_: &[u8], str: &[u8]) -> bool {
-    // The generic index_of_t below returns Some(0) for an empty needle, so
-    // dispatch to the u8-specific index_of (which returns None for empty).
     index_of(self_, str).is_some()
 }
 
@@ -580,21 +577,6 @@ pub fn index_of(self_: &[u8], str: &[u8]) -> Option<usize> {
     Some(i)
 }
 
-/// Width-generic substring search. Unlike [`index_of`], an empty needle
-/// matches at `Some(0)`.
-pub fn index_of_t<T: crate::NoUninit + Eq>(haystack: &[T], needle: &[T]) -> Option<usize> {
-    match (lanes(haystack), lanes(needle)) {
-        (Lanes::U8(h), Lanes::U8(n)) => memmem(h, n),
-        (Lanes::U16(h), Lanes::U16(n)) => highway::memmem16(h, n),
-        _ => {
-            if needle.len() > haystack.len() {
-                return None;
-            }
-            (0..=haystack.len() - needle.len()).find(|&i| haystack[i..i + needle.len()] == *needle)
-        }
-    }
-}
-
 pub fn split<'a>(self_: &'a [u8], delimiter: &'a [u8]) -> SplitIterator<'a> {
     SplitIterator {
         buffer: self_,
@@ -656,13 +638,6 @@ impl<'a> SplitIterator<'a> {
         };
 
         Some(&self.buffer[start..end])
-    }
-
-    /// Returns a slice of the remaining bytes. Does not affect iterator state.
-    pub fn rest(&self) -> &'a [u8] {
-        let end = self.buffer.len();
-        let start = self.index.unwrap_or(end);
-        &self.buffer[start..end]
     }
 }
 
@@ -1553,7 +1528,15 @@ pub enum DecodeHexError {
 /// `u16` (UTF-16). The associated function routes full pairs through the
 /// matching Highway kernel while `_decode_hex_to_bytes` keeps the generic
 /// scalar path for short inputs.
-pub trait HexChar: Copy + Into<u32> {
+///
+/// A UTF-16 code unit is classified by its low byte, which is what Node's
+/// `Buffer` hex decoder does (`Buffer.from("\uff41", "hex")` sees `'A'`):
+/// a unit above 0xFF decodes when its low byte is a hex digit and stops the
+/// decode when it is not. The Highway kernels apply the same narrowing.
+pub trait HexChar: Copy {
+    /// The byte the decoder classifies and looks up in `HEX_TABLE`.
+    fn hex_byte(self) -> u8;
+
     /// Decode up to `min(src.len() / 2, dst.len())` hex pairs with SIMD,
     /// stopping at the first pair containing a non-hex character.
     /// Returns the number of bytes written.
@@ -1562,12 +1545,22 @@ pub trait HexChar: Copy + Into<u32> {
 
 impl HexChar for u8 {
     #[inline(always)]
+    fn hex_byte(self) -> u8 {
+        self
+    }
+
+    #[inline(always)]
     fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
         highway::decode_hex(src, dst)
     }
 }
 
 impl HexChar for u16 {
+    #[inline(always)]
+    fn hex_byte(self) -> u8 {
+        self as u8
+    }
+
     #[inline(always)]
     fn decode_hex_highway(src: &[Self], dst: &mut [u8]) -> usize {
         highway::decode_hex_u16(src, dst)
@@ -1621,18 +1614,8 @@ fn _decode_hex_to_bytes<Char: HexChar, const TRUNCATE: bool>(
     let mut input = source;
 
     while !remain.is_empty() && input.len() > 1 {
-        let int0: u32 = input[0].into();
-        let int1: u32 = input[1].into();
-        if core::mem::size_of::<Char>() > 1 {
-            if int0 > u8::MAX as u32 || int1 > u8::MAX as u32 {
-                if TRUNCATE {
-                    break;
-                }
-                return Err(DecodeHexError::InvalidByteSequence);
-            }
-        }
-        let a = HEX_TABLE[(int0 as u8) as usize];
-        let b = HEX_TABLE[(int1 as u8) as usize];
+        let a = HEX_TABLE[input[0].hex_byte() as usize];
+        let b = HEX_TABLE[input[1].hex_byte() as usize];
         if a == INVALID_CHAR || b == INVALID_CHAR {
             if TRUNCATE {
                 break;

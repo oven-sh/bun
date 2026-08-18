@@ -129,6 +129,46 @@ describe.if(isPosix)("terminal signal reflects the crash cause", () => {
   });
 });
 
+// POSIX-only: Windows refuses to remove a directory that is any process's cwd.
+describe.if(isPosix)("cwd deleted before startup", () => {
+  test.concurrent.each(["install", "test"])("bun %s prints the cwd-deleted hint", async cmd => {
+    using dir = tempDir("cwd-unlinked", {});
+    const gone = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" '${cmd}'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "",
+      stderr: expect.stringContaining("The current working directory was deleted"),
+      exitCode: 1,
+    });
+    expect(stderr).not.toContain("Bun could not find a file");
+  });
+
+  test.concurrent("bun -e boots via the exe-dir fallback instead", async () => {
+    using dir = tempDir("cwd-unlinked-run", {});
+    const gone = String(dir);
+
+    await using proc = Bun.spawn({
+      cmd: ["/bin/sh", "-c", `cd "${gone}" && rmdir "${gone}" && exec "${bunExe()}" -e 'console.log(1)'`],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+    expect(stdout).toBe("1\n");
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+});
+
 // Windows: the VEH handler must walk the stack from the fault CONTEXT record
 // (RtlVirtualUnwind), not from inside the handler. When the fault is in an
 // external DLL the old RtlCaptureStackBackTrace path could stop at

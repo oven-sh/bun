@@ -13,7 +13,7 @@ use bun_jsc::{JSGlobalObject, JSValue, JsError, bun_string_jsc};
 #[inline]
 fn js_err(e: JsError) -> ToJSError {
     match e {
-        JsError::Thrown => ToJSError::JSError,
+        JsError::Thrown | JsError::Terminated => ToJSError::JSError,
         JsError::OutOfMemory => ToJSError::OutOfMemory,
     }
 }

@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicU32, Ordering};
 use crate::Error as BunError;
 use bun_alloc::{AllocError, Arena as Bump};
 use bun_ast::{Data, Loc, Log, Range, Source};
-use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt};
+use bun_collections::{ArrayHashMap, AutoBitSet, HashMap, MultiArrayList, VecExt, index_sort};
 use bun_core::{self as bun, FeatureFlags, Output};
 use bun_core::{MutableString, string_joiner::StringJoiner, strings};
 use bun_sourcemap::{
@@ -2548,7 +2548,7 @@ impl<'a> LinkerContext<'a> {
                 r#ref: export_ref,
             });
         }
-        list.sort_by(|a, b| {
+        index_sort::sort_slice_by(list, |a, b| {
             if StableRef::is_less_than((), *a, *b) {
                 core::cmp::Ordering::Less
             } else {
@@ -3840,12 +3840,16 @@ impl<'a> LinkerContext<'a> {
         // SAFETY: same column-validity invariant as `keys` above.
         let values: *const [NamedImport] = unsafe { (*named_imports_ptr).values() };
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        let mut order: Vec<usize> = (0..unsafe { (&*keys).len() }).collect();
+        let mut order = index_sort::identity(unsafe { (&*keys).len() });
         // SAFETY: `keys` points into stable SoA storage (see above); read-only deref.
-        order
-            .sort_by(|&a, &b| unsafe { (&*keys)[a].inner_index().cmp(&(&*keys)[b].inner_index()) });
+        index_sort::sort_indices(&mut order, &mut |a, b| unsafe {
+            (&*keys)[a as usize]
+                .inner_index()
+                .cmp(&(&*keys)[b as usize].inner_index())
+        });
 
         for &i in &order {
+            let i = i as usize;
             // SAFETY: `keys`/`values` point into stable SoA storage (see above); read-only deref.
             let (import_ref, named_import) = unsafe { ((*keys)[i], &(*values)[i]) };
 

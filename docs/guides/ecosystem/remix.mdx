@@ -4,9 +4,9 @@ sidebarTitle: Remix with Bun
 mode: center
 ---
 
-[Remix 3](https://github.com/remix-run/remix) is a web framework built from standalone packages (a router, HTML rendering, sessions, form parsing, and more) that are distributed together as the `remix` package. It is published under the `next` tag on npm while it is in beta, and its server runs on Bun as-is.
+[Remix 3](https://github.com/remix-run/remix) is a web framework built from standalone packages: a router, HTML rendering, sessions, form parsing, and more. These packages are distributed together as the `remix` package. Remix 3 is published under the `next` tag on npm while it is in beta. Its server runs on Bun as-is.
 
-<Note>This guide covers Remix 3. Remix 2 projects are created with `create-remix` instead.</Note>
+<Note>This guide covers Remix 3. To create a Remix 2 project, use `create-remix` instead.</Note>
 
 ---
 
@@ -46,7 +46,7 @@ bun --watch server.ts
 Server listening on http://localhost:44100
 ```
 
-Open [http://localhost:44100](http://localhost:44100) to see the starter page. The routes live in `app/routes.ts` and `app/router.ts`, and the starter home page is rendered by `app/actions/home-page.tsx`.
+Open [http://localhost:44100](http://localhost:44100) to see the starter page. The routes live in `app/routes.ts` and `app/router.ts`. `app/actions/home-page.tsx` renders the starter home page.
 
 ---
 
@@ -74,13 +74,13 @@ Server listening on http://localhost:44100
 
 <Note>
   The generated `hmr` script (`hmr.ts`) also loads `remix/node-tsx`, which relies on `module.registerHooks()`. Bun does
-  not implement that API yet (see [Node.js compatibility](/runtime/nodejs-compat#node-module)), so the script fails
-  under Bun; `bun --watch` restarts the server on changes instead.
+  not implement that API yet, so the script fails under Bun. See [Node.js
+  compatibility](/runtime/nodejs-compat#node-module). `bun --watch` restarts the server on changes instead.
 </Note>
 
 ---
 
-The router is a `fetch` handler, so the app can also be served with [`Bun.serve()`](/runtime/http/server) instead of `node:http`.
+The router is a `fetch` handler, so you can also serve the app with [`Bun.serve()`](/runtime/http/server) instead of `node:http`.
 
 ```ts server.ts icon="/icons/typescript.svg"
 import { router } from "./app/router.ts";

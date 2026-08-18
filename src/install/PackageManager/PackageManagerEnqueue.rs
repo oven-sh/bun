@@ -799,6 +799,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         this.log_mut()
                     .add_error_fmt(
@@ -819,6 +821,8 @@ pub fn enqueue_dependency_with_main_and_success_fn(
                                 if dependency.behavior.is_required() {
                                     if let Some(fail) = fail_fn {
                                         fail(this, dependency, id, err);
+                                    } else if dependency.behavior.is_peer() {
+                                        warn_unmet_peer_dependency(this, name, &version);
                                     } else {
                                         bun_ast::add_error_pretty!(
                                             this.log_mut(),
@@ -1638,6 +1642,24 @@ pub fn enqueue_dependency_with_main_and_success_fn(
     }
 }
 
+/// Unmet peers stay unresolved instead of failing the install; see `may_stay_unresolved`.
+#[cold]
+#[inline(never)]
+fn warn_unmet_peer_dependency(
+    this: &PackageManager,
+    name: SemverString,
+    version: &dependency::Version,
+) {
+    bun_ast::add_warning_pretty!(
+        this.log_mut(),
+        None,
+        bun_ast::Loc::EMPTY,
+        "No version matching \"{}\" found for peer dependency \"{}\"<r> <d>(but package exists)<r>",
+        bstr::BStr::new(this.lockfile.str(&version.literal)),
+        bstr::BStr::new(this.lockfile.str(&name)),
+    );
+}
+
 /// Allocate and initialise an `.extract` Task for an npm tarball.
 /// Shared by the buffered path (`enqueueExtractNPMPackage`) and the
 /// streaming path (`createExtractTaskForStreaming`) so both produce
@@ -1881,31 +1903,18 @@ fn enqueue_local_tarball(
     // other dependencies (e.g. `appendPackage` / `StringBuilder.allocate`
     // in `Package.fromNPM`).
     let mut abs_buf = PathBuffer::uninit();
-    let (tarball_path, normalize): (&[u8], bool) = 'tarball_path: {
-        let workspace_pkg_id = this
-            .lockfile
-            .get_workspace_pkg_if_workspace_dep(dependency_id);
-        if workspace_pkg_id == invalid_package_id {
-            break 'tarball_path (path, true);
-        }
-
-        let workspace_res = this.lockfile.packages.items_resolution()[workspace_pkg_id as usize];
-        if workspace_res.tag != ResolutionTag::Workspace {
-            break 'tarball_path (path, true);
-        }
-
-        // Construct an absolute path to the tarball.
-        // Normally tarball paths are always relative to the root directory, but if a
-        // workspace depends on a tarball path, it should be relative to the workspace.
-        let workspace_str = *workspace_res.workspace();
-        let workspace_path = workspace_str.slice(this.lockfile.buffers.string_bytes.as_slice());
-        let joined = Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
-            FileSystem::instance().top_level_dir(),
-            &mut abs_buf,
-            &[workspace_path, path],
-        );
-        break 'tarball_path (joined, false);
-    };
+    let (tarball_path, normalize): (&[u8], bool) =
+        match local_tarball_base_dir(&this.lockfile, dependency_id, path) {
+            None => (path, true),
+            Some(base_dir) => (
+                Path::resolve_path::join_abs_string_buf::<Path::platform::Auto>(
+                    FileSystem::instance().top_level_dir(),
+                    &mut abs_buf,
+                    &[base_dir, path],
+                ),
+                false,
+            ),
+        };
 
     // Build the `Task` value *before* claiming a hive slot — the `.expect()`s
     // below can unwind, and `Task` carries drop glue. See `enqueue_git_clone`.
@@ -1954,6 +1963,33 @@ fn enqueue_local_tarball(
     let task = this.preallocated_resolve_tasks.get_init(value).as_ptr();
     // SAFETY: `get_init` just fully initialized the slot.
     unsafe { &raw mut (*task).threadpool_task }
+}
+
+/// The workspace or `file:` folder directory that `path` is relative to; `None` is the top-level dir.
+fn local_tarball_base_dir<'a>(
+    lockfile: &'a Lockfile::Lockfile,
+    dependency_id: DependencyID,
+    path: &[u8],
+) -> Option<&'a [u8]> {
+    let declared = &lockfile.buffers.dependencies[dependency_id as usize].version;
+    let declared_by_parent = declared.tag == dependency::version::Tag::Tarball
+        && matches!(
+            &declared.tarball().uri,
+            dependency::tarball::Uri::Local(declared_path) if lockfile.str(declared_path) == path
+        );
+    if !declared_by_parent {
+        // Overrides, resolutions and catalogs are all written in the root package.json.
+        return None;
+    }
+
+    let declarer = lockfile.get_parent_pkg_of_dependency(dependency_id)?;
+    let declarer_res = &lockfile.packages.items_resolution()[declarer as usize];
+    let base_dir = match declarer_res.tag {
+        ResolutionTag::Workspace => declarer_res.workspace(),
+        ResolutionTag::Folder => declarer_res.folder(),
+        _ => return None,
+    };
+    Some(lockfile.str(base_dir))
 }
 
 fn update_name_and_name_hash_from_version_replacement(
@@ -2567,7 +2603,8 @@ fn get_or_put_resolved_package(
                         }
                     }
 
-                    if behavior.is_peer() {
+                    // `Ok(None)` in the peer pass makes the caller reload the manifest and retry.
+                    if behavior.is_peer() && !install_peer {
                         return Ok(None);
                     }
 
@@ -2705,24 +2742,7 @@ fn get_or_put_resolved_package(
                 break 'res FolderResolutionValue::NewPackageId(package.meta.id);
             };
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Workspace => {
             if !behavior.is_workspace() && !this.lockfile.is_workspace_dependency(dependency_id) {
@@ -2777,24 +2797,7 @@ fn get_or_put_resolved_package(
                 this,
             );
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
         dependency::version::Tag::Symlink => {
             // reshaped for borrowck — `link_dir` / `symlink_path`
@@ -2816,28 +2819,30 @@ fn get_or_put_resolved_package(
                 this,
             );
 
-            match res {
-                FolderResolutionValue::Err(err) => Err(err),
-                FolderResolutionValue::PackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        ..Default::default()
-                    }))
-                }
-                FolderResolutionValue::NewPackageId(package_id) => {
-                    success_fn(this, dependency_id, package_id);
-                    Ok(Some(ResolvedPackageResult {
-                        package: *this.lockfile.packages.get(package_id as usize),
-                        is_first_time: true,
-                        task: None,
-                    }))
-                }
-            }
+            resolved_folder_package(this, res, dependency_id, success_fn)
         }
 
         _ => Ok(None),
     }
+}
+
+fn resolved_folder_package(
+    this: &mut PackageManager,
+    res: FolderResolutionValue,
+    dependency_id: DependencyID,
+    success_fn: SuccessFn,
+) -> crate::Result<Option<ResolvedPackageResult>> {
+    let (package_id, is_first_time) = match res {
+        FolderResolutionValue::Err(err) => return Err(err),
+        FolderResolutionValue::PackageId(package_id) => (package_id, false),
+        FolderResolutionValue::NewPackageId(package_id) => (package_id, true),
+    };
+    success_fn(this, dependency_id, package_id);
+    Ok(Some(ResolvedPackageResult {
+        package: *this.lockfile.packages.get(package_id as usize),
+        is_first_time,
+        task: None,
+    }))
 }
 
 /// `--latest` never moves a row below what bun.lock already has (e.g. a prerelease or a version ahead of the tag).
@@ -2900,10 +2905,7 @@ fn locked_version_in_lockfile<'a>(
         return None;
     }
     let lockfile: &Lockfile::Lockfile = &this.lockfile;
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     let range = &version.npm().version;
@@ -2936,10 +2938,7 @@ fn patched_package_satisfying(
     if lockfile.patched_dependencies.count() == 0 {
         return None;
     }
-    let candidates: &[PackageID] = match lockfile.package_index.get(&name_hash)? {
-        PackageIndexEntry::Id(id) => core::slice::from_ref(id),
-        PackageIndexEntry::Ids(ids) => ids.as_slice(),
-    };
+    let candidates = lockfile.package_index.get(&name_hash)?.as_slice();
     let pkg_res = lockfile.packages.items_resolution();
     let buf = lockfile.buffers.string_bytes.as_slice();
     candidates.iter().copied().find(|&id| {

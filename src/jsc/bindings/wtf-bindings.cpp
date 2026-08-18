@@ -297,7 +297,7 @@ static thread_local WTF::StackBounds stackBoundsForCurrentThread = WTF::StackBou
 
 extern "C" [[ZIG_EXPORT(nothrow)]] void Bun__StackCheck__initialize()
 {
-    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBounds();
+    stackBoundsForCurrentThread = WTF::StackBounds::currentThreadStackBoundsForEmbedder();
 }
 
 extern "C" [[ZIG_EXPORT(nothrow)]] __attribute__((__always_inline__)) void* Bun__StackCheck__getMaxStack()

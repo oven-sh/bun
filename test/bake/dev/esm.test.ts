@@ -1758,3 +1758,37 @@ devTest("a module that failed because its dependency rejected is loaded again on
     expect(await c.js`loadLazy()`).toBe("fixed");
   },
 });
+
+devTest("a dependency that throws while an earlier dependency's top-level await is in flight does not leave that rejection unhandled", {
+  framework: minimalFramework,
+  files: {
+    // The route lists `slow` before `sync`: `slow` comes back as a promise that later rejects, then `sync` throws right away.
+    "slow.ts": `
+      await 1;
+      export const slow = "unreachable";
+      throw new Error("slow rejected");
+    `,
+    "sync.ts": `
+      export const sync = "unreachable";
+      throw new Error("sync threw");
+    `,
+    "routes/index.ts": `
+      import { slow } from "../slow";
+      import { sync } from "../sync";
+      export default function () {
+        return new Response(slow + sync);
+      }
+    `,
+    "routes/other.ts": `
+      export default function () {
+        return new Response("other route still works");
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").expectErrorPage("sync threw");
+    // An unhandled rejection from `slow` would have taken the dev server down before this request is answered.
+    await dev.fetch("/other").equals("other route still works");
+    await dev.fetch("/").expectErrorPage("sync threw");
+  },
+});

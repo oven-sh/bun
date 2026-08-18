@@ -556,6 +556,7 @@ function parseEsmDependencies<T extends GenericModuleLoader<any>>(
         parent.state = State.Stale;
         throw e;
       }
+      for (const p of list) if (p instanceof Promise) p.catch(() => {});
       throwLoadFailure(parent, parent.generation, e);
     }
     list.push(promiseOrModule);

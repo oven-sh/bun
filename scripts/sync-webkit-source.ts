@@ -4,29 +4,51 @@ import { dirname, join } from "node:path";
 export type PinnedCommit =
   /** A 40-hex sha, with or without the `autobuild-` prefix of the release built from it. */
   | { sha: string }
-  /** `autobuild-preview-pr-<n>-<sha8>`: the first 8 hex of the PR head the preview was built from. */
-  | { shaPrefix: string; pullRef: string };
+  /**
+   * `autobuild-preview-pr-<n>-<sha8>`: the first 8 hex of the commit the preview was built from,
+   * and the two refs on origin that can reach it. The PR ref does while the commit is the PR's
+   * head or an ancestor of it, whatever the tag says (every tag made before oven-sh/WebKit#461
+   * points at main), and after the PR's branch is merged or deleted; the tag does once it points
+   * at the commit it is named after, which is the only ref left once the PR has been force-pushed.
+   */
+  | { shaPrefix: string; pullRef: string; tagRef: string };
 
 /**
  * WEBKIT_VERSION is a 40-hex sha or the name of an oven-sh/WebKit release.
  * Both release workflows name the release after the commit they built
  * (build.yml: `autobuild-<sha>`, build-preview.yml:
  * `autobuild-preview-pr-<n>-<first 8 hex of the PR head>`), so the name says
- * what the tarballs contain. The tag object behind the release does not:
- * releases created before oven-sh/WebKit#461 tagged whatever main's HEAD was
- * when the release job ran, which is never the PR head for a preview and is
- * the next commit on main for about one main release in six. The tag object is
- * therefore never consulted; the sha is taken from the name.
+ * what the tarballs contain. The tag object behind the release only does so
+ * since oven-sh/WebKit#461: before it, the release job tagged whatever main's
+ * HEAD was at the time, which is never the PR head for a preview and is the
+ * next commit on main for about one main release in six. So the name decides
+ * which commit is wanted; a tag is at most one of the places to fetch it from.
  */
 export function pinnedCommit(version: string): PinnedCommit | undefined {
   const preview = /^autobuild-preview-pr-(\d+)-([0-9a-f]{8})$/.exec(version);
   if (preview) {
-    // refs/pull/<n>/head still serves the commit once the PR's branch has been merged or deleted.
-    return { shaPrefix: preview[2], pullRef: `refs/pull/${preview[1]}/head` };
+    return { shaPrefix: preview[2], pullRef: `refs/pull/${preview[1]}/head`, tagRef: `refs/tags/${version}` };
   }
   const sha = /^(?:autobuild-)?([0-9a-f]{40})$/.exec(version);
   if (sha) return { sha: sha[1] };
   return undefined;
+}
+
+/** How far down a PR's history an earlier push of it is looked for when the clone is shallow. */
+const SHALLOW_PULL_REQUEST_DEPTH = 50;
+
+/**
+ * `git fetch origin <what>` (a commit id or a ref), best effort: whether the wanted commit arrived
+ * is judged afterwards by looking for it. Fetching by id rather than `git fetch origin` works in
+ * every clone shape, including --single-branch and --depth clones whose refspec covers only main's
+ * tip. A shallow clone is kept shallow and given `depth` commits of history; without --depth, a
+ * ref whose history does not connect to the few commits such a clone has brings in all of
+ * WebKit's history, tens of GB.
+ */
+async function fetchFromOrigin(webkitRepo: string, what: string, depth: number): Promise<void> {
+  const shallow = (await Bun.$`git rev-parse --is-shallow-repository`.cwd(webkitRepo).quiet().text()).trim();
+  const depthFlag = shallow === "true" ? [`--depth=${depth}`] : [];
+  await Bun.$`git fetch ${depthFlag} origin ${what}`.cwd(webkitRepo).nothrow();
 }
 
 async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
@@ -49,28 +71,29 @@ async function commitBuiltFrom(webkitRepo: string, version: string, pin: PinnedC
   if ("sha" in pin) {
     let sha = await resolveCommit(webkitRepo, pin.sha);
     if (!sha) {
-      await Bun.$`git fetch origin`.cwd(webkitRepo);
+      await fetchFromOrigin(webkitRepo, pin.sha, 1);
       sha = await resolveCommit(webkitRepo, pin.sha);
     }
     if (sha) return sha;
     throw new Error(
-      `could not find commit ${pin.sha} (${version}) in ${webkitRepo} even after fetching origin\n` +
+      `commit ${pin.sha} (${version}) is not in ${webkitRepo}, and origin did not serve it\n` +
         "check that the commit exists on https://github.com/oven-sh/WebKit",
     );
   }
 
   // The prefix is only ever compared against whole object ids, never resolved as a name:
   // `git rev-parse <prefix>` would accept a ref called that, or an unrelated commit sharing the
-  // prefix, while the PR head itself has not been fetched yet. Fetching first puts the built
-  // commit among the candidates whenever the PR still has it.
-  await Bun.$`git fetch origin ${pin.pullRef}`.cwd(webkitRepo);
+  // prefix, while the built commit itself has not been fetched yet. Fetching both refs first puts
+  // it among the candidates whenever either still reaches it.
+  await fetchFromOrigin(webkitRepo, pin.pullRef, SHALLOW_PULL_REQUEST_DEPTH);
+  await fetchFromOrigin(webkitRepo, pin.tagRef, 1);
   const commits = await commitsWithPrefix(webkitRepo, pin.shaPrefix);
   if (commits.length === 1) return commits[0];
   if (commits.length === 0) {
-    const head = await resolveCommit(webkitRepo, "FETCH_HEAD");
     throw new Error(
-      `no commit starting with ${pin.shaPrefix} (${version}) in ${webkitRepo} even after fetching ${pin.pullRef}, ` +
-        `whose head is ${head}\nthe preview was built from a push the PR no longer has`,
+      `no commit starting with ${pin.shaPrefix} (${version}) in ${webkitRepo}: neither ${pin.pullRef} nor ${pin.tagRef} ` +
+        "on origin reaches one\nthe PR has replaced the push this preview was built from, and its tag does not point " +
+        "at that push (tags made before oven-sh/WebKit#461 point at main instead)",
     );
   }
   throw new Error(`${pin.shaPrefix} (${version}) matches more than one commit in ${webkitRepo}: ${commits.join(", ")}`);

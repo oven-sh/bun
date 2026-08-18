@@ -397,6 +397,7 @@ export function resolveLlvmToolchain(
   | "rustHostTriple"
   | "strip"
   | "llvmStrip"
+  | "nm"
   | "dsymutil"
   | "ccache"
   | "rc"
@@ -511,6 +512,12 @@ export function resolveLlvmToolchain(
     llvmStrip = strip;
   }
 
+  // llvm-nm: reads ELF, Mach-O, COFF and LTO bitcode objects alike, which is
+  // what the per-dep undefined-symbol checks need. Same package as llvm-ar,
+  // so it is only ever missing from a partial LLVM install; then the checks
+  // are skipped rather than the build refused.
+  const nm = findLlvmTool("llvm-nm", paths, os, { checkVersion: false, required: false })?.path;
+
   // dsymutil: required on darwin; optional elsewhere (needed only when
   // cross-compiling a darwin release from a non-darwin host).
   let dsymutil: string | undefined;
@@ -587,6 +594,7 @@ export function resolveLlvmToolchain(
     rustHostTriple,
     strip,
     llvmStrip,
+    nm,
     dsymutil,
     ccache,
     rc,

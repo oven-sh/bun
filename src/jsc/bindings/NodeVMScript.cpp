@@ -117,6 +117,8 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     } else if (!options.fromJS(globalObject, vm, scope, optionsArg, &importer)) {
         RETURN_IF_EXCEPTION(scope, JSValue::encode(jsUndefined()));
     }
+    options.lineOffset = clampOffsetForSource(options.lineOffset, sourceString.length());
+    options.columnOffset = clampOffsetForSource(options.columnOffset, sourceString.length());
 
     auto* zigGlobalObject = defaultGlobalObject(globalObject);
     Structure* structure = zigGlobalObject->NodeVMScriptStructure();

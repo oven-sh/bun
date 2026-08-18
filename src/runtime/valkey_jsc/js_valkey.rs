@@ -1612,7 +1612,7 @@ impl JSValkeyClient {
         // Add queue sizes
         memory_cost += client.in_flight.readable_length()
             * core::mem::size_of::<super::valkey_command::PromisePair>();
-        for command in client.queue.readable_slice(0) {
+        for command in client.queue.iter() {
             memory_cost += command.serialized_data.len();
         }
         memory_cost +=

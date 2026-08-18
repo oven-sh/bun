@@ -410,9 +410,8 @@ impl ValkeyClient {
 
         // We compute the count first, then drain by `read_item`.
         let pipelineable_count: usize = {
-            let to_process = self.queue.readable_slice(0);
             let mut total: usize = 0;
-            for command in to_process {
+            for command in self.queue.iter() {
                 if !command
                     .meta
                     .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)

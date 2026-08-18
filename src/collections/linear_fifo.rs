@@ -146,6 +146,12 @@ impl<T> LinearFifoBuffer<T> for DynamicBuffer<T> {
 
 // ── LinearFifo ────────────────────────────────────────────────────────────────
 
+/// Iterator over the live items, see [`LinearFifo::iter`].
+pub type Iter<'a, T> = core::iter::Chain<core::slice::Iter<'a, T>, core::slice::Iter<'a, T>>;
+/// Iterator over the live items, see [`LinearFifo::iter_mut`].
+pub type IterMut<'a, T> =
+    core::iter::Chain<core::slice::IterMut<'a, T>, core::slice::IterMut<'a, T>>;
+
 pub struct LinearFifo<T, B: LinearFifoBuffer<T>> {
     buf: B,
     head: usize,
@@ -182,8 +188,15 @@ impl<T> LinearFifo<T, DynamicBuffer<T>> {
     }
 }
 
-// `pub fn deinit` → Drop. Dynamic frees `buf` via `Box` drop; Static/Slice are
-// no-ops. Field drop glue covers it; no explicit impl needed.
+// The storage is `MaybeUninit<T>`, so its own drop glue never runs `T::drop`:
+// live items must be dropped explicitly. `discard` owns that logic.
+impl<T, B: LinearFifoBuffer<T>> Drop for LinearFifo<T, B> {
+    fn drop(&mut self) {
+        if self.count != 0 {
+            self.discard(self.count);
+        }
+    }
+}
 
 impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
     #[inline]
@@ -351,10 +364,80 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         }
     }
 
-    /// Discard first `count` items in the fifo
+    /// The live items as two slices: the run starting at `head`, then (when
+    /// the ring wraps) the run at the start of the buffer. Either may be
+    /// empty. Concatenated they are the whole queue in FIFO order, unlike
+    /// `readable_slice(0)`, which is only the first run.
+    pub fn as_slices(&self) -> (&[T], &[T]) {
+        let buf_len = self.buf_len();
+        let end = self.head + self.count;
+        let buf = self.buf.as_slice();
+        if end <= buf_len {
+            (&buf[self.head..end], &[])
+        } else {
+            (&buf[self.head..], &buf[..end - buf_len])
+        }
+    }
+
+    /// Mutable [`as_slices`](Self::as_slices).
+    pub fn as_mut_slices(&mut self) -> (&mut [T], &mut [T]) {
+        let buf_len = self.buf_len();
+        let head = self.head;
+        let end = head + self.count;
+        // `count <= buf_len` so the wrapped run `[0, end - buf_len)` ends at
+        // or before `head`; the two runs never overlap.
+        let (prefix, tail) = self.buf.as_mut_slice().split_at_mut(head);
+        if end <= buf_len {
+            (&mut tail[..end - head], &mut [])
+        } else {
+            (tail, &mut prefix[..end - buf_len])
+        }
+    }
+
+    /// All live items in FIFO order.
+    pub fn iter(&self) -> Iter<'_, T> {
+        let (a, b) = self.as_slices();
+        a.iter().chain(b)
+    }
+
+    /// Mutable [`iter`](Self::iter).
+    pub fn iter_mut(&mut self) -> IterMut<'_, T> {
+        let (a, b) = self.as_mut_slices();
+        a.iter_mut().chain(b)
+    }
+
+    /// Discard (drop) the first `count` items in the fifo.
     pub fn discard(&mut self, count: usize) {
         debug_assert!(count <= self.count);
 
+        if mem::needs_drop::<T>() && count > 0 {
+            let (a, b) = self.as_mut_slices();
+            let n = count.min(a.len());
+            let a = ptr::from_mut(&mut a[..n]);
+            let b = ptr::from_mut(&mut b[..count - n]);
+            // Move `head` first so a panicking `T::drop` leaves the fifo
+            // consistent (the rest of the range leaks, is not dropped twice).
+            self.move_head(count);
+            // SAFETY: both ranges were live items and are no longer reachable
+            // through `head..count`, so each is dropped exactly once and the
+            // slots are never read as `T` again.
+            unsafe {
+                ptr::drop_in_place(a);
+                ptr::drop_in_place(b);
+                #[cfg(debug_assertions)]
+                {
+                    poison(&mut *a, a.len());
+                    poison(&mut *b, b.len());
+                }
+            }
+        } else {
+            self.advance(count);
+        }
+    }
+
+    /// Move `head` past the first `count` items without dropping them. Used
+    /// after the items were moved out (`read_item`) or need no drop.
+    fn advance(&mut self, count: usize) {
         #[cfg(debug_assertions)]
         {
             // set old range to undefined. Note: may be wrapped around
@@ -368,7 +451,10 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
                 poison(self.readable_slice_mut(slice_len), rem);
             }
         }
+        self.move_head(count);
+    }
 
+    fn move_head(&mut self, count: usize) {
         let mut head = self.head + count;
         if B::POWERS_OF_TWO {
             // Note it is safe to do a wrapping subtract as
@@ -387,9 +473,9 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
             return None;
         }
         // SAFETY: buf[head] is in the readable region (count > 0); we move it
-        // out and immediately discard(1), so the slot is never read again.
+        // out and immediately advance(1), so the slot is never read again.
         let c = unsafe { ptr::read(self.buf.as_slice().as_ptr().add(self.head)) };
-        self.discard(1);
+        self.advance(1);
         Some(c)
     }
 
@@ -590,7 +676,7 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         &mut self.buf.as_mut_slice()[index]
     }
 
-    /// Remove one item at `offset` and MOVE all items after it up one.
+    /// Remove (drop) one item at `offset` and MOVE all items after it up one.
     pub fn ordered_remove_item(&mut self, offset: usize) {
         if offset == 0 {
             return self.discard(1);
@@ -601,6 +687,10 @@ impl<T, B: LinearFifoBuffer<T>> LinearFifo<T, B> {
         let buf_len = self.buf_len();
         let head = self.head;
         let count = self.count;
+
+        // SAFETY: `offset < count`, so the slot holds a live item; the shifts
+        // below overwrite it without reading it again.
+        unsafe { ptr::drop_in_place(self.peek_item_mut(offset)) };
 
         if buf_len - head >= count {
             // If it doesnt overflow past the end, there is one copy to be done
@@ -990,5 +1080,211 @@ mod tests {
                 "contents mismatch for offset {offset}"
             );
         }
+    }
+
+    // ── drop / iter ───────────────────────────────────────────────────────
+
+    use core::cell::Cell;
+
+    /// Increments a shared counter when dropped; carries a payload so a
+    /// double drop or a drop of an uninitialized slot is loud under ASAN.
+    struct Counted<'a> {
+        id: u32,
+        drops: &'a Cell<u32>,
+        _payload: Box<u32>,
+    }
+
+    impl<'a> Counted<'a> {
+        fn new(id: u32, drops: &'a Cell<u32>) -> Self {
+            Self {
+                id,
+                drops,
+                _payload: Box::new(id),
+            }
+        }
+    }
+
+    impl Drop for Counted<'_> {
+        fn drop(&mut self) {
+            self.drops.set(self.drops.get() + 1);
+        }
+    }
+
+    type CountedFifo<'a> = LinearFifo<Counted<'a>, DynamicBuffer<Counted<'a>>>;
+
+    fn ids<'a>(it: impl Iterator<Item = &'a Counted<'a>>) -> Vec<u32> {
+        it.map(|c| c.id).collect()
+    }
+
+    /// 8-slot ring holding ids 6..14 with head=6: write 8, pop 6, write 6.
+    fn wrapped_counted<'a>(drops: &'a Cell<u32>) -> CountedFifo<'a> {
+        let mut fifo = CountedFifo::init();
+        for id in 0..8 {
+            fifo.write_item(Counted::new(id, drops)).unwrap();
+        }
+        assert_eq!(fifo.buf_len(), 8);
+        for _ in 0..6 {
+            drop(fifo.read_item().unwrap());
+        }
+        for id in 8..14 {
+            fifo.write_item(Counted::new(id, drops)).unwrap();
+        }
+        assert_eq!(fifo.buf_len(), 8, "must not have grown");
+        assert!(fifo.buf_len() - fifo.head < fifo.count, "must be wrapped");
+        assert_eq!(drops.get(), 6);
+        drops.set(0);
+        fifo
+    }
+
+    #[test]
+    fn drop_runs_for_items_still_queued() {
+        let drops = Cell::new(0);
+        {
+            let mut fifo = CountedFifo::init();
+            for id in 0..10 {
+                fifo.write_item(Counted::new(id, &drops)).unwrap();
+            }
+            for _ in 0..3 {
+                drop(fifo.read_item().unwrap());
+            }
+            assert_eq!(drops.get(), 3);
+        }
+        assert_eq!(
+            drops.get(),
+            10,
+            "the 7 items left in the fifo must be dropped with it"
+        );
+    }
+
+    #[test]
+    fn drop_runs_for_both_halves_of_a_wrapped_ring() {
+        let drops = Cell::new(0);
+        {
+            let fifo = wrapped_counted(&drops);
+            assert_eq!(fifo.readable_length(), 8);
+        }
+        assert_eq!(drops.get(), 8);
+    }
+
+    #[test]
+    fn drop_of_empty_and_static_fifos() {
+        let drops = Cell::new(0);
+        drop(CountedFifo::init());
+        {
+            let mut fifo = LinearFifo::<Counted<'_>, StaticBuffer<Counted<'_>, 4>>::init();
+            for id in 0..4 {
+                fifo.write_item(Counted::new(id, &drops)).unwrap();
+            }
+            drop(fifo.read_item().unwrap());
+            drop(fifo.read_item().unwrap());
+            fifo.write_item(Counted::new(4, &drops)).unwrap();
+            assert!(fifo.buf_len() - fifo.head < fifo.count, "must be wrapped");
+            assert_eq!(drops.get(), 2);
+        }
+        assert_eq!(drops.get(), 5);
+    }
+
+    #[test]
+    fn discard_drops_across_the_wrap_and_read_item_does_not_double_drop() {
+        let drops = Cell::new(0);
+        let mut fifo = wrapped_counted(&drops);
+        // 2 from the tail run `[6, 8)`, 1 from the wrapped prefix.
+        fifo.discard(3);
+        assert_eq!(drops.get(), 3);
+        assert_eq!(ids(fifo.iter()), vec![9, 10, 11, 12, 13]);
+        let item = fifo.read_item().unwrap();
+        assert_eq!(item.id, 9);
+        assert_eq!(
+            drops.get(),
+            3,
+            "read_item moves the item out, it must not drop it"
+        );
+        drop(item);
+        assert_eq!(drops.get(), 4);
+        drop(fifo);
+        assert_eq!(drops.get(), 8);
+    }
+
+    #[test]
+    fn ordered_remove_item_drops_the_removed_item_only() {
+        let drops = Cell::new(0);
+        let mut fifo = wrapped_counted(&drops);
+        // offset 5 -> index (6 + 5) & 7 = 3, in the wrapped prefix.
+        fifo.ordered_remove_item(5);
+        assert_eq!(drops.get(), 1);
+        assert_eq!(ids(fifo.iter()), vec![6, 7, 8, 9, 10, 12, 13]);
+        // offset 1 -> index 7, in the tail run; the prefix must shift too.
+        fifo.ordered_remove_item(1);
+        assert_eq!(drops.get(), 2);
+        assert_eq!(ids(fifo.iter()), vec![6, 8, 9, 10, 12, 13]);
+        fifo.ordered_remove_item(0);
+        assert_eq!(drops.get(), 3);
+        assert_eq!(ids(fifo.iter()), vec![8, 9, 10, 12, 13]);
+        drop(fifo);
+        assert_eq!(drops.get(), 8);
+    }
+
+    #[test]
+    fn iter_yields_both_halves_in_fifo_order() {
+        let drops = Cell::new(0);
+        let mut fifo = wrapped_counted(&drops);
+        assert_eq!(
+            fifo.readable_slice(0).len(),
+            2,
+            "readable_slice(0) is only the first run"
+        );
+        assert_eq!(fifo.iter().count(), 8);
+        assert_eq!(ids(fifo.iter()), vec![6, 7, 8, 9, 10, 11, 12, 13]);
+        assert_eq!(ids(fifo.iter().rev()), vec![13, 12, 11, 10, 9, 8, 7, 6]);
+        let (a, b) = fifo.as_slices();
+        assert_eq!(ids(a.iter()), vec![6, 7]);
+        assert_eq!(ids(b.iter()), vec![8, 9, 10, 11, 12, 13]);
+
+        for c in fifo.iter_mut() {
+            c.id += 100;
+        }
+        let expected = ids(fifo.iter());
+        let mut drained = Vec::new();
+        while let Some(c) = fifo.read_item() {
+            drained.push(c.id);
+        }
+        assert_eq!(drained, expected);
+        assert_eq!(drained, vec![106, 107, 108, 109, 110, 111, 112, 113]);
+    }
+
+    #[test]
+    fn iter_on_empty_full_and_grown_rings() {
+        let drops = Cell::new(0);
+        let mut fifo = CountedFifo::init();
+        assert_eq!(fifo.iter().count(), 0);
+        let (a, b) = fifo.as_slices();
+        assert!(a.is_empty() && b.is_empty());
+
+        // Full, unwrapped.
+        for id in 0..8 {
+            fifo.write_item(Counted::new(id, &drops)).unwrap();
+        }
+        assert_eq!(fifo.writable_length(), 0);
+        assert_eq!(ids(fifo.iter()), (0..8).collect::<Vec<_>>());
+
+        // Full and wrapped: pop 3, push 3.
+        for _ in 0..3 {
+            drop(fifo.read_item().unwrap());
+        }
+        for id in 8..11 {
+            fifo.write_item(Counted::new(id, &drops)).unwrap();
+        }
+        assert_eq!(fifo.buf_len(), 8);
+        assert_eq!(fifo.writable_length(), 0);
+        assert_eq!(ids(fifo.iter()), (3..11).collect::<Vec<_>>());
+
+        // Growth mid-wrap: realign + realloc must keep every item exactly once.
+        fifo.write_item(Counted::new(11, &drops)).unwrap();
+        assert_eq!(fifo.buf_len(), 16);
+        assert_eq!(fifo.head, 0);
+        assert_eq!(ids(fifo.iter()), (3..12).collect::<Vec<_>>());
+        assert_eq!(drops.get(), 3);
+        drop(fifo);
+        assert_eq!(drops.get(), 12);
     }
 }

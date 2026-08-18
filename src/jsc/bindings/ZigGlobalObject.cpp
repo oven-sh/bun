@@ -1431,6 +1431,12 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
 // Windows doesn't have mmap
 // This code should pretty much only be called on Linux.
 #if !OS(WINDOWS)
+    // An empty result makes the caller fall back to a copying allocation, which
+    // throws for this length. createFromBytes below would RELEASE_ASSERT instead.
+    if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 
     if (ptr == MAP_FAILED) {
@@ -1521,10 +1527,29 @@ extern "C" JSC::EncodedJSValue Bun__createUint8ArrayForCopy(JSC::JSGlobalObject*
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
+// ArrayBuffer::createFromBytes RELEASE_ASSERTs above MAX_ARRAY_BUFFER_SIZE, so an
+// oversized length has to be turned into the RangeError `new ArrayBuffer(len)`
+// throws before the bytes reach it. The caller already gave the bytes up, so
+// they are released through the deallocator here, the same as when the
+// returned object is collected.
+static bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject* globalObject, JSC::ThrowScope& scope, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
+{
+    if (len <= MAX_ARRAY_BUFFER_SIZE) [[likely]]
+        return false;
+
+    if (deallocator)
+        deallocator(const_cast<void*>(ptr), deallocatorContext);
+    throwOutOfMemoryError(globalObject, scope);
+    return true;
+}
+
 extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobalObject* globalObject, const void* ptr, size_t len, JSTypedArrayBytesDeallocator deallocator, void* deallocatorContext)
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+        return {};
 
     auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
@@ -1539,6 +1564,9 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+        return {};
 
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);

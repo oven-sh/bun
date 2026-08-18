@@ -387,10 +387,13 @@ impl ArrayBuffer {
         }
     }
 
+    /// The length is not range-checked here: `to_js*` hands it to
+    /// `Bun__make*WithBytesNoCopy`, which throws a RangeError for anything
+    /// above JSC's `MAX_ARRAY_BUFFER_SIZE` (2^32 bytes on 64-bit targets).
     pub fn from_bytes(bytes: &mut [u8], typed_array_type: JSType) -> ArrayBuffer {
         ArrayBuffer {
-            len: u32::try_from(bytes.len()).expect("int cast") as usize,
-            byte_len: u32::try_from(bytes.len()).expect("int cast") as usize,
+            len: bytes.len(),
+            byte_len: bytes.len(),
             typed_array_type,
             ptr: bytes.as_mut_ptr(),
             ..Default::default()
@@ -411,8 +414,8 @@ impl ArrayBuffer {
         // this is an FFI hand-off, not a leak.
         let ptr = bun_core::heap::into_raw(bytes).cast::<u8>();
         ArrayBuffer {
-            len: u32::try_from(len).expect("int cast") as usize,
-            byte_len: u32::try_from(len).expect("int cast") as usize,
+            len,
+            byte_len: len,
             typed_array_type,
             ptr,
             ..Default::default()
@@ -946,6 +949,11 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 /// calls `deallocator(ptr, deallocator_context)` on the JS thread when it is
 /// collected (never, if `deallocator` is `None`).
 ///
+/// Fails with a RangeError when `len` is above JSC's `MAX_ARRAY_BUFFER_SIZE`
+/// (2^32 bytes on 64-bit targets). The bytes are still consumed: the
+/// deallocator runs before the error is returned, so the caller must not
+/// release them again on `Err`.
+///
 /// # Safety
 ///
 /// - `ptr` must be valid for reads and writes of `len` bytes (JS code can do
@@ -953,8 +961,9 @@ pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
 ///   lifetime: until the deallocator runs, or indefinitely when `deallocator`
 ///   is `None`. `ptr` may be null only when `len == 0`.
 /// - `deallocator`, if `Some`, must be sound to call exactly once with
-///   `(ptr, deallocator_context)` on the JS thread at GC time, and
-///   `deallocator_context` must remain valid until then.
+///   `(ptr, deallocator_context)` on the JS thread, either at GC time or
+///   when this call fails, and `deallocator_context` must remain valid
+///   until then.
 pub(crate) unsafe fn make_array_buffer_with_bytes_no_copy(
     global: &JSGlobalObject,
     ptr: *mut c_void,

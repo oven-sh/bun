@@ -3,7 +3,9 @@
 //! Rust port of Zig's `ComptimeStringMap`. Declared via
 //! [`comptime_string_map!`] / [`comptime_string_set!`]; lookups compile to a
 //! `match key.len()` jump table plus constant-length byte compares (word-sized
-//! loads against immediates) — no hashing at runtime.
+//! loads against immediates) — no hashing at runtime. Large maps keep the
+//! length dispatch but store their keys as data and share one binary search
+//! ([`SortedKeys`]) instead of unrolling a compare per key.
 //!
 //! ```ignore
 //! bun_core::comptime_string_map! {
@@ -102,10 +104,10 @@ impl SortedKeys {
         let Some(i) = len.checked_sub(self.min_len) else {
             return &[];
         };
-        if i + 1 >= self.buckets.len() {
-            return &[];
+        match self.buckets.get(i..) {
+            Some(&[start, end, ..]) => &self.sorted[start as usize..end as usize],
+            _ => &[],
         }
-        &self.sorted[self.buckets[i] as usize..self.buckets[i + 1] as usize]
     }
 
     /// Declaration index of `key`, or `u32::MAX` for a miss.
@@ -257,6 +259,9 @@ mod tests {
         assert_eq!(COMMANDS.len(), 3);
         assert_eq!(COMMANDS.iter().count(), 3);
     }
+
+    /// 241 keys puts this map over `SORTED_LOOKUP_MIN_KEYS`; the last key is
+    /// the only one longer than 12 bytes, so lengths 13..=15 are empty buckets.
     #[test]
     fn large_map_uses_sorted_tables() {
         crate::comptime_string_map! {
@@ -500,10 +505,13 @@ mod tests {
             "key236" => 236,
             "k0237xyyyyyy" => 237,
             "key238" => 238,
-            "key239" => 239
+            "key239" => 239,
+            "k0240xyyyyyyyyyy" => 240
             };
         }
-        assert_eq!(BIG.len(), 240);
+        assert_eq!(BIG.len(), 241);
+        assert_eq!(<__ComptimeStringMap_BIG>::MIN_LEN, 4);
+        assert_eq!(<__ComptimeStringMap_BIG>::MAX_LEN, 16);
         for (i, (key, value)) in BIG.entries().enumerate() {
             assert_eq!(*value, i);
             assert_eq!(BIG.get(key), Some(&i));
@@ -512,11 +520,15 @@ mod tests {
             assert_eq!(BIG.get(&upper), None, "{}", key.escape_ascii());
         }
         assert_eq!(BIG.keys().next(), Some(b"k0000x".as_slice()));
+        // Below MIN_LEN, in-range lengths, an empty bucket, and past MAX_LEN.
         assert_eq!(BIG.get(b""), None);
         assert_eq!(BIG.get(b"key"), None);
+        assert_eq!(BIG.get(b"key0"), None);
         assert_eq!(BIG.get(b"key1000"), None);
+        assert_eq!(BIG.get(b"k0240xyyyyyyyy"), None);
         assert_eq!(BIG.get(b"k0000xyyyyyyyyyyyyyyyyy"), None);
         assert_eq!(BIG.get_ascii_case_insensitive(b"KEY"), None);
+        assert_eq!(BIG.get_ascii_case_insensitive(b"K0240XYYYYYYYY"), None);
         assert_eq!(
             BIG.get_with_eql(b"key7".as_slice(), |a: &[u8], b| a == b),
             Some(&7)

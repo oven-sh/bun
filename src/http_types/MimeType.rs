@@ -1662,3 +1662,49 @@ pub fn sniff(bytes: &[u8]) -> Option<MimeType> {
     }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{EXTENSIONS, Table};
+
+    /// `EXTENSIONS` is by far the largest `comptime_string_map!`, so it is
+    /// looked up through the shared sorted-key tables rather than a compare
+    /// tree. Many extensions share a MIME type, so compare entry addresses:
+    /// value equality would not notice a lookup landing on the wrong entry.
+    ///
+    /// Probes the map rather than `by_extension`: `to_mime_type` reaches the
+    /// highway FFI, which `cargo test -p bun_http_types` does not link.
+    #[test]
+    fn extensions_resolve_to_their_own_entry() {
+        // Miri interprets every probe of the search; all 1184 extensions take
+        // ~30s there, so it checks every 37th one (32 of assorted lengths).
+        let stride = if cfg!(miri) { 37 } else { 1 };
+        for (ext, table) in EXTENSIONS.entries().step_by(stride) {
+            let ext_str = bstr::BStr::new(ext);
+            let is_entry = |hit: Option<&Table>| hit.is_some_and(|hit| std::ptr::eq(hit, table));
+            assert!(is_entry(EXTENSIONS.get(ext)), "{ext_str}");
+            let upper = ext.to_ascii_uppercase();
+            assert!(
+                is_entry(EXTENSIONS.get_ascii_case_insensitive(&upper)),
+                "{ext_str}"
+            );
+            if upper != ext {
+                assert!(EXTENSIONS.get(&upper).is_none(), "{ext_str}");
+            }
+        }
+    }
+
+    #[test]
+    fn unknown_extensions_miss() {
+        assert!(EXTENSIONS.get(b"").is_none());
+        assert!(EXTENSIONS.get(b".js").is_none());
+        // Same length as real entries, sorting before, between and after them.
+        assert!(EXTENSIONS.get(b"!!!").is_none());
+        assert!(EXTENSIONS.get(b"jsq").is_none());
+        assert!(EXTENSIONS.get(b"~~~").is_none());
+        assert!(EXTENSIONS.get_ascii_case_insensitive(b"JSQ").is_none());
+        // No extension is 12 bytes long; the longest is 13.
+        assert!(EXTENSIONS.get(b"twelve-bytes").is_none());
+        assert!(EXTENSIONS.get(b"fourteen-bytes").is_none());
+    }
+}

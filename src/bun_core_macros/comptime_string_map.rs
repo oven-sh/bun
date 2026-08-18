@@ -252,17 +252,20 @@ fn sorted_tables(
     buckets: &[(usize, Vec<usize>)],
     blob_total: usize,
 ) -> syn::Result<SortedTables> {
-    let too_large = |what: &str| {
+    let too_large = |what: &str, actual: usize| {
         syn::Error::new(
             name.span(),
-            format!("comptime string map {what} exceeds u16::MAX"),
+            format!(
+                "comptime string map {what} is {actual}; the lookup tables are u16, so the limit is {}",
+                u16::MAX
+            ),
         )
     };
     if keys.len() > u16::MAX as usize {
-        return Err(too_large("key count"));
+        return Err(too_large("key count", keys.len()));
     }
     if blob_total > u16::MAX as usize {
-        return Err(too_large("total key bytes"));
+        return Err(too_large("total key bytes", blob_total));
     }
     let min_len = buckets.first().map(|(l, _)| *l).unwrap_or(0);
     let max_len = buckets.last().map(|(l, _)| *l).unwrap_or(0);

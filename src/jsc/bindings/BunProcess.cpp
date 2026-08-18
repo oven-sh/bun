@@ -3001,39 +3001,43 @@ static JSValue constructStdin(JSC::JSGlobalObject* globalObject, JSObject* proce
 // reified values: building them runs JS and loads the fs/tty/net stream stack,
 // so it must only happen on an actual read — not when the property is merely
 // redefined, deleted, or enumerated (any of which reifies the static table).
-JSValue Process::getStdio(JSGlobalObject* globalObject, int fd)
+JSValue Process::stdio(int fd)
 {
     ASSERT(fd >= 0 && fd <= 2);
     if (JSValue existing = m_stdio[fd].get())
         return existing;
+    // Built in the process object's own realm, whichever realm read the property.
+    auto* globalObject = this->globalObject();
     JSValue stream = fd == 0 ? constructStdin(globalObject, this) : constructStdioWriteStream(globalObject, this, fd);
-    // The getter may have re-entered (or the stream been assigned) while JS ran.
+    // The builder runs JS, which may have read this property re-entrantly and built it already.
     if (JSValue existing = m_stdio[fd].get())
         return existing;
-    if (stream)
-        m_stdio[fd].set(globalObject->vm(), this, stream);
+    m_stdio[fd].set(globalObject->vm(), this, stream);
     return stream;
 }
 
 static EncodedJSValue processStdioGetter(JSGlobalObject* globalObject, EncodedJSValue thisValue, int fd)
 {
     Process* process = getProcessObject(globalObject, JSValue::decode(thisValue));
-    return JSValue::encode(process ? process->getStdio(globalObject, fd) : jsUndefined());
+    return JSValue::encode(process ? process->stdio(fd) : jsUndefined());
 }
 
-static bool processStdioSetter(JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, int fd)
+// Assignment replaces the accessor with a plain data property on whichever object was
+// assigned to (as it did when these were lazily reified values), so a copy of the
+// descriptor on another object never writes through to the real process.
+static bool processStdioSetter(JSGlobalObject* globalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName propertyName)
 {
-    if (Process* process = getProcessObject(globalObject, JSValue::decode(thisValue)))
-        process->setStdio(globalObject->vm(), fd, JSValue::decode(encodedValue));
+    if (auto* object = JSValue::decode(thisValue).getObject())
+        object->putDirect(JSC::getVM(globalObject), propertyName, JSValue::decode(encodedValue), 0);
     return true;
 }
 
 JSC_DEFINE_CUSTOM_GETTER(processStdin, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) { return processStdioGetter(globalObject, thisValue, 0); }
 JSC_DEFINE_CUSTOM_GETTER(processStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) { return processStdioGetter(globalObject, thisValue, 1); }
 JSC_DEFINE_CUSTOM_GETTER(processStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, PropertyName)) { return processStdioGetter(globalObject, thisValue, 2); }
-JSC_DEFINE_CUSTOM_SETTER(setProcessStdin, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName)) { return processStdioSetter(globalObject, thisValue, value, 0); }
-JSC_DEFINE_CUSTOM_SETTER(setProcessStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName)) { return processStdioSetter(globalObject, thisValue, value, 1); }
-JSC_DEFINE_CUSTOM_SETTER(setProcessStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName)) { return processStdioSetter(globalObject, thisValue, value, 2); }
+JSC_DEFINE_CUSTOM_SETTER(setProcessStdin, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName name)) { return processStdioSetter(globalObject, thisValue, value, name); }
+JSC_DEFINE_CUSTOM_SETTER(setProcessStdout, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName name)) { return processStdioSetter(globalObject, thisValue, value, name); }
+JSC_DEFINE_CUSTOM_SETTER(setProcessStderr, (JSGlobalObject * globalObject, EncodedJSValue thisValue, EncodedJSValue value, PropertyName name)) { return processStdioSetter(globalObject, thisValue, value, name); }
 
 static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 {
@@ -4520,7 +4524,7 @@ JSC_DEFINE_CUSTOM_GETTER(processNextTick, (JSGlobalObject * lexicalGlobalObject,
     Process* process = getProcessObject(lexicalGlobalObject, JSValue::decode(thisValue));
     if (!process)
         return JSValue::encode(jsUndefined());
-    auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    auto* globalObject = defaultGlobalObject(process->globalObject());
     auto& vm = JSC::getVM(globalObject);
     // queueNextTick() may already have built it without going through the property.
     JSValue nextTick = process->nextTickFunction();

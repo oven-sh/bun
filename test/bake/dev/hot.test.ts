@@ -1,6 +1,6 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
-import { runWithErrorPromise } from "harness";
+import { isDebug, runWithErrorPromise } from "harness";
 import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { Dev, devTest, emptyHtmlFile, WAIT_MULTIPLIER } from "../bake-harness";
 
@@ -764,6 +764,76 @@ devTest("unsubscribing the last memory visualizer socket stops its timer", {
     await memory.roundTrip();
   },
 });
+
+// The `M` (memory visualizer) topic only emits frames in builds with `BAKE_DEBUGGING_FEATURES` (canary or debug).
+const hasBakeDebuggingFeatures = isDebug || Bun.version_with_sha.includes("-canary.");
+
+const memoryVisualizerApp = {
+  "index.html": emptyHtmlFile({}),
+  "bun.app.ts": `
+    import html from "./index.html";
+    // Always armed in the dev server's timer heap; /tick answers on its next fire.
+    const waiters = [];
+    setInterval(() => {
+      for (const resolve of waiters.splice(0)) resolve();
+    }, 20);
+    export default {
+      static: {
+        "/": html,
+      },
+      async fetch(req) {
+        if (new URL(req.url).pathname === "/tick") {
+          await new Promise(resolve => waiters.push(resolve));
+          return new Response("ticked");
+        }
+        return new Response("Not Found", { status: 404 });
+      },
+    };
+  `,
+};
+
+/** Subscribes an extra hmr socket to `M`; the server answers with one frame immediately and then one per timer tick. */
+async function subscribeMemoryVisualizer(dev: Dev) {
+  const socket = await openHmrSocket(dev);
+  socket.send("sM");
+  await socket.waitForFrames("M", 1);
+  return socket;
+}
+
+if (hasBakeDebuggingFeatures) {
+  devTest("memory visualizer topic ticks while subscribed and unsubscribes without disturbing other timers", {
+    files: memoryVisualizerApp,
+    htmlFiles: [],
+    async test(dev) {
+      const start = performance.now();
+      const subscriber = await subscribeMemoryVisualizer(dev);
+      // Frame 3 only arrives if the tick handler re-armed the timer after firing.
+      await subscriber.waitForFrames("M", 3);
+      // Two real ticks take at least 2s; a re-insert without moving the deadline would deliver frame 3 at ~1s.
+      expect(performance.now() - start).toBeGreaterThanOrEqual(1500);
+
+      // Removing the visualizer timer used to discard whichever timer was at the heap root instead, so the fixture's interval never fired again.
+      await dev.fetch("/tick").equals("ticked");
+      await subscriber.close();
+      await dev.fetch("/tick").equals("ticked");
+
+      // Left open on purpose: the harness's graceful exit closes it while the timer is armed.
+      await subscribeMemoryVisualizer(dev);
+    },
+  });
+
+  devTest("memory visualizer timer stays armed while another subscriber remains", {
+    files: memoryVisualizerApp,
+    htmlFiles: [],
+    async test(dev) {
+      const first = await subscribeMemoryVisualizer(dev);
+      const second = await subscribeMemoryVisualizer(dev);
+      await first.close();
+      // A frame from a tick just before the close can still be in flight, so only the second frame from here on proves the timer is still armed.
+      await second.waitForFrames("M", second.received.filter(id => id === "M").length + 2);
+    },
+  });
+}
 
 devTest("dev.write resolves only after the new module body has run", {
   files: {

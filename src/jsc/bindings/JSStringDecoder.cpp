@@ -591,10 +591,6 @@ JSC::EncodedJSValue JSStringDecoderConstructor::construct(JSC::JSGlobalObject* l
     // This is a hack to make express' body-parser work
     // It does something weird with the prototype
     // Not exactly a subclass
-    //
-    // The this slot holds the receiver of a call and new.target of a construct. A call
-    // resolved through a scope (captured or module-level binding) has that scope object as
-    // its receiver; strict toThis maps it to undefined so it is not decorated and returned.
     JSValue thisValue = callFrame->thisValue().toThis(lexicalGlobalObject, JSC::ECMAMode::strict());
     if (thisValue.isObject() && thisValue != constructor) {
         auto clientData = WebCore::clientData(vm);

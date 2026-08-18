@@ -61,8 +61,7 @@ static JSC::JSValue invokeAccessor(
 
     HandleScope hs(isolate);
 
-    // Same sloppy-mode receiver rule as FunctionTemplate::functionCall: null, undefined and a
-    // scope object passed as the receiver of a bare call become globalThis, primitives are boxed.
+    // Sloppy-mode receiver, as in FunctionTemplate::functionCall.
     JSC::JSObject* jscThis = JSC::asObject(thisObject.toThis(globalObject, JSC::ECMAMode::sloppy()));
     Local<v8::Object> holder = hs.createLocal<v8::Object>(vm, jscThis);
     Local<v8::Name> property = hs.createLocal<v8::Name>(vm, name);

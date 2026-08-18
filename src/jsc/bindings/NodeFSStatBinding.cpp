@@ -139,8 +139,6 @@ static JSValue modeStatFunction(JSC::JSGlobalObject* globalObject, CallFrame* ca
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    // A bare call through a captured or module binding carries the scope object as its receiver;
-    // strict toThis maps it to undefined so `mode` is not read out of the scope's variable slots.
     auto* thisObject = dynamicDowncast<JSObject>(callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::strict()));
     if (!thisObject)
         return JSC::jsUndefined();

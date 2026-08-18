@@ -240,17 +240,13 @@ async function downloadV8(): Promise<Protocol> {
   return Promise.all([
     download<Protocol>(`${baseUrl}/js_protocol.json`),
     download<Protocol>(`${baseUrl}/browser_protocol.json`),
-  ]).then(([js, browser]) => {
-    const all = [...js.domains, ...browser.domains];
-    return {
-      name: "V8",
-      version: js.version,
-      domains: withReferencedTypes(
-        all.filter(domain => !domains.includes(domain.domain)),
-        all,
-      ),
-    };
-  });
+  ]).then(([js, browser]) => ({
+    name: "V8",
+    version: js.version,
+    domains: [...js.domains, ...browser.domains]
+      .filter(domain => !domains.includes(domain.domain))
+      .sort((a, b) => a.domain.localeCompare(b.domain)),
+  }));
 }
 
 async function download<V>(url: string): Promise<V> {

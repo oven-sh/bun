@@ -514,9 +514,7 @@ extern "C" JSC::JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
     // Every JS VM's RunLoop should use Bun's RunLoop implementation
     ASSERT(vmPtr->runLoop().kind() == WTF::RunLoop::Kind::Bun);
 
-    WebCore::JSVMClientData::create(&vm, Bun__getVM(), /* isWorkerVM */ worker_ptr != nullptr);
-    if (auto* worker = static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr))
-        WebCore::clientData(vm)->setIsNodeWorkerVM(worker->options().kind == WebCore::WorkerOptions::Kind::Node);
+    WebCore::JSVMClientData::create(&vm, Bun__getVM(), static_cast<WebCore::WorkerMessagingProxy*>(worker_ptr));
 
     const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
         if (executionContextId == std::numeric_limits<int32_t>::max() || executionContextId > 1) [[unlikely]] {

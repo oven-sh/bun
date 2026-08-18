@@ -5010,12 +5010,15 @@ void Process::finishCreation(JSC::VM& vm)
 
     putDirect(vm, vm.propertyNames->toStringTagSymbol, jsString(vm, String("process"_s)), 0);
     putDirect(vm, Identifier::fromString(vm, "_exiting"_s), jsBoolean(false), 0);
-    // Main-thread-only internals; absent on a node:worker_threads worker's process, as in Node.
+
+    // No-op stubs Node only has on the main thread; a worker_threads Worker's process lacks them.
     if (!WebCore::clientData(vm)->isNodeWorkerVM()) {
-        auto* globalObject = this->globalObject();
-        for (ASCIILiteral name : { "_debugEnd"_s, "_debugProcess"_s, "_startProfilerIdleNotifier"_s, "_stopProfilerIdleNotifier"_s })
-            putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, name), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugEnd"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_debugProcess"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_startProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
+        putDirectNativeFunction(vm, globalObject(), Identifier::fromString(vm, "_stopProfilerIdleNotifier"_s), 0, Process_stubEmptyFunction, ImplementationVisibility::Public, NoIntrinsic, 0);
     }
+
     // Node's addReadOnlyProcessAlias: read-only so `process.noDeprecation = false`
     // is ignored, but a per-Process property — a Worker must not flip the main
     // thread. Unflagged it stays an ordinary undefined slot user code can set.

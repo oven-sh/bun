@@ -27,7 +27,6 @@
 #include "config.h"
 #include "Worker.h"
 
-#include "BunClientData.h"
 #include "InternalModuleRegistry.h"
 #include "ErrorCode.h"
 #include "ErrorEvent.h"
@@ -373,23 +372,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionSetNodeWorkerStdioPorts, (JSGlobalObject * le
     return JSValue::encode(jsUndefined());
 }
 
-// node runs its worker bootstrap before user code: on a node:worker_threads worker
-// thread, load node:worker_threads (which rebinds process stdio, registers
-// parentPort and the postMessageToThread port) before preloads and the entry
-// point. Returns false with the exception reported.
-extern "C" bool Bun__NodeWorker__bootstrap(Zig::GlobalObject* globalObject)
+// A node:worker_threads worker loads node:worker_threads before preloads and the entry
+// point (it rebinds process stdio and registers parentPort / the postMessageToThread
+// port), as Node runs its worker bootstrap before user code. Throws like require() would.
+extern "C" void Bun__Worker__loadNodeWorkerThreadsModule(Zig::GlobalObject* globalObject)
 {
-    auto& vm = globalObject->vm();
-    if (!WebCore::clientData(vm)->isNodeWorkerVM())
-        return true;
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    globalObject->internalModuleRegistry()->requireId(globalObject, vm, Bun::InternalModuleRegistry::Field::NodeWorkerThreads);
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return false;
-    }
-    return true;
+    globalObject->internalModuleRegistry()->requireId(globalObject, globalObject->vm(), Bun::InternalModuleRegistry::Field::NodeWorkerThreads);
 }
 
 // worker_threads (worker side): register the transferred port as this thread's parentPort.

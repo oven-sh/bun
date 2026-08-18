@@ -1191,7 +1191,12 @@ export default function Client() {
           // Silences the "Bun Bake is highly experimental" banner.
           BUN_DEV_SERVER_TEST_RUNNER: "1",
           ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
-          LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../leaksan.supp")}`,
+          LSAN_OPTIONS: [
+            bunEnv.LSAN_OPTIONS,
+            `print_suppressions=0:suppressions=${path.join(import.meta.dir, "../../leaksan.supp")}`,
+          ]
+            .filter(Boolean)
+            .join(":"),
         },
         stdout: "pipe",
         stderr: "pipe",
@@ -1440,7 +1445,7 @@ export default async function AboutPage() {
       expect(output).toContain("Processing thread");
       return output;
     }
-    const leakScanTimeout = 120_000;
+    const leakScanTimeout = 120_000 * WAIT_MULTIPLIER;
 
     // Keep only the LSan records with BunString machinery on the stack, reduced to the two frames above it ("who created it").
     const stringMachinery = /\bBunString__\w+|bun_core::string::/;

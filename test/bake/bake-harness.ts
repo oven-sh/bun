@@ -957,7 +957,6 @@ export class Client extends EventEmitter {
         if (exitCode !== null) {
           code = exitCode;
         } else if (signalCode !== null) {
-          console.log("THE SIGNAL CODE IS", signalCode);
           code = `${signalCode}`;
         } else {
           code = "unknown";

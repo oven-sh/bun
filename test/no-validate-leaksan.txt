@@ -338,6 +338,7 @@ test/napi/uv_stub.test.ts
 
 # New dev-server tests not yet measured under LSan (#38004 fix included); remove once the ASAN lane is green.
 test/bake/dev/production.test.ts
+
 test/js/third_party/pg-gateway/pglite.test.ts
 test/js/bun/test/parallel/test-integration-rspack.ts
 

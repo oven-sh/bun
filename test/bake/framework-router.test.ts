@@ -6,6 +6,18 @@ import path from "path";
 
 const { parseRoutePattern, FrameworkRouter } = frameworkRouterInternals;
 
+async function run(dir: string, args: string[], env = bunEnv) {
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), ...args],
+    cwd: dir,
+    env,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  return { stdout, stderr, exitCode };
+}
+
 const testRoutePattern = (style: string) => {
   // The 'expected' is a one-off string serialization that is only used for testing.
   // Params are serialized as ":param", catch all as ":*param", and optional catch all as ":*?param".
@@ -180,18 +192,6 @@ describe.concurrent("a style that is not a built-in style name", () => {
     "pages/index.tsx": "export default () => null;",
   };
 
-  async function run(dir: string, args: string[], env = bunEnv) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd: dir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
-
   test("Bun.serve({ app }) rejects it", async () => {
     using dir = tempDir("fsr-style-serve", {
       ...appFiles,
@@ -269,18 +269,6 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
       export default ${appWithRoots(root)};
     `,
   });
-
-  async function run(dir: string, args: string[], env = bunEnv) {
-    await using proc = Bun.spawn({
-      cmd: [bunExe(), ...args],
-      cwd: dir,
-      env,
-      stdout: "pipe",
-      stderr: "pipe",
-    });
-    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    return { stdout, stderr, exitCode };
-  }
 
   const build = (dir: string) => run(dir, ["build", "--app"]);
 

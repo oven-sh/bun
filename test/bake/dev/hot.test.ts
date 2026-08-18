@@ -1,7 +1,7 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
 import { expect } from "bun:test";
 import { runWithErrorPromise } from "harness";
-import { renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("import.meta.hot.accept basic", {
@@ -526,6 +526,26 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       }
       await c.expectMessage(`atomic ${round}`);
     }
+  },
+});
+devTest("a hot-reload event that invalidates nothing is processed once", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      console.log("hello");
+    `,
+  },
+  async test(dev) {
+    // Bundling the route puts the project directory on the watch list; wait out the build's own synchronization message.
+    const built = dev.waitForHotReload(false);
+    await dev.fetch("/");
+    await built;
+
+    // mkdir is one watcher notification on every platform; nothing imports it, so it is exactly one SeenFiles.
+    const messages = await dev.watchSynchronizationMessagesFor(() => mkdirSync(dev.join("unrelated")));
+    expect(messages).toStrictEqual(["SeenFiles"]);
   },
 });
 devTest("hot update frames are not delivered to application websocket topics", {

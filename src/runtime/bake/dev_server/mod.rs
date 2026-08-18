@@ -659,11 +659,6 @@ impl HotReloadEvent {
 
         let mut entry_points = EntryPointList::default();
 
-        // SAFETY: `first` is live; `&mut *dev` re-borrowed for the call only.
-        // `process_file_list` mutates graph/watcher/transpiler fields of `dev`,
-        // all disjoint from `dev.watcher_atomics.events[_]` (where `first` lives).
-        unsafe { (*first).process_file_list(&mut *dev, &mut entry_points) };
-
         // SAFETY: `first` is live; `timer` was set by
         // `WatcherAtomics::watcher_acquire_event` before submission.
         let timer = unsafe { (*first).timer };
@@ -673,9 +668,7 @@ impl HotReloadEvent {
         // to avoid aliasing UB.
         let mut current: *mut HotReloadEvent = first;
         loop {
-            // SAFETY: `current` always points at a live event owned by
-            // `dev.watcher_atomics`; `&mut *dev` re-borrowed for the call only,
-            // disjoint per the note above.
+            // SAFETY: `current` is a live event in `dev.watcher_atomics`, disjoint from the fields `process_file_list` mutates.
             unsafe { (*current).process_file_list(&mut *dev, &mut entry_points) };
             // SAFETY: `dev` is valid; recycle traffics in raw `*mut HotReloadEvent`.
             match unsafe {

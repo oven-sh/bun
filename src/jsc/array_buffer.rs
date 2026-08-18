@@ -181,18 +181,19 @@ impl ArrayBuffer {
 impl ArrayBuffer {
     /// Only use this when reading from the file descriptor is _very_ cheap. Like, for example, an in-memory file descriptor.
     /// Do not use this for pipes, however tempting it may seem.
-    pub(crate) fn to_js_buffer_from_fd(fd: Fd, size: usize, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn to_js_buffer_from_fd(
+        fd: Fd,
+        size: usize,
+        global: &JSGlobalObject,
+    ) -> JsResult<JSValue> {
         // SAFETY: FFI — `global` is a live &JSGlobalObject (opaque ZST handle, coerces to
         // *const); fn accepts null ptr with explicit size.
         // Wrapped in `from_js_host_call` so the C++ throw scope opened by
         // `Bun__createUint8ArrayForCopy` is checked before `as_array_buffer` below
         // declares `ASSERT_NO_PENDING_EXCEPTION` (validateExceptionChecks).
-        let buffer_value = match crate::host_fn::from_js_host_call(global, || unsafe {
+        let buffer_value = crate::host_fn::from_js_host_call(global, || unsafe {
             Bun__createUint8ArrayForCopy(global, ptr::null(), size, true)
-        }) {
-            Ok(v) => v,
-            Err(_) => return JSValue::ZERO,
-        };
+        })?;
 
         let mut array_buffer = buffer_value.as_array_buffer(global).expect("Unexpected");
         let mut bytes = array_buffer.byte_slice_mut();
@@ -214,16 +215,14 @@ impl ArrayBuffer {
                     }
                 }
                 bun_sys::Result::Err(err) => {
-                    let err_js = err.to_js(global);
-                    let _ = global.throw_value(err_js);
-                    return JSValue::ZERO;
+                    return Err(global.throw_value(err.to_js(global)));
                 }
             }
         }
 
         buffer_value.ensure_still_alive();
 
-        buffer_value
+        Ok(buffer_value)
     }
 
     #[inline]
@@ -263,7 +262,7 @@ impl ArrayBuffer {
             let result =
                 Self::to_js_buffer_from_fd(fd, usize::try_from(size).expect("int cast"), global);
             fd.close();
-            return Ok(result);
+            return result;
         }
 
         // bun_sys::mmap takes raw i32 prot/flags.
@@ -278,14 +277,13 @@ impl ArrayBuffer {
 
         match result {
             bun_sys::Result::Ok(buf) => {
-                // `buf` is a fresh mmap region whose ownership transfers to JSC.
-                Ok(JSBuffer__fromMmap(global, buf.cast(), map_len))
+                // `buf` is a fresh mmap region whose ownership transfers to JSC, which
+                // also unmaps it when it refuses the length (above `MAX_ARRAY_BUFFER_SIZE`).
+                crate::host_fn::from_js_host_call(global, || {
+                    JSBuffer__fromMmap(global, buf.cast(), map_len)
+                })
             }
-            bun_sys::Result::Err(err) => {
-                let err_js = err.to_js(global);
-                let _ = global.throw_value(err_js);
-                Ok(JSValue::ZERO)
-            }
+            bun_sys::Result::Err(err) => Err(global.throw_value(err.to_js(global))),
         }
     }
 

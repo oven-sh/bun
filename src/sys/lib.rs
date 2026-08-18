@@ -989,19 +989,6 @@ pub(crate) extern "C" fn Bun__errnoName(err: core::ffi::c_int) -> *const core::f
     })
 }
 
-/// Small "fire and forget" wrapper around unlink for C usage that handles
-/// EINTR, Windows path conversion, etc.
-///
-/// # Safety
-/// `ptr[0..=len]` must be a valid NUL-terminated path slice for the call.
-#[unsafe(no_mangle)]
-pub(crate) unsafe extern "C" fn Bun__unlink(ptr: *const u8, len: usize) {
-    // SAFETY: caller (C++) guarantees `ptr[0..=len]` is a valid NUL-terminated
-    // path slice for the duration of the call.
-    let path = unsafe { ZStr::from_raw(ptr, len) };
-    let _ = unlink(path);
-}
-
 // libuv-style error constants (negated errno on posix, UV_* on Windows). The
 // per-platform `bun_errno` module defines this as `mod uv_e`; re-export under
 // the canonical name so callers can write `bun_sys::UV_E::NOENT`.

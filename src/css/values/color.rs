@@ -2141,9 +2141,6 @@ impl RelativeComponentParser {
         if let Ok(value) = input.try_parse(|i| {
             match Calc::<Percentage>::parse_with(i, &|ident| {
                 let v = this.get_ident(ident, allowed)?;
-                // value variant is a *Percentage
-                // but we immediately dereference it and discard the pointer
-                // so using a field on this closure struct instead of making a gratuitous allocation
                 Some(Calc::Value(Box::new(Percentage { v })))
             }) {
                 Ok(Calc::Value(v)) => Ok(*v),

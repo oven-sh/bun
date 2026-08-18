@@ -646,6 +646,18 @@ static void settle(JSGlobalObject* g, JSWebView* view, PendingSlot slot, bool ok
     settleSlot(g, view, slotFor(view, slot), ok, v);
 }
 
+// Slots, not m_pending: a navigation that Chrome has already answered is
+// waiting for Page.loadEventFired and exists only in its slot.
+static void rejectViewSlots(JSGlobalObject* g, JSWebView* view, JSValue err)
+{
+    view->m_loading = false;
+    settleSlot(g, view, view->m_pendingNavigate, false, err);
+    settleSlot(g, view, view->m_pendingEval, false, err);
+    settleSlot(g, view, view->m_pendingScreenshot, false, err);
+    settleSlot(g, view, view->m_pendingMisc, false, err);
+    settleSlot(g, view, view->m_pendingCdp, false, err);
+}
+
 // Build an Error from CDP exceptionDetails. exception.description is V8's
 // Error.prototype.stack formatter:
 //   "Error: msg\n    at functionName (url:line:col)\n    at ..."
@@ -1069,10 +1081,7 @@ void Transport::handleEvent(std::span<const char> method, std::span<const char> 
         JSWebView* view = viewFor(vid);
         m_views.remove(vid);
         if (!view) return;
-        // Reject all pending slots. settle() is idempotent on empty slots.
-        auto* err = createError(g, "page detached (crashed or closed)"_s);
-        for (auto s : { PendingSlot::Navigate, PendingSlot::Evaluate, PendingSlot::Screenshot, PendingSlot::Misc, PendingSlot::Cdp })
-            settle(g, view, s, false, err);
+        rejectViewSlots(g, view, createError(g, "page detached (crashed or closed)"_s));
         // Erase stale m_pending entries — replies won't come.
         m_pending.removeIf([vid](auto& kv) { return kv.value.viewId == vid; });
         view->m_closed = true;
@@ -1281,20 +1290,17 @@ void Transport::rejectAllAndMarkDead(const WTF::String& reason)
     m_mode = TransportMode::None;
     m_wsOpen = false;
     m_wsPending.clear();
+    m_pending.clear();
+    m_sessions.clear();
+    // ~JSWebView() (a GC while settling) removes from m_views; iterate a local.
+    auto views = std::exchange(m_views, {});
     if (!m_global) return;
     auto* g = m_global;
     JSValue err = createError(g, reason);
-    // Reject each view's slots via settle(). Multiple pending ids may point
-    // at the same view (different slots); settle() is idempotent on an
-    // already-cleared slot — the first settle for a slot rejects, the rest
-    // find barrier.get() == null and no-op.
-    for (auto& [id, entry] : m_pending) {
-        if (JSWebView* v = viewFor(entry.viewId))
-            settle(g, v, entry.slot, false, err);
+    for (auto& weak : views.values()) {
+        if (JSWebView* v = weak.get())
+            rejectViewSlots(g, v, err);
     }
-    m_pending.clear();
-    m_sessions.clear();
-    m_views.clear();
     updateKeepAlive();
 }
 
@@ -1701,15 +1707,7 @@ JSPromise* reload(JSGlobalObject* g, JSWebView* view)
 void close(JSWebView* view)
 {
     auto& t = transport();
-    if (t.m_global) {
-        auto* g = t.m_global;
-        JSValue err = createError(g, "WebView closed"_s);
-        settleSlot(g, view, view->m_pendingNavigate, false, err);
-        settleSlot(g, view, view->m_pendingEval, false, err);
-        settleSlot(g, view, view->m_pendingScreenshot, false, err);
-        settleSlot(g, view, view->m_pendingMisc, false, err);
-        settleSlot(g, view, view->m_pendingCdp, false, err);
-    }
+    if (auto* g = t.m_global) rejectViewSlots(g, view, createError(g, "WebView closed"_s));
     // Prune m_pending entries for this view — the attach chain
     // (TargetCreateTarget → TargetAttachToTarget → PageEnable →
     // PageNavigate) holds Weak<view> per step and each step chains to the

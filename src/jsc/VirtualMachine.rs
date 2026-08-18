@@ -4873,14 +4873,7 @@ impl VirtualMachine {
         let promise: *mut JSInternalPromise =
             match jsc::JSModuleLoader::load_and_evaluate_module_ptr(global, Some(&main_str)) {
                 Some(promise) => promise.as_ptr(),
-                // The test file is the loader's entry specifier itself (no
-                // synthetic main module as in `bun run`), so failing to resolve
-                // it, e.g. a path that is not valid UTF-8 and reaches the loader
-                // with U+FFFD substituted in, throws synchronously instead of
-                // rejecting the load promise. Hand it back as a rejection so the
-                // runner reports it against this file and moves on to the next
-                // one. Marked handled first: the runner reports the rejection
-                // itself, the rejection tracker must not report it again.
+                // The entry specifier did not resolve: report it like any other failed load.
                 None => {
                     let global_ref = self.global();
                     let rejected = JSInternalPromise::create(global_ref);

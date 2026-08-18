@@ -6,7 +6,7 @@
  */
 import { $ } from "bun";
 import { beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
 import { existsSync, mkdirSync, renameSync, symlinkSync, writeFileSync } from "node:fs";
 import path from "path";
 import { createTestBuilder, sortedShellOutput } from "../util";
@@ -329,3 +329,65 @@ test.skipIf(process.platform === "win32")(
     expect(exitCode).toBe(0);
   },
 );
+
+// The preserve-root check resolved every operand through the fixed-size
+// thread-local path buffers (1024 bytes for normalizing, 4096 for joining),
+// so an operand longer than either crashed the process before rm ever
+// touched the filesystem. Runs in a child process so the crash shows up as a
+// failed assertion rather than taking the test runner down with it.
+test("operands longer than the path scratch buffers are reported, not a crash", async () => {
+  using dir = tempDir("rm-long-operand", { "short.txt": "" });
+  const long = Buffer.alloc(1100, "a").toString();
+  const longer = Buffer.alloc(8192, "b").toString();
+  const absolute = path.join(String(dir), long);
+  // Joins back down to "/" no matter how long it is, so it still has to be refused.
+  const upToRoot = Buffer.alloc(6000, "../").toString();
+
+  const fixture = /* ts */ `
+    import { $ } from "bun";
+    import { existsSync } from "node:fs";
+    $.nothrow();
+    const { LONG, LONGER, ABSOLUTE, UP_TO_ROOT } = process.env;
+    const run = async (...args: string[]) => {
+      const { exitCode, stderr } = await $\`rm \${args}\`.quiet();
+      return { exitCode, stderr: stderr.toString() };
+    };
+    const results = {
+      relative: await run(LONG!),
+      absolute: await run(ABSOLUTE!),
+      overJoinBuffer: await run(LONGER!),
+      mixed: { ...(await run(LONG!, "short.txt")), shortRemoved: !existsSync("short.txt") },
+      upToRoot: UP_TO_ROOT ? await run(UP_TO_ROOT) : undefined,
+    };
+    console.log(JSON.stringify(results));
+  `;
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "-e", fixture],
+    env: {
+      ...bunEnv,
+      LONG: long,
+      LONGER: longer,
+      ABSOLUTE: absolute,
+      // The check is effectively a no-op for drive-rooted paths on Windows.
+      ...(isWindows ? {} : { UP_TO_ROOT: upToRoot }),
+    },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+
+  // Which errno an over-long name produces is up to the OS; what matters is
+  // that each operand fails on its own and the others are still processed.
+  const tooLong = (operand: string) =>
+    isWindows ? expect.stringMatching(/^rm: /) : `rm: ${operand}: File name too long\n`;
+  expect(JSON.parse(stdout)).toEqual({
+    relative: { exitCode: 1, stderr: tooLong(long) },
+    absolute: { exitCode: 1, stderr: tooLong(absolute) },
+    overJoinBuffer: { exitCode: 1, stderr: tooLong(longer) },
+    mixed: { exitCode: 1, stderr: tooLong(long), shortRemoved: true },
+    ...(isWindows ? {} : { upToRoot: { exitCode: 1, stderr: 'rm: "/" may not be removed\n' } }),
+  });
+  expect(exitCode).toBe(0);
+});

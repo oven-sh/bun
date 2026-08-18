@@ -552,6 +552,48 @@ it("writeFileSync in append should not truncate the file", () => {
   expect(readFileSync(path, "utf8")).toBe(str);
 });
 
+describe("append with flag a+ writes at end of file", () => {
+  const seed = "0123456789";
+  const expected = "0123456789AB";
+
+  it("writeFileSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    writeFileSync(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("promises.writeFile", async () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    await promises.writeFile(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("appendFileSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    fs.appendFileSync(path, "AB", { flag: "a+" });
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+
+  it("openSync + writeSync", () => {
+    const path = join(tmpdirSync(), "a-plus.txt");
+    writeFileSync(path, seed);
+    const fd = openSync(path, "a+");
+    try {
+      writeSync(fd, "AB");
+      // a+ (unlike a) also grants read access.
+      const buf = Buffer.alloc(expected.length);
+      expect(readSync(fd, buf, 0, buf.length, 0)).toBe(expected.length);
+      expect(buf.toString()).toBe(expected);
+    } finally {
+      closeSync(fd);
+    }
+    expect(readFileSync(path, "utf8")).toBe(expected);
+  });
+});
+
 it.concurrent("await readdir #3931", async () => {
   await using proc = Bun.spawn({
     cmd: [bunExe(), join(import.meta.dir, "./repro-3931.js")],
@@ -2737,6 +2779,29 @@ describe("writeFileSync", () => {
     for (let i = 0; i < buffer.length; i++) {
       expect(buffer[i]).toBe(out[i]);
     }
+  });
+});
+
+describe("writeFile/appendFile data argument", () => {
+  it("rejects a String wrapper object on the sync and callback paths, like node", () => {
+    // Node only accepts primitive strings here (`new String("x")` is an
+    // object), unlike most other string-or-buffer arguments, which unwrap it.
+    // The callback forms validate before scheduling anything, so they throw
+    // synchronously too. (fs.promises.* is different: there node accepts any
+    // iterable, which a String object is.)
+    using dir = tempDir("fs-data-string-object", {});
+    const file = (name: string) => join(String(dir), name);
+    const data = new String("data") as any;
+
+    expect(() => writeFileSync(file("write-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFileSync(file("append-sync.txt"), data)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.writeFile(file("write-cb.txt"), data, () => {})).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+    expect(() => fs.appendFile(file("append-cb.txt"), data, () => {})).toThrowWithCode(
+      TypeError,
+      "ERR_INVALID_ARG_TYPE",
+    );
+
+    expect(readdirSync(String(dir))).toEqual([]);
   });
 });
 

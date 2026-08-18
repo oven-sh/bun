@@ -42,7 +42,7 @@ pub fn GetStdHandle(std_handle: DWORD) -> Option<HANDLE> {
 // `crate::windows_sys::*` path used by callers.
 // ──────────────────────────────────────────────────────────────────────────
 pub use bun_windows_sys::{
-    CURDIR, Curdir, PEB, PebView, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
+    CURDIR, PEB, ProcessParameters, RTL_USER_PROCESS_PARAMETERS, TEB, peb, teb,
 };
 
 // SAFETY: nested `i16`/`u16` POD; all-zero is the documented pre-call state

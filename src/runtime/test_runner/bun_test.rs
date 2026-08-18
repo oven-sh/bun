@@ -76,43 +76,38 @@ pub mod js_fns {
         }
     }
 
-    pub(crate) struct GetActiveCfg<'a> {
-        pub(crate) signature: Signature<'a>,
-        pub(crate) allow_in_preload: bool,
-    }
-
-    fn get_active_test_root<'a>(
+    /// Only requires the runner: hooks are legal in preload scripts (they attach
+    /// to the root), so the preload check lives in `clone_active_strong`.
+    fn get_test_root(
         global_this: &JSGlobalObject,
-        cfg: &GetActiveCfg<'a>,
+        signature: Signature<'_>,
     ) -> JsResult<&'static mut BunTestRoot> {
         // `Jest.runner` is a process-global that outlives every caller, so the
         // unbounded `&'static mut` is the honest model here.
         let Some(runner) = Jest::runner() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of the test runner. Run \"bun test\" to run tests.",
-                cfg.signature
+                signature
             )));
         };
-        let bun_test_root = &mut runner.bun_test_root;
-        let vm = global_this.bun_vm();
-        if vm.is_in_preload && !cfg.allow_in_preload {
-            return Err(global_this.throw(format_args!(
-                "Cannot use {} during preload.",
-                cfg.signature
-            )));
-        }
-        Ok(bun_test_root)
+        Ok(&mut runner.bun_test_root)
     }
 
     pub(crate) fn clone_active_strong(
         global_this: &JSGlobalObject,
-        cfg: &GetActiveCfg<'_>,
+        signature: Signature<'_>,
     ) -> JsResult<BunTestPtr> {
-        let bun_test_root = get_active_test_root(global_this, cfg)?;
+        let bun_test_root = get_test_root(global_this, signature)?;
+        if global_this.bun_vm().is_in_preload {
+            return Err(global_this.throw(format_args!(
+                "Cannot use {} during preload.",
+                signature
+            )));
+        }
         let Some(bun_test) = bun_test_root.clone_active_file() else {
             return Err(global_this.throw(format_args!(
                 "Cannot use {} outside of a test file.",
-                cfg.signature
+                signature
             )));
         };
         Ok(bun_test)
@@ -186,10 +181,7 @@ pub mod js_fns {
                 false
             };
 
-            let bun_test_root = get_active_test_root(
-                global_this,
-                &GetActiveCfg { signature: Signature::Str(sig_bytes), allow_in_preload: true },
-            )?;
+            let bun_test_root = get_test_root(global_this, Signature::Str(sig_bytes))?;
 
             let cfg = ExecutionEntryCfg {
                 has_done_parameter,
@@ -785,9 +777,9 @@ impl BunTest {
             return Ok(());
         }
 
-        this.add_result(refdata.phase.clone());
+        this.add_result(refdata.phase);
         // `this` borrow ends here (NLL); `run_next_tick` re-derives via `.get()`.
-        Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase.clone());
+        Self::run_next_tick(&refdata.buntest_weak, global_this, refdata.phase);
         Ok(())
     }
 
@@ -860,8 +852,8 @@ impl BunTest {
         };
         // SAFETY: `&mut` derived via `UnsafeCell`; borrow ends before
         // `run_next_tick` re-derives.
-        strong.get().add_result(ref_in.phase.clone());
-        Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase.clone());
+        strong.get().add_result(ref_in.phase);
+        Self::run_next_tick(&ref_in.buntest_weak, global_this, ref_in.phase);
 
         Ok(JSValue::UNDEFINED)
     }
@@ -1188,7 +1180,7 @@ impl BunTest {
             }
 
             let prev_unhandled_count = vm.unhandled_error_counter;
-            global_this.handle_rejected_promises();
+            let _ = global_this.handle_rejected_promises();
             if vm.unhandled_error_counter == prev_unhandled_count {
                 break;
             }
@@ -1209,7 +1201,7 @@ impl BunTest {
                 if unsafe { (*dcb_data).called } {
                     // done callback already called or the callback errored; add result immediately
                 } else {
-                    let r = Self::ref_(this_strong, cfg_data.clone());
+                    let r = Self::ref_(this_strong, cfg_data);
                     let alias = NonNull::new(r.as_ptr())
                         .expect("ref_() returns a freshly-boxed RefData");
                     // SAFETY: see above. Move the sole +1 into the DoneCallback.
@@ -1429,10 +1421,10 @@ pub struct EntryData {
     pub(crate) remaining_repeat_count: i64,
 }
 
-// Clone: bitwise OK — `active_scope` is a non-owning borrow of a
+// Clone/Copy: bitwise OK — `active_scope` is a non-owning borrow of a
 // `DescribeScope` whose lifetime spans the async boundary (see field note);
 // `EntryData.entry` likewise borrows.
-#[derive(Clone)]
+#[derive(Clone, Copy)]
 pub enum RefDataValue {
     Start,
     Collection {

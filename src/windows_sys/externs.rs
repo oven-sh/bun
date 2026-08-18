@@ -23,7 +23,6 @@ type DWORD_PTR = usize;
 pub type UINT = c_uint;
 pub type ULONG = c_ulong;
 pub type LONG = c_long;
-pub type ULONGLONG = u64;
 pub type LARGE_INTEGER = i64;
 pub type WCHAR = u16;
 pub type CHAR = c_char;
@@ -270,7 +269,6 @@ pub const PATH_MAX_WIDE: usize = 32767;
 
 // `SetFilePointer` move methods.
 pub const FILE_BEGIN: DWORD = 0;
-pub const FILE_CURRENT: DWORD = 1;
 pub const FILE_END: DWORD = 2;
 
 // `DuplicateHandle` options.
@@ -284,17 +282,10 @@ pub const FILE_SHARE_DELETE: ULONG = 0x0000_0004;
 // File attribute flags (`winnt.h`).
 pub const FILE_ATTRIBUTE_READONLY: DWORD = 0x0000_0001;
 pub const FILE_ATTRIBUTE_HIDDEN: DWORD = 0x0000_0002;
-pub const FILE_ATTRIBUTE_SYSTEM: DWORD = 0x0000_0004;
 pub const FILE_ATTRIBUTE_DIRECTORY: DWORD = 0x0000_0010;
-pub const FILE_ATTRIBUTE_ARCHIVE: DWORD = 0x0000_0020;
-pub const FILE_ATTRIBUTE_DEVICE: DWORD = 0x0000_0040;
 pub const FILE_ATTRIBUTE_NORMAL: DWORD = 0x0000_0080;
 pub const FILE_ATTRIBUTE_TEMPORARY: DWORD = 0x0000_0100;
-pub const FILE_ATTRIBUTE_SPARSE_FILE: DWORD = 0x0000_0200;
 pub const FILE_ATTRIBUTE_REPARSE_POINT: DWORD = 0x0000_0400;
-pub const FILE_ATTRIBUTE_COMPRESSED: DWORD = 0x0000_0800;
-pub const FILE_ATTRIBUTE_OFFLINE: DWORD = 0x0000_1000;
-pub const FILE_ATTRIBUTE_NOT_CONTENT_INDEXED: DWORD = 0x0000_2000;
 
 // `NtCreateFile` CreateDisposition (`ntifs.h`).
 pub const FILE_OPEN: ULONG = 1;
@@ -305,8 +296,6 @@ pub const FILE_OVERWRITE_IF: ULONG = 5;
 
 // `NtCreateFile` CreateOptions (`ntifs.h`).
 pub const FILE_DIRECTORY_FILE: ULONG = 0x0000_0001;
-pub const FILE_WRITE_THROUGH: ULONG = 0x0000_0002;
-pub const FILE_SEQUENTIAL_ONLY: ULONG = 0x0000_0004;
 pub const FILE_SYNCHRONOUS_IO_NONALERT: ULONG = 0x0000_0020;
 pub const FILE_NON_DIRECTORY_FILE: ULONG = 0x0000_0040;
 pub const FILE_OPEN_REPARSE_POINT: ULONG = 0x0020_0000;
@@ -345,7 +334,6 @@ pub const fn is_reparse_tag_name_surrogate(tag: DWORD) -> bool {
 // `CreateNamedPipeW` dwOpenMode / dwPipeMode (`winbase.h`).
 pub const PIPE_ACCESS_INBOUND: DWORD = 0x0000_0001;
 pub const PIPE_ACCESS_OUTBOUND: DWORD = 0x0000_0002;
-pub const PIPE_ACCESS_DUPLEX: DWORD = 0x0000_0003;
 pub const PIPE_TYPE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_READMODE_BYTE: DWORD = 0x0000_0000;
 pub const PIPE_WAIT: DWORD = 0x0000_0000;
@@ -834,7 +822,6 @@ pub mod kernel32 {
         pub Type: u32,
     }
     pub const MEM_COMMIT: u32 = 0x1000;
-    pub const MEM_FREE: u32 = 0x10000;
 
     pub const PAGE_NOACCESS: u32 = 0x01;
     pub const PAGE_READONLY: u32 = 0x02;
@@ -999,23 +986,6 @@ pub const INFINITE: DWORD = 0xFFFF_FFFF;
 pub const WAIT_FAILED: DWORD = 0xFFFF_FFFF;
 pub const STARTF_USESTDHANDLES: DWORD = 0x0000_0100;
 
-#[cfg_attr(windows, link(name = "kernel32"))]
-unsafe extern "system" {
-    #[link_name = "WaitForSingleObject"]
-    fn WaitForSingleObject_raw(hHandle: HANDLE, dwMilliseconds: DWORD) -> DWORD;
-}
-/// SAFETY: `handle` must be a valid waitable kernel object.
-pub unsafe fn WaitForSingleObject(handle: HANDLE, ms: DWORD) -> Result<DWORD, Win32Error> {
-    // SAFETY: caller contract guarantees `handle` is a valid waitable kernel
-    // object; `ms` is a by-value DWORD with no pointer preconditions.
-    let rc = unsafe { WaitForSingleObject_raw(handle, ms) };
-    if rc == WAIT_FAILED {
-        Err(Win32Error::get())
-    } else {
-        Ok(rc)
-    }
-}
-
 // ──────────────────────────────────────────────────────────────────────────
 // NTSTATUS — a transparent newtype so unmapped codes round-trip.
 // ──────────────────────────────────────────────────────────────────────────
@@ -1062,10 +1032,6 @@ impl NTSTATUS {
     pub const fn from_raw(raw: u32) -> Self {
         NTSTATUS(raw)
     }
-    #[inline]
-    pub const fn raw(self) -> u32 {
-        self.0
-    }
 }
 
 #[inline]
@@ -1078,7 +1044,6 @@ pub const fn NT_SUCCESS(status: NTSTATUS) -> bool {
 pub const fn NT_ERROR(status: NTSTATUS) -> bool {
     (status.0 >> 30) == 3
 }
-pub const STATUS_SUCCESS: NTSTATUS = NTSTATUS::SUCCESS;
 
 #[cfg_attr(windows, link(name = "ntdll"))]
 unsafe extern "system" {
@@ -1484,13 +1449,6 @@ unsafe extern "system" {
 unsafe extern "system" {
     pub fn CopyFileW(source: LPCWSTR, dest: LPCWSTR, bFailIfExists: BOOL) -> BOOL;
 
-    pub fn SetFileInformationByHandle(
-        file: HANDLE,
-        fileInformationClass: FILE_INFO_BY_HANDLE_CLASS,
-        fileInformation: LPVOID,
-        bufferSize: DWORD,
-    ) -> BOOL;
-
     pub fn GetHostNameW(lpBuffer: PWSTR, nSize: c_int) -> BOOL;
 
     pub fn SetEnvironmentVariableW(lpName: LPCWSTR, lpValue: LPCWSTR) -> BOOL;
@@ -1509,9 +1467,6 @@ unsafe extern "system" {
         hJob: HANDLE,     // [in]
         hProcess: HANDLE, // [in]
     ) -> BOOL;
-
-    pub fn ResumeThread(hJob: HANDLE, // [in]
-    ) -> DWORD;
 
     pub fn SetInformationJobObject(
         hJob: HANDLE,
@@ -1667,8 +1622,6 @@ pub struct CURDIR {
     pub DosPath: UNICODE_STRING,
     pub Handle: HANDLE,
 }
-/// CamelCase alias (`bun_core` callers).
-pub type Curdir = CURDIR;
 
 /// `RTL_USER_PROCESS_PARAMETERS` (`winternl.h`) — minimal view.
 #[repr(C)]
@@ -1717,8 +1670,6 @@ pub struct PEB {
     // reference would assert false immutability to the optimizer (UB).
     pub ProcessParameters: *const RTL_USER_PROCESS_PARAMETERS,
 }
-/// Legacy alias (former `bun_core::windows_sys` name).
-pub type PebView = PEB;
 
 /// `TEB` (`winternl.h`) — minimal view; only `ProcessEnvironmentBlock` is read.
 #[repr(C)]
@@ -1796,8 +1747,6 @@ pub fn peb() -> *const PEB {
 pub const CTRL_C_EVENT: DWORD = 0;
 pub const CTRL_BREAK_EVENT: DWORD = 1;
 pub const CTRL_CLOSE_EVENT: DWORD = 2;
-pub const CTRL_LOGOFF_EVENT: DWORD = 5;
-pub const CTRL_SHUTDOWN_EVENT: DWORD = 6;
 
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {

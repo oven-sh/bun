@@ -1054,6 +1054,89 @@ describe("Template Literal Security", () => {
     ).toThrowErrorMatchingInlineSnapshot(`"Helpers are only allowed for INSERT, UPDATE and WHERE IN commands"`);
     await sql.close();
   });
+
+  describe("an object or array interpolated as a value cannot stand in for the parameter list", () => {
+    const bindError = "Binding expected string, TypedArray, boolean, number, bigint or null";
+    const rejectsBinding = (query: Promise<unknown>) => expect(async () => await query).toThrow(bindError);
+    // e.g. a parsed request body: taken as the binding set it binds ?1 = 2 and ?2 = "bob"
+    const attackerId = JSON.parse('{"0": 2, "1": "bob"}');
+    const serverTenant = "alice";
+    let sql: SQL;
+
+    beforeAll(async () => {
+      sql = new SQL("sqlite://:memory:");
+      await sql`CREATE TABLE docs (id INTEGER, tenant TEXT, body TEXT)`;
+      await sql`INSERT INTO docs VALUES (1, 'alice', 'A-secret'), (2, 'bob', 'B-secret')`;
+    });
+
+    afterAll(async () => {
+      await sql?.close();
+    });
+
+    test("SELECT: indexed-key object in the first slot throws instead of rebinding every parameter", async () => {
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`);
+    });
+
+    test("SELECT: array in the first slot throws instead of becoming the parameter list", async () => {
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${[2, "bob"]} AND tenant = ${serverTenant}`);
+    });
+
+    test("SELECT: plain object or Date in the first slot throws instead of binding NULL", async () => {
+      await rejectsBinding(sql`SELECT ${{ a: 1 }} AS a, ${{ b: 2 }} AS b`);
+      await rejectsBinding(sql`SELECT ${new Date(0)} AS a`);
+    });
+
+    test(".values() and .raw() result modes bind the same way", async () => {
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.values());
+      await rejectsBinding(sql`SELECT * FROM docs WHERE id = ${attackerId} AND tenant = ${serverTenant}`.raw());
+    });
+
+    test("INSERT: object or array in the first slot throws and writes nothing", async () => {
+      await rejectsBinding(
+        sql`INSERT INTO docs VALUES (${{ 0: 99, 1: "eve", 2: "PWNED" }}, ${serverTenant}, ${"legit"})`,
+      );
+      await rejectsBinding(sql`INSERT INTO docs VALUES (${[99, "eve", "PWNED"]}, ${serverTenant}, ${"legit"})`);
+      expect(await sql`SELECT * FROM docs WHERE id = 99 OR tenant = 'eve'`).toEqual([]);
+    });
+
+    test("INSERT: plain object as the only value throws instead of storing NULL", async () => {
+      await sql`CREATE TABLE object_value (v)`;
+      await rejectsBinding(sql`INSERT INTO object_value VALUES (${{ x: 1 }})`);
+      expect(await sql`SELECT count(*) AS n FROM object_value`).toEqual([{ n: 0 }]);
+    });
+
+    test("unsafe(): object as the first element of the parameter array throws", async () => {
+      await rejectsBinding(sql.unsafe("SELECT * FROM docs WHERE id = ? AND tenant = ?", [attackerId, serverTenant]));
+      await rejectsBinding(sql.unsafe("SELECT ? AS a", [{ x: 1 }]));
+    });
+
+    test("sql() insert helper: object as the first column's value throws instead of filling the row from it", async () => {
+      await sql`CREATE TABLE helper_first_column (a TEXT, b TEXT)`;
+      await rejectsBinding(
+        sql`INSERT INTO helper_first_column ${sql({ a: { 0: "x", 1: "y" } as any, b: serverTenant })}`,
+      );
+      expect(await sql`SELECT * FROM helper_first_column`).toEqual([]);
+    });
+
+    test("positional values, helpers and unsafe() arrays still bind in order", async () => {
+      expect(await sql`SELECT * FROM docs WHERE id = ${1} AND tenant = ${serverTenant}`).toEqual([
+        { id: 1, tenant: "alice", body: "A-secret" },
+      ]);
+      expect(await sql`SELECT id FROM docs WHERE id IN ${sql([1, 2])} ORDER BY id`).toEqual([{ id: 1 }, { id: 2 }]);
+      expect(await sql`SELECT typeof(${new Uint8Array([1, 2])}) AS blob, ${null} AS n, ${3n} AS big`).toEqual([
+        { blob: "blob", n: null, big: 3 },
+      ]);
+      expect(await sql.unsafe("SELECT ? AS a, ? AS b", [1, "two"])).toEqual([{ a: 1, b: "two" }]);
+
+      const inserted = await sql`INSERT INTO docs VALUES (${3}, ${"carol"}, ${"C"})`;
+      expect(inserted.count).toBe(1);
+      await sql`INSERT INTO docs ${sql({ id: 4, tenant: "dave", body: "D" })}`;
+      expect(await sql`SELECT id, tenant FROM docs WHERE id IN ${sql([3, 4])} ORDER BY id`).toEqual([
+        { id: 3, tenant: "carol" },
+        { id: 4, tenant: "dave" },
+      ]);
+    });
+  });
 });
 describe("Transactions", () => {
   let sql: SQL;

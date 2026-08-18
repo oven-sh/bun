@@ -168,7 +168,6 @@ version = "0.0.0"
 dependencies = [
  "bun_alloc",
  "bun_options_types",
- "bun_url",
 ]
 
 [[package]]
@@ -1661,6 +1660,7 @@ dependencies = [
  "bun_zstd",
  "bytemuck",
  "const_format",
+ "encoding_rs",
  "enum-map",
  "enumset",
  "getrandom",

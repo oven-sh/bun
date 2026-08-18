@@ -27,10 +27,9 @@ use core::ptr::NonNull;
 // ──────────────────────────────────────────────────────────────────────────
 
 pub use bun_jsc::{
-    ArrayBuffer, CallFrame, CoerceTo, ErrorBuilder, ErrorCode, ExternColumnIdentifier,
-    ExternColumnIdentifierValue, GlobalRef, JSArrayIterator, JSCell, JSGlobalObject, JSObject,
-    JSType, JSValue, JsCell, JsError, JsRef, JsResult, MarkedArgumentBuffer, StringJsc,
-    StrongOptional, ThrowFmtArgs, ZigStringJsc, bun_string_jsc, host_fn,
+    ArrayBuffer, CallFrame, ErrorBuilder, ErrorCode, ExternColumnIdentifier, GlobalRef,
+    JSArrayIterator, JSCell, JSGlobalObject, JSObject, JSType, JSValue, JsCell, JsError, JsRef,
+    JsResult, MarkedArgumentBuffer, StringJsc, Strong, StrongOptional, bun_string_jsc, host_fn,
 };
 
 /// Re-export — `bun_jsc` now defines `IntegerRange` at its crate root and the
@@ -50,7 +49,7 @@ pub use bun_jsc::IntegerRange;
 pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgresError {
     use bun_sql::postgres::AnyPostgresError as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
     }
 }
@@ -58,7 +57,7 @@ pub(crate) fn js_error_to_postgres(e: JsError) -> bun_sql::postgres::AnyPostgres
 pub(crate) fn js_error_to_mysql(e: JsError) -> bun_sql::mysql::protocol::any_mysql_error::Error {
     use bun_sql::mysql::protocol::any_mysql_error::Error as E;
     match e {
-        JsError::Thrown => E::JSError,
+        JsError::Thrown | JsError::Terminated => E::JSError,
         JsError::OutOfMemory => E::OutOfMemory,
     }
 }
@@ -521,7 +520,6 @@ pub mod api {
                 }
             }
         }
-        pub use SSLConfig as SslConfig;
     }
     /// PascalCase namespace alias.
     #[allow(non_snake_case)]
@@ -617,7 +615,7 @@ pub use bun_jsc::JsClass;
 
 pub mod codegen {
     ::bun_jsc::js_class_module!(JSPostgresSQLConnection = "PostgresSQLConnection"
-        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose });
+        as crate::postgres::PostgresSQLConnection { queries, onconnect, onclose, onnotification });
     ::bun_jsc::js_class_module!(
         JSPostgresSQLQuery = "PostgresSQLQuery" as crate::postgres::PostgresSQLQuery,
         impl_js_class {

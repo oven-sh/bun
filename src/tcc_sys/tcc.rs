@@ -61,7 +61,6 @@ tcc_externs! {
     fn tcc_add_library_path(s: *mut TCCState, pathname: *const c_char) -> c_int;
     fn tcc_add_library(s: *mut TCCState, libraryname: *const c_char) -> c_int;
     fn tcc_add_symbol(s: *mut TCCState, name: *const c_char, val: *const c_void) -> c_int;
-    fn tcc_run(s: *mut TCCState, argc: c_int, argv: *mut *mut c_char) -> c_int;
     fn tcc_relocate(s1: *mut TCCState) -> c_int;
     fn tcc_get_symbol(s: *mut TCCState, name: *const c_char) -> *mut c_void;
 }
@@ -122,9 +121,6 @@ pub enum OutputFormat {
 // Nominal type for some registered symbol. Used to force pointer-cast usage without
 // allowing for interop with other APIs taking `*mut c_void` pointers.
 bun_opaque::opaque_ffi! { pub struct Symbol; }
-
-pub type SymbolCallback =
-    unsafe extern "C" fn(ctx: *mut c_void, name: *const c_char, val: *const Symbol);
 
 bun_opaque::opaque_ffi! {
     /// Opaque TinyCC compilation state. Always handled via `*mut State` / `&mut State`.
@@ -396,14 +392,6 @@ impl State {
             }
         }
         Ok(())
-    }
-
-    /// Link and run `main()` function and return its value. DO NOT call `relocate` before.
-    /// Returns the status code returned by the program's `main()` function.
-    pub fn run(&mut self, argc: c_int, argv: *const *const c_char) -> c_int {
-        // SAFETY: self is a valid *mut TCCState; argv points to argc NUL-terminated C strings.
-        // Cast const away to match the C ABI (tcc does not mutate argv).
-        unsafe { tcc_run(self, argc, argv as *mut *mut c_char) }
     }
 
     /// Do all relocations (needed before using `get_symbol`)

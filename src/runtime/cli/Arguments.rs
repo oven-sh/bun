@@ -834,12 +834,12 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         let base: &[u8] = if bun_paths::is_absolute(cwd_arg) {
             b"/"
         } else {
-            let len = bun_sys::getcwd(&mut *outbuf)?;
-            &outbuf[..len]
+            bun_core::getcwd(&mut outbuf)?.as_bytes()
         };
-        let out = resolve_path::join_abs::<platform::Loose>(base, cwd_arg);
-        // `chdir` wants a NUL-terminated path; `join_abs` returns a borrowed
-        // slice into a threadlocal buffer, so dupe-Z once and reuse for both
+        let mut spill = Vec::new();
+        let out =
+            resolve_path::join_abs_string_spill::<platform::Loose>(base, &mut spill, &[cwd_arg]);
+        // `chdir` wants a NUL-terminated path, so dupe-Z once and reuse for both
         // the `chdir` arg and the stored `absolute_working_dir`.
         let out_z = bun_core::ZBox::from_bytes(out);
         if let bun_sys::Result::Err(err) = bun_sys::chdir(&out_z) {
@@ -869,8 +869,7 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         // Everything else (install/test/build/...) must not silently act on
         // whatever project happens to live above the executable.
         let mut temp = PathBuffer::uninit();
-        let len = bun_sys::getcwd(&mut *temp)?;
-        Box::<[u8]>::from(&temp[..len])
+        Box::<[u8]>::from(bun_core::getcwd(&mut temp)?.as_bytes())
     };
 
     // Not gated on .BunxCommand: bunx skips Arguments.parse entirely
@@ -965,17 +964,14 @@ pub(crate) fn parse(cmd: CommandTag, ctx: Context<'_>) -> crate::Result<api::Tra
         });
     }
 
-    opts.tsconfig_override = if let Some(ts) = args.option(b"--tsconfig-override") {
-        Some(
-            resolve_path::join_abs_string::<platform::Auto>(
-                ctx.args.absolute_working_dir.as_deref().unwrap(),
-                &[ts],
-            )
-            .into(),
-        )
-    } else {
-        None
-    };
+    opts.tsconfig_override = args.option(b"--tsconfig-override").map(|ts| {
+        let mut spill = Vec::new();
+        Box::from(resolve_path::join_abs_string_spill::<platform::Auto>(
+            ctx.args.absolute_working_dir.as_deref().unwrap(),
+            &mut spill,
+            &[ts],
+        ))
+    });
 
     opts.main_fields = slice_to_owned(args.options(b"--main-fields"));
     // we never actually supported inject.

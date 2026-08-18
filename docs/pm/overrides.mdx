@@ -33,7 +33,7 @@ When you run `bun install`, Bun installs the latest version of each package.
 
 ```txt tree layout of node_modules icon="list-tree"
 node_modules
-├── foo@1.2.3
+├── foo@2.3.4
 └── bar@4.5.6
 ```
 
@@ -44,11 +44,6 @@ If a security vulnerability is introduced in `bar@4.5.6`, you may want to pin `b
 ## `"overrides"`
 
 Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specified version range when determining which version of `bar` to install, whether it's a dependency or a metadependency.
-
-<Note>
-  Bun only supports top-level `"overrides"`, not [nested
-  overrides](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#overrides).
-</Note>
 
 {/* prettier-ignore */}
 ```json package.json icon="file-json"
@@ -63,11 +58,11 @@ Add `bar` to the `"overrides"` field in `package.json`. Bun defers to the specif
 }
 ```
 
+Bun only reads overrides from the root `package.json`, not from workspace packages. Overrides apply to `peerDependencies` as well.
+
 ## `"resolutions"`
 
-`"resolutions"` is Yarn's alternative to `"overrides"`, with similar syntax. Bun supports it to make migration from Yarn easier.
-
-As with `"overrides"`, _nested resolutions_ are not supported.
+`"resolutions"` is Yarn's alternative to `"overrides"`, with similar syntax. Bun supports it to help projects migrate from Yarn.
 
 {/* prettier-ignore */}
 ```json package.json icon="file-json"
@@ -81,3 +76,78 @@ As with `"overrides"`, _nested resolutions_ are not supported.
   } // [!code ++]
 }
 ```
+
+## Values
+
+A value can be any dependency specifier, not only a version range. `npm:` swaps a package for a fork, and `catalog:` (or `catalog:<name>`) keeps the overridden version in sync with a [workspace catalog](/pm/catalogs):
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "quux": "npm:@myorg/quux@^1.0.0",
+    "foo": "catalog:"
+  }
+}
+```
+
+A value of `"$name"` reuses the range you declared for `name` in your own dependencies, so `"bar": "$foo"` pins `bar` to whatever range you declared for `foo`.
+
+## Nested overrides
+
+You can scope a rule to one parent package, so it only applies to that package's direct dependency. Bun accepts the npm object form, the pnpm `>` form, and a parent with a version range:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "micromatch": {
+      ".": "^4.0.5",
+      "picomatch": "^2.3.2"
+    },
+    "micromatch>picomatch": "^2.3.2",
+    "micromatch@^4>picomatch": "^2.3.2"
+  }
+}
+```
+
+`"."` inside an object overrides `micromatch` itself, like a top-level `"micromatch"` rule.
+
+`"resolutions"` accepts Yarn's path form. Bun accepts `**` for compatibility, but either way the rule only affects the parent's direct dependency:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "resolutions": {
+    "micromatch/picomatch": "^2.3.2",
+    "**/micromatch/**/picomatch": "^2.3.2"
+  }
+}
+```
+
+When several rules match, the most specific wins: parent-with-version > parent > top-level.
+
+## Version-scoped overrides
+
+The key can carry a version selector so the rule only applies to dependents whose declared range overlaps it. This is the form `pnpm audit --fix` writes:
+
+```json package.json icon="file-json"
+{
+  "name": "my-app",
+  "overrides": {
+    "semver@<7.5.2": "7.5.2",
+    "webpack>terser@4": "4.8.1",
+    "terser@4": {
+      ".": "4.8.1"
+    }
+  }
+}
+```
+
+Bun compares the selector with the range each dependent _declares_, not the resolved version. `"semver@<7.5.2"` applies to a dependent that declares `^7.3.0` (which could still pick `7.3.x`) but not to one that declares `^7.5.2`. Dependents using a dist-tag, `catalog:`, `workspace:`, git, or URL specifier never match a selector.
+
+## Limitations
+
+- Bun supports only one parent level. It ignores `a>b>c`, `a/b/c`, and deeper object nesting with a warning.
+- Bun does not support pnpm's `"pkg@"` (empty selector) and `"-"` (remove dependency) forms, and skips them with a warning.
+- Bun writes a lockfile containing nested or version-scoped rules as `lockfileVersion` 3, which older versions of Bun cannot read.

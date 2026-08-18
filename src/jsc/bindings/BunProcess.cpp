@@ -2939,6 +2939,7 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, JSC:
     forceSync = true;
 #endif
     JSC::EncodedJSValue sink = JSValue::encode(resultObject->getIndex(globalObject, 1));
+    RETURN_IF_EXCEPTION(scope, {});
     // No-op outside `bun test --isolate`, where the swap must end this sink.
     Bun__trackProcessStdioSinkForTestIsolation(globalObject, sink);
     if (forceSync) {

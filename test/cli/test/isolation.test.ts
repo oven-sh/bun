@@ -67,11 +67,9 @@ describe.concurrent("bun test --isolate", () => {
     expect(exitCode).toBe(0);
   });
 
-  // Each isolate context lazily re-creates process.stderr/stdout over a fresh
-  // dup() of the stdio fd plus an epoll registration; the global swap must end
-  // the outgoing file's sinks or the dups accumulate per file and a stale
-  // registration can later collide with a reused fd number (EEXIST from
-  // epoll_ctl, #37968). Counts fds that share fd 2's pipe via /proc, Linux-only.
+  // The swap must end each file's process.stderr/stdout sinks (a fresh dup of
+  // the stdio fd per isolate global) or the dups and their epoll registrations
+  // accumulate. https://github.com/oven-sh/bun/issues/37968
   test.skipIf(!isLinux)("with --isolate, stdio sinks do not leak a dup'd fd per file", async () => {
     const countFixture = `
       import { test } from "bun:test";
@@ -84,7 +82,10 @@ describe.concurrent("bun test --isolate", () => {
         for (const fd of readdirSync("/proc/self/fd")) {
           try {
             if (readlinkSync("/proc/self/fd/" + fd) === target) count++;
-          } catch {}
+          } catch (error) {
+            // An fd can vanish between readdir and readlink.
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
         }
         console.log("FDCOUNT:" + count);
       });

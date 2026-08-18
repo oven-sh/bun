@@ -629,8 +629,10 @@ impl<V: CalcValue> Calc<V> {
         input: &mut css::Parser,
         parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        // Parse nested calc() and other math functions.
-        match input.try_parse(Self::parse) {
+        // Parse nested calc() and other math functions. They resolve the same
+        // identifiers as the enclosing function: `calc(r + abs(g))` in a
+        // relative color.
+        match input.try_parse(|i| Self::parse_with(i, parse_ident)) {
             Ok(calc) => match calc {
                 Calc::Function(f) => {
                     return match *f {
@@ -641,7 +643,7 @@ impl<V: CalcValue> Calc<V> {
                 other => return Ok(other),
             },
             Err(e) => {
-                // A math function token can only be parsed by `Self::parse`.
+                // A math function token can only be parsed by `Self::parse_with`.
                 // If that failed, none of the alternatives below can succeed
                 // either, so return the error rather than falling through:
                 // `V::parse` would re-enter the same nested block through

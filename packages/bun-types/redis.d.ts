@@ -7,7 +7,10 @@ declare module "bun" {
     connectionTimeout?: number;
 
     /**
-     * Idle timeout in milliseconds
+     * Idle timeout in milliseconds. Bun counts it from the last data the
+     * server sent. Sending does not reset it. When it fires, Bun closes the
+     * connection and runs `onclose`. Bun does not reconnect on its own, even
+     * with `autoReconnect: true`. Call `connect()` to reconnect.
      * @default 0 (no timeout)
      */
     idleTimeout?: number;

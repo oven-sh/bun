@@ -1,6 +1,7 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
-import { bunEnv, bunExe, withoutAggressiveGC } from "harness";
+import { bunEnv, bunExe, isWindows, withoutAggressiveGC } from "harness";
+import { spawnSync } from "node:child_process";
 import { join } from "path";
 
 const arg0 = process.argv[0];
@@ -42,4 +43,17 @@ test("args round-trip non-ASCII, spaces, quotes and backslashes", async () => {
   const [plain, withRun] = await Promise.all([run(args, false), run(args, true)]);
   expect(plain).toEqual([arg0, arg1, ...args]);
   expect(withRun).toEqual([arg0, arg1, ...args]);
+});
+
+// Windows hands the process one UTF-16 command line to split itself. Bun uses
+// the C runtime's rules (what `wmain`, and therefore node, receives); the one
+// place shell32's CommandLineToArgvW disagrees with those is `""` inside a
+// quoted region, so pin that down with a verbatim command line.
+test.skipIf(!isWindows)('argv uses the C runtime rules for "" inside quotes', () => {
+  const { stdout } = spawnSync(bunExe(), [`"${arg1}"`, `"a"" b" c "d""" e "" f""g`], {
+    env: bunEnv,
+    encoding: "utf8",
+    windowsVerbatimArguments: true,
+  });
+  expect(JSON.parse(stdout).slice(2)).toEqual(['a" b', "c", 'd"', "e", "", "fg"]);
 });

@@ -3757,12 +3757,17 @@ fn argv_storage() -> &'static [ZBox] {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is
         // ANSI-encoded (CP_ACP) — lossy for non-ASCII argv (e.g.
         // `bun -e "🌊 测试"`, https://github.com/oven-sh/bun/issues/11610).
-        // libstd's `args_os()` parses `GetCommandLineW` itself (MSVC CRT
-        // rules, WTF-8 output) without loading shell32.dll for
-        // `CommandLineToArgvW`, so Windows falls through to it below.
+        // libstd's `args_os()` splits `GetCommandLineW` itself with the MSVC
+        // CRT (2008+) rules — the argv every `wmain` program, node included,
+        // sees — without loading shell32.dll for `CommandLineToArgvW`.
+        // Unpaired surrogates become U+FFFD, as they did before.
+        #[cfg(windows)]
+        let args = std::env::args_os()
+            .map(|a| ZBox::from_vec(a.to_string_lossy().into_owned().into_bytes()))
+            .collect();
         #[cfg(not(windows))]
-        if let Some(raw) = raw_os_argv() {
-            return raw
+        let args = match raw_os_argv() {
+            Some(raw) => raw
                 .iter()
                 .map(|&p| {
                     // SAFETY: kernel argv entries are NUL-terminated and live
@@ -3770,15 +3775,16 @@ fn argv_storage() -> &'static [ZBox] {
                     let s = unsafe { core::ffi::CStr::from_ptr(p) };
                     ZBox::from_bytes(s.to_bytes())
                 })
-                .collect();
-        }
-        // Fallback for entry points that don't go through `extern "C" fn main`
-        // (e.g. `cargo test` harness, Rust `fn main()` via `lang_start`). On
-        // glibc/macOS/Windows this also works for the real binary — only
-        // musl-static needs the `raw_os_argv` path above.
-        std::env::args_os()
-            .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
-            .collect()
+                .collect(),
+            // Entry points that don't go through `extern "C" fn main` (the
+            // `cargo test` harness, Rust `fn main()` via `lang_start`). On
+            // glibc/macOS this also works for the real binary — only
+            // musl-static needs the `raw_os_argv` path above.
+            None => std::env::args_os()
+                .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
+                .collect(),
+        };
+        args
     })
 }
 

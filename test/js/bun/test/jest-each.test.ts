@@ -84,12 +84,10 @@ describe("%j title memory", () => {
       const [out, err, code] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       const match = (out + err).match(/RSS_BYTES:(\d+)/);
       if (!match) {
-        // Keep the diff readable: err is ~70MB of 512KB titles on a healthy run.
-        expect({ out, errTail: err.slice(-2000), code }).toEqual({
-          out: expect.stringMatching(/RSS_BYTES:\d+/),
-          errTail: expect.any(String),
-          code: 0,
-        });
+        // Bounded tails: err is ~70MB of 512KB titles on a healthy run.
+        throw new Error(
+          `Expected RSS_BYTES marker. exit code: ${code}\nstdout tail:\n${out.slice(-2000)}\nstderr tail:\n${err.slice(-2000)}`,
+        );
       }
       expect(code).toBe(0);
       return Number(match![1]);

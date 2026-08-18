@@ -255,12 +255,11 @@ impl<T: JsSinkAbi> JSSink<T> {
         result
     }
 
-    /// Disconnect the upstream source: JSController → unprotect + detachPtr; ByteStream → clear its SinkHandle.
+    /// Disconnect the upstream source: JSController → detachPtr; ByteStream → clear its SinkHandle.
     pub(crate) fn detach(source: &mut SourceHandle, _global: &crate::webcore::jsc::JSGlobalObject) {
         match *source {
             SourceHandle::JSController(value) => {
                 source.clear();
-                value.unprotect();
                 // detachPtr leaves m_needExceptionCheck set; wrap to satisfy the verifier.
                 let _ = ::bun_jsc::call_check_slow(_global, || {
                     streams::controller_abi::detach_ptr(value)
@@ -537,13 +536,8 @@ impl<T: JsSinkType> JSSink<T> {
         use bun_sys_jsc::ErrorJsc;
         bun_core::mark_binding!();
 
-        // SAFETY: get_this returns a live ThisSink* on Ok.
-        let this = Self::get_this(global, frame)?;
-
-        if let Some(err) = this.sink.get_pending_error() {
-            return Err(global.throw_value(err));
-        }
-
+        // Option getters can run user JS that closes the sink, so read them
+        // before resolving `this`.
         let config = if frame.arguments_count() > 0 {
             match T::START_TAG {
                 Some(tag) => {
@@ -554,6 +548,12 @@ impl<T: JsSinkType> JSSink<T> {
         } else {
             streams::Start::Empty
         };
+
+        let this = Self::get_this(global, frame)?;
+
+        if let Some(err) = this.sink.get_pending_error() {
+            return Err(global.throw_value(err));
+        }
 
         match this.sink.start(config) {
             sys::Result::Ok(()) => Ok(JSValue::UNDEFINED),

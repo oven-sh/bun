@@ -2335,9 +2335,9 @@ impl JSValue {
     pub fn unwrap_boxed_primitive(self, global: &JSGlobalObject) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__unwrapBoxedPrimitive(global, self))
     }
-    /// `JSValue.getPrototype`.
-    pub fn get_prototype(self, global: &JSGlobalObject) -> JSValue {
-        JSC__JSValue__getPrototype(self, global)
+    /// `JSValue.getPrototype`; runs a Proxy's `getPrototypeOf` trap, so it may throw.
+    pub fn get_prototype(self, global: &JSGlobalObject) -> JsResult<JSValue> {
+        host_fn::from_js_host_call(global, || JSC__JSValue__getPrototype(self, global))
     }
 
     // ── Reflection / naming. ───────────────

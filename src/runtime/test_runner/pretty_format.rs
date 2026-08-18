@@ -854,7 +854,7 @@ impl<'a, 'f, W: bun_io::Write, const ENABLE_ANSI_COLORS: bool>
                 writer.print(format_args!("{} ", name_str));
             } else {
                 value
-                    .get_prototype(global_this)
+                    .get_prototype(global_this)?
                     .get_name_property(global_this, &mut name_str)?;
                 if name_str.len > 0 && !name_str.eql_comptime(b"Object") {
                     writer.print(format_args!("{} ", name_str));

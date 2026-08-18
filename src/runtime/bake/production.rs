@@ -271,7 +271,7 @@ struct OutputDir {
 
 impl OutputDir {
     fn write(&mut self, file: &OutputFile) {
-        if let Err(err) = file.write_to_disk(self.dir.fd(), b".") {
+        if let Err(err) = file.write_to_disk(self.dir.fd()) {
             bun_core::handle_error_return_trace(err);
             Output::err(
                 err,

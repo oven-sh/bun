@@ -4,8 +4,58 @@ use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
 use crate::types::{SpanType, TextType, VerbatimLine};
 
-/// Emphasis delimiter entry for CommonMark emphasis algorithm.
-pub(crate) const MAX_EMPH_MATCHES: usize = 6;
+/// Inline capacity of `EmphSizes`, chosen so the `Inline` variant is no
+/// larger than the `Heap` one (Vec = 3 words, +tag +len = 32 bytes).
+const EMPH_SIZES_INLINE_CAP: usize = 30;
+
+/// Ordered match sizes (1 = em, 2 = strong) for one side of an emphasis
+/// delimiter run. A run can match arbitrarily many times (e.g. 14 `*`
+/// opened against seven `**` closers), so overflow spills to the heap:
+/// dropping a recorded match would emit unbalanced HTML.
+#[derive(Clone)]
+pub(crate) enum EmphSizes {
+    Inline {
+        len: u8,
+        buf: [u8; EMPH_SIZES_INLINE_CAP],
+    },
+    Heap(Vec<u8>),
+}
+
+impl EmphSizes {
+    pub(crate) fn push(&mut self, size: u8) {
+        match self {
+            EmphSizes::Inline { len, buf } => {
+                let n = *len as usize;
+                if n < EMPH_SIZES_INLINE_CAP {
+                    buf[n] = size;
+                    *len += 1;
+                } else {
+                    let mut v = Vec::with_capacity(n + 1);
+                    v.extend_from_slice(&buf[..n]);
+                    v.push(size);
+                    *self = EmphSizes::Heap(v);
+                }
+            }
+            EmphSizes::Heap(v) => v.push(size),
+        }
+    }
+
+    pub(crate) fn as_slice(&self) -> &[u8] {
+        match self {
+            EmphSizes::Inline { len, buf } => &buf[..*len as usize],
+            EmphSizes::Heap(v) => v,
+        }
+    }
+}
+
+impl Default for EmphSizes {
+    fn default() -> Self {
+        EmphSizes::Inline {
+            len: 0,
+            buf: [0; EMPH_SIZES_INLINE_CAP],
+        }
+    }
+}
 
 /// Snapshot of an enclosing slice's walk state while one of its link/image/
 /// wikilink labels is rendered. `base..end` locate the enclosing slice
@@ -21,7 +71,7 @@ pub(crate) struct LabelFrame {
     leave: LabelLeave,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 pub struct EmphDelim {
     pub(crate) pos: usize,    // start position in content
     pub(crate) count: usize,  // original run length
@@ -32,11 +82,9 @@ pub struct EmphDelim {
     pub(crate) open_count: usize,  // total chars consumed as opener
     pub(crate) close_count: usize, // total chars consumed as closer
     // Individual match sizes in order (each is 1 for em, 2 for strong)
-    pub(crate) open_sizes: [u8; MAX_EMPH_MATCHES],
-    pub(crate) open_num: u8, // number of open matches
-    pub(crate) close_sizes: [u8; MAX_EMPH_MATCHES],
-    pub(crate) close_num: u8, // number of close matches
-    pub(crate) active: bool,  // false if deactivated between matched pairs
+    pub(crate) open_sizes: EmphSizes,
+    pub(crate) close_sizes: EmphSizes,
+    pub(crate) active: bool, // false if deactivated between matched pairs
 }
 
 impl Default for EmphDelim {
@@ -50,10 +98,8 @@ impl Default for EmphDelim {
             remaining: 0,
             open_count: 0,
             close_count: 0,
-            open_sizes: [0; MAX_EMPH_MATCHES],
-            open_num: 0,
-            close_sizes: [0; MAX_EMPH_MATCHES],
-            close_num: 0,
+            open_sizes: EmphSizes::default(),
+            close_sizes: EmphSizes::default(),
             active: true,
         }
     }
@@ -352,7 +398,7 @@ impl Parser<'_> {
                                 self.leave_span(SpanType::Del)?;
                             }
                         } else {
-                            self.emit_emph_close_tags(&d.close_sizes[0..d.close_num as usize])?;
+                            self.emit_emph_close_tags(d.close_sizes.as_slice())?;
                         }
 
                         // Emit remaining delimiter chars as text
@@ -367,7 +413,7 @@ impl Parser<'_> {
                                 self.enter_span(SpanType::Del)?;
                             }
                         } else {
-                            self.emit_emph_open_tags(&d.open_sizes[0..d.open_num as usize])?;
+                            self.emit_emph_open_tags(d.open_sizes.as_slice())?;
                         }
 
                         delim_cursor += 1;
@@ -870,19 +916,14 @@ impl Parser<'_> {
 
                     self.emph_delims[oi].remaining -= use_;
                     self.emph_delims[oi].open_count += use_;
-                    if (self.emph_delims[oi].open_num as usize) < MAX_EMPH_MATCHES {
-                        let n = self.emph_delims[oi].open_num as usize;
-                        self.emph_delims[oi].open_sizes[n] = u8::try_from(use_).expect("int cast");
-                        self.emph_delims[oi].open_num += 1;
-                    }
+                    self.emph_delims[oi]
+                        .open_sizes
+                        .push(u8::try_from(use_).expect("int cast"));
                     self.emph_delims[closer_idx].remaining -= use_;
                     self.emph_delims[closer_idx].close_count += use_;
-                    if (self.emph_delims[closer_idx].close_num as usize) < MAX_EMPH_MATCHES {
-                        let n = self.emph_delims[closer_idx].close_num as usize;
-                        self.emph_delims[closer_idx].close_sizes[n] =
-                            u8::try_from(use_).expect("int cast");
-                        self.emph_delims[closer_idx].close_num += 1;
-                    }
+                    self.emph_delims[closer_idx]
+                        .close_sizes
+                        .push(u8::try_from(use_).expect("int cast"));
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)
                     let mut k = prev_candidate[closer_idx];

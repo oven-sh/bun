@@ -4520,28 +4520,25 @@ pub(super) fn finalize_bundle(
             dev.assets.reindex_if_needed()?;
             use bun_bundler::Graph::InputFileColumns as _;
             let sources = bv2.graph.input_files.items_source();
-            let css_chunk_hashes = css_chunks.iter().filter_map(|chunk| {
-                let key = sources[chunk.entry_point.source_index() as usize]
-                    .path
-                    .key_for_incremental_graph();
-                let content_hash = hash(key);
-                dev.assets.get(content_hash).map(|_| content_hash)
-            });
+            let css_chunk_hashes: Vec<(u64, &[u8])> = css_chunks
+                .iter()
+                .filter_map(|chunk| {
+                    let key = sources[chunk.entry_point.source_index() as usize]
+                        .path
+                        .key_for_incremental_graph();
+                    let content_hash = hash(key);
+                    let asset = dev.assets.get(content_hash)?;
+                    Some((content_hash, &*asset.blob.internal_blob().bytes))
+                })
+                .collect();
             w_int!(
                 u32,
-                u32::try_from(css_chunk_hashes.clone().count()).expect("int cast")
+                u32::try_from(css_chunk_hashes.len()).expect("int cast")
             );
-            for content_hash in css_chunk_hashes {
+            for (content_hash, css_data) in css_chunk_hashes {
                 let mut hex = [0u8; 16];
                 let n = bun_core::fmt::bytes_to_hex_lower(&content_hash.to_ne_bytes(), &mut hex);
                 w_all!(&hex[..n]);
-                let css_data: &[u8] = &dev
-                    .assets
-                    .get(content_hash)
-                    .unwrap()
-                    .blob
-                    .internal_blob()
-                    .bytes;
                 w_int!(u32, u32::try_from(css_data.len()).expect("int cast"));
                 w_all!(css_data);
             }
@@ -6253,13 +6250,17 @@ impl DevServer {
         }
 
         if let Some(rest) = path.strip_prefix(&*self.root) {
+            let is_sep = |c: &u8| *c == b'/' || (cfg!(windows) && *c == b'\\');
             // The filesystem root already ends in a separator.
-            let rel = if self.root.ends_with(b"/") {
+            let rel = if self.root.last().is_some_and(is_sep) {
                 Some(rest)
             } else {
-                rest.strip_prefix(b"/")
+                rest.split_first()
+                    .filter(|(c, _)| is_sep(c))
+                    .map(|(_, r)| r)
             };
-            if let Some(rel) = rel {
+            // The slow path below converts any remaining backslashes to posix.
+            if let Some(rel) = rel.filter(|r| !cfg!(windows) || !r.contains(&b'\\')) {
                 return rel;
             }
         }

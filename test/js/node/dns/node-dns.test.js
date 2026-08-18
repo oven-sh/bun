@@ -1012,8 +1012,14 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
         labels.push(msg.slice(i + 1, i + 1 + msg[i]).toString("latin1"));
         i += msg[i] + 1;
       }
-      wire.push(labels.join("."));
+      const qname = labels.join(".");
+      wire.push(qname);
       const question = msg.slice(12, i + 5);
+      if (qname.endsWith(".nxdomain.test")) {
+        const nxdomain = Buffer.from([msg[0], msg[1], 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0]);
+        server.send(Buffer.concat([nxdomain, question]), rinfo.port, rinfo.address);
+        return;
+      }
       const header = Buffer.from([msg[0], msg[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
       // TTL=0 so c-ares does not cache across tests that share an ASCII qname.
       const answer = Buffer.from([0xc0, 0x0c, 0, 1, 0, 1, 0, 0, 0, 0, 0, 4, 10, 7, 7, 7]);
@@ -1074,13 +1080,45 @@ describe("dns.resolve IDNA-encodes internationalized hostnames", () => {
     expect({ result, wire: [...wire] }).toEqual({ result: ["10.7.7.7"], wire: ["xn--r8jz45g.jp"] });
   });
 
-  it("err.hostname on failure preserves the caller's original spelling", async () => {
-    const r = new dns.promises.Resolver({ timeout: 100, tries: 1 });
-    r.setServers(["127.0.0.1:1"]);
-    const err = await r.resolve4("bücher.example").then(
+  it("err.hostname on NXDOMAIN preserves the caller's original spelling", async () => {
+    wire.length = 0;
+    const err = await resolver.resolve4("bücher.nxdomain.test").then(
       () => ({}),
       e => e,
     );
-    expect(err.hostname).toBe("bücher.example");
+    expect({ code: err.code, hostname: err.hostname, wire: [...wire] }).toEqual({
+      code: "ENOTFOUND",
+      hostname: "bücher.nxdomain.test",
+      wire: ["xn--bcher-kva.nxdomain.test"],
+    });
+  });
+
+  // dns.lookup() goes through the default resolver, so point that resolver at
+  // the fake server in a child process. The trailing dot keeps c-ares from also
+  // trying the host's search domains. The hostname is spelled with a \\u escape
+  // so argv stays ASCII on every platform.
+  it("c-ares lookup() sends the punycode form on the wire", async () => {
+    wire.length = 0;
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `require("node:dns").setServers(["127.0.0.1:" + process.argv[1]]);
+         Bun.dns.lookup("b\\u00fccher.example.", { backend: "c-ares", family: 4 }).then(
+           r => console.log(JSON.stringify(r.map(({ address, family }) => ({ address, family })))),
+           e => console.log(JSON.stringify({ code: e.code })),
+         );`,
+        String(server.address().port),
+      ],
+      env: bunEnv,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stderr).toBe("");
+    expect({ result: JSON.parse(stdout), wire: [...wire] }).toEqual({
+      result: [{ address: "10.7.7.7", family: 4 }],
+      wire: ["xn--bcher-kva.example"],
+    });
+    expect(exitCode).toBe(0);
   });
 });

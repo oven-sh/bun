@@ -89,6 +89,12 @@ test.each(["application/json", "Application/JSON"])("%s data URL imports as JSON
   expect(mod.default).toEqual({ a: 1.5 });
 });
 
+test("text/css data URL imports like a .css file", async () => {
+  const mod = await import("data:text/css,body{color:red}");
+  expect(Object.keys(mod)).toEqual(["__esModule", "default"]);
+  expect(mod.default).toEqual({});
+});
+
 // https://github.com/oven-sh/bun/issues/29159
 test.each(["text/javascript", "application/javascript", "Text/JavaScript", " text/javascript"])(
   "TypeScript syntax in a %s data URL is a syntax error",

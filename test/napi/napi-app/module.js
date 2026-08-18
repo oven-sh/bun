@@ -766,6 +766,22 @@ nativeTests.test_type_tag = () => {
   console.log("o2 matches o2:", nativeTests.check_tag(o2, 3, 4));
 };
 
+nativeTests.test_this_value_of_bare_call_through_closure = () => {
+  const { return_this } = nativeTests;
+  // return_this is captured by keep, so the bare call below is resolved through the closure's
+  // scope object, which JSC leaves in the call's this slot. A Node-API callback must still see
+  // the sloppy-mode receiver (globalThis), never that scope object.
+  function keep() {
+    return return_this;
+  }
+  console.log("bare call through closure returned globalThis:", return_this() === globalThis);
+  console.log("call(undefined) returned globalThis:", return_this.call(undefined) === globalThis);
+  console.log("call(5) returned a Number object:", return_this.call(5) instanceof Number);
+  const receiver = {};
+  console.log("call(receiver) returned receiver:", return_this.call(receiver) === receiver);
+  keep();
+};
+
 nativeTests.test_napi_class = () => {
   const NapiClass = nativeTests.get_class_with_constructor();
   const instance = new NapiClass();

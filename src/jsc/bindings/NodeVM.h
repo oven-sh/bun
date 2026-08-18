@@ -95,7 +95,7 @@ class NodeVMSpecialSandbox final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
 
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::ProhibitsPropertyCaching;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesGetOwnPropertySlot | JSC::InterceptsGetOwnPropertySlotByIndexEvenWhenLengthIsNotZero | JSC::OverridesPut | JSC::OverridesGetOwnPropertyNames | JSC::OverridesIsExtensible | JSC::ProhibitsPropertyCaching;
 
     static NodeVMSpecialSandbox* create(VM& vm, NodeVMGlobalObject* globalObject);
 

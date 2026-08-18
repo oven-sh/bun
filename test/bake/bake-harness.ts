@@ -315,10 +315,10 @@ export class Dev extends EventEmitter {
     this.on("watch_synchronization", onEvent);
     try {
       await change();
-      await firstMessage.promise;
+      await this.#rejectOnExit(firstMessage.promise, "the first watch synchronization message");
       // The batch-start ack is ordered after everything published while handling `change`, so the list is complete once it arrives.
       this.socket!.send("H");
-      await batchStarted.promise;
+      await this.#rejectOnExit(batchStarted.promise, "the batch-start watch synchronization ack");
     } finally {
       this.off("watch_synchronization", onEvent);
     }

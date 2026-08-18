@@ -3,58 +3,13 @@ use crate::helpers;
 use crate::links::{BracketMatches, LabelLeave};
 use crate::parser::{self, Parser};
 use crate::types::{SpanType, TextType, VerbatimLine};
-
-/// Inline capacity of `EmphSizes`; 30 makes the `Inline` variant the same
-/// 32-byte size as the `Heap` variant.
-const EMPH_SIZES_INLINE_CAP: usize = 30;
+use bun_collections::SmallList;
 
 /// Ordered match sizes (1 = em, 2 = strong) for one side of an emphasis
 /// delimiter run. A run can match arbitrarily many times, so sizes past
-/// the inline capacity spill to the heap instead of being dropped.
-#[derive(Clone)]
-pub(crate) enum EmphSizes {
-    Inline {
-        len: u8,
-        buf: [u8; EMPH_SIZES_INLINE_CAP],
-    },
-    Heap(Vec<u8>),
-}
-
-impl EmphSizes {
-    pub(crate) fn push(&mut self, size: u8) {
-        match self {
-            EmphSizes::Inline { len, buf } => {
-                let n = *len as usize;
-                if n < EMPH_SIZES_INLINE_CAP {
-                    buf[n] = size;
-                    *len += 1;
-                } else {
-                    let mut v = Vec::with_capacity(n + 1);
-                    v.extend_from_slice(&buf[..n]);
-                    v.push(size);
-                    *self = EmphSizes::Heap(v);
-                }
-            }
-            EmphSizes::Heap(v) => v.push(size),
-        }
-    }
-
-    pub(crate) fn as_slice(&self) -> &[u8] {
-        match self {
-            EmphSizes::Inline { len, buf } => &buf[..*len as usize],
-            EmphSizes::Heap(v) => v,
-        }
-    }
-}
-
-impl Default for EmphSizes {
-    fn default() -> Self {
-        EmphSizes::Inline {
-            len: 0,
-            buf: [0; EMPH_SIZES_INLINE_CAP],
-        }
-    }
-}
+/// the inline capacity (24 keeps the type at 32 bytes) spill to the heap
+/// instead of being dropped.
+pub(crate) type EmphSizes = SmallList<u8, 24>;
 
 /// Snapshot of an enclosing slice's walk state while one of its link/image/
 /// wikilink labels is rendered. `base..end` locate the enclosing slice
@@ -397,7 +352,7 @@ impl Parser<'_> {
                                 self.leave_span(SpanType::Del)?;
                             }
                         } else {
-                            self.emit_emph_close_tags(d.close_sizes.as_slice())?;
+                            self.emit_emph_close_tags(&d.close_sizes)?;
                         }
 
                         // Emit remaining delimiter chars as text
@@ -412,7 +367,7 @@ impl Parser<'_> {
                                 self.enter_span(SpanType::Del)?;
                             }
                         } else {
-                            self.emit_emph_open_tags(d.open_sizes.as_slice())?;
+                            self.emit_emph_open_tags(&d.open_sizes)?;
                         }
 
                         delim_cursor += 1;
@@ -917,12 +872,12 @@ impl Parser<'_> {
                     self.emph_delims[oi].open_count += use_;
                     self.emph_delims[oi]
                         .open_sizes
-                        .push(u8::try_from(use_).expect("int cast"));
+                        .append(u8::try_from(use_).expect("int cast"));
                     self.emph_delims[closer_idx].remaining -= use_;
                     self.emph_delims[closer_idx].close_count += use_;
                     self.emph_delims[closer_idx]
                         .close_sizes
-                        .push(u8::try_from(use_).expect("int cast"));
+                        .append(u8::try_from(use_).expect("int cast"));
 
                     // Remove all delimiters between opener and closer (CommonMark §6.4)
                     let mut k = prev_candidate[closer_idx];

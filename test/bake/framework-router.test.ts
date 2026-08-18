@@ -392,6 +392,83 @@ describe.concurrent("fileSystemRouterTypes[n].root that does not fit in a path b
   });
 });
 
+// e.g. `../web/pages` from a sibling package in a monorepo: route patterns come from the path below that root.
+describe.concurrent("fileSystemRouterTypes[n].root outside the project root", () => {
+  // The project root is apps/api; prints "<pathname> <status> <body>" for each request.
+  const serveFixture = (root: string) => ({
+    "apps/api/server.ts": `
+      export function render(req, meta) {
+        return meta.pageModule.default(req, meta);
+      }
+    `,
+    "apps/api/start.ts": `
+      using server = Bun.serve({
+        port: 0,
+        development: true,
+        app: {
+          framework: {
+            fileSystemRouterTypes: [{ root: ${JSON.stringify(root)}, style: "nextjs-pages", serverEntryPoint: "./server.ts" }],
+          },
+        },
+        fetch: () => new Response("not routed", { status: 404 }),
+      });
+      for (const pathname of ["/", "/blog/hello-world"]) {
+        const res = await fetch(new URL(pathname, server.url));
+        console.log(pathname, res.status, await res.text());
+      }
+    `,
+  });
+  const pages = (prefix: string) => ({
+    [`${prefix}/index.ts`]: `export default () => new Response("index");`,
+    [`${prefix}/blog/[slug].ts`]: `export default (req, meta) => new Response("slug:" + meta.params.slug);`,
+  });
+
+  async function run(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "start.ts"],
+      cwd: path.join(dir, "apps", "api"),
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("a sibling directory", async () => {
+    using dir = tempDir("fsr-sibling-root", { ...serveFixture("../web/pages"), ...pages("apps/web/pages") });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  test("an ancestor directory", async () => {
+    using dir = tempDir("fsr-ancestor-root", { ...serveFixture(".."), ...pages("apps") });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(exitCode).toBe(0);
+  });
+
+  // Both kinds of route error name the file relative to the project root and do not stop the server.
+  test("route errors name the file relative to the project root", async () => {
+    using dir = tempDir("fsr-sibling-root-errors", {
+      ...serveFixture("../web/pages"),
+      ...pages("apps/web/pages"),
+      "apps/web/pages/[oops.ts": `export default () => new Response("");`,
+      "apps/web/pages/about.ts": `export default () => new Response("");`,
+      "apps/web/pages/about/index.ts": `export default () => new Response("");`,
+    });
+    const { stdout, stderr, exitCode } = await run(String(dir));
+    expect(stdout, stderr).toBe("/ 200 index\n/blog/hello-world 200 slug:hello-world\n");
+    expect(stderr).toContain('"../web/pages/[oops.ts" is not a valid route');
+    expect(stderr).toContain('Missing "]" to match this route parameter');
+    expect(stderr).toContain("Multiple pages matching the same route pattern is ambiguous");
+    expect(stderr).toContain("  - ../web/pages/about.ts");
+    expect(stderr).toContain("  - ../web/pages/about/index.ts");
+    expect(exitCode).toBe(0);
+  });
+});
+
 describe("url matching", () => {
   // Builds a router over `files`; match(url) is normalized to { file: <relative page path>, params } or null.
   const makeMatcher = (...files: string[]) => {
@@ -499,6 +576,17 @@ describe("url matching", () => {
     expect(r.match("/joe")).toBe(null);
     expect(r.match("/joe/other")).toBe(null);
     expect(r.match("/joe/posts/extra")).toBe(null);
+  });
+
+  // Like Bun.FileSystemRouter, so a static page is not shadowed by a dynamic sibling for "/about/".
+  test("one trailing slash serves the same route as none, static or dynamic", () => {
+    using r = makeMatcher("index.tsx", "about.tsx", "[slug].tsx");
+    expect(r.match("/")).toStrictEqual({ file: "index.tsx", params: null });
+    expect(r.match("/about")).toStrictEqual({ file: "about.tsx", params: null });
+    expect(r.match("/about/")).toStrictEqual({ file: "about.tsx", params: null });
+    expect(r.match("/other")).toStrictEqual({ file: "[slug].tsx", params: { slug: "other" } });
+    expect(r.match("/other/")).toStrictEqual({ file: "[slug].tsx", params: { slug: "other" } });
+    expect(r.match("/about//")).toBe(null);
   });
 
   test("a failed candidate's captures don't leak into a later zero-segment match", () => {

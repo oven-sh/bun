@@ -27,7 +27,7 @@ pub type OpaqueFileId = bun_core::GenericIndex<u32, OpaqueFileIdMarker>;
 pub type OpaqueFileIdOptional = Option<OpaqueFileId>;
 
 pub struct FrameworkRouter {
-    /// Absolute path to root directory of the router.
+    /// Absolute path to the project root; only labels files in errors. Each `Type::abs_root` may be outside it.
     pub(crate) root: Box<[u8]>,
     pub(crate) types: Box<[Type]>,
     pub(crate) routes: Vec<Route>,
@@ -183,7 +183,7 @@ impl FrameworkRouter {
 
         for (type_index, ty) in types.iter_mut().enumerate() {
             ty.abs_root = strings::paths::without_trailing_slash_windows_path(&ty.abs_root).into();
-            debug_assert!(strings::has_prefix(&ty.abs_root, root));
+            debug_assert!(paths::is_absolute(&ty.abs_root));
 
             routes.push(Route {
                 part: Part::Text(b""),
@@ -322,28 +322,37 @@ impl EncodedPattern {
         })
     }
 
+    /// `match_slow` strips the trailing slash first, so a separator with nothing after it is an empty segment.
     fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
         // Discard captures left by a previous candidate that failed partway.
         params.params.clear();
         let mut param_num: usize = 0;
+        // Start of the segment after the one ending at `end`, or `None` when only a separator follows it.
+        let next_segment = |end: usize| -> Option<usize> {
+            if end == path.len() {
+                Some(end)
+            } else if end + 1 == path.len() {
+                None
+            } else {
+                Some(end + 1)
+            }
+        };
         let mut it = self.iterate();
         let mut i: usize = 1;
         while let Some(part) = it.next() {
             match part {
                 Part::Text(expect) => {
-                    if path.len() < i + expect.len()
-                        || !(path.len() == i + expect.len() || path[i + expect.len()] == b'/')
+                    let end = i + expect.len();
+                    if path.len() < end
+                        || (end < path.len() && path[end] != b'/')
+                        || !strings::eql(&path[i..end], expect)
                     {
                         return false;
                     }
-                    if !strings::eql(&path[i..i + expect.len()], expect) {
+                    let Some(next) = next_segment(end) else {
                         return false;
-                    }
-                    i += expect.len();
-                    if i < path.len() {
-                        // Consume the separator unless the text ends the path.
-                        i += 1;
-                    }
+                    };
+                    i = next;
                 }
                 Part::Param(name) => {
                     if i >= path.len() {
@@ -369,36 +378,34 @@ impl EncodedPattern {
                         value: bun_ptr::RawSlice::new(&path[i..end]),
                     };
                     param_num += 1;
-                    i = if end == path.len() { end } else { end + 1 };
+                    let Some(next) = next_segment(end) else {
+                        return false;
+                    };
+                    i = next;
                 }
                 Part::CatchAllOptional(name) | Part::CatchAll(name) => {
                     let params_before = param_num;
                     // Capture remaining path segments as individual parameters
-                    if i < path.len() {
-                        let mut segment_start = i;
-                        while segment_start < path.len() {
-                            let segment_end = strings::index_of_char_pos(path, b'/', segment_start)
-                                .unwrap_or(path.len());
-                            // An empty segment (double slash) never matches.
-                            if segment_start == segment_end {
-                                return false;
-                            }
-                            // Check if we're about to exceed the maximum number of parameters
-                            if param_num >= MatchedParams::MAX_COUNT {
-                                return false;
-                            }
-                            params.params.resize(param_num + 1).unwrap();
-                            params.params.slice()[param_num] = MatchedParamEntry {
-                                key: bun_ptr::RawSlice::new(name),
-                                value: bun_ptr::RawSlice::new(&path[segment_start..segment_end]),
-                            };
-                            param_num += 1;
-                            segment_start = if segment_end == path.len() {
-                                segment_end
-                            } else {
-                                segment_end + 1
-                            };
+                    while i < path.len() {
+                        let end = strings::index_of_char_pos(path, b'/', i).unwrap_or(path.len());
+                        // An empty segment (double slash) never matches.
+                        if end == i {
+                            return false;
                         }
+                        // Check if we're about to exceed the maximum number of parameters
+                        if param_num >= MatchedParams::MAX_COUNT {
+                            return false;
+                        }
+                        params.params.resize(param_num + 1).unwrap();
+                        params.params.slice()[param_num] = MatchedParamEntry {
+                            key: bun_ptr::RawSlice::new(name),
+                            value: bun_ptr::RawSlice::new(&path[i..end]),
+                        };
+                        param_num += 1;
+                        let Some(next) = next_segment(end) else {
+                            return false;
+                        };
+                        i = next;
                     }
                     // Only the optional form may match zero segments.
                     return matches!(part, Part::CatchAllOptional(_)) || param_num > params_before;
@@ -1261,7 +1268,16 @@ impl FrameworkRouter {
     pub(crate) fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
         params.params = BoundedArray::default();
 
-        debug_assert!(path[0] == b'/');
+        // Request-targets like `*` or `host:port` name no path, so they match no route.
+        if path.first() != Some(&b'/') {
+            return None;
+        }
+        // "/about/" serves the same route as "/about", like Bun.FileSystemRouter.
+        let path = if path.len() > 1 && path[path.len() - 1] == b'/' {
+            &path[..path.len() - 1]
+        } else {
+            path
+        };
         if let Some(static_route) = self.static_routes.get(path) {
             return Some(*static_route);
         }
@@ -1617,30 +1633,36 @@ impl FrameworkRouter {
                             continue 'outer;
                         };
 
+                        let t = &self.types[t_index.get() as usize];
+
+                        // The route pattern: relative to this type's root, which may be outside `self.root`.
                         let mut rel_path_buf = PathBuffer::uninit();
-                        let full_rel_path_len = {
-                            let full_rel_path = paths::resolve_path::relative_normalized_buf::<
-                                paths::platform::Auto,
-                                true,
-                            >(
-                                &mut rel_path_buf[1..], &self.root, abs_path
-                            );
-                            full_rel_path.len()
-                        };
+                        let rel_path_len = 1 + paths::resolve_path::relative_normalized_buf::<
+                            paths::platform::Auto,
+                            true,
+                        >(
+                            &mut rel_path_buf[1..], &t.abs_root, abs_path
+                        )
+                        .len();
                         rel_path_buf[0] = b'/';
                         paths::resolve_path::platform_to_posix_in_place(
-                            &mut rel_path_buf[0..full_rel_path_len],
+                            &mut rel_path_buf[0..rel_path_len],
                         );
+                        let rel_path: &[u8] = &rel_path_buf[0..rel_path_len];
 
-                        let t = &self.types[t_index.get() as usize];
-                        let abs_root_len = t.abs_root.len();
-                        let root_len = self.root.len();
-                        let full_rel_path = &rel_path_buf[1..1 + full_rel_path_len];
-                        let rel_path: &[u8] = if abs_root_len == root_len {
-                            &rel_path_buf[0..full_rel_path_len + 1]
-                        } else {
-                            &full_rel_path[abs_root_len - root_len - 1..]
-                        };
+                        // Errors label the file relative to the project root, like the other colliding file.
+                        let mut full_rel_path_buf = paths::path_buffer_pool::get();
+                        let full_rel_path_len = paths::resolve_path::relative_normalized_buf::<
+                            paths::platform::Auto,
+                            true,
+                        >(
+                            &mut full_rel_path_buf[..], &self.root, abs_path
+                        )
+                        .len();
+                        paths::resolve_path::platform_to_posix_in_place(
+                            &mut full_rel_path_buf[0..full_rel_path_len],
+                        );
+                        let full_rel_path: &[u8] = &full_rel_path_buf[0..full_rel_path_len];
 
                         let mut log = TinyLog::empty();
                         // The arena is reset at the end of every arm via
@@ -1652,8 +1674,12 @@ impl FrameworkRouter {
                                 .parse(rel_path, ext, &mut log, t.allow_layouts, arena_state);
                         let parsed = match parse_result {
                             Err(_) => {
-                                log.cursor_at +=
-                                    u32::try_from(abs_root_len - root_len).expect("int cast");
+                                // `cursor_at` indexes `rel_path`; both strings end with the same file name.
+                                log.cursor_at = u32::try_from(
+                                    (log.cursor_at as usize + full_rel_path.len())
+                                        .saturating_sub(rel_path.len()),
+                                )
+                                .expect("int cast");
                                 ctx.on_router_syntax_error(full_rel_path, log)?;
                                 arena_state.reset_retain_with_limit(8 * 1024 * 1024);
                                 continue 'outer;

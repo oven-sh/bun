@@ -5169,7 +5169,9 @@ impl From<framework_router::OpaqueFileIdOptional> for OpaqueFileIdOrOptional {
 
 fn on_request(dev: &mut DevServer, req: &mut Request, mut resp: AnyResponse) -> JsResult<()> {
     let mut params: framework_router::MatchedParams = Default::default();
-    if let Some(route_index) = dev.router.match_slow(req.url(), &mut params) {
+    // `req.url()` is the raw request-target: it carries the query string and may be absolute-form.
+    let pathname = extract_pathname_from_url(req.url());
+    if let Some(route_index) = dev.router.match_slow(pathname, &mut params) {
         let route_bundle_index = dev
             .get_or_put_route_bundle(route_bundle::UnresolvedIndex::Framework(route_index))
             .expect("oom");
@@ -5546,7 +5548,8 @@ pub(super) fn dump_bundle(
     wrap: bool,
 ) {
     let mut buf = paths::path_buffer_pool::get();
-    let name = &paths::resolve_path::join_abs_string_buf::<paths::platform::Auto>(
+    // Posix on every platform: a fake `/` root under Windows rules would yield a UNC-looking `/\graph\...`.
+    let name = &paths::resolve_path::join_abs_string_buf::<paths::platform::Posix>(
         b"/",
         &mut buf[..],
         &[<&'static str>::from(graph).as_bytes(), rel_path],
@@ -6438,7 +6441,6 @@ impl DevServer {
             .map(bake::DevServerPlugin::Borrowed);
         self.plugin_state = PluginState::Loaded;
         self.start_next_bundle_if_present();
-        self.on_plugin_load_settled();
         Ok(())
     }
 
@@ -6456,15 +6458,7 @@ impl DevServer {
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
         // TODO: allow recovery from this state
-        self.on_plugin_load_settled();
         Ok(())
-    }
-
-    /// Releases the pending request taken in `ensure_route_is_bundled`; may drop `*self`, so it must be the caller's last use of `self`.
-    fn on_plugin_load_settled(&mut self) {
-        if let Some(mut server) = self.server {
-            server.on_static_request_complete();
-        }
     }
 }
 
@@ -6981,29 +6975,25 @@ fn new_route_params_for_bundle_promise(
     )
 }
 
-// TODO: this is shitty
+/// The pathname (no query or fragment) of a full URL or a raw HTTP request-target.
+/// Targets that name no path (`CONNECT host:port`, `OPTIONS *`) come back unchanged and match no route.
 fn extract_pathname_from_url(url: &[u8]) -> &[u8] {
-    // Extract pathname from URL (remove protocol, host, query, hash)
-    let mut pathname = if let Some(proto_end) = strings::index_of(url, b"://") {
-        &url[proto_end + 3..]
-    } else {
+    // Origin-form first: scanning "/proxy/https://example.com" for "://" would mangle it.
+    let pathname = if url.first() == Some(&b'/') {
         url
+    } else if let Some(scheme_end) = strings::index_of(url, b"://") {
+        // The authority ends at the first '/', '?' or '#' (RFC 3986 section 3.2).
+        match strings::index_of_any_pos(url, b"/?#", scheme_end + b"://".len()) {
+            Some(path_start) if url[path_start] == b'/' => &url[path_start..],
+            // `http://host` and `http://host?q` name an empty path, meaning "/".
+            _ => b"/",
+        }
+    } else {
+        return url;
     };
 
-    if let Some(path_start) = strings::index_of_char(pathname, b'/') {
-        let path_with_query = &pathname[path_start as usize..];
-        // Remove query string and hash
-        let query_index = strings::index_of_char(path_with_query, b'?')
-            .map(|i| i as usize)
-            .unwrap_or(path_with_query.len());
-        let hash_index = strings::index_of_char(path_with_query, b'#')
-            .map(|i| i as usize)
-            .unwrap_or(path_with_query.len());
-        let end = query_index.min(hash_index);
-        pathname = &path_with_query[..end];
-    }
-
-    pathname
+    let end = strings::index_of_any(pathname, b"?#").unwrap_or(pathname.len());
+    &pathname[..end]
 }
 
 // Type aliases referenced throughout (Phase B will resolve to real paths)

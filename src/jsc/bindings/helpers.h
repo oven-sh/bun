@@ -383,8 +383,6 @@ static const WTF::String toStringStatic(ZigString str)
     return WTF::String(AtomStringImpl::add(std::span { untagged, str.len }));
 }
 
-// Null means the message is over the string length limit. Callers throw, reject
-// with, or put properties on the error unconditionally, so it is still created.
 static WTF::String errorMessageOrFallback(WTF::String message, const ZigString& source)
 {
     if (message.isNull() && source.len > 0) [[unlikely]]

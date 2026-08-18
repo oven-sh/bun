@@ -169,8 +169,7 @@ pub(crate) fn write_bind<Context: WriterContext>(
             match crate::postgres::types::tag_jsc::from_js(global, value)
                 .map_err(js_error_to_postgres)?
             {
-                // An object with its own toString() (decimal.js, sql.array(), ...) still binds as
-                // that string. Arrays and plain objects have no text form other than JSON.
+                // Objects with their own toString() (decimal.js, sql.array(), ...) keep binding as that string.
                 types::Tag::json => {
                     if value.is_array()
                         || !value

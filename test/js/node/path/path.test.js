@@ -267,6 +267,28 @@ test("path.resolve() and path.relative() use an overridden process.cwd()", () =>
     expect([path.posix.resolve("."), calls]).toEqual([".", 2]);
     calls = 0;
     expect([path.posix.resolve("a"), calls]).toEqual(["a", 1]);
+    // relative() resolves its two operands separately, each against its own reading.
+    const answers = ["/one", "/two"];
+    calls = 0;
+    process.cwd = () => answers[calls++];
+    expect([path.posix.relative("a", "b"), calls]).toEqual(["../../two/b", 2]);
+    calls = 0;
+    expect([path.posix.relative("/one/a", "b"), calls]).toEqual(["../b", 1]);
+    calls = 0;
+    const winAnswers = ["C:\\one", "C:\\two"];
+    process.cwd = () => winAnswers[calls++];
+    expect([path.win32.relative("a", "b"), calls]).toEqual(["..\\..\\two\\b", 2]);
+
+    // Whatever it returns is used as a string, except that lib/path.js throws on
+    // undefined and null (it indexes into the value).
+    process.cwd = () => 42;
+    expect(path.posix.resolve("x")).toBe("42/x");
+    for (const value of [undefined, null]) {
+      process.cwd = () => value;
+      expect(() => path.posix.resolve("x")).toThrow(TypeError);
+      expect(() => path.win32.resolve()).toThrow(TypeError);
+      expect(() => path.posix.relative("a", "b")).toThrow(TypeError);
+    }
 
     // lib/path.js reads process.cwd as an ordinary property, so an accessor works as well.
     Object.defineProperty(process, "cwd", { get: () => () => "/from/getter", configurable: true });

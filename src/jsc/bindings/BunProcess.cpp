@@ -4663,6 +4663,12 @@ extern "C" EncodedJSValue Bun__Process__getCachedCwd(JSC::JSGlobalObject* lexica
             }
             JSValue result = JSC::profiledCall(globalObject, ProfilingReason::API, custom, callData, process, JSC::MarkedArgumentBuffer());
             RETURN_IF_EXCEPTION(scope, {});
+            // lib/path.js indexes into whatever came back, which throws for these two and
+            // stringifies anything else.
+            if (result.isUndefinedOrNull()) [[unlikely]] {
+                JSC::throwTypeError(globalObject, scope, result.isNull() ? "process.cwd() returned null"_s : "process.cwd() returned undefined"_s);
+                return {};
+            }
             auto* string = result.toString(globalObject);
             RETURN_IF_EXCEPTION(scope, {});
             RELEASE_AND_RETURN(scope, JSValue::encode(string));

@@ -955,19 +955,22 @@ mod posix {
         Ok(normalize::<C>(joined, out))
     }
 
+    /// `from_cwd` / `to_cwd` are the `process.cwd()` reads of the two `resolve()`
+    /// calls in lib/path.js, present for whichever operands [`needs_cwd`].
     pub(super) fn relative<C: Unit>(
         global: &JSGlobalObject,
         from_in: Chars<'_>,
         to_in: Chars<'_>,
-        cwd: Option<&Input<'_>>,
+        from_cwd: Option<&Input<'_>>,
+        to_cwd: Option<&Input<'_>>,
     ) -> JsResult<JSValue> {
         // Trim leading forward slashes.
         let mut from_buf: Buf<C> = Buf::new();
         let mut to_buf: Buf<C> = Buf::new();
-        let from = resolve1::<C>(from_in, cwd, &mut from_buf)
+        let from = resolve1::<C>(from_in, from_cwd, &mut from_buf)
             .map_err(|_| global.throw_string_too_long())?;
-        let to =
-            resolve1::<C>(to_in, cwd, &mut to_buf).map_err(|_| global.throw_string_too_long())?;
+        let to = resolve1::<C>(to_in, to_cwd, &mut to_buf)
+            .map_err(|_| global.throw_string_too_long())?;
 
         if from == to {
             return Ok(empty_string(global));
@@ -1552,7 +1555,8 @@ mod win32 {
         Ok(out)
     }
 
-    /// `process.cwd()`, fetched at most once per call even when relative() resolves twice.
+    /// The one `process.cwd()` read of a resolve(), recorded in `cwd` so the caller can keep
+    /// it alive until the result has been built.
     #[inline]
     pub(super) fn shared_cwd<'a>(
         global: &JSGlobalObject,
@@ -2726,28 +2730,50 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         return Ok(empty_string(global));
     }
 
-    let mut cwd_storage: Buf<u16> = Buf::new();
+    // lib/path.js resolves the two operands with two independent resolve() calls, so each
+    // operand that needs the cwd reads process.cwd() for itself (observable when it has been
+    // replaced by something stateful); the reads are hoisted here only to pick the width.
+    let mut from_cwd_storage: Buf<u16> = Buf::new();
+    let mut to_cwd_storage: Buf<u16> = Buf::new();
     if !WIN {
         let mut all_8bit = from.is_8bit() && to.is_8bit();
-        let mut cwd: Option<Input<'_>> = None;
-        if posix::needs_cwd(&from.chars) || posix::needs_cwd(&to.chars) {
-            let c = posix::cwd(global, &mut cwd_storage)?;
+        let mut from_cwd: Option<Input<'_>> = None;
+        let mut to_cwd: Option<Input<'_>> = None;
+        if posix::needs_cwd(&from.chars) {
+            let c = posix::cwd(global, &mut from_cwd_storage)?;
             all_8bit &= c.is_8bit();
-            cwd = Some(c);
+            from_cwd = Some(c);
+        }
+        if posix::needs_cwd(&to.chars) {
+            let c = posix::cwd(global, &mut to_cwd_storage)?;
+            all_8bit &= c.is_8bit();
+            to_cwd = Some(c);
         }
         let result = if all_8bit {
-            posix::relative::<u8>(global, from.chars, to.chars, cwd.as_ref())
+            posix::relative::<u8>(
+                global,
+                from.chars,
+                to.chars,
+                from_cwd.as_ref(),
+                to_cwd.as_ref(),
+            )
         } else {
-            posix::relative::<u16>(global, from.chars, to.chars, cwd.as_ref())
+            posix::relative::<u16>(
+                global,
+                from.chars,
+                to.chars,
+                from_cwd.as_ref(),
+                to_cwd.as_ref(),
+            )
         };
-        if let Some(cwd) = cwd {
+        for cwd in [from_cwd, to_cwd].into_iter().flatten() {
             cwd.keep_alive();
         }
         result
     } else {
-        // Scan both operands first so both can be built at one width, sharing one cwd fetch.
-        let mut cwd: Option<Input<'_>> = None;
-        let mut drive_cwd_storage: Buf<u16> = Buf::new();
+        // Scan both operands first so both can be built at one width.
+        let mut from_cwd: Option<Input<'_>> = None;
+        let mut to_cwd: Option<Input<'_>> = None;
         let mut from_st = win32::ResolveState::new();
         let mut to_st = win32::ResolveState::new();
         win32::resolve_scan(
@@ -2755,16 +2781,16 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
             1,
             |_| Ok(from),
             &mut from_st,
-            &mut cwd,
-            &mut cwd_storage,
+            &mut from_cwd,
+            &mut from_cwd_storage,
         )?;
         win32::resolve_scan(
             global,
             1,
             |_| Ok(to),
             &mut to_st,
-            &mut cwd,
-            &mut drive_cwd_storage,
+            &mut to_cwd,
+            &mut to_cwd_storage,
         )?;
         let is_8bit = |st: &win32::ResolveState<'_>| match st.return_cwd {
             Some(cwd) => cwd.is_8bit(),
@@ -2793,7 +2819,7 @@ fn relative<const WIN: bool>(global: &JSGlobalObject, frame: &CallFrame) -> JsRe
         } else {
             finish!(u16)
         };
-        if let Some(cwd) = cwd {
+        for cwd in [from_cwd, to_cwd].into_iter().flatten() {
             cwd.keep_alive();
         }
         result

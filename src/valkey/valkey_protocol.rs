@@ -88,6 +88,8 @@ impl RESPType {
 pub enum RESPValue {
     // RESP2 types
     SimpleString(Box<[u8]>),
+    /// A `-` simple error or `!` blob error reply. Both carry the server's
+    /// message and reject the command that produced them.
     Error(Box<[u8]>),
     Integer(i64),
     BulkString(Option<Box<[u8]>>),
@@ -97,7 +99,6 @@ pub enum RESPValue {
     Null,
     Double(f64),
     Boolean(bool),
-    BlobError(Box<[u8]>),
     VerbatimString(VerbatimString),
     Map(Vec<MapEntry>),
     Set(Vec<RESPValue>),
@@ -134,7 +135,6 @@ impl fmt::Display for RESPValue {
             RESPValue::Null => writer.write_str("(nil)"),
             RESPValue::Double(d) => write!(writer, "{}", d),
             RESPValue::Boolean(b) => write!(writer, "{}", b),
-            RESPValue::BlobError(str) => write!(writer, "Error: {}", BStr::new(str)),
             RESPValue::VerbatimString(verbatim) => {
                 write!(
                     writer,
@@ -398,7 +398,8 @@ impl<'a> ValkeyReader<'a> {
                 }
                 let len = self.read_integer()?;
                 if len < 0 {
-                    return Ok(RESPValue::Array(Vec::new()));
+                    // RESP2 null array.
+                    return Ok(RESPValue::Null);
                 }
                 let len = usize::try_from(len).expect("int cast");
                 let mut array =
@@ -414,7 +415,9 @@ impl<'a> ValkeyReader<'a> {
 
             // RESP3 types
             RESPType::Null => {
-                let _ = self.read_until_crlf()?; // Read and discard CRLF
+                if !self.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidNull);
+                }
                 Ok(RESPValue::Null)
             }
             RESPType::Double => {
@@ -441,7 +444,7 @@ impl<'a> ValkeyReader<'a> {
                     return Err(RedisError::InvalidBlobError);
                 }
                 let owned = Box::<[u8]>::from(str);
-                Ok(RESPValue::BlobError(owned))
+                Ok(RESPValue::Error(owned))
             }
             RESPType::VerbatimString => Ok(RESPValue::VerbatimString(self.read_verbatim_string()?)),
             RESPType::Map => {
@@ -668,11 +671,16 @@ impl ReplyScanner {
             RESPType::SimpleString
             | RESPType::Error
             | RESPType::Integer
-            | RESPType::Null
             | RESPType::Double
             | RESPType::Boolean
             | RESPType::BigNumber => {
                 let _ = reader.read_until_crlf()?;
+                Ok(None)
+            }
+            RESPType::Null => {
+                if !reader.read_until_crlf()?.is_empty() {
+                    return Err(RedisError::InvalidNull);
+                }
                 Ok(None)
             }
             RESPType::BulkString | RESPType::BlobError | RESPType::VerbatimString => {
@@ -826,5 +834,118 @@ impl SubscriptionPushMessage {
             ),
             _ => false,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn parse(frame: &[u8]) -> Result<RESPValue, RedisError> {
+        let mut reader = ValkeyReader::init(frame);
+        let value = reader.read_value()?;
+        assert_eq!(reader.pos(), frame.len(), "frame not fully consumed");
+        Ok(value)
+    }
+
+    fn scan(frame: &[u8]) -> Result<ScanResult, RedisError> {
+        ReplyScanner::default().scan(frame)
+    }
+
+    /// Every proper prefix of a complete frame must read as a short read in
+    /// both the tree parser and the scanner, never as an error or a value.
+    fn assert_prefixes_are_partial(frame: &[u8]) {
+        for i in 0..frame.len() {
+            let prefix = &frame[..i];
+            assert!(
+                matches!(parse(prefix), Err(RedisError::InvalidResponse)),
+                "parser accepted or rejected prefix {:?}",
+                BStr::new(prefix)
+            );
+            assert!(
+                matches!(scan(prefix), Ok(ScanResult::NeedMoreData)),
+                "scanner accepted or rejected prefix {:?}",
+                BStr::new(prefix)
+            );
+        }
+        assert!(matches!(scan(frame), Ok(ScanResult::Complete)));
+    }
+
+    #[test]
+    fn resp2_null_array_is_null() {
+        let frame = b"*-1\r\n";
+        assert!(matches!(parse(frame), Ok(RESPValue::Null)));
+        assert_prefixes_are_partial(frame);
+    }
+
+    #[test]
+    fn resp2_null_bulk_string_is_null() {
+        let frame = b"$-1\r\n";
+        assert!(matches!(parse(frame), Ok(RESPValue::BulkString(None))));
+        assert_prefixes_are_partial(frame);
+    }
+
+    #[test]
+    fn resp3_null_requires_bare_crlf() {
+        let frame = b"_\r\n";
+        assert!(matches!(parse(frame), Ok(RESPValue::Null)));
+        assert_prefixes_are_partial(frame);
+
+        let junk = b"_junk\r\n";
+        assert!(matches!(parse(junk), Err(RedisError::InvalidNull)));
+        assert!(matches!(scan(junk), Err(RedisError::InvalidNull)));
+        // Inside an aggregate the scanner must reject it too.
+        assert!(matches!(
+            scan(b"*2\r\n_junk\r\n_\r\n"),
+            Err(RedisError::InvalidNull)
+        ));
+    }
+
+    #[test]
+    fn big_number_keeps_its_digits() {
+        for digits in [
+            &b"9007199254740993"[..],
+            b"42",
+            b"-1",
+            b"3492890328409238509324850943850943825024385",
+        ] {
+            let mut frame = Vec::new();
+            frame.push(b'(');
+            frame.extend_from_slice(digits);
+            frame.extend_from_slice(b"\r\n");
+            match parse(&frame) {
+                Ok(RESPValue::BigNumber(value)) => assert_eq!(&*value, digits),
+                _ => panic!("expected BigNumber for {:?}", BStr::new(digits)),
+            }
+            assert_prefixes_are_partial(&frame);
+        }
+    }
+
+    #[test]
+    fn simple_and_blob_errors_decode_alike() {
+        for (frame, text) in [
+            (
+                &b"-ERR unknown command\r\n"[..],
+                &b"ERR unknown command"[..],
+            ),
+            (
+                b"!21\r\nSYNTAX invalid syntax\r\n",
+                b"SYNTAX invalid syntax",
+            ),
+        ] {
+            match parse(frame) {
+                Ok(RESPValue::Error(msg)) => assert_eq!(&*msg, text),
+                _ => panic!("expected Error for {:?}", BStr::new(frame)),
+            }
+            assert_prefixes_are_partial(frame);
+        }
+        assert!(matches!(
+            parse(b"!-1\r\n"),
+            Err(RedisError::InvalidBlobError)
+        ));
+        assert!(matches!(
+            scan(b"!-1\r\n"),
+            Err(RedisError::InvalidBlobError)
+        ));
     }
 }

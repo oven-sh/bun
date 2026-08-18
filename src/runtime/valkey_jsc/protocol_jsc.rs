@@ -112,11 +112,6 @@ pub(crate) fn resp_value_to_js_with_options(
         RESPValue::Null => Ok(JSValue::NULL),
         RESPValue::Double(d) => Ok(JSValue::js_number(*d)),
         RESPValue::Boolean(b) => Ok(JSValue::from(*b)),
-        RESPValue::BlobError(str) => Ok(valkey_error_to_js(
-            global,
-            &**str,
-            RedisError::InvalidBlobError,
-        )),
         RESPValue::VerbatimString(verbatim) => {
             valkey_str_to_js_value(global, &mut verbatim.content, options)
         }
@@ -158,14 +153,7 @@ pub(crate) fn resp_value_to_js_with_options(
 
             Ok(js_obj)
         }
-        RESPValue::BigNumber(str) => {
-            // Try to parse as number if possible
-            if let Ok(int) = bun_core::fmt::parse_int::<i64>(str, 10) {
-                Ok(JSValue::js_number(int as f64))
-            } else {
-                // If it doesn't fit in an i64, return as string
-                bun_string_jsc::create_utf8_for_js(global, str)
-            }
-        }
+        // Always a string: an i64 that fits does not fit a JS number above 2^53.
+        RESPValue::BigNumber(str) => valkey_str_to_js_value(global, str, options),
     }
 }

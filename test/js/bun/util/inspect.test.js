@@ -671,6 +671,53 @@ describe.concurrent("Bun.inspect when a property lookup throws", () => {
   });
 });
 
+// Formatting an object with [util.inspect.custom] loads node:util on first use. When that load
+// throws (here: the stack is exhausted), the error has to propagate to the caller and the next
+// call has to retry the load. It used to abort the process in the lazy property initializer.
+describe.concurrent("Bun.inspect when loading util.inspect for inspect.custom throws", () => {
+  it.each([
+    ["without colors", "Bun.inspect(obj)", '"custom"'],
+    ["with colors", "Bun.inspect(obj, { colors: true })", '"\\u001b[36mcustom\\u001b[39m"'],
+  ])("%s", async (_, call, expected) => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+          const obj = {
+            [Symbol.for("nodejs.util.inspect.custom")]: (depth, options) => options.stylize("custom", "special"),
+          };
+          let deep;
+          function recurse() {
+            try {
+              recurse();
+            } catch {
+              // Only the frame whose call overflowed gets here.
+              try {
+                deep = ${call};
+              } catch (e) {
+                deep = e;
+              }
+            }
+          }
+          recurse();
+          console.log(String(deep));
+          console.log(JSON.stringify(${call}));
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: `RangeError: Maximum call stack size exceeded.\n${expected}\n`,
+      stderr: "",
+      exitCode: 0,
+    });
+  });
+});
+
 describe("console.logging function displays async and generator names", async () => {
   const cases = [
     function () {},

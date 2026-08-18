@@ -2301,18 +2301,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
         });
 
-    m_utilInspectFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);
-            RETURN_IF_EXCEPTION(scope, );
-            RELEASE_ASSERT(nodeUtilValue.isObject());
-            auto prop = nodeUtilValue.getObject()->getIfPropertyExists(init.owner, Identifier::fromString(init.vm, "inspect"_s));
-            RETURN_IF_EXCEPTION(scope, );
-            ASSERT(prop);
-            init.set(uncheckedDowncast<JSFunction>(prop));
-        });
-
     m_utilInspectOptionsStructure.initLater(
         [](const Initializer<Structure>& init) {
             init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
@@ -2325,28 +2313,6 @@ void GlobalObject::finishCreation(VM& vm)
                 init.owner);
 
             init.set(ErrorCodeCache::create(init.vm, structure));
-        });
-
-    m_utilInspectStylizeColorFunction.initLater(
-        [](const Initializer<JSFunction>& init) {
-            auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSC::MarkedArgumentBuffer args;
-            args.append(uncheckedDowncast<Zig::GlobalObject>(init.owner)->utilInspectFunction());
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
-            RETURN_IF_EXCEPTION(scope, );
-
-            JSC::CallData callData = JSC::getCallData(getStylize);
-            NakedPtr<JSC::Exception> returnedException = nullptr;
-            auto result = JSC::profiledCall(init.owner, ProfilingReason::API, getStylize, callData, jsNull(), args, returnedException);
-            RETURN_IF_EXCEPTION(scope, );
-
-            if (returnedException) {
-                throwException(init.owner, scope, returnedException.get());
-            }
-            RETURN_IF_EXCEPTION(scope, );
-            init.set(uncheckedDowncast<JSFunction>(result));
         });
 
     m_utilInspectStylizeNoColorFunction.initLater(
@@ -2884,6 +2850,44 @@ void GlobalObject::finishCreation(VM& vm)
     addBuiltinGlobals(vm);
 
     ASSERT(classInfo());
+}
+
+JSC::JSFunction* GlobalObject::utilInspectFunction()
+{
+    if (auto* function = m_utilInspectFunction.get())
+        return function;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSValue nodeUtilValue = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    RELEASE_ASSERT(nodeUtilValue.isObject());
+    JSValue inspect = nodeUtilValue.getObject()->getIfPropertyExists(this, Identifier::fromString(vm, "inspect"_s));
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    ASSERT(inspect);
+    auto* function = uncheckedDowncast<JSFunction>(inspect);
+    m_utilInspectFunction.set(vm, this, function);
+    return function;
+}
+
+JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
+{
+    if (auto* function = m_utilInspectStylizeColorFunction.get())
+        return function;
+
+    auto& vm = this->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    JSFunction* inspect = utilInspectFunction();
+    RETURN_IF_EXCEPTION(scope, nullptr);
+
+    JSC::MarkedArgumentBuffer args;
+    args.append(inspect);
+    JSC::JSFunction* getStylize = JSC::JSFunction::create(vm, this, utilInspectGetStylizeWithColorCodeGenerator(vm), this);
+    JSValue result = JSC::profiledCall(this, ProfilingReason::API, getStylize, JSC::getCallData(getStylize), jsNull(), args);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    auto* function = uncheckedDowncast<JSFunction>(result);
+    m_utilInspectStylizeColorFunction.set(vm, this, function);
+    return function;
 }
 
 JSC_DEFINE_CUSTOM_GETTER(JSDOMFileConstructor_getter, (JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, PropertyName))

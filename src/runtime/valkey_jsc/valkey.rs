@@ -4,6 +4,7 @@ use bun_collections::VecExt;
 // This file contains the core Valkey client implementation with protocol handling
 
 use bun_collections::OffsetByteList;
+use bun_core::UnwrapOrOom;
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{GlobalRef, JSGlobalObject, JSPromise, JSValue, JsResult};
 use bun_ptr::ScopedRef;
@@ -1491,10 +1492,12 @@ impl ValkeyClient {
     pub(crate) fn disconnect(&mut self) -> JsResult<()> {
         self.flags.is_manually_closed = true;
         self.unregister_auto_flusher();
-        if self.status == Status::Connected || self.status == Status::Connecting {
-            return self.close(uws::CloseCode::FastShutdown);
+        match self.status {
+            Status::Connected | Status::Connecting => self.close(uws::CloseCode::FastShutdown),
+            // Between retries: the manual flag makes the close terminal.
+            Status::Disconnected if self.flags.is_reconnecting => self.parent().cancel_reconnect(),
+            Status::NeverConnected | Status::Disconnected => Ok(()),
         }
-        Ok(())
     }
 
     /// Get a writer for the connected socket
@@ -1591,21 +1594,5 @@ impl bun_io::Write for WriteBufWriter<'_> {
         self.0
             .write(buf)
             .map_err(|_| bun_core::Error::Alloc(bun_alloc::AllocError))
-    }
-}
-
-// Local extension trait providing `.unwrap_or_oom()` on `Result<T, E>`.
-// No shared `UnwrapOrOom` trait exists yet (bun_alloc has none); delegate to
-// `bun_core::handle_oom` so every call site keeps its method-chain shape.
-trait UnwrapOrOom {
-    type Output;
-    fn unwrap_or_oom(self) -> Self::Output;
-}
-impl<T, E> UnwrapOrOom for core::result::Result<T, E> {
-    type Output = T;
-    #[inline]
-    #[track_caller]
-    fn unwrap_or_oom(self) -> T {
-        bun_core::handle_oom(self)
     }
 }

@@ -901,9 +901,17 @@ impl<'a> LinkerContext<'a> {
                 worklist: Vec::new(),
             };
 
-            // Tree shaking: Each entry point marks all files reachable from itself
+            // Tree shaking: Each entry point marks all files reachable from itself.
+            // `import()` targets are marked live from the live part that holds
+            // the `import()` instead (see `mark_part_live_step`).
+            let root_dynamic_imports = !self.options.tree_shaking;
             for i in 0..entry_points_len {
                 let entry_point = entry_points[i];
+                if !root_dynamic_imports
+                    && entry_point_kinds[entry_point as usize] == EntryPoint::Kind::DynamicImport
+                {
+                    continue;
+                }
                 self.mark_file_live_for_tree_shaking(&mut ctx, entry_point);
             }
         }
@@ -2905,10 +2913,9 @@ impl<'a> LinkerContext<'a> {
             ctx.worklist.push(TreeShakeWork::File(source_index));
         }
 
-        let dependencies =
-            &ctx.parts[source_index as usize].as_slice()[part_index as usize].dependencies;
+        let part = &ctx.parts[source_index as usize].as_slice()[part_index as usize];
 
-        for dependency in dependencies.iter() {
+        for dependency in part.dependencies.iter() {
             let dep_source = dependency.source_index.get();
             let dep_part = dependency.part_index;
             if !ctx.parts_live[dep_source as usize].is_set(dep_part as usize) {
@@ -2916,6 +2923,22 @@ impl<'a> LinkerContext<'a> {
                     part_index: dep_part,
                     source_index: dep_source,
                 });
+            }
+        }
+
+        // `scan_imports_and_exports` adds no wrapper dependency for external `import()`.
+        if self.graph.code_splitting {
+            let records = &ctx.import_records[source_index as usize];
+            for &import_index in part.import_record_indices.iter() {
+                let record = &records[import_index as usize];
+                if record.source_index.is_valid()
+                    && self.is_external_dynamic_import(record, source_index)
+                {
+                    let other = record.source_index.get();
+                    if !self.graph.files_live.is_set(other as usize) {
+                        ctx.worklist.push(TreeShakeWork::File(other));
+                    }
+                }
             }
         }
     }

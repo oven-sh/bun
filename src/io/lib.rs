@@ -1322,16 +1322,6 @@ macro_rules! intrusive_uv_fs {
     };
 }
 
-impl Default for Request {
-    fn default() -> Self {
-        Self {
-            next: bun_threading::Link::new(),
-            callback: |_| unreachable!(),
-            scheduled: false,
-        }
-    }
-}
-
 // Intrusive MPSC queue keyed on the `next` field.
 //
 // `next` is stored as `AtomicPtr<Request>`; the non-atomic accessor

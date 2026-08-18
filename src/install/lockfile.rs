@@ -1653,7 +1653,7 @@ impl<'a> Printer<'a> {
         match Self::print_with_lockfile(&lockfile, format, writer) {
             Ok(()) => {}
             Err(crate::Error::Alloc(bun_alloc::AllocError)) => bun_core::out_of_memory(),
-            Err(crate::Error::BrokenPipe) | Err(crate::Error::WriteFailed) => return Ok(()),
+            Err(crate::Error::WriteFailed) => return Ok(()),
             Err(e) => return Err(e),
         }
         Output::flush();

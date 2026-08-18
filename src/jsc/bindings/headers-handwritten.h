@@ -383,11 +383,6 @@ extern "C" bool Bun__VM__useIsolationSourceProviderCache(void* bunVM);
 extern "C" const char* Bun__version;
 extern "C" const char* Bun__version_with_sha;
 
-// Version exports removed - now handled by CMake-generated header (bun_dependency_versions.h)
-// Only keep the ones still exported from native code
-extern "C" const char* Bun__versions_uws;
-extern "C" const char* Bun__versions_usockets;
-
 extern "C" const char* Bun__version_sha;
 
 extern "C" void ZigString__freeGlobal(const unsigned char* ptr, size_t len);

@@ -992,3 +992,92 @@ describe("pending cache", () => {
     expect(results).toEqual(Array(8).fill({ address: "127.0.0.1", family: 4 }));
   });
 });
+
+// Node converts IDN hostnames to punycode before c-ares sees them. The fake
+// server records every QNAME it receives, answers NS queries with
+// "ns1.example.com" and A queries with 127.0.0.7, and returns NXDOMAIN for
+// "xn--maana-pta.com" (punycode of "mañana.com").
+describe("IDN hostnames", () => {
+  function encodeName(name) {
+    return Buffer.concat([
+      ...name.split(".").map(label => Buffer.concat([Buffer.from([label.length]), Buffer.from(label)])),
+      Buffer.from([0]),
+    ]);
+  }
+
+  async function startFakeServer() {
+    const socket = dgram.createSocket("udp4");
+    const queries = [];
+    socket.on("message", (query, rinfo) => {
+      const labels = [];
+      let off = 12;
+      while (query[off] !== 0) {
+        labels.push(query.toString("latin1", off + 1, off + 1 + query[off]));
+        off += query[off] + 1;
+      }
+      const qtype = query.readUInt16BE(off + 1);
+      const question = query.subarray(12, off + 5);
+      const qname = labels.join(".");
+      queries.push(`${qtype === 1 ? "A" : qtype === 2 ? "NS" : qtype} ${qname}`);
+
+      if (qname === "xn--maana-pta.com") {
+        // QR, RD, RA, RCODE=3 (NXDOMAIN)
+        const header = Buffer.from([query[0], query[1], 0x81, 0x83, 0, 1, 0, 0, 0, 0, 0, 0]);
+        socket.send(Buffer.concat([header, question]), rinfo.port, rinfo.address);
+        return;
+      }
+
+      const rdata = qtype === 2 ? encodeName("ns1.example.com") : Buffer.from([127, 0, 0, 7]);
+      const header = Buffer.from([query[0], query[1], 0x81, 0x80, 0, 1, 0, 1, 0, 0, 0, 0]);
+      const answer = Buffer.from([0xc0, 0x0c, 0, qtype, 0, 1, 0, 0, 0, 60, rdata.length >> 8, rdata.length & 0xff]);
+      socket.send(Buffer.concat([header, question, answer, rdata]), rinfo.port, rinfo.address);
+    });
+    socket.bind(0, "127.0.0.1");
+    await once(socket, "listening");
+    return { socket, queries, port: socket.address().port };
+  }
+
+  test.concurrent("resolveNs queries the punycode name", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      resolver.setServers(["127.0.0.1:" + port]);
+      expect(await resolver.resolveNs("bücher.de")).toEqual(["ns1.example.com"]);
+      expect(queries).toEqual(["NS xn--bcher-kva.de"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("resolve4 queries the punycode name", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      const resolver = new dns_promises.Resolver({ timeout: 1000, tries: 1 });
+      resolver.setServers(["127.0.0.1:" + port]);
+      expect(await resolver.resolve4("пример.рф")).toEqual(["127.0.0.7"]);
+      expect(queries).toEqual(["A xn--e1afmkfd.xn--p1ai"]);
+    } finally {
+      socket.close();
+    }
+  });
+
+  test.concurrent("a failed IDN query reports the original hostname", async () => {
+    const { socket, queries, port } = await startFakeServer();
+    try {
+      const resolver = new dns.Resolver({ timeout: 1000, tries: 1 });
+      resolver.setServers(["127.0.0.1:" + port]);
+      const { promise, resolve, reject } = Promise.withResolvers();
+      resolver.resolveNs("mañana.com", (err, records) =>
+        err ? resolve(err) : reject(new Error("expected an error, got " + JSON.stringify(records))),
+      );
+      const err = await promise;
+      expect(err.code).toBe("ENOTFOUND");
+      expect(err.syscall).toBe("queryNs");
+      expect(err.hostname).toBe("mañana.com");
+      expect(err.message).toBe("queryNs ENOTFOUND mañana.com");
+      expect(queries).toEqual(["NS xn--maana-pta.com"]);
+    } finally {
+      socket.close();
+    }
+  });
+});

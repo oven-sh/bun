@@ -60,6 +60,40 @@ function withTranslatedError(error: any) {
   return error;
 }
 
+const [, , idnaToASCII] = $cpp("NodeURL.cpp", "Bun::createNodeURLBinding");
+const nonASCIIRE = /[^\x00-\x7F]/;
+
+// Node converts IDN hostnames to punycode before they reach c-ares or
+// getaddrinfo (ada::idna::to_ascii in cares_wrap.cc). c-ares rejects a
+// non-ASCII name locally, so an unconverted IDN query fails with ENOTFOUND
+// before any packet is sent.
+function toASCII(hostname) {
+  if (typeof hostname !== "string" || !nonASCIIRE.test(hostname)) {
+    return hostname;
+  }
+  // On conversion failure keep the original name, so the resolver reports
+  // the error on the name the caller passed.
+  return idnaToASCII(hostname) || hostname;
+}
+
+// Sends the query with the punycode hostname. Node errors carry the name the
+// caller passed, so restore it on failure.
+function query(resolver, method, hostname, arg?) {
+  const ascii = toASCII(hostname);
+  if (ascii === hostname) {
+    return resolver[method](hostname, arg);
+  }
+  return resolver[method](ascii, arg).catch(error => {
+    if (error?.hostname === ascii) {
+      error.hostname = hostname;
+      if (typeof error.message === "string") {
+        error.message = error.message.replace(ascii, hostname);
+      }
+    }
+    return Promise.$reject(error);
+  });
+}
+
 function getServers() {
   return dns.getServers();
 }
@@ -322,8 +356,7 @@ function lookup(hostname, options, callback) {
   }
 
   callback = guardCallback(callback);
-  dns
-    .lookup(hostname, options)
+  query(dns, "lookup", hostname, options)
     .then(res => {
       throwIfEmpty(res);
 
@@ -412,24 +445,22 @@ var InternalResolver = class Resolver {
 
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, rrtype)
-      .then(
-        results => {
-          switch (rrtype?.toLowerCase()) {
-            case "a":
-            case "aaaa":
-              callback(null, results.map(mapResolveX));
-              break;
-            default:
-              callback(null, results);
-              break;
-          }
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolve", hostname, rrtype).then(
+      results => {
+        switch (rrtype?.toLowerCase()) {
+          case "a":
+          case "aaaa":
+            callback(null, results.map(mapResolveX));
+            break;
+          default:
+            callback(null, results);
+            break;
+        }
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolve4(hostname, options, callback) {
@@ -440,16 +471,14 @@ var InternalResolver = class Resolver {
 
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, "A")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolve", hostname, "A").then(
+      addresses => {
+        callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolve6(hostname, options, callback) {
@@ -460,121 +489,105 @@ var InternalResolver = class Resolver {
 
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolve(hostname, "AAAA")
-      .then(
-        addresses => {
-          callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolve", hostname, "AAAA").then(
+      addresses => {
+        callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveAny(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveAny(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveAny", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveCname(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveCname(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveCname", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveMx(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveMx(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveMx", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveNaptr(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveNaptr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveNaptr", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveNs(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveNs(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveNs", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolvePtr(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolvePtr(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolvePtr", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveSrv(hostname, callback) {
     callback = validateResolve(hostname, callback);
 
-    Resolver.#getResolver(this)
-      .resolveSrv(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveSrv", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveCaa(hostname, callback) {
@@ -583,16 +596,14 @@ var InternalResolver = class Resolver {
     }
     callback = guardCallback(callback);
 
-    Resolver.#getResolver(this)
-      .resolveCaa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveCaa", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   resolveTxt(hostname, callback) {
@@ -601,16 +612,14 @@ var InternalResolver = class Resolver {
     }
     callback = guardCallback(callback);
 
-    Resolver.#getResolver(this)
-      .resolveTxt(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveTxt", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
   resolveSoa(hostname, callback) {
     if (typeof callback !== "function") {
@@ -618,16 +627,14 @@ var InternalResolver = class Resolver {
     }
     callback = guardCallback(callback);
 
-    Resolver.#getResolver(this)
-      .resolveSoa(hostname)
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    query(Resolver.#getResolver(this), "resolveSoa", hostname).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   reverse(ip, callback) {
@@ -769,9 +776,9 @@ const promises = {
     }
 
     if (options.all) {
-      return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookupAll(options.order)));
+      return translateErrorCode(query(dns, "lookup", hostname, options).then(promisifyLookupAll(options.order)));
     }
-    return translateErrorCode(dns.lookup(hostname, options).then(promisifyLookup(options.order)));
+    return translateErrorCode(query(dns, "lookup", hostname, options).then(promisifyLookup(options.order)));
   },
 
   lookupService(address, port) {
@@ -809,49 +816,49 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyResolveX(false)));
+        return translateErrorCode(query(dns, "resolve", hostname, rrtype).then(promisifyResolveX(false)));
       default:
-        return translateErrorCode(dns.resolve(hostname, rrtype));
+        return translateErrorCode(query(dns, "resolve", hostname, rrtype));
     }
   },
 
   resolve4(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "A").then(promisifyResolveX(options?.ttl)));
+    return translateErrorCode(query(dns, "resolve", hostname, "A").then(promisifyResolveX(options?.ttl)));
   },
 
   resolve6(hostname, options) {
-    return translateErrorCode(dns.resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
+    return translateErrorCode(query(dns, "resolve", hostname, "AAAA").then(promisifyResolveX(options?.ttl)));
   },
 
   resolveAny(hostname) {
-    return translateErrorCode(dns.resolveAny(hostname));
+    return translateErrorCode(query(dns, "resolveAny", hostname));
   },
   resolveSrv(hostname) {
-    return translateErrorCode(dns.resolveSrv(hostname));
+    return translateErrorCode(query(dns, "resolveSrv", hostname));
   },
   resolveTxt(hostname) {
-    return translateErrorCode(dns.resolveTxt(hostname));
+    return translateErrorCode(query(dns, "resolveTxt", hostname));
   },
   resolveSoa(hostname) {
-    return translateErrorCode(dns.resolveSoa(hostname));
+    return translateErrorCode(query(dns, "resolveSoa", hostname));
   },
   resolveNaptr(hostname) {
-    return translateErrorCode(dns.resolveNaptr(hostname));
+    return translateErrorCode(query(dns, "resolveNaptr", hostname));
   },
   resolveMx(hostname) {
-    return translateErrorCode(dns.resolveMx(hostname));
+    return translateErrorCode(query(dns, "resolveMx", hostname));
   },
   resolveCaa(hostname) {
-    return translateErrorCode(dns.resolveCaa(hostname));
+    return translateErrorCode(query(dns, "resolveCaa", hostname));
   },
   resolveNs(hostname) {
-    return translateErrorCode(dns.resolveNs(hostname));
+    return translateErrorCode(query(dns, "resolveNs", hostname));
   },
   resolvePtr(hostname) {
-    return translateErrorCode(dns.resolvePtr(hostname));
+    return translateErrorCode(query(dns, "resolvePtr", hostname));
   },
   resolveCname(hostname) {
-    return translateErrorCode(dns.resolveCname(hostname));
+    return translateErrorCode(query(dns, "resolveCname", hostname));
   },
   reverse(ip) {
     return translateErrorCode(dns.reverse(ip));
@@ -886,63 +893,63 @@ const promises = {
         case "a":
         case "aaaa":
           return translateErrorCode(
-            Resolver.#getResolver(this).resolve(hostname, rrtype).then(promisifyResolveX(false)),
+            query(Resolver.#getResolver(this), "resolve", hostname, rrtype).then(promisifyResolveX(false)),
           );
         default:
-          return translateErrorCode(Resolver.#getResolver(this).resolve(hostname, rrtype));
+          return translateErrorCode(query(Resolver.#getResolver(this), "resolve", hostname, rrtype));
       }
     }
 
     resolve4(hostname, options) {
       return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "A").then(promisifyResolveX(options?.ttl)),
+        query(Resolver.#getResolver(this), "resolve", hostname, "A").then(promisifyResolveX(options?.ttl)),
       );
     }
 
     resolve6(hostname, options) {
       return translateErrorCode(
-        Resolver.#getResolver(this).resolve(hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
+        query(Resolver.#getResolver(this), "resolve", hostname, "AAAA").then(promisifyResolveX(options?.ttl)),
       );
     }
 
     resolveAny(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveAny(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveAny", hostname));
     }
 
     resolveCname(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCname(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveCname", hostname));
     }
 
     resolveMx(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveMx(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveMx", hostname));
     }
 
     resolveNaptr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNaptr(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveNaptr", hostname));
     }
 
     resolveNs(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveNs(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveNs", hostname));
     }
 
     resolvePtr(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolvePtr(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolvePtr", hostname));
     }
 
     resolveSoa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSoa(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveSoa", hostname));
     }
 
     resolveSrv(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveSrv(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveSrv", hostname));
     }
 
     resolveCaa(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveCaa(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveCaa", hostname));
     }
 
     resolveTxt(hostname) {
-      return translateErrorCode(Resolver.#getResolver(this).resolveTxt(hostname));
+      return translateErrorCode(query(Resolver.#getResolver(this), "resolveTxt", hostname));
     }
 
     reverse(ip) {

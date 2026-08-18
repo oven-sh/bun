@@ -248,7 +248,7 @@ pub(crate) fn add_imports_to_program(
     for (module_name, imports_map) in sorted_modules {
         let sorted_imports = {
             let mut sorted: Vec<_> = imports_map.values().collect();
-            index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.imported.cmp(&b.imported));
+            index_sort::sort_slice_unstable_by(&mut sorted, |a, b| a.imported.cmp(b.imported));
             sorted
         };
 

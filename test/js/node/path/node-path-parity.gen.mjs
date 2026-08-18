@@ -5,9 +5,16 @@
 // Generates pseudo-random node:path calls (fixed seed), evaluates them with the
 // running Node's path.posix/path.win32, drops the ones whose result depends on
 // process.cwd(), and keeps up to 70 per (namespace, function).
-import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
+
+// The Node.js release whose lib/path.js src/runtime/node/path.rs is ported from. The
+// recorded results are that release's behaviour, so only it may regenerate them; bump
+// this together with the port.
+const NODE_VERSION = "26.3.0";
+if (process.versions.node !== NODE_VERSION) {
+  console.error(`node-path-parity.json must be generated with Node.js v${NODE_VERSION}, not v${process.versions.node}`);
+  process.exit(1);
+}
 
 let s = 42;
 const rnd = () => (s = (Math.imul(s, 1664525) + 1013904223) >>> 0) / 2 ** 32;
@@ -82,9 +89,21 @@ function evaluate(ns, fn, args) {
   }
 }
 
+// lib/path.js reads process.cwd() whenever a result involves the working directory. Such
+// results differ between hosts (on Windows the cwd carries a drive letter, which
+// win32.resolve() and everything built on it pick up, including drive-relative inputs
+// like "C:x" when the cwd is on that drive) and between checkouts (relative() counts the
+// cwd's components), so a case is kept only if it evaluates the same under working
+// directories of different depths, without a drive and on each drive the inputs use.
+// prettier-ignore
+const cwds = ["/", "/one", "/two/deeper", "C:\\", "C:\\three", "C:\\four\\deeper\\still", "D:\\five\\deeper", "Z:\\six", "\\\\server\\share\\seven"];
+const evaluateEverywhere = (ns, fn, args) =>
+  cwds.map(cwd => {
+    process.cwd = () => cwd;
+    return JSON.stringify(evaluate(ns, fn, args));
+  });
+
 const cases = Array.from({ length: 20000 }, makeCase);
-const here = process.cwd();
-const elsewhere = fs.mkdtempSync(path.join(os.tmpdir(), "parity-"));
 const rows = [];
 const seen = new Set();
 for (const ns of ["posix", "win32"]) {
@@ -92,17 +111,13 @@ for (const ns of ["posix", "win32"]) {
     const key = JSON.stringify([ns, fn, args]);
     if (seen.has(key) || key.length > 320) continue;
     seen.add(key);
-    process.chdir(here);
-    const a = evaluate(ns, fn, args);
-    process.chdir(elsewhere);
-    const b = evaluate(ns, fn, args);
-    if (JSON.stringify(a) !== JSON.stringify(b)) continue; // depends on process.cwd()
+    const results = evaluateEverywhere(ns, fn, args);
+    if (results[0] === undefined || results.some(result => result !== results[0])) continue; // depends on process.cwd()
+    const a = JSON.parse(results[0]);
     if (typeof a !== "string" && typeof a !== "boolean" && (typeof a !== "object" || a === null)) continue;
     rows.push([ns, fn, args, a]);
   }
 }
-process.chdir(here);
-fs.rmdirSync(elsewhere);
 
 const buckets = new Map();
 for (const row of rows) {

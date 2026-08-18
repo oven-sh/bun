@@ -996,6 +996,23 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
     return true;
   }
 
+  /// Removes a pending reserve callback that is still waiting for a
+  /// connection. Returns false when the callback already ran (the caller owns
+  /// a connection and must release() it) or was never queued.
+  cancelReserve(onConnected: (err: Error | null, result: any) => void): boolean {
+    const index = this.reservedQueue.indexOf(onConnected);
+    if (index === -1) {
+      return false;
+    }
+    this.reservedQueue.splice(index, 1);
+    // the cancelled reservation may have been the last pending work; a
+    // graceful close() is waiting on this callback
+    if (this.onAllQueriesFinished && !this.hasPendingQueries()) {
+      this.onAllQueriesFinished();
+    }
+    return true;
+  }
+
   getConnectionForQuery(pooledConnection: PooledConnection) {
     return pooledConnection.connection;
   }
@@ -2158,6 +2175,7 @@ export interface DatabaseAdapter<Connection, ConnectionHandle, QueryHandle> {
   get closed(): boolean;
 
   supportsReservedConnections?(): boolean;
+  cancelReserve?(onConnected: OnConnected<Connection>): boolean;
   getConnectionForQuery?(pooledConnection: Connection): ConnectionHandle | null;
   attachConnectionCloseHandler?(connection: Connection, handler: () => void): void;
   detachConnectionCloseHandler?(connection: Connection, handler: () => void): void;

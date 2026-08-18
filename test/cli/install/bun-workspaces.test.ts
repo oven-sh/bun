@@ -734,6 +734,47 @@ describe("relative tarballs", async () => {
       },
     });
   });
+  // The tarball path is written in the root package.json, so it is relative to
+  // the root even though the dependency it ends up satisfying is declared by
+  // the workspace (#25835 for overrides, #25752 for catalogs). The workspace
+  // gets a different tarball at the same relative path, so reading it relative
+  // to the workspace installs `baz` instead of failing.
+  for (const [source, root, specifier] of [
+    ["override", { overrides: { bar: "file:./bar.tgz" } }, "^0.0.2"],
+    ["catalog entry", { catalogs: { vendored: { bar: "file:./bar.tgz" } } }, "catalog:vendored"],
+  ] as const) {
+    test.concurrent(`from a root ${source} applied to a workspace dependency`, async () => {
+      using ctx = await setupTest();
+      const { packageDir, env } = ctx;
+      await Promise.all([
+        write(join(packageDir, "package.json"), JSON.stringify({ name: "foo", workspaces: ["pkgs/*"], ...root })),
+        write(
+          join(packageDir, "pkgs", "pkg1", "package.json"),
+          JSON.stringify({ name: "pkg1", dependencies: { bar: specifier } }),
+        ),
+        cp(join(import.meta.dir, "bar-0.0.2.tgz"), join(packageDir, "bar.tgz")),
+      ]);
+      await cp(join(import.meta.dir, "baz-0.0.3.tgz"), join(packageDir, "pkgs", "pkg1", "bar.tgz"));
+
+      // The second install starts from the lockfile and an empty cache, so it
+      // reads the tarball again from the path recorded there.
+      for (const frozenLockfile of [false, true]) {
+        await Promise.all([
+          rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+          rm(env.BUN_INSTALL_CACHE_DIR, { recursive: true, force: true }),
+        ]);
+
+        await runBunInstall(env, packageDir, { frozenLockfile });
+
+        expect(await file(join(packageDir, "node_modules", "bar", "package.json")).json()).toEqual({
+          name: "bar",
+          version: "0.0.2",
+        });
+      }
+
+      expect(await file(join(packageDir, "bun.lock")).text()).toContain('"bar": ["bar@./bar.tgz", {}, "sha512-');
+    });
+  }
 
   // Regression test for a data race where the `.local_tarball` task callback
   // (running on a ThreadPool worker) read `lockfile.packages` and

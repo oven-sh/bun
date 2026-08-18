@@ -196,6 +196,31 @@ pub(crate) static PM_PARAMS: &[ParamType] = concat_params![
         clap::param!("--trusted"),
         clap::param!("--json                              Output in JSON format"),
         clap::param!(
+            "--diff <STR>...                        A package spec or path to compare (bun pm diff; may be given twice)"
+        ),
+        clap::param!(
+            "--raw                                  Compare file bytes as-is; skip the JS/CSS/JSON re-print (bun pm diff)"
+        ),
+        clap::param!("--unformatted                          Alias of --raw (bun pm diff)"),
+        clap::param!(
+            "--unminify                             Rename short locals in lockstep in every JS file, not only ones that look minified (bun pm diff)"
+        ),
+        clap::param!(
+            "--minify                               Also normalise syntax (!0 vs true, quotes, parens…) so equivalent spellings collapse (bun pm diff)"
+        ),
+        clap::param!(
+            "-w, --ignore-space                     Show files that differ only in whitespace as 'whitespace only' instead of hunks (bun pm diff)"
+        ),
+        clap::param!(
+            "--name-only                            Only list the files that differ (bun pm diff)"
+        ),
+        clap::param!(
+            "--stat                                 Show a per-file change summary instead of hunks (bun pm diff)"
+        ),
+        clap::param!(
+            "-U, --unified <STR>                    Lines of context around each change (bun pm diff, default 3)"
+        ),
+        clap::param!(
             "-F, --filter <STR>...                  List only the matching workspaces' dependencies (bun pm licenses)"
         ),
         clap::param!(
@@ -550,6 +575,18 @@ pub struct CommandLineArguments {
     pub dev_only: bool,
     pub long: bool,
 
+    // `bun pm diff` options
+    pub diff_args: Vec<&'static [u8]>,
+    pub diff_name_only: bool,
+    pub diff_raw: bool,
+    /// The subcommand only needs registry configuration; a missing package.json is not an error.
+    pub no_project_ok: bool,
+    pub diff_unminify: bool,
+    pub diff_minify: bool,
+    pub diff_ignore_space: bool,
+    pub diff_stat: bool,
+    pub diff_context: Option<usize>,
+
     // `bun audit` options
     pub audit_level: Option<AuditLevel>,
     pub audit_ignore_list: &'static [&'static [u8]],
@@ -636,6 +673,15 @@ impl Default for CommandLineArguments {
 
             dev_only: false,
             long: false,
+            diff_args: Vec::new(),
+            diff_name_only: false,
+            diff_raw: false,
+            no_project_ok: false,
+            diff_unminify: false,
+            diff_minify: false,
+            diff_ignore_space: false,
+            diff_stat: false,
+            diff_context: None,
 
             audit_level: None,
             audit_ignore_list: &[],
@@ -1726,6 +1772,27 @@ Full documentation is available at <magenta>https://bun.com/docs/pm/cli/prune<r>
             }
             cli.dev_only = args.flag(b"--dev");
             cli.long = args.flag(b"--long");
+            cli.diff_args = args.options(b"--diff").to_vec();
+            cli.diff_name_only = args.flag(b"--name-only");
+            cli.diff_raw = args.flag(b"--raw") || args.flag(b"--unformatted");
+            cli.no_project_ok = cli.positionals.first().is_some_and(|p| *p == b"pm")
+                && cli.positionals.get(1).is_some_and(|p| *p == b"diff");
+            cli.diff_unminify = args.flag(b"--unminify");
+            cli.diff_minify = args.flag(b"--minify");
+            cli.diff_ignore_space = args.flag(b"--ignore-space");
+            cli.diff_stat = args.flag(b"--stat");
+            if let Some(n) = args.option(b"--unified") {
+                match strings::parse_int::<usize>(n, 10) {
+                    Ok(v) => cli.diff_context = Some(v),
+                    Err(_) => {
+                        Output::err_generic(
+                            "invalid --unified value: {}, expected a non-negative integer",
+                            (bstr::BStr::new(n),),
+                        );
+                        Global::exit(1);
+                    }
+                }
+            }
         }
 
         // `bun pm why` and `bun why` options

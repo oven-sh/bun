@@ -890,10 +890,6 @@ pub mod kernel32 {
             lpLastAccessTime: *const FILETIME,
             lpLastWriteTime: *const FILETIME,
         ) -> BOOL;
-        /// `SetHandleInformation` (`handleapi.h`). No pointer preconditions:
-        /// `hObject` is an opaque kernel handle (validated kernel-side; bad
-        /// handle → `FALSE` + `GetLastError`), `dwMask`/`dwFlags` are by-value.
-        pub safe fn SetHandleInformation(hObject: HANDLE, dwMask: DWORD, dwFlags: DWORD) -> BOOL;
         /// `CreateProcessW` (`processthreadsapi.h`).
         pub fn CreateProcessW(
             lpApplicationName: LPCWSTR,
@@ -1168,7 +1164,6 @@ pub mod ws2_32 {
         pub safe fn WSAGetLastError() -> c_int;
         /// No preconditions; writes the thread-local Winsock error slot.
         pub safe fn WSASetLastError(err: c_int);
-        pub fn closesocket(s: usize) -> c_int;
         pub fn recv(s: usize, buf: *mut c_void, len: c_int, flags: c_int) -> c_int;
         pub fn send(s: usize, buf: *const c_void, len: c_int, flags: c_int) -> c_int;
         /// `WSAPoll` (`winsock2.h`). Returns count of ready fds, 0 on timeout,

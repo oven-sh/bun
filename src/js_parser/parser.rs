@@ -854,12 +854,6 @@ impl Default for ExprOrLetStmt {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FunctionKind {
-    Stmt,
-    Expr,
-}
-
 #[repr(u8)]
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AsyncPrefixExpression {

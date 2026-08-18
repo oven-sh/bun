@@ -1440,9 +1440,15 @@ interface Navigator {
   readonly userAgent: string;
   readonly platform: "MacIntel" | "Win32" | "Linux x86_64";
   readonly hardwareConcurrency: number;
+  readonly language: string;
+  readonly languages: readonly string[];
 }
 
 declare var navigator: Navigator;
+declare var Navigator: {
+  prototype: Navigator;
+  new (): Navigator;
+};
 
 interface BlobPropertyBag {
   /** Set a default "type". Not yet implemented. */

@@ -153,6 +153,14 @@ describe("fuzzer-like edge cases", () => {
       expect(count(out, "<em>")).toBe(count(out, "</em>"));
       expect(out).not.toContain("*");
     }
+
+    // Unequal runs: the unconsumed delimiter char stays as literal text.
+    expect(Markdown.html(stars(15) + "foo" + stars(14) + "\n")).toBe(
+      "<p>*" + "<strong>".repeat(7) + "foo" + "</strong>".repeat(7) + "</p>\n",
+    );
+    expect(Markdown.html(stars(14) + "foo" + stars(15) + "\n")).toBe(
+      "<p>" + "<strong>".repeat(7) + "foo" + "</strong>".repeat(7) + "*</p>\n",
+    );
   });
 
   test("deeply nested links", () => {

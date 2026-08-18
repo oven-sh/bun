@@ -91,10 +91,10 @@ fn poison<T>(slice: &mut [T], n: usize) {
 // stored in fifos today, so materialising `&[T]` over uninitialized slots for
 // those types is latent UB.
 // The fix is reworking the accessors to operate on `&[MaybeUninit<T>]` and
-// only assume-init the logically-written subranges. That cannot be done by
-// touching this file alone — `writable_slice`-family callers in other crates
-// see the signature change — so it is deferred to a dedicated change with
-// Miri coverage for a NonNull-bearing element type.
+// only assume-init the logically-written subranges; `writable_slice`-family
+// callers in other crates see the signature change, so that lives in #31835.
+// The `T: Copy` bound below only pins the no-destructor contract; it does not
+// close this gap.
 pub struct StaticBuffer<T, const N: usize>([MaybeUninit<T>; N]);
 
 impl<T, const N: usize> LinearFifoBuffer<T> for StaticBuffer<T, N> {

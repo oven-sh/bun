@@ -1388,6 +1388,83 @@ describe("Valkey: Offline Queue", () => {
     }
   });
 
+  test("commands queued after the queue wrapped reach the server in one write", async () => {
+    // The client runs in a child process with nothing else live and queues
+    // the GETs from a setImmediate callback, so the flush runs at the end of
+    // that tick and the loop then parks. A client that only flushes the part
+    // of the queue before the wrap point writes two GETs there and the other
+    // three on a later, unrelated wake. The stub records how many GETs the
+    // first read carrying a GET held, and holds the GET replies until it has
+    // all five so no reply can wake the child in between. The deadline only
+    // bounds the failure.
+    let getsSeen = 0;
+    let getsInFirstRead = 0;
+    const sockets: Bun.Socket<{ buffer: Buffer }>[] = [];
+    const allGetsSeen = Promise.withResolvers<void>();
+    const server = Bun.listen<{ buffer: Buffer }>({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          socket.data = { buffer: Buffer.alloc(0) };
+          sockets.push(socket);
+        },
+        error() {},
+        close() {},
+        data(socket, chunk) {
+          const state = socket.data;
+          state.buffer = Buffer.concat([state.buffer, chunk]);
+          let replies = "";
+          let gets = 0;
+          for (const args of readCommands(state)) {
+            const name = (args[0] ?? "").toUpperCase();
+            if (name === "GET") {
+              gets += 1;
+            } else {
+              replies += name === "HELLO" ? "+OK\r\n" : "+PONG\r\n";
+            }
+          }
+          if (replies) socket.write(replies);
+          if (gets > 0 && getsSeen === 0) getsInFirstRead = gets;
+          getsSeen += gets;
+          if (getsSeen >= 5) allGetsSeen.resolve();
+        },
+      },
+    });
+    const releaseReplies = Promise.race([allGetsSeen.promise, Bun.sleep(2000)]).then(() => {
+      for (const socket of sockets) socket.write("$1\r\nv\r\n".repeat(getsSeen));
+    });
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${server.port}", { autoReconnect: false });
+          await client.connect();
+          await Promise.all(Array.from({ length: 6 }, () => client.ping()));
+          await new Promise(resolve => setImmediate(resolve));
+          const values = await Promise.all(Array.from({ length: 5 }, () => client.get("k")));
+          console.log(values.length, "replies");
+          client.close();
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+      await releaseReplies;
+      expect({ getsInFirstRead, stdout, exitCode }).toEqual({
+        getsInFirstRead: 5,
+        stdout: "5 replies\n",
+        exitCode: 0,
+      });
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("close() rejects every command queued while the connection never became ready", async () => {
     const stub = stubServer({ answer: false });
     const port = await stub.listen();

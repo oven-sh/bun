@@ -220,10 +220,10 @@ describe("crypto", () => {
           expect(Hash.hash(input, "hex")).toBe(expected.toString("hex"));
           expect(Hash.hash(input, "base64")).toBe(new Hash().update(input).digest("base64"));
 
-          const buf = new Uint8Array(256);
+          const buf = new Uint8Array(256).fill(0xa5);
           expect(Hash.hash(input, buf)).toBe(buf);
           expect(Buffer.from(buf.subarray(0, expected.byteLength))).toEqual(expected);
-          expect(buf.subarray(expected.byteLength).every(byte => byte === 0)).toBe(true);
+          expect(buf.subarray(expected.byteLength).every(byte => byte === 0xa5)).toBe(true);
         });
       });
     }

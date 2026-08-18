@@ -1018,6 +1018,85 @@ describe.concurrent(() => {
     expect(process.memoryUsage.rss()).toEqual(expect.any(Number));
   });
 
+  // JSC measures the live size of the heap at the end of each collection and
+  // keeps one figure per kind of collection, eden or full. heapUsed used to
+  // report the eden figure only, so it did not change when a full collection
+  // freed memory. Each child disables Bun's GC timer so that the only
+  // collections are the ones it requests. Bun.gc(true) and bun:jsc's edenGC()
+  // return the figure measured by the collection they ran, which is what
+  // heapUsed has to report afterwards.
+  describe("process.memoryUsage().heapUsed reports the most recent collection", () => {
+    async function reportedBy(script, env = {}) {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "-e", script],
+        env: { ...bunEnv, BUN_GC_TIMER_DISABLE: "1", ...env },
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(exitCode).toBe(0);
+      return JSON.parse(stdout);
+    }
+
+    it("after a full collection that follows an eden collection", async () => {
+      const { collections, heapUsed } = await reportedBy(`
+        const { edenGC } = require("bun:jsc");
+        const heapUsed = () => process.memoryUsage().heapUsed;
+
+        // The objects hang off the global object so that the eden collection
+        // counts them whatever the JIT keeps in registers. The array is built in
+        // a function of its own so that no frame that is still on the stack
+        // points at it when the last full collection runs.
+        function fill() {
+          const objects = [];
+          for (let i = 0; i < 50_000; i++) objects.push({ i });
+          globalThis.retained = objects;
+        }
+
+        const full = Bun.gc(true);
+        const heapUsedAfterFull = heapUsed();
+
+        fill();
+        const eden = edenGC();
+        const heapUsedAfterEden = heapUsed();
+
+        globalThis.retained = null;
+        const fullAfterEden = Bun.gc(true);
+        const heapUsedAfterFullAfterEden = heapUsed();
+
+        console.log(JSON.stringify({
+          collections: [full, eden, fullAfterEden],
+          heapUsed: [heapUsedAfterFull, heapUsedAfterEden, heapUsedAfterFullAfterEden],
+        }));
+      `);
+
+      const [full, eden, fullAfterEden] = collections;
+      // The eden collection counted the retained objects and the last full
+      // collection freed them, so a stale figure differs from the current one.
+      expect(full).toBeGreaterThan(0);
+      expect(eden).toBeGreaterThan(full);
+      expect(fullAfterEden).toBeLessThan(eden);
+      expect(heapUsed).toEqual(collections);
+    });
+
+    // Without the JIT, JSC turns off generational collection and runs every
+    // collection as a full one, so the eden figure stays 0 for the life of the
+    // process.
+    it("when every collection is a full collection", async () => {
+      const { full, heapUsed } = await reportedBy(
+        `
+          const full = Bun.gc(true);
+          console.log(JSON.stringify({ full, heapUsed: process.memoryUsage().heapUsed }));
+        `,
+        { BUN_JSC_useJIT: "false" },
+      );
+
+      expect(full).toBeGreaterThan(0);
+      expect(heapUsed).toBe(full);
+    });
+  });
+
   describe("process.cpuUsage", () => {
     it("works", () => {
       expect(process.cpuUsage()).toEqual({

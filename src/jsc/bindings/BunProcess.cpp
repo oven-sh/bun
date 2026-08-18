@@ -4106,9 +4106,9 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionMemoryUsage, (JSC::JSGlobalObject * glo
     result->putDirectOffset(vm, 0, JSC::jsNumber(current_rss));
     result->putDirectOffset(vm, 1, JSC::jsNumber(vm.heap.blockBytesAllocated()));
 
-    // heap.size() loops through every cell...
-    // TODO: add a binding for heap.sizeAfterLastCollection()
-    result->putDirectOffset(vm, 2, JSC::jsNumber(vm.heap.sizeAfterLastEdenCollection()));
+    // heap.size() walks every block of the heap, so report the size JSC measured
+    // at the end of the most recent collection instead.
+    result->putDirectOffset(vm, 2, JSC::jsNumber(WebCore::clientData(vm)->heapSizeAfterLastCollection()));
 
     result->putDirectOffset(vm, 3, JSC::jsNumber(vm.heap.extraMemorySize() + vm.heap.externalMemorySize()));
 

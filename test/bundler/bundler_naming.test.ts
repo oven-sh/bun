@@ -73,6 +73,20 @@ describe("bundler", () => {
       },
     ],
   });
+  // The implicit root is the entry points' common ancestor, `pages/` here.
+  // With more than 8 entry points it used to fall back to the cwd, so the
+  // same build wrote `/out/pages/*.js` instead.
+  const manyEntryNames = Array.from({ length: 9 }, (_, i) => `page${i}.js`);
+  for (const backend of ["api", "cli"] as const) {
+    itBundled(`naming/ImplicitOutbaseManyEntryPoints/${backend}`, {
+      backend,
+      files: Object.fromEntries(manyEntryNames.map((name, i) => [`/pages/${name}`, `console.log(${i});`])),
+      entryPoints: manyEntryNames.map(name => `/pages/${name}`),
+      onAfterBundle(api) {
+        expect(readdirSync(api.outdir).sort()).toEqual(manyEntryNames);
+      },
+    });
+  }
   itBundled("naming/EntryNamingTemplate1", {
     files: {
       "/a/hello/entry.js": /* js */ `

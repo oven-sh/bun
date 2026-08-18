@@ -1,6 +1,6 @@
 import { $ } from "bun";
 import { expect, test } from "bun:test";
-import { bunExe, isLinux } from "harness";
+import { bunExe, isASAN, isDebug, isLinux } from "harness";
 
 // The css math function parser (src/css/values/calc.rs) takes its identifier
 // resolver as a `&dyn Fn` (`ParseIdent`), so the mutually recursive
@@ -9,31 +9,34 @@ import { bunExe, isLinux } from "harness";
 // per call site instead (61 copies of each function, a few hundred KB of the
 // binary) and nothing else notices, so this pins the instance count.
 //
-// Reads the static symbol table, which the stripped release `bun` does not
-// have; debug, asan and bun-profile binaries do.
-const nm = isLinux ? Bun.which("nm") || Bun.which("llvm-nm") : null;
-const calcSymbols =
-  nm === null
-    ? []
-    : (await $`${nm} -C --defined-only ${bunExe()} | grep 'values::calc::Calc<'`.nothrow().text())
-        .split("\n")
-        .filter(Boolean);
+// Reads the symbol table, which only the unstripped debug and asan binaries
+// have; the release `bun` is stripped.
+test.skipIf(!isLinux || !(isDebug || isASAN))("the math function parser is compiled once per value type", async () => {
+  const nm = Bun.which("nm") || Bun.which("llvm-nm");
+  if (!nm) {
+    throw new Error("nm executable not found. Please install binutils or llvm.");
+  }
 
-test.skipIf(calcSymbols.length === 0)("the math function parser is compiled once per value type", () => {
-  const instances: Record<string, number> = {};
-  for (const line of calcSymbols) {
+  // grep exits 1 when nothing matches; that case fails the assertions below.
+  const symbols = await $`${nm} -C --defined-only ${bunExe()} | grep 'values::calc::Calc<'`.nothrow().text();
+
+  const instances: Record<string, Record<string, number>> = {};
+  for (const line of symbols.split("\n")) {
     // `<address> <type> <demangled name>`; the name itself can contain spaces.
     const name = line.replace(/^\S*\s+\S\s+/, "");
     // A generic method demangles with its type arguments after the name
     // (`::parse_sum::<(), {closure}>`), one symbol per distinct closure.
     const match = /^<bun_css::values::calc::Calc<(.+?)>>::(parse_sum|parse_product|parse_value)(::<.*>)?$/.exec(name);
     if (match === null) continue;
-    const [, valueType, method] = match;
-    const key = `${method} for Calc<${valueType.replaceAll(/bun_css::values::\w+::/g, "")}>`;
-    instances[key] = (instances[key] ?? 0) + 1;
+    const valueType = match[1].replaceAll(/bun_css::values::\w+::/g, "");
+    const methods = (instances[valueType] ??= {});
+    methods[match[2]] = (methods[match[2]] ?? 0) + 1;
   }
 
-  const methods = new Set(Object.keys(instances).map(key => key.split(" ")[0]));
-  expect([...methods].sort()).toEqual(["parse_product", "parse_sum", "parse_value"]);
-  expect(instances).toEqual(Object.fromEntries(Object.keys(instances).map(key => [key, 1])));
+  expect(Object.keys(instances)).toContain("f32");
+  expect(instances).toEqual(
+    Object.fromEntries(
+      Object.keys(instances).map(valueType => [valueType, { parse_sum: 1, parse_product: 1, parse_value: 1 }]),
+    ),
+  );
 });

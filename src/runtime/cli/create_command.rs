@@ -461,9 +461,7 @@ impl CreateCommand {
 
                 progress.refresh();
 
-                let file_buf = vec![0u8; 16384];
-
-                let mut tarball_buf_list: Vec<u8> = file_buf;
+                let mut tarball_buf_list: Vec<u8> = Vec::with_capacity(16384);
                 let mut gunzip = Zlib::ZlibReaderArrayList::init(
                     tarball_bytes.list.as_slice(),
                     &mut tarball_buf_list,
@@ -736,7 +734,6 @@ impl CreateCommand {
                     }
                 }
             }
-            _ => unreachable!(),
         }
 
         node.end();
@@ -1708,7 +1705,6 @@ impl Default for Example {
 #[repr(u8)]
 #[derive(Copy, Clone, Eq, PartialEq, strum::IntoStaticStr)]
 pub enum ExampleTag {
-    Unknown,
     GithubRepository,
     Official,
     LocalFolder,

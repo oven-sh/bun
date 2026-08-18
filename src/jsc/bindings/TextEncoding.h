@@ -43,7 +43,6 @@ public:
     TextEncoding() = default;
     PAL_EXPORT TextEncoding(ASCIILiteral name);
     PAL_EXPORT TextEncoding(StringView name);
-    PAL_EXPORT TextEncoding(const String& name);
 
     bool isValid() const { return !m_name.isNull(); }
     ASCIILiteral name() const { return m_name; }
@@ -59,8 +58,6 @@ private:
     ASCIILiteral m_name;
     char16_t m_backslashAsCurrencySymbol;
 };
-
-PAL_EXPORT const TextEncoding& UTF8Encoding();
 
 inline String TextEncoding::decode(std::span<const uint8_t> characters) const
 {

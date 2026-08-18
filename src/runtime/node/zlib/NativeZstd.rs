@@ -42,11 +42,13 @@ mod _impl {
         // `BackRef` centralises the single unsafe deref so the trait impl is safe.
         pub global_this: bun_ptr::BackRef<JSGlobalObject>,
         /// How the pool thread delivers a finished write to the VM.
-        pub loop_handle: bun_jsc::LoopHandle,
+        pub ticket: Cell<Option<bun_jsc::Ticket>>,
         pub stream: JsCell<Context>,
         pub poll_ref: JsCell<CountedKeepAlive>,
         pub this_value: JsCell<StrongOptional>, // jsc.Strong.Optional
         pub write_in_progress: Cell<bool>,
+        /// bit 0: the pending input's ArrayBuffer is pinned; bit 1: the pending output's. A held bufferless view sets neither.
+        pub pinned_buffers: Cell<u8>,
         pub pending_close: Cell<bool>,
         pub closed: Cell<bool>,
         pub task: JsCell<WorkPoolTask>,
@@ -110,11 +112,12 @@ mod _impl {
                 // JSC_BORROW — the JSGlobalObject outlives this payload (the C++
                 // wrapper is owned by that global's heap).
                 global_this: bun_ptr::BackRef::new(global),
-                loop_handle: global.bun_vm().loop_handle(),
+                ticket: Cell::new(None),
                 stream: JsCell::new(stream),
                 poll_ref: JsCell::new(CountedKeepAlive::default()),
                 this_value: JsCell::new(StrongOptional::empty()),
                 write_in_progress: Cell::new(false),
+                pinned_buffers: Cell::new(0),
                 pending_close: Cell::new(false),
                 closed: Cell::new(false),
                 // WorkPoolTask { callback: undefined } — callback is overwritten by

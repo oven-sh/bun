@@ -289,7 +289,7 @@ pub(crate) fn spawn(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<false>(global_this, args, secondary_args_value)
+    spawn_maybe_sync::<false>(global_this, args, secondary_args_value, &mut None)
 }
 
 /// Bun.spawnSync() calls this.
@@ -298,13 +298,39 @@ pub(crate) fn spawn_sync(
     args: JSValue,
     secondary_args_value: Option<JSValue>,
 ) -> JsResult<JSValue> {
-    spawn_maybe_sync::<true>(global_this, args, secondary_args_value)
+    let mut bun_test_deadline: Option<Timespec> = None;
+    let result = spawn_maybe_sync::<true>(
+        global_this,
+        args,
+        secondary_args_value,
+        &mut bun_test_deadline,
+    );
+    // A bun:test deadline that passed while the isolated loop was blocking is reported only now: the loop is torn down and the child reaped, so the runner's callback re-enters nothing that is mid-flight. With an exception pending (spawn failure, termination) the file timer is left armed and reports it from the main loop instead.
+    if let Some(deadline) = bun_test_deadline
+        && result.is_ok()
+        && !global_this.has_exception()
+        && let Some(runner) = crate::test_runner::jest::Jest::runner()
+        && let Some(active_file) = runner.bun_test_root.active_file.clone()
+    {
+        let vm = global_this.bun_vm().as_mut();
+        runner.remove_active_timeout(vm);
+        crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
+            &active_file,
+            &deadline,
+            vm,
+        );
+        if global_this.has_exception() {
+            return Ok(JSValue::ZERO);
+        }
+    }
+    result
 }
 
 fn spawn_maybe_sync<const IS_SYNC: bool>(
     global_this: &JSGlobalObject,
     args_: JSValue,
     secondary_args_value: Option<JSValue>,
+    bun_test_deadline: &mut Option<Timespec>,
 ) -> JsResult<JSValue> {
     if IS_SYNC {
         // We skip this on Windows due to test failures.
@@ -360,6 +386,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     let mut gid: Option<u32> = None;
     let mut kill_signal: SignalCode = SignalCode::DEFAULT;
     let mut max_buffer: Option<i64> = None;
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let mut cgroup: Option<CgroupTarget> = None;
 
     #[cfg(windows)]
     let mut windows_hide: bool = false;
@@ -688,6 +716,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                         },
                     )?;
                     gid = Some(gid_int as u32);
+                }
+            }
+
+            // Ignored where cgroups don't exist, like `windowsHide` on POSIX.
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            if let Some(value) = args.get(global_this, "cgroup")? {
+                if !value.is_undefined_or_null() {
+                    cgroup = Some(CgroupTarget::from_js(global_this, value)?);
                 }
             }
 
@@ -1025,7 +1061,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // - No stdin, stdout, stderr pipes
     // - No extra fds
     // - No auto killer (for tests)
-    // - No execution time limit (for tests)
     // - No IPC
     // - No inspector (since they might want to press pause or step)
     let can_block_entire_thread_to_reduce_cpu_usage_in_fast_path = (cfg!(unix) && IS_SYNC)
@@ -1037,9 +1072,6 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         && !stdio[2].is_piped()
         && extra_fds.is_empty()
         && !jsc_vm.auto_killer.enabled
-        // `jsc_vm()` is the audited safe `&VM` accessor (centralised opaque-ZST
-        // deref proof in `VirtualMachine`).
-        && !jsc_vm.jsc_vm().has_execution_time_limit()
         && !jsc_vm.is_inspector_enabled()
         && !bun_core::env_var::feature_flag::BUN_FEATURE_FLAG_DISABLE_SPAWNSYNC_FAST_PATH
             .get()
@@ -1095,6 +1127,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     }
 
     let loop_handle = EventLoopHandle::init(event_loop.cast::<()>());
+
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    let cgroup_dir = match &cgroup {
+        Some(target) => Some(target.open(global_this)?),
+        None => None,
+    };
 
     let mut spawn_options = SpawnOptions {
         // Empty means "inherit the parent's working directory". Only chdir
@@ -1156,6 +1194,8 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             verbatim_arguments: windows_verbatim_arguments,
             loop_: loop_handle,
         },
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        cgroup_fd: cgroup_dir.as_ref().map(|c| c.dir.handle()),
         ..Default::default()
     };
 
@@ -1176,7 +1216,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             spawn_options.deinit();
             let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                 // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                // string we built above (lives in `arg0_backing`/`arg_backing`).
+                // string we built above (lives in `cstr_storage`).
                 ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
             } else {
                 ZStr::EMPTY
@@ -1209,6 +1249,12 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             sys::Result::Err(err) => {
                 // See EMFILE arm above.
                 spawn_options.deinit();
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if let Some(c) = &cgroup_dir
+                    && err.syscall == sys::Tag::clone3
+                {
+                    return Err(global_this.throw_value(c.target.blame(&err).to_js(global_this)));
+                }
                 match err.get_errno() {
                     errno @ (sys::Errno::EACCES
                     | sys::Errno::ENOENT
@@ -1217,7 +1263,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     | sys::Errno::ENOTDIR) => {
                         let display_path: &ZStr = if !argv.is_empty() && !argv[0].is_null() {
                             // SAFETY: argv[0] is non-null and points at a NUL-terminated
-                            // string we built above (lives in `arg0_backing`/`arg_backing`).
+                            // string we built above (lives in `cstr_storage`).
                             ZStr::from_cstr(unsafe { bun_core::ffi::cstr(argv[0]) })
                         } else {
                             ZStr::EMPTY
@@ -1525,6 +1571,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                 None,
                 core::mem::size_of::<*mut IPC::SendQueue>() as core::ffi::c_int,
                 posix_ipc_fd.native(),
+                0,
                 true,
             );
             if !raw_socket.is_null() {
@@ -1632,8 +1679,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
         // This must go before other things happen so that the exit handler is
         // registered before onProcessExit can potentially be called.
         if let Some(timeout_val) = timeout {
-            let ts =
-                Timespec::ms_from_now(TimespecMockMode::AllowMockedTime, i64::from(timeout_val));
+            let ts = Timespec::ms_from_now(TimespecMockMode::ForceRealTime, i64::from(timeout_val));
             // Note: `EventLoopTimer.next` is a local-stub Timespec until
             // `bun_event_loop` switches to `bun_core::Timespec`; copy fieldwise.
             subprocess.event_loop_timer.with_mut(|t| {
@@ -1850,7 +1896,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
     // This ensures JavaScript timers don't fire and stdin/stdout from the main process aren't affected
     {
         let mut absolute_timespec = Timespec::EPOCH;
-        let mut now = Timespec::now(TimespecMockMode::AllowMockedTime);
+        let mut now = Timespec::now(TimespecMockMode::ForceRealTime);
         let mut user_timespec: Timespec = if let Some(timeout_ms) = timeout {
             now.add_ms(i64::from(timeout_ms))
         } else {
@@ -1864,8 +1910,14 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             if let Some(abort_signal_timeout) = signal.get_timeout() {
                 // Note: `AbortSignal::Timeout.event_loop_timer` uses the
                 // bun_event_loop-local `Timespec` stub; convert fieldwise.
+                //
+                // A fake-heap deadline is on the mocked clock, which cannot
+                // advance while this call blocks; only a real-heap one is
+                // comparable with `now`.
                 if abort_signal_timeout.event_loop_timer.state
                     == crate::timer::EventLoopTimerState::ACTIVE
+                    && abort_signal_timeout.event_loop_timer.in_heap
+                        == crate::timer::InHeap::Regular
                 {
                     let next = &abort_signal_timeout.event_loop_timer.next;
                     let next_ts = Timespec {
@@ -1934,7 +1986,7 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
             }) {
                 TickState::Completed => {}
                 TickState::Timeout => {
-                    now = Timespec::now(TimespecMockMode::AllowMockedTime);
+                    now = Timespec::now(TimespecMockMode::ForceRealTime);
                     let did_user_timeout = has_user_timespec
                         && (absolute_timespec.eql(&user_timespec)
                             || user_timespec.order(&now) == core::cmp::Ordering::Less);
@@ -1947,39 +1999,24 @@ fn spawn_maybe_sync<const IS_SYNC: bool>(
                     // Support bun:test timeouts AND spawnSync() timeout.
                     // There is a scenario where inside of spawnSync() a totally
                     // different test fails, and that SHOULD be okay.
-                    if has_bun_test_timeout {
-                        if bun_test_timeout.order(&now) == core::cmp::Ordering::Less {
-                            bun_test_fired = true;
-                            let mut active_file_strong = crate::test_runner::jest::Jest::runner()
-                                .unwrap()
-                                .bun_test_root
-                                .active_file
-                                // TODO: add a .cloneNonOptional()?
-                                .clone();
-
-                            let taken_active_file = active_file_strong.take().unwrap();
-
-                            // SAFETY: jsc_vm_ptr is the live thread VM.
-                            crate::test_runner::jest::Jest::runner()
-                                .unwrap()
-                                .remove_active_timeout(unsafe { &mut *jsc_vm_ptr });
-
-                            // This might internally call `kill(2)` on this
-                            // spawnSync process. Even if we do that, we still
-                            // need to reap the process. So we may go through
-                            // the event loop again, but it should wake up
-                            // ~instantly so we can drain the events.
-                            crate::test_runner::bun_test::BunTest::bun_test_timeout_callback(
-                                &taken_active_file,
-                                &absolute_timespec,
-                                // SAFETY: jsc_vm_ptr is the live thread VM.
-                                unsafe { &*jsc_vm_ptr },
-                            );
-                            // The direct child may already be reaped (and
-                            // gone from the auto-killer), so kill it here too.
-                            let _ = subprocess.try_kill(subprocess.kill_signal);
-                            // active_file_strong / taken_active_file drop here (was `defer .deinit()`).
+                    // Kill the dangling processes now so this loop can drain, but leave the runner's timeout callback to `spawn_sync`: it re-enters the test runner and must not run while this isolated loop is still active.
+                    if has_bun_test_timeout
+                        && bun_test_timeout.order(&now) == core::cmp::Ordering::Less
+                    {
+                        bun_test_fired = true;
+                        *bun_test_deadline = Some(absolute_timespec);
+                        if let Some(active_file) = crate::test_runner::jest::Jest::runner()
+                            .unwrap()
+                            .bun_test_root
+                            .active_file
+                            .clone()
+                        {
+                            active_file
+                                .get()
+                                .execution
+                                .kill_dangling_processes_on_timeout(global_this);
                         }
+                        let _ = subprocess.try_kill(subprocess.kill_signal);
                     }
                 }
             }
@@ -2166,4 +2203,113 @@ fn append_envp_from_js(
         storage.push(line);
     }
     Ok(())
+}
+
+/// `cgroup` option: a cgroup directory the child starts inside.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+enum CgroupTarget {
+    Path(ZBox),
+    DirFd(Fd),
+}
+
+/// The directory fd handed to `posix_spawn_bun`, plus what to blame on error.
+#[cfg(any(target_os = "linux", target_os = "android"))]
+struct OpenCgroup<'a> {
+    /// Always ours and `O_CLOEXEC` (a caller's fd is dup'd), so it can neither
+    /// leak into the child nor be closed under us mid-spawn.
+    dir: sys::File,
+    target: &'a CgroupTarget,
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
+impl CgroupTarget {
+    /// Attach whichever of path / fd the caller gave us.
+    fn blame(&self, err: &sys::Error) -> sys::Error {
+        match self {
+            Self::Path(path) => err.with_path(path.as_bytes()),
+            Self::DirFd(fd) => err.with_fd(*fd),
+        }
+    }
+
+    fn from_js(global: &JSGlobalObject, value: JSValue) -> JsResult<Self> {
+        if value.is_number() {
+            // `validate_integer_range` maps NaN to the default; there is no default fd.
+            let fd = global.validate_integer_range::<i32>(
+                value,
+                -1,
+                bun_sql_jsc::jsc::IntegerRange {
+                    min: 0,
+                    max: i128::from(i32::MAX),
+                    field_name: b"cgroup",
+                    ..Default::default()
+                },
+            )?;
+            if fd < 0 {
+                return Err(global.throw_range_error(
+                    value.as_number(),
+                    bun_fmt::OutOfRangeOptions {
+                        field_name: b"cgroup",
+                        msg: b"an integer",
+                        ..Default::default()
+                    },
+                ));
+            }
+            return Ok(Self::DirFd(Fd::from_native(fd)));
+        }
+        if value.is_string() {
+            let path = value.to_slice(global)?;
+            if strings::contains_char(path.slice(), 0) {
+                return Err(global
+                    .err(
+                        jsc::ErrorCode::INVALID_ARG_VALUE,
+                        format_args!(
+                            "The property 'options.cgroup' must be a string without null bytes. Received {}",
+                            bun_fmt::quote(path.slice())
+                        ),
+                    )
+                    .throw());
+            }
+            return Ok(Self::Path(ZBox::from_bytes(path.slice())));
+        }
+        Err(global.throw_invalid_argument_type_value(b"cgroup", b"string or number", value))
+    }
+
+    /// Resolve to a directory fd in the parent so a bad path fails the spawn
+    /// with errno + path rather than an opaque exit 127 from the child.
+    fn open(&self, global: &JSGlobalObject) -> JsResult<OpenCgroup<'_>> {
+        let dir = match self {
+            Self::DirFd(fd) => sys::dup(*fd),
+            Self::Path(path) => sys::open_dir_absolute(path.as_bytes()),
+        };
+        let opened = match dir {
+            Ok(dir) => OpenCgroup {
+                dir: sys::File::from_fd(dir),
+                target: self,
+            },
+            Err(err) => return Err(global.throw_value(self.blame(&err).to_js(global))),
+        };
+
+        // Best-effort: a frozen destination would park the child before exec
+        // and, through vfork, this thread with it. The kernel reports no error.
+        if Self::is_frozen(opened.dir.handle()) {
+            let err = self.blame(&sys::Error::from_code(sys::Errno::EBUSY, sys::Tag::clone3));
+            return Err(global.throw_value(err.to_js(global)));
+        }
+
+        Ok(opened)
+    }
+
+    fn is_frozen(dir: Fd) -> bool {
+        // v2: `cgroup.freeze` is this cgroup's own request (set before freezing
+        // completes); `cgroup.events` `frozen 1` is the effective state,
+        // including a freeze inherited from an ancestor.
+        if let Ok(freeze) = sys::File::read_from(dir, b"cgroup.freeze") {
+            return freeze.starts_with(b"1")
+                || sys::File::read_from(dir, b"cgroup.events")
+                    .is_ok_and(|events| strings::contains(&events, b"frozen 1"));
+        }
+        // v1 only freezes where the freezer controller is co-mounted, and
+        // reports THAWED / FREEZING / FROZEN (effective state).
+        sys::File::read_from(dir, b"freezer.state").is_ok_and(|state| !state.starts_with(b"THAWED"))
+    }
 }

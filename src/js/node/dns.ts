@@ -227,6 +227,7 @@ const validResolveRRTypes = {
   PTR: true,
   SOA: true,
   SRV: true,
+  TLSA: true,
   TXT: true,
 };
 

@@ -168,22 +168,41 @@ describe("compiled binary validity", () => {
   }
   type ModuleGraphLayout = ReturnType<typeof locateModuleGraph>;
 
-  const corruptedEntryPoints = [
+  const twoFiles = { "app.js": `console.log("should not run");`, "worker.js": `console.log("should not run");` };
+  const corruptedGraphs = [
     {
       label: "entry_point_id equal to the module count",
       files: { "app.js": `console.log("should not run");` },
+      error: "entry point ID is out of range for the module list",
       corrupt(executable: Buffer, { moduleRecordCount, entryPointIdAt }: ModuleGraphLayout) {
         executable.writeUInt32LE(moduleRecordCount, entryPointIdAt);
       },
     },
     {
-      // Records are loaded into a map keyed by name, so two records with the same name
-      // load as one file: an id below the record count can still be past the last file.
-      label: "entry_point_id past the files left after a duplicated module name",
-      files: { "app.js": `console.log("should not run");`, "worker.js": `console.log("should not run");` },
-      corrupt(executable: Buffer, { modulesAt, entryPointIdAt }: ModuleGraphLayout) {
+      // Files are keyed by name, so a repeated name would collapse two records into one
+      // and leave every later id pointing at the wrong file.
+      label: "two module records with the same name",
+      files: twoFiles,
+      error: "two modules share a name",
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
         executable.copy(executable, modulesAt + MODULE_RECORD_SIZE, modulesAt, modulesAt + 8);
-        executable.writeUInt32LE(1, entryPointIdAt);
+      },
+    },
+    {
+      label: "a module name pointing past the end of the graph",
+      files: twoFiles,
+      error: "module name is out of range",
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
+        executable.writeUInt32LE(0xfffffff0, modulesAt);
+      },
+    },
+    {
+      // Record layout: name {offset, length}, contents {offset, length}, ...
+      label: "module contents longer than the graph",
+      files: twoFiles,
+      error: "module contents are out of range",
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
+        executable.writeUInt32LE(0x7fffffff, modulesAt + MODULE_RECORD_SIZE + 12);
       },
     },
   ];
@@ -193,9 +212,9 @@ describe("compiled binary validity", () => {
   // with Bun's own ad-hoc signer, and `from_bytes` is shared across platforms.
   // Higher per-test timeout: the whole executable (~1GB under debug+ASAN) is
   // compiled, read back and rewritten.
-  test.skipIf(isMacOS).each(corruptedEntryPoints)(
+  test.skipIf(isMacOS).each(corruptedGraphs)(
     "$label is reported instead of crashing",
-    async ({ files, corrupt }) => {
+    async ({ files, error, corrupt }) => {
       using dir = tempDir("build-compile-corrupt-entry", files);
       const result = await Bun.build({
         entrypoints: Object.keys(files).map(file => join(String(dir), file)),
@@ -218,7 +237,7 @@ describe("compiled binary validity", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
       expect({ stdout, stderr, exitCode }).toEqual({
         stdout: "",
-        stderr: expect.stringContaining("Corrupted module graph: entry point ID is out of range for the module list"),
+        stderr: expect.stringContaining("Corrupted module graph: " + error),
         exitCode: 1,
       });
     },

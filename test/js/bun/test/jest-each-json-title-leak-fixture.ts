@@ -1,4 +1,5 @@
 import { test } from "bun:test";
+import { rss } from "harness";
 
 // Registers LEAK_FIXTURE_ROWS tests whose `%j` title stringifies a ~512KB
 // object. Each registration formats the title through format_label's
@@ -11,5 +12,5 @@ test.each(table)("%j", () => {});
 
 test("report rss", () => {
   Bun.gc(true);
-  console.log("RSS_BYTES:" + process.memoryUsage().rss);
+  console.log("RSS_BYTES:" + rss());
 });

@@ -1465,6 +1465,22 @@ describe("latexMath option", () => {
     expect(Markdown.ansi("$$a$$\n", { colors: false })).toBe("$$a$$\n");
   });
 
+  // A span that continues on the next line reaches the renderer as one chunk
+  // with the line break inside it. It has to stay one line of output, or the
+  // continuation loses the list indent / quote gutter and the column count.
+  test("ansi(): line breaks inside math and code spans become spaces", () => {
+    expect(Markdown.ansi("x $a +\nb$ y\n")).toBe("x \x1b[35m$a + b$\x1b[39m y\x1b[0m\n");
+    const plain = (md: string, columns?: number) => Markdown.ansi(md, { colors: false, columns });
+    expect(plain("- item\n  $$\n  x\n  $$\n- next\n")).toBe("  * item $$ x $$\n  * next\n");
+    expect(plain("> quote $$\n> x\n> $$ end\n")).toBe("| quote $$ x $$ end\n");
+    expect(plain("- The value $a +\n  b$ matters\n")).toBe("  * The value $a + b$ matters\n");
+    expect(plain("- item `a\n  b` tail\n- next\n")).toBe("  * item a b tail\n  * next\n");
+    // The column count stays accurate after the span, so the wrap falls where it did for plain text.
+    expect(plain("$$\nabcdefghij\nklmnopqrst\n$$ one two three four five six\n", 30)).toBe(
+      "$$ abcdefghij klmnopqrst $$\none two three four five six\n",
+    );
+  });
+
   test("math delimiter floods render in linear time", async () => {
     await using proc = Bun.spawn({
       cmd: [
@@ -1554,7 +1570,9 @@ describe("underline option", () => {
     );
   });
 
-  test("ansi() enables underline", () => {
-    expect(Markdown.ansi("_a_ *b*\n")).toBe("\x1b[4ma\x1b[24m \x1b[3mb\x1b[23m\x1b[0m\n");
+  // The terminal preset (ansi() and `bun file.md`) deliberately leaves the
+  // option off: underscores keep rendering as emphasis there.
+  test("ansi() keeps underscores as emphasis", () => {
+    expect(Markdown.ansi("_a_ __b__\n")).toBe("\x1b[3ma\x1b[23m \x1b[1mb\x1b[22m\x1b[0m\n");
   });
 });

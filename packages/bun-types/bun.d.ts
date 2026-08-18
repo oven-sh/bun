@@ -1657,8 +1657,8 @@ declare module "bun" {
      * Render markdown to an ANSI-colored terminal string.
      *
      * Supports headings, lists, tables, inline styles, syntax-highlighted
-     * code blocks, links, images, and blockquotes. By default, enables all
-     * GFM extensions plus wikilinks, underline, and LaTeX math.
+     * code blocks, links, images, and blockquotes. Enables all GFM
+     * extensions plus wikilinks, autolinks, and LaTeX math spans.
      *
      * @param input The markdown string or buffer to render
      * @param theme Optional theme overrides

@@ -99,7 +99,8 @@ impl Options {
         permissive_www_autolinks: true,
         permissive_email_autolinks: true,
         wiki_links: true,
-        underline: true,
+        // Off pending #39560: on, every `_em_` in a README would render underlined.
+        underline: false,
         latex_math: true,
         ..Self::NONE
     };

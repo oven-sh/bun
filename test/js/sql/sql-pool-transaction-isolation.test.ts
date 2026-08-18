@@ -1,7 +1,11 @@
-// Fault-injection test: the mock server drops the socket mid-query, which a real
-// container will not do on demand. Wire bytes come from ./wire-frames.ts.
+// Pool slot accounting across the paths that hand a connection back to the pool.
+// The mock servers record every statement per connection, so a transaction that
+// lands on a connection somebody else still holds shows up in the recorded order.
+// They also drop the socket on demand, which a real container will not do.
+// Wire bytes come from ./wire-frames.ts.
 import { SQL } from "bun";
 import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import type net from "node:net";
 import {
   listeningServer,
@@ -103,12 +107,26 @@ function firstInterleaving(received: Received[]): string | null {
   return null;
 }
 
-const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer }> = [
-  { adapter: "postgres", mockServer: pgMockServer },
-  { adapter: "mysql", mockServer: mysqlMockServer },
+const adapters: Array<{ adapter: "postgres" | "mysql"; mockServer: MockServer; beginCommand: string }> = [
+  { adapter: "postgres", mockServer: pgMockServer, beginCommand: "BEGIN" },
+  { adapter: "mysql", mockServer: mysqlMockServer, beginCommand: "START TRANSACTION" },
 ];
 
-describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
+// reserved.begin() / beginDistributed() calls that reject before anything is sent.
+const rejectedBeforeBegin = [
+  {
+    name: "begin() with invalid options",
+    begin: (reserved: Bun.ReservedSQL) => reserved.begin("read-only", async () => "unreachable"),
+    message: "Transaction options can only contain letters, spaces, and commas.",
+  },
+  {
+    name: "beginDistributed() with an invalid name",
+    begin: (reserved: Bun.ReservedSQL) => reserved.beginDistributed("bad'name", async () => "unreachable"),
+    message: "This adapter doesn't support distributed transactions.",
+  },
+];
+
+describe.each(adapters)("$adapter", ({ adapter, mockServer, beginCommand }) => {
   const options = (port: number): Bun.SQL.Options => ({
     adapter,
     hostname: "127.0.0.1",
@@ -258,6 +276,134 @@ describe.each(adapters)("$adapter", ({ adapter, mockServer }) => {
       expect(firstInterleaving(received)).toBeNull();
     } finally {
       await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // A transaction started on a reserved connection runs on the reservation's own
+  // slot. When it rejects before BEGIN is sent, the slot has to stay with the
+  // reservation. bun:test also fails these tests if the rejected begin() leaves an
+  // unhandled rejection behind.
+  test.each(rejectedBeforeBegin)(
+    "the reservation keeps its pool slot after reserved $name rejects",
+    async ({ begin, message }) => {
+      const received: Received[] = [];
+      const { port, server } = await mockServer(received);
+      const sql = new SQL(options(port));
+      try {
+        const reserved = await sql.reserve();
+        const err = await begin(reserved).then(
+          () => null,
+          e => e,
+        );
+        expect(err?.message).toBe(message);
+
+        // The reservation holds the pool's only slot, so this has to wait for release().
+        const t1 = sql.begin(async tx => {
+          await tx.unsafe("SELECT 'T1a'");
+          return "t1";
+        });
+        await reserved.unsafe("SELECT 'R1'");
+        await reserved.unsafe("SELECT 'R2'");
+        expect(received).toEqual([
+          { conn: 0, sql: "SELECT 'R1'" },
+          { conn: 0, sql: "SELECT 'R2'" },
+        ]);
+
+        reserved.release();
+        expect(await t1).toBe("t1");
+
+        // release() brought the slot back to zero queries, so it can be reserved again.
+        const reservedAgain = await sql.reserve();
+        await reservedAgain.unsafe("SELECT 'R3'");
+        reservedAgain.release();
+
+        expect(received).toEqual([
+          { conn: 0, sql: "SELECT 'R1'" },
+          { conn: 0, sql: "SELECT 'R2'" },
+          { conn: 0, sql: beginCommand },
+          { conn: 0, sql: "SELECT 'T1a'" },
+          { conn: 0, sql: "COMMIT" },
+          { conn: 0, sql: "SELECT 'R3'" },
+        ]);
+      } finally {
+        await sql.close({ timeout: 0 }).catch(() => {});
+        await new Promise<void>(r => server.close(() => r()));
+      }
+    },
+  );
+
+  test("reserved.close({ timeout }) waits for a transaction started on the reservation", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    const sql = new SQL(options(port));
+    try {
+      const reserved = await sql.reserve();
+      const t1 = reserved.begin(async tx => {
+        await tx.unsafe("SELECT 'T1a'");
+        return "t1";
+      });
+      // The timeout is in seconds. close() resolves as soon as t1 settles; without the
+      // transaction being tracked it would close the connection under t1 instead.
+      const closed = reserved.close({ timeout: 60 });
+      expect(await t1).toBe("t1");
+      await closed;
+      reserved.release();
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "SELECT 'T1a'" },
+        { conn: 0, sql: "COMMIT" },
+      ]);
+    } finally {
+      await sql.close({ timeout: 0 }).catch(() => {});
+      await new Promise<void>(r => server.close(() => r()));
+    }
+  });
+
+  // Runs in a child process: bun:test would turn any unhandled rejection into a test
+  // failure, and the second half of this contract is that one rejection IS reported.
+  test("a rejected reserved begin() is reported as unhandled only when the caller ignores it", async () => {
+    const received: Received[] = [];
+    const { port, server } = await mockServer(received);
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+            const reported = [];
+            process.on("unhandledRejection", err => reported.push(err.message));
+            const sql = new Bun.SQL(${JSON.stringify(options(port))});
+            const reserved = await sql.reserve();
+            const handled = await reserved
+              .begin(async () => {
+                throw new Error("handled by the caller");
+              })
+              .catch(err => err.message);
+            reserved.begin("read-only", async () => {});
+            await reserved.unsafe("SELECT 'still reserved'");
+            reserved.release();
+            await sql.close();
+            console.log(JSON.stringify({ handled, reported }));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual({
+        handled: "handled by the caller",
+        reported: ["Transaction options can only contain letters, spaces, and commas."],
+      });
+      expect(exitCode).toBe(0);
+      expect(received).toEqual([
+        { conn: 0, sql: beginCommand },
+        { conn: 0, sql: "ROLLBACK" },
+        { conn: 0, sql: "SELECT 'still reserved'" },
+      ]);
+    } finally {
       await new Promise<void>(r => server.close(() => r()));
     }
   });

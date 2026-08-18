@@ -378,8 +378,29 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.array = sql.array;
     reserved_sql.listen = listen;
     reserved_sql.notify = makeNotify(reserved_sql);
-    function onTransactionFinished(transaction_promise: Promise<any>) {
+    function settleReservedTransaction(transaction_promise: Promise<any>, settle: (value: any) => void, value: any) {
       reservedTransaction.delete(transaction_promise);
+      settle(value);
+    }
+    // reserved_sql.close({ timeout }) waits on reservedTransaction. Entries are removed
+    // from the settle functions, not from a handler on the returned promise: a handler
+    // marks the caller's promise as handled (hiding a rejection the caller ignores), and
+    // a .finally() chain rejects a second promise that nobody handles.
+    function runReservedTransaction(callback: TransactionCallback, options: string | undefined, distributed: boolean) {
+      const { promise, resolve, reject } = Promise.withResolvers();
+      reservedTransaction.add(promise);
+      // lets just reuse the same code path as the transaction begin
+      onTransactionConnected(
+        callback,
+        options,
+        settleReservedTransaction.bind(null, promise, resolve),
+        settleReservedTransaction.bind(null, promise, reject),
+        true,
+        distributed,
+        null,
+        pooledConnection,
+      );
+      return promise;
     }
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
@@ -395,12 +416,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      const { promise, resolve, reject } = Promise.withResolvers();
-      // lets just reuse the same code path as the transaction begin
-      onTransactionConnected(callback, name, resolve, reject, true, true, null, pooledConnection);
-      reservedTransaction.add(promise);
-      promise.finally(onTransactionFinished.bind(null, promise));
-      return promise;
+      return runReservedTransaction(callback, name, true);
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
@@ -421,12 +437,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      const { promise, resolve, reject } = Promise.withResolvers();
-      // lets just reuse the same code path as the transaction begin
-      onTransactionConnected(callback, options, resolve, reject, true, false, null, pooledConnection);
-      reservedTransaction.add(promise);
-      promise.finally(onTransactionFinished.bind(null, promise));
-      return promise;
+      return runReservedTransaction(callback, options, false);
     };
 
     reserved_sql.flush = () => {
@@ -580,7 +591,9 @@ const SQL: typeof Bun.SQL = function SQL(
       // Get distributed transaction commands from adapter
       const commands = pool.getDistributedTransactionCommands?.(options);
       if (!commands) {
-        pool.release(pooledConnection);
+        if (!dontRelease) {
+          pool.release(pooledConnection);
+        }
         return reject(new Error(`This adapter doesn't support distributed transactions.`));
       }
 
@@ -596,7 +609,9 @@ const SQL: typeof Bun.SQL = function SQL(
       if (options && pool.validateTransactionOptions) {
         const validation = pool.validateTransactionOptions(options);
         if (!validation.valid) {
-          pool.release(pooledConnection);
+          if (!dontRelease) {
+            pool.release(pooledConnection);
+          }
           return reject(new Error(validation.error));
         }
       }
@@ -611,7 +626,9 @@ const SQL: typeof Bun.SQL = function SQL(
         ROLLBACK_TO_SAVEPOINT_COMMAND = commands.ROLLBACK_TO_SAVEPOINT;
         BEFORE_COMMIT_OR_ROLLBACK_COMMAND = commands.BEFORE_COMMIT_OR_ROLLBACK || null;
       } catch (err) {
-        pool.release(pooledConnection);
+        if (!dontRelease) {
+          pool.release(pooledConnection);
+        }
         return reject(err);
       }
     }

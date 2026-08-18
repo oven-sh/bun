@@ -168,6 +168,8 @@ pub struct RouteBundle {
     pub(crate) client_bundle: Option<StaticRouteRef>,
     pub(crate) client_script_generation: u32,
     pub(crate) active_viewers: u32,
+    /// A request already re-bundled this failing route's imports and no file changed since; cleared when a hot-reload bundle starts.
+    pub(crate) rebundled_for_failures: bool,
 }
 
 impl RouteBundle {

@@ -1,6 +1,7 @@
 // Bundling bugs that only occur in DevServer; independent cases share one dev server, one route each.
 import type { Bake } from "bun";
 import { expect } from "bun:test";
+import { readdirSync, readlinkSync } from "node:fs";
 import { Dev, devTest, emptyHtmlFile, minimalFramework } from "../bake-harness";
 
 const buildFailedTitle = "<title>Bun - Build Failed</title>";
@@ -1193,5 +1194,84 @@ devTest("route marked by an earlier failure does not report another route's erro
 
     await dev.fetch("/b").equals("b: s");
     await expectBuildFailedPage(dev, "/a", `a.ts`);
+  },
+});
+devTest("requests for a route with build errors do not re-bundle it every time", {
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 1;
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+
+    for (const broken of ["export const value = <<<SYNTAX_ERROR>>>;", "export const value = <<<ANOTHER_ONE>>>;"]) {
+      await dev.write("other.ts", broken);
+
+      // The first request after a file change re-bundles the route once, in case the incremental build got the failures wrong.
+      const rebundled = dev.waitForHotReload(false);
+      await expectBuildFailedPage(dev, "/");
+      await rebundled;
+
+      // Until another file changes, requests serve the failures that bundle produced.
+      expect(
+        await dev.countBundles(async () => {
+          for (let i = 0; i < 5; i++) {
+            await expectBuildFailedPage(dev, "/");
+          }
+        }),
+      ).toBe(0);
+    }
+
+    await dev.write("other.ts", "export const value = 2;");
+    expect((await dev.fetch("/")).status).toBe(200);
+  },
+});
+devTest("re-bundling a watched file does not leak a file descriptor (counted through /proc, so linux only)", {
+  skip: ["win32", "darwin"],
+  files: {
+    "index.html": emptyHtmlFile({
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import { value } from "./other";
+      console.log(value);
+    `,
+    "other.ts": `
+      export const value = 0;
+    `,
+  },
+  async test(dev) {
+    expect((await dev.fetch("/")).status).toBe(200);
+
+    const other = dev.join("other.ts");
+    const fdDir = `/proc/${dev.devProcess.pid}/fd`;
+    const descriptorsForOther = () => {
+      let count = 0;
+      for (const fd of readdirSync(fdDir)) {
+        let target: string;
+        try {
+          target = readlinkSync(`${fdDir}/${fd}`);
+        } catch {
+          continue;
+        }
+        if (target === other) count++;
+      }
+      return count;
+    };
+
+    // The watcher keeps one descriptor; each re-bundle opens another to read the file, which must be closed once the watcher declines it.
+    const before = descriptorsForOther();
+    for (let i = 1; i <= 5; i++) {
+      await dev.write("other.ts", `export const value = ${i};`);
+    }
+    expect(descriptorsForOther()).toBe(before);
   },
 });

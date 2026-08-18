@@ -423,6 +423,7 @@ pub struct DevServer {
     pub(crate) emit_memory_visualizer_events: u32,
     pub(crate) memory_visualizer_timer: EventLoopTimer,
 
+    /// When false, a request for a route with failures re-bundles its imports once per file change before showing them; see `RouteBundle::rebundled_for_failures`.
     pub(crate) assume_perfect_incremental_bundling: bool,
 
     /// If true, console logs from the browser will be echoed to the server console.
@@ -2274,8 +2275,11 @@ fn check_route_failures(
         TraceImportGoal::FindErrors,
     )?;
     if !dev.incremental_result.failures_added.is_empty() {
-        // See comment on this field for information
-        if !dev.assume_perfect_incremental_bundling {
+        let assume_perfect_incremental_bundling = dev.assume_perfect_incremental_bundling;
+        let rb = dev.route_bundle_ptr(route_bundle_index);
+        // See `assume_perfect_incremental_bundling`.
+        if !assume_perfect_incremental_bundling && !rb.rebundled_for_failures {
+            rb.rebundled_for_failures = true;
             // Cache bust EVERYTHING reachable
             {
                 let mut it = gts.client_bits.iterator::<true, true>();
@@ -3142,6 +3146,12 @@ impl DevServer {
         debug_assert!(self.current_bundle.is_none());
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
+
+        if had_reload_event {
+            for route_bundle in &mut self.route_bundles {
+                route_bundle.rebundled_for_failures = false;
+            }
+        }
 
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
@@ -5304,6 +5314,7 @@ impl DevServer {
             server_state: route_bundle::State::Unqueued,
             client_bundle: None,
             active_viewers: 0,
+            rebundled_for_failures: false,
         });
         // SAFETY: index_location still valid (route_bundles is a separate field)
         unsafe { *index_location = Some(bundle_index) };

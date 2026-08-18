@@ -4781,6 +4781,7 @@ pub mod bv2_impl {
                                 contents_or_fd: parse_task::ContentsOrFd::Fd {
                                     dir: bun_sys::Fd::INVALID,
                                     file: bun_sys::Fd::INVALID,
+                                    owns_file: false,
                                 },
                                 side_effects: bun_ast::SideEffects::HasSideEffects,
                                 jsx: this
@@ -6908,28 +6909,32 @@ pub mod bv2_impl {
             }
 
             // To minimize contention, watchers are appended on the bundle thread.
-            if this.bun_watcher.is_some() {
-                if parse_result.watcher_data.fd != bun_sys::Fd::INVALID {
-                    let source_index = parse_result.value.source_index();
-                    // borrowck — read the source path before
-                    // `should_add_watcher(&self)` so the column borrow is released.
-                    let source_path = this.graph.input_files.items_source()[source_index as usize]
-                        .path
-                        .text;
-                    if this.should_add_watcher(source_path) {
+            let watcher_data = &parse_result.watcher_data;
+            if this.bun_watcher.is_some() && watcher_data.fd.is_valid() {
+                let source_index = parse_result.value.source_index();
+                // borrowck — read the source path before
+                // `should_add_watcher(&self)` so the column borrow is released.
+                let source_path = this.graph.input_files.items_source()[source_index as usize]
+                    .path
+                    .text;
+                let adopted = this.should_add_watcher(source_path)
+                    && matches!(
                         // const generic `CLONE_FILE_PATH = isWindows`
                         // matches `cfg!(windows)` at compile time.
-                        let _ = this
-                            .bun_watcher_mut()
+                        this.bun_watcher_mut()
                             .unwrap()
                             .add_file::<{ cfg!(windows) }>(
-                                parse_result.watcher_data.fd,
+                                watcher_data.fd,
                                 source_path,
                                 bun_wyhash::hash(source_path) as u32,
-                                parse_result.watcher_data.dir_fd,
+                                watcher_data.dir_fd,
                                 None,
-                            );
-                    }
+                            ),
+                        Ok(bun_watcher::FdOwnership::Watcher)
+                    );
+                // Already watched (every dev-server re-parse) or excluded: nothing else closes the fd this parse opened.
+                if !adopted && watcher_data.owns_fd {
+                    let _ = bun_sys::close(watcher_data.fd);
                 }
             }
 

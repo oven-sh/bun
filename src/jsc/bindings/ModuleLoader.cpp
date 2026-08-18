@@ -1048,9 +1048,9 @@ static JSValue fetchESMSourceCode(
             RELEASE_AND_RETURN(scope, rejectOrResolve(JSSourceCode::create(vm, JSC::SourceCode(provider))));
         }
 
-            // Native modules the ES module loader instantiates itself (require() goes through
-            // the registry) still belong in process.moduleLoadList; their tag is their registry id.
-#define RECORD_NATIVE_MODULE_LOAD(name)                                                                                                                                                                 \
+        // Native modules the ES module loader instantiates itself (require() goes through
+        // the registry) still belong in process.moduleLoadList; their tag is their registry id.
+#define RECORD_NATIVE_MODULE_LOAD(name)                                                                                                                                                                  \
     globalObject->internalModuleRegistry()->recordLoad(globalObject, vm, static_cast<InternalModuleRegistry::Field>(SyntheticModuleType::name & (SyntheticModuleType::InternalModuleRegistryFlag - 1))); \
     RETURN_IF_EXCEPTION(scope, {});
 

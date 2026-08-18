@@ -61,877 +61,828 @@ DEFINE_NATIVE_MODULE(NodeConstants)
 {
     INIT_NATIVE_MODULE(NodeConstants, 0);
 
+    struct Entry {
+        ASCIILiteral name;
+        double value;
+    };
+    static constexpr Entry constants[] = {
 #ifdef RTLD_LAZY
-    put(Identifier::fromString(vm, "RTLD_LAZY"_s), jsNumber(RTLD_LAZY));
+        { "RTLD_LAZY"_s, RTLD_LAZY },
 #endif
 #ifdef RTLD_NOW
-    put(Identifier::fromString(vm, "RTLD_NOW"_s), jsNumber(RTLD_NOW));
+        { "RTLD_NOW"_s, RTLD_NOW },
 #endif
 #ifdef RTLD_GLOBAL
-    put(Identifier::fromString(vm, "RTLD_GLOBAL"_s), jsNumber(RTLD_GLOBAL));
+        { "RTLD_GLOBAL"_s, RTLD_GLOBAL },
 #endif
 #ifdef RTLD_LOCAL
-    put(Identifier::fromString(vm, "RTLD_LOCAL"_s), jsNumber(RTLD_LOCAL));
+        { "RTLD_LOCAL"_s, RTLD_LOCAL },
 #endif
 #ifdef RTLD_DEEPBIND
-    put(Identifier::fromString(vm, "RTLD_DEEPBIND"_s), jsNumber(RTLD_DEEPBIND));
+        { "RTLD_DEEPBIND"_s, RTLD_DEEPBIND },
 #endif
 #ifdef E2BIG
-    put(Identifier::fromString(vm, "E2BIG"_s), jsNumber(E2BIG));
+        { "E2BIG"_s, E2BIG },
 #endif
 #ifdef EACCES
-    put(Identifier::fromString(vm, "EACCES"_s), jsNumber(EACCES));
+        { "EACCES"_s, EACCES },
 #endif
 #ifdef EADDRINUSE
-    put(Identifier::fromString(vm, "EADDRINUSE"_s), jsNumber(EADDRINUSE));
+        { "EADDRINUSE"_s, EADDRINUSE },
 #endif
 #ifdef EADDRNOTAVAIL
-    put(Identifier::fromString(vm, "EADDRNOTAVAIL"_s), jsNumber(EADDRNOTAVAIL));
+        { "EADDRNOTAVAIL"_s, EADDRNOTAVAIL },
 #endif
 #ifdef EAFNOSUPPORT
-    put(Identifier::fromString(vm, "EAFNOSUPPORT"_s), jsNumber(EAFNOSUPPORT));
+        { "EAFNOSUPPORT"_s, EAFNOSUPPORT },
 #endif
 #ifdef EAGAIN
-    put(Identifier::fromString(vm, "EAGAIN"_s), jsNumber(EAGAIN));
+        { "EAGAIN"_s, EAGAIN },
 #endif
 #ifdef EALREADY
-    put(Identifier::fromString(vm, "EALREADY"_s), jsNumber(EALREADY));
+        { "EALREADY"_s, EALREADY },
 #endif
 #ifdef EBADF
-    put(Identifier::fromString(vm, "EBADF"_s), jsNumber(EBADF));
+        { "EBADF"_s, EBADF },
 #endif
 #ifdef EBADMSG
-    put(Identifier::fromString(vm, "EBADMSG"_s), jsNumber(EBADMSG));
+        { "EBADMSG"_s, EBADMSG },
 #endif
 #ifdef EBUSY
-    put(Identifier::fromString(vm, "EBUSY"_s), jsNumber(EBUSY));
+        { "EBUSY"_s, EBUSY },
 #endif
 #ifdef ECANCELED
-    put(Identifier::fromString(vm, "ECANCELED"_s), jsNumber(ECANCELED));
+        { "ECANCELED"_s, ECANCELED },
 #endif
 #ifdef ECHILD
-    put(Identifier::fromString(vm, "ECHILD"_s), jsNumber(ECHILD));
+        { "ECHILD"_s, ECHILD },
 #endif
 #ifdef ECONNABORTED
-    put(Identifier::fromString(vm, "ECONNABORTED"_s), jsNumber(ECONNABORTED));
+        { "ECONNABORTED"_s, ECONNABORTED },
 #endif
 #ifdef ECONNREFUSED
-    put(Identifier::fromString(vm, "ECONNREFUSED"_s), jsNumber(ECONNREFUSED));
+        { "ECONNREFUSED"_s, ECONNREFUSED },
 #endif
 #ifdef ECONNRESET
-    put(Identifier::fromString(vm, "ECONNRESET"_s), jsNumber(ECONNRESET));
+        { "ECONNRESET"_s, ECONNRESET },
 #endif
 #ifdef EDEADLK
-    put(Identifier::fromString(vm, "EDEADLK"_s), jsNumber(EDEADLK));
+        { "EDEADLK"_s, EDEADLK },
 #endif
 #ifdef EDESTADDRREQ
-    put(Identifier::fromString(vm, "EDESTADDRREQ"_s), jsNumber(EDESTADDRREQ));
+        { "EDESTADDRREQ"_s, EDESTADDRREQ },
 #endif
 #ifdef EDOM
-    put(Identifier::fromString(vm, "EDOM"_s), jsNumber(EDOM));
+        { "EDOM"_s, EDOM },
 #endif
 #ifdef EDQUOT
-    put(Identifier::fromString(vm, "EDQUOT"_s), jsNumber(EDQUOT));
+        { "EDQUOT"_s, EDQUOT },
 #endif
 #ifdef EEXIST
-    put(Identifier::fromString(vm, "EEXIST"_s), jsNumber(EEXIST));
+        { "EEXIST"_s, EEXIST },
 #endif
 #ifdef EFAULT
-    put(Identifier::fromString(vm, "EFAULT"_s), jsNumber(EFAULT));
+        { "EFAULT"_s, EFAULT },
 #endif
 #ifdef EFBIG
-    put(Identifier::fromString(vm, "EFBIG"_s), jsNumber(EFBIG));
+        { "EFBIG"_s, EFBIG },
 #endif
 #ifdef EHOSTUNREACH
-    put(Identifier::fromString(vm, "EHOSTUNREACH"_s), jsNumber(EHOSTUNREACH));
+        { "EHOSTUNREACH"_s, EHOSTUNREACH },
 #endif
 #ifdef EIDRM
-    put(Identifier::fromString(vm, "EIDRM"_s), jsNumber(EIDRM));
+        { "EIDRM"_s, EIDRM },
 #endif
 #ifdef EILSEQ
-    put(Identifier::fromString(vm, "EILSEQ"_s), jsNumber(EILSEQ));
+        { "EILSEQ"_s, EILSEQ },
 #endif
 #ifdef EINPROGRESS
-    put(Identifier::fromString(vm, "EINPROGRESS"_s), jsNumber(EINPROGRESS));
+        { "EINPROGRESS"_s, EINPROGRESS },
 #endif
 #ifdef EINTR
-    put(Identifier::fromString(vm, "EINTR"_s), jsNumber(EINTR));
+        { "EINTR"_s, EINTR },
 #endif
 #ifdef EINVAL
-    put(Identifier::fromString(vm, "EINVAL"_s), jsNumber(EINVAL));
+        { "EINVAL"_s, EINVAL },
 #endif
 #ifdef EIO
-    put(Identifier::fromString(vm, "EIO"_s), jsNumber(EIO));
+        { "EIO"_s, EIO },
 #endif
 #ifdef EISCONN
-    put(Identifier::fromString(vm, "EISCONN"_s), jsNumber(EISCONN));
+        { "EISCONN"_s, EISCONN },
 #endif
 #ifdef EISDIR
-    put(Identifier::fromString(vm, "EISDIR"_s), jsNumber(EISDIR));
+        { "EISDIR"_s, EISDIR },
 #endif
 #ifdef ELOOP
-    put(Identifier::fromString(vm, "ELOOP"_s), jsNumber(ELOOP));
+        { "ELOOP"_s, ELOOP },
 #endif
 #ifdef EMFILE
-    put(Identifier::fromString(vm, "EMFILE"_s), jsNumber(EMFILE));
+        { "EMFILE"_s, EMFILE },
 #endif
 #ifdef EMLINK
-    put(Identifier::fromString(vm, "EMLINK"_s), jsNumber(EMLINK));
+        { "EMLINK"_s, EMLINK },
 #endif
 #ifdef EMSGSIZE
-    put(Identifier::fromString(vm, "EMSGSIZE"_s), jsNumber(EMSGSIZE));
+        { "EMSGSIZE"_s, EMSGSIZE },
 #endif
 #ifdef EMULTIHOP
-    put(Identifier::fromString(vm, "EMULTIHOP"_s), jsNumber(EMULTIHOP));
+        { "EMULTIHOP"_s, EMULTIHOP },
 #endif
 #ifdef ENAMETOOLONG
-    put(Identifier::fromString(vm, "ENAMETOOLONG"_s), jsNumber(ENAMETOOLONG));
+        { "ENAMETOOLONG"_s, ENAMETOOLONG },
 #endif
 #ifdef ENETDOWN
-    put(Identifier::fromString(vm, "ENETDOWN"_s), jsNumber(ENETDOWN));
+        { "ENETDOWN"_s, ENETDOWN },
 #endif
 #ifdef ENETRESET
-    put(Identifier::fromString(vm, "ENETRESET"_s), jsNumber(ENETRESET));
+        { "ENETRESET"_s, ENETRESET },
 #endif
 #ifdef ENETUNREACH
-    put(Identifier::fromString(vm, "ENETUNREACH"_s), jsNumber(ENETUNREACH));
+        { "ENETUNREACH"_s, ENETUNREACH },
 #endif
 #ifdef ENFILE
-    put(Identifier::fromString(vm, "ENFILE"_s), jsNumber(ENFILE));
+        { "ENFILE"_s, ENFILE },
 #endif
 #ifdef ENOBUFS
-    put(Identifier::fromString(vm, "ENOBUFS"_s), jsNumber(ENOBUFS));
+        { "ENOBUFS"_s, ENOBUFS },
 #endif
 #ifdef ENODATA
-    put(Identifier::fromString(vm, "ENODATA"_s), jsNumber(ENODATA));
+        { "ENODATA"_s, ENODATA },
 #endif
 #ifdef ENODEV
-    put(Identifier::fromString(vm, "ENODEV"_s), jsNumber(ENODEV));
+        { "ENODEV"_s, ENODEV },
 #endif
 #ifdef ENOENT
-    put(Identifier::fromString(vm, "ENOENT"_s), jsNumber(ENOENT));
+        { "ENOENT"_s, ENOENT },
 #endif
 #ifdef ENOEXEC
-    put(Identifier::fromString(vm, "ENOEXEC"_s), jsNumber(ENOEXEC));
+        { "ENOEXEC"_s, ENOEXEC },
 #endif
 #ifdef ENOLCK
-    put(Identifier::fromString(vm, "ENOLCK"_s), jsNumber(ENOLCK));
+        { "ENOLCK"_s, ENOLCK },
 #endif
 #ifdef ENOLINK
-    put(Identifier::fromString(vm, "ENOLINK"_s), jsNumber(ENOLINK));
+        { "ENOLINK"_s, ENOLINK },
 #endif
 #ifdef ENOMEM
-    put(Identifier::fromString(vm, "ENOMEM"_s), jsNumber(ENOMEM));
+        { "ENOMEM"_s, ENOMEM },
 #endif
 #ifdef ENOMSG
-    put(Identifier::fromString(vm, "ENOMSG"_s), jsNumber(ENOMSG));
+        { "ENOMSG"_s, ENOMSG },
 #endif
 #ifdef ENOPROTOOPT
-    put(Identifier::fromString(vm, "ENOPROTOOPT"_s), jsNumber(ENOPROTOOPT));
+        { "ENOPROTOOPT"_s, ENOPROTOOPT },
 #endif
 #ifdef ENOSPC
-    put(Identifier::fromString(vm, "ENOSPC"_s), jsNumber(ENOSPC));
+        { "ENOSPC"_s, ENOSPC },
 #endif
 #ifdef ENOSR
-    put(Identifier::fromString(vm, "ENOSR"_s), jsNumber(ENOSR));
+        { "ENOSR"_s, ENOSR },
 #endif
 #ifdef ENOSTR
-    put(Identifier::fromString(vm, "ENOSTR"_s), jsNumber(ENOSTR));
+        { "ENOSTR"_s, ENOSTR },
 #endif
 #ifdef ENOSYS
-    put(Identifier::fromString(vm, "ENOSYS"_s), jsNumber(ENOSYS));
+        { "ENOSYS"_s, ENOSYS },
 #endif
 #ifdef ENOTCONN
-    put(Identifier::fromString(vm, "ENOTCONN"_s), jsNumber(ENOTCONN));
+        { "ENOTCONN"_s, ENOTCONN },
 #endif
 #ifdef ENOTDIR
-    put(Identifier::fromString(vm, "ENOTDIR"_s), jsNumber(ENOTDIR));
+        { "ENOTDIR"_s, ENOTDIR },
 #endif
 #ifdef ENOTEMPTY
-    put(Identifier::fromString(vm, "ENOTEMPTY"_s), jsNumber(ENOTEMPTY));
+        { "ENOTEMPTY"_s, ENOTEMPTY },
 #endif
 #ifdef ENOTSOCK
-    put(Identifier::fromString(vm, "ENOTSOCK"_s), jsNumber(ENOTSOCK));
+        { "ENOTSOCK"_s, ENOTSOCK },
 #endif
 #ifdef ENOTSUP
-    put(Identifier::fromString(vm, "ENOTSUP"_s), jsNumber(ENOTSUP));
+        { "ENOTSUP"_s, ENOTSUP },
 #endif
 #ifdef ENOTTY
-    put(Identifier::fromString(vm, "ENOTTY"_s), jsNumber(ENOTTY));
+        { "ENOTTY"_s, ENOTTY },
 #endif
 #ifdef ENXIO
-    put(Identifier::fromString(vm, "ENXIO"_s), jsNumber(ENXIO));
+        { "ENXIO"_s, ENXIO },
 #endif
 #ifdef EOPNOTSUPP
-    put(Identifier::fromString(vm, "EOPNOTSUPP"_s), jsNumber(EOPNOTSUPP));
+        { "EOPNOTSUPP"_s, EOPNOTSUPP },
 #endif
 #ifdef EOVERFLOW
-    put(Identifier::fromString(vm, "EOVERFLOW"_s), jsNumber(EOVERFLOW));
+        { "EOVERFLOW"_s, EOVERFLOW },
 #endif
 #ifdef EPERM
-    put(Identifier::fromString(vm, "EPERM"_s), jsNumber(EPERM));
+        { "EPERM"_s, EPERM },
 #endif
 #ifdef EPIPE
-    put(Identifier::fromString(vm, "EPIPE"_s), jsNumber(EPIPE));
+        { "EPIPE"_s, EPIPE },
 #endif
 #ifdef EPROTO
-    put(Identifier::fromString(vm, "EPROTO"_s), jsNumber(EPROTO));
+        { "EPROTO"_s, EPROTO },
 #endif
 #ifdef EPROTONOSUPPORT
-    put(Identifier::fromString(vm, "EPROTONOSUPPORT"_s),
-        jsNumber(EPROTONOSUPPORT));
+        { "EPROTONOSUPPORT"_s, EPROTONOSUPPORT },
 #endif
 #ifdef EPROTOTYPE
-    put(Identifier::fromString(vm, "EPROTOTYPE"_s), jsNumber(EPROTOTYPE));
+        { "EPROTOTYPE"_s, EPROTOTYPE },
 #endif
 #ifdef ERANGE
-    put(Identifier::fromString(vm, "ERANGE"_s), jsNumber(ERANGE));
+        { "ERANGE"_s, ERANGE },
 #endif
 #ifdef EROFS
-    put(Identifier::fromString(vm, "EROFS"_s), jsNumber(EROFS));
+        { "EROFS"_s, EROFS },
 #endif
 #ifdef ESPIPE
-    put(Identifier::fromString(vm, "ESPIPE"_s), jsNumber(ESPIPE));
+        { "ESPIPE"_s, ESPIPE },
 #endif
 #ifdef ESRCH
-    put(Identifier::fromString(vm, "ESRCH"_s), jsNumber(ESRCH));
+        { "ESRCH"_s, ESRCH },
 #endif
 #ifdef ESTALE
-    put(Identifier::fromString(vm, "ESTALE"_s), jsNumber(ESTALE));
+        { "ESTALE"_s, ESTALE },
 #endif
 #ifdef ETIME
-    put(Identifier::fromString(vm, "ETIME"_s), jsNumber(ETIME));
+        { "ETIME"_s, ETIME },
 #endif
 #ifdef ETIMEDOUT
-    put(Identifier::fromString(vm, "ETIMEDOUT"_s), jsNumber(ETIMEDOUT));
+        { "ETIMEDOUT"_s, ETIMEDOUT },
 #endif
 #ifdef ETXTBSY
-    put(Identifier::fromString(vm, "ETXTBSY"_s), jsNumber(ETXTBSY));
+        { "ETXTBSY"_s, ETXTBSY },
 #endif
 #ifdef EWOULDBLOCK
-    put(Identifier::fromString(vm, "EWOULDBLOCK"_s), jsNumber(EWOULDBLOCK));
+        { "EWOULDBLOCK"_s, EWOULDBLOCK },
 #endif
 #ifdef EXDEV
-    put(Identifier::fromString(vm, "EXDEV"_s), jsNumber(EXDEV));
+        { "EXDEV"_s, EXDEV },
 #endif
 #ifdef WSAEINTR
-    put(Identifier::fromString(vm, "WSAEINTR"_s), jsNumber(WSAEINTR));
+        { "WSAEINTR"_s, WSAEINTR },
 #endif
 #ifdef WSAEBADF
-    put(Identifier::fromString(vm, "WSAEBADF"_s), jsNumber(WSAEBADF));
+        { "WSAEBADF"_s, WSAEBADF },
 #endif
 #ifdef WSAEACCES
-    put(Identifier::fromString(vm, "WSAEACCES"_s), jsNumber(WSAEACCES));
+        { "WSAEACCES"_s, WSAEACCES },
 #endif
 #ifdef WSAEFAULT
-    put(Identifier::fromString(vm, "WSAEFAULT"_s), jsNumber(WSAEFAULT));
+        { "WSAEFAULT"_s, WSAEFAULT },
 #endif
 #ifdef WSAEINVAL
-    put(Identifier::fromString(vm, "WSAEINVAL"_s), jsNumber(WSAEINVAL));
+        { "WSAEINVAL"_s, WSAEINVAL },
 #endif
 #ifdef WSAEMFILE
-    put(Identifier::fromString(vm, "WSAEMFILE"_s), jsNumber(WSAEMFILE));
+        { "WSAEMFILE"_s, WSAEMFILE },
 #endif
 #ifdef WSAEWOULDBLOCK
-    put(Identifier::fromString(vm, "WSAEWOULDBLOCK"_s), jsNumber(WSAEWOULDBLOCK));
+        { "WSAEWOULDBLOCK"_s, WSAEWOULDBLOCK },
 #endif
 #ifdef WSAEINPROGRESS
-    put(Identifier::fromString(vm, "WSAEINPROGRESS"_s), jsNumber(WSAEINPROGRESS));
+        { "WSAEINPROGRESS"_s, WSAEINPROGRESS },
 #endif
 #ifdef WSAEALREADY
-    put(Identifier::fromString(vm, "WSAEALREADY"_s), jsNumber(WSAEALREADY));
+        { "WSAEALREADY"_s, WSAEALREADY },
 #endif
 #ifdef WSAENOTSOCK
-    put(Identifier::fromString(vm, "WSAENOTSOCK"_s), jsNumber(WSAENOTSOCK));
+        { "WSAENOTSOCK"_s, WSAENOTSOCK },
 #endif
 #ifdef WSAEDESTADDRREQ
-    put(Identifier::fromString(vm, "WSAEDESTADDRREQ"_s),
-        jsNumber(WSAEDESTADDRREQ));
+        { "WSAEDESTADDRREQ"_s, WSAEDESTADDRREQ },
 #endif
 #ifdef WSAEMSGSIZE
-    put(Identifier::fromString(vm, "WSAEMSGSIZE"_s), jsNumber(WSAEMSGSIZE));
+        { "WSAEMSGSIZE"_s, WSAEMSGSIZE },
 #endif
 #ifdef WSAEPROTOTYPE
-    put(Identifier::fromString(vm, "WSAEPROTOTYPE"_s), jsNumber(WSAEPROTOTYPE));
+        { "WSAEPROTOTYPE"_s, WSAEPROTOTYPE },
 #endif
 #ifdef WSAENOPROTOOPT
-    put(Identifier::fromString(vm, "WSAENOPROTOOPT"_s), jsNumber(WSAENOPROTOOPT));
+        { "WSAENOPROTOOPT"_s, WSAENOPROTOOPT },
 #endif
 #ifdef WSAEPROTONOSUPPORT
-    put(Identifier::fromString(vm, "WSAEPROTONOSUPPORT"_s),
-        jsNumber(WSAEPROTONOSUPPORT));
+        { "WSAEPROTONOSUPPORT"_s, WSAEPROTONOSUPPORT },
 #endif
 #ifdef WSAESOCKTNOSUPPORT
-    put(Identifier::fromString(vm, "WSAESOCKTNOSUPPORT"_s),
-        jsNumber(WSAESOCKTNOSUPPORT));
+        { "WSAESOCKTNOSUPPORT"_s, WSAESOCKTNOSUPPORT },
 #endif
 #ifdef WSAEOPNOTSUPP
-    put(Identifier::fromString(vm, "WSAEOPNOTSUPP"_s), jsNumber(WSAEOPNOTSUPP));
+        { "WSAEOPNOTSUPP"_s, WSAEOPNOTSUPP },
 #endif
 #ifdef WSAEPFNOSUPPORT
-    put(Identifier::fromString(vm, "WSAEPFNOSUPPORT"_s),
-        jsNumber(WSAEPFNOSUPPORT));
+        { "WSAEPFNOSUPPORT"_s, WSAEPFNOSUPPORT },
 #endif
 #ifdef WSAEAFNOSUPPORT
-    put(Identifier::fromString(vm, "WSAEAFNOSUPPORT"_s),
-        jsNumber(WSAEAFNOSUPPORT));
+        { "WSAEAFNOSUPPORT"_s, WSAEAFNOSUPPORT },
 #endif
 #ifdef WSAEADDRINUSE
-    put(Identifier::fromString(vm, "WSAEADDRINUSE"_s), jsNumber(WSAEADDRINUSE));
+        { "WSAEADDRINUSE"_s, WSAEADDRINUSE },
 #endif
 #ifdef WSAEADDRNOTAVAIL
-    put(Identifier::fromString(vm, "WSAEADDRNOTAVAIL"_s),
-        jsNumber(WSAEADDRNOTAVAIL));
+        { "WSAEADDRNOTAVAIL"_s, WSAEADDRNOTAVAIL },
 #endif
 #ifdef WSAENETDOWN
-    put(Identifier::fromString(vm, "WSAENETDOWN"_s), jsNumber(WSAENETDOWN));
+        { "WSAENETDOWN"_s, WSAENETDOWN },
 #endif
 #ifdef WSAENETUNREACH
-    put(Identifier::fromString(vm, "WSAENETUNREACH"_s), jsNumber(WSAENETUNREACH));
+        { "WSAENETUNREACH"_s, WSAENETUNREACH },
 #endif
 #ifdef WSAENETRESET
-    put(Identifier::fromString(vm, "WSAENETRESET"_s), jsNumber(WSAENETRESET));
+        { "WSAENETRESET"_s, WSAENETRESET },
 #endif
 #ifdef WSAECONNABORTED
-    put(Identifier::fromString(vm, "WSAECONNABORTED"_s),
-        jsNumber(WSAECONNABORTED));
+        { "WSAECONNABORTED"_s, WSAECONNABORTED },
 #endif
 #ifdef WSAECONNRESET
-    put(Identifier::fromString(vm, "WSAECONNRESET"_s), jsNumber(WSAECONNRESET));
+        { "WSAECONNRESET"_s, WSAECONNRESET },
 #endif
 #ifdef WSAENOBUFS
-    put(Identifier::fromString(vm, "WSAENOBUFS"_s), jsNumber(WSAENOBUFS));
+        { "WSAENOBUFS"_s, WSAENOBUFS },
 #endif
 #ifdef WSAEISCONN
-    put(Identifier::fromString(vm, "WSAEISCONN"_s), jsNumber(WSAEISCONN));
+        { "WSAEISCONN"_s, WSAEISCONN },
 #endif
 #ifdef WSAENOTCONN
-    put(Identifier::fromString(vm, "WSAENOTCONN"_s), jsNumber(WSAENOTCONN));
+        { "WSAENOTCONN"_s, WSAENOTCONN },
 #endif
 #ifdef WSAESHUTDOWN
-    put(Identifier::fromString(vm, "WSAESHUTDOWN"_s), jsNumber(WSAESHUTDOWN));
+        { "WSAESHUTDOWN"_s, WSAESHUTDOWN },
 #endif
 #ifdef WSAETOOMANYREFS
-    put(Identifier::fromString(vm, "WSAETOOMANYREFS"_s),
-        jsNumber(WSAETOOMANYREFS));
+        { "WSAETOOMANYREFS"_s, WSAETOOMANYREFS },
 #endif
 #ifdef WSAETIMEDOUT
-    put(Identifier::fromString(vm, "WSAETIMEDOUT"_s), jsNumber(WSAETIMEDOUT));
+        { "WSAETIMEDOUT"_s, WSAETIMEDOUT },
 #endif
 #ifdef WSAECONNREFUSED
-    put(Identifier::fromString(vm, "WSAECONNREFUSED"_s),
-        jsNumber(WSAECONNREFUSED));
+        { "WSAECONNREFUSED"_s, WSAECONNREFUSED },
 #endif
 #ifdef WSAELOOP
-    put(Identifier::fromString(vm, "WSAELOOP"_s), jsNumber(WSAELOOP));
+        { "WSAELOOP"_s, WSAELOOP },
 #endif
 #ifdef WSAENAMETOOLONG
-    put(Identifier::fromString(vm, "WSAENAMETOOLONG"_s),
-        jsNumber(WSAENAMETOOLONG));
+        { "WSAENAMETOOLONG"_s, WSAENAMETOOLONG },
 #endif
 #ifdef WSAEHOSTDOWN
-    put(Identifier::fromString(vm, "WSAEHOSTDOWN"_s), jsNumber(WSAEHOSTDOWN));
+        { "WSAEHOSTDOWN"_s, WSAEHOSTDOWN },
 #endif
 #ifdef WSAEHOSTUNREACH
-    put(Identifier::fromString(vm, "WSAEHOSTUNREACH"_s),
-        jsNumber(WSAEHOSTUNREACH));
+        { "WSAEHOSTUNREACH"_s, WSAEHOSTUNREACH },
 #endif
 #ifdef WSAENOTEMPTY
-    put(Identifier::fromString(vm, "WSAENOTEMPTY"_s), jsNumber(WSAENOTEMPTY));
+        { "WSAENOTEMPTY"_s, WSAENOTEMPTY },
 #endif
 #ifdef WSAEPROCLIM
-    put(Identifier::fromString(vm, "WSAEPROCLIM"_s), jsNumber(WSAEPROCLIM));
+        { "WSAEPROCLIM"_s, WSAEPROCLIM },
 #endif
 #ifdef WSAEUSERS
-    put(Identifier::fromString(vm, "WSAEUSERS"_s), jsNumber(WSAEUSERS));
+        { "WSAEUSERS"_s, WSAEUSERS },
 #endif
 #ifdef WSAEDQUOT
-    put(Identifier::fromString(vm, "WSAEDQUOT"_s), jsNumber(WSAEDQUOT));
+        { "WSAEDQUOT"_s, WSAEDQUOT },
 #endif
 #ifdef WSAESTALE
-    put(Identifier::fromString(vm, "WSAESTALE"_s), jsNumber(WSAESTALE));
+        { "WSAESTALE"_s, WSAESTALE },
 #endif
 #ifdef WSAEREMOTE
-    put(Identifier::fromString(vm, "WSAEREMOTE"_s), jsNumber(WSAEREMOTE));
+        { "WSAEREMOTE"_s, WSAEREMOTE },
 #endif
 #ifdef WSASYSNOTREADY
-    put(Identifier::fromString(vm, "WSASYSNOTREADY"_s), jsNumber(WSASYSNOTREADY));
+        { "WSASYSNOTREADY"_s, WSASYSNOTREADY },
 #endif
 #ifdef WSAVERNOTSUPPORTED
-    put(Identifier::fromString(vm, "WSAVERNOTSUPPORTED"_s),
-        jsNumber(WSAVERNOTSUPPORTED));
+        { "WSAVERNOTSUPPORTED"_s, WSAVERNOTSUPPORTED },
 #endif
 #ifdef WSANOTINITIALISED
-    put(Identifier::fromString(vm, "WSANOTINITIALISED"_s),
-        jsNumber(WSANOTINITIALISED));
+        { "WSANOTINITIALISED"_s, WSANOTINITIALISED },
 #endif
 #ifdef WSAEDISCON
-    put(Identifier::fromString(vm, "WSAEDISCON"_s), jsNumber(WSAEDISCON));
+        { "WSAEDISCON"_s, WSAEDISCON },
 #endif
 #ifdef WSAENOMORE
-    put(Identifier::fromString(vm, "WSAENOMORE"_s), jsNumber(WSAENOMORE));
+        { "WSAENOMORE"_s, WSAENOMORE },
 #endif
 #ifdef WSAECANCELLED
-    put(Identifier::fromString(vm, "WSAECANCELLED"_s), jsNumber(WSAECANCELLED));
+        { "WSAECANCELLED"_s, WSAECANCELLED },
 #endif
 #ifdef WSAEINVALIDPROCTABLE
-    put(Identifier::fromString(vm, "WSAEINVALIDPROCTABLE"_s),
-        jsNumber(WSAEINVALIDPROCTABLE));
+        { "WSAEINVALIDPROCTABLE"_s, WSAEINVALIDPROCTABLE },
 #endif
 #ifdef WSAEINVALIDPROVIDER
-    put(Identifier::fromString(vm, "WSAEINVALIDPROVIDER"_s),
-        jsNumber(WSAEINVALIDPROVIDER));
+        { "WSAEINVALIDPROVIDER"_s, WSAEINVALIDPROVIDER },
 #endif
 #ifdef WSAEPROVIDERFAILEDINIT
-    put(Identifier::fromString(vm, "WSAEPROVIDERFAILEDINIT"_s),
-        jsNumber(WSAEPROVIDERFAILEDINIT));
+        { "WSAEPROVIDERFAILEDINIT"_s, WSAEPROVIDERFAILEDINIT },
 #endif
 #ifdef WSASYSCALLFAILURE
-    put(Identifier::fromString(vm, "WSASYSCALLFAILURE"_s),
-        jsNumber(WSASYSCALLFAILURE));
+        { "WSASYSCALLFAILURE"_s, WSASYSCALLFAILURE },
 #endif
 #ifdef WSASERVICE_NOT_FOUND
-    put(Identifier::fromString(vm, "WSASERVICE_NOT_FOUND"_s),
-        jsNumber(WSASERVICE_NOT_FOUND));
+        { "WSASERVICE_NOT_FOUND"_s, WSASERVICE_NOT_FOUND },
 #endif
 #ifdef WSATYPE_NOT_FOUND
-    put(Identifier::fromString(vm, "WSATYPE_NOT_FOUND"_s),
-        jsNumber(WSATYPE_NOT_FOUND));
+        { "WSATYPE_NOT_FOUND"_s, WSATYPE_NOT_FOUND },
 #endif
 #ifdef WSA_E_NO_MORE
-    put(Identifier::fromString(vm, "WSA_E_NO_MORE"_s), jsNumber(WSA_E_NO_MORE));
+        { "WSA_E_NO_MORE"_s, WSA_E_NO_MORE },
 #endif
 #ifdef WSA_E_CANCELLED
-    put(Identifier::fromString(vm, "WSA_E_CANCELLED"_s),
-        jsNumber(WSA_E_CANCELLED));
+        { "WSA_E_CANCELLED"_s, WSA_E_CANCELLED },
 #endif
 #ifdef WSAEREFUSED
-    put(Identifier::fromString(vm, "WSAEREFUSED"_s), jsNumber(WSAEREFUSED));
+        { "WSAEREFUSED"_s, WSAEREFUSED },
 #endif
-    put(Identifier::fromString(vm, "PRIORITY_LOW"_s), jsNumber(19));
-    put(Identifier::fromString(vm, "PRIORITY_BELOW_NORMAL"_s), jsNumber(10));
-    put(Identifier::fromString(vm, "PRIORITY_NORMAL"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "PRIORITY_ABOVE_NORMAL"_s), jsNumber(-7));
-    put(Identifier::fromString(vm, "PRIORITY_HIGH"_s), jsNumber(-14));
-    put(Identifier::fromString(vm, "PRIORITY_HIGHEST"_s), jsNumber(-20));
+        { "PRIORITY_LOW"_s, 19 },
+        { "PRIORITY_BELOW_NORMAL"_s, 10 },
+        { "PRIORITY_NORMAL"_s, 0 },
+        { "PRIORITY_ABOVE_NORMAL"_s, -7 },
+        { "PRIORITY_HIGH"_s, -14 },
+        { "PRIORITY_HIGHEST"_s, -20 },
 #ifdef SIGHUP
-    put(Identifier::fromString(vm, "SIGHUP"_s), jsNumber(SIGHUP));
+        { "SIGHUP"_s, SIGHUP },
 #endif
 #ifdef SIGINT
-    put(Identifier::fromString(vm, "SIGINT"_s), jsNumber(SIGINT));
+        { "SIGINT"_s, SIGINT },
 #endif
 #ifdef SIGQUIT
-    put(Identifier::fromString(vm, "SIGQUIT"_s), jsNumber(SIGQUIT));
+        { "SIGQUIT"_s, SIGQUIT },
 #endif
 #ifdef SIGILL
-    put(Identifier::fromString(vm, "SIGILL"_s), jsNumber(SIGILL));
+        { "SIGILL"_s, SIGILL },
 #endif
 #ifdef SIGTRAP
-    put(Identifier::fromString(vm, "SIGTRAP"_s), jsNumber(SIGTRAP));
+        { "SIGTRAP"_s, SIGTRAP },
 #endif
 #ifdef SIGABRT
-    put(Identifier::fromString(vm, "SIGABRT"_s), jsNumber(SIGABRT));
+        { "SIGABRT"_s, SIGABRT },
 #endif
 #ifdef SIGIOT
-    put(Identifier::fromString(vm, "SIGIOT"_s), jsNumber(SIGIOT));
+        { "SIGIOT"_s, SIGIOT },
 #endif
 #ifdef SIGBUS
-    put(Identifier::fromString(vm, "SIGBUS"_s), jsNumber(SIGBUS));
+        { "SIGBUS"_s, SIGBUS },
 #endif
 #ifdef SIGFPE
-    put(Identifier::fromString(vm, "SIGFPE"_s), jsNumber(SIGFPE));
+        { "SIGFPE"_s, SIGFPE },
 #endif
 #ifdef SIGKILL
-    put(Identifier::fromString(vm, "SIGKILL"_s), jsNumber(SIGKILL));
+        { "SIGKILL"_s, SIGKILL },
 #endif
 #ifdef SIGUSR1
-    put(Identifier::fromString(vm, "SIGUSR1"_s), jsNumber(SIGUSR1));
+        { "SIGUSR1"_s, SIGUSR1 },
 #endif
 #ifdef SIGSEGV
-    put(Identifier::fromString(vm, "SIGSEGV"_s), jsNumber(SIGSEGV));
+        { "SIGSEGV"_s, SIGSEGV },
 #endif
 #ifdef SIGUSR2
-    put(Identifier::fromString(vm, "SIGUSR2"_s), jsNumber(SIGUSR2));
+        { "SIGUSR2"_s, SIGUSR2 },
 #endif
 #ifdef SIGPIPE
-    put(Identifier::fromString(vm, "SIGPIPE"_s), jsNumber(SIGPIPE));
+        { "SIGPIPE"_s, SIGPIPE },
 #endif
 #ifdef SIGALRM
-    put(Identifier::fromString(vm, "SIGALRM"_s), jsNumber(SIGALRM));
+        { "SIGALRM"_s, SIGALRM },
 #endif
 #ifdef SIGTERM
-    put(Identifier::fromString(vm, "SIGTERM"_s), jsNumber(SIGTERM));
+        { "SIGTERM"_s, SIGTERM },
 #endif
 #ifdef SIGCHLD
-    put(Identifier::fromString(vm, "SIGCHLD"_s), jsNumber(SIGCHLD));
+        { "SIGCHLD"_s, SIGCHLD },
 #endif
 #ifdef SIGSTKFLT
-    put(Identifier::fromString(vm, "SIGSTKFLT"_s), jsNumber(SIGSTKFLT));
+        { "SIGSTKFLT"_s, SIGSTKFLT },
 #endif
 #ifdef SIGCONT
-    put(Identifier::fromString(vm, "SIGCONT"_s), jsNumber(SIGCONT));
+        { "SIGCONT"_s, SIGCONT },
 #endif
 #ifdef SIGSTOP
-    put(Identifier::fromString(vm, "SIGSTOP"_s), jsNumber(SIGSTOP));
+        { "SIGSTOP"_s, SIGSTOP },
 #endif
 #ifdef SIGTSTP
-    put(Identifier::fromString(vm, "SIGTSTP"_s), jsNumber(SIGTSTP));
+        { "SIGTSTP"_s, SIGTSTP },
 #endif
 #ifdef SIGBREAK
-    put(Identifier::fromString(vm, "SIGBREAK"_s), jsNumber(SIGBREAK));
+        { "SIGBREAK"_s, SIGBREAK },
 #endif
 #ifdef SIGTTIN
-    put(Identifier::fromString(vm, "SIGTTIN"_s), jsNumber(SIGTTIN));
+        { "SIGTTIN"_s, SIGTTIN },
 #endif
 #ifdef SIGTTOU
-    put(Identifier::fromString(vm, "SIGTTOU"_s), jsNumber(SIGTTOU));
+        { "SIGTTOU"_s, SIGTTOU },
 #endif
 #ifdef SIGURG
-    put(Identifier::fromString(vm, "SIGURG"_s), jsNumber(SIGURG));
+        { "SIGURG"_s, SIGURG },
 #endif
 #ifdef SIGXCPU
-    put(Identifier::fromString(vm, "SIGXCPU"_s), jsNumber(SIGXCPU));
+        { "SIGXCPU"_s, SIGXCPU },
 #endif
 #ifdef SIGXFSZ
-    put(Identifier::fromString(vm, "SIGXFSZ"_s), jsNumber(SIGXFSZ));
+        { "SIGXFSZ"_s, SIGXFSZ },
 #endif
 #ifdef SIGVTALRM
-    put(Identifier::fromString(vm, "SIGVTALRM"_s), jsNumber(SIGVTALRM));
+        { "SIGVTALRM"_s, SIGVTALRM },
 #endif
 #ifdef SIGPROF
-    put(Identifier::fromString(vm, "SIGPROF"_s), jsNumber(SIGPROF));
+        { "SIGPROF"_s, SIGPROF },
 #endif
 #ifdef SIGWINCH
-    put(Identifier::fromString(vm, "SIGWINCH"_s), jsNumber(SIGWINCH));
+        { "SIGWINCH"_s, SIGWINCH },
 #endif
 #ifdef SIGIO
-    put(Identifier::fromString(vm, "SIGIO"_s), jsNumber(SIGIO));
+        { "SIGIO"_s, SIGIO },
 #endif
 #ifdef SIGPOLL
-    put(Identifier::fromString(vm, "SIGPOLL"_s), jsNumber(SIGPOLL));
+        { "SIGPOLL"_s, SIGPOLL },
 #endif
 #ifdef SIGLOST
-    put(Identifier::fromString(vm, "SIGLOST"_s), jsNumber(SIGLOST));
+        { "SIGLOST"_s, SIGLOST },
 #endif
 #ifdef SIGPWR
-    put(Identifier::fromString(vm, "SIGPWR"_s), jsNumber(SIGPWR));
+        { "SIGPWR"_s, SIGPWR },
 #endif
 #ifdef SIGINFO
-    put(Identifier::fromString(vm, "SIGINFO"_s), jsNumber(SIGINFO));
+        { "SIGINFO"_s, SIGINFO },
 #endif
 #ifdef SIGSYS
-    put(Identifier::fromString(vm, "SIGSYS"_s), jsNumber(SIGSYS));
+        { "SIGSYS"_s, SIGSYS },
 #endif
 #ifdef SIGUNUSED
-    put(Identifier::fromString(vm, "SIGUNUSED"_s), jsNumber(SIGUNUSED));
+        { "SIGUNUSED"_s, SIGUNUSED },
 #endif
-    put(Identifier::fromString(vm, "UV_FS_SYMLINK_DIR"_s), jsNumber(1));
-    put(Identifier::fromString(vm, "UV_FS_SYMLINK_JUNCTION"_s), jsNumber(2));
-    put(Identifier::fromString(vm, "O_RDONLY"_s), jsNumber(O_RDONLY));
-    put(Identifier::fromString(vm, "O_WRONLY"_s), jsNumber(O_WRONLY));
-    put(Identifier::fromString(vm, "O_RDWR"_s), jsNumber(O_RDWR));
+        { "UV_FS_SYMLINK_DIR"_s, 1 },
+        { "UV_FS_SYMLINK_JUNCTION"_s, 2 },
+        { "O_RDONLY"_s, O_RDONLY },
+        { "O_WRONLY"_s, O_WRONLY },
+        { "O_RDWR"_s, O_RDWR },
 
-    put(Identifier::fromString(vm, "UV_DIRENT_UNKNOWN"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "UV_DIRENT_FILE"_s), jsNumber(1));
-    put(Identifier::fromString(vm, "UV_DIRENT_DIR"_s), jsNumber(2));
-    put(Identifier::fromString(vm, "UV_DIRENT_LINK"_s), jsNumber(3));
-    put(Identifier::fromString(vm, "UV_DIRENT_FIFO"_s), jsNumber(4));
-    put(Identifier::fromString(vm, "UV_DIRENT_SOCKET"_s), jsNumber(5));
-    put(Identifier::fromString(vm, "UV_DIRENT_CHAR"_s), jsNumber(6));
-    put(Identifier::fromString(vm, "UV_DIRENT_BLOCK"_s), jsNumber(7));
+        { "UV_DIRENT_UNKNOWN"_s, 0 },
+        { "UV_DIRENT_FILE"_s, 1 },
+        { "UV_DIRENT_DIR"_s, 2 },
+        { "UV_DIRENT_LINK"_s, 3 },
+        { "UV_DIRENT_FIFO"_s, 4 },
+        { "UV_DIRENT_SOCKET"_s, 5 },
+        { "UV_DIRENT_CHAR"_s, 6 },
+        { "UV_DIRENT_BLOCK"_s, 7 },
 
-    put(Identifier::fromString(vm, "S_IFMT"_s), jsNumber(S_IFMT));
-    put(Identifier::fromString(vm, "S_IFREG"_s), jsNumber(S_IFREG));
-    put(Identifier::fromString(vm, "S_IFDIR"_s), jsNumber(S_IFDIR));
-    put(Identifier::fromString(vm, "S_IFCHR"_s), jsNumber(S_IFCHR));
+        { "S_IFMT"_s, S_IFMT },
+        { "S_IFREG"_s, S_IFREG },
+        { "S_IFDIR"_s, S_IFDIR },
+        { "S_IFCHR"_s, S_IFCHR },
 #ifdef S_IFBLK
-    put(Identifier::fromString(vm, "S_IFBLK"_s), jsNumber(S_IFBLK));
+        { "S_IFBLK"_s, S_IFBLK },
 #endif
 #ifdef S_IFIFO
-    put(Identifier::fromString(vm, "S_IFIFO"_s), jsNumber(S_IFIFO));
+        { "S_IFIFO"_s, S_IFIFO },
 #endif
 #ifdef S_IFLNK
-    put(Identifier::fromString(vm, "S_IFLNK"_s), jsNumber(S_IFLNK));
+        { "S_IFLNK"_s, S_IFLNK },
 #endif
 #ifdef S_IFSOCK
-    put(Identifier::fromString(vm, "S_IFSOCK"_s), jsNumber(S_IFSOCK));
+        { "S_IFSOCK"_s, S_IFSOCK },
 #endif
 #ifdef O_CREAT
-    put(Identifier::fromString(vm, "O_CREAT"_s), jsNumber(O_CREAT));
+        { "O_CREAT"_s, O_CREAT },
 #endif
 #ifdef O_EXCL
-    put(Identifier::fromString(vm, "O_EXCL"_s), jsNumber(O_EXCL));
+        { "O_EXCL"_s, O_EXCL },
 #endif
 #if OS(WINDOWS)
-    put(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s), jsNumber(536870912));
+        { "UV_FS_O_FILEMAP"_s, 536870912 },
 #else
-    put(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s), jsNumber(0));
+        { "UV_FS_O_FILEMAP"_s, 0 },
 #endif
 
 #ifdef O_NOCTTY
-    put(Identifier::fromString(vm, "O_NOCTTY"_s), jsNumber(O_NOCTTY));
+        { "O_NOCTTY"_s, O_NOCTTY },
 #endif
 #ifdef O_TRUNC
-    put(Identifier::fromString(vm, "O_TRUNC"_s), jsNumber(O_TRUNC));
+        { "O_TRUNC"_s, O_TRUNC },
 #endif
 #ifdef O_APPEND
-    put(Identifier::fromString(vm, "O_APPEND"_s), jsNumber(O_APPEND));
+        { "O_APPEND"_s, O_APPEND },
 #endif
 #ifdef O_DIRECTORY
-    put(Identifier::fromString(vm, "O_DIRECTORY"_s), jsNumber(O_DIRECTORY));
+        { "O_DIRECTORY"_s, O_DIRECTORY },
 #endif
 #ifdef O_NOATIME
-    put(Identifier::fromString(vm, "O_NOATIME"_s), jsNumber(O_NOATIME));
+        { "O_NOATIME"_s, O_NOATIME },
 #endif
 #ifdef O_NOFOLLOW
-    put(Identifier::fromString(vm, "O_NOFOLLOW"_s), jsNumber(O_NOFOLLOW));
+        { "O_NOFOLLOW"_s, O_NOFOLLOW },
 #endif
 #ifdef O_SYNC
-    put(Identifier::fromString(vm, "O_SYNC"_s), jsNumber(O_SYNC));
+        { "O_SYNC"_s, O_SYNC },
 #endif
 #ifdef O_DSYNC
-    put(Identifier::fromString(vm, "O_DSYNC"_s), jsNumber(O_DSYNC));
+        { "O_DSYNC"_s, O_DSYNC },
 #endif
 #ifdef O_SYMLINK
-    put(Identifier::fromString(vm, "O_SYMLINK"_s), jsNumber(O_SYMLINK));
+        { "O_SYMLINK"_s, O_SYMLINK },
 #endif
 #ifdef O_DIRECT
-    put(Identifier::fromString(vm, "O_DIRECT"_s), jsNumber(O_DIRECT));
+        { "O_DIRECT"_s, O_DIRECT },
 #endif
 #ifdef O_NONBLOCK
-    put(Identifier::fromString(vm, "O_NONBLOCK"_s), jsNumber(O_NONBLOCK));
+        { "O_NONBLOCK"_s, O_NONBLOCK },
 #endif
 #ifdef S_IRWXU
-    put(Identifier::fromString(vm, "S_IRWXU"_s), jsNumber(S_IRWXU));
+        { "S_IRWXU"_s, S_IRWXU },
 #endif
 #ifdef S_IRUSR
-    put(Identifier::fromString(vm, "S_IRUSR"_s), jsNumber(S_IRUSR));
+        { "S_IRUSR"_s, S_IRUSR },
 #endif
 #ifdef S_IWUSR
-    put(Identifier::fromString(vm, "S_IWUSR"_s), jsNumber(S_IWUSR));
+        { "S_IWUSR"_s, S_IWUSR },
 #endif
 #ifdef S_IXUSR
-    put(Identifier::fromString(vm, "S_IXUSR"_s), jsNumber(S_IXUSR));
+        { "S_IXUSR"_s, S_IXUSR },
 #endif
 #ifdef S_IRWXG
-    put(Identifier::fromString(vm, "S_IRWXG"_s), jsNumber(S_IRWXG));
+        { "S_IRWXG"_s, S_IRWXG },
 #endif
 #ifdef S_IRGRP
-    put(Identifier::fromString(vm, "S_IRGRP"_s), jsNumber(S_IRGRP));
+        { "S_IRGRP"_s, S_IRGRP },
 #endif
 #ifdef S_IWGRP
-    put(Identifier::fromString(vm, "S_IWGRP"_s), jsNumber(S_IWGRP));
+        { "S_IWGRP"_s, S_IWGRP },
 #endif
 #ifdef S_IXGRP
-    put(Identifier::fromString(vm, "S_IXGRP"_s), jsNumber(S_IXGRP));
+        { "S_IXGRP"_s, S_IXGRP },
 #endif
 #ifdef S_IRWXO
-    put(Identifier::fromString(vm, "S_IRWXO"_s), jsNumber(S_IRWXO));
+        { "S_IRWXO"_s, S_IRWXO },
 #endif
 #ifdef S_IROTH
-    put(Identifier::fromString(vm, "S_IROTH"_s), jsNumber(S_IROTH));
+        { "S_IROTH"_s, S_IROTH },
 #endif
 #ifdef S_IWOTH
-    put(Identifier::fromString(vm, "S_IWOTH"_s), jsNumber(S_IWOTH));
+        { "S_IWOTH"_s, S_IWOTH },
 #endif
 #ifdef S_IXOTH
-    put(Identifier::fromString(vm, "S_IXOTH"_s), jsNumber(S_IXOTH));
+        { "S_IXOTH"_s, S_IXOTH },
 #endif
 #ifdef F_OK
-    put(Identifier::fromString(vm, "F_OK"_s), jsNumber(F_OK));
+        { "F_OK"_s, F_OK },
 #endif
 #ifdef R_OK
-    put(Identifier::fromString(vm, "R_OK"_s), jsNumber(R_OK));
+        { "R_OK"_s, R_OK },
 #endif
 #ifdef W_OK
-    put(Identifier::fromString(vm, "W_OK"_s), jsNumber(W_OK));
+        { "W_OK"_s, W_OK },
 #endif
 #ifdef X_OK
-    put(Identifier::fromString(vm, "X_OK"_s), jsNumber(X_OK));
+        { "X_OK"_s, X_OK },
 #endif
-    put(Identifier::fromString(vm, "UV_FS_COPYFILE_EXCL"_s), jsNumber(1));
-    put(Identifier::fromString(vm, "COPYFILE_EXCL"_s), jsNumber(1));
-    put(Identifier::fromString(vm, "UV_FS_COPYFILE_FICLONE"_s), jsNumber(2));
-    put(Identifier::fromString(vm, "COPYFILE_FICLONE"_s), jsNumber(2));
-    put(Identifier::fromString(vm, "UV_FS_COPYFILE_FICLONE_FORCE"_s),
-        jsNumber(4));
-    put(Identifier::fromString(vm, "COPYFILE_FICLONE_FORCE"_s), jsNumber(4));
+        { "UV_FS_COPYFILE_EXCL"_s, 1 },
+        { "COPYFILE_EXCL"_s, 1 },
+        { "UV_FS_COPYFILE_FICLONE"_s, 2 },
+        { "COPYFILE_FICLONE"_s, 2 },
+        { "UV_FS_COPYFILE_FICLONE_FORCE"_s, 4 },
+        { "COPYFILE_FICLONE_FORCE"_s, 4 },
 #ifdef OPENSSL_VERSION_NUMBER
-    put(Identifier::fromString(vm, "OPENSSL_VERSION_NUMBER"_s),
-        jsNumber(OPENSSL_VERSION_NUMBER));
+        { "OPENSSL_VERSION_NUMBER"_s, OPENSSL_VERSION_NUMBER },
 #endif
 #ifdef SSL_OP_ALL
-    put(Identifier::fromString(vm, "SSL_OP_ALL"_s), jsNumber(SSL_OP_ALL));
+        { "SSL_OP_ALL"_s, SSL_OP_ALL },
 #endif
 #ifdef SSL_OP_ALLOW_NO_DHE_KEX
-    put(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s),
-        jsNumber(SSL_OP_ALLOW_NO_DHE_KEX));
+        { "SSL_OP_ALLOW_NO_DHE_KEX"_s, SSL_OP_ALLOW_NO_DHE_KEX },
 #else
-    put(Identifier::fromString(vm, "SSL_OP_ALLOW_NO_DHE_KEX"_s), jsNumber(0));
+        { "SSL_OP_ALLOW_NO_DHE_KEX"_s, 0 },
 #endif
 #ifdef SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION
-    put(Identifier::fromString(vm, "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s),
-        jsNumber(SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION));
+        { "SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION"_s, SSL_OP_ALLOW_UNSAFE_LEGACY_RENEGOTIATION },
 #endif
 #ifdef SSL_OP_CIPHER_SERVER_PREFERENCE
-    put(Identifier::fromString(vm, "SSL_OP_CIPHER_SERVER_PREFERENCE"_s),
-        jsNumber(SSL_OP_CIPHER_SERVER_PREFERENCE));
+        { "SSL_OP_CIPHER_SERVER_PREFERENCE"_s, SSL_OP_CIPHER_SERVER_PREFERENCE },
 #endif
 #ifdef SSL_OP_CISCO_ANYCONNECT
-    put(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s),
-        jsNumber(SSL_OP_CISCO_ANYCONNECT));
+        { "SSL_OP_CISCO_ANYCONNECT"_s, SSL_OP_CISCO_ANYCONNECT },
 #else
-    put(Identifier::fromString(vm, "SSL_OP_CISCO_ANYCONNECT"_s), jsNumber(0));
+        { "SSL_OP_CISCO_ANYCONNECT"_s, 0 },
 #endif
 #ifdef SSL_OP_COOKIE_EXCHANGE
-    put(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s),
-        jsNumber(SSL_OP_COOKIE_EXCHANGE));
+        { "SSL_OP_COOKIE_EXCHANGE"_s, SSL_OP_COOKIE_EXCHANGE },
 #else
-    put(Identifier::fromString(vm, "SSL_OP_COOKIE_EXCHANGE"_s), jsNumber(0));
+        { "SSL_OP_COOKIE_EXCHANGE"_s, 0 },
 #endif
 #ifdef SSL_OP_CRYPTOPRO_TLSEXT_BUG
-    put(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s),
-        jsNumber(SSL_OP_CRYPTOPRO_TLSEXT_BUG));
+        { "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s, SSL_OP_CRYPTOPRO_TLSEXT_BUG },
 #else
-    put(Identifier::fromString(vm, "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s), jsNumber(0));
+        { "SSL_OP_CRYPTOPRO_TLSEXT_BUG"_s, 0 },
 #endif
 #ifdef SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS
-    put(Identifier::fromString(vm, "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s),
-        jsNumber(SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS));
+        { "SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS"_s, SSL_OP_DONT_INSERT_EMPTY_FRAGMENTS },
 #endif
 #ifdef SSL_OP_LEGACY_SERVER_CONNECT
-    put(Identifier::fromString(vm, "SSL_OP_LEGACY_SERVER_CONNECT"_s),
-        jsNumber(SSL_OP_LEGACY_SERVER_CONNECT));
+        { "SSL_OP_LEGACY_SERVER_CONNECT"_s, SSL_OP_LEGACY_SERVER_CONNECT },
 #endif
 #ifdef SSL_OP_NO_COMPRESSION
-    put(Identifier::fromString(vm, "SSL_OP_NO_COMPRESSION"_s),
-        jsNumber(SSL_OP_NO_COMPRESSION));
+        { "SSL_OP_NO_COMPRESSION"_s, SSL_OP_NO_COMPRESSION },
 #endif
 #ifdef SSL_OP_NO_ENCRYPT_THEN_MAC
-    put(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s),
-        jsNumber(SSL_OP_NO_ENCRYPT_THEN_MAC));
+        { "SSL_OP_NO_ENCRYPT_THEN_MAC"_s, SSL_OP_NO_ENCRYPT_THEN_MAC },
 #else
-    put(Identifier::fromString(vm, "SSL_OP_NO_ENCRYPT_THEN_MAC"_s), jsNumber(0));
+        { "SSL_OP_NO_ENCRYPT_THEN_MAC"_s, 0 },
 #endif
 #ifdef SSL_OP_NO_QUERY_MTU
-    put(Identifier::fromString(vm, "SSL_OP_NO_QUERY_MTU"_s),
-        jsNumber(SSL_OP_NO_QUERY_MTU));
+        { "SSL_OP_NO_QUERY_MTU"_s, SSL_OP_NO_QUERY_MTU },
 #endif
 #ifdef SSL_OP_NO_RENEGOTIATION
-    put(Identifier::fromString(vm, "SSL_OP_NO_RENEGOTIATION"_s),
-        jsNumber(SSL_OP_NO_RENEGOTIATION));
+        { "SSL_OP_NO_RENEGOTIATION"_s, SSL_OP_NO_RENEGOTIATION },
 #endif
 #ifdef SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION
-    put(Identifier::fromString(vm,
-            "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION"_s),
-        jsNumber(SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION));
+        { "SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION"_s, SSL_OP_NO_SESSION_RESUMPTION_ON_RENEGOTIATION },
 #endif
 #ifdef SSL_OP_NO_SSLv2
-    put(Identifier::fromString(vm, "SSL_OP_NO_SSLv2"_s),
-        jsNumber(SSL_OP_NO_SSLv2));
+        { "SSL_OP_NO_SSLv2"_s, SSL_OP_NO_SSLv2 },
 #endif
 #ifdef SSL_OP_NO_SSLv3
-    put(Identifier::fromString(vm, "SSL_OP_NO_SSLv3"_s),
-        jsNumber(SSL_OP_NO_SSLv3));
+        { "SSL_OP_NO_SSLv3"_s, SSL_OP_NO_SSLv3 },
 #endif
 #ifdef SSL_OP_NO_TICKET
-    put(Identifier::fromString(vm, "SSL_OP_NO_TICKET"_s),
-        jsNumber(SSL_OP_NO_TICKET));
+        { "SSL_OP_NO_TICKET"_s, SSL_OP_NO_TICKET },
 #endif
 #ifdef SSL_OP_NO_TLSv1
-    put(Identifier::fromString(vm, "SSL_OP_NO_TLSv1"_s),
-        jsNumber(SSL_OP_NO_TLSv1));
+        { "SSL_OP_NO_TLSv1"_s, SSL_OP_NO_TLSv1 },
 #endif
 #ifdef SSL_OP_NO_TLSv1_1
-    put(Identifier::fromString(vm, "SSL_OP_NO_TLSv1_1"_s),
-        jsNumber(SSL_OP_NO_TLSv1_1));
+        { "SSL_OP_NO_TLSv1_1"_s, SSL_OP_NO_TLSv1_1 },
 #endif
 #ifdef SSL_OP_NO_TLSv1_2
-    put(Identifier::fromString(vm, "SSL_OP_NO_TLSv1_2"_s),
-        jsNumber(SSL_OP_NO_TLSv1_2));
+        { "SSL_OP_NO_TLSv1_2"_s, SSL_OP_NO_TLSv1_2 },
 #endif
 #ifdef SSL_OP_NO_TLSv1_3
-    put(Identifier::fromString(vm, "SSL_OP_NO_TLSv1_3"_s),
-        jsNumber(SSL_OP_NO_TLSv1_3));
+        { "SSL_OP_NO_TLSv1_3"_s, SSL_OP_NO_TLSv1_3 },
 #endif
 #ifdef SSL_OP_PRIORITIZE_CHACHA
-    put(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s),
-        jsNumber(SSL_OP_PRIORITIZE_CHACHA));
+        { "SSL_OP_PRIORITIZE_CHACHA"_s, SSL_OP_PRIORITIZE_CHACHA },
 #else
-    put(Identifier::fromString(vm, "SSL_OP_PRIORITIZE_CHACHA"_s), jsNumber(0));
+        { "SSL_OP_PRIORITIZE_CHACHA"_s, 0 },
 #endif
 #ifdef SSL_OP_TLS_ROLLBACK_BUG
-    put(Identifier::fromString(vm, "SSL_OP_TLS_ROLLBACK_BUG"_s),
-        jsNumber(SSL_OP_TLS_ROLLBACK_BUG));
+        { "SSL_OP_TLS_ROLLBACK_BUG"_s, SSL_OP_TLS_ROLLBACK_BUG },
 #endif
-    // BoringSSL does not define engine constants in openssl/engine.h.
-    // Values mirror ProcessBindingConstants.cpp (and node).
-    put(Identifier::fromString(vm, "ENGINE_METHOD_RSA"_s), jsNumber(0x0001));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_DSA"_s), jsNumber(0x0002));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_DH"_s), jsNumber(0x0004));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_RAND"_s), jsNumber(0x0008));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_CIPHERS"_s), jsNumber(0x0040));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_DIGESTS"_s), jsNumber(0x0080));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_METHS"_s), jsNumber(0x0200));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_PKEY_ASN1_METHS"_s), jsNumber(0x0400));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_EC"_s), jsNumber(0x0800));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_ALL"_s), jsNumber(0xFFFF));
-    put(Identifier::fromString(vm, "ENGINE_METHOD_NONE"_s), jsNumber(0x0000));
+        // BoringSSL does not define engine constants in openssl/engine.h.
+        // Values mirror ProcessBindingConstants.cpp (and node).
+        { "ENGINE_METHOD_RSA"_s, 0x0001 },
+        { "ENGINE_METHOD_DSA"_s, 0x0002 },
+        { "ENGINE_METHOD_DH"_s, 0x0004 },
+        { "ENGINE_METHOD_RAND"_s, 0x0008 },
+        { "ENGINE_METHOD_CIPHERS"_s, 0x0040 },
+        { "ENGINE_METHOD_DIGESTS"_s, 0x0080 },
+        { "ENGINE_METHOD_PKEY_METHS"_s, 0x0200 },
+        { "ENGINE_METHOD_PKEY_ASN1_METHS"_s, 0x0400 },
+        { "ENGINE_METHOD_EC"_s, 0x0800 },
+        { "ENGINE_METHOD_ALL"_s, 0xFFFF },
+        { "ENGINE_METHOD_NONE"_s, 0x0000 },
 #ifdef DH_CHECK_P_NOT_SAFE_PRIME
-    put(Identifier::fromString(vm, "DH_CHECK_P_NOT_SAFE_PRIME"_s),
-        jsNumber(DH_CHECK_P_NOT_SAFE_PRIME));
+        { "DH_CHECK_P_NOT_SAFE_PRIME"_s, DH_CHECK_P_NOT_SAFE_PRIME },
 #endif
 #ifdef DH_CHECK_P_NOT_PRIME
-    put(Identifier::fromString(vm, "DH_CHECK_P_NOT_PRIME"_s),
-        jsNumber(DH_CHECK_P_NOT_PRIME));
+        { "DH_CHECK_P_NOT_PRIME"_s, DH_CHECK_P_NOT_PRIME },
 #endif
 #ifdef DH_UNABLE_TO_CHECK_GENERATOR
-    put(Identifier::fromString(vm, "DH_UNABLE_TO_CHECK_GENERATOR"_s),
-        jsNumber(DH_UNABLE_TO_CHECK_GENERATOR));
+        { "DH_UNABLE_TO_CHECK_GENERATOR"_s, DH_UNABLE_TO_CHECK_GENERATOR },
 #endif
 #ifdef DH_NOT_SUITABLE_GENERATOR
-    put(Identifier::fromString(vm, "DH_NOT_SUITABLE_GENERATOR"_s),
-        jsNumber(DH_NOT_SUITABLE_GENERATOR));
+        { "DH_NOT_SUITABLE_GENERATOR"_s, DH_NOT_SUITABLE_GENERATOR },
 #endif
 #ifdef RSA_PKCS1_PADDING
-    put(Identifier::fromString(vm, "RSA_PKCS1_PADDING"_s),
-        jsNumber(RSA_PKCS1_PADDING));
+        { "RSA_PKCS1_PADDING"_s, RSA_PKCS1_PADDING },
 #endif
 #ifdef RSA_SSLV23_PADDING
-    put(Identifier::fromString(vm, "RSA_SSLV23_PADDING"_s),
-        jsNumber(RSA_SSLV23_PADDING));
+        { "RSA_SSLV23_PADDING"_s, RSA_SSLV23_PADDING },
 #endif
 #ifdef RSA_NO_PADDING
-    put(Identifier::fromString(vm, "RSA_NO_PADDING"_s), jsNumber(RSA_NO_PADDING));
+        { "RSA_NO_PADDING"_s, RSA_NO_PADDING },
 #endif
 #ifdef RSA_PKCS1_OAEP_PADDING
-    put(Identifier::fromString(vm, "RSA_PKCS1_OAEP_PADDING"_s),
-        jsNumber(RSA_PKCS1_OAEP_PADDING));
+        { "RSA_PKCS1_OAEP_PADDING"_s, RSA_PKCS1_OAEP_PADDING },
 #endif
 #ifdef RSA_X931_PADDING
-    put(Identifier::fromString(vm, "RSA_X931_PADDING"_s),
-        jsNumber(RSA_X931_PADDING));
+        { "RSA_X931_PADDING"_s, RSA_X931_PADDING },
 #else
-    put(Identifier::fromString(vm, "RSA_X931_PADDING"_s), jsNumber(5));
+        { "RSA_X931_PADDING"_s, 5 },
 #endif
 #ifdef RSA_PKCS1_PSS_PADDING
-    put(Identifier::fromString(vm, "RSA_PKCS1_PSS_PADDING"_s),
-        jsNumber(RSA_PKCS1_PSS_PADDING));
+        { "RSA_PKCS1_PSS_PADDING"_s, RSA_PKCS1_PSS_PADDING },
 #endif
 #ifdef RSA_PSS_SALTLEN_DIGEST
-    put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s),
-        jsNumber(RSA_PSS_SALTLEN_DIGEST));
+        { "RSA_PSS_SALTLEN_DIGEST"_s, RSA_PSS_SALTLEN_DIGEST },
 #endif
 #ifdef RSA_PSS_SALTLEN_MAX_SIGN
-    put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s),
-        jsNumber(RSA_PSS_SALTLEN_MAX_SIGN));
+        { "RSA_PSS_SALTLEN_MAX_SIGN"_s, RSA_PSS_SALTLEN_MAX_SIGN },
 #else
-    put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s), jsNumber(-2));
+        { "RSA_PSS_SALTLEN_MAX_SIGN"_s, -2 },
 #endif
 #ifdef RSA_PSS_SALTLEN_AUTO
-    put(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s),
-        jsNumber(RSA_PSS_SALTLEN_AUTO));
+        { "RSA_PSS_SALTLEN_AUTO"_s, RSA_PSS_SALTLEN_AUTO },
 #endif
+    };
+    for (const auto& entry : constants)
+        put(Identifier::fromString(vm, entry.name), jsNumber(entry.value));
+
     auto cipherList = String("TLS_AES_256_GCM_SHA384:"
                              "TLS_CHACHA20_POLY1305_SHA256:"
                              "TLS_AES_128_GCM_SHA256:"
@@ -960,46 +911,48 @@ DEFINE_NATIVE_MODULE(NodeConstants)
         jsString(vm, cipherList));
     put(Identifier::fromString(vm, "defaultCipherList"_s),
         jsString(vm, cipherList));
+
+    static constexpr Entry tlsConstants[] = {
 #ifdef TLS1_VERSION
-    put(Identifier::fromString(vm, "TLS1_VERSION"_s), jsNumber(TLS1_VERSION));
+        { "TLS1_VERSION"_s, TLS1_VERSION },
 #endif
 #ifdef TLS1_1_VERSION
-    put(Identifier::fromString(vm, "TLS1_1_VERSION"_s), jsNumber(TLS1_1_VERSION));
+        { "TLS1_1_VERSION"_s, TLS1_1_VERSION },
 #endif
 #ifdef TLS1_2_VERSION
-    put(Identifier::fromString(vm, "TLS1_2_VERSION"_s), jsNumber(TLS1_2_VERSION));
+        { "TLS1_2_VERSION"_s, TLS1_2_VERSION },
 #endif
 #ifdef TLS1_3_VERSION
-    put(Identifier::fromString(vm, "TLS1_3_VERSION"_s), jsNumber(TLS1_3_VERSION));
+        { "TLS1_3_VERSION"_s, TLS1_3_VERSION },
 #endif
-    put(Identifier::fromString(vm, "POINT_CONVERSION_COMPRESSED"_s),
-        jsNumber(POINT_CONVERSION_COMPRESSED));
-    put(Identifier::fromString(vm, "POINT_CONVERSION_UNCOMPRESSED"_s),
-        jsNumber(POINT_CONVERSION_UNCOMPRESSED));
-    put(Identifier::fromString(vm, "POINT_CONVERSION_HYBRID"_s),
-        jsNumber(POINT_CONVERSION_HYBRID));
+        { "POINT_CONVERSION_COMPRESSED"_s, POINT_CONVERSION_COMPRESSED },
+        { "POINT_CONVERSION_UNCOMPRESSED"_s, POINT_CONVERSION_UNCOMPRESSED },
+        { "POINT_CONVERSION_HYBRID"_s, POINT_CONVERSION_HYBRID },
 
-    // OBSOLETE OPTIONS retained for compatibility (always 0, as in node).
-    put(Identifier::fromString(vm, "SSL_OP_MICROSOFT_SESS_ID_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_TLS_D5_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_TLS_BLOCK_PADDING_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_SINGLE_ECDH_USE"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_SINGLE_DH_USE"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_EPHEMERAL_RSA"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_1"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_PKCS1_CHECK_2"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_CA_DN_BUG"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s), jsNumber(0));
+        // OBSOLETE OPTIONS retained for compatibility (always 0, as in node).
+        { "SSL_OP_MICROSOFT_SESS_ID_BUG"_s, 0 },
+        { "SSL_OP_NETSCAPE_CHALLENGE_BUG"_s, 0 },
+        { "SSL_OP_NETSCAPE_REUSE_CIPHER_CHANGE_BUG"_s, 0 },
+        { "SSL_OP_SSLREF2_REUSE_CERT_TYPE_BUG"_s, 0 },
+        { "SSL_OP_MICROSOFT_BIG_SSLV3_BUFFER"_s, 0 },
+        { "SSL_OP_MSIE_SSLV2_RSA_PADDING"_s, 0 },
+        { "SSL_OP_SSLEAY_080_CLIENT_DH_BUG"_s, 0 },
+        { "SSL_OP_TLS_D5_BUG"_s, 0 },
+        { "SSL_OP_TLS_BLOCK_PADDING_BUG"_s, 0 },
+        { "SSL_OP_SINGLE_ECDH_USE"_s, 0 },
+        { "SSL_OP_SINGLE_DH_USE"_s, 0 },
+        { "SSL_OP_EPHEMERAL_RSA"_s, 0 },
+        { "SSL_OP_PKCS1_CHECK_1"_s, 0 },
+        { "SSL_OP_PKCS1_CHECK_2"_s, 0 },
+        { "SSL_OP_NETSCAPE_CA_DN_BUG"_s, 0 },
+        { "SSL_OP_NETSCAPE_DEMO_CIPHER_CHANGE_BUG"_s, 0 },
 
-    // fs formats the binding exposes; keep in sync with ProcessBindingConstants.cpp.
-    put(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s), jsNumber(0));
-    put(Identifier::fromString(vm, "EXTENSIONLESS_FORMAT_WASM"_s), jsNumber(1));
+        // fs formats the binding exposes; keep in sync with ProcessBindingConstants.cpp.
+        { "EXTENSIONLESS_FORMAT_JAVASCRIPT"_s, 0 },
+        { "EXTENSIONLESS_FORMAT_WASM"_s, 1 },
+    };
+    for (const auto& entry : tlsConstants)
+        put(Identifier::fromString(vm, entry.name), jsNumber(entry.value));
 
     // node freezes require('constants') (lib/constants.js ObjectFreeze).
     auto scope = DECLARE_THROW_SCOPE(vm);

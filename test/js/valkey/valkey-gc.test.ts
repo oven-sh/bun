@@ -1,5 +1,5 @@
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isASAN } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, bunRun, isASAN, isMusl, isWindows } from "harness";
 import net from "node:net";
 import { join } from "node:path";
 
@@ -41,6 +41,197 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
   expect(stdout.trim()).toBe("OK");
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+// The socket's close event (ValkeyClient::on_close) rejects the commands the
+// connection still owes replies for, then settles connect()/onclose or arms the
+// retry. Rejecting a promise fails once the VM's termination is pending, which
+// is the state a terminated worker's teardown closes its sockets in, and
+// on_close() then returns before its callees ran. The keep-alive ref the socket
+// held on the client used to be released by those callees, so every
+// RedisClient terminated with commands owed leaked its Box<JSValkeyClient>; now
+// the close event's entry releases it whatever on_close() returns. One case per
+// branch of on_close() (retry scheduled, autoReconnect off, retries exhausted)
+// with the commands in flight, one with commands in the offline queue as well,
+// and one whose close event is on_connect_error (a dial that never completes)
+// rather than on_close. With the offline queue, the first rejection failing
+// used to leave the queue's remaining entries undropped, leaking their
+// serialized bytes as well. Only observable via LSan, so ASAN-only. (The main
+// thread's teardown under process.exit() closes the same sockets with no
+// termination pending, so the rejections succeed there and nothing leaked.)
+describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks nothing", () => {
+  const CRLF = "\\r\\n";
+  // Answers HELLO on connection number `helloOn` (on every connection when
+  // unset), never replies to a command, ends connection `endOn` at its first
+  // INCR, and resolves `ready` once connection `ready[0]` has sent `ready[1]`.
+  const server = (opts: { helloOn?: number; endOn?: number; ready: [connection: number, sent: string] }) => `
+    const HELLO = "%1${CRLF}$5${CRLF}proto${CRLF}:3${CRLF}";
+    const { promise: ready, resolve: onReady } = Promise.withResolvers();
+    let connections = 0;
+    const server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(s) { s.data = { n: ++connections, buf: "", hello: false }; },
+        data(s, chunk) {
+          s.data.buf += chunk.toString("latin1");
+          if (!s.data.hello && s.data.buf.includes("HELLO")) {
+            s.data.hello = true;
+            if (${opts.helloOn ?? 0} === 0 || s.data.n === ${opts.helloOn ?? 0}) s.write(HELLO);
+          }
+          if (s.data.n === ${opts.endOn ?? 0} && s.data.buf.includes("INCR")) s.end();
+          if (s.data.n === ${opts.ready[0]} && s.data.buf.includes(${JSON.stringify(opts.ready[1])})) onReady();
+        },
+        close() {},
+        error() {},
+      },
+    });
+  `;
+
+  async function expectCleanExit(src: string, stdout: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: {
+        ...bunEnv,
+        BUN_DESTRUCT_VM_ON_EXIT: "1",
+        ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+        LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../leaksan.supp")}`,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: out, stderr: err, exitCode }).toEqual({ stdout, stderr: "", exitCode: 0 });
+  }
+
+  // The client is created from a macrotask on purpose: allocations made while
+  // the worker's module body is still on the stack match the module-evaluation
+  // entries of leaksan.supp, and a leaked client would then go unreported.
+  const workerSrc = (body: string) => `
+    const { parentPort, workerData } = require("node:worker_threads");
+    setImmediate(() => {
+      const client = new Bun.RedisClient(workerData.url, workerData.options);
+      globalThis.client = client;
+      ${body}
+    });
+  `;
+
+  // Terminates the worker once the server reports `ready`, with whatever the
+  // client still owes.
+  function terminateWorker(serverSrc: string, options: object, worker: string) {
+    return expectCleanExit(
+      `
+      const { Worker } = require("node:worker_threads");
+      ${serverSrc}
+      const worker = new Worker(${JSON.stringify(workerSrc(worker))}, {
+        eval: true,
+        workerData: { url: "redis://127.0.0.1:" + server.port, options: ${JSON.stringify(options)} },
+      });
+      worker.on("error", (err) => { console.error(err); process.exit(2); });
+      worker.on("exit", (code) => { console.error("worker exited on its own with " + code); process.exit(3); });
+      await ready;
+      worker.removeAllListeners("exit");
+      console.log("terminated", await worker.terminate());
+      server.stop(true);
+      `,
+      "terminated 1\n",
+    );
+  }
+
+  const inFlight = `client.connect().then(() => { for (let i = 0; i < 4; i++) client.incr("k").catch(() => {}); });`;
+
+  // Symbolizing a leak report takes LSan several seconds on a debug binary.
+  const timeout = 60_000;
+  test.concurrent(
+    "worker.terminate(): retry scheduled",
+    () => terminateWorker(server({ ready: [1, "INCR"] }), {}, inFlight),
+    timeout,
+  );
+  test.concurrent(
+    "worker.terminate(): autoReconnect off",
+    () => terminateWorker(server({ ready: [1, "INCR"] }), { autoReconnect: false }, inFlight),
+    timeout,
+  );
+  test.concurrent(
+    "worker.terminate(): retries exhausted",
+    () => terminateWorker(server({ ready: [1, "INCR"] }), { maxRetries: 0 }, inFlight),
+    timeout,
+  );
+
+  // WATCH is not auto-pipelined, so it waits in the offline queue while the
+  // INCRs are in flight, and the INCRs sent after it queue up behind it. The
+  // first in-flight rejection failing then leaves the whole queue behind.
+  test.concurrent(
+    "worker.terminate(): commands queued behind a non-pipelined command",
+    () =>
+      terminateWorker(
+        server({ ready: [1, "INCR"] }),
+        { autoReconnect: false },
+        `client.connect().then(() => {
+          for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
+          client.send("WATCH", ["k"]).catch(() => {});
+          for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
+        });`,
+      ),
+    timeout,
+  );
+
+  // The dial never completes: the listener's accept queue is full, so the
+  // kernel drops the SYN and connect() sits in EINPROGRESS. Teardown then
+  // delivers on_connect_error for it, with the commands in the offline queue.
+  // Needs listen(2) with a zero backlog, which Bun's own listeners do not
+  // expose, so the listener is a raw libc socket.
+  test.skipIf(isWindows || isMusl)(
+    "worker.terminate(): commands queued behind a dial that stays pending",
+    () =>
+      expectCleanExit(
+        `
+        const { Worker } = require("node:worker_threads");
+        const net = require("node:net");
+        const { dlopen, ptr } = require("bun:ffi");
+        const darwin = process.platform === "darwin";
+        const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+          socket:      { args: ["int", "int", "int"],  returns: "int" },
+          bind:        { args: ["int", "ptr", "int"],  returns: "int" },
+          listen:      { args: ["int", "int"],         returns: "int" },
+          getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+        });
+        const AF_INET = 2, SOCK_STREAM = 1;
+        const addr = new Uint8Array(16);
+        if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+        addr.set([127, 0, 0, 1], 4);
+        const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, 0) !== 0) throw new Error("listen failed");
+        const len = new Uint32Array([16]);
+        if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+        const port = (addr[2] << 8) | addr[3];
+        // Nobody accepts, so this one connection fills the queue.
+        const filler = net.connect(port, "127.0.0.1");
+        filler.on("error", () => {});
+        await new Promise(resolve => filler.on("connect", resolve));
+        const { promise: dialing, resolve: onDialing } = Promise.withResolvers();
+        const worker = new Worker(${JSON.stringify(
+          workerSrc(`
+            client.connect().catch(() => {});
+            for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
+            parentPort.postMessage("dialing");
+          `),
+        )}, {
+          eval: true,
+          workerData: { url: "redis://127.0.0.1:" + port, options: { autoReconnect: false } },
+        });
+        worker.on("message", onDialing);
+        worker.on("error", (err) => { console.error(err); process.exit(2); });
+        worker.on("exit", (code) => { console.error("worker exited on its own with " + code); process.exit(3); });
+        await dialing;
+        worker.removeAllListeners("exit");
+        console.log("terminated", await worker.terminate());
+        filler.destroy();
+        `,
+        "terminated 1\n",
+      ),
+    timeout,
+  );
 });
 
 // Fuzzer found a heap-use-after-free that survived the ScopedRef refactor:

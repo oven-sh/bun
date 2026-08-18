@@ -1366,13 +1366,6 @@ impl JSValkeyClient {
 
     // Callback for when Valkey client needs to reconnect
     pub(crate) fn on_valkey_reconnect(&self) {
-        // SAFETY: adopts connect()'s socket keep-alive ref for the just-closed
-        // socket (or the one `ValkeyDeferredClose::run` took in its place).
-        // Reached only from `ValkeyClient::on_close()`'s reconnect branch,
-        // which never calls `on_valkey_close()`, so this scope is the sole
-        // releaser. The caller holds its own scoped ref, so count > 0.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
-
         // This timer was bounding the attempt that just ended; left armed it
         // fires during the retry delay, and `fail()` then has no socket to
         // close and nothing settles connect(). `reconnect()` arms a new one.
@@ -1384,11 +1377,6 @@ impl JSValkeyClient {
     // Callback for when Valkey client closes
     pub(crate) fn on_valkey_close(&self) -> JsResult<()> {
         let global_object = self.global_object;
-
-        // SAFETY: adopts connect()'s socket keep-alive ref (or the one
-        // `ValkeyDeferredClose::run` took in its place); the caller holds its
-        // own scoped ref so count stays > 0 until this drops.
-        let _socket_ref = unsafe { ScopedRef::adopt(self.as_ctx_ptr()) };
         let _defer = scopeguard::guard(BackRef::new(self), |p| p.update_poll_ref());
 
         let Some(this_jsvalue) = self.this_value.get().try_get() else {
@@ -1537,8 +1525,11 @@ impl JSValkeyClient {
         // `owner_ptr` opaquely (no overlapping write).
         let owner_ptr: *mut JSValkeyClient = std::ptr::from_ref::<JSValkeyClient>(self).cast_mut();
         let client_ptr: *mut valkey::ValkeyClient = self.client.as_ptr();
-        // Socket keep-alive ref, released by on_valkey_close/on_valkey_reconnect.
-        // Forgotten once there is a socket to own it.
+        // Socket keep-alive ref. Forgotten once there is a socket to own it;
+        // adopted by the guard at the entry of the socket's close event
+        // (`SocketHandler::on_close`, `SocketHandler::on_connect_error`, or
+        // `ValkeyClient::close()` for a half-open socket), which is the one
+        // event uSockets delivers for every socket this returns.
         let socket_ref = self.ref_scope();
         // SAFETY: `client_ptr` is live; `group` is the lazy-initialised per-VM
         // `SocketGroup` (stable for the VM's lifetime). `ssl_ctx` is a +1-ref
@@ -1859,6 +1850,10 @@ impl<const SSL: bool> SocketHandler<SSL> {
     ) -> JsResult<()> {
         debug!("Socket closed.");
         let _guard = this.ref_scope();
+        // SAFETY: adopts the keep-alive ref `connect()` forgot for this
+        // socket; this is its one close event. Released after `_defer` runs,
+        // while `_guard` still holds the client.
+        let _socket_ref = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         // Before `on_close()`: it runs `onclose` and settles the connect()
@@ -1886,6 +1881,8 @@ impl<const SSL: bool> SocketHandler<SSL> {
         // Ensure the socket pointer is updated.
         this.client_mut().socket = Socket::SocketTcp(uws::SocketTCP::detached());
         let _guard = this.ref_scope();
+        // SAFETY: as in `on_close`; a dial that fails gets this event instead.
+        let _socket_ref = unsafe { ScopedRef::adopt(this.as_ctx_ptr()) };
         this.client_mut().status = valkey::Status::Disconnected;
         let _defer = scopeguard::guard(BackRef::new(this), |p| p.update_poll_ref());
 
@@ -2039,9 +2036,8 @@ impl ValkeyDeferredClose {
                 if !this.client.get().socket.is_closed() {
                     return;
                 }
-                // `on_close()` ends in `on_valkey_close`/`on_valkey_reconnect`,
-                // which release the ref the socket would have held.
-                this.ref_();
+                // No socket ref to give back: `connect()` forgets it only once
+                // it has a socket, and this task exists because it never did.
                 this.client_mut().status = valkey::Status::Disconnected;
                 let closed = this.client_mut().on_close();
                 this.update_poll_ref();

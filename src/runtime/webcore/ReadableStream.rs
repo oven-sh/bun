@@ -323,14 +323,11 @@ impl ReadableStream {
                 byte_stream.parent_const().set_sink_owner(owner_cell);
                 byte_stream.sink.set(sink);
                 byte_stream.sink_paused.set(false);
-                // The `sinkOwner` slot set above is what roots `owner_cell` from now on, and
-                // this wrapper is what holds the slot. A producer that holds the source
-                // (`FetchTasklet`) keeps delivering to `sink` whether or not JS still reaches
-                // the wrapper, so the wrapper has to stay alive as long as that ref is held.
-                // Done before the first write below, which can run script and so collect.
+                // The wrapper's `sinkOwner` slot is now what roots `owner_cell`, so a producer
+                // holding the source must keep the wrapper alive too. Before the first write,
+                // which can run script.
                 // SAFETY: `Source::Bytes` is the wrapper's whole `m_ctx` allocation, live while
-                // the stream is; `byte_stream` is a back-reference, so no borrow of the context
-                // is live across this call.
+                // the stream is; `byte_stream` is a back-reference, so no borrow is live here.
                 unsafe {
                     let source = NewSource::from_context_ptr(NonNull::from(byte_stream).as_ptr());
                     (*source).root_wrapper_if_needed();
@@ -799,15 +796,11 @@ pub trait SourceContext: Sized {
     /// `setRefUnrefFn` — default no-op.
     fn set_ref_unref(&mut self, _enable: bool) {}
 
-    /// Whether the JS wrapper must stay alive while a native ref beyond the
-    /// wrapper's own is held ([`NewSource::root_wrapper_if_needed`]). The
-    /// default holds for `FileReader`: its read completes off the event loop
-    /// and then calls the wrapper's `onClose`. `ByteStream` answers from its
-    /// state: the wrapper roots a natively wired sink's cell (`sinkOwner`), so
-    /// it has to live while a producer can still deliver to that sink, but
-    /// with no sink it is what the stream's consumers hold, and rooting it
-    /// would keep a stream nobody can reach alive for as long as the producer
-    /// (`FetchTasklet`) runs.
+    /// Whether a native ref on the source must also keep the JS wrapper alive
+    /// ([`NewSource::root_wrapper_if_needed`]). `FileReader`: always, its read
+    /// completion calls the wrapper's `onClose`. `ByteStream`: only while the
+    /// wrapper roots a wired sink; otherwise the producer's ref would pin a
+    /// stream nobody can reach for as long as the body lasts.
     fn native_ref_roots_wrapper(&self) -> bool {
         true
     }
@@ -1167,16 +1160,11 @@ impl<C: SourceContext> NewSource<C> {
         self.root_wrapper_if_needed();
     }
 
-    /// Root the wrapper while a ref beyond the wrapper's own is held and the
-    /// context needs the wrapper alive for it
-    /// ([`SourceContext::native_ref_roots_wrapper`]): a FileReader
-    /// `waiting_for_on_reader_done` I/O ref, whose `on_js_close` is reached from
-    /// `on_reader_done` off the event loop with no JS frame on the stack and
-    /// must never read a dead-but-unswept cell; or a ByteStream that a producer
-    /// holds while a native sink is wired to it. Re-run whenever one of the two
-    /// inputs changes: a ref is taken ([`Self::increment_count`]) or a sink is
-    /// wired ([`ReadableStream::wire_native_sink`]). [`Self::decrement_count`]
-    /// drops the root once only the wrapper's own ref remains.
+    /// Root the wrapper while a ref beyond its own is held and the context wants
+    /// that ([`SourceContext::native_ref_roots_wrapper`]). Called when either
+    /// input changes: [`Self::increment_count`], and
+    /// [`ReadableStream::wire_native_sink`]. [`Self::decrement_count`] drops the
+    /// root once only the wrapper's own ref remains.
     pub fn root_wrapper_if_needed(&mut self) {
         if self.ref_count <= 1 || !self.context.native_ref_roots_wrapper() {
             return;

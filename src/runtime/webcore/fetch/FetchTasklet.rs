@@ -114,21 +114,17 @@ pub struct FetchTasklet {
     /// native response ref if we still need it when JS is discarted
     // Response is intrusively refcounted; modeled as a raw ptr.
     pub(crate) native_response: Option<*mut Response>,
-    /// A counted ref on the response body stream's ByteStream source for as long as this
-    /// tasklet is its `producer`. The body is delivered into, and unhooked through, this
-    /// native memory, never through the JS wrappers, which GC (and the VM's last sweep)
-    /// destroys in no particular order. The ref roots the stream only while a native sink is
-    /// wired to the source (`NewSource::root_wrapper_if_needed`: the source's wrapper is what
-    /// roots that sink). Otherwise only the stream's consumers (the Response wrapper, a
-    /// reader, a pipe, a pending pull) keep it alive, and once they are all gone the source
-    /// reports the collected wrapper through `on_response_stream_collected`.
+    /// A counted ref on the response body's ByteStream source while this tasklet is its
+    /// `producer`: the body is delivered and unhooked through native memory, not through JS
+    /// wrappers that GC destroys in any order. It does not keep the stream reachable
+    /// (`SourceContext::native_ref_roots_wrapper`); once the stream's consumers are gone, the
+    /// source reports that through `on_response_stream_collected`.
     pub(crate) response_stream_source: Option<NonNull<crate::webcore::byte_stream::Source>>,
     pub(crate) request_headers: Headers,
     pub(crate) promise: jsc::JSPromiseStrong,
     pub(crate) concurrent_task: ConcurrentTask,
-    /// Keeps the event loop alive while a body consumer waits for bytes. `JsCell`: the
-    /// ByteStream's drain signal re-enters `on_stream_drained` through a shared ref while a
-    /// delivery on this tasklet is on the stack.
+    /// Held while a body consumer waits for bytes. `JsCell`: the ByteStream's drain signal
+    /// reaches `on_stream_drained` through a shared ref during a delivery.
     pub poll_ref: JsCell<KeepAlive>,
     /// For Http Client requests
     /// when Content-Length is provided this represents the whole size of the request
@@ -833,18 +829,15 @@ impl FetchTasklet {
             }
         } else if let Some(source) = self.response_stream_source {
             bun_output::scoped_log!(FetchTasklet, "onBodyReceived response_stream_source");
-            // The delivery holds its own ref on the source. Delivering can run script (a
-            // native sink's handlers), which can cancel the body, and the cancel comes back
-            // through `on_stream_cancelled` and drops the producer ref while `on_data` is
-            // still on the stack; a collection in that script then destroys the wrapper and
-            // with it the source, under `on_data`. Released below, once nothing here uses it.
-            // SAFETY: live through our producer ref; no borrow of the source exists yet.
+            // The delivery holds its own ref: a sink's handlers run inside `on_data` and can
+            // cancel the body, which drops the producer ref (`on_stream_cancelled`), and a GC
+            // in there would then free the source under `on_data`.
+            // SAFETY: live through the producer ref; no borrow of the source exists yet.
             unsafe { (*source.as_ptr()).increment_count() };
             let bytes = Self::response_bytes(source);
             bytes.size_hint.set(self.get_size_hint());
             let chunk = self.scheduled_response_buffer.list.as_slice();
             bytes.on_data(Self::temporary_chunk(chunk, false));
-            // Still the producer? (See above: the delivery can have cancelled the body.)
             if self.response_stream_source.is_some() {
                 self.update_keep_alive_for_body_consumer(&bytes);
             }
@@ -1642,10 +1635,8 @@ impl FetchTasklet {
             return DrainResult::Aborted;
         }
 
-        // Creating the stream (`res.body`) does not by itself keep the process alive:
-        // whatever reads it refs the loop when it starts to wait (`on_consumer_attached`,
-        // `on_stream_drained`), synchronously, before the loop can run dry. A stream that
-        // is created and then never read holds nothing.
+        // No loop ref for creating the stream: a consumer takes one when it starts to wait
+        // (`on_consumer_attached`, `on_stream_drained`), before the loop can run dry.
 
         // The bytes already in `scheduled_response_buffer` are handed to the
         // new stream below. That is the drain `Paused` was waiting for, so
@@ -1698,41 +1689,33 @@ impl FetchTasklet {
         }
     }
 
-    /// The ByteStream behind `source`. Valid while a counted ref pins the source: ours
-    /// (`response_stream_source`, or the pointer `take_response_stream_source` handed out
-    /// and `release_response_stream_source` has not consumed yet), or the JS wrapper's.
+    /// The ByteStream behind a source one of our refs still pins.
     fn response_bytes(
         source: NonNull<crate::webcore::byte_stream::Source>,
     ) -> bun_ptr::BackRef<crate::webcore::ByteStream> {
-        // SAFETY: see above; `context` is a field of the live source. Every ByteStream
-        // method takes `&self` (R-2), so a shared borrow is all a delivery needs.
+        // SAFETY: the source is live (caller's ref); ByteStream is `&self`-only (R-2).
         bun_ptr::BackRef::new(unsafe { &(*source.as_ptr()).context })
     }
 
-    /// Stop being the response ByteStream's producer. Returns the source, still pinned by
-    /// our counted ref, so a terminal chunk can be delivered into it first; the caller then
-    /// passes it to `release_response_stream_source`. Touches no JS cell.
+    /// Stop being the producer. The source stays pinned by our ref, so the caller can still
+    /// deliver a terminal chunk before `release_response_stream_source`. Touches no JS cell.
     fn take_response_stream_source(
         &mut self,
     ) -> Option<NonNull<crate::webcore::byte_stream::Source>> {
         let source = self.response_stream_source.take()?;
-        // SAFETY: pinned by the counted ref taken in `on_readable_stream_available`, which
-        // only `release_response_stream_source` drops.
+        // SAFETY: still pinned by the ref from `on_readable_stream_available`.
         unsafe { (*source.as_ptr()).producer.set(SourceHandle::None) };
         Some(source)
     }
 
-    /// Drop one of our counted refs on the source: the producer ref from
-    /// `on_readable_stream_available` (handed out by `take_response_stream_source`), or the
-    /// ref a delivery takes for its own duration. This can be the last ref (the stream's JS
-    /// wrapper can be gone by now) and then frees the source, so nothing may touch it
-    /// afterwards.
+    /// Drop one of our refs (the producer's, or a delivery's). Can free the source: the JS
+    /// wrapper may be gone already.
     fn release_response_stream_source(source: NonNull<crate::webcore::byte_stream::Source>) {
         // SAFETY: balances a ref this tasklet took; `source` is not used after this.
         unsafe { crate::webcore::byte_stream::Source::decrement_count(source.as_ptr()) };
     }
 
-    /// Unhook from the response ByteStream (the stream can outlive us in JS) and release it.
+    /// Unhook from the response ByteStream (the stream can outlive us) and release it.
     /// Touches no JS cell.
     fn clear_stream_handlers(&mut self) {
         if let Some(source) = self.take_response_stream_source() {
@@ -1750,34 +1733,28 @@ impl FetchTasklet {
         self.ignore_remaining_response_body();
     }
 
-    /// The source's JS wrapper was collected, and with it every reader, pipe, and
-    /// node `Readable` that could still pull from it (`ByteStream::on_wrapper_finalized`).
-    /// Nobody can read the rest of this body: cancel it like `reader.cancel()` would.
-    /// This runs inside a GC sweep, where the tasklet must not be torn down (a delivery
-    /// can be on the stack, and the sweep must not run script), so the cancel is queued
-    /// behind the current turn. `this` is the source's `producer` pointer, live because
-    /// `clear_stream_handlers` clears that handle before a tasklet is freed.
+    /// `ByteStream::on_wrapper_finalized`: nothing can read the rest of this body, so cancel
+    /// it as `reader.cancel()` would. Runs inside a GC sweep, possibly under a delivery on
+    /// this tasklet, so the cancel is queued. `this` is the source's `producer` pointer,
+    /// live until `clear_stream_handlers`.
     pub(crate) fn on_response_stream_collected(this: NonNull<FetchTasklet>) {
-        // SAFETY: see above. A delivery holding `&mut` to this tasklet can be on the stack,
-        // so no reference is formed here: one `Copy` field is read and the atomic count is
-        // bumped through the pointer. The hop keeps the pointer for the exclusive access it
-        // needs once it runs.
+        // SAFETY: `this` is live (see above). A `&mut` to it can be on the stack, so no
+        // reference is formed: a `Copy` field is read and the atomic count is bumped.
         let global_this: GlobalRef = unsafe { (*this.as_ptr()).global_this };
         let vm = global_this.bun_vm();
         if vm.is_shutting_down() {
             // Teardown aborts every fetch still in flight (`stop_for_vm_teardown`).
             return;
         }
-        // SAFETY: as above; `ref_` only touches the interior-mutable counter.
+        // SAFETY: as above.
         unsafe { bun_ptr::ThreadSafeRefCount::<Self>::ref_(this.as_ptr()) };
         let hop = bun_core::heap::into_raw(Box::new(CollectedResponseStreamHop(this)));
         vm.as_mut()
             .enqueue_task(ManagedTask::new_owned(hop, CollectedResponseStreamHop::run));
     }
 
-    /// The ByteStream handed bytes to a consumer. Re-arm the transport, and keep the
-    /// process alive for whatever that consumer asks for next; the next delivery
-    /// (`update_keep_alive_for_body_consumer`) settles whether anything is waiting.
+    /// The ByteStream handed bytes to a consumer: re-arm the transport, and hold the loop
+    /// until the next delivery settles whether the consumer waits for more.
     pub(crate) fn on_stream_drained(&self) {
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
@@ -1789,23 +1766,17 @@ impl FetchTasklet {
         }
     }
 
-    /// A consumer is waiting on the ByteStream: a pull went pending, or a native sink
-    /// was wired to it. Keep the process alive until the bytes it waits for arrive.
+    /// A pull went pending, or a native sink was wired: something waits for bytes.
     pub(crate) fn on_consumer_attached(&self) {
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
     }
 
-    /// A chunk was just delivered to the ByteStream and more are coming. Something that
-    /// waits for the next one keeps the process alive: a pull the chunk did not satisfy, a
-    /// buffered consumer (`res.body.text()`), or a native sink. With none of those the
-    /// transport stays paused (`callback` flipped it as it delivered this chunk), and the
-    /// paused body must not keep an otherwise idle process alive: that is the state after a
-    /// reader is released, or after `res.body` is touched but never read. A consumer that
-    /// comes back pulls, and the pull refs the loop again (`on_consumer_attached`,
-    /// `on_stream_drained`); a consumer that is collected cancels the body instead
-    /// (`on_response_stream_collected`). A consumer that keeps reading pulls again in the
-    /// microtask that takes this chunk, before the loop can observe the unref.
+    /// After a non-terminal delivery: the loop is held only while something waits for the
+    /// next chunk. Otherwise the transport stays paused (a released reader, an untouched
+    /// `res.body`) and must not hold an idle process; a consumer that comes back pulls,
+    /// which refs again. A consumer that keeps reading pulls again in the microtask that
+    /// takes this chunk, before the loop can see the unref.
     fn update_keep_alive_for_body_consumer(&self, bytes: &crate::webcore::ByteStream) {
         let waiting = bytes.sink.get().is_some()
             || bytes.buffer_action.get().is_some()
@@ -1934,9 +1905,8 @@ impl FetchTasklet {
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
         // Also fine from `on_response_finalize` (a JSC Weak finalizer inside
-        // `WeakBlock::sweep`): that path only gets here with no stream source held, so
-        // this touches no JS cell and frees nothing. The request-body sink is left for
-        // `clear_sink()` in `deinit()` (an event-loop task, outside sweep) to detach.
+        // `WeakBlock::sweep`), which only gets here with no source held. The request-body
+        // sink is left for `clear_sink()` in `deinit()` (an event-loop task, outside sweep).
         self.clear_stream_handlers();
         self.response.clear();
 
@@ -2713,13 +2683,10 @@ impl FetchTasklet {
             //    2b. if we have a promise, we should keep loading the body.
             // 3. We never started buffering, in which case we should ignore the body.
             //
-            // This is called inside a finalizer: decide from native state only.
+            // Inside a finalizer: decide from native state only.
             if !matches!(body, BodyValue::Locked(_)) || this.response_stream_source.is_some() {
-                // Scenario 1: the stream outlives its Response for as long as something
-                // consumes it (`res.body` handed to a pipe, a reader, `Readable.fromWeb`).
-                // While nothing does, the transport sits paused without holding the loop
-                // (`update_keep_alive_for_body_consumer`); once the stream's wrapper is
-                // collected too, `on_response_stream_collected` cancels the body.
+                // Scenario 1: the stream outlives its Response while something consumes it;
+                // once it is collected too, `on_response_stream_collected` cancels the body.
                 return;
             }
 
@@ -2835,21 +2802,17 @@ impl bun_event_loop::Taskable for FetchTaskletPromiseSettle {
     }
 }
 
-/// The hop `on_response_stream_collected` queues (a `ManagedTask::new_owned` context).
-/// Owns one ref on the tasklet, released when the hop is dropped: after it ran, or
-/// unrun when its VM tears down the queue.
+/// `ManagedTask::new_owned` context queued by `on_response_stream_collected`. Owns one ref
+/// on the tasklet, released on drop: after running, or unrun at VM teardown.
 struct CollectedResponseStreamHop(NonNull<FetchTasklet>);
 
 impl CollectedResponseStreamHop {
     fn run(this: *mut Self) -> ElJsResult<()> {
-        // SAFETY: the box `on_response_stream_collected` queued; reclaimed exactly once
-        // here (the task's `cleanup` only runs when it is released unrun).
+        // SAFETY: the queued box; `cleanup` only runs for a task released unrun.
         let hop = unsafe { bun_core::heap::take(this) };
-        // SAFETY: the ref `hop` owns keeps the tasklet live; JS thread, between tasks, so
-        // no other borrow of it is live.
+        // SAFETY: the ref `hop` owns keeps the tasklet live; between tasks, no other borrow.
         let tasklet = unsafe { &mut *hop.0.as_ptr() };
-        // Still producing into that stream? The body can have ended, or been cancelled,
-        // since the sweep that queued this hop.
+        // The body can have ended or been cancelled since the sweep that queued this.
         if tasklet.response_stream_source.is_some() {
             tasklet.on_stream_cancelled();
         }

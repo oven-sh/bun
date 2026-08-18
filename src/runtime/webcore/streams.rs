@@ -1011,11 +1011,9 @@ impl SourceHandle {
         }
     }
 
-    /// The source's JS wrapper was collected with no native consumer attached:
-    /// nothing can read what the producer delivers from now on. Called from a
-    /// GC sweep, so an arm may only schedule work, and none may run JS. The
-    /// fetch arm hands over the pointer itself: the work it queues needs the
-    /// write-capable pointer the handle carries, not a borrow taken here.
+    /// The source's JS wrapper was collected and no native consumer is attached:
+    /// nothing can read what the producer delivers from now on. Called from a GC
+    /// sweep: arms may schedule work, not run JS.
     pub fn consumer_collected(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => {

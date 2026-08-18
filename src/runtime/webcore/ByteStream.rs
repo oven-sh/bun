@@ -90,8 +90,7 @@ impl readable_stream::SourceContext for ByteStream {
         Self::on_wrapper_finalized(self);
         false
     }
-    /// The producer's ref (`FetchTasklet`) pins the wrapper only while the
-    /// wrapper roots a natively wired sink; see the trait method.
+    /// The wrapper roots a natively wired sink (`sinkOwner`), nothing else.
     fn native_ref_roots_wrapper(&self) -> bool {
         self.sink.get().is_some()
     }
@@ -265,9 +264,8 @@ impl ByteStream {
         Vec::<u8>::move_from_list(list)
     }
 
-    /// A consumer now waits on this stream: a native sink was just wired to
-    /// it, or a pull found the buffer empty and went pending. The producer
-    /// keeps the process alive for it (`FetchTasklet::on_consumer_attached`).
+    /// A native sink was wired, or a pull went pending: a consumer now waits
+    /// for bytes (`FetchTasklet::on_consumer_attached` refs the loop for it).
     pub fn signal_consumer_attached(&self) {
         self.parent_const().producer.get().start();
     }
@@ -675,12 +673,9 @@ impl ByteStream {
         self.buffer.get().capacity()
     }
 
-    /// The JS wrapper was collected (`NewSource::finalize`): no stream, reader,
-    /// or node `Readable` can pull from this source again. A native consumer (a
-    /// `sink`, or a `buffer_action` that waits for the whole body) does not hold
-    /// the wrapper and still takes the bytes; with neither attached, the
-    /// producer is delivering into memory nobody can read. Runs inside a GC
-    /// sweep, so the producer may only schedule its teardown.
+    /// `NewSource::finalize`: nothing JS-side can pull from this source again.
+    /// A `sink` or a `buffer_action` does not hold the wrapper and still takes
+    /// the bytes; without one, tell the producer. Runs inside a GC sweep.
     fn on_wrapper_finalized(&self) {
         if self.sink.get().is_some() || self.buffer_action.get().is_some() {
             return;

@@ -1607,7 +1607,8 @@ impl Expect {
         // so now execute the symmetric matching
 
         // retrieve the matcher name
-        let matcher_name = matcher_fn.get_name(global_this)?;
+        // `get_name` hands back a +1 WTFStringImpl ref.
+        let matcher_name = bun_core::OwnedString::new(matcher_fn.get_name(global_this)?);
 
         let matcher_params = CustomMatcherParamsFormatter {
             colors: Output::enable_ansi_colors_stderr(),
@@ -1625,7 +1626,7 @@ impl Expect {
             expect.flags.get(),
             global_this,
             value,
-            matcher_name,
+            &matcher_name,
             &matcher_params,
             false,
         )?;
@@ -1643,7 +1644,7 @@ impl Expect {
             matcher_args.push(*arg);
         }
 
-        let _ = Self::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, expect.flags.get(), false)?;
+        let _ = Self::execute_custom_matcher(global_this, matcher_name.get(), matcher_fn, &matcher_args, expect.flags.get(), false)?;
 
         Ok(this_value)
     }
@@ -2619,7 +2620,8 @@ impl ExpectCustomAsymmetricMatcher {
         }
 
         // retrieve the matcher name
-        let matcher_name = matcher_fn.get_name(global_this)?;
+        // `get_name` hands back a +1 WTFStringImpl ref.
+        let matcher_name = bun_core::OwnedString::new(matcher_fn.get_name(global_this)?);
 
         // retrieve the asymmetric matcher args
         // if null, it means the function has not yet been called to capture the args, which is a misuse of the matcher
@@ -2639,7 +2641,7 @@ impl ExpectCustomAsymmetricMatcher {
             matcher_args.push(captured_args.get_index(global_this, i as u32)?);
         }
 
-        Expect::execute_custom_matcher(global_this, matcher_name, matcher_fn, &matcher_args, this.flags, true)
+        Expect::execute_custom_matcher(global_this, matcher_name.get(), matcher_fn, &matcher_args, this.flags, true)
     }
 
     /// Function called by c++ function "matchAsymmetricMatcher" to execute the custom matcher against the provided leftValue

@@ -6553,6 +6553,17 @@ pub mod bv2_impl {
                         import_record.source_index = Index::INVALID;
 
                         if let Some(entry) = dev_server.is_file_cached(path.text, bake_graph) {
+                            // The importer's `with { type }` (or the extension, once it drops one) wins over the loader the cached build used; unknown extensions keep a plugin's.
+                            let wanted_loader = import_record
+                                .loader
+                                .or_else(|| path.loader(&transpiler.options.loaders));
+                            if wanted_loader.is_some_and(|wanted| {
+                                dev_server
+                                    .bundled_loader(path.text, bake_graph)
+                                    .is_some_and(|bundled| bundled != wanted)
+                            }) {
+                                break 'brk;
+                            }
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL
@@ -7339,6 +7350,21 @@ pub mod bv2_impl {
                                 )
                                 .expect("oom");
 
+                            // A same-target importer reuses these builds; a slot already taken belongs to a client-discovered copy.
+                            for (map_target, index) in [
+                                (result_ast_target, result_source_index as IndexInt),
+                                (Target::ServerComponentsSsr, ssr_index),
+                            ] {
+                                let slot = this
+                                    .graph
+                                    .path_to_source_index_map(map_target)
+                                    .get_or_put(source_path_text)
+                                    .expect("oom");
+                                if !slot.found_existing {
+                                    *slot.value_ptr = index;
+                                }
+                            }
+
                             (reference_source_index, ssr_index)
                         } else {
                             // Enqueue only one file
@@ -7365,7 +7391,7 @@ pub mod bv2_impl {
                             (server_index, Index::INVALID.get())
                         };
 
-                        // Not put in the path maps: `LinkerGraph::load` redirects cross-target import records instead.
+                        // The reference is not put in the path maps: `LinkerGraph::load` redirects cross-target import records to it.
                         this.graph
                             .server_component_boundaries
                             .put(

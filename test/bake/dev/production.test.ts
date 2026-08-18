@@ -43,6 +43,27 @@ describe("production", () => {
     expect(buildStderr.toString()).toContain("oh no!");
   });
 
+  test("a route generated from getStaticPaths that throws while rendering fails the build", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-param-throw", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/blog/[slug].tsx": `export default function BlogPost({ params }) {
+  throw new Error("param boom");
+  return <div>{params.slug}</div>;
+}
+export function getStaticPaths() {
+  return { paths: [{ params: { slug: "hello" } }], fallback: false };
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    expect(stderr.toString()).toContain("param boom");
+    expect(stderr.toString()).not.toContain("cannot be pre-rendered to a static page");
+    expect(exitCode).toBe(1);
+  });
+
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {
       "src/index.tsx": `export default { 
@@ -432,6 +453,26 @@ export default function IndexPage() { return <p>{title}</p>; }
           error: Could not resolve: "../lib/title"
               at <dir>/pages/index.tsx:1:23"
         `);
+        expect(stdout).toBe("exit event: 1\n");
+        expect(exitCode).toBe(1);
+      },
+      timeout,
+    );
+
+    // A "use client" page is both a route entry point and a client component entry point, and the two chunks get the same output path.
+    test(
+      "two chunks with the same output path",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-duplicate-output-path", {
+          "src/index.tsx": config,
+          "pages/index.tsx": `"use client";
+export default function IndexPage() { return <p>index</p>; }
+`,
+        });
+
+        const { exitCode, stdout, report } = await build(dir);
+        expect(report).toContain("Multiple files share the same output path");
+        expect(report).not.toContain("An internal error occurred");
         expect(stdout).toBe("exit event: 1\n");
         expect(exitCode).toBe(1);
       },
@@ -964,6 +1005,47 @@ export default function IndexPage() {
 
     // Verify NO JavaScript imports are included in the HTML
     expect(htmlContent).not.toContain('<script type="module"');
+  });
+
+  test("a custom framework without server components builds and keeps its client entry", async () => {
+    using dir = tempDir("bake-production-custom-framework", {
+      "bun.app.ts": `export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              {
+                root: "pages",
+                style: "nextjs-pages",
+                serverEntryPoint: "./server-entry.ts",
+                clientEntryPoint: "./client-entry.ts",
+              },
+            ],
+          },
+        },
+      };`,
+      "pages/index.tsx": `export default function Home() { return "homepage"; }`,
+      "server-entry.ts": `export function render(req: Request, meta: any) {
+  return new Response(String(meta.pageModule.default()));
+}
+export async function prerender(meta: any) {
+  const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+  const body = String(meta.pageModule.default());
+  return { files: { "/index.html": "<!DOCTYPE html><html><body>" + body + scripts + "</body></html>" } };
+}`,
+      "client-entry.ts": `console.log("client loaded");`,
+    });
+
+    const { exitCode } = await Bun.$`${bunExe()} build --app ./bun.app.ts`.cwd(String(dir)).env(bunEnv).throws(false);
+
+    const htmlPage = path.join(String(dir), "dist", "index.html");
+    expect(existsSync(htmlPage)).toBe(true);
+    const htmlContent = await Bun.file(htmlPage).text();
+    expect(htmlContent).toContain("homepage");
+    // Without server components no route is fully static, so prerender still receives the client entry in `meta.modules`.
+    const scriptMatch = htmlContent.match(/<script type="module" src="([^"]*_bun[^"]*\.js)"><\/script>/);
+    expect(scriptMatch).not.toBeNull();
+    expect(existsSync(path.join(String(dir), "dist", scriptMatch![1].replace(/^\//, "")))).toBe(true);
+    expect(exitCode).toBe(0);
   });
 
   // A successful build leaves through `on_exit` + `global_exit`: 'exit' handlers, process.exitCode, and VM teardown under BUN_DESTRUCT_VM_ON_EXIT.
@@ -1957,4 +2039,86 @@ export default function DocsLayout({ children }) {
       "/docs/intro": { rendersClientComponent: true, loadsClientEntry: true },
     });
   });
+
+  test(
+    "client component imported by a server component and by another client component is bundled once",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-client-shared-boundary", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import { Inner } from "../components/Inner";
+import { Shell } from "../components/Shell";
+
+export default function IndexPage() {
+  return <main><Inner /><Shell /></main>;
+}`,
+        // Server components between the page and Outer, so Inner.tsx is a boundary before Outer.tsx resolves it.
+        "components/Shell.tsx": `import { Frame } from "./Frame";
+
+export function Shell() {
+  return <section><Frame /></section>;
+}`,
+        "components/Frame.tsx": `import { Outer } from "./Outer";
+
+export function Frame() {
+  return <article><Outer /></article>;
+}`,
+        "components/Outer.tsx": `"use client";
+import { Inner } from "./Inner";
+
+export const innerSeenByOuter = () => Inner;
+
+export function Outer() {
+  return <div id="outer"><Inner /></div>;
+}`,
+        "components/Inner.tsx": `"use client";
+
+export function Inner() {
+  return <span className="inner">inner module marker</span>;
+}`,
+        // Loads the client chunks the RSC payload points at for Inner and Outer.
+        "check-client-chunks.mjs": `import { readFileSync } from "node:fs";
+
+const rsc = readFileSync("dist/index.rsc", "utf8");
+const [, innerChunk] = rsc.match(/I\\["\\.\\/([^"]+)",\\[\\],"Inner"\\]/);
+const [, outerChunk] = rsc.match(/I\\["\\.\\/([^"]+)",\\[\\],"Outer"\\]/);
+const inner = await import("./dist/_bun/" + innerChunk);
+const outer = await import("./dist/_bun/" + outerChunk);
+console.log(JSON.stringify({ outerImportsSameInner: outer.innerSeenByOuter() === inner.Inner }));`,
+        "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
+      });
+
+      const build = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+      expect(build.stderr.toString()).not.toContain("error");
+      expect(build.exitCode).toBe(0);
+
+      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
+        '<div id="outer"><span class="inner">inner module marker</span></div>',
+      );
+
+      const chunkDir = path.join(dir, "dist", "_bun");
+      const chunksWithInner: string[] = [];
+      for (const file of readdirSync(chunkDir)) {
+        if (
+          file.endsWith(".js") &&
+          (await Bun.file(path.join(chunkDir, file)).text()).includes("inner module marker")
+        ) {
+          chunksWithInner.push(file);
+        }
+      }
+      expect(chunksWithInner).toHaveLength(1);
+
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "check-client-chunks.mjs"],
+        cwd: dir,
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toStrictEqual({ outerImportsSameInner: true });
+      expect(exitCode).toBe(0);
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
 });

@@ -1438,6 +1438,50 @@ devTest("editing files imported with a loader other than their extension's keeps
     await c.expectMessage("{{second}}", 'string:{"version":2}', 'console.log("snippet ran again");');
   },
 });
+devTest("dropping an import attribute rebundles the file with its extension's loader", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: [],
+      scripts: ["index.ts"],
+    }),
+    "index.ts": `
+      import t from "./data.ts" with { type: "text" };
+      console.log("t:" + typeof t);
+    `,
+    "data.ts": `
+      export const x = 1;
+      console.log("data ran");
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("t:string");
+
+    // data.ts is cached as a text module; the importer no longer asks for that loader.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          import { x } from "./data.ts";
+          console.log("x:" + x);
+        `,
+      );
+    });
+    await c.expectMessage("data ran", "x:1");
+
+    // The rebundle of data.ts itself used to reuse the recorded text loader.
+    await c.expectReload(async () => {
+      await dev.write(
+        "data.ts",
+        `
+          export const x = 2;
+          console.log("data ran");
+        `,
+      );
+    });
+    await c.expectMessage("data ran", "x:2");
+  },
+});
 devTest("deleting a file imported by a module loaded through an import attribute", {
   skip: [
     "win32", // unlinkSync is having weird behavior

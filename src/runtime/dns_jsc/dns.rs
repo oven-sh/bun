@@ -348,7 +348,7 @@ pub(crate) struct CAresRecordKind {
     pub ns_type: c_ares::NSType,
     /// The `ares_callback` thunk that parses raw reply bytes for this record type
     /// and forwards to `ResolveInfoRequest::on_cares_complete`.
-    pub raw_callback: unsafe extern "C" fn(*mut c_void, c_int, c_int, *mut u8, c_int),
+    pub raw_callback: c_ares::AresCallback,
 }
 
 /// The parsed reply of one query; freed on drop.

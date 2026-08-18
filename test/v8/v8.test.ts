@@ -390,6 +390,36 @@ describe.skipIf(!canBuildNodeAddons()).todoIf(isBroken && isMusl)("node:v8", () 
     it("prototype methods and native accessors are reachable on instances", async () => {
       await checkSameOutput("test_v8_prototype_template");
     });
+
+    it("native accessor callbacks see the object as their holder on property access", async () => {
+      const output = await checkSameOutput("native_accessor_holder_on_property_access");
+      expect(output).toBe(["getter holder is the object: true", "setter holder is the object: true"].join("\n"));
+    });
+
+    // Only Bun exposes a native data property's getter and setter as callable functions, so this
+    // cannot be compared against Node: the receiver has to be converted the way a sloppy-mode
+    // function would, in particular a bare call through a closure must not hand the accessor the
+    // scope object JSC leaves in the this slot.
+    it("native accessor callbacks get a sloppy-mode holder when called as functions", async () => {
+      const expected = [
+        "bare getter(): globalThis",
+        "getter.call(undefined): globalThis",
+        "getter.call(null): globalThis",
+        "getter.call(5): a Number object",
+        "getter.call(obj): the object",
+        "bare setter(): globalThis",
+        "setter.call(undefined): globalThis",
+        "setter.call(null): globalThis",
+        "setter.call(5): a Number object",
+        "setter.call(obj): the object",
+      ].join("\n");
+      for (const buildMode of [BuildMode.release, BuildMode.debug]) {
+        const output = await runOn(Runtime.bun, buildMode, "native_accessor_holder_for_weird_receivers");
+        expect(output.replaceAll(/^\[\w+\].+$/gm, "").trim(), `addon built in ${BuildMode[buildMode]} mode`).toBe(
+          expected,
+        );
+      }
+    });
   });
 
   describe("ArrayBuffer / TypedArray", () => {

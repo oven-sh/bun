@@ -646,6 +646,43 @@ devTest("import.meta.hot.accept specifier callbacks run once per update, dispose
     }
   },
 });
+devTest("an accept callback is not run for an importer the same update evaluated again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./mid";
+      import.meta.hot.accept();
+    `,
+    "mid.ts": `
+      import { d } from "./d";
+      console.log("mid v1 " + d);
+      import.meta.hot.accept("./d", newModule => console.log("mid v1 accepted " + newModule.d));
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("mid v1 d1");
+    // `mid` accepts `d`, but is replaced in the same update: only its new body runs, not the callback its old body registered.
+    {
+      await using batch = await dev.batchChanges();
+      await dev.write("d.ts", `export const d = "d2";`);
+      await dev.write(
+        "mid.ts",
+        `
+          import { d } from "./d";
+          console.log("mid v2 " + d);
+          import.meta.hot.accept("./d", newModule => console.log("mid v2 accepted " + newModule.d));
+        `,
+      );
+    }
+    await c.expectMessage("mid v2 d2");
+    await dev.write("d.ts", `export const d = "d3";`);
+    await c.expectMessage("mid v2 accepted d3");
+  },
+});
 devTest("import.meta.hot.dispose runs for every module the update evaluates again", {
   files: {
     // importer: index handles every update below with its accept callback and

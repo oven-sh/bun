@@ -1,4 +1,5 @@
 import { RedisClient } from "bun";
+import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { describe, expect, mock, test } from "bun:test";
 import { once } from "events";
 import { bunEnv, bunExe, isWindows, tempDir, tls as tlsCert } from "harness";
@@ -1321,6 +1322,82 @@ describe("Valkey: Recovering After fail()", () => {
       });
     } finally {
       fake.server.close();
+    }
+  });
+});
+
+describe("Valkey: Offline Queue", () => {
+  // Answers HELLO with `+OK` and every other command with `+PONG`, unless
+  // `answerHello` is false, in which case the connection never becomes ready
+  // and everything the client sends stays in its offline queue.
+  function stubServer({ answerHello = true } = {}) {
+    const sockets: net.Socket[] = [];
+    const server = net.createServer(socket => {
+      sockets.push(socket);
+      socket.on("data", chunk => {
+        if (!answerHello) return;
+        const text = chunk.toString("latin1");
+        let commands = 0;
+        for (let i = text.indexOf("*"); i !== -1; i = text.indexOf("*", i + 1)) commands++;
+        const helloAt = text.indexOf("HELLO");
+        socket.write((helloAt === -1 ? "" : "+OK\r\n") + "+PONG\r\n".repeat(commands - (helloAt === -1 ? 0 : 1)));
+      });
+      socket.on("error", () => {});
+    });
+    return {
+      server,
+      listen: async () => {
+        server.listen(0, "127.0.0.1");
+        await once(server, "listening");
+        return (server.address() as net.AddressInfo).port;
+      },
+      close: () => {
+        for (const socket of sockets) socket.destroy();
+        return new Promise(resolve => server.close(resolve));
+      },
+    };
+  }
+
+  test("estimated memory counts every queued command after the queue was drained and refilled", async () => {
+    const stub = stubServer();
+    const port = await stub.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      await client.connect();
+      // Six commands go through the queue and are answered, so the queue is
+      // empty again but its read position is no longer at the start.
+      await Promise.all(Array.from({ length: 6 }, () => client.ping()));
+      const idleCost = estimateShallowMemoryUsageOf(client);
+
+      // Five more commands are queued in one turn, before the pipeline
+      // flushes them. Their serialized bytes must all show up in the estimate.
+      const key = "k".repeat(1000);
+      const pending = Array.from({ length: 5 }, () => client.get(key));
+      expect(estimateShallowMemoryUsageOf(client) - idleCost).toBeGreaterThanOrEqual(5 * key.length);
+
+      expect(await Promise.all(pending)).toEqual(["PONG", "PONG", "PONG", "PONG", "PONG"]);
+    } finally {
+      client.close();
+      await stub.close();
+    }
+  });
+
+  test("close() rejects every command queued while the connection never became ready", async () => {
+    const stub = stubServer({ answerHello: false });
+    const port = await stub.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
+    try {
+      const outcomes = Array.from({ length: 40 }, (_, i) =>
+        client.get(`key-${i}`).then(
+          () => "fulfilled",
+          (err: Error & { code?: string }) => err.code,
+        ),
+      );
+      client.close();
+      expect(await Promise.all(outcomes)).toEqual(Array(40).fill("ERR_REDIS_CONNECTION_CLOSED"));
+    } finally {
+      client.close();
+      await stub.close();
     }
   });
 });

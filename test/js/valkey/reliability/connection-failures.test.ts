@@ -512,9 +512,10 @@ describe("Valkey: Recovering After fail()", () => {
   // A process that a client keeps alive never exits on its own; report that
   // as the exit code after 3 s instead of waiting for the test to time out.
   async function exitOutcome(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+    const output = Promise.all([proc.stdout.text(), proc.stderr.text()]);
     const exitCode = await Promise.race([proc.exited, delay(3000).then(() => "still running" as const)]);
     if (exitCode === "still running") proc.kill();
-    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    const [stdout, stderr] = await output;
     return { stdout, stderr, exitCode };
   }
 

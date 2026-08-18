@@ -101,6 +101,9 @@ export const libjpegTurbo: Dependency = {
       defines: {
         BUN_8BIT_ONLY: true,
         ...(simd ? { NEON_INTRINSICS: true } : {}),
+        // jpeg_nbits.h only picks the clz intrinsic on ARM; without it x64
+        // ships a 64 KB jpeg_nbits_table for the same floor(log2)+1 result.
+        ...(cfg.arm64 ? {} : { USE_CLZ_INTRINSIC: true }),
       },
       headers: {
         "jconfig.h": {

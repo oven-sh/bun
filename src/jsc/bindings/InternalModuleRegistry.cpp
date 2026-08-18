@@ -191,8 +191,10 @@ void InternalModuleRegistry::didLoad(JSGlobalObject* globalObject, VM& vm, Field
 {
     ASSERT(m_loadCount < BUN_INTERNAL_MODULE_COUNT);
     m_loadOrder[m_loadCount++] = static_cast<uint8_t>(id);
+    // putDirectIndex, not push: appending must not run Array.prototype setters or
+    // fail on a frozen list in the middle of loading a builtin.
     if (auto* list = m_moduleLoadList.get())
-        list->push(globalObject, jsString(vm, String(internalModuleNames[static_cast<uint8_t>(id)])));
+        list->putDirectIndex(globalObject, list->length(), jsString(vm, String(internalModuleNames[static_cast<uint8_t>(id)])));
 }
 
 JSArray* InternalModuleRegistry::moduleLoadList(JSGlobalObject* globalObject)

@@ -1709,15 +1709,14 @@ extern "C" fn BakeProdSourceMap(pt: *mut PerThread, key: BunString) -> BunString
     BunString::dead()
 }
 
-/// Packed: type (u8) | no_client (bool, 1 bit) | unused (u23)
+/// Packed: type (u8) | fully_static (bit 8, read as `noClient` by Bake.ts) | unused (u23)
 #[repr(transparent)]
 #[derive(Clone, Copy)]
 pub struct TypeAndFlags(i32);
 
 impl TypeAndFlags {
-    pub(crate) const fn new(ty: u8, no_client: bool) -> Self {
-        // type: bits 0..8, no_client: bit 8, unused: bits 9..32
-        TypeAndFlags((ty as i32) | ((no_client as i32) << 8))
+    pub(crate) const fn new(ty: u8, fully_static: bool) -> Self {
+        TypeAndFlags((ty as i32) | ((fully_static as i32) << 8))
     }
 
     pub(crate) const fn bits(self) -> i32 {

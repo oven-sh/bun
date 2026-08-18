@@ -1322,6 +1322,60 @@ describe.concurrent(() => {
     });
   }
 
+  it("process.stdin/stdout/stderr are accessors, like Node", () => {
+    for (const name of ["stdin", "stdout", "stderr"]) {
+      const d = Object.getOwnPropertyDescriptor(process, name);
+      expect(typeof d.get).toBe("function");
+      expect(d.enumerable).toBe(true);
+      expect(d.configurable).toBe(true);
+    }
+    // nextTick stays a data property, like Node.
+    expect(Object.getOwnPropertyDescriptor(process, "nextTick").value).toBe(process.nextTick);
+  });
+
+  it("deleting a lazy process property keeps stdio, nextTick and assignment working", async () => {
+    // `delete` reifies process's whole static property table; the streams and the
+    // tick queue must still be built (once) on first use afterwards, and assignment
+    // must keep replacing them.
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `delete process.release;
+         const order = [];
+         process.nextTick(() => order.push("tick"));
+         Promise.resolve().then(() => order.push("microtask"));
+         const out = process.stdout;
+         const same = out === process.stdout && process.stdin === process.stdin && process.stderr === process.stderr;
+         const fake = { write() {} };
+         const assigned = ["stdin", "stdout", "stderr"].every(name => (process[name] = fake, process[name] === fake));
+         process.nextTick = 1;
+         setImmediate(() => out.write(JSON.stringify({ same, assigned, nextTick: process.nextTick, order, release: "release" in process }) + "\\n"));`,
+      ],
+      env: bunEnv,
+      stderr: "inherit",
+    });
+    const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+    expect(stdout).toBe(
+      JSON.stringify({ same: true, assigned: true, nextTick: 1, order: ["tick", "microtask"], release: false }) + "\n",
+    );
+    expect(exitCode).toBe(0);
+  });
+
+  it("assigning stdio on a copy of process's descriptors doesn't write through to process", () => {
+    // jest-environment-node builds its per-test `process` this way (jest-util createProcessObject).
+    const real = process.stdout;
+    const descriptors = Object.getOwnPropertyDescriptors(process);
+    for (const key of Object.keys(descriptors)) descriptors[key].configurable = true;
+    const copy = Object.defineProperties(Object.create(Object.getPrototypeOf(process)), descriptors);
+    expect(copy.stdout).toBe(real);
+    const fake = { write() {} };
+    copy.stdout = fake;
+    expect(copy.stdout).toBe(fake);
+    expect(process.stdout).toBe(real);
+    expect(typeof Object.getOwnPropertyDescriptor(process, "stdout").get).toBe("function");
+  });
+
   it("dlopen args parsing", () => {
     const notFound = join(tmpdirSync(), "not-found.so");
     expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();

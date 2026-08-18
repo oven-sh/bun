@@ -853,9 +853,8 @@ impl ShellRmTask {
         Ok(())
     }
 
-    /// Join into `buf` honoring [`join_style`]. A tree can be deeper than
-    /// `buf`, so a result that does not fit goes to `spill` and the syscall
-    /// on it reports `ENAMETOOLONG`.
+    /// Join into `buf` (into `spill` when the result does not fit) honoring
+    /// [`join_style`].
     fn buf_join<'a>(
         &self,
         buf: &'a mut bun_paths::PathBuffer,

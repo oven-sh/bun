@@ -1,5 +1,5 @@
 import { describe, expect, it, setDefaultTimeout, test } from "bun:test";
-import { bunEnv, bunExe, isDebug, tempDir, tmpdirSync } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, tempDir, tmpdirSync } from "harness";
 import { once } from "node:events";
 import fs from "node:fs";
 import { join, relative, resolve } from "node:path";
@@ -2843,4 +2843,37 @@ describe("no JS entry after a worker's termination has been thrown", () => {
       expect(after).toEqual(Object.fromEntries(names.map(n => [n, 0])));
     });
   }
+});
+
+// A node worker loads node:worker_threads (parentPort, stdio, process overrides)
+// before preloads and the entry point. If that bootstrap throws, the failure must
+// surface exactly like an entry point that throws: 'error' on the Worker, exit
+// code 1, no 'online'/entry evaluation, and the parent is not kept alive.
+// BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS (debug-assertion builds) forces the throw.
+test.skipIf(!isDebug && !isASAN)("a Worker whose bootstrap throws reports 'error' and exits with 1", async () => {
+  await using proc = Bun.spawn({
+    cmd: [
+      bunExe(),
+      "-e",
+      `const { Worker } = require("node:worker_threads");
+       const worker = new Worker("require('node:worker_threads').parentPort.postMessage('entry ran')", { eval: true });
+       const events = [];
+       worker.on("online", () => events.push(["online"]));
+       worker.on("message", m => events.push(["message", m]));
+       worker.on("error", e => events.push(["error", e.message]));
+       worker.on("exit", code => {
+         events.push(["exit", code]);
+         console.log(JSON.stringify(events));
+       });`,
+    ],
+    env: { ...bunEnv, BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS: "1" },
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stderr).toBe("");
+  expect(JSON.parse(stdout)).toEqual([
+    ["error", "node:worker_threads bootstrap failed (BUN_DEBUG_TEST_NODE_WORKER_BOOTSTRAP_THROWS)"],
+    ["exit", 1],
+  ]);
+  expect(exitCode).toBe(0);
 });

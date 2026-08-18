@@ -851,6 +851,26 @@ pub mod fs {
             PathName::init(self.text)
         }
 
+        /// `pretty` (the pre-`set_realpath` path) when this is a file-namespace
+        /// symlink whose own extension differs case-insensitively from the
+        /// target's; `text` otherwise. Dotfiles count as extensionless.
+        #[inline]
+        pub fn text_for_loader(&self) -> &'a [u8] {
+            if self.is_symlink && self.is_file() {
+                let pretty_ext = crate::extension(self.pretty);
+                if !pretty_ext.is_empty()
+                    && !crate::strings::eql_case_insensitive_ascii(
+                        pretty_ext,
+                        crate::extension(self.text),
+                        true,
+                    )
+                {
+                    return self.pretty;
+                }
+            }
+            self.text
+        }
+
         /// Sets `text`/`pretty` to the same slice,
         /// namespace defaults to `"file"`.
         #[inline]

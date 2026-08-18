@@ -5287,14 +5287,14 @@ unsafe fn resolve<'a>(
     let Some(result_path) = result.path_const() else {
         return Err(crate::Error::ModuleNotFound);
     };
-    // Note: `result_path.text` is a `&'_ [u8]` borrowed from the
+    // Note: `result_path.{text,pretty}` are `&'_ [u8]` borrowed from the
     // resolver's interned `'static` BSSStringList stores (see resolver/lib.rs
     // §allocators) — the same store `load_preloads` reads from. Transmute the
     // lifetime to `'a` so the caller can `clone_utf8` it; the underlying bytes
     // outlive the program.
-    // SAFETY: `result_path.text` borrows the resolver's `'static` interned
-    // string store; detaching the borrow lifetime is sound (see Note).
-    *ret_path = unsafe { bun_ptr::detach_lifetime(result_path.text) };
+    // SAFETY: `result_path.{text,pretty}` borrow the resolver's `'static`
+    // interned string store; detaching the borrow lifetime is sound (see Note).
+    *ret_path = unsafe { bun_ptr::detach_lifetime(result_path.text_for_loader()) };
     Ok(())
 }
 

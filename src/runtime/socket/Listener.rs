@@ -1652,25 +1652,19 @@ fn connect_finish<const IS_SSL: bool>(
     let opened_err = match socket_ref.do_connect() {
         Ok(()) => None,
         Err(crate::Error::Js(err)) => Some(err),
-        Err(_) => {
-            // Winsock sets WSAGetLastError, not the CRT `_errno()` that
-            // `last_errno()` reads.
-            #[cfg(windows)]
-            let os_errno = {
-                let mut e = bun_sys::windows::WSAGetLastError().map_or(0, |err| err as c_int);
-                // Winsock AF_UNIX returns WSAECONNREFUSED whether the path exists
-                // or not; Node distinguishes ENOENT via `CreateFile`.
-                if port.is_none() && e == bun_sys::SystemErrno::ECONNREFUSED as c_int {
-                    if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
-                        if !bun_sys::exists(path) {
-                            e = bun_sys::SystemErrno::ENOENT as c_int;
-                        }
-                    }
-                }
-                e
+        Err(err) => {
+            // The OS error uSockets returned for the dial, in SystemErrno
+            // numbering; a failure that is not a dial has no code.
+            let raw = match err {
+                crate::Error::FailedToOpenSocket { errno } => errno,
+                _ => 0,
             };
-            #[cfg(not(windows))]
-            let os_errno = bun_sys::last_errno();
+            let mut os_errno = bun_errno::connect_errno(raw) as c_int;
+            if port.is_none() {
+                if let Some(UnixOrHost::Unix(path)) = socket_ref.connection.get() {
+                    os_errno = bun_sys::unix_connect_errno(os_errno, path);
+                }
+            }
             let errno = if port.is_none() {
                 // Preserve the real errno from the failed connect(2) on a unix path:
                 // connecting to an existing non-socket file is ENOTSOCK, a
@@ -1678,10 +1672,8 @@ fn connect_finish<const IS_SSL: bool>(
                 if os_errno == bun_sys::SystemErrno::ENAMETOOLONG as c_int {
                     // libuv reports UV_EINVAL for a pipe path it cannot express.
                     bun_sys::SystemErrno::EINVAL as c_int
-                } else if os_errno != 0 {
-                    os_errno
                 } else {
-                    bun_sys::SystemErrno::ENOENT as c_int
+                    os_errno
                 }
             } else {
                 // A synchronous TCP connect failure is almost always the local

@@ -634,8 +634,8 @@ impl<const SSL: bool> NewSocket<SSL> {
                         flags,
                         core::mem::size_of::<*mut c_void>() as c_int,
                     ) {
-                        uws::ConnectResult::Failed => {
-                            return Err(crate::Error::FailedToOpenSocket);
+                        uws::ConnectResult::Failed { errno } => {
+                            return Err(crate::Error::FailedToOpenSocket { errno });
                         }
                         uws::ConnectResult::Socket(s) => {
                             *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
@@ -649,16 +649,15 @@ impl<const SSL: bool> NewSocket<SSL> {
                 );
             }
             Some(UnixOrHost::Unix(u)) => {
-                let s = group.connect_unix(
-                    kind,
-                    ssl_ctx,
-                    u,
-                    flags,
-                    core::mem::size_of::<*mut c_void>() as c_int,
-                );
-                if s.is_null() {
-                    return Err(crate::Error::FailedToOpenSocket);
-                }
+                let s = group
+                    .connect_unix(
+                        kind,
+                        ssl_ctx,
+                        u,
+                        flags,
+                        core::mem::size_of::<*mut c_void>() as c_int,
+                    )
+                    .map_err(|errno| crate::Error::FailedToOpenSocket { errno })?;
                 *uws::us_socket_t::opaque_mut(s).ext() = Some(this);
                 self.socket.set(SocketHandler::<SSL>::from(s));
             }
@@ -1097,7 +1096,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     ///
     /// `dns_error` is the raw `getaddrinfo(3)` return code when the name
     /// lookup itself failed; 0 for a connect failure past name resolution
-    /// (then `errno` carries the connect error).
+    /// (then `errno` carries the connect error, in `SystemErrno` numbering:
+    /// every caller either maps the OS code with `connect_errno` first, as
+    /// `on_connect_error` does, or picks the errno itself).
     /// `Err` is what the `connectError`/`error` handler or a promise
     /// rejection left pending; the socket is released either way (guards).
     pub(crate) fn handle_connect_error(
@@ -1154,8 +1155,8 @@ impl<const SSL: bool> NewSocket<SSL> {
         // A failed name lookup is reported as the resolver error
         // (`getaddrinfo ENOTFOUND <hostname>`, `syscall`/`hostname` set),
         // matching `node:dns` — never collapsed into ECONNREFUSED. On that
-        // path `errno` carries the same (possibly negative) getaddrinfo code
-        // as `dns_error`, so it is only treated as an errno in the else arm.
+        // path there is no connect error and `errno` is ignored; it is only
+        // read in the else arm.
         let dns_err = c_ares::Error::init_eai(dns_error).filter(|_| dns_error != 0);
         let err = if let Some(dns_err) = dns_err {
             let hostname: &[u8] = match this.connection.get() {
@@ -1169,50 +1170,9 @@ impl<const SSL: bool> NewSocket<SSL> {
             )
         } else {
             debug_assert!(errno >= 0);
-            // uSockets hands us raw WSA codes (SO_ERROR, the recv probe) on
-            // Windows; map those onto the SystemErrno numbering the whitelist
-            // below compares against.
-            #[cfg(windows)]
-            let errno: c_int = if errno >= 10000 {
-                sys::SystemErrno::init(errno as u32)
-                    .map(|e| e as c_int)
-                    .unwrap_or(sys::SystemErrno::ECONNREFUSED as c_int)
-            } else {
-                errno
-            };
-            // Unix-path connect errors keep their real code (a non-socket file
-            // is ENOTSOCK, a permission-denied path is EACCES, a missing one is
-            // ENOENT, an inexpressible path is EINVAL); everything else stays
-            // ECONNREFUSED.
-            let errno_: c_int = if errno == sys::SystemErrno::ENOENT as c_int
-                || errno == sys::SystemErrno::ENOTSOCK as c_int
-                || errno == sys::SystemErrno::EACCES as c_int
-                || errno == sys::SystemErrno::EINVAL as c_int
-                || errno == sys::SystemErrno::ECONNRESET as c_int
-                || errno == sys::SystemErrno::EADDRINUSE as c_int
-                || errno == sys::SystemErrno::EADDRNOTAVAIL as c_int
-            {
-                errno
-            } else {
-                sys::SystemErrno::ECONNREFUSED as c_int
-            };
-            let code_ = if errno == sys::SystemErrno::ENOENT as c_int {
-                BunString::static_("ENOENT")
-            } else if errno == sys::SystemErrno::ENOTSOCK as c_int {
-                BunString::static_("ENOTSOCK")
-            } else if errno == sys::SystemErrno::EACCES as c_int {
-                BunString::static_("EACCES")
-            } else if errno == sys::SystemErrno::EINVAL as c_int {
-                BunString::static_("EINVAL")
-            } else if errno == sys::SystemErrno::ECONNRESET as c_int {
-                BunString::static_("ECONNRESET")
-            } else if errno == sys::SystemErrno::EADDRINUSE as c_int {
-                BunString::static_("EADDRINUSE")
-            } else if errno == sys::SystemErrno::EADDRNOTAVAIL as c_int {
-                BunString::static_("EADDRNOTAVAIL")
-            } else {
-                BunString::static_("ECONNREFUSED")
-            };
+            let errno_enum = bun_errno::connect_errno_code(errno);
+            let errno_: c_int = errno_enum as c_int;
+            let code_ = BunString::static_(<&'static str>::from(errno_enum));
             #[cfg(windows)]
             let errno_ = -sys::windows::libuv::e_discriminant_to_uv(errno_ as u16)
                 .unwrap_or(sys::windows::libuv::UV_ECONNREFUSED);
@@ -1288,7 +1248,9 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     /// Takes `ThisPtr<Self>` for the same re-entrancy reason as
-    /// `handle_connect_error`.
+    /// `handle_connect_error`. `errno` is in `SystemErrno` numbering (the
+    /// uSockets trampoline maps the OS code), or the resolver code when the
+    /// lookup failed, which `dns_error` reports too.
     pub(crate) fn on_connect_error(
         this: bun_ptr::ThisPtr<Self>,
         socket: SocketHandler<SSL>,

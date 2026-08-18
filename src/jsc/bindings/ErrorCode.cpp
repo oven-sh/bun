@@ -52,7 +52,7 @@ JSC_DEFINE_HOST_FUNCTION(NodeError_proto_toString, (JSC::JSGlobalObject * global
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
-    auto thisVal = callFrame->thisValue();
+    auto thisVal = callFrame->thisValue().toThis(globalObject, JSC::ECMAMode::strict());
 
     auto name = thisVal.get(globalObject, vm.propertyNames->name);
     RETURN_IF_EXCEPTION(scope, {});

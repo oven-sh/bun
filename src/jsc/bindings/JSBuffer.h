@@ -23,6 +23,7 @@
 #include "root.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>
+#include <JavaScriptCore/ThrowScope.h>
 #include <wtf/NeverDestroyed.h>
 
 #include "BufferEncodingType.h"
@@ -38,6 +39,11 @@ extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
 namespace Bun {
 
 std::optional<size_t> byteLength(JSC::JSString* str, JSC::JSGlobalObject* lexicalGlobalObject, WebCore::BufferEncodingType encoding);
+
+// ArrayBuffer::createFromBytes RELEASE_ASSERTs above MAX_ARRAY_BUFFER_SIZE. Above
+// it, this releases the adopted bytes through the deallocator, throws the
+// RangeError `new ArrayBuffer(length)` would throw, and returns true.
+bool rejectBytesNoCopyAboveArrayBufferLimit(JSC::JSGlobalObject*, JSC::ThrowScope&, const void* bytes, size_t length, JSTypedArrayBytesDeallocator, void* deallocatorContext);
 
 namespace Buffer {
 

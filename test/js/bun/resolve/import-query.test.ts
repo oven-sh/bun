@@ -1,5 +1,5 @@
-import { beforeEach, expect, test } from "bun:test";
-import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
+import { beforeEach, describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 globalThis.importQueryFixtureOrder = [];
 const resolvedPath = require.resolve("./import-query-fixture.ts");
 const resolvedURL = Bun.pathToFileURL(resolvedPath).href;
@@ -233,4 +233,95 @@ test("Bun.resolveSync with non-ASCII specifier and query string", async () => {
   const resolved = JSON.parse(stdout.trim());
   expect(resolved).toEndWith("target.js?v=caf\u00e9-\u65e5\u672c\u8a9e");
   expect(exitCode).toBe(0);
+});
+
+test("require of a non-.node file with a query string that ends in .node is not routed to dlopen", async () => {
+  using dir = tempDir("query-endswith-node", {
+    "config.js": `module.exports = { ok: 1 };\n`,
+    "entry.cjs": `console.log(require("./config.js?from=addon.node").ok);\n`,
+  });
+  await using proc = Bun.spawn({ cmd: [bunExe(), "entry.cjs"], env: bunEnv, cwd: String(dir), stderr: "pipe" });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout, stderr, exitCode }).toEqual({ stdout: "1\n", stderr: "", exitCode: 0 });
+});
+
+// `?` is not a valid filename character on Windows/NTFS.
+describe.skipIf(isWindows).concurrent("filename containing a literal ?", () => {
+  async function run(cmd: string[], cwd: string) {
+    await using proc = Bun.spawn({ cmd, env: bunEnv, cwd, stdout: "pipe", stderr: "pipe" });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("runs as the CLI entry point", async () => {
+    using dir = tempDir("qmark-cli", {
+      "weird?name.mjs": `console.log("qfile-ran");\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "./weird?name.mjs"], String(dir));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "qfile-ran\n", stderr: "", exitCode: 0 });
+  });
+
+  test("runs as the CLI entry point when the ? is the first character", async () => {
+    using dir = tempDir("qmark-cli-leading", {
+      "?leading.js": `console.log("leading-ran");\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "./?leading.js"], String(dir));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "leading-ran\n", stderr: "", exitCode: 0 });
+  });
+
+  test("is reachable via dynamic import and require", async () => {
+    using dir = tempDir("qmark-import", {
+      "weird?name.mjs": `export const v = "qfile"; globalThis.ran = (globalThis.ran || 0) + 1;\n`,
+      "entry.mjs": `
+        const dyn = await import("./weird?name.mjs");
+        const req = require("./weird?name.mjs");
+        console.log(JSON.stringify({ dyn: dyn.v, req: req.v, ran: globalThis.ran }));
+      `,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
+    expect(stderr).toBe("");
+    expect(JSON.parse(stdout.trim())).toEqual({ dyn: "qfile", req: "qfile", ran: 1 });
+    expect(exitCode).toBe(0);
+  });
+
+  test("is reachable via static import", async () => {
+    using dir = tempDir("qmark-static", {
+      "weird?name.mjs": `export const v = "qfile";\n`,
+      "entry.mjs": `import { v } from "./weird?name.mjs"; console.log(v);\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "qfile\n", stderr: "", exitCode: 0 });
+  });
+
+  test("import.meta inside the file reflects the literal path", async () => {
+    using dir = tempDir("qmark-meta", {
+      "weird?name.mjs": `console.log(JSON.stringify({
+        path: import.meta.path,
+        dir: import.meta.dir,
+        file: import.meta.file,
+        url: import.meta.url,
+      }));\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "./weird?name.mjs"], String(dir));
+    expect(stderr).toBe("");
+    const meta = JSON.parse(stdout.trim());
+    expect(meta).toEqual({
+      path: `${dir}/weird?name.mjs`,
+      dir: String(dir),
+      file: "weird?name.mjs",
+      url: Bun.pathToFileURL(`${dir}/weird?name.mjs`).href,
+    });
+    expect(meta.url).toContain("weird%3Fname.mjs");
+    expect(exitCode).toBe(0);
+  });
+
+  test("?query still resolves to the stripped path when that file exists", async () => {
+    using dir = tempDir("qmark-precedence", {
+      "pref.mjs": `export const which = "stripped";\n`,
+      "pref.mjs?x": `export const which = "literal";\n`,
+      "entry.mjs": `console.log((await import("./pref.mjs?x")).which);\n`,
+    });
+    const { stdout, stderr, exitCode } = await run([bunExe(), "entry.mjs"], String(dir));
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "stripped\n", stderr: "", exitCode: 0 });
+  });
 });

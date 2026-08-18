@@ -4392,7 +4392,10 @@ impl VirtualMachine {
 
         let is_special_source = source == MAIN_FILE_NAME || Macro::is_macro_path(source);
         let mut query_string: &[u8] = b"";
-        let normalized_specifier = normalize_specifier_for_resolution(specifier, &mut query_string);
+        let mut normalized_specifier =
+            normalize_specifier_for_resolution(specifier, &mut query_string);
+        // POSIX filenames may contain a literal `?`.
+        let mut retry_with_literal_question_mark = !cfg!(windows) && !query_string.is_empty();
         let top_level_dir = self.top_level_dir();
         let source_to_use: &[u8] = if !is_special_source {
             if is_a_file_path {
@@ -4417,7 +4420,7 @@ impl VirtualMachine {
         // returning the resolver result; `retry_on_not_found` is consumed on
         // the first miss.
         let mut retry_on_not_found = bun_paths::is_absolute(source_to_use);
-        let result: bun_resolver::Result = loop {
+        let result: bun_resolver::Result = 'resolve: loop {
             let import_kind = if is_esm {
                 bun_ast::ImportKind::Stmt
             } else {
@@ -4433,55 +4436,66 @@ impl VirtualMachine {
                 ResultUnion::Success(r) => break r,
                 ResultUnion::Failure(e) => return Err(e.into()),
                 ResultUnion::Pending(_) | ResultUnion::NotFound => {
-                    if !retry_on_not_found {
-                        return Err(crate::CrateError::ModuleNotFound);
-                    }
-                    retry_on_not_found = false;
+                    'not_found: {
+                        if !retry_on_not_found {
+                            break 'not_found;
+                        }
+                        retry_on_not_found = false;
 
-                    // SAFETY: thread-local heap allocation; sole `&mut` on the JS
-                    // thread for the duration of the bust below.
-                    let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
-                    let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
-                        if let Some(dir) = bun_paths::dirname(normalized_specifier) {
-                            if dir.len() > buf.len() {
-                                return Err(crate::CrateError::ModuleNotFound);
+                        // SAFETY: thread-local heap allocation; sole `&mut` on the JS
+                        // thread for the duration of the bust below.
+                        let buf = unsafe { &mut *specifier_cache_resolver_buf() }.as_mut_slice();
+                        let buster_name: &[u8] = if bun_paths::is_absolute(normalized_specifier) {
+                            if let Some(dir) = bun_paths::dirname(normalized_specifier) {
+                                if dir.len() > buf.len() {
+                                    break 'not_found;
+                                }
+                                // Normalized without trailing slash.
+                                bun_paths::string_paths::normalize_slashes_only(
+                                    buf,
+                                    dir,
+                                    bun_paths::SEP,
+                                )
+                            } else {
+                                // Absolute but root — fall through to join.
+                                &b""[..]
                             }
-                            // Normalized without trailing slash.
-                            bun_paths::string_paths::normalize_slashes_only(
-                                buf,
-                                dir,
-                                bun_paths::SEP,
-                            )
                         } else {
-                            // Absolute but root — fall through to join.
                             &b""[..]
-                        }
-                    } else {
-                        &b""[..]
-                    };
-                    let buster_name: &[u8] = if !buster_name.is_empty() {
-                        buster_name
-                    } else {
-                        // If the specifier is too long to join, it can't name
-                        // a real directory — skip the cache bust and fail.
-                        if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
-                            return Err(crate::CrateError::ModuleNotFound);
-                        }
-                        let parts: [&[u8]; 3] = [
-                            source_to_use,
-                            normalized_specifier,
-                            bun_paths::path_literal!("..").as_bytes(),
-                        ];
-                        bun_paths::resolve_path::join_abs_string_buf_z::<
-                            bun_paths::resolve_path::platform::Auto,
-                        >(top_level_dir, buf, &parts)
-                        .as_bytes()
-                    };
+                        };
+                        let buster_name: &[u8] = if !buster_name.is_empty() {
+                            buster_name
+                        } else {
+                            // If the specifier is too long to join, it can't name
+                            // a real directory — skip the cache bust and fail.
+                            if source_to_use.len() + normalized_specifier.len() + 4 >= buf.len() {
+                                break 'not_found;
+                            }
+                            let parts: [&[u8]; 3] = [
+                                source_to_use,
+                                normalized_specifier,
+                                bun_paths::path_literal!("..").as_bytes(),
+                            ];
+                            bun_paths::resolve_path::join_abs_string_buf_z::<
+                                bun_paths::resolve_path::platform::Auto,
+                            >(top_level_dir, buf, &parts)
+                            .as_bytes()
+                        };
 
-                    // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
-                        bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                        // Only re-query if we previously had something cached.
+                        if self.transpiler.resolver.bust_dir_cache(
+                            bun_paths::string_paths::without_trailing_slash_windows_path(
+                                buster_name,
+                            ),
+                        ) {
+                            continue 'resolve;
+                        }
+                    }
+                    if retry_with_literal_question_mark {
+                        retry_with_literal_question_mark = false;
+                        normalized_specifier = specifier;
+                        query_string = b"";
+                        retry_on_not_found = bun_paths::is_absolute(source_to_use);
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);

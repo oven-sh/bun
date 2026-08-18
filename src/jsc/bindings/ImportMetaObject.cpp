@@ -88,13 +88,27 @@ ImportMetaObject* ImportMetaObject::create(JSC::JSGlobalObject* globalObject, JS
     return ImportMetaObject::createFromSpecifier(globalObject, specifier);
 }
 
+#if !OS(WINDOWS)
+extern "C" bool Bun__existsAsFile(const char* ptr, size_t len);
+#endif
+
 ImportMetaObject* ImportMetaObject::createFromSpecifier(JSC::JSGlobalObject* globalObject, const String& specifier)
 {
     auto index = specifier.find('?');
     URL url;
     if (index != notFound) {
         StringView view = specifier;
-        url = URL::fileURLWithFileSystemPath(view.substring(0, index));
+        StringView stripped = view.substring(0, index);
+#if !OS(WINDOWS)
+        // `?` starts a query only when the stripped prefix is itself a file.
+        if (stripped.startsWith('/')) {
+            WTF::CString utf8 = stripped.utf8();
+            if (!Bun__existsAsFile(utf8.data(), utf8.length())) {
+                return create(globalObject, URL::fileURLWithFileSystemPath(specifier).string());
+            }
+        }
+#endif
+        url = URL::fileURLWithFileSystemPath(stripped);
         url.setQuery(view.substring(index + 1));
     } else {
         url = URL::fileURLWithFileSystemPath(specifier);

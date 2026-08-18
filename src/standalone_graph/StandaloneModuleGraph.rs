@@ -2,7 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use core::mem::size_of;
+use core::mem::{offset_of, size_of};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -337,8 +337,41 @@ pub(crate) struct CompiledModuleGraphFile {
     pub side: FileSide,
 }
 
+impl CompiledModuleGraphFile {
+    /// Decodes one record as `to_bytes` laid it out. The bytes come from the
+    /// executable, so the four enum fields are checked on the way in: reading the
+    /// record straight into a `CompiledModuleGraphFile` would turn a byte outside
+    /// an enum's discriminants into a value the enum cannot hold, which is
+    /// undefined behavior before anything looks at it.
+    fn read(record: &[u8; size_of::<Self>()]) -> crate::Result<Self> {
+        let pointer = |field: usize| -> StringPointer {
+            // SAFETY: `field` is the offset of a `StringPointer` field of `Self`, so
+            // it lies inside `record`, which holds a whole `Self`; every bit pattern
+            // is a valid `StringPointer` (two `u32`s), and `read_unaligned` does not
+            // need `record` to be 4-byte aligned.
+            unsafe { core::ptr::read_unaligned(record.as_ptr().add(field).cast::<StringPointer>()) }
+        };
+        Ok(Self {
+            name: pointer(offset_of!(Self, name)),
+            contents: pointer(offset_of!(Self, contents)),
+            sourcemap: pointer(offset_of!(Self, sourcemap)),
+            bytecode: pointer(offset_of!(Self, bytecode)),
+            module_info: pointer(offset_of!(Self, module_info)),
+            bytecode_origin_path: pointer(offset_of!(Self, bytecode_origin_path)),
+            encoding: Encoding::from_repr(record[offset_of!(Self, encoding)])
+                .ok_or(Corruption::ModuleEncoding)?,
+            loader: Loader::from_repr(record[offset_of!(Self, loader)])
+                .ok_or(Corruption::ModuleLoader)?,
+            module_format: ModuleFormat::from_repr(record[offset_of!(Self, module_format)])
+                .ok_or(Corruption::ModuleFormat)?,
+            side: FileSide::from_repr(record[offset_of!(Self, side)])
+                .ok_or(Corruption::ModuleSide)?,
+        })
+    }
+}
+
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum FileSide {
     #[default]
     Server = 0,
@@ -346,7 +379,7 @@ pub enum FileSide {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum Encoding {
     Binary = 0,
     #[default]
@@ -356,7 +389,7 @@ pub enum Encoding {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum ModuleFormat {
     #[default]
     None = 0,
@@ -677,30 +710,22 @@ impl StandaloneModuleGraph {
         };
         // Note: the modules blob sits at an arbitrary byte offset in the section, and
         // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
-        // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
-        // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
-        let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
-        let modules_list_base = modules_list_bytes.as_ptr();
+        // → 4-byte). We instead split it into fixed-size byte records and decode each one with
+        // `CompiledModuleGraphFile::read`, so no `&T` ever points at unaligned memory.
+        let (records, _) =
+            modules_list_bytes.as_chunks::<{ size_of::<CompiledModuleGraphFile>() }>();
 
         // `entry_point()` indexes `files` by this id. `to_bytes` writes one file per
         // record with distinct names, and a repeated name is rejected below, so the
         // record count is the file count.
-        if offsets.entry_point_id as usize >= modules_list_count {
+        if offsets.entry_point_id as usize >= records.len() {
             return Err(Corruption::EntryPointId.into());
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
-        modules.reserve(modules_list_count);
-        for i in 0..modules_list_count {
-            // SAFETY: index < count derived from byte length above; bytes live for 'static.
-            let module: CompiledModuleGraphFile = unsafe {
-                core::ptr::read_unaligned(
-                    modules_list_base
-                        .add(i * size_of::<CompiledModuleGraphFile>())
-                        .cast::<CompiledModuleGraphFile>(),
-                )
-            };
-            let module = &module;
+        modules.reserve(records.len());
+        for record in records {
+            let module = CompiledModuleGraphFile::read(record)?;
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is checked
             // against `raw_len` and is disjoint from the writable bytecode/module_info
             // subranges (serialized by `to_bytes`); section bytes are a live 'static allocation.

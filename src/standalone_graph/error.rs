@@ -1,6 +1,7 @@
 /// What `StandaloneModuleGraph::from_bytes` found wrong with the graph embedded
 /// in the executable. Every offset it reads comes from the file, so each one is
-/// checked before it is dereferenced.
+/// checked before it is dereferenced, and every enum byte is checked before it
+/// becomes an enum.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corruption {
     ByteCount,
@@ -13,6 +14,10 @@ pub enum Corruption {
     ModuleBytecode,
     ModuleInfo,
     BytecodeOriginPath,
+    ModuleEncoding,
+    ModuleLoader,
+    ModuleFormat,
+    ModuleSide,
     CompileExecArgv,
 }
 
@@ -33,6 +38,10 @@ impl Corruption {
             Self::BytecodeOriginPath => {
                 "Corrupted module graph: bytecode origin path is out of range"
             }
+            Self::ModuleEncoding => "Corrupted module graph: module encoding is out of range",
+            Self::ModuleLoader => "Corrupted module graph: module loader is out of range",
+            Self::ModuleFormat => "Corrupted module graph: module format is out of range",
+            Self::ModuleSide => "Corrupted module graph: module side is out of range",
             Self::CompileExecArgv => "Corrupted module graph: compile exec argv is out of range",
         }
     }

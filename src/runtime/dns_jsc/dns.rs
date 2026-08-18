@@ -321,8 +321,7 @@ unsafe extern "C" {
     ) -> i32;
 }
 
-/// `None` when the name is not valid IDNA. Callers must reject it themselves:
-/// an empty name is a legitimate root-zone query for NS/SOA in `Channel::resolve`.
+/// `None`: not valid IDNA. Do not map it to "", which NS/SOA treat as the root zone.
 fn hostname_to_ascii<'a>(name: &'a [u8], buf: &'a mut [u8; 1024]) -> Option<&'a [u8]> {
     if strings::first_non_ascii(name).is_none() {
         return Some(name);
@@ -5398,8 +5397,7 @@ impl Resolver {
             }
         };
 
-        // Encode for the wire only. The cache key and the request keep the caller's
-        // spelling so `err.hostname` echoes it.
+        // Wire name only; the cache key and request keep the caller's spelling for err.hostname.
         let mut ascii_buf = [0u8; 1024];
         let Some(ascii_name) = hostname_to_ascii(name, &mut ascii_buf) else {
             let mut promise = JSPromiseStrong::init(global_this);

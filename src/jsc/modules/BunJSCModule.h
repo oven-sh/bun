@@ -984,61 +984,10 @@ JSC_DEFINE_HOST_FUNCTION(functionEstimateDirectMemoryUsageOf, (JSGlobalObject * 
     return JSValue::encode(jsNumber(0));
 }
 
-#if USE(BMALLOC_MEMORY_FOOTPRINT_API)
-
-#include <bmalloc/bmalloc.h>
-
-JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
-{
-    return JSValue::encode(jsDoubleNumber(bmalloc::api::percentAvailableMemoryInUse()));
-}
-
-#else
-
 JSC_DEFINE_HOST_FUNCTION(functionPercentAvailableMemoryInUse, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return JSValue::encode(jsNull());
 }
-
-#endif
-
-// clang-format off
-/* Source for BunJSCModuleTable.lut.h
-@begin BunJSCModuleTable
-    callerSourceOrigin                  functionCallerSourceOrigin                  Function    0
-    jscDescribe                         functionDescribe                            Function    0
-    jscDescribeArray                    functionDescribeArray                       Function    0
-    drainMicrotasks                     functionDrainMicrotasks                     Function    0
-    edenGC                              functionEdenGC                              Function    0
-    fullGC                              functionFullGC                              Function    0
-    gcAndSweep                          functionGCAndSweep                          Function    0
-    getRandomSeed                       functionGetRandomSeed                       Function    0
-    heapSize                            functionHeapSize                            Function    0
-    heapStats                           functionMemoryUsageStatistics               Function    0
-    startSamplingProfiler               functionStartSamplingProfiler               Function    0
-    samplingProfilerStackTraces         functionSamplingProfilerStackTraces         Function    0
-    noInline                            functionNeverInlineFunction                 Function    0
-    isRope                              functionIsRope                              Function    0
-    memoryUsage                         functionCreateMemoryFootprint               Function    0
-    noFTL                               functionNoFTL                               Function    0
-    noOSRExitFuzzing                    functionNoOSRExitFuzzing                    Function    0
-    numberOfDFGCompiles                 functionNumberOfDFGCompiles                 Function    0
-    optimizeNextInvocation              functionOptimizeNextInvocation              Function    0
-    releaseWeakRefs                     functionReleaseWeakRefs                     Function    0
-    reoptimizationRetryCount            functionReoptimizationRetryCount            Function    0
-    setRandomSeed                       functionSetRandomSeed                       Function    0
-    startRemoteDebugger                 functionStartRemoteDebugger                 Function    0
-    totalCompileTime                    functionTotalCompileTime                    Function    0
-    getProtectedObjects                 functionGetProtectedObjects                 Function    0
-    generateHeapSnapshotForDebugging    functionGenerateHeapSnapshotForDebugging    Function    0
-    profile                             functionRunProfiler                         Function    0
-    setTimeZone                         functionSetTimeZone                         Function    0
-    serialize                           functionSerialize                           Function    0
-    deserialize                         functionDeserialize                         Function    0
-    estimateShallowMemoryUsageOf        functionEstimateDirectMemoryUsageOf         Function    1
-    percentAvailableMemoryInUse         functionPercentAvailableMemoryInUse         Function    0
-@end
-*/
 
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
@@ -1072,7 +1021,7 @@ DEFINE_NATIVE_MODULE(BunJSC)
     putNativeFn(Identifier::fromString(vm, "getProtectedObjects"_s), functionGetProtectedObjects);
     putNativeFn(Identifier::fromString(vm, "generateHeapSnapshotForDebugging"_s), functionGenerateHeapSnapshotForDebugging);
     putNativeFn(Identifier::fromString(vm, "profile"_s), functionRunProfiler);
-    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s),  functionCodeCoverageForFile);
+    putNativeFn(Identifier::fromString(vm, "codeCoverageForFile"_s), functionCodeCoverageForFile);
     putNativeFn(Identifier::fromString(vm, "setTimeZone"_s), functionSetTimeZone);
     putNativeFn(Identifier::fromString(vm, "serialize"_s), functionSerialize);
     putNativeFn(Identifier::fromString(vm, "deserialize"_s), functionDeserialize);

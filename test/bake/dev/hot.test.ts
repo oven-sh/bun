@@ -772,6 +772,43 @@ devTest("an accept callback is not run for an importer the same update evaluated
     await c.expectMessage("mid v2 accepted d3");
   },
 });
+devTest("a module that dropped an import is not evaluated again when that import changes", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./a";
+      import "./b";
+    `,
+    "a.ts": `
+      import { x } from "./x";
+      console.log("a evaluated " + x);
+      import.meta.hot.accept();
+    `,
+    "b.ts": `
+      import { x } from "./x";
+      console.log("b evaluated " + x);
+      import.meta.hot.accept("./x", newModule => console.log("b accepted " + newModule.x));
+    `,
+    "x.ts": `
+      export const x = "x1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a evaluated x1", "b evaluated x1");
+    await dev.write(
+      "a.ts",
+      `
+        console.log("a evaluated without x");
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("a evaluated without x");
+    // `a` no longer imports `x`: only `b` is told about it.
+    await dev.write("x.ts", `export const x = "x2";`);
+    await c.expectMessage("b accepted x2");
+  },
+});
 devTest("import.meta.hot.dispose runs for every module the update evaluates again", {
   files: {
     // importer: index handles every update with its accept callback and is never evaluated again, so its own dispose callback must never run.

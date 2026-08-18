@@ -482,6 +482,8 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
 
 /** Stale→Pending, new generation, no in-flight load, hooks cleared for the body to register anew: the one place an evaluation begins. */
 function beginEvaluation(mod: HMRModule): number {
+  // The load re-adds the edges the new body still has.
+  for (const dep of (mod.imports as HMRModule[] | null) ?? []) dep.importers.delete(mod);
   mod.state = State.Pending;
   mod.loading = null;
   mod.selfAccept = null;

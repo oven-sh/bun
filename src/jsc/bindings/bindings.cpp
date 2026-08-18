@@ -2694,7 +2694,7 @@ JSC__JSObject__create(JSC::JSGlobalObject* globalObject, size_t initialCapacity,
     void (*ArgFn3)(void* arg0, JSC::JSObject* arg1, JSC::JSGlobalObject* arg2))
 {
     JSC::JSObject* object = initialCapacity
-        ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(initialCapacity), JSFinalObject::maxInlineCapacity))
+        ? JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(std::min(initialCapacity, static_cast<size_t>(JSFinalObject::maxInlineCapacity))))
         : JSC::constructEmptyObject(globalObject);
 
     ArgFn3(arg2, object, globalObject);
@@ -2729,7 +2729,7 @@ JSC::EncodedJSValue JSC__JSValue__createEmptyObject(JSC::JSGlobalObject* globalO
     if (!initialCapacity)
         return JSC::JSValue::encode(JSC::constructEmptyObject(globalObject));
     return JSC::JSValue::encode(
-        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned int>(initialCapacity), JSFinalObject::maxInlineCapacity)));
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), static_cast<unsigned>(std::min(initialCapacity, static_cast<size_t>(JSFinalObject::maxInlineCapacity)))));
 }
 
 extern "C" uint64_t Bun__Blob__getSizeForBindings(void* blob);

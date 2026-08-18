@@ -1,19 +1,20 @@
 // Closes a client from the continuation of one of its own replies, drops the
 // last reference to it and collects, all before the socket read that delivered
 // the reply has returned. The read then finishes up on a client whose JS
-// wrapper is dead but not finalized yet. Prints one line per round that
-// survives that, and throws if a round never got the wrapper collected inside
-// the read, so a run that misses the window fails instead of passing vacuously.
+// wrapper is dead but not finalized yet.
 //
 // The collector scans the native stack conservatively, so a stale copy of the
 // wrapper's address anywhere between the collector's frame and the stack base
 // keeps it alive. Every native call that receives the wrapper (constructor,
-// connect, get, close) can spill it into its frame, and later frames of the
-// socket read and the collector then sit on top of that memory without
-// overwriting all of it. scrub() overwrites the stack below the calling frame
-// right after each of those calls. With that, release, profile and debug
-// builds all reach the window on every round; without it, release builds only
-// reached it on the first round.
+// connect, get, close) can spill it into its frame. scrub() overwrites the
+// stack below the calling frame right after each of those calls. Without it,
+// release builds only reached the window on the first round.
+//
+// A round can still miss the window: a live frame above the scrub can hold the
+// address (one Linux aarch64 CI lane missed round 2 every time). So a round
+// that misses is reported and skipped. The run passes if at least one of the
+// ten rounds reached the window and came back from the read, and fails
+// otherwise. The last line prints how many rounds reached it.
 import { RedisClient } from "bun";
 import { jscInternals } from "bun:internal-for-testing";
 

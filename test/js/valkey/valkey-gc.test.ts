@@ -629,5 +629,8 @@ test.concurrent("getBuffer replies survive GC with adopted backing stores intact
 test.concurrent("a client closed and collected from within its own reply does not crash the socket read", async () => {
   const result = await bunRun(join(import.meta.dir, "valkey.close-from-reply.fixture.ts"));
   expect(result).toSpawn();
-  expect(result.stdout).toMatch(/^[1-9]\d* rounds? reached the window$/m);
+  const reached = result.stdout.match(/^([1-9]\d*) rounds? reached the window$/m);
+  expect(reached).not.toBeNull();
+  // Keep the per-lane count in the CI log so a slide toward zero is visible.
+  console.log(`close-from-reply fixture: ${reached![1]} of 10 rounds reached the window`);
 });

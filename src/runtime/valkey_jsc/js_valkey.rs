@@ -106,8 +106,8 @@ impl JSValkeyClient {
             .map_or(0, |map| map.size())
     }
 
-    /// Test whether this context has any subscriptions. It is mandatory to
-    /// guard deinit with this function.
+    /// Whether any subscription handler is registered. Reads the JS wrapper,
+    /// so it is false once the wrapper is dead or finalized.
     pub(crate) fn has_subscriptions(&self) -> bool {
         self.channels_subscribed_to_count() > 0
     }

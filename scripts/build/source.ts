@@ -529,9 +529,9 @@ export interface ResolvedDep {
    */
   outputs: string[];
   /**
-   * Stamps of this dep's `forbidUndefined` checks. bun.ts makes whatever
-   * consumes the objects (the link, or cpp-only's archive target) depend on
-   * them, so a violation fails the build in every mode that compiles the dep.
+   * Stamps of this dep's `forbidUndefined` checks. Whatever the objects go
+   * into next waits for them: the per-dep archive here when cfg.archiveDeps,
+   * otherwise bun.ts's archive or link.
    */
   checks: string[];
 }
@@ -1702,8 +1702,8 @@ function emitDirect(
     // in this branch.
     mkdirSync(buildDir, { recursive: true });
     for (const o of objects) mkdirSync(resolve(o, ".."), { recursive: true });
-    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects);
-    n.phony(name, [lib, ...checks]);
+    const lib = ar(n, cfg, join("deps", name, `${cfg.libPrefix}${name}${cfg.libSuffix}`), objects, checks);
+    n.phony(name, [lib]);
     return { libs: [lib], objects: [], headerOutputs: [lib], checks };
   }
   n.phony(name, [...objects, ...checks]);

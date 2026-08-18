@@ -60,9 +60,9 @@ function mockToolchain(nm: string | undefined): Toolchain {
 }
 
 /** A linux-x64 target with the hooks on unless `asan`, and llvm-nm found unless `withoutNm`; nothing is built. */
-function configure(buildDir: string, { asan = false, withoutNm = false } = {}): Config {
+function configure(buildDir: string, { asan = false, withoutNm = false, archiveDeps = false } = {}): Config {
   return resolveConfig(
-    { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan, buildDir, linuxSysroot: buildDir },
+    { os: "linux", arch: "x64", abi: "gnu", buildType: "Debug", asan, archiveDeps, buildDir, linuxSysroot: buildDir },
     mockToolchain(withoutNm ? undefined : "/fake/llvm/bin/llvm-nm"),
   );
 }
@@ -146,6 +146,18 @@ describe("the dep_check_undefined edge", () => {
     expect(ninja).toContain("\n  nm = /fake/llvm/bin/llvm-nm\n");
     // `ninja fakedep` runs the check too.
     expect(ninja).toMatch(/^build fakedep: phony .*deps\/fakedep\/\.undefined-symbols-checked/m);
+  });
+
+  test("with --archiveDeps the dep's archive waits for the stamp", () => {
+    using dir = tempDir("forbid-undefined-archive", {
+      "build/dep/a.c": "",
+      "build/dep/table.c": "",
+      "build/dep/sub/b.c": "",
+    });
+    const buildDir = resolve(String(dir), "build");
+    const { resolved, ninja } = emit(configure(buildDir, { archiveDeps: true }), fakeDep(resolve(buildDir, "dep")));
+    expect(resolved.libs).toEqual([resolve(buildDir, "deps", "fakedep", "libfakedep.a")]);
+    expect(ninja).toMatch(/^build deps\/fakedep\/libfakedep\.a: ar .* \| deps\/fakedep\/\.undefined-symbols-checked$/m);
   });
 
   test("is skipped without llvm-nm", () => {

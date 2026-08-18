@@ -37,7 +37,10 @@ enum us_fault_syscall {
     US_FAULT_ACCEPT,
     /* Reserved: no bsd.c hooks yet, so the JS setter does not accept them. */
     US_FAULT_SOCKET,
+    /* Runs after the real close in bsd_close_socket. Only US_FAULT_ERRNO
+     * applies: the close still happens, the rule only sets errno afterwards. */
     US_FAULT_CLOSE,
+    /* Reserved, as US_FAULT_SOCKET. */
     US_FAULT_SHUTDOWN,
     /* Not a syscall: the per-loop TLS plaintext buffer allocated once by
      * us_internal_init_loop_ssl_data. Only US_FAULT_ERRNO applies — there is

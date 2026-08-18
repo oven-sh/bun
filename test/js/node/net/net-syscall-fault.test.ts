@@ -244,6 +244,37 @@ describe.skipIf(skip)("node:net under injected syscall faults", () => {
     }
   });
 
+  // A dial that fails inside connect(2) closes its socket before reporting.
+  // The code reported must be the connect's, not what that close left in
+  // errno; the "close" rule sets errno the way a failed close would.
+  test("the errno of a failed connect survives the close that follows it", async () => {
+    const server = net.createServer();
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const port = (server.address() as net.AddressInfo).port;
+    try {
+      // EINVAL is one of the codes a synchronous TCP failure keeps.
+      fault.set({ syscall: "connect", action: "errno", errno: "EINVAL", repeat: 1 });
+      fault.set({ syscall: "close", action: "errno", errno: "EBADF", repeat: 1 });
+      const client = net.connect({ port, host: "127.0.0.1" });
+      const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
+      expect(err.code).toBe("EINVAL");
+    } finally {
+      fault.clear();
+      server.close();
+    }
+  });
+
+  test("the errno of a failed unix connect survives the close that follows it", async () => {
+    fault.set({ syscall: "connect", action: "errno", errno: "ECONNRESET", repeat: 1 });
+    fault.set({ syscall: "close", action: "errno", errno: "EBADF", repeat: 1 });
+    // The path is not looked at: the injected connect fails first.
+    const client = net.connect({ path: "/nonexistent-dir/r.sock" });
+    const [err] = (await once(client, "error")) as [NodeJS.ErrnoException];
+    fault.clear();
+    expect(err.code).toBe("ECONNRESET");
+  });
+
   test("fd targeting: rule on the server fd does not affect the client", async () => {
     using p = await connectedPair();
     // The server socket's recv should error; the client should still receive

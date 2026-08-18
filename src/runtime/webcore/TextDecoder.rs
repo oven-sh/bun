@@ -47,8 +47,10 @@ pub struct TextDecoder {
 
     // encoding_rs decoder for every other encoding. It owns the streaming
     // state (lead byte, ISO-2022-JP mode, GB18030 first/second/third), so it
-    // must live across `{stream: true}` chunks. Created lazily on first
-    // decode, dropped when a flushing decode ends the stream.
+    // must live across `{stream: true}` chunks. Created lazily by a stream's
+    // first chunk and cleared by `begin_decode` when the next stream starts,
+    // however the previous decode exited: a decoder that has flushed must not
+    // be fed again (encoding_rs panics).
     codec: RefCell<Option<encoding_rs::Decoder>>,
 
     // Read-only after construction (set in `constructor` before the JS wrapper
@@ -202,6 +204,45 @@ impl TextDecoder {
         Ok((output, saw_error))
     }
 
+    /// Feeds one chunk to the encoding_rs decoder shared across a stream's
+    /// `{stream: true}` chunks. `InvalidByteSequence` is only reported in
+    /// fatal mode; otherwise malformed bytes become U+FFFD in the output.
+    fn decode_with_encoding_rs<const FLUSH: bool>(
+        &self,
+        decoder: &mut encoding_rs::Decoder,
+        bytes: &[u8],
+    ) -> Result<Vec<u16>, strings::ToUTF16Error> {
+        // Bounds the output for this chunk in both the replacing and the
+        // fatal mode, so neither decode call below can stop on a full buffer.
+        let cap = decoder
+            .max_utf16_buffer_length(bytes.len())
+            .ok_or(strings::ToUTF16Error::OutOfMemory)?;
+        let mut decoded = Vec::<u16>::new();
+        decoded
+            .try_reserve_exact(cap)
+            .map_err(|_| strings::ToUTF16Error::OutOfMemory)?;
+        decoded.resize(cap, 0);
+
+        let written = if self.fatal {
+            let (result, _, written) =
+                decoder.decode_to_utf16_without_replacement(bytes, &mut decoded, FLUSH);
+            if let encoding_rs::DecoderResult::Malformed(..) = result {
+                return Err(strings::ToUTF16Error::InvalidByteSequence);
+            }
+            debug_assert!(matches!(result, encoding_rs::DecoderResult::InputEmpty));
+            written
+        } else {
+            let (result, _, written, _) = decoder.decode_to_utf16(bytes, &mut decoded, FLUSH);
+            debug_assert!(matches!(result, encoding_rs::CoderResult::InputEmpty));
+            written
+        };
+        decoded.truncate(written);
+        // `cap` is about one code unit per input byte; two-byte CJK text fills
+        // half of it, and this buffer lives as long as the JS string does.
+        decoded.shrink_to_fit();
+        Ok(decoded)
+    }
+
     #[bun_jsc::host_fn(method)]
     pub(crate) fn decode(
         &self,
@@ -258,18 +299,25 @@ impl TextDecoder {
             )));
         };
 
-        // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2:
-        // a decode() after a flushing one starts a new stream. This runs AFTER
-        // the input check: a type error must leave the stream state untouched.
-        if !self.do_not_flush.replace(stream) {
-            self.bom_seen.set(false);
-        }
+        // This runs AFTER the input check: a type error must leave the stream
+        // state untouched.
+        self.begin_decode(stream);
 
         // Dispatch the runtime `stream` bool to a const-generic flush parameter.
         if !stream {
             self.decode_slice::<true>(global_this, input_slice)
         } else {
             self.decode_slice::<false>(global_this, input_slice)
+        }
+    }
+
+    /// https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2: a
+    /// decode() after a flushing one starts a new stream, with a new decoder
+    /// and its BOM not yet seen.
+    fn begin_decode(&self, stream: bool) {
+        if !self.do_not_flush.replace(stream) {
+            self.bom_seen.set(false);
+            *self.codec.borrow_mut() = None;
         }
     }
 
@@ -491,59 +539,41 @@ impl TextDecoder {
                         .encoding_rs()
                         .new_decoder_without_bom_handling()
                 });
+                let result = self.decode_with_encoding_rs::<FLUSH>(decoder, buffer_slice);
 
-                let Some(cap) = decoder.max_utf16_buffer_length(buffer_slice.len()) else {
-                    return Err(global_this.throw_out_of_memory());
-                };
-                let mut decoded = Vec::<u16>::new();
-                if decoded.try_reserve_exact(cap).is_err() {
-                    return Err(global_this.throw_out_of_memory());
-                }
-                decoded.resize(cap, 0);
-                let (saw_error, written) = if self.fatal {
-                    let (result, _, written) = decoder.decode_to_utf16_without_replacement(
-                        buffer_slice,
-                        &mut decoded,
-                        FLUSH,
-                    );
-                    (
-                        matches!(result, encoding_rs::DecoderResult::Malformed(..)),
-                        written,
-                    )
-                } else {
-                    let (_, _, written, had_errors) =
-                        decoder.decode_to_utf16(buffer_slice, &mut decoded, FLUSH);
-                    (had_errors, written)
-                };
-                decoded.truncate(written);
-
-                // A flushing decode ends the stream, and a fatal error throws
-                // away the decoder's pending bytes (the spec resets the decoder
-                // state and drops the per-call I/O queue), so the next
-                // `decode()` starts with a fresh decoder either way.
-                if FLUSH || (saw_error && self.fatal) {
+                // A fatal error discards the decoder along with whatever it had
+                // pending (a lead byte, the ISO-2022-JP mode), so a later
+                // `{stream: true}` chunk starts over instead of continuing from
+                // the bad byte. A flushing decode leaves it to `begin_decode`.
+                if matches!(result, Err(strings::ToUTF16Error::InvalidByteSequence)) {
                     *slot = None;
                 }
+                // Released before anything below can allocate or throw.
                 drop(slot);
 
-                if saw_error && self.fatal {
-                    return Err(global_this
-                        .err(
-                            jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
-                            format_args!(
-                                "The encoded data was not valid for encoding {}",
-                                bstr::BStr::new(EncodingLabel::get_label(self.encoding))
-                            ),
-                        )
-                        .throw());
-                }
+                let decoded = match result {
+                    Ok(decoded) => decoded,
+                    Err(strings::ToUTF16Error::InvalidByteSequence) => {
+                        return Err(global_this
+                            .err(
+                                jsc::ErrorCode::ERR_ENCODING_INVALID_ENCODED_DATA,
+                                format_args!(
+                                    "The encoded data was not valid for encoding {}",
+                                    bstr::BStr::new(EncodingLabel::get_label(self.encoding))
+                                ),
+                            )
+                            .throw());
+                    }
+                    Err(strings::ToUTF16Error::OutOfMemory) => {
+                        return Err(global_this.throw_out_of_memory());
+                    }
+                };
 
                 if decoded.is_empty() {
                     return Ok(ZigString::EMPTY.to_js(global_this));
                 }
 
                 let len = decoded.len();
-                // PERF: Vec::leak may retain excess capacity — profile if it shows up on a hot path.
                 let ptr = decoded.leak().as_mut_ptr();
                 // SAFETY: `ptr` was leaked from a global-allocator `Vec<u16>`;
                 // ownership transfers to JSC's external-string finalizer.
@@ -700,11 +730,12 @@ pub extern "C" fn TextDecoder__createForStream(
         unsafe { *out_utf8_fast_path = true };
         return core::ptr::null_mut();
     }
-    let mut decoder = TextDecoder::default();
-    decoder.fatal = fatal;
-    decoder.ignore_bom = ignore_bom;
-    decoder.encoding = encoding;
-    bun_core::heap::into_raw(TextDecoder::new(decoder))
+    bun_core::heap::into_raw(TextDecoder::new(TextDecoder {
+        fatal,
+        ignore_bom,
+        encoding,
+        ..TextDecoder::default()
+    }))
 }
 
 #[unsafe(no_mangle)]
@@ -740,10 +771,7 @@ pub extern "C" fn TextDecoder__decodeForStream(
         // escape this call.
         unsafe { core::slice::from_raw_parts(input, input_len) }
     };
-    // https://encoding.spec.whatwg.org/#dom-textdecoder-decode steps 1-2.
-    if !this.do_not_flush.replace(stream) {
-        this.bom_seen.set(false);
-    }
+    this.begin_decode(stream);
     let result = if stream {
         this.decode_slice::<false>(global, slice)
     } else {

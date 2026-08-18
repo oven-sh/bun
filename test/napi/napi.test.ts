@@ -241,7 +241,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             await using tmpdir = tempDir("napi-app-no-link-tmp", {});
             const result = spawnSync({
               cmd: [exe, "self"],
-              env: { ...bunEnv, BUN_TMPDIR: tmpdir, BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1" },
+              env: {
+                ...bunEnv,
+                BUN_TMPDIR: String(tmpdir),
+                TMPDIR: String(tmpdir),
+                BUN_FEATURE_FLAG_DISABLE_PE_ADDON_LINK: "1",
+              },
               stdin: "inherit",
               stderr: "inherit",
               stdout: "pipe",
@@ -249,7 +254,7 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
             const stdout = result.stdout.toString().trim();
             expect(stdout).toBe("hello world!");
             expect(result.success).toBeTrue();
-            expect(readdirSync(tmpdir).filter(f => f.endsWith(".node")).length).toBeGreaterThan(0);
+            expect(readdirSync(String(tmpdir)).filter(f => f.endsWith(".node")).length).toBeGreaterThan(0);
           },
           // Same --compile workload as the sibling above; see its timeout note.
           30 * 1000,
@@ -291,12 +296,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   });
 
   const unwindFixture = join(__dirname, "napi-app/unwind-fixture.js");
-  const unwindExpectedStdout = isWindows
-    ? "seh: caught\nlongjmp: 3\nfinally: 12\n"
-    : "seh: unsupported\nlongjmp: 3\nfinally: unsupported\n";
+  const cxxExpectedLine = "cxx: caught boom, destructors: 2, custom 42, destructors: 3\n";
+  const unwindExpectedStdout =
+    (isWindows ? "seh: caught\nlongjmp: 3\nfinally: 12\n" : "seh: unsupported\nlongjmp: 3\nfinally: unsupported\n") +
+    cxxExpectedLine;
 
   // Baseline for the --compile test below: the addon loaded as a regular DLL.
-  it("unwind_addon: SEH and longjmp across addon frames work when loaded normally", async () => {
+  it("unwind_addon, cxx_eh_addon: SEH, longjmp and C++ exceptions work when loaded normally", async () => {
     await using proc = spawn({
       cmd: [bunExe(), unwindFixture],
       env: bunEnv,
@@ -312,10 +318,12 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
   // reachable. `__except` dispatch and longjmp (RtlUnwindEx on MSVC) both walk
   // addon frames and crash the process without it, and the __finally case
   // additionally needs bun's handler trampoline to cope with Windows invoking
-  // it a second time for the same frame. The second run forces the
-  // extract-to-tempfile + LoadLibrary path on the same exe as a control.
+  // it a second time for the same frame. The C++ line needs the addon's
+  // statically linked throw to learn the addon's own image base. The second
+  // run forces the extract-to-tempfile + LoadLibrary path on the same exe as a
+  // control.
   it.skipIf(!isWindows)(
-    "unwind_addon: SEH, longjmp and collided unwinds work inside a statically merged --compile exe",
+    "unwind_addon, cxx_eh_addon: SEH, longjmp, collided unwinds and C++ exceptions work inside a statically merged --compile exe",
     async () => {
       await using dir = tempDir("napi-unwind-compile", {});
       const exe = join(dir, "unwind.exe");
@@ -327,10 +335,11 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
         stderr: "inherit",
       });
       expect(build.success).toBeTrue();
-      expect(
-        peHasSection(exe, ".bunL"),
-        "unwind_addon.node was not merged into the exe, so this would only test the tempfile fallback",
-      ).toBeTrue();
+      // Both addons have to be merged (.bn0 and .bn1); otherwise a line below
+      // would only be testing the tempfile fallback.
+      expect(peHasSection(exe, ".bunL")).toBeTrue();
+      expect(peHasSection(exe, ".bn0")).toBeTrue();
+      expect(peHasSection(exe, ".bn1"), "the second addon was not merged into the exe").toBeTrue();
 
       for (const [mode, env] of [
         ["merged", bunEnv],

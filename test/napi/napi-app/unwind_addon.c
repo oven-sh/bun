@@ -81,37 +81,39 @@ static napi_value seh_catch(napi_env env, napi_callback_info info) {
 #endif
 }
 
-static jmp_buf unwind_target;
+// The jump targets live in the calling frame rather than in statics: the
+// Worker fixture calls these functions from several threads at once.
 
 // Each level writes a volatile local array and uses its callee's return value,
 // so all three are genuine non-leaf frames with stack space of their own that
 // longjmp has to unwind through (no tail calls, nothing folded away).
-static NOINLINE int level3(void) {
+static NOINLINE int level3(jmp_buf *target) {
   volatile int locals[4];
   locals[0] = 3;
-  longjmp(unwind_target, locals[0]);
+  longjmp(*target, locals[0]);
 }
 
-static NOINLINE int level2(void) {
+static NOINLINE int level2(jmp_buf *target) {
   volatile int locals[4];
   locals[0] = 2;
-  locals[1] = level3();
+  locals[1] = level3(target);
   return locals[0] + locals[1];
 }
 
-static NOINLINE int level1(void) {
+static NOINLINE int level1(jmp_buf *target) {
   volatile int locals[4];
   locals[0] = 1;
-  locals[1] = level2();
+  locals[1] = level2(target);
   return locals[0] + locals[1];
 }
 
 static napi_value longjmp_depth(napi_env env, napi_callback_info info) {
   (void)info;
   char message[64];
-  int value = setjmp(unwind_target);
+  jmp_buf target;
+  int value = setjmp(target);
   if (value == 0) {
-    level1();
+    level1(&target);
     return make_string(env, "longjmp: fell through");
   }
   snprintf(message, sizeof message, "longjmp: %d", value);
@@ -120,25 +122,27 @@ static napi_value longjmp_depth(napi_env env, napi_callback_info info) {
 
 #ifdef _MSC_VER
 
-static jmp_buf first_target;
-static jmp_buf second_target;
-static volatile int finally_order;
+struct collision {
+  jmp_buf first_target;
+  jmp_buf second_target;
+  volatile int finally_order;
+};
 
 // The first longjmp unwinds through both __finally blocks. The inner one
 // starts a second unwind while the first is still running this frame's
 // handler (a "collided unwind"), which Windows completes by invoking the
 // handler again, resuming after the inner block. The outer block therefore
 // only runs if that second invocation reaches the addon's handler too.
-static NOINLINE void nested_finally(void) {
+static NOINLINE void nested_finally(struct collision *c) {
   __try {
     __try {
-      longjmp(first_target, 1);
+      longjmp(c->first_target, 1);
     } __finally {
-      finally_order = finally_order * 10 + 1;
-      longjmp(second_target, 1);
+      c->finally_order = c->finally_order * 10 + 1;
+      longjmp(c->second_target, 1);
     }
   } __finally {
-    finally_order = finally_order * 10 + 2;
+    c->finally_order = c->finally_order * 10 + 2;
   }
 }
 
@@ -148,15 +152,16 @@ static napi_value collided_unwind(napi_env env, napi_callback_info info) {
   (void)info;
 #ifdef _MSC_VER
   char message[64];
-  finally_order = 0;
-  if (setjmp(first_target) != 0) {
+  struct collision c;
+  c.finally_order = 0;
+  if (setjmp(c.first_target) != 0) {
     return make_string(env, "finally: first longjmp completed");
   }
-  if (setjmp(second_target) == 0) {
-    nested_finally();
+  if (setjmp(c.second_target) == 0) {
+    nested_finally(&c);
     return make_string(env, "finally: fell through");
   }
-  snprintf(message, sizeof message, "finally: %d", finally_order);
+  snprintf(message, sizeof message, "finally: %d", c.finally_order);
   return make_string(env, message);
 #else
   return make_string(env, "finally: unsupported");

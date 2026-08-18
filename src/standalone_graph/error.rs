@@ -13,6 +13,10 @@ pub enum Corruption {
     ModuleBytecode,
     ModuleInfo,
     BytecodeOriginPath,
+    ModuleEncoding,
+    ModuleLoader,
+    ModuleFormat,
+    ModuleSide,
     CompileExecArgv,
 }
 
@@ -33,6 +37,10 @@ impl Corruption {
             Self::BytecodeOriginPath => {
                 "Corrupted module graph: bytecode origin path is out of range"
             }
+            Self::ModuleEncoding => "Corrupted module graph: module encoding is out of range",
+            Self::ModuleLoader => "Corrupted module graph: module loader is out of range",
+            Self::ModuleFormat => "Corrupted module graph: module format is out of range",
+            Self::ModuleSide => "Corrupted module graph: module side is out of range",
             Self::CompileExecArgv => "Corrupted module graph: compile exec argv is out of range",
         }
     }

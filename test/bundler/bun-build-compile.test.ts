@@ -150,7 +150,8 @@ describe("compiled binary validity", () => {
   // The embedded module graph ends with `Offsets` (repr(C): byte_count u64, modules_ptr {offset u32, length u32},
   // entry_point_id u32, compile_exec_argv_ptr, flags) followed by the trailer. `byte_count` is the size of the
   // graph before `Offsets`, and `modules_ptr` points into it at the 52-byte `CompiledModuleGraphFile` records,
-  // each of which starts with the module name as {offset u32, length u32} into the graph.
+  // each of which starts with the module name as {offset u32, length u32} into the graph and ends with four
+  // one-byte enums: encoding, loader, module format, side.
   const GRAPH_TRAILER = "\n---- Bun! ----\n";
   const OFFSETS_SIZE = 32;
   const MODULE_RECORD_SIZE = 52;
@@ -168,11 +169,12 @@ describe("compiled binary validity", () => {
   }
   type ModuleGraphLayout = ReturnType<typeof locateModuleGraph>;
 
+  const oneFile = { "app.js": `console.log("should not run");` };
   const twoFiles = { "app.js": `console.log("should not run");`, "worker.js": `console.log("should not run");` };
   const corruptedGraphs = [
     {
       label: "entry_point_id equal to the module count",
-      files: { "app.js": `console.log("should not run");` },
+      files: oneFile,
       error: "entry point ID is out of range for the module list",
       corrupt(executable: Buffer, { moduleRecordCount, entryPointIdAt }: ModuleGraphLayout) {
         executable.writeUInt32LE(moduleRecordCount, entryPointIdAt);
@@ -205,6 +207,20 @@ describe("compiled binary validity", () => {
         executable.writeUInt32LE(0x7fffffff, modulesAt + MODULE_RECORD_SIZE + 12);
       },
     },
+    // The enum bytes at the end of the first record. 0xff is not a value of any of the four enums.
+    ...[
+      { field: "encoding", at: 48 },
+      { field: "loader", at: 49 },
+      { field: "format", at: 50 },
+      { field: "side", at: 51 },
+    ].map(({ field, at }) => ({
+      label: `an out-of-range module ${field} byte`,
+      files: oneFile,
+      error: `module ${field} is out of range`,
+      corrupt(executable: Buffer, { modulesAt }: ModuleGraphLayout) {
+        executable[modulesAt + at] = 0xff;
+      },
+    })),
   ];
 
   // A damaged graph must surface as an error, not an out-of-bounds panic in

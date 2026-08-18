@@ -2,7 +2,7 @@
 //! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 
-use core::mem::size_of;
+use core::mem::{offset_of, size_of};
 use core::ptr::NonNull;
 use std::io::Write as _;
 use std::sync::Arc;
@@ -321,7 +321,7 @@ impl bun_resolver::StandaloneModuleGraph for StandaloneModuleGraph {
 }
 
 #[repr(C)]
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct CompiledModuleGraphFile {
     pub name: StringPointer,
     pub contents: StringPointer,
@@ -337,8 +337,38 @@ pub(crate) struct CompiledModuleGraphFile {
     pub side: FileSide,
 }
 
+impl CompiledModuleGraphFile {
+    /// Decodes one record as `to_bytes` laid it out. Reading the record as a whole is
+    /// undefined behavior if a byte is outside its enum, so each enum byte is checked first.
+    fn read(record: &[u8; size_of::<Self>()]) -> crate::Result<Self> {
+        let pointer = |field: usize| -> StringPointer {
+            // SAFETY: `field` is the offset of a `StringPointer` field of `Self`, so
+            // it lies inside `record`, which holds a whole `Self`; every bit pattern
+            // is a valid `StringPointer` (two `u32`s), and `read_unaligned` does not
+            // need `record` to be 4-byte aligned.
+            unsafe { core::ptr::read_unaligned(record.as_ptr().add(field).cast::<StringPointer>()) }
+        };
+        Ok(Self {
+            name: pointer(offset_of!(Self, name)),
+            contents: pointer(offset_of!(Self, contents)),
+            sourcemap: pointer(offset_of!(Self, sourcemap)),
+            bytecode: pointer(offset_of!(Self, bytecode)),
+            module_info: pointer(offset_of!(Self, module_info)),
+            bytecode_origin_path: pointer(offset_of!(Self, bytecode_origin_path)),
+            encoding: Encoding::from_repr(record[offset_of!(Self, encoding)])
+                .ok_or(Corruption::ModuleEncoding)?,
+            loader: Loader::from_repr(record[offset_of!(Self, loader)])
+                .ok_or(Corruption::ModuleLoader)?,
+            module_format: ModuleFormat::from_repr(record[offset_of!(Self, module_format)])
+                .ok_or(Corruption::ModuleFormat)?,
+            side: FileSide::from_repr(record[offset_of!(Self, side)])
+                .ok_or(Corruption::ModuleSide)?,
+        })
+    }
+}
+
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum FileSide {
     #[default]
     Server = 0,
@@ -346,7 +376,7 @@ pub enum FileSide {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum Encoding {
     Binary = 0,
     #[default]
@@ -356,7 +386,7 @@ pub enum Encoding {
 }
 
 #[repr(u8)]
-#[derive(Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, strum::FromRepr)]
 pub enum ModuleFormat {
     #[default]
     None = 0,
@@ -675,32 +705,22 @@ impl StandaloneModuleGraph {
                 Corruption::ModuleList,
             )?
         };
-        // Note: the modules blob sits at an arbitrary byte offset in the section, and
-        // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
-        // → 4-byte). We instead iterate by index and `read_unaligned` each fixed-size record into a
-        // local (`CompiledModuleGraphFile` is `Copy`/POD), so no `&T` ever points at unaligned memory.
-        let modules_list_count = modules_list_bytes.len() / size_of::<CompiledModuleGraphFile>();
-        let modules_list_base = modules_list_bytes.as_ptr();
+        // Byte records, not a `&[CompiledModuleGraphFile]`: the blob sits at an arbitrary byte
+        // offset and that slice would need 4-byte alignment.
+        let (records, _) =
+            modules_list_bytes.as_chunks::<{ size_of::<CompiledModuleGraphFile>() }>();
 
         // `entry_point()` indexes `files` by this id. `to_bytes` writes one file per
         // record with distinct names, and a repeated name is rejected below, so the
         // record count is the file count.
-        if offsets.entry_point_id as usize >= modules_list_count {
+        if offsets.entry_point_id as usize >= records.len() {
             return Err(Corruption::EntryPointId.into());
         }
 
         let mut modules = StringArrayHashMap::<File>::new();
-        modules.reserve(modules_list_count);
-        for i in 0..modules_list_count {
-            // SAFETY: index < count derived from byte length above; bytes live for 'static.
-            let module: CompiledModuleGraphFile = unsafe {
-                core::ptr::read_unaligned(
-                    modules_list_base
-                        .add(i * size_of::<CompiledModuleGraphFile>())
-                        .cast::<CompiledModuleGraphFile>(),
-                )
-            };
-            let module = &module;
+        modules.reserve(records.len());
+        for record in records {
+            let module = CompiledModuleGraphFile::read(record)?;
             // SAFETY: each name/contents/sourcemap/bytecode_origin_path subrange is checked
             // against `raw_len` and is disjoint from the writable bytecode/module_info
             // subranges (serialized by `to_bytes`); section bytes are a live 'static allocation.
@@ -2598,4 +2618,92 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 
     debug_assert!(header_list.len() == string_payload_start_location);
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A record with a distinct value in every field, and its bytes as `to_bytes` writes them.
+    fn record() -> (
+        CompiledModuleGraphFile,
+        [u8; size_of::<CompiledModuleGraphFile>()],
+    ) {
+        let pointer = |offset, length| StringPointer { offset, length };
+        let module = CompiledModuleGraphFile {
+            name: pointer(1, 2),
+            contents: pointer(3, 4),
+            sourcemap: pointer(5, 6),
+            bytecode: pointer(7, 8),
+            module_info: pointer(9, 10),
+            bytecode_origin_path: pointer(11, 12),
+            encoding: Encoding::Utf8,
+            loader: Loader::Xml,
+            module_format: ModuleFormat::Cjs,
+            side: FileSide::Client,
+        };
+        // SAFETY: `CompiledModuleGraphFile` is `repr(C)` without padding (six 8-byte
+        // pointers and then four bytes, 4-byte aligned), so every byte of it is
+        // initialized, and a byte array has no alignment requirement.
+        let bytes = unsafe {
+            core::ptr::from_ref(&module)
+                .cast::<[u8; size_of::<CompiledModuleGraphFile>()]>()
+                .read()
+        };
+        (module, bytes)
+    }
+
+    #[test]
+    fn read_decodes_what_to_bytes_writes() {
+        let (module, bytes) = record();
+        assert_eq!(CompiledModuleGraphFile::read(&bytes), Ok(module));
+    }
+
+    #[test]
+    fn read_checks_each_enum_byte_against_its_own_enum() {
+        let (_, valid) = record();
+        let enum_bytes: [(usize, fn(u8) -> bool, Corruption); 4] = [
+            (
+                offset_of!(CompiledModuleGraphFile, encoding),
+                |byte| Encoding::from_repr(byte).is_some(),
+                Corruption::ModuleEncoding,
+            ),
+            (
+                offset_of!(CompiledModuleGraphFile, loader),
+                |byte| Loader::from_repr(byte).is_some(),
+                Corruption::ModuleLoader,
+            ),
+            (
+                offset_of!(CompiledModuleGraphFile, module_format),
+                |byte| ModuleFormat::from_repr(byte).is_some(),
+                Corruption::ModuleFormat,
+            ),
+            (
+                offset_of!(CompiledModuleGraphFile, side),
+                |byte| FileSide::from_repr(byte).is_some(),
+                Corruption::ModuleSide,
+            ),
+        ];
+        // The enums are the whole tail of the record, so a new one needs an entry above.
+        assert_eq!(
+            enum_bytes.len(),
+            size_of::<CompiledModuleGraphFile>() - offset_of!(CompiledModuleGraphFile, encoding)
+        );
+        for (at, is_discriminant, what) in enum_bytes {
+            for byte in 0..=u8::MAX {
+                let mut record = valid;
+                record[at] = byte;
+                let expected: crate::Result<()> = if is_discriminant(byte) {
+                    Ok(())
+                } else {
+                    Err(what.into())
+                };
+                assert_eq!(
+                    CompiledModuleGraphFile::read(&record).map(|_| ()),
+                    expected,
+                    "byte {byte} at offset {at}"
+                );
+            }
+        }
+    }
 }

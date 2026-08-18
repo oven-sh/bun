@@ -57,12 +57,13 @@ test("Stats instances share Stats.prototype", () => {
 });
 
 // A call resolved through a binding that a closure captures is compiled with the scope object
-// itself in the this slot, and native methods see it raw. isFile() and friends used to read
-// `mode` out of that scope object: a missing binding produced a bogus false, and a `mode` binding
-// still in its temporal dead zone crashed the process. Such a receiver now gets the same answer as
-// any other non-object receiver.
-describe("Stats mode methods called without a receiver", () => {
-  test("a call through a captured binding is treated like an undefined receiver", () => {
+// itself in the this slot, and native functions see it raw. isFile() and friends used to read
+// `mode` out of that scope object (the date getters, once pulled out of their property descriptor,
+// `atimeMs` and so on): a missing binding produced a bogus answer, and a binding still in its
+// temporal dead zone crashed the process. Such a receiver now gets the same answer as any other
+// non-object receiver.
+describe("Stats methods and accessors called without a receiver", () => {
+  test("a mode method called through a captured binding is treated like an undefined receiver", () => {
     const stats = statSync(import.meta.path);
     const bigintStats = statSync(import.meta.dir, { bigint: true });
     const { isFile } = stats;
@@ -82,15 +83,37 @@ describe("Stats mode methods called without a receiver", () => {
     expect(keep()).toEqual([isFile, isDirectory]);
   });
 
-  test("a call through a scope whose `mode` binding is in its TDZ does not crash", async () => {
+  test("a date getter called through a captured binding is treated like an undefined receiver", () => {
+    const stats = statSync(import.meta.path);
+    const bigintStats = statSync(import.meta.path, { bigint: true });
+    const atime = Object.getOwnPropertyDescriptor(Stats.prototype, "atime")!.get!;
+    const bigintMtime = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(bigintStats), "mtime")!.get!;
+    function keep() {
+      return [atime, bigintMtime];
+    }
+    expect({
+      bare: [atime(), bigintMtime()],
+      undefinedReceiver: [atime.call(undefined), bigintMtime.call(undefined)],
+      statsReceiver: [atime.call(stats), bigintMtime.call(bigintStats)],
+    }).toEqual({
+      bare: [undefined, undefined],
+      undefinedReceiver: [undefined, undefined],
+      statsReceiver: [stats.atime, bigintStats.mtime],
+    });
+    expect(keep()).toEqual([atime, bigintMtime]);
+  });
+
+  test("calls through a scope whose `mode` and `atimeMs` bindings are in their TDZ do not crash", async () => {
     const src = `
-      const { statSync } = require("node:fs");
+      const { Stats, statSync } = require("node:fs");
       const { isFile } = statSync(${JSON.stringify(import.meta.path)});
       const { isDirectory } = statSync(${JSON.stringify(import.meta.dir)}, { bigint: true });
-      console.log(isFile(), isDirectory());
+      const atime = Object.getOwnPropertyDescriptor(Stats.prototype, "atime").get;
+      console.log(isFile(), isDirectory(), atime());
       let mode = 0;
+      let atimeMs = 0;
       function keep() {
-        return [isFile, isDirectory, mode];
+        return [isFile, isDirectory, atime, mode, atimeMs];
       }
       keep();
     `;
@@ -101,6 +124,10 @@ describe("Stats mode methods called without a receiver", () => {
       stderr: "pipe",
     });
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "undefined undefined\n", stderr: "", exitCode: 0 });
+    expect({ stdout, stderr, exitCode }).toEqual({
+      stdout: "undefined undefined undefined\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });

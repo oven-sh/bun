@@ -63,6 +63,15 @@ function shaBuiltFrom(version: string, cacheDir: string): string {
   return sha;
 }
 
+/** Runs git in the repo and returns what it printed; if git fails, the error carries git's own explanation. */
+async function git(webkitRepo: string, args: string[]): Promise<string> {
+  const out = await Bun.$`git ${args}`.cwd(webkitRepo).quiet().nothrow();
+  if (out.exitCode !== 0)
+    throw new Error(`git ${args.join(" ")} failed in ${webkitRepo}:\n${out.stderr.toString().trim()}`);
+  return out.text().trim();
+}
+
+/** The commit `rev` names in the repo, or "" if it names nothing there (also for HEAD of a repo with no checkout yet). */
 async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
   const out = await Bun.$`git rev-parse --verify ${rev}^{commit}`.cwd(webkitRepo).quiet().nothrow();
   return out.exitCode === 0 ? out.text().trim() : "";
@@ -74,17 +83,19 @@ async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
  * tip; GitHub serves any commit it still has this way, a preview's included, even one the PR has
  * since force-pushed away. A shallow clone is kept shallow: fetching into one without --depth
  * downloads everything below the commit that the clone does not have, which for a commit older
- * than its boundary is all of WebKit's history.
+ * than its boundary is all of WebKit's history. (--depth=1 would also re-shallow a clone at a
+ * commit it already has, which is why the caller only gets here for a commit it does not.)
  */
 async function fetchFromOrigin(webkitRepo: string, sha: string): Promise<void> {
-  const shallow = (await Bun.$`git rev-parse --is-shallow-repository`.cwd(webkitRepo).quiet().text()).trim();
-  const depth = shallow === "true" ? ["--depth=1"] : [];
+  const shallow = (await git(webkitRepo, ["rev-parse", "--is-shallow-repository"])) === "true";
+  const depth = shallow ? ["--depth=1"] : [];
   await Bun.$`git fetch ${depth} origin ${sha}`.cwd(webkitRepo).nothrow();
 }
 
 /**
- * Checks `webkitRepo` out at the commit `version` was built from, fetching it first if needed.
- * `cacheDir` is the build cache holding the downloaded prebuilts; only a preview pin consults it.
+ * Checks `webkitRepo` out at the commit `version` was built from, fetching it first if the repo
+ * does not have it. `cacheDir` is the build cache holding the downloaded prebuilts; only a preview
+ * pin consults it.
  */
 export async function syncWebKitSource(webkitRepo: string, version: string, cacheDir: string): Promise<string> {
   const sha = shaBuiltFrom(version, cacheDir);
@@ -100,12 +111,12 @@ export async function syncWebKitSource(webkitRepo: string, version: string, cach
     );
   }
 
-  const checkedOutCommit = (await Bun.$`git rev-parse HEAD`.cwd(webkitRepo).quiet().text()).trim();
+  const checkedOutCommit = await resolveCommit(webkitRepo, "HEAD");
   if (checkedOutCommit === expectedSha) {
     console.log(`already at ${version} (${expectedSha})`);
   } else {
-    console.log(`changing from ${checkedOutCommit} to ${version} (${expectedSha})`);
-    // it is OK that this leaves you with a detached HEAD
+    console.log(`changing from ${checkedOutCommit || "nothing checked out"} to ${version} (${expectedSha})`);
+    // it is OK that this leaves you with a detached HEAD; this streams so that a big checkout shows progress
     await Bun.$`git checkout ${expectedSha}`.cwd(webkitRepo);
   }
   return expectedSha;

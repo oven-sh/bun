@@ -8,28 +8,32 @@
  * therefore point at the wrong commit, the way the real ones do; resolving
  * through the tag lands there.
  *
- * Clones come in two shapes: a plain clone, and `--depth=1`, which is what a
- * developer cloning a repo the size of WebKit is likely to have and whose only
- * refspec is the tip of one branch; the pinned commit has to arrive in both.
+ * Clones come in two shapes: the plain clone CONTRIBUTING.md describes, and a
+ * `--depth=1` clone, which nothing recommends but which exists (a repo this size
+ * invites it) and whose only refspec is the tip of one branch; the pinned commit
+ * has to arrive in both, and a clone that already has it must not be touched.
  */
 import { $, spawnSync } from "bun";
 import { afterAll, describe, expect, test } from "bun:test";
 import { tempDir, tmpdirSync } from "harness";
-import { mkdirSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 import { commitOfDownloadedPrebuilt, pinnedCommit, syncWebKitSource } from "../../../scripts/sync-webkit-source.ts";
 
 // Keep this file's git and the script's git (Bun.$) away from the developer's
-// config: signing, hooks, url rewrites. GIT_CONFIG_GLOBAL has to be a real
-// file; git on some Windows builds rejects the null device.
-const gitConfig = join(tmpdirSync(), "test.gitconfig");
+// config (signing, hooks, url rewrites) and from any repository the temp dir
+// happens to live under. GIT_CONFIG_GLOBAL has to be a real file; git on some
+// Windows builds rejects the null device.
+const scratch = tmpdirSync();
+const gitConfig = join(scratch, "test.gitconfig");
 writeFileSync(gitConfig, "[advice]\n\tdetachedHead = false\n");
 const gitEnv = {
   ...process.env,
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: gitConfig,
+  GIT_CEILING_DIRECTORIES: dirname(scratch),
   GIT_AUTHOR_NAME: "Test",
   GIT_AUTHOR_EMAIL: "test@example.com",
   GIT_COMMITTER_NAME: "Test",
@@ -238,6 +242,42 @@ describe.concurrent("sync-webkit-source", () => {
       expect(head(clone)).toBe(push);
       expect(isShallow(clone)).toBe(shape === "depth-1");
     });
+
+    test("a commit the clone already has is checked out without fetching", async () => {
+      using dir = tempDir(`sync-webkit-source-local-${shape}`, {});
+      const { origin, base } = makeOrigin(String(dir));
+      const tip = commit(origin, "tip");
+      const clone = cloneOf(String(dir), origin, shape);
+      // A depth-1 clone has only the tip; fetching it again with --depth=1 would re-shallow the clone at it.
+      const wanted = shape === "depth-1" ? tip : base;
+
+      expect(await syncWebKitSource(clone, `autobuild-${wanted}`, emptyCache(String(dir)))).toBe(wanted);
+      // Any fetch, even one that brought nothing, leaves FETCH_HEAD behind.
+      expect({ head: head(clone), fetched: existsSync(join(clone, ".git", "FETCH_HEAD")) }).toEqual({
+        head: wanted,
+        fetched: false,
+      });
+    });
+  });
+
+  test("a repo that was only initialized and pointed at origin gets the commit too", async () => {
+    using dir = tempDir("sync-webkit-source-initialized", {});
+    const { origin, base } = makeOrigin(String(dir));
+    const repo = initRepo(join(String(dir), "repo"));
+    git(repo, "remote", "add", "origin", origin);
+
+    expect(await syncWebKitSource(repo, base, emptyCache(String(dir)))).toBe(base);
+    expect(head(repo)).toBe(base);
+  });
+
+  test("when git itself fails, its explanation is what the error says", async () => {
+    using dir = tempDir("sync-webkit-source-not-a-repo", {});
+    const notARepo = join(String(dir), "vendor-webkit");
+    mkdirSync(notARepo);
+
+    await expect(
+      syncWebKitSource(notARepo, "781d6abb94b9eaee825e95ef700a83d8cf576f55", emptyCache(String(dir))),
+    ).rejects.toThrow("not a git repository");
   });
 
   test("a preview of a push the PR has since replaced is still checked out", async () => {

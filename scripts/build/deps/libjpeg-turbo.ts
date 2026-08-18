@@ -16,9 +16,9 @@
  * deals in 8-bit RGB(A).
  */
 
+import { quote } from "../shell.ts";
 import type { Dependency } from "../source.ts";
 import { depBuildDir, depSourceDir } from "../source.ts";
-import { quote } from "../shell.ts";
 
 const LIBJPEG_TURBO_COMMIT = "e352b02f794f701407b39af08576035ba3360d60"; // 3.1.4
 

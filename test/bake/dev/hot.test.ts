@@ -507,6 +507,98 @@ devTest("server: modules between the updated module and the route are evaluated 
     await dev.fetch("/").equals("v2 derived(v2)");
   },
 });
+devTest("server: modules an update never got to evaluate keep their hooks for the next update", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "mid.ts": `
+      import { value } from "./config";
+      export const mid = "mid(" + value + ")";
+      import.meta.hot.dispose(() => (globalThis.log ??= []).push("mid disposed " + mid));
+    `,
+    "boundary.ts": `
+      import { mid } from "./mid";
+      export const boundary = "boundary(" + mid + ")";
+      import.meta.hot.accept(newModule => (globalThis.log ??= []).push("boundary accepted " + newModule.boundary));
+    `,
+    "routes/index.ts": `
+      import { boundary } from "../boundary";
+      export default function () {
+        return Response.json({ boundary, log: globalThis.log ?? [] });
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toStrictEqual({ boundary: "boundary(mid(v1))", log: [] });
+    // `config` throws first in the reload loop: `mid` and `boundary` were disposed but never evaluated again.
+    await dev.write(
+      "config.ts",
+      `
+        throw new Error("config boom");
+        export const value = "v2";
+      `,
+    );
+    await dev.output.waitForLine(/config boom/);
+    expect(await dev.fetch("/").json()).toStrictEqual({
+      boundary: "boundary(mid(v1))",
+      log: ["mid disposed mid(v1)"],
+    });
+    // The fix walks up through `mid` to `boundary`, which still self-accepts.
+    await dev.write("config.ts", `export const value = "v3";`);
+    expect(await dev.fetch("/").json()).toStrictEqual({
+      boundary: "boundary(mid(v3))",
+      log: ["mid disposed mid(v1)", "boundary accepted boundary(mid(v3))"],
+    });
+    await dev.write("config.ts", `export const value = "v4";`);
+    expect(await dev.fetch("/").json()).toStrictEqual({
+      boundary: "boundary(mid(v4))",
+      log: [
+        "mid disposed mid(v1)",
+        "boundary accepted boundary(mid(v3))",
+        "mid disposed mid(v3)",
+        "boundary accepted boundary(mid(v4))",
+      ],
+    });
+  },
+});
+devTest("server: an import() that lands while a dispose promise is pending evaluates the new body once", {
+  framework: minimalFramework,
+  files: {
+    "counted.ts": `
+      globalThis.evaluations = (globalThis.evaluations ?? 0) + 1;
+      export const value = "v1";
+      import.meta.hot.dispose(() => globalThis.disposing.promise);
+    `,
+    // "arm" creates the promise the next dispose returns, "release" resolves it, anything else imports `counted`.
+    "routes/index.ts": `
+      export default async function (req) {
+        const op = req.headers.get("x-command");
+        if (op === "arm") {
+          globalThis.disposing = Promise.withResolvers();
+          return new Response("armed");
+        }
+        if (op === "release") {
+          globalThis.disposing.resolve();
+          return new Response("released");
+        }
+        const { value } = await import("../counted");
+        return Response.json({ value, evaluations: globalThis.evaluations });
+      }
+    `,
+  },
+  async test(dev) {
+    const command = (line: string) => dev.fetch("/", { headers: { "x-command": line } });
+    await command("arm").equals("armed");
+    expect(await command("load").json()).toStrictEqual({ value: "v1", evaluations: 1 });
+    await dev.patch("counted.ts", { find: '"v1"', replace: '"v2"' });
+    // The update is waiting on the dispose promise; this import evaluates v2.
+    expect(await command("load").json()).toStrictEqual({ value: "v2", evaluations: 2 });
+    await command("release").equals("released");
+    expect(await command("load").json()).toStrictEqual({ value: "v2", evaluations: 2 });
+  },
+});
 devTest("server: a sync throw during an update with a reload in flight leaves no unhandled rejection", {
   framework: minimalFramework,
   files: {

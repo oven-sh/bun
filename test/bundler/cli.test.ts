@@ -529,8 +529,8 @@ describe("CLI argument error messages", () => {
     const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
     expect(stderr).toContain("cannot use both --outdir and --outfile");
     expect(stdout).toBe("");
-    expect(exitCode).toBe(1);
     expect(fs.existsSync(path.join(String(dir), "dist"))).toBe(false);
+    expect(exitCode).toBe(1);
   });
 });
 

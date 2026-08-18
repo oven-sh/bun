@@ -354,8 +354,6 @@ test/cli/init/init.test.ts
 
 # bundle.test.ts: new dev-server tests not yet measured under LSan (#38004 fix included).
 test/bake/dev/bundle.test.ts
-# css.test.ts: evicted watch entry path leak (#39197) is not in this branch.
-test/bake/dev/css.test.ts
 
 # Need to terminate HTTP thread.
 test/js/bun/test/parallel/test-http-should-not-accept-untrusted-certificates.ts

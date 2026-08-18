@@ -317,16 +317,31 @@ devTest("import.meta.hot.accept multiple modules", {
 devTest("modules between the updated module and its accepting boundary are evaluated again", {
   // One server; each case has its own page and module graph under a directory of the same name. Clients are opened one at a time.
   files: {
-    // accept: index -> d, index -> a -> d. `index` accepts `d` and is not evaluated again, but `a` computed its export from `d` and has to be.
+    // accept: index -> d, index -> a -> d. `index` accepts both and is not evaluated again, but `a` computed its export from `d` and has to be; one callback carries both.
     "accept.html": emptyHtmlFile({ scripts: ["accept/index.ts"] }),
     "accept/index.ts": `
       import { d } from "./d";
       import { a } from "./a";
       console.log("index " + d + " " + a);
       globalThis.snapshot = () => d + " " + a;
-      import.meta.hot.accept("./d", newModule => {
-        globalThis.accepted = newModule.d + " " + a;
+      import.meta.hot.accept(["./d", "./a"], newModules => {
+        globalThis.accepted = newModules[0].d + " " + newModules[1].a;
       });
+    `,
+    // chain: index -> b -> c. `index` accepts `b`, so an edit of `c` is handled by evaluating `b` again and calling the callback with it (Vite semantics).
+    "chain.html": emptyHtmlFile({ scripts: ["chain/index.ts"] }),
+    "chain/index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+      import.meta.hot.accept("./b", newModule => console.log("index accepted " + newModule.b));
+    `,
+    "chain/b.ts": `
+      import { c } from "./c";
+      export const b = "b(" + c + ")";
+      console.log("b evaluated " + b);
+    `,
+    "chain/c.ts": `
+      export const c = "c1";
     `,
     "accept/a.ts": `
       import { d } from "./d";
@@ -433,6 +448,14 @@ devTest("modules between the updated module and its accepting boundary are evalu
       await c.expectMessage("a evaluated a(d3)");
       expect(await c.js<string>`snapshot()`).toBe("d3 a(d3)");
       expect(await c.js<string>`globalThis.accepted`).toBe("d3 a(d3)");
+    }
+    {
+      await using c = await dev.client("/chain");
+      await c.expectMessage("b evaluated b(c1)", "index b(c1)");
+      await dev.write("chain/c.ts", `export const c = "c2";`);
+      await c.expectMessage("b evaluated b(c2)", "index accepted b(c2)");
+      await dev.write("chain/c.ts", `export const c = "c3";`);
+      await c.expectMessage("b evaluated b(c3)", "index accepted b(c3)");
     }
     {
       await using c = await dev.client("/order");
@@ -635,7 +658,7 @@ devTest("server: a sync throw during an update with a reload in flight leaves no
 });
 devTest("import.meta.hot.accept specifier callbacks run once per update, dispose once per module", {
   files: {
-    // once: index -> d, index -> a -> d, index -> b -> c -> d, index -> other -> d, other -> a. `index` and `other` are reached once per path; each callback runs once.
+    // once: index -> d, index -> a -> d, index -> b -> c -> d, index -> other -> d, other -> a. `index` and `other` are reached once per path; each callback runs once, with every accepted module the update replaced.
     "once.html": emptyHtmlFile({ scripts: ["once/index.ts"] }),
     "once/index.ts": `
       import { d } from "./d";
@@ -643,8 +666,8 @@ devTest("import.meta.hot.accept specifier callbacks run once per update, dispose
       import { b } from "./b";
       import "./other";
       console.log("index " + d + " " + a + " " + b);
-      import.meta.hot.accept("./d", newModule => {
-        console.log("index accepted " + newModule.d);
+      import.meta.hot.accept(["./d", "./a", "./b"], newModules => {
+        console.log("index accepted " + newModules[0]?.d + " " + newModules[1]?.a + " " + newModules[2]?.b);
       });
     `,
     "once/other.ts": `
@@ -692,10 +715,13 @@ devTest("import.meta.hot.accept specifier callbacks run once per update, dispose
       await using c = await dev.client("/once");
       await c.expectMessage("index d1 a(d1) b(c(d1))");
       await dev.write("once/d.ts", `export const d = "d2";`);
-      await c.expectMessage("index accepted d2", "other accepted d2 undefined");
+      await c.expectMessage("index accepted d2 a(d2) b(c(d2))", "other accepted d2 a(d2)");
       // The next update starts over: the callbacks run again, still once each.
       await dev.write("once/d.ts", `export const d = "d3";`);
-      await c.expectMessage("index accepted d3", "other accepted d3 undefined");
+      await c.expectMessage("index accepted d3 a(d3) b(c(d3))", "other accepted d3 a(d3)");
+      // Only `a` is replaced: the callbacks report just it.
+      await dev.write("once/a.ts", `import { d } from "./d"; export const a = "A(" + d + ")";`);
+      await c.expectMessage("index accepted undefined A(d3) undefined", "other accepted undefined A(d3)");
     }
     {
       await using c = await dev.client("/two");

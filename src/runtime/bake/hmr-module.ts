@@ -656,14 +656,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
   emitEvent("bun:beforeUpdate", null);
 
-  type ToAccept = {
-    cb: HotAccept;
-    key: Id;
-    importer: HMRModule;
-  };
   /** Every module this update replaces with a new copy: disposed of, then evaluated again. */
   const toReload = new Set<HMRModule>();
-  const toAccept: ToAccept[] = [];
+  /** Importers accepting a module the walk went through, with every such module of theirs this update replaces. */
+  const toAccept = new Map<HotAccept, { importer: HMRModule; keys: Set<Id> }>();
   let failures: Set<Id> | null = null;
 
   // Discover all HMR boundaries
@@ -683,8 +679,6 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
 
     // Discover all HMR boundaries
     const visited = new Set<HMRModule>();
-    // An importer accepting `key` is reached again from every module walked past on the way up.
-    const accepted = new Set<HotAccept>();
     const queue: HMRModule[] = [existing];
     visited.add(existing);
     while (true) {
@@ -722,12 +716,13 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         }
       }
 
+      // Like Vite, an importer accepts the module being propagated, not only the file that changed.
       for (const importer of mod.importers) {
-        const cb = importer.depAccepts?.[key];
+        const cb = importer.depAccepts?.[mod.id];
         if (cb) {
-          if (accepted.has(cb)) continue;
-          accepted.add(cb);
-          toAccept.push({ cb, key, importer });
+          let entry = toAccept.get(cb);
+          if (!entry) toAccept.set(cb, (entry = { importer, keys: new Set() }));
+          entry.keys.add(mod.id);
         } else if (propagates) {
           if (visited.has(importer)) continue;
           visited.add(importer);
@@ -758,7 +753,7 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
         path.push(current.id);
         inner: for (const importer of current.importers) {
           if (importer.selfAccept) continue inner;
-          if (importer.depAccepts?.[boundary]) continue inner;
+          if (importer.depAccepts?.[current.id]) continue inner;
           current = importer;
           continue outer;
         }
@@ -867,11 +862,10 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
 
   // Call all accept callbacks
-  for (const { cb: cbEntry, key, importer } of toAccept) {
+  for (const [{ cb, modules, single }, { importer, keys }] of toAccept) {
     // The importer was itself re-evaluated in this update, so its old callback is stale.
     if (toReload.has(importer)) continue;
-    const { cb: cbFn, modules, single } = cbEntry;
-    cbFn(single ? getEsmExports(registry.get(key)!) : createAcceptArray(modules, key));
+    cb(single ? getEsmExports(registry.get(modules[0])!) : createAcceptArray(modules, keys));
   }
 
   if (refreshRuntime) {
@@ -892,13 +886,8 @@ function patchImporters(mod: HMRModule) {
   }
 }
 
-function createAcceptArray(modules: string[], key: Id) {
-  const arr = new Array(modules.length);
-  arr.fill(undefined);
-  const i = modules.indexOf(key);
-  DEBUG.ASSERT(i !== -1);
-  arr[i] = getEsmExports(registry.get(key)!);
-  return arr;
+function createAcceptArray(modules: string[], keys: Set<Id>) {
+  return modules.map(id => (keys.has(id) ? getEsmExports(registry.get(id)!) : undefined));
 }
 
 /** `vite:*` is an alias of `bun:*`; both `on` and `off` go through this. */

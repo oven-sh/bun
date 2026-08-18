@@ -1,6 +1,7 @@
 import type { Query as QueryType } from "./query";
 
 const PublicArray = globalThis.Array;
+const PublicString = globalThis.String;
 const {
   Query,
   SQLQueryFlags,
@@ -63,10 +64,14 @@ type ArrayType =
   | "PG_DATABASE"
   | (string & {});
 export type { ArrayType, SQLArrayParameter, SQLResultArray };
-class SQLArrayParameter {
+// Only the tagged-template path unwraps this (adapter.bindParam); the insert/update/in helpers and
+// sql.unsafe bind the object itself. Native binds string-like values as text and JSON-serializes
+// other objects, so this has to look like a string to reach the server as an array literal.
+class SQLArrayParameter extends PublicString {
   serializedValues: string;
   arrayType: ArrayType;
   constructor(serializedValues: string, arrayType: ArrayType) {
+    super(serializedValues);
     this.serializedValues = serializedValues;
     this.arrayType = arrayType;
   }

@@ -1,5 +1,5 @@
 import { SQL } from "bun";
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { describeWithContainer } from "harness";
 
 // Tests for `prepare: false` (unnamed prepared statements).
@@ -110,28 +110,6 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
     expect(rows[1].val).toBe("world");
   });
 
-  // https://github.com/oven-sh/bun/issues/39450
-  test("Date and object parameters are encoded the same as with prepare: true", async () => {
-    await container.ready;
-    await using db = new SQL(options());
-
-    const date = new Date("2026-08-17T13:06:14.904Z");
-    const [{ ts }] = await db`SELECT ${date}::timestamptz AS ts`;
-    expect(ts).toEqual(date);
-
-    const [{ j }] = await db`SELECT ${{ a: 1 }}::jsonb AS j`;
-    expect(j).toEqual({ a: 1 });
-
-    const [{ arr }] = await db`SELECT ${[1, 2, 3]}::jsonb AS arr`;
-    expect(arr).toEqual([1, 2, 3]);
-
-    // Same shape as the issue's repro: insert into typed columns via unsafe.
-    await db.unsafe(`CREATE TEMP TABLE prepare_false_encoding (ts timestamptz, j jsonb)`);
-    await db.unsafe(`INSERT INTO prepare_false_encoding (ts, j) VALUES ($1, $2)`, [date, { a: 1 }]);
-    const rows = await db.unsafe(`SELECT ts, j FROM prepare_false_encoding`);
-    expect(rows).toEqual([{ ts: date, j: { a: 1 } }]);
-  });
-
   test("concurrent parameterized queries with high concurrency", async () => {
     await container.ready;
     await using db = new SQL({ ...options(), max: 8 });
@@ -146,5 +124,104 @@ describeWithContainer("PostgreSQL prepare: false", { image: "postgres_plain" }, 
     for (const { expected, actual } of results) {
       expect(actual).toBe(expected);
     }
+  });
+
+  // https://github.com/oven-sh/bun/issues/39450
+  // https://github.com/oven-sh/bun/issues/30221
+  // With unnamed statements Bind is written before the server has described the
+  // parameter types, so every non-numeric parameter is bound with an unknown
+  // type (OID 0). Dates and objects used to go out as toString() output there:
+  // a Date.prototype.toString() string the server rejects for timestamps, and
+  // "[object Object]".
+  describe("Date and object parameters", () => {
+    const date = new Date("2026-08-17T13:06:14.904Z");
+    const obj = { a: 1, b: [null, true], c: "hi" };
+
+    test("Date param binds to timestamptz and timestamp", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const [row] = await db`SELECT ${date}::timestamptz AS tz, ${date}::timestamp AS naive`;
+      expect(row).toEqual({ tz: date, naive: date });
+    });
+
+    test("invalid Date is rejected by the server", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const err = await db`SELECT ${new Date(NaN)}::timestamptz AS ts`.catch(e => e);
+      expect(err.message).toBe('invalid input syntax for type timestamp with time zone: "Invalid Date"');
+    });
+
+    test("object param binds to jsonb and json", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const [row] = await db`SELECT ${obj}::jsonb AS jb, ${obj}::json AS j`;
+      expect(row).toEqual({ jb: obj, j: obj });
+    });
+
+    test("array param binds to jsonb", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const arr = [1, "two", { three: 3 }];
+      const [{ v }] = await db`SELECT ${arr}::jsonb AS v`;
+      expect(v).toEqual(arr);
+    });
+
+    test("object param bound where the server infers text is JSON text, not [object Object]", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const [{ v }] = await db`SELECT ${obj}::text AS v`;
+      expect(v).toBe(JSON.stringify(obj));
+    });
+
+    test("Date and object params via sql.unsafe into typed columns", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      await db.unsafe(`CREATE TEMP TABLE prepare_false_unsafe (ts timestamptz, j jsonb)`);
+      await db.unsafe(`INSERT INTO prepare_false_unsafe (ts, j) VALUES ($1, $2)`, [date, obj]);
+      expect(await db.unsafe(`SELECT ts, j FROM prepare_false_unsafe`)).toEqual([{ ts: date, j: obj }]);
+    });
+
+    test("Date and object params via the INSERT helper into typed columns", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      await db`CREATE TEMP TABLE prepare_false_helper (ts timestamptz, j jsonb)`;
+      await db`INSERT INTO prepare_false_helper ${db({ ts: date, j: obj })}`;
+      expect(await db`SELECT ts, j FROM prepare_false_helper`).toEqual([{ ts: date, j: obj }]);
+    });
+
+    test("string params are still bound verbatim", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const literal = JSON.stringify(obj);
+      const [row] =
+        await db`SELECT ${literal}::text AS t, ${literal}::jsonb AS j, ${date.toISOString()}::timestamptz AS ts`;
+      expect(row).toEqual({ t: literal, j: obj, ts: date });
+    });
+  });
+
+  // The helpers and sql.unsafe hand the sql.array() wrapper itself to native (only the
+  // tagged-template path unwraps it), so it must still bind as text rather than being
+  // JSON-serialized like other objects.
+  describe("sql.array()", () => {
+    test("inside an UPDATE helper still binds as an array literal", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      await db`CREATE TEMP TABLE prepare_false_arr (id SERIAL PRIMARY KEY, name TEXT NOT NULL, roles TEXT[])`;
+      const [{ id }] =
+        await db`INSERT INTO prepare_false_arr (name, roles) VALUES (${"a"}, ${db.array(["a", "b"], "TEXT")}) RETURNING id`;
+      const [row] =
+        await db`UPDATE prepare_false_arr SET ${db({ name: "b", roles: db.array(["c", "d"], "TEXT") })} WHERE id = ${id} RETURNING name, roles`;
+      expect(row).toEqual({ name: "b", roles: ["c", "d"] });
+    });
+
+    test("passed to sql.unsafe still binds as an array literal", async () => {
+      await container.ready;
+      await using db = new SQL(options());
+      const param = db.array(["a", "b"], "TEXT");
+      const args = [param];
+      const [{ v }] = await db.unsafe("SELECT $1::TEXT[] AS v", args);
+      expect(v).toEqual(["a", "b"]);
+      expect(args[0]).toBe(param);
+    });
   });
 });

@@ -530,6 +530,40 @@ devTest("server: modules between the updated module and the route are evaluated 
     await dev.fetch("/").equals("v2 derived(v2)");
   },
 });
+devTest("server: a module that throws while another one's reload is in flight fails the update without an unhandled rejection", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const value = "v1";
+    `,
+    // Both importers of `config` are reloaded by the update; `slow` (listed first) comes back as a promise that rejects, then `sync` throws right away.
+    "slow.ts": `
+      import { value } from "./config";
+      await 1;
+      if (value === "v2") throw new Error("slow rejected");
+      export const slow = "slow(" + value + ")";
+    `,
+    "sync.ts": `
+      import { value } from "./config";
+      if (value === "v2") throw new Error("sync threw");
+      export const sync = "sync(" + value + ")";
+    `,
+    "routes/index.ts": `
+      import { slow } from "../slow";
+      import { sync } from "../sync";
+      export default function () {
+        return new Response(slow + " " + sync);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("slow(v1) sync(v1)");
+    await dev.write("config.ts", `export const value = "v2";`);
+    // An unhandled rejection from `slow` would have taken the dev server down before the next update.
+    await dev.write("config.ts", `export const value = "v3";`);
+    await dev.fetch("/").equals("slow(v3) sync(v3)");
+  },
+});
 devTest("import.meta.hot.accept specifier callbacks run once per update, dispose once per module", {
   files: {
     // once: index -> d, index -> a -> d, index -> b -> c -> d,

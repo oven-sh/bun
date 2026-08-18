@@ -813,28 +813,40 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   }
   const promises: Promise<HMRModule>[] = [];
   const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];
-  for (const [mod, selfAccept] of selfAccepts) {
-    const modOrPromise = loadModuleAsync(mod.id, false, null);
-    if (modOrPromise !== mod) {
-      DEBUG.ASSERT(modOrPromise instanceof Promise);
-      promises.push(
-        (modOrPromise as Promise<HMRModule>).then(mod => {
-          if (selfAccept) {
-            selfAccept(getEsmExports(mod));
-          }
-          return mod;
-        }),
-      );
-    } else if (selfAccept) {
-      if (mod.state === State.Loaded) {
-        selfAccept(getEsmExports(mod));
-      } else {
-        acceptsAfterLoad.push([mod, selfAccept]);
+  let syncError: { error: unknown } | null = null;
+  try {
+    for (const [mod, selfAccept] of selfAccepts) {
+      const modOrPromise = loadModuleAsync(mod.id, false, null);
+      if (modOrPromise !== mod) {
+        DEBUG.ASSERT(modOrPromise instanceof Promise);
+        promises.push(
+          (modOrPromise as Promise<HMRModule>).then(mod => {
+            if (selfAccept) {
+              selfAccept(getEsmExports(mod));
+            }
+            return mod;
+          }),
+        );
+      } else if (selfAccept) {
+        if (mod.state === State.Loaded) {
+          selfAccept(getEsmExports(mod));
+        } else {
+          acceptsAfterLoad.push([mod, selfAccept]);
+        }
       }
     }
+  } catch (error) {
+    syncError = { error };
   }
   if (promises.length > 0) {
-    await Promise.all(promises);
+    // A sync throw above must not leave the in-flight loads unobserved.
+    const settled = await Promise.allSettled(promises);
+    if (syncError) throw syncError.error;
+    for (const r of settled) {
+      if (r.status === "rejected") throw r.reason;
+    }
+  } else if (syncError) {
+    throw syncError.error;
   }
   for (const [mod, selfAccept] of acceptsAfterLoad) {
     if (mod.state === State.Loaded) {

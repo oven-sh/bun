@@ -57,8 +57,8 @@ public:
     static JSC_DECLARE_HOST_FUNCTION(jsCreateInternalModuleById);
 
     // process.moduleLoadList: the modules this global has loaded, in load order,
-    // named like Node ("NativeModule node:fs", "Internal Binding ..."). The array
-    // is created on first access and appended to on later loads.
+    // named like Node ("NativeModule fs", "Internal Binding buffer"). The array is
+    // created on first access and appended to on later loads.
     JSArray* moduleLoadList(JSGlobalObject* globalObject);
 
 private:

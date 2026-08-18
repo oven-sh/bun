@@ -189,8 +189,10 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
 
 void InternalModuleRegistry::didLoad(JSGlobalObject* globalObject, VM& vm, Field id)
 {
-    ASSERT(m_loadCount < BUN_INTERNAL_MODULE_COUNT);
-    m_loadOrder[m_loadCount++] = static_cast<uint8_t>(id);
+    // Each id loads once, so this cannot overflow unless a builtin require cycle
+    // re-enters createInternalModuleById for an id that is still evaluating.
+    if (m_loadCount < BUN_INTERNAL_MODULE_COUNT)
+        m_loadOrder[m_loadCount++] = static_cast<uint8_t>(id);
     // putDirectIndex, not push: appending must not run Array.prototype setters or
     // fail on a frozen list in the middle of loading a builtin.
     if (auto* list = m_moduleLoadList.get())

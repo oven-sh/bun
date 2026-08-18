@@ -1333,13 +1333,13 @@ describe.concurrent(() => {
          const before = list.length;
          require("node:zlib");
          if (process.moduleLoadList !== list) throw new Error("identity");
-         console.log(JSON.stringify({ hadZlib: list.slice(0, before).includes("NativeModule node:zlib"), last: list.at(-1), grew: list.length > before }));`,
+         console.log(JSON.stringify({ hadZlib: list.slice(0, before).includes("NativeModule zlib"), last: list.at(-1), grew: list.length > before }));`,
       ],
       env: bunEnv,
       stderr: "inherit",
     });
     expect(await proc.stdout.text()).toBe(
-      JSON.stringify({ hadZlib: false, last: "NativeModule node:zlib", grew: true }) + "\n",
+      JSON.stringify({ hadZlib: false, last: "NativeModule zlib", grew: true }) + "\n",
     );
     expect(await proc.exited).toBe(0);
   });

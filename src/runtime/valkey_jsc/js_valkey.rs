@@ -1023,7 +1023,7 @@ impl JSValkeyClient {
                 debug!("first dial failed before a socket was opened: {:?}", err);
                 // Settled by the deferred close like a refused dial: the
                 // promise, onclose and the retry policy all go through on_close().
-                self.close_without_socket_next_tick(self.dial_error_message(err));
+                self.close_without_socket_next_tick(self.dial_error_message(&err));
                 return Ok(promise);
             }
 
@@ -1161,8 +1161,8 @@ impl JSValkeyClient {
     /// before it had a socket, in the shape of `node:net`'s: `connect ENOENT
     /// /run/redis.sock`. `errno` is raw (a WSA code on Windows); `connect_errno`
     /// normalises it the way `Bun.connect` does.
-    fn dial_error_message(&self, err: uws::ConnectError) -> Box<[u8]> {
-        let uws::ConnectError::FailedToOpenSocket { errno } = err;
+    fn dial_error_message(&self, err: &uws::ConnectError) -> Box<[u8]> {
+        let &uws::ConnectError::FailedToOpenSocket { errno } = err;
         Self::connect_error_message(&self.client.get().address, errno)
     }
 
@@ -1228,7 +1228,7 @@ impl JSValkeyClient {
             debug!("reconnect failed before a socket was opened: {:?}", err);
             // Same outcome as a dial that fails asynchronously: another retry,
             // or fail() and a settled connect() promise once retries are used up.
-            self.close_without_socket_next_tick(self.dial_error_message(err));
+            self.close_without_socket_next_tick(self.dial_error_message(&err));
             return Ok(());
         }
 
@@ -1604,7 +1604,7 @@ impl JSValkeyClient {
                 // refused dial.
                 Err(err) => {
                     debug!("first dial failed before a socket was opened: {:?}", err);
-                    self.close_without_socket_next_tick(self.dial_error_message(err));
+                    self.close_without_socket_next_tick(self.dial_error_message(&err));
                 }
                 Ok(()) => self.reset_connection_timeout(),
             }

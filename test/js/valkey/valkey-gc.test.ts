@@ -61,26 +61,23 @@ test.concurrent("RedisClient survives a failed custom-TLS context without freein
 // termination pending, so the rejections succeed there and nothing leaked.)
 describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks nothing", () => {
   const CRLF = "\\r\\n";
-  // Answers HELLO on connection number `helloOn` (on every connection when
-  // unset), never replies to a command, ends connection `endOn` at its first
-  // INCR, and resolves `ready` once connection `ready[0]` has sent `ready[1]`.
-  const server = (opts: { helloOn?: number; endOn?: number; ready: [connection: number, sent: string] }) => `
+  // Answers HELLO, never replies to a command, and resolves `ready` once the
+  // first INCR has arrived, so the commands it owes are in flight from then on.
+  const server = `
     const HELLO = "%1${CRLF}$5${CRLF}proto${CRLF}:3${CRLF}";
     const { promise: ready, resolve: onReady } = Promise.withResolvers();
-    let connections = 0;
     const server = Bun.listen({
       hostname: "127.0.0.1",
       port: 0,
       socket: {
-        open(s) { s.data = { n: ++connections, buf: "", hello: false }; },
+        open(s) { s.data = { buf: "", hello: false }; },
         data(s, chunk) {
           s.data.buf += chunk.toString("latin1");
           if (!s.data.hello && s.data.buf.includes("HELLO")) {
             s.data.hello = true;
-            if (${opts.helloOn ?? 0} === 0 || s.data.n === ${opts.helloOn ?? 0}) s.write(HELLO);
+            s.write(HELLO);
           }
-          if (s.data.n === ${opts.endOn ?? 0} && s.data.buf.includes("INCR")) s.end();
-          if (s.data.n === ${opts.ready[0]} && s.data.buf.includes(${JSON.stringify(opts.ready[1])})) onReady();
+          if (s.data.buf.includes("INCR")) onReady();
         },
         close() {},
         error() {},
@@ -118,11 +115,11 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
 
   // Terminates the worker once the server reports `ready`, with whatever the
   // client still owes.
-  function terminateWorker(serverSrc: string, options: object, worker: string) {
+  function terminateWorker(options: object, worker: string) {
     return expectCleanExit(
       `
       const { Worker } = require("node:worker_threads");
-      ${serverSrc}
+      ${server}
       const worker = new Worker(${JSON.stringify(workerSrc(worker))}, {
         eval: true,
         workerData: { url: "redis://127.0.0.1:" + server.port, options: ${JSON.stringify(options)} },
@@ -142,21 +139,13 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
 
   // Symbolizing a leak report takes LSan several seconds on a debug binary.
   const timeout = 60_000;
-  test.concurrent(
-    "worker.terminate(): retry scheduled",
-    () => terminateWorker(server({ ready: [1, "INCR"] }), {}, inFlight),
-    timeout,
-  );
+  test.concurrent("worker.terminate(): retry scheduled", () => terminateWorker({}, inFlight), timeout);
   test.concurrent(
     "worker.terminate(): autoReconnect off",
-    () => terminateWorker(server({ ready: [1, "INCR"] }), { autoReconnect: false }, inFlight),
+    () => terminateWorker({ autoReconnect: false }, inFlight),
     timeout,
   );
-  test.concurrent(
-    "worker.terminate(): retries exhausted",
-    () => terminateWorker(server({ ready: [1, "INCR"] }), { maxRetries: 0 }, inFlight),
-    timeout,
-  );
+  test.concurrent("worker.terminate(): retries exhausted", () => terminateWorker({ maxRetries: 0 }, inFlight), timeout);
 
   // WATCH is not auto-pipelined, so it waits in the offline queue while the
   // INCRs are in flight, and the INCRs sent after it queue up behind it. The
@@ -165,7 +154,6 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
     "worker.terminate(): commands queued behind a non-pipelined command",
     () =>
       terminateWorker(
-        server({ ready: [1, "INCR"] }),
         { autoReconnect: false },
         `client.connect().then(() => {
           for (let i = 0; i < 4; i++) client.incr("k").catch(() => {});
@@ -181,7 +169,7 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
   // delivers on_connect_error for it, with the commands in the offline queue.
   // Needs listen(2) with a zero backlog, which Bun's own listeners do not
   // expose, so the listener is a raw libc socket.
-  test.skipIf(isWindows || isMusl)(
+  test.concurrent.skipIf(isWindows || isMusl)(
     "worker.terminate(): commands queued behind a dial that stays pending",
     () =>
       expectCleanExit(
@@ -205,10 +193,11 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
         const len = new Uint32Array([16]);
         if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
         const port = (addr[2] << 8) | addr[3];
-        // Nobody accepts, so this one connection fills the queue.
+        // Nobody accepts, so this one connection fills the queue. The error
+        // listener outlives the await, so a later error on the filler is
+        // swallowed rather than thrown.
         const filler = net.connect(port, "127.0.0.1");
-        filler.on("error", () => {});
-        await new Promise(resolve => filler.on("connect", resolve));
+        await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
         const { promise: dialing, resolve: onDialing } = Promise.withResolvers();
         const worker = new Worker(${JSON.stringify(
           workerSrc(`

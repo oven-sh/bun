@@ -2530,6 +2530,55 @@ console.log(<div {...obj} key="after" />);`),
     });
   });
 
+  // JSX_ENTITY (src/ast/lexer_tables.rs) has ~250 names, so the lexer looks it
+  // up through the sorted-key tables that comptime_string_map! emits for large
+  // maps instead of a compare tree. Names are case-sensitive and are 2 to 8
+  // characters long ("thetasym" is the only 8-character one). An unknown name
+  // stays in the text as written.
+  describe("named JSX entities", () => {
+    const bun = new Bun.Transpiler({
+      loader: "jsx",
+      define: { "process.env.NODE_ENV": JSON.stringify("development") },
+    });
+    const transpile = entity => bun.transformSync(`export var x = <div>${entity}</div>`);
+    const withChildren = text =>
+      `export var x = jsxDEV_7x81h0kn("div", {\n  children: "${text}"\n}, undefined, false, undefined, this);\n`;
+
+    it.each([
+      ["&lt;", "<"],
+      ["&gt;", ">"],
+      ["&mu;", "\u03BC"],
+      ["&amp;", "&"],
+      ["&ETH;", "\u00D0"],
+      ["&eth;", "\u00F0"],
+      ["&nbsp;", "\u00A0"],
+      ["&copy;", "\u00A9"],
+      ["&euro;", "\u20AC"],
+      ["&laquo;", "\u00AB"],
+      ["&Alpha;", "\u0391"],
+      ["&alpha;", "\u03B1"],
+      ["&hellip;", "\u2026"],
+      ["&forall;", "\u2200"],
+      ["&Lambda;", "\u039B"],
+      ["&lambda;", "\u03BB"],
+      ["&Epsilon;", "\u0395"],
+      ["&epsilon;", "\u03B5"],
+      ["&alefsym;", "\u2135"],
+      ["&thetasym;", "\u03D1"],
+    ])("%s decodes", (entity, decoded) => {
+      expect(transpile(entity)).toBe(withChildren(decoded));
+    });
+
+    // Wrong case, a prefix and an extension of a real name, a miss among the
+    // 7-character names, and a name longer than any entry.
+    it.each(["&NBSP;", "&Nbsp;", "&nbs;", "&nbspx;", "&thetasy;", "&thetasyms;", "&bogus;"])(
+      "%s stays as written",
+      entity => {
+        expect(transpile(entity)).toBe(withChildren(entity));
+      },
+    );
+  });
+
   it("require with a dynamic non-string expression", () => {
     var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
     expect(nodeTranspiler.transformSync("require('hi' + bar)")).toBe('require("hi" + bar);\n');

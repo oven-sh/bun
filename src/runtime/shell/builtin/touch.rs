@@ -357,9 +357,7 @@ impl FlagParser for Opts {
             b"--reference" => Some(ParseFlagResult::Unsupported(unsupported_flag(
                 b"--reference=FILE",
             ))),
-            b"--time" => Some(ParseFlagResult::Unsupported(unsupported_flag(
-                b"--reference=FILE",
-            ))),
+            b"--time" => Some(ParseFlagResult::Unsupported(unsupported_flag(b"--time"))),
             _ => None,
         }
     }

@@ -746,6 +746,12 @@ void bsd_close_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
 #else
     close(fd);
 #endif
+    /* After the real close (no fd leak): an armed "close" rule leaves errno,
+     * and WSAGetLastError on Windows, set the way a failed close would, so a
+     * caller that reads them after its cleanup is caught. */
+    ssize_t injected = 0; int unused = 0;
+    (void)US_FAULT_CHECK(US_FAULT_CLOSE, fd, injected, unused);
+    (void)injected; (void)unused;
 }
 
 void bsd_shutdown_socket(LIBUS_SOCKET_DESCRIPTOR fd) {

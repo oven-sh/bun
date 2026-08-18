@@ -22,15 +22,16 @@ pub(crate) fn mark_chunks_with_transitive_use_client(
         return Ok(());
     }
 
-    if cfg!(debug_assertions)
+    // Disabling the visitor keeps every route dynamic instead of silently classifying it as fully static.
+    let disabled = cfg!(debug_assertions)
         && env_var::BUN_SSG_DISABLE_STATIC_ROUTE_VISITOR
             .get()
-            .unwrap_or(false)
-    {
-        return Ok(());
-    }
-
-    let reaching = files_reaching_client(c)?;
+            .unwrap_or(false);
+    let reaching = if disabled {
+        None
+    } else {
+        Some(files_reaching_client(c)?)
+    };
     let entry_point_kinds = c.graph.files.items_entry_point_kind();
     let targets = c.graph.ast.items_target();
 
@@ -47,7 +48,10 @@ pub(crate) fn mark_chunks_with_transitive_use_client(
         {
             continue;
         }
-        if reaching.is_set(source_index as usize) {
+        if reaching
+            .as_ref()
+            .is_none_or(|r| r.is_set(source_index as usize))
+        {
             chunk.flags.insert(chunk::Flags::HAS_TRANSITIVE_USE_CLIENT);
         }
     }

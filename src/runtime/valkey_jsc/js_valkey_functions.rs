@@ -1840,12 +1840,38 @@ impl JSValkeyClient {
         let _guard = this.ref_scope();
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
-        let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
-        let mut channel_names: Vec<JSValue> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
         }
+
+        // The channel names are held from the argument walk until they are in
+        // the handler map. An index getter on the channel array can hand out a
+        // fresh string, and the getter for the next index can run a GC. A `Vec`
+        // is not a GC root, so every name is rooted in the buffer as well.
+        jsc::MarkedArgumentBuffer::new(|rooted| {
+            Self::subscribe_rooted(
+                this,
+                global,
+                frame.this(),
+                channel_or_many,
+                handler_callback,
+                rooted,
+            )
+        })
+    }
+
+    fn subscribe_rooted(
+        this: &Self,
+        global: &JSGlobalObject,
+        this_js: JSValue,
+        channel_or_many: JSValue,
+        handler_callback: JSValue,
+        rooted: &mut jsc::MarkedArgumentBuffer,
+    ) -> JsResult<JSValue> {
+        let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
+        // Mirrors `rooted`, which cannot be read back.
+        let mut channel_names: Vec<JSValue> = Vec::with_capacity(1);
 
         // The first argument given is the channel or may be an array of channels.
         if channel_or_many.is_array() {
@@ -1858,6 +1884,7 @@ impl JSValkeyClient {
 
             let mut array_iter = channel_or_many.array_iterator(global)?;
             while let Some(channel_arg) = array_iter.next()? {
+                rooted.append(channel_arg);
                 let Some(channel) = from_js(global, channel_arg)? else {
                     return Err(global.throw_invalid_argument_type(
                         "subscribe",
@@ -1870,6 +1897,7 @@ impl JSValkeyClient {
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
+            rooted.append(channel_or_many);
             let Some(channel) = from_js(global, channel_or_many)? else {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
@@ -1901,19 +1929,23 @@ impl JSValkeyClient {
             args: CommandArgs::Args(&redis_channels),
             meta: CommandMeta::default() | CommandMeta::SUBSCRIPTION_REQUEST,
         };
-        let promise = match this.send(global, frame.this(), &command) {
-            Ok(p) => p,
-            Err(err) => {
-                // Roll back only the handlers added above.
-                for &channel_name in &channel_names {
-                    this.remove_last_receive_handler(global, channel_name, handler_callback)?;
-                }
-                this.update_poll_ref();
-                return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
-            }
-        };
+        let sent = this.send(global, this_js, &command);
 
-        Ok(promise_to_js(promise))
+        // A first dial is made inside `send()`. When it fails outright (no TLS
+        // context, for example) the client is failed by the time the SUBSCRIBE
+        // is looked at, and the promise comes back already rejected. Roll back
+        // only the handlers added above.
+        if sent.is_err() || this.client.get().send_rejection().is_some() {
+            for &channel_name in &channel_names {
+                this.remove_last_receive_handler(global, channel_name, handler_callback)?;
+            }
+            this.update_poll_ref();
+        }
+
+        match sent {
+            Ok(promise) => Ok(promise_to_js(promise)),
+            Err(err) => send_err_to_js(global, "Failed to send SUBSCRIBE command", &err),
+        }
     }
 
     /// Send redis the UNSUBSCRIBE RESP command and clean up anything necessary after the unsubscribe commoand.

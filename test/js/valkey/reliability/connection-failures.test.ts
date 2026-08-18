@@ -509,6 +509,15 @@ describe("Valkey: Recovering After fail()", () => {
       .map(item => (typeof item === "number" ? `:${item}\r\n` : `$${Buffer.byteLength(item)}\r\n${item}\r\n`))
       .join("");
 
+  // A process that a client keeps alive never exits on its own; report that
+  // as the exit code after 3 s instead of waiting for the test to time out.
+  async function exitOutcome(proc: Bun.Subprocess<"ignore", "pipe", "pipe">) {
+    const exitCode = await Promise.race([proc.exited, delay(3000).then(() => "still running" as const)]);
+    if (exitCode === "still running") proc.kill();
+    const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+    return { stdout, stderr, exitCode };
+  }
+
   // Calls connect() from the first onclose and reports how that attempt ended.
   function connectFromOnclose(client: RedisClient): Promise<string> {
     const { promise, resolve } = Promise.withResolvers<string>();
@@ -1732,10 +1741,7 @@ describe("Valkey: Recovering After fail()", () => {
         stdout: "pipe",
         stderr: "pipe",
       });
-      const exitCode = await Promise.race([proc.exited, delay(3000).then(() => "still running")]);
-      if (exitCode === "still running") proc.kill();
-      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
-      expect({ stdout, stderr, exitCode }).toEqual({
+      expect(await exitOutcome(proc)).toEqual({
         stdout: "onclose ERR_REDIS_CONNECTION_CLOSED\nsubscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
         stderr: "",
         exitCode: 0,
@@ -1743,6 +1749,35 @@ describe("Valkey: Recovering After fail()", () => {
     } finally {
       fake.server.close();
     }
+  });
+
+  test("the process exits after subscribe() makes a first dial that fails outright", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        // Neither key nor cert parses, so the dial that subscribe() makes
+        // fails inside the call, before a socket exists.
+        const client = new Bun.RedisClient("rediss://127.0.0.1:1", {
+          tls: { key: "not a key", cert: "not a cert" },
+          autoReconnect: false,
+        });
+        const closed = Promise.withResolvers();
+        client.onclose = err => closed.resolve(err);
+        await client.subscribe("ch", () => {}).catch(err => console.log("subscribe rejected", err.code));
+        console.log("onclose", (await closed.promise).code);
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(await exitOutcome(proc)).toEqual({
+      stdout: "subscribe rejected ERR_REDIS_CONNECTION_CLOSED\nonclose ERR_REDIS_CONNECTION_CLOSED\n",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

@@ -819,7 +819,7 @@ impl BunTest {
             // Key the failure by this `done`'s own entry, not get_current_state_data():
             // in a concurrent group the "current" entry can be a different test.
             // SAFETY: see above; both fields are read before any JS can run.
-            let (buntest, owner) = unsafe { ((*this).buntest_weak.upgrade(), (*this).owner.clone()) };
+            let (buntest, owner) = unsafe { ((*this).buntest_weak.upgrade(), (*this).owner) };
             match buntest {
                 Some(strong) => strong.get().on_uncaught_exception(global_this, Some(value), false, &owner),
                 // The file it belongs to is already torn down; report it like any stray error.
@@ -1134,7 +1134,7 @@ impl BunTest {
 
         if cfg_done_parameter {
             bun_core::scoped_log!(bun_test_group, "callTestCallback -> appending done callback param: data {}", cfg_data);
-            done_callback = DoneCallback::create_unbound(global_this, Rc::downgrade(this_strong), cfg_data.clone());
+            done_callback = DoneCallback::create_unbound(global_this, Rc::downgrade(this_strong), cfg_data);
             done_arg = match DoneCallback::bind(done_callback, global_this) {
                 Ok(v) => v,
                 Err(e) => {

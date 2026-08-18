@@ -413,14 +413,15 @@ fn message_with_type_and_level_(
 
     let to_stderr = matches!(level, MessageLevel::Warning | MessageLevel::Error)
         || message_type == MessageType::Assert;
-    // Lock/unlock a mutex incase two JS threads are console.log'ing at the same
-    // time. We do this the slightly annoying way to avoid assigning a pointer.
-    let _stream_lock = ConsoleStreamLock::acquire(to_stderr);
 
     // SAFETY: see [`vm_console`]; the sink's writer borrow is the only one taken
     // from `console` below (formatting can re-enter this function, so no
     // long-lived `&mut ConsoleObject` may be held).
     let mut sink = unsafe { Sink::open(console, to_stderr) };
+    // Two JS threads console.log'ing to the same fd at once take turns; a worker's
+    // own stream needs no lock (and must not hold one across its JS write()).
+    let _stream_lock =
+        matches!(sink, Sink::Fd { .. }).then(|| ConsoleStreamLock::acquire(to_stderr));
 
     if message_type == MessageType::Clear {
         // Nothing to clear when output goes to a stream rather than the terminal.

@@ -822,7 +822,7 @@ pub unsafe trait UvStream: UvHandle {
                 // SAFETY: stream prefix invariant.
                 let _ = unsafe { uv_read_stop(req) };
                 // SAFETY: `ctx` is the live context stashed in `handle.data`.
-                T::on_read_error(unsafe { &mut *ctx }, n as c_int);
+                unsafe { T::on_read_error(ctx, n as c_int) };
             } else {
                 // SAFETY: `buffer` was filled by `uv_allocb` above with a
                 // slice of length `>= n`.
@@ -845,7 +845,13 @@ pub trait StreamReader: Sized {
     fn on_read_alloc(this: &mut Self, suggested_size: usize) -> &mut [u8];
     /// `err` is the raw negative libuv errno (e.g. `UV_EOF`). Map via
     /// `bun_sys::windows::translate_uv_error_to_e` if `bun_sys::E` is needed.
-    fn on_read_error(this: &mut Self, err: c_int);
+    /// `this` is raw for the same reason as in [`on_read`](Self::on_read): implementors report
+    /// the error to their owner, which can re-enter `*this` (through JS), so no
+    /// `&mut Self` may be live across the call.
+    ///
+    /// # Safety
+    /// `this` is the live context passed to [`UvStream::read_start_ctx`].
+    unsafe fn on_read_error(this: *mut Self, err: c_int);
     /// `this` is raw because `data` typically points *into* `*this` (it was
     /// returned from [`on_read_alloc`]). Forming `&mut Self` in the trampoline
     /// would alias with `data` under Stacked Borrows; the implementor decides

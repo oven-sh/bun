@@ -1977,11 +1977,14 @@ impl uv::StreamReader for SendQueue {
         IPCHandlers::WindowsNamedPipe::on_read_alloc(this, suggested_size)
     }
     #[inline]
-    fn on_read_error(this: &mut Self, err: core::ffi::c_int) {
+    unsafe fn on_read_error(this: *mut Self, err: core::ffi::c_int) {
         // Map the raw libuv errno
         // to `bun_sys::E`, defaulting to CANCELED for unmapped codes.
         let e = bun_sys::windows::translate_uv_error_to_e(err);
-        IPCHandlers::WindowsNamedPipe::on_read_error(this, e);
+        // SAFETY: `this` is the live `SendQueue` stashed in `handle.data` by
+        // `read_start_ctx`; a shared reborrow only, as the close delivered below
+        // runs JS that may re-enter the queue.
+        IPCHandlers::WindowsNamedPipe::on_read_error(unsafe { &*this }, e);
     }
     #[inline]
     unsafe fn on_read(this: *mut Self, data: &[u8]) {

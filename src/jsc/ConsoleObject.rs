@@ -484,7 +484,15 @@ fn message_with_type_and_level_(
 
     // SAFETY: caller (JSC C++) guarantees `vals` points to `len` JSValues.
     let vals = unsafe { bun_core::ffi::slice(vals, len) };
-    write_message(message_type, level, global, vals, writer, enable_colors, default_indent)?;
+    write_message(
+        message_type,
+        level,
+        global,
+        vals,
+        writer,
+        enable_colors,
+        default_indent,
+    )?;
     if routed && !routed_buffer.is_empty() {
         write_to_process_stdio(global, to_stderr, &routed_buffer);
     }
@@ -585,12 +593,22 @@ fn write_message(
 /// `process.stdout` / `process.stderr` (streams to the parent thread). Stream
 /// errors are dropped, like Node's Console with `ignoreErrors`.
 fn write_to_process_stdio(global: &JSGlobalObject, to_stderr: bool, bytes: &[u8]) {
-    Bun__Process__writeToStdioStream(global, if to_stderr { 2 } else { 1 }, bytes.as_ptr(), bytes.len());
+    Bun__Process__writeToStdioStream(
+        global,
+        if to_stderr { 2 } else { 1 },
+        bytes.as_ptr(),
+        bytes.len(),
+    );
 }
 
 unsafe extern "C" {
     /// `process[fd == 2 ? "stderr" : "stdout"].write(Buffer)`; never leaves an exception pending.
-    safe fn Bun__Process__writeToStdioStream(global: &JSGlobalObject, fd: i32, bytes: *const u8, len: usize);
+    safe fn Bun__Process__writeToStdioStream(
+        global: &JSGlobalObject,
+        fd: i32,
+        bytes: *const u8,
+        len: usize,
+    );
 }
 
 /// Called by node:worker_threads' worker bootstrap once process stdio is port-backed.
@@ -5941,7 +5959,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeEnd(
     };
     let Some(value) = prev else { return };
     // get the duration in microseconds, then display it in milliseconds
-    let elapsed_ms = (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
+    let elapsed_ms =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
     // SAFETY: see [`vm_console`].
     if unsafe { (*vm_console(global)).routes_to_process_stdio } {
         let mut line = elapsed_prefix(elapsed_ms, slice);
@@ -5979,7 +5998,8 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
         return;
     };
     // get the duration in microseconds, then display it in milliseconds
-    let elapsed_ms = (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
+    let elapsed_ms =
+        (value.read() / bun_core::time::NS_PER_US) as f64 / bun_core::time::US_PER_MS as f64;
     // SAFETY: see [`vm_console`].
     let routed = unsafe { (*vm_console(global)).routes_to_process_stdio };
     let mut routed_buffer: Vec<u8> = Vec::new();
@@ -6008,7 +6028,11 @@ pub(crate) extern "C" fn Bun__ConsoleObject__timeLog(
     // this VM; JS-thread-only. Kept as a raw deref (not `vm_console_mut`) so the
     // resulting `writer` borrow does not pin a long-lived `&mut ConsoleObject`
     // across the `fmt.format(...)` calls below, which can re-enter JS.
-    let writer: &mut dyn bun_io::Write = if routed { &mut routed_buffer } else { unsafe { (*console).error_writer() } };
+    let writer: &mut dyn bun_io::Write = if routed {
+        &mut routed_buffer
+    } else {
+        unsafe { (*console).error_writer() }
+    };
     // SAFETY: caller passes a valid (args, args_len) pair.
     for &arg in unsafe { bun_core::ffi::slice(args, args_len) } {
         let Ok(tag) = formatter::Tag::get(arg, global) else {

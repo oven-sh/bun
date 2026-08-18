@@ -338,9 +338,8 @@ pub(crate) struct CompiledModuleGraphFile {
 }
 
 impl CompiledModuleGraphFile {
-    /// Decodes one record as `to_bytes` laid it out. The record is not read as a
-    /// whole because a byte outside one of its enums would make that read
-    /// undefined behavior, so each enum byte is checked first.
+    /// Decodes one record as `to_bytes` laid it out. Reading the record as a whole is
+    /// undefined behavior if a byte is outside its enum, so each enum byte is checked first.
     fn read(record: &[u8; size_of::<Self>()]) -> crate::Result<Self> {
         let pointer = |field: usize| -> StringPointer {
             // SAFETY: `field` is the offset of a `StringPointer` field of `Self`, so
@@ -706,9 +705,8 @@ impl StandaloneModuleGraph {
                 Corruption::ModuleList,
             )?
         };
-        // The blob sits at an arbitrary byte offset, so it is split into byte records for
-        // `CompiledModuleGraphFile::read` rather than viewed as a `&[CompiledModuleGraphFile]`,
-        // which would need 4-byte alignment.
+        // Byte records, not a `&[CompiledModuleGraphFile]`: the blob sits at an arbitrary byte
+        // offset and that slice would need 4-byte alignment.
         let (records, _) =
             modules_list_bytes.as_chunks::<{ size_of::<CompiledModuleGraphFile>() }>();
 

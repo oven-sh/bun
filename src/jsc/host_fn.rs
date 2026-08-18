@@ -867,7 +867,7 @@ pub fn new_function_with_data(
 pub struct DomCall {
     pub class_name: &'static str,
     pub function_name: &'static str,
-    /// `<class>__<fn>__put` — generated in `ZigLazyStaticFunctions-inlines.h`.
+    /// `<class>__<fn>__put`, defined in `ZigGeneratedCode.cpp`.
     pub put: unsafe extern "C" fn(*mut JSGlobalObject, JSValue),
 }
 

@@ -48,14 +48,13 @@ function blockUntil(what, condition) {
 function blockUntilDead(pid) {
   if (process.platform !== "linux") return sleepSync(100);
   blockUntil("the child to die", () => {
-    let stat;
     try {
-      stat = fs.readFileSync(`/proc/${pid}/stat`, "latin1");
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, "latin1");
+      return stat[stat.lastIndexOf(")") + 2] === "Z" && fs.readdirSync(`/proc/${pid}/task`).length === 1;
     } catch (error) {
       if (error.code !== "ENOENT" && error.code !== "ESRCH") throw error;
       return true;
     }
-    return stat[stat.lastIndexOf(")") + 2] === "Z" && fs.readdirSync(`/proc/${pid}/task`).length === 1;
   });
 }
 

@@ -1230,6 +1230,10 @@ impl SendQueue {
             // A disconnect() still postponed (behind a handle's ack, or on its task) is overtaken.
             self.close_after_flush.set(false);
             self.pending_close.set(false);
+            // As is a write still in flight: nothing is left to complete it.
+            #[cfg(windows)]
+            self.windows_close(true);
+            #[cfg(not(windows))]
             self.close_socket(CloseReason::Normal, CloseFrom::User);
         }
         if !self.pending_after_close.get() {

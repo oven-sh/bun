@@ -7223,8 +7223,9 @@ declare module "bun" {
        *   by itself. Use {@link onExit} or {@link Subprocess.exited} to
        *   determine why the process ended.
        * - It fires before {@link onExit}: when the process exits, the channel
-       *   is reported closed first, as `node:child_process` emits `'disconnect'`
-       *   before `'exit'`.
+       *   is closed (should something else still hold the child's end open)
+       *   and reported first, the order in which `node:child_process` emits
+       *   `'disconnect'` and `'exit'` when the channel closes with the child.
        * - Only runs when {@link ipc} is enabled and runs at most once per
        *   subprocess.
        * - If the child becomes a zombie (exited but not yet reaped), the IPC is

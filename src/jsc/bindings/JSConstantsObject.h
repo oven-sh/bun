@@ -110,10 +110,11 @@ struct StaticHashTable {
     static constexpr JSC::HashTable table { rowCount, bucketCount - 1, StaticHashTableDetail::seenPropertyAttributes(rows), nullptr, rows, index.data() };
 };
 
-// An object whose own properties are a static property table, so a property
-// costs nothing until it is first read. The constants bindings
-// (process.binding('constants').*, process.binding('uv')) use one ClassInfo per
-// table, all sharing this class.
+// An object whose own properties are a static property table. JSC answers a
+// ConstantInteger row straight from the table, so the constants are never
+// stored on the object; callback and function rows are created on first read.
+// The constants bindings (process.binding('constants').*, process.binding('uv'))
+// use one ClassInfo per table, all sharing this class.
 class JSConstantsObject final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;

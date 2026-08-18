@@ -49,9 +49,9 @@
 namespace Bun {
 using namespace JSC;
 
-// Every object below is a JSConstantsObject over one of these tables, so a
-// constant is only materialized when something reads it. Rows are in node's
-// order; that is the order the properties enumerate in.
+// Every object below is a JSConstantsObject over one of these tables: the
+// constants stay in the table and nothing is stored on the object. Rows are in
+// node's order; that is the order the properties enumerate in.
 
 // Row for a constant whose property name is the macro's own name.
 #define CONSTANT(constant) constantInteger(#constant##_s, constant)

@@ -37,9 +37,10 @@ describe("process.binding", () => {
   });
 });
 
-// The constants objects are backed by static property tables that materialize a
-// property the first time it is read. Everything below must hold anyway, exactly
-// as it does for the plain objects node uses.
+// The constants objects are backed by static property tables: a constant is
+// answered from the table and is only stored on the object once something
+// materializes the whole table (spread, Object.entries, delete, ...). Everything
+// below must hold anyway, exactly as it does for the plain objects node uses.
 describe("constants objects behave like plain objects", () => {
   async function runInFreshProcess(source: string): Promise<any> {
     await using proc = Bun.spawn({
@@ -54,34 +55,59 @@ describe("constants objects behave like plain objects", () => {
     return JSON.parse(stdout);
   }
 
+  test.concurrent("reading the constants does not store them on the object", async () => {
+    // The child must not name a variable after a builtin module: `bun -e` loads
+    // the builtins it sees named in the source, and node:zlib freezes its table.
+    const result = await runInFreshProcess(`
+      const { estimateShallowMemoryUsageOf } = require("bun:jsc");
+      const table = process.binding("constants").zlib;
+      const keys = Object.keys(table);
+      let numbers = 0;
+      for (const key of keys) numbers += typeof table[key] === "number" ? 1 : 0;
+      const plain = Object.create(null);
+      for (const key of keys) plain[key] = table[key];
+      console.log(JSON.stringify({
+        keys: keys.length,
+        numbers,
+        size: estimateShallowMemoryUsageOf(table),
+        plainSize: estimateShallowMemoryUsageOf(plain),
+      }));
+    `);
+    expect(result.keys).toBeGreaterThan(100);
+    expect(result.numbers).toBe(result.keys);
+    // A plain object holding the same constants needs a slot per constant. The
+    // binding object, even after every constant was read, stays a bare object.
+    expect(result.size * 4).toBeLessThan(result.plainSize);
+  });
+
   test.concurrent("enumeration order does not depend on which properties were read first", async () => {
     const result = await runInFreshProcess(`
-      const fs = process.binding("constants").fs;
-      const expected = Object.keys(fs);
+      const table = process.binding("constants").fs;
+      const expected = Object.keys(table);
       // Read a few properties in an order that differs from the table order.
-      void fs.S_IFMT;
-      void fs.O_APPEND;
-      void fs.UV_FS_SYMLINK_DIR;
+      void table.S_IFMT;
+      void table.O_APPEND;
+      void table.UV_FS_SYMLINK_DIR;
       const forIn = [];
-      for (const key in fs) forIn.push(key);
+      for (const key in table) forIn.push(key);
       const orders = {
-        keys: Object.keys(fs),
-        names: Object.getOwnPropertyNames(fs),
-        ownKeys: Reflect.ownKeys(fs),
+        keys: Object.keys(table),
+        names: Object.getOwnPropertyNames(table),
+        ownKeys: Reflect.ownKeys(table),
         forIn,
-        json: Object.keys(JSON.parse(JSON.stringify(fs))),
-        entries: Object.entries(fs).map(([key]) => key),
-        values: Object.values(fs),
-        spread: Object.keys({ ...fs }),
-        assign: Object.keys(Object.assign({}, fs)),
-        structuredClone: Object.keys(structuredClone(fs)),
+        json: Object.keys(JSON.parse(JSON.stringify(table))),
+        entries: Object.entries(table).map(([key]) => key),
+        values: Object.values(table),
+        spread: Object.keys({ ...table }),
+        assign: Object.keys(Object.assign({}, table)),
+        structuredClone: Object.keys(structuredClone(table)),
       };
       // node:zlib freezes its table after reading some of it.
-      Object.freeze(fs);
-      orders.keysAfterFreeze = Object.keys(fs);
-      orders.entriesAfterFreeze = Object.entries(fs).map(([key]) => key);
-      orders.frozen = Object.isFrozen(fs);
-      console.log(JSON.stringify({ expected, expectedValues: expected.map(key => fs[key]), orders }));
+      Object.freeze(table);
+      orders.keysAfterFreeze = Object.keys(table);
+      orders.entriesAfterFreeze = Object.entries(table).map(([key]) => key);
+      orders.frozen = Object.isFrozen(table);
+      console.log(JSON.stringify({ expected, expectedValues: expected.map(key => table[key]), orders }));
     `);
     const { expected, expectedValues, orders } = result;
     expect(expected.slice(0, 5)).toEqual([

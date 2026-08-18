@@ -1432,3 +1432,29 @@ async function viewRouteOverHmr(dev: Dev, route: string) {
     },
   };
 }
+
+// Scripts are enqueued before styles, so the extra hop gives `b.js` a higher source index than `a.css`.
+devTest("failed css root imported by a later script gets no chunk", {
+  files: {
+    "index.html": emptyHtmlFile({
+      styles: ["a.css"],
+      scripts: ["c.js"],
+      body: `<div class="a">hello</div>`,
+    }),
+    "a.css": `
+      @import "./not-css.js";
+      .a { color: red; }
+    `,
+    "c.js": `import "./b.js";`,
+    "b.js": `import "./a.css";`,
+    "not-css.js": `export const x = 1;`,
+  },
+  async test(dev) {
+    await expectBuildFailed(dev, "/");
+    // The first response replays the bundle's failure list; the second consults the graph, where a chunk would mask it.
+    await expectBuildFailed(dev, "/");
+    await dev.write("a.css", `.a { color: blue; }`);
+    await using c = await dev.client("/");
+    await c.style(".a").color.expect.toBe("#00f");
+  },
+});

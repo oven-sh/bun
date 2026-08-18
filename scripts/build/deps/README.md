@@ -104,7 +104,7 @@ export const mydep: Dependency = {
   // How to build. `direct` lists sources explicitly; emitDirect compiles
   // each as a first-class cc/cxx edge and the resulting .o's go straight
   // into bun's link line. See `DirectBuild` in ../source.ts for all
-  // optional fields (lang/pic/defines/headers/codegen).
+  // optional fields (lang/pic/defines/headers/codegen/forbidUndefined).
   build: cfg => ({
     kind: "direct",
     sources: ["src/foo.c", "src/bar.c"],
@@ -148,7 +148,7 @@ export const mydep: Dependency = {
 - **tinycc.ts** — direct build with a build-time codegen tool
 - **zlib.ts** — direct build with per-source SIMD `-m` flags + `.h.in` substitution
 - **libarchive.ts** / **cares.ts** — direct build with hand-written per-target config.h
-- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest
+- **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
 - **lolhtml.ts** — cargo build with rustflags

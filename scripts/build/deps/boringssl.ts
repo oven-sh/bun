@@ -22,7 +22,7 @@
 
 import { quote } from "../shell.ts";
 import type { Dependency, DirectBuild } from "../source.ts";
-import { depSourceDir } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS, depSourceDir } from "../source.ts";
 
 const BORINGSSL_COMMIT = "2288897e2e716330490893d226b4f079f9da9e0c";
 
@@ -84,6 +84,10 @@ export const boringssl: Dependency = {
         "-gcv8",
         `-I${quote(depSourceDir(cfg, "boringssl") + "/gen/", cfg.host.os === "windows")}`,
       ],
+      // With the hooks on, nothing in BoringSSL may allocate from libc any
+      // more (mem.cc's fallback is dead code the compiler drops); under ASAN
+      // the fallbacks are live and libc is the point.
+      ...(!cfg.asan && { forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS } }),
     };
     return spec;
   },

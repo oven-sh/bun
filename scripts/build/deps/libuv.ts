@@ -9,6 +9,7 @@
  */
 
 import type { Dependency } from "../source.ts";
+import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 
 // Tip of oven-sh/libuv's `bun` branch: upstream f3ce527e + win-pipe CancelIoEx
 // fix, ConPTY uv_spawn, AppContainer pipe namespace (oven-sh/libuv#7), fs/tty
@@ -74,6 +75,11 @@ export const libuv: Dependency = {
       "-Wno-int-conversion",
       "/wd4996",
     ],
+    // bun swaps in mimalloc with uv_replace_allocator (src/bun_bin/lib.rs), so
+    // everything has to allocate through uv__malloc and friends; uv-common.c
+    // is the default table that swap replaces. The one stray CRT call there
+    // was got uv__free'd and crashed (oven-sh/libuv#14).
+    forbidUndefined: { symbols: LIBC_ALLOCATION_SYMBOLS, except: ["src/uv-common.c"] },
   }),
 
   provides: () => ({

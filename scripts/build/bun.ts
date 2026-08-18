@@ -234,9 +234,14 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   // no-op rebuild (ar has no restat) would otherwise cascade to a full PCH+cxx
   // rebuild. Link still gets every dep via depLibs/depObjects.
   const depHeaderSignal: string[] = [];
+  // forbidUndefined stamps (source.ts): the link below and cpp-only's `bun`
+  // target depend on them, so a dep that regrows a forbidden reference fails
+  // the build in every mode that compiles it.
+  const depChecks: string[] = [];
   for (const d of deps) {
     depLibs.push(...d.libs);
     depObjects.push(...d.objects);
+    depChecks.push(...d.checks);
     depIncludes.push(...d.includes);
     // d.outputs is the "headers are ready" signal: for nested-cmake/
     // prebuilt that's the .a/stamp (headers are undeclared side-effects),
@@ -464,7 +469,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
     // lolhtml) aren't in depHeaderSignal, so the archive doesn't pull them
     // transitively — but link-only still needs them uploaded.
     if (cfg.mode === "cpp-only") {
-      n.phony("bun", [archive, ...depLibs, ...uploadStamps]);
+      n.phony("bun", [archive, ...depLibs, ...depChecks, ...uploadStamps]);
       n.default(["bun"]);
       return { archive, deps, codegen, rustObjects, objects: allObjects };
     }
@@ -501,7 +506,7 @@ export function emitBun(n: Ninja, cfg: Config, sources: Sources): BunOutput {
   const exe = link(n, cfg, exeName, linkObjects, {
     libs: depLibs,
     flags: ldflags,
-    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs],
+    implicitInputs: [...linkImplicitInputs(cfg), ...shims.implicitInputs, ...depChecks],
     // Declare the `-Wl,-Map=` side-product so `perf` symbolication picks it
     // up. Linux release only — the map flag itself is gated identically in
     // flags.ts.

@@ -4739,6 +4739,86 @@ describe("detached buffers in compare, equals, swapNN and as a fill value", () =
   });
 });
 
+// Expected values are Node's (v26). Node uses an integral number as the offset as
+// is, whatever its magnitude, and only sends other values through toInteger()
+// (NaN, +-Infinity and anything outside the safe-integer range become 0,
+// fractions round down). An offset >= 2**53 used to take the toInteger() path
+// here and silently become 0.
+describe("Buffer.prototype.copy offset coercion", () => {
+  function copyInto(...args) {
+    const target = Buffer.alloc(8, ".");
+    try {
+      const copied = Buffer.from("ABCDEFGH").copy(target, ...args);
+      return { copied, target: target.toString("latin1") };
+    } catch (e) {
+      return { code: e.code, message: e.message };
+    }
+  }
+
+  const untouched = { copied: 0, target: "........" };
+  const whole = { copied: 8, target: "ABCDEFGH" };
+
+  it.each([
+    [2 ** 53, untouched],
+    [2 ** 52 + 3, untouched],
+    [1e308, untouched],
+    [Infinity, whole],
+    [-Infinity, whole],
+    [NaN, whole],
+    ["2", { copied: 6, target: "..ABCDEF" }],
+    [1.5, { copied: 7, target: ".ABCDEFG" }],
+    [
+      -0.5,
+      { code: "ERR_OUT_OF_RANGE", message: 'The value of "targetStart" is out of range. It must be >= 0. Received -1' },
+    ],
+  ])("targetStart %p", (targetStart, expected) => {
+    expect(copyInto(targetStart)).toEqual(expected);
+  });
+
+  it.each([
+    [
+      2 ** 53,
+      {
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "sourceStart" is out of range. It must be >= 0 && <= 8. Received 9_007_199_254_740_992',
+      },
+    ],
+    [1e308, { code: "ERR_OUT_OF_RANGE", message: expect.stringContaining('"sourceStart" is out of range') }],
+    [Infinity, whole],
+    [2.9, { copied: 6, target: "CDEFGH.." }],
+    [
+      -0.5,
+      {
+        code: "ERR_OUT_OF_RANGE",
+        message: 'The value of "sourceStart" is out of range. It must be >= 0 && <= 8. Received -1',
+      },
+    ],
+  ])("sourceStart %p", (sourceStart, expected) => {
+    expect(copyInto(0, sourceStart)).toEqual(expected);
+  });
+
+  it.each([
+    [2 ** 53, whole],
+    [1e308, whole],
+    [Infinity, untouched],
+    [-Infinity, untouched],
+    [2.9, { copied: 2, target: "AB......" }],
+    [
+      -0.5,
+      { code: "ERR_OUT_OF_RANGE", message: 'The value of "sourceEnd" is out of range. It must be >= 0. Received -1' },
+    ],
+  ])("sourceEnd %p", (sourceEnd, expected) => {
+    expect(copyInto(0, 0, sourceEnd)).toEqual(expected);
+  });
+
+  it("checks sourceStart even when targetStart is already past the target", () => {
+    expect(copyInto(2 ** 53, 2 ** 53)).toEqual({
+      code: "ERR_OUT_OF_RANGE",
+      message: 'The value of "sourceStart" is out of range. It must be >= 0 && <= 8. Received 9_007_199_254_740_992',
+    });
+  });
+});
+
 describe("Buffer.copyBytesFrom", () => {
   it("copies the correct bytes from a Uint8Array view with a non-zero byteOffset", () => {
     const ab = new ArrayBuffer(10);

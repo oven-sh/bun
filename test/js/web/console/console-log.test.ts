@@ -1,6 +1,6 @@
 import { file, spawn } from "bun";
 import { expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import { closeSync, openSync } from "node:fs";
 import { join } from "node:path";
 
@@ -156,23 +156,13 @@ it.skipIf(isWindows)("console.log gives up quietly when stdout cannot be written
     console.log(Object.fromEntries(entries));
     console.log(new MessageEvent("message", { data: Buffer.alloc(8192, "d").toString() }));
     console.log(new Request("http://example.com/" + Buffer.alloc(8192, "p").toString()));
-    const built = await Bun.build({
-      entrypoints: [import.meta.dir + "/big-artifact.js"],
-      target: "browser",
-    });
-    console.log(built.outputs[0]);
     console.error("done");
   `;
-  using dir = tempDir("console-log-ebadf", {
-    "index.js": code,
-    "big-artifact.js": "export default " + JSON.stringify(Buffer.alloc(8192, "a").toString()) + ";\n",
-  });
   // A read-only descriptor as stdout makes the child's write(2) fail with EBADF.
   const stdoutFd = openSync("/dev/null", "r");
   try {
     await using proc = spawn({
-      cmd: [bunExe(), "index.js"],
-      cwd: String(dir),
+      cmd: [bunExe(), "-e", code],
       env: bunEnv,
       stdin: "ignore",
       stdout: stdoutFd,

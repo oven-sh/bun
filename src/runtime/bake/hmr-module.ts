@@ -480,10 +480,13 @@ export function loadModuleAsync<IsUserDynamic extends boolean>(
   }
 }
 
-/** Stale→Pending, new generation, no in-flight load: the one place an evaluation begins. */
+/** Stale→Pending, new generation, no in-flight load, hooks cleared for the body to register anew: the one place an evaluation begins. */
 function beginEvaluation(mod: HMRModule): number {
   mod.state = State.Pending;
   mod.loading = null;
+  mod.selfAccept = null;
+  mod.depAccepts = null;
+  mod.onDispose = null;
   return ++mod.generation;
 }
 
@@ -492,7 +495,6 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
   try {
     const exportsBefore = mod.exports;
     mod.imports = modules.map(getEsmExports);
-    const shouldPatchImporters = !mod.selfAccept || mod.selfAccept === implicitAcceptFunction;
     const p = load(mod);
     mod.imports = modules;
     if (p) {
@@ -503,7 +505,7 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
           mod.loading = null;
           if (mod.exports === exportsBefore) mod.exports = {};
           mod.cjs = null;
-          if (shouldPatchImporters) patchImporters(mod);
+          patchImporters(mod);
           return mod;
         },
         e => throwLoadFailure(mod, generation, e),
@@ -511,7 +513,7 @@ function finishLoadModuleAsync(mod: HMRModule, generation: number, load: Unloade
     }
     if (mod.exports === exportsBefore) mod.exports = {};
     mod.cjs = null;
-    if (shouldPatchImporters) patchImporters(mod);
+    patchImporters(mod);
     mod.state = State.Loaded;
     mod.loading = null;
     return mod;
@@ -787,32 +789,26 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     console.warn(message);
   }
 
-  // Dispose all modules. Marking them stale first lets a load that arrives while a dispose callback is pending evaluate the new version.
+  // Hooks stay until beginEvaluation clears them, so a module a failing update never reaches keeps them; a load arriving during a pending dispose evaluates the new version and the reload loop then finds it Loaded or in flight.
+  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   const disposePromises: Promise<void>[] = [];
   for (const mod of toReload) {
     mod.state = State.Stale;
+    selfAccepts.set(mod, mod.selfAccept);
     const { onDispose } = mod;
     if (!onDispose) continue;
+    mod.onDispose = null;
     for (const fn of onDispose) {
       const p = fn(mod.data);
       if (p && p instanceof Promise) {
         disposePromises.push(p);
       }
     }
-    mod.onDispose = null;
   }
   if (disposePromises.length > 0) {
     await Promise.all(disposePromises);
   }
 
-  // Reload all modules. All are marked stale before any is loaded, so the loader evaluates a stale import first.
-  const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
-  for (const mod of toReload) {
-    mod.state = State.Stale;
-    selfAccepts.set(mod, mod.selfAccept);
-    mod.selfAccept = null;
-    mod.depAccepts = null;
-  }
   const promises: Promise<HMRModule>[] = [];
   const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];
   let syncError: { error: unknown } | null = null;

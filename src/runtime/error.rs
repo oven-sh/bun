@@ -36,8 +36,10 @@ pub enum Error {
     DNSResolveFailed,
     #[error("ConnectionClosed")]
     ConnectionClosed,
+    /// A dial that failed before there was a socket; `errno` is the OS
+    /// error uSockets returned for it (see `bun_uws::ConnectResult::Failed`).
     #[error("FailedToOpenSocket")]
-    FailedToOpenSocket,
+    FailedToOpenSocket { errno: i32 },
     #[error("TooManyRedirects")]
     TooManyRedirects,
     #[error("ConnectionRefused")]
@@ -473,8 +475,9 @@ impl From<bun_sys::Error> for Error {
 
 impl From<bun_uws::ConnectError> for Error {
     #[inline]
-    fn from(_: bun_uws::ConnectError) -> Self {
-        Self::FailedToOpenSocket
+    fn from(err: bun_uws::ConnectError) -> Self {
+        let bun_uws::ConnectError::FailedToOpenSocket { errno } = err;
+        Self::FailedToOpenSocket { errno }
     }
 }
 
@@ -586,7 +589,7 @@ impl Error {
             Self::RequestBodyNotReusable => "RequestBodyNotReusable",
             Self::DNSResolveFailed => "DNSResolveFailed",
             Self::ConnectionClosed => "ConnectionClosed",
-            Self::FailedToOpenSocket => "FailedToOpenSocket",
+            Self::FailedToOpenSocket { .. } => "FailedToOpenSocket",
             Self::TooManyRedirects => "TooManyRedirects",
             Self::ConnectionRefused => "ConnectionRefused",
             Self::RedirectURLInvalid => "RedirectURLInvalid",

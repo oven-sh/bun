@@ -275,6 +275,9 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
         BunString rhs = Bun::toString(noop);
         BunString result;
         Bun__Path__joinString(isWindows, &lhs, &rhs, &result);
+        if (result.tag == BunStringTag::Dead) [[unlikely]] {
+            return ERR::STRING_TOO_LONG(scope, globalObject);
+        }
         val = result.transferToWTFString();
     }
 

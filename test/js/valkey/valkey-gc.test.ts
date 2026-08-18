@@ -164,40 +164,45 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
     timeout,
   );
 
-  // The dial never completes: the listener's accept queue is full, so the
-  // kernel drops the SYN and connect() sits in EINPROGRESS. Teardown then
-  // delivers on_connect_error for it, with the commands in the offline queue.
-  // Needs listen(2) with a zero backlog, which Bun's own listeners do not
-  // expose, so the listener is a raw libc socket.
+  // A listener nobody accepts from, with a backlog one filler connection
+  // fills, so the kernel drops every later SYN and a dial to `port` sits in
+  // EINPROGRESS for good. Needs listen(2) with the smallest backlog that
+  // admits exactly one connection (macOS treats 0 as unlimited), which Bun's
+  // own listeners do not expose, so the listener is a raw libc socket.
+  const blackhole = `
+    const net = require("node:net");
+    const { dlopen, ptr } = require("bun:ffi");
+    const darwin = process.platform === "darwin";
+    const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
+      socket:      { args: ["int", "int", "int"],  returns: "int" },
+      bind:        { args: ["int", "ptr", "int"],  returns: "int" },
+      listen:      { args: ["int", "int"],         returns: "int" },
+      getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
+    });
+    const AF_INET = 2, SOCK_STREAM = 1;
+    const addr = new Uint8Array(16);
+    if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
+    addr.set([127, 0, 0, 1], 4);
+    const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
+    if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, darwin ? 1 : 0) !== 0) throw new Error("listen failed");
+    const len = new Uint32Array([16]);
+    if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
+    const port = (addr[2] << 8) | addr[3];
+    // The error listener outlives the await, so a later error on the filler
+    // is swallowed rather than thrown.
+    const filler = net.connect(port, "127.0.0.1");
+    await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+  `;
+
+  // The dial never completes, so teardown delivers on_connect_error for it,
+  // with the commands in the offline queue.
   test.concurrent.skipIf(isWindows || isMusl)(
     "worker.terminate(): commands queued behind a dial that stays pending",
     () =>
       expectCleanExit(
         `
         const { Worker } = require("node:worker_threads");
-        const net = require("node:net");
-        const { dlopen, ptr } = require("bun:ffi");
-        const darwin = process.platform === "darwin";
-        const libc = dlopen(darwin ? "libSystem.B.dylib" : "libc.so.6", {
-          socket:      { args: ["int", "int", "int"],  returns: "int" },
-          bind:        { args: ["int", "ptr", "int"],  returns: "int" },
-          listen:      { args: ["int", "int"],         returns: "int" },
-          getsockname: { args: ["int", "ptr", "ptr"],  returns: "int" },
-        });
-        const AF_INET = 2, SOCK_STREAM = 1;
-        const addr = new Uint8Array(16);
-        if (darwin) { addr[0] = 16; addr[1] = AF_INET; } else new DataView(addr.buffer).setUint16(0, AF_INET, true);
-        addr.set([127, 0, 0, 1], 4);
-        const fd = libc.symbols.socket(AF_INET, SOCK_STREAM, 0);
-        if (fd < 0 || libc.symbols.bind(fd, ptr(addr), 16) !== 0 || libc.symbols.listen(fd, 0) !== 0) throw new Error("listen failed");
-        const len = new Uint32Array([16]);
-        if (libc.symbols.getsockname(fd, ptr(addr), ptr(len)) !== 0) throw new Error("getsockname failed");
-        const port = (addr[2] << 8) | addr[3];
-        // Nobody accepts, so this one connection fills the queue. The error
-        // listener outlives the await, so a later error on the filler is
-        // swallowed rather than thrown.
-        const filler = net.connect(port, "127.0.0.1");
-        await new Promise((resolve, reject) => filler.on("connect", resolve).on("error", reject));
+        ${blackhole}
         const { promise: dialing, resolve: onDialing } = Promise.withResolvers();
         const worker = new Worker(${JSON.stringify(
           workerSrc(`
@@ -218,6 +223,60 @@ describe.skipIf(!isASAN)("VM teardown with commands owed to a RedisClient leaks 
         filler.destroy();
         `,
         "terminated 1\n",
+      ),
+    timeout,
+  );
+
+  // A dial to an IP literal gets a real us_socket_t back from uSockets before
+  // the TCP handshake completes (POLL_TYPE_SEMI_SOCKET), and uSockets delivers
+  // no close event when the application closes one of those, so
+  // ValkeyClient::close() releases connect()'s keep-alive ref and runs the
+  // close event by hand. One case per entry into that branch: close() while
+  // the dial is pending, and the connection timeout firing during it. The
+  // command in the offline queue tells the two apart: connect() itself is
+  // always rejected as connection-closed. The client is created from a
+  // macrotask for the same reason as the workers'.
+  function closePendingDial(options: object, body: string, stdout: string) {
+    return expectCleanExit(
+      `
+      ${blackhole}
+      const { promise: done, resolve: onDone } = Promise.withResolvers();
+      setImmediate(async () => {
+        const client = new Bun.RedisClient("redis://127.0.0.1:" + port, ${JSON.stringify(options)});
+        let closes = 0;
+        client.onclose = () => { closes++; };
+        const connecting = client.connect();
+        const queued = client.get("k");
+        ${body}
+        const code = (p) => p.then(() => "resolved", (err) => err.code);
+        console.log(await code(connecting), await code(queued), closes, client.connected);
+        Bun.gc(true);
+        onDone();
+      });
+      await done;
+      Bun.gc(true);
+      filler.destroy();
+      `,
+      stdout + "\n",
+    );
+  }
+  test.concurrent.skipIf(isWindows || isMusl)(
+    "close() while a dial to an IP literal is pending",
+    () =>
+      closePendingDial(
+        { autoReconnect: false },
+        "client.close();",
+        "ERR_REDIS_CONNECTION_CLOSED ERR_REDIS_CONNECTION_CLOSED 1 false",
+      ),
+    timeout,
+  );
+  test.concurrent.skipIf(isWindows || isMusl)(
+    "connection timeout while a dial to an IP literal is pending",
+    () =>
+      closePendingDial(
+        { connectionTimeout: 1 },
+        "",
+        "ERR_REDIS_CONNECTION_CLOSED ERR_REDIS_CONNECTION_TIMEOUT 1 false",
       ),
     timeout,
   );

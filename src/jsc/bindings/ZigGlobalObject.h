@@ -545,9 +545,9 @@ public:
     /* setupMainThreadPort's drain callback; run once by WebWorker__entrySettled */                          \
     /* after entry-module evaluation. Stored here (not on globalThis) so user code can't clobber it. */      \
     V(private, WriteBarrier<JSObject>, m_nodeWorkerEntryEvaluatedHook)                                       \
-    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */         \
-    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */             \
-    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                              \
+    /* node:worker_threads worker: { stdin?, stdout, stderr } MessagePorts from the parent Worker; */        \
+    /* process.stdin/stdout/stderr are built over these lazily (BunProcess.cpp constructStd*). */            \
+    V(private, WriteBarrier<JSObject>, m_nodeWorkerStdioPorts)                                               \
                                                                                                              \
     /* The original, unmodified Error.prepareStackTrace. */                                                  \
     /* */                                                                                                    \

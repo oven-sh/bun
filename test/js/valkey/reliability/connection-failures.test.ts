@@ -1145,6 +1145,47 @@ describe("Valkey: Recovering After fail()", () => {
     }
   });
 
+  test("a duplicate of a failed client still auto-reconnects", async () => {
+    // Connection 1 (the original) fails on a protocol error, connection 2 (the
+    // duplicate) is dropped by the server right after it answers PING.
+    const fake = helloServer({
+      PING: (connection, socket) => {
+        if (connection === 1) return "\x01\r\n";
+        if (connection === 2) {
+          socket.end("+PONG\r\n");
+          return null;
+        }
+        return "+PONG\r\n";
+      },
+    });
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: true });
+    let duplicate: RedisClient | undefined;
+    try {
+      await client.connect();
+      await expect(client.ping()).rejects.toMatchObject({ code: "ERR_REDIS_INVALID_RESPONSE_TYPE" });
+      expect(client.connected).toBe(false);
+      duplicate = await client.duplicate();
+      // A duplicate copies the original's manual-close state; a failure is not
+      // one, so the drop of connection 2 goes through the retry policy: no
+      // onclose, a second onconnect, and the queued PING answered by connection 3.
+      const reconnected = Promise.withResolvers<void>();
+      let connects = 0;
+      duplicate.onconnect = () => {
+        if (++connects === 2) reconnected.resolve();
+      };
+      duplicate.onclose = err => reconnected.reject(err);
+      expect(await duplicate.ping()).toBe("PONG");
+      await reconnected.promise;
+      expect(await duplicate.ping()).toBe("PONG");
+      expect(fake.connections).toBe(3);
+    } finally {
+      duplicate?.close();
+      client.close();
+      fake.server.close();
+    }
+  });
+
   test("a message listener that closes and reconnects is not fed the pushes buffered behind its message", async () => {
     // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
     const push = (...items: (string | number)[]) =>

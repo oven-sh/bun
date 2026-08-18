@@ -37,7 +37,8 @@ pub struct ConnectionFlags {
     pub(crate) is_reconnecting: bool,
     /// Sticky until `on_open`/`connect()`. `fail()` closes the socket outright
     /// (see `close()`), so by the time it returns the close callback has run
-    /// and this overlaps `Disconnected`.
+    /// (`on_close` reads this to skip the retry policy) and this overlaps
+    /// `Disconnected`.
     pub(crate) failed: bool,
     pub(crate) enable_auto_pipelining: bool,
     pub(crate) finalized: bool,
@@ -614,9 +615,10 @@ impl ValkeyClient {
         );
 
         // A failure the client detected itself (idle timeout, protocol or
-        // handshake error) has always been a deliberate close; only closes the
-        // peer initiated go through the retry policy, even with auto reconnect on.
-        self.flags.is_manually_closed = true;
+        // handshake error) has always been a deliberate close; `on_close` reads
+        // `failed` and skips the retry policy. It is not `is_manually_closed`:
+        // that flag is copied into `duplicate()`, and a duplicate of a failed
+        // client should still reconnect.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
     }
@@ -673,9 +675,9 @@ impl ValkeyClient {
         self.read_buffer.clear_and_free();
         self.reply_scanner.reset();
 
-        // If manually closing, don't attempt to reconnect
-        if self.flags.is_manually_closed {
-            debug!("skip reconnecting since the connection is manually closed");
+        // A manual close or a failure the client detected itself: no retry.
+        if self.flags.is_manually_closed || self.flags.failed {
+            debug!("skip reconnecting since the connection is manually closed or failed");
             self.fail(b"Connection closed", RedisError::ConnectionClosed)?;
             self.on_valkey_close()?;
             return Ok(());

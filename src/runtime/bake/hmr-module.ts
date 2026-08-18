@@ -792,6 +792,8 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
   // Hooks stay until beginEvaluation clears them, so a module a failing update never reaches keeps them; a load arriving during a pending dispose evaluates the new version and the reload loop then finds it Loaded or in flight.
   const selfAccepts = new Map<HMRModule, HotAcceptFunction | null>();
   const disposePromises: Promise<void>[] = [];
+  // One throwing dispose callback must not skip the others; the first failure still fails the update.
+  let disposeError: { error: unknown } | null = null;
   for (const mod of toReload) {
     mod.state = State.Stale;
     selfAccepts.set(mod, mod.selfAccept);
@@ -799,15 +801,22 @@ export async function replaceModules(modules: Record<Id, UnloadedModule>, source
     if (!onDispose) continue;
     mod.onDispose = null;
     for (const fn of onDispose) {
-      const p = fn(mod.data);
-      if (p && p instanceof Promise) {
-        disposePromises.push(p);
+      try {
+        const p = fn(mod.data);
+        if (p && p instanceof Promise) {
+          disposePromises.push(p);
+        }
+      } catch (error) {
+        disposeError ??= { error };
       }
     }
   }
   if (disposePromises.length > 0) {
-    await Promise.all(disposePromises);
+    for (const r of await Promise.allSettled(disposePromises)) {
+      if (r.status === "rejected") disposeError ??= { error: r.reason };
+    }
   }
+  if (disposeError) throw disposeError.error;
 
   const promises: Promise<HMRModule>[] = [];
   const acceptsAfterLoad: [HMRModule, HotAcceptFunction][] = [];

@@ -697,3 +697,94 @@ test("calls second", () => {
   expect(record).toMatch(/FNF:2\nFNH:2\n/);
   expect(exitCode).toBe(0);
 });
+
+// The text reporter takes its color flag at runtime. Pin the exact escape
+// sequences of every row kind (header, "All files", a passing file, a failing
+// file with uncovered ranges) and check the NO_COLOR run is the same table
+// with the escapes removed.
+test("text reporter colors", () => {
+  using dir = tempDir("cov-colors", {
+    "bunfig.toml": `
+[test]
+coverageSkipTestFiles = true
+coverageThreshold = { lines = 0.9, functions = 0.9 }
+`,
+    "covered.ts": `export function covered() {
+  return 1;
+}
+`,
+    "partial.ts": `export function a() {
+  return 1;
+}
+export function b() {
+  const x = 2;
+  const y = x + 1;
+  return y;
+}
+export function c() {
+  return 3;
+}
+export function d() {
+  const x = 4;
+  const y = x + 1;
+  return y;
+}
+`,
+    "demo.test.ts": `
+import { test, expect } from "bun:test";
+import { covered } from "./covered";
+import { a, c } from "./partial";
+
+test("runs", () => {
+  expect(covered()).toBe(1);
+  expect(a()).toBe(1);
+  expect(c()).toBe(3);
+});
+`,
+  });
+
+  function coverageTable(env: Record<string, string | undefined>) {
+    const result = Bun.spawnSync([bunExe(), "test", "--coverage"], {
+      cwd: dir,
+      env,
+      stdio: [null, null, "pipe"],
+    });
+    const lines = result.stderr.toString("utf-8").split(/\r?\n/);
+    const isRule = (line: string) => line.includes("|---------|---------|");
+    const table = lines.slice(lines.findIndex(isRule), lines.findLastIndex(isRule) + 1);
+    return { table, exitCode: result.exitCode };
+  }
+
+  const R = "\x1b[0m";
+  const B = "\x1b[1m";
+  const D = "\x1b[2m";
+  const RED = "\x1b[31m";
+  const GREEN = "\x1b[32m";
+  const rule = "------------|---------|---------|-------------------";
+
+  const colored = coverageTable({ ...bunEnv, NO_COLOR: undefined, FORCE_COLOR: "1" });
+  expect(colored.table).toEqual([
+    `${R}${D}${rule}${R}`,
+    `File        ${D}|${R} % Funcs ${D}|${R} % Lines ${D}|${R} Uncovered Line #s`,
+    `${R}${D}${rule}${R}`,
+    `${R}${B}${RED}All files  ${R}${D} | ${R}${B}${RED}  75.00${R}${D} | ${R}${B}${RED}  70.00${R}${D} |${R}`,
+    `${R}${B}${GREEN} covered.ts${R}${D} | ${R}${B}${GREEN} 100.00${R}${D} | ${R}${B}${GREEN} 100.00${R}${D} | ${R}`,
+    `${R}${B}${RED} partial.ts${R}${D} | ${R}${B}${RED}  50.00${R}${D} | ${R}${B}${RED}  40.00${R}${D} | ${R}${RED}4-6${R}${D},${R}${RED}12-14`,
+    `${R}${D}${rule}${R}`,
+  ]);
+  // partial.ts is below the threshold.
+  expect(colored.exitCode).toBe(1);
+
+  const plain = coverageTable(bunEnv);
+  expect(plain.table).toEqual(colored.table.map(line => Bun.stripANSI(line)));
+  expect(plain.table).toEqual([
+    rule,
+    "File        | % Funcs | % Lines | Uncovered Line #s",
+    rule,
+    "All files   |   75.00 |   70.00 |",
+    " covered.ts |  100.00 |  100.00 | ",
+    " partial.ts |   50.00 |   40.00 | 4-6,12-14",
+    rule,
+  ]);
+  expect(plain.exitCode).toBe(1);
+});

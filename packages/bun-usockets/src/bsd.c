@@ -2066,11 +2066,13 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 
     if (rc != 0) {
         bsd_close_socket(fd);
+        /* bsd_do_connect_raw returned the connect error; re-arm it so the
+         * caller observes the connect failure rather than whatever closing the
+         * socket left behind. */
 #ifdef _WIN32
-        /* bsd_do_connect_raw returned the WSA error; re-arm it so the Rust
-         * caller's WSAGetLastError() observes the connect failure rather than
-         * whatever closesocket() left behind. */
         WSASetLastError(rc);
+#else
+        errno = rc;
 #endif
         return LIBUS_SOCKET_ERROR;
     }
@@ -2091,6 +2093,8 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const cha
         bsd_close_socket(fd);
 #ifdef _WIN32
         WSASetLastError(rc);
+#else
+        errno = rc;
 #endif
         return LIBUS_SOCKET_ERROR;
     }
@@ -2127,7 +2131,9 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket_unix(const char *server_path, 
     }
 #elif defined(__linux__)
     if (dirfd_workaround_for_unix_path_len != -1) {
+        int saved_errno = errno;
         close(dirfd_workaround_for_unix_path_len);
+        errno = saved_errno;
     }
 #endif
 

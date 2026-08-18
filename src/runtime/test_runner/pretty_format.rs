@@ -2627,11 +2627,7 @@ impl bun_jsc::ConsoleFormatter for Formatter<'_> {
     }
 }
 
-/// Maps the wider `console_object::Tag` onto this file's `Tag`. Only the
-/// variants the `write_format` hooks and the asymmetric matchers actually emit
-/// are reachable (Boolean / Double / Object / Array / Private / String); the
-/// rest collapse onto `Object` so any future caller still renders something
-/// useful.
+/// Variants this file has no arm for collapse onto `Object`.
 impl From<bun_jsc::FormatTag> for Tag {
     fn from(tag: bun_jsc::FormatTag) -> Self {
         use bun_jsc::FormatTag as Ft;
@@ -2685,11 +2681,7 @@ pub trait AsymmetricMatcherFormatter {
     fn amf_quote_strings(&mut self) -> &mut bool;
     /// `printAs(tag, …)` routed through the formatter's own runtime
     /// dispatcher. Only `Object` / `String` / `Array` are reached.
-    ///
-    /// Generic over the writer so that the caller's writer goes down as is. A
-    /// matcher nested in a matcher re-enters this for every level, and a
-    /// writer adapter added per level would stack up into one frame per level
-    /// inside every single write, below the stack check in `print_as`.
+    /// Generic rather than `dyn` so nested matchers do not stack one writer adapter per level.
     fn amf_print_as<W: bun_io::Write, const C: bool>(
         &mut self,
         tag: bun_jsc::FormatTag,

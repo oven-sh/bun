@@ -326,6 +326,17 @@ class JSStreamsRuntime final {
     WTF_MAKE_NONCOPYABLE(JSStreamsRuntime);
 
 public:
+    // Index of every handler in m_handlers, in macro order (both lists).
+    // clang-format off
+#define WEB_STREAMS_HANDLER_INDEX_ENTRY(name) name,
+    enum class Handler : uint8_t {
+        FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_HANDLER_INDEX_ENTRY)
+        Count
+    };
+#undef WEB_STREAMS_HANDLER_INDEX_ENTRY
+    // clang-format on
+
     JSStreamsRuntime() = default;
     void initialize(Zig::GlobalObject*);
 
@@ -333,7 +344,7 @@ public:
     // behind a free function so streams .cpp files do not include ZigGlobalObject.h.
     static JSStreamsRuntime* from(JSC::JSGlobalObject*);
 
-    // Called from Zig::GlobalObject::visitChildren. MUST visit EVERY m_<handler>
+    // Called from Zig::GlobalObject::visitChildren. MUST visit EVERY handler
     // LazyProperty (both macro lists), the two size-function LazyProperties, and every
     // LazyProperty in FOR_EACH_WEB_STREAMS_INTERNAL_STRUCTURE. Safe on a
     // default-constructed instance (LazyProperty::visit is a no-op for m_pointer == 0).
@@ -343,7 +354,7 @@ public:
     // The shared handler functions. Each LazyProperty materializes the JSFunction on FIRST
     // use; the global is the owner passed to `init.owner`.
 #define WEB_STREAMS_DECLARE_HANDLER_ACCESSOR(name) \
-    JSC::JSFunction* name() const { return m_##name.getInitializedOnMainThread(m_globalObject); }
+    JSC::JSFunction* name() const { return m_handlers[static_cast<size_t>(Handler::name)].getInitializedOnMainThread(m_globalObject); }
     FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
     FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_ACCESSOR)
 #undef WEB_STREAMS_DECLARE_HANDLER_ACCESSOR
@@ -366,11 +377,7 @@ public:
 private:
     JSC::JSGlobalObject* m_globalObject { nullptr };
 
-#define WEB_STREAMS_DECLARE_HANDLER_MEMBER(name) \
-    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_##name;
-    FOR_EACH_WEB_STREAMS_REACTION_HANDLER(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
-    FOR_EACH_WEB_STREAMS_BOUND_HANDLER_TARGET(WEB_STREAMS_DECLARE_HANDLER_MEMBER)
-#undef WEB_STREAMS_DECLARE_HANDLER_MEMBER
+    JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_handlers[static_cast<size_t>(Handler::Count)];
 
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_byteLengthQueuingStrategySizeFunction;
     JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSFunction> m_countQueuingStrategySizeFunction;

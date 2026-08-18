@@ -66,6 +66,7 @@ class DOMWrapperWorld;
 #include <wtf/WeakHashSet.h>
 #include "JSCTaskScheduler.h"
 #include "HTTPHeaderIdentifiers.h"
+#include "DOMURLBaseCache.h"
 namespace Zig {
 class GlobalObject;
 }
@@ -171,6 +172,8 @@ public:
     // so there is no startup cost worth deferring.
     WebCore::HTTPHeaderIdentifiers& httpHeaderIdentifiers() { return m_httpHeaderIdentifiers; }
 
+    WebCore::DOMURLBaseCache& urlBaseCache() { return m_urlBaseCache; }
+
     void* bunVM;
     // Opaque box of the Rust VmHandle for this VM: what any *other* thread uses
     // to post work / ref the loop (never bunVM). Created in create(), released
@@ -238,6 +241,8 @@ private:
     std::unique_ptr<ExtendedDOMClientIsoSubspaces> m_clientSubspaces;
 
     WebCore::HTTPHeaderIdentifiers m_httpHeaderIdentifiers;
+
+    WebCore::DOMURLBaseCache m_urlBaseCache;
 
     SentinelLinkedList<JSVMClientDataClient, BasicRawSentinelNode<JSVMClientDataClient>> m_clients;
     bool m_isWorkerVM { false };

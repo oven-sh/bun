@@ -180,6 +180,71 @@ describe("HTMLRewriter", () => {
     expect(exitCode).toBe(0);
   });
 
+  // A direct stream's pull() receives the pump controller itself, so user code
+  // can hand it to an API that roots its argument with gcProtect (another
+  // rewriter's .on() does). The pipe never protects the controller, so when a
+  // failing rewrite detaches it, the detach must not gcUnprotect it either:
+  // that cancelled the other holder's root and the next GC collected the
+  // controller out from under it. The unreferenced run shows the controller
+  // is otherwise collectable, so "alive" below really is the holder's root.
+  it("detaching the pump controller of a failed rewrite keeps a gcProtect held elsewhere on it", async () => {
+    const fixture = /* js */ `
+      const holder = new HTMLRewriter();
+      async function failedRewrite(handToHolder) {
+        let ref;
+        const input = new Response(
+          new ReadableStream({
+            type: "direct",
+            pull(controller) {
+              ref = new WeakRef(controller);
+              if (handToHolder) holder.on("*", controller);
+              // The element handler below throws inside this write, so the pipe
+              // fails and detaches the controller while it is still attached.
+              controller.write("<p>x</p>");
+            },
+          }),
+        );
+        const out = new HTMLRewriter()
+          .on("p", {
+            element() {
+              throw new Error("handler threw");
+            },
+          })
+          .transform(input);
+        const outcome = await out.text().then(
+          () => "resolved",
+          err => "rejected with " + err.message,
+        );
+        return { ref, outcome };
+      }
+      for (const handToHolder of [false, true]) {
+        const { ref, outcome } = await failedRewrite(handToHolder);
+        for (let i = 0; i < 3; i++) {
+          await new Promise(resolve => setImmediate(resolve));
+          Bun.gc(true);
+        }
+        const liveness = ref.deref() === undefined ? "collected" : "alive";
+        console.log((handToHolder ? "handed to holder.on()" : "unreferenced") + ": " + outcome + ", controller " + liveness);
+      }
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", fixture],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe(
+      [
+        "unreferenced: rejected with handler threw, controller collected",
+        "handed to holder.on(): rejected with handler threw, controller alive",
+        "",
+      ].join("\n"),
+    );
+    expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
+
   it("HTMLRewriter: async replacement", async () => {
     await gcTick();
     const res = new HTMLRewriter()

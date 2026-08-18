@@ -6863,12 +6863,8 @@ fn wrap_unhandled_rejection_error_for_uncaught_exception(
         .to_js()
 }
 
-/// LAYERING: moved DOWN from `bun_bundler_jsc::PluginRunner` so
-/// `resolve_maybe_needs_trailing_slash` can consult `Bun.plugin()` resolvers
-/// without a `bun_jsc → bun_bundler_jsc` cycle. The body only touches
-/// `JSGlobalObject`/`JSValue`/`bun_core::String`, all of which live at this
-/// tier; `bun_bundler_jsc` re-exports this fn for its own callers.
-pub fn plugin_runner_on_resolve_jsc(
+/// `None` when no `Bun.plugin()` `onResolve` callback claimed the specifier.
+pub(crate) fn plugin_runner_on_resolve_jsc(
     global: &JSGlobalObject,
     namespace: bun_core::String,
     specifier: bun_core::String,

@@ -155,4 +155,32 @@ describe("ArrayBufferSink", () => {
     expect(() => s.end()).toThrow(/already been closed/);
     expect(s.close()).toBeUndefined();
   });
+
+  it("start() with an option getter that closes the sink throws instead of crashing", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        for (const key of ["highWaterMark", "asUint8Array", "stream"]) {
+          const s = new Bun.ArrayBufferSink();
+          s.write("hello");
+          let err;
+          try {
+            s.start({ get [key]() { s.close(); return key === "highWaterMark" ? 1024 : true; } });
+          } catch (e) { err = e; }
+          console.log(key, /already been closed/.test(err?.message));
+          try { s.write("x"); console.log("write ok"); } catch (e) { console.log("write", /already been closed/.test(e.message)); }
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect(stdout).toBe("highWaterMark true\nwrite true\nasUint8Array true\nwrite true\nstream true\nwrite true\n");
+    if (exitCode !== 0) expect(stderr).toBe("");
+    expect(exitCode).toBe(0);
+  });
 });

@@ -171,18 +171,34 @@ impl Rm {
                             // Check that none of the paths will delete the root.
                             {
                                 let cwd = Builtin::shell(interp, cmd).cwd().to_vec();
+                                // Operands are unbounded user input, so neither
+                                // step may use the fixed-size thread-local
+                                // buffers behind `join` / `normalize_string`.
+                                // Normalizing never grows a path by more than
+                                // one byte.
+                                let mut join_spill = Vec::new();
+                                let mut normalize_buf = Vec::new();
 
                                 for i in args_start..argc {
                                     let path = Builtin::of(interp, cmd).arg_bytes(i);
                                     let resolved: &[u8] = if Platform::AUTO.is_absolute(path) {
                                         path
                                     } else {
-                                        resolve_path::join::<platform::Auto>(&[&cwd, path])
+                                        resolve_path::join_spill::<platform::Auto>(
+                                            &mut join_spill,
+                                            &[&cwd, path],
+                                        )
                                     };
-                                    let normalized = resolve_path::normalize_string::<
+                                    if normalize_buf.len() <= resolved.len() {
+                                        normalize_buf.resize(resolved.len() + 1, 0);
+                                    }
+                                    let normalized = resolve_path::normalize_string_buf::<
                                         false,
                                         platform::Auto,
-                                    >(resolved);
+                                        false,
+                                    >(
+                                        resolved, &mut normalize_buf[..]
+                                    );
                                     let dirname =
                                         resolve_path::dirname::<platform::Auto>(normalized);
                                     if dirname.is_empty() {

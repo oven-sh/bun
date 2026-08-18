@@ -235,9 +235,6 @@
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
-BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_assertSettings);
 
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
@@ -947,7 +944,7 @@ namespace Zig {
 
 using namespace WebCore;
 
-static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
+JSGlobalObject* GlobalObject::deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = JSC::getVM(globalObject);
     // Same reasoning as Zig__GlobalObject__createForTestIsolation: keep the
@@ -1001,7 +998,7 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
-        &Zig::deriveShadowRealmGlobalObject,
+        &deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1029,7 +1026,7 @@ const JSC::GlobalObjectMethodTable& EvalGlobalObject::globalObjectMethodTable()
         nullptr, // defaultLanguage
         &compileStreaming,
         &instantiateStreaming,
-        &Zig::deriveShadowRealmGlobalObject,
+        &deriveShadowRealmGlobalObject,
         &codeForEval, // codeForEval
         &canCompileStrings, // canCompileStrings
         &trustedScriptStructure, // trustedScriptStructure
@@ -1432,6 +1429,11 @@ extern "C" JSC::EncodedJSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSG
 // Windows doesn't have mmap
 // This code should pretty much only be called on Linux.
 #if !OS(WINDOWS)
+    // Empty makes the caller fall back to the copying path, which throws for this length.
+    if (byteLength > MAX_ARRAY_BUFFER_SIZE) [[unlikely]] {
+        return JSC::JSValue::encode(JSC::JSValue {});
+    }
+
     auto ptr = mmap(nullptr, totalLength, PROT_READ | PROT_WRITE, MAP_PRIVATE, fd, 0);
 
     if (ptr == MAP_FAILED) {
@@ -1527,6 +1529,9 @@ extern "C" JSC::EncodedJSValue Bun__makeArrayBufferWithBytesNoCopy(JSC::JSGlobal
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+        return {};
+
     auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
     }));
@@ -1540,6 +1545,9 @@ extern "C" JSC::EncodedJSValue Bun__makeTypedArrayWithBytesNoCopy(JSC::JSGlobalO
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    if (Bun::rejectBytesNoCopyAboveArrayBufferLimit(globalObject, scope, ptr, len, deallocator, deallocatorContext)) [[unlikely]]
+        return {};
 
     auto buffer_ = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), len }, createSharedTask<void(void*)>([=](void* p) {
         if (deallocator) deallocator(p, deallocatorContext);
@@ -3115,9 +3123,6 @@ JSValue GlobalObject_getGlobalThis(VM& vm, JSObject* globalObject)
 {
     return uncheckedDowncast<Zig::GlobalObject>(globalObject)->globalThis();
 }
-
-// This is like `putDirectBuiltinFunction` but for the global static list.
-#define globalBuiltinFunction(vm, globalObject, identifier, function, attributes) JSC::JSGlobalObject::GlobalPropertyInfo(identifier, JSFunction::create(vm, function, globalObject), attributes)
 
 void GlobalObject::addBuiltinGlobals(JSC::VM& vm)
 {

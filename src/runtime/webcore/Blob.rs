@@ -7032,7 +7032,6 @@ pub trait FileCloser: Sized {
     fn io_request(&mut self) -> Option<&mut bun_io::Request>;
     fn io_poll(&mut self) -> &mut bun_io::Poll;
     fn task(&mut self) -> &mut bun_jsc::WorkPoolTask;
-    fn update(&mut self);
     #[cfg(windows)]
     fn loop_(&self) -> *mut bun_libuv_sys::uv_loop_t;
 
@@ -7130,9 +7129,6 @@ macro_rules! impl_file_closer {
             }
             fn task(&mut self) -> &mut ::bun_jsc::WorkPoolTask {
                 &mut self.task
-            }
-            fn update(&mut self) {
-                $T::update(self)
             }
             #[cfg(windows)]
             fn loop_(&self) -> *mut ::bun_libuv_sys::uv_loop_t {

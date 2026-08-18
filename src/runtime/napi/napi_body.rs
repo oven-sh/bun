@@ -976,7 +976,16 @@ extern "C" fn napi_get_prototype(
         return NapiEnv::set_last_error(Some(env), NapiStatus::object_expected);
     }
 
-    result.set(env, object.get_prototype(env.to_js()));
+    // Like V8's Object::GetPrototype: a Proxy yields null and its trap never runs.
+    if object.js_type() == jsc::JSType::ProxyObject {
+        result.set(env, JSValue::NULL);
+        return env.ok();
+    }
+    let prototype = match object.get_prototype(env.to_js()) {
+        Ok(prototype) => prototype,
+        Err(_) => return env.pending_exception(),
+    };
+    result.set(env, prototype);
     env.ok()
 }
 

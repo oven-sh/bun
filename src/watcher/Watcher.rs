@@ -438,7 +438,8 @@ impl Watcher {
             if item == last_item || self.watchlist.len() <= item as usize {
                 continue;
             }
-            self.watchlist.swap_remove(item as usize);
+            // Frees an owned `file_path`; the fd was closed in the first pass.
+            drop(self.watchlist.swap_remove(item as usize));
 
             // swapRemove put a different entry at `item`, but its kqueue registration still
             // carries its old `udata` (= pre-swap index). Rewrite it so subsequent kevents
@@ -1044,6 +1045,7 @@ impl fmt::Display for Op {
 // ─── WatchItem ────────────────────────────────────────────────────────────
 
 pub struct WatchItem {
+    /// Freed by `flush_evictions` when `Owned`; borrowed bytes must outlive the entry.
     pub file_path: Cow<'static, [u8]>,
     // filepath hash for quick comparison
     pub hash: u32,

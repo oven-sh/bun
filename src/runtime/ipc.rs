@@ -1127,8 +1127,7 @@ impl SendQueue {
         let _ = reason; // suppress unused on windows
     }
 
-    /// uSockets' `on_close`. Still open here means uSockets closed the socket itself (peer read
-    /// error such as ECONNRESET, or loop teardown); `close_socket` records our own closes first.
+    /// uSockets' `on_close`; still open here only for closes uSockets made itself (peer read error).
     fn socket_closed(&self) {
         if !self.socket_is_open() {
             return;
@@ -1139,15 +1138,17 @@ impl SendQueue {
 
     /// The peer closed its end (EOF; a read error on Windows).
     fn peer_closed(&self) {
+        // Nothing can be written to it any more, so a write still in flight is cancelled, not waited for.
+        #[cfg(windows)]
+        self.windows_close(true);
+        #[cfg(not(windows))]
         self.close_socket(CloseReason::Failure, CloseFrom::User);
         self.deliver_close_event_now();
     }
 
-    /// Peer-initiated closes are delivered from the read dispatch itself: the peer's exit is
-    /// usually dispatched later in the same poll batch and reported to JS right away, so the
-    /// deferred task (which runs after the batch, and which our own closes keep using) would
-    /// report the close after the exit. Node orders the two the same way. The task still runs,
-    /// finds nothing to do, and its ref keeps `self` alive across the JS run here.
+    /// A peer-initiated close is reported from the read dispatch, ahead of the peer's exit, which
+    /// is usually dispatched later in the same poll batch (as in node). The deferred task still
+    /// runs (as a no-op); its ref keeps `self` alive across the JS run here.
     fn deliver_close_event_now(&self) {
         if !self.pending_after_close.get() {
             return;
@@ -1848,6 +1849,9 @@ impl SendQueue {
         if this.windows.get().try_close_after_write {
             this.close_socket(CloseReason::Normal, CloseFrom::User);
         }
+        // A close this completion caused (write error, or the close that waited for it) is
+        // reported now, like a close observed by the read side.
+        this.deliver_close_event_now();
         // The event-loop exit is handled by `_scope` drop.
     }
     fn get_global_this(&self) -> bun_jsc::GlobalRef {

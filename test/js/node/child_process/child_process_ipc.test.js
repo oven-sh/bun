@@ -25,8 +25,26 @@ test("'disconnect' is emitted before 'exit' when the channel's EOF and the exit 
   using dir = tempDir("ipc-disconnect-before-exit", {
     "parent.js": `
       const { fork } = require("node:child_process");
-      const { existsSync } = require("node:fs");
+      const { existsSync, readdirSync, readFileSync } = require("node:fs");
       const path = require("node:path");
+
+      const deadline = Date.now() + 30_000;
+      function blockUntil(what, condition) {
+        while (!condition()) {
+          if (Date.now() > deadline) throw new Error("timed out waiting for " + what);
+          Bun.sleepSync(1);
+        }
+      }
+      // On Linux the child is dead once /proc shows it as a zombie with no other threads left (the
+      // last thread to go is the one that closes its descriptors and signals the exit; a debug
+      // build takes ~15ms to get there). Elsewhere a SIGKILL'd child is gone within a few ms.
+      function blockUntilDead(pid) {
+        if (process.platform !== "linux") return Bun.sleepSync(100);
+        blockUntil("the child to die", () => {
+          const stat = readFileSync("/proc/" + pid + "/stat", "latin1");
+          return stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync("/proc/" + pid + "/task").length === 1;
+        });
+      }
 
       const closed = path.join(__dirname, "channel-closed");
       const child = fork(path.join(__dirname, "child.js"), [closed], {
@@ -35,15 +53,9 @@ test("'disconnect' is emitted before 'exit' when the channel's EOF and the exit 
       const events = [];
       child.stdout.once("data", () => {
         child.send("close-your-end");
-        const deadline = Date.now() + 30_000;
-        while (!existsSync(closed)) {
-          if (Date.now() > deadline) throw new Error("child never closed the channel");
-          Bun.sleepSync(1);
-        }
+        blockUntil("the child to close the channel", () => existsSync(closed));
         child.kill("SIGKILL");
-        // SIGKILL takes effect within about a millisecond; by the time this returns the exit is
-        // ready to be picked up together with the EOF.
-        Bun.sleepSync(50);
+        blockUntilDead(child.pid);
       });
       child.on("disconnect", () => events.push("disconnect"));
       child.on("exit", () => events.push("exit"));

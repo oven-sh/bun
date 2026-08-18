@@ -1,7 +1,28 @@
 import { spawn } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, gcTick, isWindows } from "harness";
+import { bunEnv, bunExe, gcTick, isLinux, isWindows } from "harness";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "path";
+
+// Kills the child and returns once it is dead without touching the event loop, so that its exit
+// is pending at the same time as whatever its death did to the channel. On Linux the child is dead
+// once /proc shows it as a zombie with no other threads left (the last thread to go is the one
+// that closes its descriptors and signals the exit; a debug build takes ~15ms to get there).
+// Elsewhere a SIGKILL'd child is gone within a few milliseconds.
+function killAndBlockUntilDead(child: Bun.Subprocess) {
+  child.kill("SIGKILL");
+  if (!isLinux) {
+    Bun.sleepSync(100);
+    return;
+  }
+  const deadline = Date.now() + 30_000;
+  for (;;) {
+    const stat = readFileSync(`/proc/${child.pid}/stat`, "latin1");
+    if (stat[stat.lastIndexOf(")") + 2] === "Z" && readdirSync(`/proc/${child.pid}/task`).length === 1) return;
+    if (Date.now() > deadline) throw new Error("child did not die");
+    Bun.sleepSync(1);
+  }
+}
 
 describe.each(["advanced", "json"])("ipc mode %s", mode => {
   it("the subprocess should be defined and the child should send", done => {
@@ -121,16 +142,13 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     });
   });
 
-  // Both tests below kill the child and stay off the event loop until it is dead, so the channel
+  // The tests below kill the child and stay off the event loop until it is dead, so the channel
   // going away and the exit are picked up in the same poll. The channel is dispatched first (a
   // dying process's descriptors are closed before it can be reaped) and, as in node, has to be
   // reported before the exit is looked at. It used to be reported from a later event-loop task,
   // so onExit ran first.
   async function killAndReportOrder(child: Bun.Subprocess, events: string[], done: Promise<unknown>) {
-    child.kill("SIGKILL");
-    // SIGKILL takes effect within about a millisecond; by the time this returns the exit is ready
-    // to be picked up together with the channel's close.
-    Bun.sleepSync(50);
+    killAndBlockUntilDead(child);
     await done;
     return events;
   }
@@ -169,7 +187,14 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
     ]);
   });
 
-  it.concurrent("onDisconnect runs before onExit when the child dies with our message unread", async () => {
+  // The child never reads its end of the channel, so what we send stays unread; on Linux our end
+  // then reports ECONNRESET instead of EOF when the child dies, which closes the channel through
+  // a different path than the test above. A message larger than the channel's buffers is on top
+  // of that still being written when the child dies.
+  it.concurrent.each([
+    ["a short message", "never read"],
+    ["a message larger than the channel's buffers", Buffer.alloc(4 * 1024 * 1024, "x").toString()],
+  ])("onDisconnect runs before onExit when the child dies with %s unread", async (_label, message) => {
     const events: string[] = [];
     const disconnected = Promise.withResolvers<void>();
     const exited = Promise.withResolvers<void>();
@@ -189,10 +214,7 @@ describe.each(["advanced", "json"])("ipc mode %s", mode => {
       },
     });
     await child.stdout.getReader().read();
-    // The child never reads its end of the channel, so this stays unread; on Linux our end then
-    // reports ECONNRESET instead of EOF when the child dies, which closes the channel through a
-    // different path than the test above.
-    child.send("never read");
+    child.send(message);
     expect(await killAndReportOrder(child, events, Promise.all([disconnected.promise, exited.promise]))).toEqual([
       "disconnect",
       "exit",

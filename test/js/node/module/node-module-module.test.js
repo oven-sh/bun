@@ -29,6 +29,18 @@ describe.concurrent("node-module-module", () => {
     expect(Array.isArray(require("module").globalPaths)).toBe(true);
   });
 
+  test("Module.prototype is not enumerable, so its enumerable statics can be copied onto a subclass", () => {
+    const Module = require("module");
+    const { value, ...descriptor } = Object.getOwnPropertyDescriptor(Module, "prototype");
+    expect(descriptor).toEqual({ writable: true, enumerable: false, configurable: false });
+    expect(Object.keys(Module)).not.toContain("prototype");
+    // jest-runtime builds its `Module` this way; assigning `prototype` on a class throws.
+    class Sub extends Module.Module {}
+    for (const [key, val] of Object.entries(Module.Module)) Sub[key] = val;
+    expect(Sub.prototype).toBeInstanceOf(Module);
+    expect(Sub._extensions).toBe(Module._extensions);
+  });
+
   test("module.enableCompileCache validates its argument", () => {
     expect(Module.enableCompileCache.length).toBe(1);
     for (const invalid of [0, null, false, 1, NaN, true, Symbol(0)]) {

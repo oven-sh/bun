@@ -85,11 +85,14 @@ async function resolveCommit(webkitRepo: string, rev: string): Promise<string> {
  * downloads everything below the commit that the clone does not have, which for a commit older
  * than its boundary is all of WebKit's history. (--depth=1 would also re-shallow a clone at a
  * commit it already has, which is why the caller only gets here for a commit it does not.)
+ * Returns git's explanation when the fetch fails, which is the same exit code whether origin does
+ * not have the commit or could not be reached at all, and "" when it succeeded.
  */
-async function fetchFromOrigin(webkitRepo: string, sha: string): Promise<void> {
+async function fetchFromOrigin(webkitRepo: string, sha: string): Promise<string> {
   const shallow = (await git(webkitRepo, ["rev-parse", "--is-shallow-repository"])) === "true";
   const depth = shallow ? ["--depth=1"] : [];
-  await Bun.$`git fetch ${depth} origin ${sha}`.cwd(webkitRepo).nothrow();
+  const out = await Bun.$`git fetch ${depth} origin ${sha}`.cwd(webkitRepo).quiet().nothrow();
+  return out.exitCode === 0 ? "" : out.stderr.toString().trim();
 }
 
 /**
@@ -100,14 +103,15 @@ async function fetchFromOrigin(webkitRepo: string, sha: string): Promise<void> {
 export async function syncWebKitSource(webkitRepo: string, version: string, cacheDir: string): Promise<string> {
   const sha = shaBuiltFrom(version, cacheDir);
   let expectedSha = await resolveCommit(webkitRepo, sha);
+  let fetchFailure = "";
   if (!expectedSha) {
-    await fetchFromOrigin(webkitRepo, sha);
+    fetchFailure = await fetchFromOrigin(webkitRepo, sha);
     expectedSha = await resolveCommit(webkitRepo, sha);
   }
   if (!expectedSha) {
     throw new Error(
-      `commit ${sha} (${version}) is not in ${webkitRepo}, and origin did not serve it\n` +
-        "check that the commit exists on https://github.com/oven-sh/WebKit",
+      `commit ${sha} (${version}) is not in ${webkitRepo}, and fetching it from origin ` +
+        (fetchFailure ? `failed:\n${fetchFailure}` : "did not bring it in"),
     );
   }
 

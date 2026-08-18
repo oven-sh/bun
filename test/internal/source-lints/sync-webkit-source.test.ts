@@ -132,6 +132,14 @@ function cacheWithPrebuilt(dir: string, version: string, builtFrom: string): str
   return cacheDir;
 }
 
+/** The message a sync is expected to fail with (several assertions on one message, so the sync runs once). */
+function failureOf(sync: Promise<string>): Promise<string> {
+  return sync.then(
+    sha => `resolved to ${sha} instead of failing`,
+    (error: Error) => error.message,
+  );
+}
+
 /** A build cache nothing has been downloaded into. */
 function emptyCache(dir: string): string {
   const cacheDir = join(dir, "build-cache");
@@ -219,14 +227,28 @@ describe.concurrent("sync-webkit-source", () => {
     expect(git(clone, "rev-list", "--count", built)).toBe("1");
   });
 
-  test("a sha origin does not have fails by name", async () => {
+  test("a sha origin does not have fails with git saying so", async () => {
     using dir = tempDir("sync-webkit-source-missing", {});
     const { clone, base } = originAndClone(String(dir));
     const missing = "0badc0de0badc0de0badc0de0badc0de0badc0de";
 
-    await expect(syncWebKitSource(clone, missing, emptyCache(String(dir)))).rejects.toThrow(
-      `commit ${missing} (${missing}) is not in ${clone}, and origin did not serve it`,
+    const failure = await failureOf(syncWebKitSource(clone, missing, emptyCache(String(dir))));
+    expect(failure).toStartWith(
+      `commit ${missing} (${missing}) is not in ${clone}, and fetching it from origin failed:\n`,
     );
+    expect(failure).toContain(`not our ref ${missing}`);
+    expect(head(clone)).toBe(base);
+  });
+
+  test("an origin that cannot be reached is reported as that, not as a missing commit", async () => {
+    using dir = tempDir("sync-webkit-source-unreachable-origin", {});
+    const { origin, clone, base } = originAndClone(String(dir));
+    const later = commit(origin, "later");
+    git(clone, "remote", "set-url", "origin", join(String(dir), "no-such-origin"));
+
+    const failure = await failureOf(syncWebKitSource(clone, later, emptyCache(String(dir))));
+    expect(failure).toStartWith(`commit ${later} (${later}) is not in ${clone}, and fetching it from origin failed:\n`);
+    expect(failure).toContain("does not appear to be a git repository");
     expect(head(clone)).toBe(base);
   });
 

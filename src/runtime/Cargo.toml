@@ -45,6 +45,7 @@ bun_collections.workspace = true
 bun_crash_handler.workspace = true
 bun_csrf.workspace = true
 bun_cares_sys.workspace = true
+bun_css.workspace = true
 bun_dns.workspace = true
 bun_dotenv.workspace = true
 bun_event_loop.workspace = true

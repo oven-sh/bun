@@ -342,50 +342,52 @@ describe.skipIf(!isEnabled)("Valkey: Connection Failures", () => {
   });
 });
 
-describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
-  function readCommands(state: { buffer: Buffer }): string[][] {
-    const commands: string[][] = [];
-    while (true) {
-      const text = state.buffer.toString("latin1");
-      if (text[0] !== "*") break;
-      const headerEnd = text.indexOf("\r\n");
-      if (headerEnd === -1) break;
-      const argCount = parseInt(text.slice(1, headerEnd), 10);
-      if (!Number.isInteger(argCount) || argCount < 0) break;
-      let pos = headerEnd + 2;
-      const args: string[] = [];
-      let complete = true;
-      for (let i = 0; i < argCount; i++) {
-        if (text[pos] !== "$") {
-          complete = false;
-          break;
-        }
-        const lenEnd = text.indexOf("\r\n", pos);
-        if (lenEnd === -1) {
-          complete = false;
-          break;
-        }
-        const len = parseInt(text.slice(pos + 1, lenEnd), 10);
-        if (!Number.isInteger(len) || len < 0) {
-          complete = false;
-          break;
-        }
-        const dataStart = lenEnd + 2;
-        const dataEnd = dataStart + len;
-        if (text.length < dataEnd + 2) {
-          complete = false;
-          break;
-        }
-        args.push(text.slice(dataStart, dataEnd));
-        pos = dataEnd + 2;
+// Takes the complete RESP commands off the front of `state.buffer` and leaves
+// any partial command in it for the next chunk.
+function readCommands(state: { buffer: Buffer }): string[][] {
+  const commands: string[][] = [];
+  while (true) {
+    const text = state.buffer.toString("latin1");
+    if (text[0] !== "*") break;
+    const headerEnd = text.indexOf("\r\n");
+    if (headerEnd === -1) break;
+    const argCount = parseInt(text.slice(1, headerEnd), 10);
+    if (!Number.isInteger(argCount) || argCount < 0) break;
+    let pos = headerEnd + 2;
+    const args: string[] = [];
+    let complete = true;
+    for (let i = 0; i < argCount; i++) {
+      if (text[pos] !== "$") {
+        complete = false;
+        break;
       }
-      if (!complete) break;
-      commands.push(args);
-      state.buffer = state.buffer.subarray(pos);
+      const lenEnd = text.indexOf("\r\n", pos);
+      if (lenEnd === -1) {
+        complete = false;
+        break;
+      }
+      const len = parseInt(text.slice(pos + 1, lenEnd), 10);
+      if (!Number.isInteger(len) || len < 0) {
+        complete = false;
+        break;
+      }
+      const dataStart = lenEnd + 2;
+      const dataEnd = dataStart + len;
+      if (text.length < dataEnd + 2) {
+        complete = false;
+        break;
+      }
+      args.push(text.slice(dataStart, dataEnd));
+      pos = dataEnd + 2;
     }
-    return commands;
+    if (!complete) break;
+    commands.push(args);
+    state.buffer = state.buffer.subarray(pos);
   }
+  return commands;
+}
 
+describe("Valkey: Auto-Reconnect In-Flight Commands", () => {
   test("rejects commands that were in flight when the connection dropped instead of pairing them with replies from the next connection", async () => {
     const sockets: net.Socket[] = [];
     let connections = 0;
@@ -1327,20 +1329,22 @@ describe("Valkey: Recovering After fail()", () => {
 });
 
 describe("Valkey: Offline Queue", () => {
-  // Answers HELLO with `+OK` and every other command with `+PONG`, unless
-  // `answerHello` is false, in which case the connection never becomes ready
-  // and everything the client sends stays in its offline queue.
-  function stubServer({ answerHello = true } = {}) {
+  // Answers each complete command in the order it arrives: HELLO with `+OK`
+  // and everything else with `+PONG`. With `answer: false` nothing is ever
+  // answered, so the connection never becomes ready and everything the client
+  // sends stays in its offline queue.
+  function stubServer({ answer = true } = {}) {
     const sockets: net.Socket[] = [];
     const server = net.createServer(socket => {
       sockets.push(socket);
+      const state = { buffer: Buffer.alloc(0) };
       socket.on("data", chunk => {
-        if (!answerHello) return;
-        const text = chunk.toString("latin1");
-        let commands = 0;
-        for (let i = text.indexOf("*"); i !== -1; i = text.indexOf("*", i + 1)) commands++;
-        const helloAt = text.indexOf("HELLO");
-        socket.write((helloAt === -1 ? "" : "+OK\r\n") + "+PONG\r\n".repeat(commands - (helloAt === -1 ? 0 : 1)));
+        if (!answer) return;
+        state.buffer = Buffer.concat([state.buffer, chunk]);
+        const replies = readCommands(state).map(args =>
+          (args[0] ?? "").toUpperCase() === "HELLO" ? "+OK\r\n" : "+PONG\r\n",
+        );
+        if (replies.length > 0) socket.write(replies.join(""));
       });
       socket.on("error", () => {});
     });
@@ -1364,18 +1368,20 @@ describe("Valkey: Offline Queue", () => {
     const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
     try {
       await client.connect();
-      // Six commands go through the queue and are answered, so the queue is
-      // empty again but its read position is no longer at the start.
+      // Six commands go through the queue and are answered. The queue is empty
+      // again, but its read position has moved to slot 6 of the 8 it grew to,
+      // so the next five commands wrap around to the start of its storage.
       await Promise.all(Array.from({ length: 6 }, () => client.ping()));
       const idleCost = estimateShallowMemoryUsageOf(client);
 
       // Five more commands are queued in one turn, before the pipeline
       // flushes them. Their serialized bytes must all show up in the estimate.
-      const key = "k".repeat(1000);
-      const pending = Array.from({ length: 5 }, () => client.get(key));
-      expect(estimateShallowMemoryUsageOf(client) - idleCost).toBeGreaterThanOrEqual(5 * key.length);
+      const key = Buffer.alloc(1000, "k").toString();
+      const pending = Promise.all(Array.from({ length: 5 }, () => client.get(key)));
+      const queuedCost = estimateShallowMemoryUsageOf(client);
 
-      expect(await Promise.all(pending)).toEqual(["PONG", "PONG", "PONG", "PONG", "PONG"]);
+      expect(await pending).toEqual(Array(5).fill("PONG"));
+      expect(queuedCost - idleCost).toBeGreaterThanOrEqual(5 * key.length);
     } finally {
       client.close();
       await stub.close();
@@ -1383,7 +1389,7 @@ describe("Valkey: Offline Queue", () => {
   });
 
   test("close() rejects every command queued while the connection never became ready", async () => {
-    const stub = stubServer({ answerHello: false });
+    const stub = stubServer({ answer: false });
     const port = await stub.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`, { autoReconnect: false });
     try {

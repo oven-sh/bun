@@ -206,8 +206,7 @@ impl UntrustedCommand {
     }
 }
 
-/// `print_scripts` names a package by its folder. For an `npm:` alias that is
-/// not the name `trustedDependencies` and `bun pm trust` take, so say which is.
+/// Follows `print_scripts`, which names the package by its folder.
 fn print_trusted_name_if_aliased(lockfile: &Lockfile, dep_id: DependencyID) {
     let buf = lockfile.buffers.string_bytes.as_slice();
     let alias = lockfile.buffers.dependencies.as_slice()[dep_id as usize]
@@ -255,15 +254,13 @@ impl TrustCommand {
         }
     }
 
-    /// `aliases_named` maps each CLI argument that only matched the alias of an
-    /// `npm:` aliased package to the name that package is trusted under.
-    fn print_aliases_named(aliases_named: &StringArrayHashMap<Box<[u8]>>) {
-        if aliases_named.count() == 0 {
+    fn print_aliased_args(aliased_args: &StringArrayHashMap<Box<[u8]>>) {
+        if aliased_args.count() == 0 {
             return;
         }
         // the listing above went to stdout; keep the notes after it on a terminal
         Output::flush();
-        for (alias, trusted_name) in aliases_named.keys().iter().zip(aliases_named.values()) {
+        for (alias, trusted_name) in aliased_args.keys().iter().zip(aliased_args.values()) {
             bun_core::note!(
                 "{} is an alias of {}, run 'bun pm trust {}' to trust it",
                 bun_core::fmt::quote(alias),
@@ -372,7 +369,8 @@ impl TrustCommand {
         let mut node_modules_path = AutoAbsPath::init_top_level_dir();
 
         let mut package_names_to_add: StringArrayHashMap<()> = StringArrayHashMap::new();
-        let mut aliases_named: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
+        // alias given on the command line -> the name its package is trusted under
+        let mut aliased_args: StringArrayHashMap<Box<[u8]>> = StringArrayHashMap::new();
         let mut scripts_at_depth: ArrayHashMap<usize, Vec<ScriptInfo>> = ArrayHashMap::new();
 
         let mut scripts_count: usize = 0;
@@ -438,7 +436,7 @@ impl TrustCommand {
                     };
                     let skip = !trust_all && !named(trusted_name);
                     if skip && trusted_name != alias && named(alias) {
-                        aliases_named.put(alias, Box::<[u8]>::from(trusted_name))?;
+                        aliased_args.put(alias, Box::<[u8]>::from(trusted_name))?;
                     }
 
                     let total = scripts_list.total as usize;
@@ -465,7 +463,7 @@ impl TrustCommand {
 
         if scripts_at_depth.count() == 0 || package_names_to_add.count() == 0 {
             Self::print_error_zero_untrusted_dependencies_found(trust_all, &packages_to_trust);
-            Self::print_aliases_named(&aliases_named);
+            Self::print_aliased_args(&aliased_args);
             Global::crash();
         }
 
@@ -732,7 +730,7 @@ impl TrustCommand {
                 if total_skipped_packages > 1 { "s" } else { "" },
             );
         }
-        Self::print_aliases_named(&aliases_named);
+        Self::print_aliased_args(&aliased_args);
 
         Ok(())
     }

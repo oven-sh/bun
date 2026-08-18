@@ -1,4 +1,5 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe } from "harness";
 import { Stats, statSync } from "node:fs";
 
 // Node.js's Stats constructor signature (deprecated, DEP0180):
@@ -53,4 +54,53 @@ test("Stats instances share Stats.prototype", () => {
   const bigint = statSync(import.meta.path, { bigint: true });
   expect(Object.getPrototypeOf(bigint).constructor.name).toBe("BigIntStats");
   expect(bigint instanceof Object.getPrototypeOf(bigint).constructor).toBe(true);
+});
+
+// A call resolved through a binding that a closure captures is compiled with the scope object
+// itself in the this slot, and native methods see it raw. isFile() and friends used to read
+// `mode` out of that scope object: a missing binding produced a bogus false, and a `mode` binding
+// still in its temporal dead zone crashed the process. Such a receiver now gets the same answer as
+// any other non-object receiver.
+describe("Stats mode methods called without a receiver", () => {
+  test("a call through a captured binding is treated like an undefined receiver", () => {
+    const stats = statSync(import.meta.path);
+    const bigintStats = statSync(import.meta.dir, { bigint: true });
+    const { isFile } = stats;
+    const { isDirectory } = bigintStats;
+    function keep() {
+      return [isFile, isDirectory];
+    }
+    expect({
+      bare: [isFile(), isDirectory()],
+      undefinedReceiver: [isFile.call(undefined), isDirectory.call(undefined)],
+      statsReceiver: [isFile.call(stats), isDirectory.call(bigintStats)],
+    }).toEqual({
+      bare: [undefined, undefined],
+      undefinedReceiver: [undefined, undefined],
+      statsReceiver: [true, true],
+    });
+    expect(keep()).toEqual([isFile, isDirectory]);
+  });
+
+  test("a call through a scope whose `mode` binding is in its TDZ does not crash", async () => {
+    const src = `
+      const { statSync } = require("node:fs");
+      const { isFile } = statSync(${JSON.stringify(import.meta.path)});
+      const { isDirectory } = statSync(${JSON.stringify(import.meta.dir)}, { bigint: true });
+      console.log(isFile(), isDirectory());
+      let mode = 0;
+      function keep() {
+        return [isFile, isDirectory, mode];
+      }
+      keep();
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "undefined undefined\n", stderr: "", exitCode: 0 });
+  });
 });

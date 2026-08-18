@@ -286,6 +286,26 @@ describe("StringDecoder called without new", () => {
     expect(RealStringDecoder.call(receiver, "latin1")).toBe(receiver);
     expect(receiver.encoding).toBe("latin1");
   });
+
+  // The constructor used to call asObject() on the receiver before checking that it is one, which
+  // aborts a debug build for any non-object receiver. Run it in a child so the abort shows up as a
+  // failed assertion instead of taking the test runner down.
+  it("returns a decoder for an undefined or primitive receiver", async () => {
+    const src = `
+      const { StringDecoder } = require("node:string_decoder");
+      const local = StringDecoder;
+      const results = [local("utf8"), StringDecoder.call(undefined, "utf8"), StringDecoder.call("x", "utf8")];
+      console.log(results.every(d => d instanceof StringDecoder && d.encoding === "utf8"));
+    `;
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "-e", src],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout, stderr, exitCode }).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
+  });
 });
 
 // Node's lastTotal getter is MissingBytes + BufferedBytes; Node clears BufferedBytes when a buffered

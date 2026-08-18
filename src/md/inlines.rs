@@ -31,15 +31,13 @@ pub struct EmphDelim {
     pub(crate) remaining: usize,   // chars not yet consumed
     pub(crate) open_count: usize,  // total chars consumed as opener
     pub(crate) close_count: usize, // total chars consumed as closer
+    pub(crate) close_pos: usize,   // matched `$` openers only: start of the closing run
     // Individual match sizes in order (each is 1 for em, 2 for strong)
     pub(crate) open_sizes: [u8; MAX_EMPH_MATCHES],
     pub(crate) open_num: u8, // number of open matches
     pub(crate) close_sizes: [u8; MAX_EMPH_MATCHES],
     pub(crate) close_num: u8, // number of close matches
     pub(crate) active: bool,  // false if deactivated between matched pairs
-    // `$` openers only: position of the closing run this opener was matched
-    // with. The span's content is `content[pos + count..close_pos]`.
-    pub(crate) close_pos: usize,
 }
 
 impl Default for EmphDelim {
@@ -53,12 +51,12 @@ impl Default for EmphDelim {
             remaining: 0,
             open_count: 0,
             close_count: 0,
+            close_pos: 0,
             open_sizes: [0; MAX_EMPH_MATCHES],
             open_num: 0,
             close_sizes: [0; MAX_EMPH_MATCHES],
             close_num: 0,
             active: true,
-            close_pos: 0,
         }
     }
 }
@@ -335,12 +333,7 @@ impl Parser<'_> {
                     continue;
                 }
 
-                // Math span (`$...$` or `$$...$$`), paired up in
-                // resolve_math_delim. The whole span is emitted here and its
-                // content is verbatim, so the walk skips to the closing run. A
-                // run that did not open a span is text; that includes a closer
-                // whose opener was consumed by a construct emitted before it
-                // (a wiki link whose target contains a `$`).
+                // Math span: emitted whole at its opener, so any other `$` run here is text.
                 if c == b'$' && self.flags.latex_math {
                     while delim_cursor < resolved.len() && resolved[delim_cursor].pos < i {
                         delim_cursor += 1;
@@ -383,17 +376,20 @@ impl Parser<'_> {
 
                         let d = &resolved[delim_cursor];
                         let run_end = d.pos + d.count;
+                        // md4c's MD_FLAG_UNDERLINE: every matched underscore is one U span.
+                        let underline = d.emph_char == b'_' && self.flags.underline;
 
                         // Emit closing tags first (innermost to outermost)
                         if d.emph_char == b'~' {
                             if d.close_count > 0 {
                                 self.leave_span(SpanType::Del)?;
                             }
+                        } else if underline {
+                            for _ in 0..d.close_count {
+                                self.leave_span(SpanType::U)?;
+                            }
                         } else {
-                            self.emit_emph_close_tags(
-                                d.emph_char,
-                                &d.close_sizes[0..d.close_num as usize],
-                            )?;
+                            self.emit_emph_close_tags(&d.close_sizes[0..d.close_num as usize])?;
                         }
 
                         // Emit remaining delimiter chars as text
@@ -407,11 +403,12 @@ impl Parser<'_> {
                             if d.open_count > 0 {
                                 self.enter_span(SpanType::Del)?;
                             }
+                        } else if underline {
+                            for _ in 0..d.open_count {
+                                self.enter_span(SpanType::U)?;
+                            }
                         } else {
-                            self.emit_emph_open_tags(
-                                d.emph_char,
-                                &d.open_sizes[0..d.open_num as usize],
-                            )?;
+                            self.emit_emph_open_tags(&d.open_sizes[0..d.open_num as usize])?;
                         }
 
                         delim_cursor += 1;
@@ -655,28 +652,12 @@ impl Parser<'_> {
         self.renderer.text(text_type, content)
     }
 
-    /// With the underline extension, `_` runs still pair up by the CommonMark
-    /// emphasis rules, but every matched underscore becomes one `U` span
-    /// instead of an em (1) or strong (2) span, as in md4c's MD_FLAG_UNDERLINE.
-    fn emits_underline(&self, emph_char: u8) -> bool {
-        emph_char == b'_' && self.flags.underline
-    }
-
     /// Emit emphasis opening tags (outermost to innermost).
-    pub(crate) fn emit_emph_open_tags(
-        &mut self,
-        emph_char: u8,
-        sizes: &[u8],
-    ) -> crate::types::JsResult<()> {
-        if self.emits_underline(emph_char) {
-            for _ in 0..sizes.iter().map(|&size| usize::from(size)).sum::<usize>() {
-                self.enter_span(SpanType::U)?;
-            }
-            return Ok(());
-        }
+    pub(crate) fn emit_emph_open_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         // First match = innermost, so emit in reverse (outermost first in HTML)
-        for &size in sizes.iter().rev() {
-            if size == 2 {
+        for idx in 0..sizes.len() {
+            let j = sizes.len() - 1 - idx;
+            if sizes[j] == 2 {
                 self.enter_span(SpanType::Strong)?;
             } else {
                 self.enter_span(SpanType::Em)?;
@@ -687,17 +668,7 @@ impl Parser<'_> {
 
     /// Emit emphasis closing tags (innermost to outermost).
     /// First entry in sizes was matched first (innermost), emit in forward order.
-    pub(crate) fn emit_emph_close_tags(
-        &mut self,
-        emph_char: u8,
-        sizes: &[u8],
-    ) -> crate::types::JsResult<()> {
-        if self.emits_underline(emph_char) {
-            for _ in 0..sizes.iter().map(|&size| usize::from(size)).sum::<usize>() {
-                self.leave_span(SpanType::U)?;
-            }
-            return Ok(());
-        }
+    pub(crate) fn emit_emph_close_tags(&mut self, sizes: &[u8]) -> crate::types::JsResult<()> {
         for &size in sizes {
             if size == 2 {
                 self.leave_span(SpanType::Strong)?;
@@ -826,9 +797,7 @@ impl Parser<'_> {
                 });
                 continue;
             }
-            // Math span delimiter (1 or 2 dollars only; a longer run is text).
-            // md4c's rule: a run can open only after whitespace or punctuation
-            // and close only before them, so `$5 and $10` stays text.
+            // Math span delimiter, with md4c's flanking rule (it keeps `$5 and $10` as text).
             if c == b'$' && self.flags.latex_math {
                 let run_start = i;
                 while i < content.len() && content[i] == b'$' {
@@ -1032,10 +1001,7 @@ impl Parser<'_> {
         }
     }
 
-    /// Pair `$` runs the way md4c's `md_analyze_dollar` does: a run closes the
-    /// most recent pending opener only if both runs have the same length
-    /// (`$` vs `$$`); otherwise it becomes a pending opener itself, if it may
-    /// open. A match discards every pending opener, so math spans never nest.
+    /// md4c's `md_analyze_dollar`: only same-length runs pair, and a match drops every pending opener.
     fn resolve_math_delim(
         &mut self,
         idx: usize,
@@ -1053,8 +1019,7 @@ impl Parser<'_> {
                     opener.close_pos = run.pos;
                     self.emph_delims[idx].remaining = 0;
                     self.emph_delims[idx].close_count = run.count;
-                    // The span's content is verbatim, so nothing inside it may
-                    // still pair up with a delimiter outside of it.
+                    // Nothing inside the verbatim span may pair with a delimiter outside it.
                     for inner in &mut self.emph_delims[oi + 1..idx] {
                         inner.active = false;
                     }

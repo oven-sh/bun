@@ -1537,6 +1537,23 @@ describe("underline option", () => {
     expect(underline(input)).toBe(expected);
   });
 
+  // The em/strong emitter records at most MAX_EMPH_MATCHES (6) matches per
+  // delimiter run; underline is emitted from the consumed character counts
+  // instead, so long runs get exactly one <u> per underscore on both sides.
+  const fill = (n: number, unit: string) => Buffer.alloc(n * unit.length, unit).toString();
+
+  test("long runs underline once per underscore", () => {
+    expect(underline(`${fill(14, "_")}foo${fill(14, "_")}\n`)).toBe(
+      `<p>${fill(14, "<u>")}foo${fill(14, "</u>")}</p>\n`,
+    );
+  });
+
+  test("one opener consumed by many closers stays balanced", () => {
+    expect(underline(`${fill(14, "_")}a__ b__ c__ d__ e__ f__ g__\n`)).toBe(
+      `<p>${fill(14, "<u>")}a</u></u> b</u></u> c</u></u> d</u></u> e</u></u> f</u></u> g</u></u></p>\n`,
+    );
+  });
+
   test("ansi() enables underline", () => {
     expect(Markdown.ansi("_a_ *b*\n")).toBe("\x1b[4ma\x1b[24m \x1b[3mb\x1b[23m\x1b[0m\n");
   });

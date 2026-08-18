@@ -370,8 +370,8 @@ impl<'a> Parser<'a> {
     //   emit_text, emit_emph_open_tags, emit_emph_close_tags,
     //   find_code_span_end, normalize_code_span_content, is_left_flanking,
     //   is_right_flanking, can_open_emphasis, can_close_emphasis,
-    //   collect_emphasis_delimiters, resolve_emphasis_delimiters,
-    //   resolve_math_delim, find_entity, find_html_tag
+    //   collect_emphasis_delimiters, resolve_emphasis_delimiters, find_entity,
+    //   find_html_tag, resolve_math_delim
     //
     // links.rs — impl Parser:
     //   compute_bracket_matches, match_bracket, scan_bracket_close,

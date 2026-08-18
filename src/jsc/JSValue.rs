@@ -1215,12 +1215,21 @@ impl JSValue {
     /// Own/prototype lookup,
     /// `null`/`undefined` → `None`, non-string → `ERR_INVALID_ARG_TYPE`,
     /// otherwise return the UTF-8 slice.
+    #[inline]
     pub fn get_optional_slice(
         self,
         global: &JSGlobalObject,
         property: impl AsRef<[u8]>,
     ) -> JsResult<Option<bun_core::ZigStringSlice>> {
-        let property = property.as_ref();
+        self.get_optional_slice_impl(global, property.as_ref())
+    }
+
+    #[inline(never)]
+    fn get_optional_slice_impl(
+        self,
+        global: &JSGlobalObject,
+        property: &[u8],
+    ) -> JsResult<Option<bun_core::ZigStringSlice>> {
         match self.get(global, property)? {
             Some(v) if !v.is_undefined_or_null() => {
                 if !v.is_string() {

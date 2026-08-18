@@ -209,7 +209,7 @@ pub mod dir_iterator {
         }
         #[cfg(not(windows))]
         #[inline]
-        pub(crate) fn as_zstr(&self) -> &bun_core::ZStr {
+        pub fn as_zstr(&self) -> &bun_core::ZStr {
             // SAFETY: `ptr[len] == 0` (kernel NUL-terminates `d_name`); see
             // `borrow()` debug_assert.
             unsafe { bun_core::ZStr::from_raw(self.ptr.as_ptr(), self.len) }

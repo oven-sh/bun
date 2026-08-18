@@ -1561,6 +1561,7 @@ pub fn init(
     // Step 1. Find the nearest package.json directory
     //
     // We will walk up from the cwd, trying to find the nearest package.json file.
+    let mut no_project = false;
     let root_package_json_file = 'root_package_json_file: {
         let mut this_cwd: &[u8] = original_cwd;
         let mut created_package_json = false;
@@ -1643,6 +1644,12 @@ pub fn init(
                     break 'child attempt_to_create_package_json_and_open()?;
                 }
             }
+            if cli.no_project_ok {
+                // Registry-only commands (`bun pm diff a b`) run fine from any folder: no root file, no workspaces.
+                this_cwd = original_cwd;
+                no_project = true;
+                break 'child bun_sys::File::from_fd(bun_sys::Fd::INVALID);
+            }
             return Err(crate::Error::MissingPackageJSON);
         };
 
@@ -1664,7 +1671,7 @@ pub fn init(
 
         // Check if this is a workspace; if so, use root package
         if subcommand.should_chdir_to_root() {
-            if !created_package_json {
+            if !created_package_json && !no_project {
                 while let Some(parent) = bun_core::dirname(this_cwd) {
                     let parent_without_trailing_slash = strings::without_trailing_slash(parent);
                     let mut parent_path_buf = PathBuffer::uninit();
@@ -1851,8 +1858,14 @@ pub fn init(
         // bun_sys exposes the non-Z `get_fd_path`;
         // append the NUL ourselves so the static `&ZStr` invariant holds.
         let root_buf = &mut *ROOT_PACKAGE_JSON_PATH_BUF.get();
-        let p = bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?;
-        let plen = p.len();
+        let plen = if no_project {
+            // Where the file would be; nothing reads it in this mode.
+            let p = original_package_json_path.as_bytes();
+            root_buf[..p.len()].copy_from_slice(p);
+            p.len()
+        } else {
+            bun_sys::get_fd_path(root_package_json_file.handle, root_buf)?.len()
+        };
         root_buf[plen] = 0;
         ROOT_PACKAGE_JSON_PATH.write(ZStr::from_raw(root_buf.as_ptr(), plen));
     }

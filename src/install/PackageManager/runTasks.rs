@@ -41,47 +41,38 @@ use crate::isolated_install::store as Store;
 // Callbacks trait
 // ──────────────────────────────────────────────────────────────────────────
 //
-// A single trait with associated consts gating the
-// optional hooks (default-unreachable bodies), plus associated-const tags for
-// the `Ctx` identity checks. The trait branches on three `Ctx` identities
-// (`PackageInstaller`, `Store.Installer`, neither), but there are six impls
-// across four `Ctx` shapes: `PackageInstaller` (`HoistedRunTasksCallbacks`),
-// `Store::Installer` (`StoreRunTasksCallbacks`), unit
-// (`VoidRunTasksCallbacks`, `ManifestsOnlyCallbacks`, `InstallWaitCallbacks`),
-// and `Queue` (`QueueRunTasksCallbacks` in `src/jsc/AsyncModule.rs`).
-pub trait RunTasksCallbacks {
-    /// Mirrors `Ctx` (the `extract_ctx` value type).
-    type Ctx;
+// Dyn-compatible so `run_tasks` is compiled once: the impls are the ctx
+// types themselves (`PackageInstaller`, `Store::Installer`, `Queue`) or unit
+// markers, and `flags()` says which optional hooks are live. Hook defaults
+// are unreachable and only called when the matching flag is set.
 
-    const PROGRESS_BAR: bool = false;
-    const MANIFESTS_ONLY: bool = false;
+#[derive(Clone, Copy, Default)]
+pub struct RunTasksFlags {
+    pub progress_bar: bool,
+    pub manifests_only: bool,
+    pub has_on_extract: bool,
+    pub has_on_package_manifest_error: bool,
+    pub has_on_package_download_error: bool,
+    pub has_on_resolve: bool,
+    /// ctx is a `PackageInstaller`
+    pub is_package_installer: bool,
+    /// ctx is a `Store::Installer`
+    pub is_store_installer: bool,
+}
 
-    const HAS_ON_EXTRACT: bool = false;
-    const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = false;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = false;
-    const HAS_ON_RESOLVE: bool = false;
+/// `'a` is the installer's inner lifetime; only the two `as_*` downcasts use it.
+pub trait RunTasksCallbacks<'a> {
+    fn flags(&self) -> RunTasksFlags;
 
-    /// `Ctx == *PackageInstaller`
-    const IS_PACKAGE_INSTALLER: bool = false;
-    /// `Ctx == *Store.Installer`
-    const IS_STORE_INSTALLER: bool = false;
-
-    fn on_package_manifest_error(
-        _ctx: &mut Self::Ctx,
-        _name: &[u8],
-        _err: crate::Error,
-        _url: &[u8],
-    ) {
+    fn on_package_manifest_error(&mut self, _name: &[u8], _err: crate::Error, _url: &[u8]) {
         unreachable!()
     }
 
     // `onPackageDownloadError` is called with two distinct shapes depending
-    // on the `Ctx`: `task.task_id: Task::Id` for the store installer,
-    // `package_id: PackageID` otherwise. Static dispatch via two trait
-    // methods lets impls receive the correctly-typed id without a
-    // `Task::Id` round-trip pun.
+    // on the ctx: `task.task_id: Task::Id` for the store installer,
+    // `package_id: PackageID` otherwise.
     fn on_package_download_error_store(
-        _ctx: &mut Self::Ctx,
+        &mut self,
         _task_id: Task::Id,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
@@ -91,7 +82,7 @@ pub trait RunTasksCallbacks {
         unreachable!()
     }
     fn on_package_download_error_pkg(
-        _ctx: &mut Self::Ctx,
+        &mut self,
         _package_id: PackageID,
         _name: &[u8],
         _resolution: &bun_install::Resolution,
@@ -102,7 +93,7 @@ pub trait RunTasksCallbacks {
     }
 
     fn on_extract_package_installer(
-        _ctx: &mut Self::Ctx,
+        &mut self,
         _task_id: Task::Id,
         _dependency_id: DependencyID,
         _data: &mut bun_install::ExtractData,
@@ -110,36 +101,34 @@ pub trait RunTasksCallbacks {
     ) {
         unreachable!()
     }
-    fn on_extract_store_installer(_ctx: &mut Self::Ctx, _task_id: Task::Id) {
+    fn on_extract_store_installer(&mut self, _task_id: Task::Id) {
         unreachable!()
     }
 
-    fn on_resolve(_ctx: &mut Self::Ctx) {
+    fn on_resolve(&mut self) {
         unreachable!()
     }
 
-    /// Reinterpret `&mut Self::Ctx` as `&mut PackageInstaller` — only valid
-    /// when `IS_PACKAGE_INSTALLER` is true. Default body is unreachable; the `PackageInstaller`
-    /// impl overrides it with an identity cast.
-    fn as_package_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut PackageInstaller<'a> {
+    /// Only valid when `flags().is_package_installer`.
+    fn as_package_installer(&mut self) -> &mut PackageInstaller<'a> {
         unreachable!()
     }
 
-    /// Reinterpret `&mut Self::Ctx` as `&mut Store::Installer` — only valid
-    /// when `IS_STORE_INSTALLER` is true. Default body is unreachable; the `Store::Installer`
-    /// impl overrides it with an identity cast.
-    fn as_store_installer<'a>(_ctx: &'a mut Self::Ctx) -> &'a mut Store::Installer<'a> {
+    /// Only valid when `flags().is_store_installer`.
+    fn as_store_installer(&mut self) -> &mut Store::Installer<'a> {
         unreachable!()
     }
 }
 
 /// Called from isolated_install on the main thread.
-pub fn run_tasks<C: RunTasksCallbacks>(
+#[inline(never)]
+pub fn run_tasks(
     manager: &mut PackageManager,
-    extract_ctx: &mut C::Ctx,
+    extract_ctx: &mut dyn RunTasksCallbacks<'_>,
     install_peer: bool,
     log_level: Options::LogLevel,
 ) -> crate::Result<()> {
+    let flags = extract_ctx.flags();
     // `Cell<bool>` so the `scopeguard::defer!` below can read it via `&self`
     // while the loop body sets it — no raw-ptr provenance dance needed.
     let has_updated_this_run = Cell::new(false);
@@ -159,7 +148,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
     // use of `manager`/`extract_ctx` below is a child of `*_ptr`, so the
     // pointers stay valid until the guards fire.
     let manager_ptr: *mut PackageManager = manager;
-    let extract_ctx_ptr: *mut C::Ctx = extract_ctx;
+    let extract_ctx_ptr: *mut dyn RunTasksCallbacks<'_> = extract_ctx;
     // SAFETY: `manager_ptr`/`extract_ctx_ptr` were just derived from unique
     // `&mut` fn params; reborrowing here yields the sole live `&mut` to each
     // for the body. Dropped before the guards reborrow the same pointers.
@@ -174,7 +163,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         if log_level.show_progress() {
             manager.start_progress_bar_if_none();
 
-            if C::PROGRESS_BAR {
+            if flags.progress_bar {
                 let completed_items = (manager.total_tasks - manager.pending_task_count()) as usize;
                 // SAFETY: `downloads_node` set by `start_progress_bar_if_none`;
                 // points into `manager.progress` which is live.
@@ -209,14 +198,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         ptask.run_from_main_thread(manager, log_level)?;
         if let PatchTaskCallback::Apply(apply) = &mut ptask.callback {
             if apply.logger.errors == 0 {
-                if C::HAS_ON_EXTRACT {
+                if flags.has_on_extract {
                     if let Some(_task_id) = apply.task_id {
                         // autofix
-                    } else if C::IS_PACKAGE_INSTALLER {
+                    } else if flags.is_package_installer {
                         if let Some(ctx) = apply.install_context.as_mut() {
                             // `extract_ctx` *is* the installer here.
                             let installer: &mut PackageInstaller =
-                                C::as_package_installer(extract_ctx);
+                                extract_ctx.as_package_installer();
                             let path = core::mem::take(&mut ctx.path);
                             installer.node_modules.path = path;
                             installer.current_tree_id = ctx.tree_id;
@@ -224,7 +213,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let resolution =
                                 &manager.lockfile.packages.items_resolution()[pkg_id as usize];
 
-                            installer.install_package_with_name_and_resolution::<false, false>(
+                            installer.install_package_with_name_and_resolution(
+                                false,
+                                false,
                                 ctx.dependency_id,
                                 pkg_id,
                                 log_level,
@@ -241,13 +232,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
         }
     }
 
-    if C::IS_STORE_INSTALLER {
+    if flags.is_store_installer {
         // We obtain the
         // installer via the trait downcast and access PackageManager only
         // through `installer.manager` for the duration of this block, never
         // via the function-scope `manager` shadow, so the two `&mut` do not
         // overlap in use.
-        let installer: &mut Store::Installer<'_> = C::as_store_installer(extract_ctx);
+        let installer: &mut Store::Installer<'_> = extract_ctx.as_store_installer();
         let installer_ptr: *mut Store::Installer<'_> = installer;
         let batch = installer.task_queue.pop_batch();
         let mut iter = batch.iterator();
@@ -421,8 +412,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .map(crate::Error::from)
                         .unwrap_or(crate::Error::HTTPError);
 
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, &task.url_buf);
+                    if flags.has_on_package_manifest_error {
+                        extract_ctx.on_package_manifest_error(name, err, &task.url_buf);
                     } else {
                         let fmt_args = (err.name(), name);
                         if manager.is_network_task_required(task.task_id) {
@@ -462,7 +453,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 let response = &metadata.response;
 
                 if response.status_code > 399 {
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
+                    if flags.has_on_package_manifest_error {
                         let err: PackageManifestError = match response.status_code {
                             400 => PackageManifestError::PackageManifestHTTP400,
                             401 => PackageManifestError::PackageManifestHTTP401,
@@ -473,7 +464,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             _ => PackageManifestError::PackageManifestHTTP5xx,
                         };
 
-                        C::on_package_manifest_error(extract_ctx, name, err.into(), &task.url_buf);
+                        extract_ctx.on_package_manifest_error(name, err.into(), &task.url_buf);
 
                         continue;
                     }
@@ -575,7 +566,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             );
                         }
 
-                        if C::MANIFESTS_ONLY {
+                        if flags.manifests_only {
                             continue;
                         }
 
@@ -586,7 +577,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                         let dependency_list = core::mem::take(dependency_list_entry);
 
-                        process_dependency_list_for_ctx::<C>(
+                        process_dependency_list_for_ctx(
                             manager,
                             dependency_list,
                             extract_ctx,
@@ -714,10 +705,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
-                                extract_ctx,
+                    if flags.has_on_package_download_error {
+                        if flags.is_store_installer {
+                            extract_ctx.on_package_download_error_store(
                                 task.task_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -727,8 +717,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            C::on_package_download_error_pkg(
-                                extract_ctx,
+                            extract_ctx.on_package_download_error_pkg(
                                 package_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -793,7 +782,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let is_required = manager.is_network_task_required(task.task_id);
                     manager.mark_network_task_failed(task.task_id);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
+                    if flags.has_on_package_download_error {
                         let err = match response.status_code {
                             400 => crate::Error::TarballHTTP400,
                             401 => crate::Error::TarballHTTP401,
@@ -804,9 +793,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             _ => crate::Error::TarballHTTP5xx,
                         };
 
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
-                                extract_ctx,
+                        if flags.is_store_installer {
+                            extract_ctx.on_package_download_error_store(
                                 task.task_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -816,8 +804,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         } else {
                             let package_id = manager.lockfile.buffers.resolutions
                                 [extract.dependency_id as usize];
-                            C::on_package_download_error_pkg(
-                                extract_ctx,
+                            extract_ctx.on_package_download_error_pkg(
                                 package_id,
                                 extract.name.slice(),
                                 &extract.resolution,
@@ -968,8 +955,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     let name = req.name.slice();
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, &req.network.url_buf);
+                    if flags.has_on_package_manifest_error {
+                        extract_ctx.on_package_manifest_error(name, err, &req.network.url_buf);
                     } else {
                         bun_ast::add_error_pretty!(
                             manager.log_mut(),
@@ -992,14 +979,14 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     m
                 };
                 let name_hash = manifest.pkg.name.hash;
-                let progress_name: Option<Vec<u8>> = (!C::MANIFESTS_ONLY
+                let progress_name: Option<Vec<u8>> = (!flags.manifests_only
                     && log_level.show_progress()
                     && !has_updated_this_run.get())
                 .then(|| manifest.name().to_vec());
 
                 manager.manifests.insert(name_hash, manifest)?;
 
-                if C::MANIFESTS_ONLY {
+                if flags.manifests_only {
                     continue;
                 }
 
@@ -1009,7 +996,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     .expect("infallible: task queued");
                 let dependency_list = core::mem::take(dependency_list_entry);
 
-                process_dependency_list_for_ctx::<C>(
+                process_dependency_list_for_ctx(
                     manager,
                     dependency_list,
                     extract_ctx,
@@ -1078,7 +1065,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     // `local_tarball` tasks (they never populate the map).
                     manager.mark_network_task_failed(task.id);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR {
+                    if flags.has_on_package_download_error {
                         // SAFETY: `task.tag` selects the active `task.request` union arm.
                         let fail_url: &[u8] = unsafe {
                             match task.tag {
@@ -1089,23 +1076,13 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                 _ => unreachable!(),
                             }
                         };
-                        if C::IS_STORE_INSTALLER {
-                            C::on_package_download_error_store(
-                                extract_ctx,
-                                task.id,
-                                alias,
-                                resolution,
-                                err,
-                                fail_url,
+                        if flags.is_store_installer {
+                            extract_ctx.on_package_download_error_store(
+                                task.id, alias, resolution, err, fail_url,
                             );
                         } else {
-                            C::on_package_download_error_pkg(
-                                extract_ctx,
-                                package_id,
-                                alias,
-                                resolution,
-                                err,
-                                fail_url,
+                            extract_ctx.on_package_download_error_pkg(
+                                package_id, alias, resolution, err, fail_url,
                             );
                         }
                         continue;
@@ -1133,11 +1110,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 manager.extracted_count += 1;
                 bun_core::analytics::Features::extracted_packages_inc();
 
-                if C::HAS_ON_EXTRACT {
-                    if C::IS_PACKAGE_INSTALLER {
-                        C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();
-                        C::on_extract_package_installer(
-                            extract_ctx,
+                if flags.has_on_extract {
+                    if flags.is_package_installer {
+                        extract_ctx
+                            .as_package_installer()
+                            .fix_cached_lockfile_package_slices();
+                        extract_ctx.on_extract_package_installer(
                             task.id,
                             dependency_id,
                             // SAFETY: `task.tag` is Extract/LocalTarball — `data.extract`
@@ -1145,8 +1123,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &mut task.data.extract },
                             log_level,
                         );
-                    } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                    } else if flags.is_store_installer {
+                        extract_ctx.on_extract_store_installer(task.id);
                     } else {
                         unreachable!("unexpected context type");
                     }
@@ -1176,10 +1154,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         scopeguard::defer! {
-                            if C::HAS_ON_RESOLVE && any_root.get() {
+                            if flags.has_on_resolve && any_root.get() {
                                 // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                                 // root for `extract_ctx`; the body shadow is dead at guard time.
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                                unsafe { &mut *extract_ctx_ptr }.on_resolve();
                             }
                         };
 
@@ -1258,9 +1236,9 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if C::HAS_ON_PACKAGE_MANIFEST_ERROR {
-                        C::on_package_manifest_error(extract_ctx, name, err, url);
-                    } else if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
+                    if flags.has_on_package_manifest_error {
+                        extract_ctx.on_package_manifest_error(name, err, url);
+                    } else if flags.has_on_package_download_error && flags.is_store_installer {
                         // The isolated installer queued its entry contexts
                         // under `checkout_id`, not `clone_id`. A failed clone
                         // never reaches checkout, so drain every waiting
@@ -1290,8 +1268,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                                     manager.lockfile.str(&res_git.resolved),
                                 );
                                 drained_any = true;
-                                C::on_package_download_error_store(
-                                    extract_ctx,
+                                extract_ctx.on_package_download_error_store(
                                     checkout_id,
                                     name,
                                     res,
@@ -1311,8 +1288,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             let resolved = &clone.res.git().resolved;
                             let checkout_id =
                                 Task::Id::for_git_checkout(url, manager.lockfile.str(resolved));
-                            C::on_package_download_error_store(
-                                extract_ctx,
+                            extract_ctx.on_package_download_error_store(
                                 checkout_id,
                                 name,
                                 &clone.res,
@@ -1335,7 +1311,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
 
                 manager.git_repositories.insert(task.id, repo_fd);
 
-                if C::HAS_ON_EXTRACT && C::IS_PACKAGE_INSTALLER {
+                if flags.has_on_extract && flags.is_package_installer {
                     // Installing! The clone task is shared by every dependency on
                     // this repo URL; enqueue a checkout per waiter, not just one.
                     let Some(waiters) = manager.task_queue.remove(&task.id) else {
@@ -1401,7 +1377,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         .remove(&task.id)
                         .expect("infallible: task queued");
 
-                    process_dependency_list_for_ctx::<C>(
+                    process_dependency_list_for_ctx(
                         manager,
                         dependency_list,
                         extract_ctx,
@@ -1430,13 +1406,12 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                 if task.status == Task::Status::Fail {
                     let err = task.err.unwrap_or(crate::Error::Failed);
 
-                    if C::HAS_ON_PACKAGE_DOWNLOAD_ERROR && C::IS_STORE_INSTALLER {
+                    if flags.has_on_package_download_error && flags.is_store_installer {
                         // SAFETY: `resolution.tag == Git` — git-checkout tasks are
                         // only enqueued for git resolutions; `value.git` is the
                         // active union arm.
                         let repo = &resolution.git().repo;
-                        C::on_package_download_error_store(
-                            extract_ctx,
+                        extract_ctx.on_package_download_error_store(
                             task.id,
                             alias.slice(),
                             resolution,
@@ -1457,16 +1432,17 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                     continue;
                 }
 
-                if C::HAS_ON_EXTRACT {
+                if flags.has_on_extract {
                     // We've populated the cache, package already exists in memory. Call the package installer callback
                     // and don't enqueue dependencies
-                    if C::IS_PACKAGE_INSTALLER {
+                    if flags.is_package_installer {
                         // TODO(dylan-conway) most likely don't need to call this now that the package isn't appended, but
                         // keeping just in case for now
-                        C::as_package_installer(extract_ctx).fix_cached_lockfile_package_slices();
+                        extract_ctx
+                            .as_package_installer()
+                            .fix_cached_lockfile_package_slices();
 
-                        C::on_extract_package_installer(
-                            extract_ctx,
+                        extract_ctx.on_extract_package_installer(
                             task.id,
                             git_checkout.dependency_id,
                             // SAFETY: `task.tag == GitCheckout` — `data.git_checkout`
@@ -1474,8 +1450,8 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                             unsafe { &mut task.data.git_checkout },
                             log_level,
                         );
-                    } else if C::IS_STORE_INSTALLER {
-                        C::on_extract_store_installer(extract_ctx, task.id);
+                    } else if flags.is_store_installer {
+                        extract_ctx.on_extract_store_installer(task.id);
                     } else {
                         unreachable!("unexpected context type");
                     }
@@ -1502,10 +1478,10 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         };
 
                         scopeguard::defer! {
-                            if C::HAS_ON_RESOLVE && any_root.get() {
+                            if flags.has_on_resolve && any_root.get() {
                                 // SAFETY: `extract_ctx_ptr` is the function-scope provenance
                                 // root for `extract_ctx`; the body shadow is dead at guard time.
-                                C::on_resolve(unsafe { &mut *extract_ctx_ptr });
+                                unsafe { &mut *extract_ctx_ptr }.on_resolve();
                             }
                         };
 
@@ -1540,7 +1516,7 @@ pub fn run_tasks<C: RunTasksCallbacks>(
                         }
 
                         // Invariant: this branch only reachable when !HAS_ON_EXTRACT.
-                        debug_assert!(!C::HAS_ON_EXTRACT, "ctx should be void");
+                        debug_assert!(!flags.has_on_extract, "ctx should be void");
                     }
                 }
 
@@ -1956,21 +1932,21 @@ impl PackageManager {
 /// Adapter wrapping the existing `PackageManager::process_dependency_list` so
 /// it can be driven by a `RunTasksCallbacks` impl, dispatching `on_resolve`
 /// if any root dep changed.
-fn process_dependency_list_for_ctx<C: RunTasksCallbacks>(
+fn process_dependency_list_for_ctx(
     manager: &mut PackageManager,
     dependency_list: TaskCallbackList,
-    extract_ctx: &mut C::Ctx,
+    extract_ctx: &mut dyn RunTasksCallbacks<'_>,
     install_peer: bool,
 ) -> crate::Result<()> {
-    let ctx_ptr: *mut C::Ctx = extract_ctx;
+    let ctx_ptr: *mut dyn RunTasksCallbacks<'_> = extract_ctx;
     manager.process_dependency_list(
         dependency_list,
         (),
-        if C::HAS_ON_RESOLVE {
+        if extract_ctx.flags().has_on_resolve {
             Some(move |()| {
                 // SAFETY: `ctx_ptr` derived from a unique `&mut` that outlives
                 // this closure; `process_dependency_list` does not alias it.
-                C::on_resolve(unsafe { &mut *ctx_ptr });
+                unsafe { &mut *ctx_ptr }.on_resolve();
             })
         } else {
             None

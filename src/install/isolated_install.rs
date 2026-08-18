@@ -133,38 +133,33 @@ impl<'a> std::io::Write for WyhashWriter<'a> {
     }
 }
 
-/// `RunTasksCallbacks` impl for the isolated-install loop, with
-/// `Ctx == store::Installer`.
-pub(crate) struct StoreRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
+impl<'a> run_tasks::RunTasksCallbacks<'a> for store::Installer<'a> {
+    fn flags(&self) -> run_tasks::RunTasksFlags {
+        run_tasks::RunTasksFlags {
+            has_on_extract: true,
+            has_on_package_download_error: true,
+            is_store_installer: true,
+            ..Default::default()
+        }
+    }
 
-impl<'a> run_tasks::RunTasksCallbacks for StoreRunTasksCallbacks<'a> {
-    type Ctx = store::Installer<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const IS_STORE_INSTALLER: bool = true;
-
-    fn on_extract_store_installer(ctx: &mut Self::Ctx, task_id: Task::Id) {
-        ctx.on_package_extracted(task_id);
+    fn on_extract_store_installer(&mut self, task_id: Task::Id) {
+        self.on_package_extracted(task_id);
     }
 
     fn on_package_download_error_store(
-        ctx: &mut Self::Ctx,
+        &mut self,
         id: Task::Id,
         name: &[u8],
         resolution: &Resolution,
         err: crate::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(id, name, resolution, err, url);
+        self.on_package_download_error(id, name, resolution, err, url);
     }
 
-    fn as_store_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut store::Installer<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut Installer<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a`
-        // borrows remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<store::Installer<'x>>() }
+    fn as_store_installer(&mut self) -> &mut store::Installer<'a> {
+        self
     }
 }
 
@@ -182,12 +177,7 @@ impl<'a, 'b> Wait<'a, 'b> {
         let log_level = pkg_manager.options.log_level;
         // `run_tasks` must not call `installer.manager_mut()` — `pkg_manager`
         // is the live `&mut PackageManager` for this call.
-        if let Err(err) = run_tasks::run_tasks::<StoreRunTasksCallbacks>(
-            pkg_manager,
-            self.installer,
-            true,
-            log_level,
-        ) {
+        if let Err(err) = run_tasks::run_tasks(pkg_manager, self.installer, true, log_level) {
             self.err = Some(err);
             return true;
         }

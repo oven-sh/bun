@@ -927,9 +927,9 @@ impl<'a> PackageInstaller<'a> {
                     self.current_tree_id = context.tree_id;
 
                     // Re-verify: a parent reinstall may have deleted a deferred entry.
-                    const NEEDS_VERIFY: bool = true;
-                    const IS_PENDING_PACKAGE_INSTALL: bool = true;
-                    self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
+                    self.install_package_with_name_and_resolution(
+                        /* needs_verify */ true,
+                        /* is_pending_package_install */ true,
                         // This id might be different from the id used to enqueue the task. Important
                         // to use the correct one because the package might be aliased with a different
                         // name
@@ -1163,9 +1163,9 @@ impl<'a> PackageInstaller<'a> {
                 // `DependencyInstallContext.path: Vec<u8>` — clone since `cb` is `&`.
                 self.node_modules.path.clone_from(&context.path);
                 self.current_tree_id = context.tree_id;
-                const NEEDS_VERIFY: bool = false;
-                const IS_PENDING_PACKAGE_INSTALL: bool = false;
-                self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
+                self.install_package_with_name_and_resolution(
+                    /* needs_verify */ false,
+                    /* is_pending_package_install */ false,
                     // This id might be different from the id used to enqueue the task. Important
                     // to use the correct one because the package might be aliased with a different
                     // name
@@ -1259,15 +1259,14 @@ impl<'a> PackageInstaller<'a> {
         count
     }
 
-    pub(crate) fn install_package_with_name_and_resolution<
+    pub(crate) fn install_package_with_name_and_resolution(
+        &mut self,
         // false when coming from download. if the package was downloaded
         // it was already determined to need an install
-        const NEEDS_VERIFY: bool,
+        needs_verify: bool,
         // we don't want to allow more package installs through
         // pending packages if we're already draining them.
-        const IS_PENDING_PACKAGE_INSTALL: bool,
-    >(
-        &mut self,
+        is_pending_package_install: bool,
         dependency_id: DependencyID,
         package_id: PackageID,
         log_level: Options::LogLevel,
@@ -1300,7 +1299,7 @@ impl<'a> PackageInstaller<'a> {
             }
             self.summary.fail += 1;
             self.increment_tree_install_count(
-                !IS_PENDING_PACKAGE_INSTALL,
+                !is_pending_package_install,
                 self.current_tree_id,
                 log_level,
             );
@@ -1506,7 +1505,7 @@ impl<'a> PackageInstaller<'a> {
                         }
                         self.summary.fail += 1;
                         self.increment_tree_install_count(
-                            !IS_PENDING_PACKAGE_INSTALL,
+                            !is_pending_package_install,
                             self.current_tree_id,
                             log_level,
                         );
@@ -1589,7 +1588,7 @@ impl<'a> PackageInstaller<'a> {
                     panic!("Internal assertion failure: unexpected resolution tag");
                 }
                 self.increment_tree_install_count(
-                    !IS_PENDING_PACKAGE_INSTALL,
+                    !is_pending_package_install,
                     self.current_tree_id,
                     log_level,
                 );
@@ -1599,7 +1598,7 @@ impl<'a> PackageInstaller<'a> {
 
         let needs_install = self.force_install
             || self.skip_verify_installed_version_number
-            || !NEEDS_VERIFY
+            || !needs_verify
             || remove_patch
             || !installer.verify(resolution, &self.root_node_modules_folder);
 
@@ -1653,11 +1652,11 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_with_invalid_url(is_pending_package_install, log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    !is_pending_package_install,
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1685,11 +1684,11 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_with_invalid_url(is_pending_package_install, log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    !is_pending_package_install,
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1723,11 +1722,11 @@ impl<'a> PackageInstaller<'a> {
                             Ok(()) => {}
                             Err(ForTarballError::OutOfMemory) => bun_core::out_of_memory(),
                             Err(ForTarballError::InvalidURL) => {
-                                self.fail_with_invalid_url::<IS_PENDING_PACKAGE_INSTALL>(log_level)
+                                self.fail_with_invalid_url(is_pending_package_install, log_level)
                             }
                             Err(ForTarballError::AlreadyFailed) => self
                                 .increment_tree_install_count(
-                                    !IS_PENDING_PACKAGE_INSTALL,
+                                    !is_pending_package_install,
                                     self.current_tree_id,
                                     log_level,
                                 ),
@@ -1738,7 +1737,7 @@ impl<'a> PackageInstaller<'a> {
                             panic!("unreachable, handled above");
                         }
                         self.increment_tree_install_count(
-                            !IS_PENDING_PACKAGE_INSTALL,
+                            !is_pending_package_install,
                             self.current_tree_id,
                             log_level,
                         );
@@ -1771,7 +1770,7 @@ impl<'a> PackageInstaller<'a> {
                 }
             }
 
-            if !IS_PENDING_PACKAGE_INSTALL
+            if !is_pending_package_install
                 && !Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
@@ -1810,7 +1809,7 @@ impl<'a> PackageInstaller<'a> {
                     }
                     self.summary.fail += 1;
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        !is_pending_package_install,
                         self.current_tree_id,
                         log_level,
                     );
@@ -2075,7 +2074,7 @@ impl<'a> PackageInstaller<'a> {
                     }
 
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        !is_pending_package_install,
                         self.current_tree_id,
                         log_level,
                     );
@@ -2090,7 +2089,7 @@ impl<'a> PackageInstaller<'a> {
                     // even if the package failed to install, we still need to increment the install
                     // counter for this tree
                     self.increment_tree_install_count(
-                        !IS_PENDING_PACKAGE_INSTALL,
+                        !is_pending_package_install,
                         self.current_tree_id,
                         log_level,
                     );
@@ -2222,7 +2221,7 @@ impl<'a> PackageInstaller<'a> {
         } else {
             // Same gate as the `needs_install` branch: a pending parent's
             // `uninstall_before_install` would delete this verified package.
-            if !IS_PENDING_PACKAGE_INSTALL
+            if !is_pending_package_install
                 && !Self::can_install_package_for_tree(
                     &self.completed_trees,
                     self.lockfile().buffers.trees.as_slice(),
@@ -2378,20 +2377,21 @@ impl<'a> PackageInstaller<'a> {
             // only used in the `needs_install` branch's EACCES handler).
             destination_dir.close();
             self.increment_tree_install_count(
-                !IS_PENDING_PACKAGE_INSTALL,
+                !is_pending_package_install,
                 self.current_tree_id,
                 log_level,
             );
         }
     }
 
-    fn fail_with_invalid_url<const IS_PENDING_PACKAGE_INSTALL: bool>(
+    fn fail_with_invalid_url(
         &mut self,
+        is_pending_package_install: bool,
         log_level: Options::LogLevel,
     ) {
         self.summary.fail += 1;
         self.increment_tree_install_count(
-            !IS_PENDING_PACKAGE_INSTALL,
+            !is_pending_package_install,
             self.current_tree_id,
             log_level,
         );
@@ -2511,9 +2511,9 @@ impl<'a> PackageInstaller<'a> {
         // `&mut self` call.
         let resolutions = self.resolutions;
 
-        const NEEDS_VERIFY: bool = true;
-        const IS_PENDING_PACKAGE_INSTALL: bool = false;
-        self.install_package_with_name_and_resolution::<NEEDS_VERIFY, IS_PENDING_PACKAGE_INSTALL>(
+        self.install_package_with_name_and_resolution(
+            /* needs_verify */ true,
+            /* is_pending_package_install */ false,
             dep_id,
             package_id,
             log_level,

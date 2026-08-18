@@ -26,32 +26,27 @@ use crate::package_manager_real::ProgressStrings;
 use crate::package_manager_real::run_tasks;
 use crate::package_manager_task as Task;
 
-/// `RunTasksCallbacks` impl for the hoisted-install loop, with
-/// `Ctx == PackageInstaller`.
-pub(crate) struct HoistedRunTasksCallbacks<'a>(core::marker::PhantomData<&'a mut ()>);
-
-impl<'a> run_tasks::RunTasksCallbacks for HoistedRunTasksCallbacks<'a> {
-    type Ctx = PackageInstaller<'a>;
-
-    const HAS_ON_EXTRACT: bool = true;
-    const IS_PACKAGE_INSTALLER: bool = true;
+impl<'a> run_tasks::RunTasksCallbacks<'a> for PackageInstaller<'a> {
+    fn flags(&self) -> run_tasks::RunTasksFlags {
+        run_tasks::RunTasksFlags {
+            has_on_extract: true,
+            is_package_installer: true,
+            ..Default::default()
+        }
+    }
 
     fn on_extract_package_installer(
-        ctx: &mut Self::Ctx,
+        &mut self,
         task_id: Task::Id,
         dependency_id: DependencyID,
         data: &mut ExtractData,
         log_level: package_manager::Options::LogLevel,
     ) {
-        ctx.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
+        self.install_enqueued_packages_after_extraction(task_id, dependency_id, &*data, log_level);
     }
 
-    fn as_package_installer<'x>(ctx: &'x mut Self::Ctx) -> &'x mut PackageInstaller<'x> {
-        // SAFETY: identity cast — narrows the invariant `'a` param to the
-        // borrow-local `'x` (`'a: 'x` is implied by `&'x mut PackageInstaller<'a>`).
-        // The returned reference cannot outlive `'x`, so all inner `'a` borrows
-        // remain valid. Inner-lifetime variance cast via raw pointer.
-        unsafe { &mut *core::ptr::from_mut(ctx).cast::<PackageInstaller<'x>>() }
+    fn as_package_installer(&mut self) -> &mut PackageInstaller<'a> {
+        self
     }
 }
 
@@ -451,12 +446,7 @@ pub(crate) fn install_hoisted_packages(
                 // We want to minimize how often we call this function
                 // That's part of why we unroll this loop
                 if this.pending_task_count() > 0 {
-                    run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        this,
-                        &mut installer,
-                        true,
-                        log_level,
-                    )?;
+                    run_tasks::run_tasks(this, &mut installer, true, log_level)?;
                     if !this.options.do_.install_packages() {
                         return Err(crate::Error::InstallFailed);
                     }
@@ -469,12 +459,7 @@ pub(crate) fn install_hoisted_packages(
                 installer.install_package(*dependency_id, log_level);
             }
 
-            run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                this,
-                &mut installer,
-                true,
-                log_level,
-            )?;
+            run_tasks::run_tasks(this, &mut installer, true, log_level)?;
             if !this.options.do_.install_packages() {
                 return Err(crate::Error::InstallFailed);
             }
@@ -499,12 +484,9 @@ pub(crate) fn install_hoisted_packages(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *closure.manager };
                     let log_level = manager.options.log_level;
-                    if let Err(err) = run_tasks::run_tasks::<HoistedRunTasksCallbacks>(
-                        manager,
-                        closure.installer,
-                        true,
-                        log_level,
-                    ) {
+                    if let Err(err) =
+                        run_tasks::run_tasks(manager, closure.installer, true, log_level)
+                    {
                         closure.err = Some(err);
                     }
 

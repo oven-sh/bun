@@ -487,12 +487,10 @@ pub fn enqueue_dependency_to_root(
                     // this callback, so this is the unique live borrow.
                     let manager = unsafe { &mut *self.manager };
                     if manager.pending_task_count() > 0 {
-                        // All callbacks void: `VoidRunTasksCallbacks` (below)
-                        // has `Ctx = ()` and every `HAS_* = false`.
                         let log_level = manager.options.log_level;
-                        if let Err(err) = run_tasks::run_tasks::<VoidRunTasksCallbacks>(
+                        if let Err(err) = run_tasks::run_tasks(
                             manager,
-                            &mut (),
+                            &mut VoidRunTasksCallbacks,
                             false,
                             log_level,
                         ) {
@@ -554,12 +552,12 @@ pub fn enqueue_dependency_to_root(
     }
 }
 
-/// All-void callback set used by `enqueueDependencyToRoot` and `runAndWaitFn`:
-/// `Ctx = ()`, no callbacks, so the `HAS_*` const-gates compile out the
-/// callback paths.
+/// All-void callback set used by `enqueueDependencyToRoot`.
 struct VoidRunTasksCallbacks;
-impl run_tasks::RunTasksCallbacks for VoidRunTasksCallbacks {
-    type Ctx = ();
+impl run_tasks::RunTasksCallbacks<'_> for VoidRunTasksCallbacks {
+    fn flags(&self) -> run_tasks::RunTasksFlags {
+        run_tasks::RunTasksFlags::default()
+    }
 }
 
 pub fn enqueue_network_task(this: &mut PackageManager, task: *mut NetworkTask) {

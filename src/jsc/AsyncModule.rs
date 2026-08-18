@@ -273,40 +273,41 @@ use crate::event_loop::{ConcurrentTaskItem, Task};
 
 /// `RunTasksCallbacks` impl for the auto-install module queue. `onResolve` /
 /// `onPackageManifestError` / `onPackageDownloadError` forward to the `Queue`
-/// methods, `progress_bar` selected via const generic to match the
-/// `enable_ansi_colors_stderr` branch.
-struct QueueRunTasksCallbacks<const PROGRESS: bool>;
+/// methods; `progress` matches the `enable_ansi_colors_stderr` branch.
+struct QueueRunTasksCallbacks<'a> {
+    queue: &'a mut Queue,
+    progress: bool,
+}
 
-impl<const PROGRESS: bool> run_tasks::RunTasksCallbacks for QueueRunTasksCallbacks<PROGRESS> {
-    type Ctx = Queue;
-
-    const PROGRESS_BAR: bool = PROGRESS;
-    const HAS_ON_PACKAGE_MANIFEST_ERROR: bool = true;
-    const HAS_ON_PACKAGE_DOWNLOAD_ERROR: bool = true;
-    const HAS_ON_RESOLVE: bool = true;
-
-    fn on_resolve(ctx: &mut Queue) {
-        Queue::on_resolve(ctx)
+impl run_tasks::RunTasksCallbacks<'_> for QueueRunTasksCallbacks<'_> {
+    fn flags(&self) -> run_tasks::RunTasksFlags {
+        run_tasks::RunTasksFlags {
+            progress_bar: self.progress,
+            has_on_package_manifest_error: true,
+            has_on_package_download_error: true,
+            has_on_resolve: true,
+            ..Default::default()
+        }
     }
 
-    fn on_package_manifest_error(
-        ctx: &mut Queue,
-        name: &[u8],
-        err: bun_install::Error,
-        url: &[u8],
-    ) {
-        ctx.on_package_manifest_error(name, err.name(), url)
+    fn on_resolve(&mut self) {
+        Queue::on_resolve(self.queue)
+    }
+
+    fn on_package_manifest_error(&mut self, name: &[u8], err: bun_install::Error, url: &[u8]) {
+        self.queue.on_package_manifest_error(name, err.name(), url)
     }
 
     fn on_package_download_error_pkg(
-        ctx: &mut Queue,
+        &mut self,
         package_id: PackageID,
         name: &[u8],
         resolution: &Resolution,
         err: bun_install::Error,
         url: &[u8],
     ) {
-        ctx.on_package_download_error(package_id, name, resolution, err.name(), url)
+        self.queue
+            .on_package_download_error(package_id, name, resolution, err.name(), url)
     }
 }
 
@@ -415,19 +416,23 @@ impl Queue {
         // `container_of`-derived `*mut` reborrow.
         let pm = VirtualMachine::get().as_mut().package_manager();
 
-        if bun_core::output::enable_ansi_colors_stderr() {
+        let progress = bun_core::output::enable_ansi_colors_stderr();
+        let log_level = if progress {
             pm.start_progress_bar_if_none();
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<true>>(pm, self, true, LogLevel::Default)
-                .expect("unreachable");
+            LogLevel::Default
         } else {
-            run_tasks::run_tasks::<QueueRunTasksCallbacks<false>>(
-                pm,
-                self,
-                true,
-                LogLevel::DefaultNoProgress,
-            )
-            .expect("unreachable");
-        }
+            LogLevel::DefaultNoProgress
+        };
+        run_tasks::run_tasks(
+            pm,
+            &mut QueueRunTasksCallbacks {
+                queue: self,
+                progress,
+            },
+            true,
+            log_level,
+        )
+        .expect("unreachable");
     }
 
     pub(crate) fn on_package_manifest_error(&mut self, name: &[u8], err: &'static str, url: &[u8]) {

@@ -294,8 +294,6 @@ public:
     JSC::JSFunction* performMicrotaskVariadicFunction() const { return m_performMicrotaskVariadicFunction.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
-    // Loading node:util can throw (stack overflow, termination). These return
-    // nullptr with an exception pending in that case.
     JSC::JSFunction* utilInspectFunction();
     JSC::JSFunction* utilInspectStylizeColorFunction();
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }

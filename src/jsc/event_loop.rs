@@ -5,7 +5,7 @@
 //! per-`Task` switch and `ImmediateObject::runImmediateTask`) name
 //! `bun_runtime` types and are hoisted to that tier via link-time
 //! `extern "Rust"` (`__bun_tick_queue_with_count` / `__bun_run_immediate_task`);
-//! `auto_tick`/`auto_tick_active` likewise
+//! `poll` likewise
 //! dispatch through `virtual_machine::RuntimeHooks` (need `Timer::All` for the
 //! poll deadline). See PORTING.md §Dispatch.
 
@@ -69,7 +69,7 @@ pub struct EventLoop {
     /// Tasks that asked to run on the *next* loop iteration — after I/O and
     /// timers have had a turn — rather than in the current drain, which runs
     /// until the queue is empty (a task that re-posts itself there never lets
-    /// the loop poll). Promoted into `tasks` by `auto_tick`, like immediates.
+    /// the loop poll). Promoted into `tasks` by `poll`, like immediates.
     pub yield_tasks: Vec<Task>,
 
     pub concurrent_tasks: ConcurrentQueue,
@@ -877,7 +877,7 @@ impl EventLoop {
         self.yield_tasks.push(task);
     }
 
-    /// `auto_tick`, before it polls: last iteration's yielded tasks become
+    /// `poll`, before it polls: last iteration's yielded tasks become
     /// runnable. Returns whether there are any, so the poll does not block.
     pub fn promote_yield_tasks(&mut self) -> bool {
         if self.yield_tasks.is_empty() {
@@ -896,7 +896,7 @@ impl EventLoop {
     /// Note: the real `ImmediateObject` lives in `bun_runtime` (cycle), so
     /// the per-task body dispatches through `__bun_run_immediate_task` (link-
     /// time, definer in `bun_runtime`). The swap always happens — this is
-    /// load-bearing for `auto_tick`'s `has_pending_immediate` read, which must
+    /// load-bearing for `poll`'s `has_pending_immediate` read, which must
     /// observe the post-swap `immediate_tasks` (next-tick immediates), not the
     /// un-drained current batch (busy-spin hazard).
     ///
@@ -1040,7 +1040,7 @@ impl EventLoop {
 
     /// See [`VirtualMachine::turn_active`].
     #[inline]
-    pub fn turn_active(&mut self, done: impl FnOnce() -> bool) {
+    pub fn turn_active(&mut self, done: impl FnMut() -> bool) {
         self.vm_ref().as_mut().turn_active(done)
     }
 
@@ -1237,7 +1237,7 @@ impl EventLoop {
     /// Drive the loop while a worker's entry module graph is fetched and
     /// linked, until its evaluation has begun (`entry_evaluation_started`, set
     /// by the moduleLoaderEvaluate hook once the linked graph starts executing),
-    /// the promise settled, or termination was requested. Parks in `auto_tick`
+    /// the promise settled, or termination was requested. Parks in `poll`
     /// while imports are still being read/transpiled off-thread; does not wait
     /// for a top-level await.
     pub fn wait_for_worker_entry_evaluation(&mut self, promise: jsc::AnyPromise) {

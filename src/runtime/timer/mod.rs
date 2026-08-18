@@ -1004,7 +1004,7 @@ impl All {
         }
     }
 
-    /// Called from `EventLoop::auto_tick` to compute the epoll/kqueue timeout.
+    /// Called from `jsc_hooks::poll` to compute the epoll/kqueue timeout.
     /// Returns `true` if `spec` was written. `now_out` receives the monotonic reading this
     /// took, if any, for the caller to share with the tick (see `NOW_NS_UNKNOWN`).
     ///
@@ -1103,7 +1103,12 @@ impl All {
     /// During a domain run, a due timer that is foreign to the run is parked
     /// instead of being returned, and the scan continues with the next node.
     fn next(&mut self, has_set_now: &mut bool, now: &mut Timespec) -> Option<*mut EventLoopTimer> {
-        let run_start = bun_io::run_epoch::active_run_start();
+        // 0 unless a nested run is active: the root parks nothing.
+        let run_start = if bun_jsc::domain_run::in_nested_run() {
+            bun_io::run_epoch::active_run_start()
+        } else {
+            0
+        };
         loop {
             let timer = self.timers.peek()?;
             if !*has_set_now {

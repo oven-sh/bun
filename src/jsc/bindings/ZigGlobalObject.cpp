@@ -3315,43 +3315,40 @@ uint8_t GlobalObject::drainMicrotasks()
     }
     scope.assertNoExceptionExceptTermination();
 
-    const uint32_t runExits = Bun::eventLoopDomains(vm).exits();
-    if (auto nextTickQueue = this->m_nextTickQueue.get()) {
-        nextTickQueue->drain(vm, this);
-        if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                Bun__VM__takeTerminationOutsideScript(this);
-                return 1;
-            }
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, exception);
-            return 0;
-        }
-    }
-    vm.drainMicrotasks();
-    if (auto* exception = scope.exception()) {
+    // An exception a drained callback left behind: the VM's termination ends the checkpoint
+    // (taken here, at loop level); anything else is reported and the checkpoint goes on.
+    auto landException = [&]() -> bool {
+        auto* exception = scope.exception();
+        if (!exception)
+            return false;
         if (vm.isTerminationException(exception)) {
             Bun__VM__takeTerminationOutsideScript(this);
-            return 1;
+            return true;
         }
         (void)scope.tryClearException();
         this->reportUncaughtExceptionAtEventLoop(this, exception);
-    }
+        return false;
+    };
 
-    // A domain run entered from one of those microtasks sets aside older ticks and
-    // puts them back when it exits, possibly after this checkpoint passed them.
-    if (Bun::eventLoopDomains(vm).exits() != runExits) [[unlikely]] {
-        auto nextTickQueue = this->m_nextTickQueue.get();
-        if (!nextTickQueue)
-            return 0;
+    auto& domains = Bun::eventLoopDomains(vm);
+    const uint32_t runExits = domains.exits();
+    auto* nextTickQueue = this->m_nextTickQueue.get();
+    if (nextTickQueue) {
         nextTickQueue->drain(vm, this);
-        if (auto* exception = scope.exception()) {
-            if (vm.isTerminationException(exception)) {
-                return 1;
-            }
-            (void)scope.tryClearException();
-            this->reportUncaughtExceptionAtEventLoop(this, exception);
+        if (scope.exception()) {
+            return landException() ? 1 : 0;
         }
+    }
+    vm.drainMicrotasks();
+    if (landException())
+        return 1;
+
+    // A domain run entered from one of those callbacks set aside older ticks and put
+    // them back when it exited, possibly after this checkpoint had passed them.
+    if (nextTickQueue && domains.exits() != runExits) [[unlikely]] {
+        nextTickQueue->drain(vm, this);
+        if (landException())
+            return 1;
     }
 
     return 0;

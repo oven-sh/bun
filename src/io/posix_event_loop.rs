@@ -530,6 +530,20 @@ impl FilePoll {
                 )
             };
             if ctl != 0 {
+                // Only "not in the set" is expected here (the owner closed the fd
+                // under a still-registered poll); the event is then the last this
+                // poll will see, so let it through rather than lose it.
+                let errno = sys::get_errno(ctl);
+                debug_assert!(
+                    matches!(errno, sys::E::ENOENT | sys::E::EBADF),
+                    "disarm_for_run: EPOLL_CTL_DEL failed with {errno:?}"
+                );
+                syslog!(
+                    "disarm for run failed ({:?}), dispatching: FilePoll(0x{:x}, fd={})",
+                    errno,
+                    std::ptr::from_mut(self) as usize,
+                    self.fd
+                );
                 return false;
             }
         }

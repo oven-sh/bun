@@ -79,10 +79,6 @@ fn with_current<R>(f: impl FnOnce(&mut RunState) -> R) -> R {
     RUNS.with_borrow_mut(|runs| f(runs.last_mut().expect("domain run active")))
 }
 
-fn innermost_policy() -> Policy {
-    RUNS.with_borrow(|runs| runs.last().map_or(Policy::NativeAndScripts, |r| r.policy))
-}
-
 // ─── gates ───────────────────────────────────────────────────────────────────
 // (Timers are parked inside `timer::All::next`; I/O in `bun_io` / usockets.)
 
@@ -118,13 +114,14 @@ pub fn park_task_if_foreign(task: Task) -> bool {
 
 // ─── the loop step ───────────────────────────────────────────────────────────
 
-/// One turn of the innermost run: event-loop tasks; then, for a script-running
-/// run, immediates and a microtask checkpoint; then due timers and the poll,
-/// sleeping no later than `deadline` (or the next timer). `done` is consulted
-/// after the tasks and again after the immediates, so a condition satisfied by
-/// ready work neither runs work it did not need nor sits through a poll that
-/// may have nothing to wake it. Returns whether `deadline` has passed. This is
-/// the event loop's iteration; the gates do the filtering.
+/// One turn of the innermost run: event-loop tasks; then, unless the run is
+/// native-only, immediates; then due timers and the poll, sleeping no later than
+/// `deadline` (or the next timer). `done` is evaluated after the tasks and again
+/// after the immediates — up to twice per turn, so it may do the bookkeeping it
+/// needs but must be idempotent — so a condition satisfied by ready work neither
+/// runs work it did not need nor sits through a poll that may have nothing to
+/// wake it. Returns whether `deadline` has passed. This is the event loop's
+/// iteration; the gates do the filtering.
 ///
 /// # Safety
 /// `vm` is the live per-thread VM.
@@ -140,49 +137,58 @@ pub unsafe fn turn(
         }
         None => false,
     };
+    // SAFETY: per fn contract.
+    if unsafe { ready_phases(vm, &mut done) } {
+        return deadline_passed();
+    }
+    // SAFETY: per fn contract.
+    unsafe { (*vm).poll(deadline, true) };
+    deadline_passed()
+}
+
+/// [`turn`] for the program's own run-to-completion loops (main script,
+/// shutdown, `beforeExit`): the same ready phases, then the poll without the
+/// per-iteration housekeeping (see `RuntimeHooks::poll`).
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+pub unsafe fn turn_active(vm: *mut VirtualMachine, mut done: impl FnMut() -> bool) {
+    // SAFETY: per fn contract.
+    if unsafe { ready_phases(vm, &mut done) } {
+        return;
+    }
+    // SAFETY: per fn contract.
+    unsafe { (*vm).poll(None, false) };
+}
+
+/// The ready half of a turn: event-loop tasks, then (unless the innermost run is
+/// native-only, whose queues hold only outer work) immediates. `true` as soon
+/// as `done` holds.
+///
+/// # Safety
+/// `vm` is the live per-thread VM.
+unsafe fn ready_phases(vm: *mut VirtualMachine, done: &mut impl FnMut() -> bool) -> bool {
     // SAFETY: per fn contract; `el` is the live per-thread event loop.
     let el = unsafe { (*vm).event_loop() };
     // SAFETY: as above.
     unsafe { (*el).tick() };
     if done() {
-        return deadline_passed();
+        return true;
     }
-    if innermost_policy() == Policy::NativeAndScripts {
-        // (A native-only run has queued no immediates or microtasks of its
-        // own; the queues hold outer work and are left untouched.)
-        // SAFETY: as above.
-        unsafe {
-            let had_immediates = !(*el).immediate_tasks.is_empty();
-            (*el).tick_immediate_tasks(vm);
-            // Beneath an entered frame (a nested wait) `EventLoop::exit` does not
-            // drain after each immediate; their microtasks may be what `done` waits for.
-            if had_immediates && (*el).entered_event_loop_count > 0 {
-                let _ = (*el).drain_microtasks();
-            }
-        }
-        if done() {
-            return deadline_passed();
+    if run_epoch::active_run_is_native_only() {
+        return false;
+    }
+    // SAFETY: as above.
+    unsafe {
+        let had_immediates = !(*el).immediate_tasks.is_empty();
+        (*el).tick_immediate_tasks(vm);
+        // Beneath an entered frame (a nested wait) `EventLoop::exit` does not
+        // drain after each immediate; their microtasks may be what `done` waits for.
+        if had_immediates && (*el).entered_event_loop_count > 0 {
+            let _ = (*el).drain_microtasks();
         }
     }
-    // SAFETY: per fn contract.
-    unsafe { (*vm).auto_tick_after_immediates(deadline) };
-    deadline_passed()
-}
-
-/// [`turn`] for run-to-completion loops that must not block once nothing keeps
-/// the loop alive (main program, shutdown, `beforeExit`): polls only while the
-/// loop has active handles.
-///
-/// # Safety
-/// `vm` is the live per-thread VM.
-pub unsafe fn turn_active(vm: *mut VirtualMachine, done: impl FnOnce() -> bool) {
-    // SAFETY: per fn contract.
-    unsafe { (*(*vm).event_loop()).tick() };
-    if done() {
-        return;
-    }
-    // SAFETY: per fn contract.
-    unsafe { (*vm).auto_tick_active() };
+    done()
 }
 
 // ─── the runs ────────────────────────────────────────────────────────────────

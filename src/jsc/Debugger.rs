@@ -191,7 +191,7 @@ impl Debugger {
     ///
     /// Aliasing: `this.debugger` is read through a raw pointer
     /// with fresh short-lived borrows because `event_loop().tick()` /
-    /// `auto_tick_active()` re-enter JS, which calls `VirtualMachine::get()`
+    /// `turn_active()` re-enter JS, which calls `VirtualMachine::get()`
     /// and may form independent `&mut VirtualMachine` borrows. Holding a
     /// long-lived `&mut Debugger` (which borrows from `&mut VirtualMachine`)
     /// across those calls is UB.

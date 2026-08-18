@@ -808,7 +808,12 @@ int us_internal_hold_foreign_ready_poll(struct us_loop_t *loop, struct us_poll_t
     }
     switch (us_internal_poll_type(p)) {
     case POLL_TYPE_CALLBACK:
-        /* The loop's own wakeup/async fds: infrastructure, nobody's callback. */
+        /* us_timer / us_internal_async. On epoll/kqueue these are the loop's own
+         * wakeup async and sweep timer (whose sweep gates itself on the run in
+         * us_internal_sweep_if_due) and the embedder's no-op keep-alive timer:
+         * infrastructure that serves whoever turns the loop. (The QUIC
+         * fallthrough timer exists only on libuv, which is not gated.) A timer
+         * added here whose callback reaches outer code must gate itself the same way. */
         return 0;
     case POLL_TYPE_SEMI_SOCKET:
         if (!(us_poll_events(p) & LIBUS_SOCKET_WRITABLE) && loop->data.run_executes_scripts) {

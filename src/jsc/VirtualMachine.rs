@@ -1401,7 +1401,7 @@ impl VirtualMachine {
 
         // The actual print path needs `ConsoleObject::Formatter` +
         // `ZigException` (high tier). Dispatch through `RuntimeHooks` —
-        // mirroring `auto_tick`/`ensure_debugger` — so the error is actually
+        // mirroring `poll`/`ensure_debugger` — so the error is actually
         // emitted to stderr before callers hard-exit. With no hook installed
         // (low-tier unit tests), fail loudly: PORTING.md §Forbidden bans a
         // silent no-op here since the real path has observable logic.
@@ -2069,15 +2069,16 @@ pub struct RuntimeHooks {
         unsafe fn(vm: *mut VirtualMachine) -> crate::CrateResult<*mut JSInternalPromise>,
     /// `ensureDebugger(block_until_connected)` — no-op when no debugger.
     pub ensure_debugger: unsafe fn(vm: *mut VirtualMachine, block_until_connected: bool),
-    /// The poll half of `turn_active`: only sleeps in the uSockets loop while
-    /// it has active handles, skips `runImminentGCTimer` /
-    /// `handleRejectedPromises`, and falls through to `tickWithoutIdle` when
-    /// idle (shutdown semantics).
-    pub auto_tick_active: unsafe fn(vm: *mut VirtualMachine),
-    /// `auto_tick` after its leading immediates pass, sleeping no later than
-    /// `deadline` (`crate::domain_run::turn`).
-    pub auto_tick_after_immediates:
-        unsafe fn(vm: *mut VirtualMachine, deadline: Option<&bun_core::Timespec>),
+    /// The poll half of a loop turn (`crate::domain_run::turn` / `turn_active`):
+    /// the I/O poll bounded by `deadline` and the timer heap, then due timers.
+    /// `housekeeping` adds the imminent-GC timer and unhandled-rejection
+    /// processing around the poll; run-to-completion loops pass `false`. The
+    /// body lives in `bun_runtime::jsc_hooks::poll` (needs `Timer::All`).
+    pub poll: unsafe fn(
+        vm: *mut VirtualMachine,
+        deadline: Option<&bun_core::Timespec>,
+        housekeeping: bool,
+    ),
     /// `vm.timer.unpark_after_run(outer_start)` — a nested domain run exited.
     pub timer_unpark_after_run: unsafe fn(vm: *mut VirtualMachine, outer_start: u32),
     /// `printException` / `printErrorlikeObject` — formats `value` (or its
@@ -2299,15 +2300,15 @@ impl VirtualMachine {
 }
 
 impl VirtualMachine {
-    /// See [`RuntimeHooks::auto_tick_after_immediates`].
+    /// See [`RuntimeHooks::poll`].
     ///
     /// # Safety
     /// `self` is the live per-thread VM; JS thread.
     #[inline]
-    pub unsafe fn auto_tick_after_immediates(&mut self, deadline: Option<&bun_core::Timespec>) {
+    pub unsafe fn poll(&mut self, deadline: Option<&bun_core::Timespec>, housekeeping: bool) {
         match runtime_hooks() {
             // SAFETY: per fn contract.
-            Some(hooks) => unsafe { (hooks.auto_tick_after_immediates)(self, deadline) },
+            Some(hooks) => unsafe { (hooks.poll)(self, deadline, housekeeping) },
             // No high tier (unit tests) — a non-blocking tick keeps callers progressing.
             None => self.event_loop_mut().tick(),
         }
@@ -2337,10 +2338,10 @@ impl VirtualMachine {
         unsafe { crate::domain_run::turn(self, deadline, done) }
     }
 
-    /// [`Self::turn`] for run-to-completion loops that must not block once
-    /// nothing keeps the loop alive (see [`crate::domain_run::turn_active`]).
+    /// [`Self::turn`] for the program's own run-to-completion loops (see
+    /// [`crate::domain_run::turn_active`]).
     #[inline]
-    pub fn turn_active(&mut self, done: impl FnOnce() -> bool) {
+    pub fn turn_active(&mut self, done: impl FnMut() -> bool) {
         // SAFETY: `self` is the live per-thread VM.
         unsafe { crate::domain_run::turn_active(self, done) }
     }
@@ -2697,7 +2698,7 @@ impl VirtualMachine {
         self.main = bun_ptr::RawSlice::new(path);
     }
 
-    /// `eventLoop().waitForPromise(promise)` — spin tick/auto_tick until
+    /// `eventLoop().waitForPromise(promise)` — turn the loop until
     /// `promise` settles. Thin forwarder; body lives in
     /// [`crate::event_loop::EventLoop::wait_for_promise`].
     #[inline]
@@ -2705,23 +2706,6 @@ impl VirtualMachine {
         self.event_loop_mut().wait_for_promise(promise)
     }
 
-    /// `eventLoop().autoTickActive()` — like [`auto_tick`](Self::auto_tick)
-    /// but only sleeps in the uSockets loop while it has active handles.
-    /// The real body lives in `event_loop.rs`
-    /// behind `` until the b2-cycle (`Timer::All`) breaks; until
-    /// then route through the same `auto_tick` hook so drain loops in
-    /// `on_before_exit` / `bun_main` still make forward progress.
-    #[inline]
-    pub(crate) fn auto_tick_active(&mut self) {
-        if let Some(hooks) = runtime_hooks() {
-            // SAFETY: `self` is the live per-thread VM (hook contract).
-            unsafe { (hooks.auto_tick_active)(self) };
-        } else {
-            // No high-tier hook (unit tests) — drain JS tasks only so callers
-            // observe forward progress without blocking on the I/O loop.
-            self.event_loop_mut().tick();
-        }
-    }
 
     /// `reloadEntryPoint(entry_path)` — set `main`, generate the synthetic
     /// `bun:main` entry, run preloads, and kick off module evaluation.

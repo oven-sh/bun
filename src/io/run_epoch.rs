@@ -60,8 +60,10 @@ pub fn current() -> u32 {
 }
 
 /// Start a fresh epoch and return it. Everything born from here on is "since"
-/// it. Comparison is serial-number arithmetic in 31 bits, so the counter may
-/// wrap; 0 (unknown) and `PRIMORDIAL` are skipped and stay older than everything.
+/// it. Comparison is serial-number arithmetic in 31 bits (`us_poll_t` has room
+/// for no more), so the counter may wrap; 0 (unknown) and `PRIMORDIAL` are
+/// skipped and stay older than everything. A birth is misjudged only against a
+/// run entered 2^30 or more nested runs later while its object is still alive.
 #[inline]
 pub fn bump() -> u32 {
     loop {

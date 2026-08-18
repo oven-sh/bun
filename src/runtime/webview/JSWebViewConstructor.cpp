@@ -5,6 +5,7 @@
 #include "root.h"
 #include "JSWebView.h"
 #include "ZigGlobalObject.h"
+#include "ScriptExecutionContext.h"
 #include "ErrorCode.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/InternalFunction.h>
@@ -341,6 +342,11 @@ JSC_DEFINE_HOST_FUNCTION(constructWebView, (JSGlobalObject * globalObject, CallF
     }
 
     if (backend == WebViewBackend::Chrome) {
+        // The CDP transport is one per process and belongs to the global that spawned it.
+        if (!zigGlobalObject->scriptExecutionContext()->isMainThread()) {
+            return Bun::throwError(globalObject, scope, ErrorCode::ERR_INVALID_STATE,
+                "Bun.WebView with backend \"chrome\" is only available on the main thread"_s);
+        }
         Bun__Feature__webview_chrome += 1;
         JSWebView* view = JSWebView::createChrome(globalObject, structure, width, height,
             persistDir, chromePath, chromeArgv, stdoutInherit, stderrInherit, chromeWsUrl,

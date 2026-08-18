@@ -76,12 +76,6 @@ use core::ffi::{c_char, c_uint, c_ulong, c_void};
 // typedef void   (*free_func) (voidpf opaque, voidpf address);
 pub type alloc_func = Option<unsafe extern "C" fn(*mut c_void, c_uint, c_uint) -> *mut c_void>;
 pub type free_func = Option<unsafe extern "C" fn(*mut c_void, *mut c_void)>;
-// Legacy spellings the per-platform modules exported; keep both so downstream
-// `pub use` re-exports stay source-compatible.
-pub type z_alloc_fn = alloc_func;
-pub type z_free_fn = free_func;
-pub type z_alloc_func = alloc_func;
-pub type z_free_func = free_func;
 
 // ---------------------------------------------------------------------------
 // zconf.h scalar typedefs — single source of truth.
@@ -91,32 +85,11 @@ pub type z_free_func = free_func;
 // target Bun ships; `uLong` = `unsigned long` (4B on LLP64 Windows, 8B on LP64
 // Unix) for the same reason zStream_struct above uses `c_ulong` directly.
 // ---------------------------------------------------------------------------
-pub type Byte = u8;
 pub type Bytef = u8;
 pub type uInt = c_uint;
 pub type uLong = c_ulong;
 pub type uLongf = uLong;
 pub type voidpf = *mut c_void;
-
-// ---------------------------------------------------------------------------
-// gzFile — opaque handle.
-//
-// zlib.h exposes `struct gzFile_s { unsigned have; unsigned char *next;
-// z_off64_t pos; }` purely so the `gzgetc()` macro can inline a fast path;
-// every other API treats `gzFile` as an opaque pointer. Bun never derefs it,
-// so one definition suffices for all targets. `pos` is `z_off64_t` — `__int64`
-// on Windows, `off64_t` on LP64 Unix — i.e. `i64` everywhere Bun ships, hence
-// the divergence between the old win32.rs (`c_longlong`) and bun_zlib
-// (`c_long`) copies was immaterial.
-// ---------------------------------------------------------------------------
-#[repr(C)]
-pub struct struct_gzFile_s {
-    pub have: c_uint,
-    pub next: *mut u8,
-    pub pos: i64,
-}
-pub type gzFile_s = struct_gzFile_s;
-pub type gzFile = *mut struct_gzFile_s;
 
 /// zlib's opaque `struct internal_state { int dummy; }` stub — applications
 /// never look inside, only carry the pointer.
@@ -124,7 +97,6 @@ pub type gzFile = *mut struct_gzFile_s;
 pub struct struct_internal_state {
     dummy: c_int,
 }
-pub type internal_state = struct_internal_state;
 
 // https://zlib.net/manual.html#Stream
 #[repr(C)]
@@ -166,9 +138,6 @@ pub struct zStream_struct {
 
 pub type z_stream = zStream_struct;
 pub type z_streamp = *mut z_stream;
-// Alternate spellings (win32.rs historically used these).
-pub type struct_z_stream_s = zStream_struct;
-pub type z_stream_s = zStream_struct;
 
 // SAFETY: `#[repr(C)]` POD — raw pointers, integers, and `Option<extern fn>`
 // allocators. All-zero

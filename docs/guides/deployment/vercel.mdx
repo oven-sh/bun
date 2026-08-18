@@ -26,7 +26,7 @@ mode: center
 
     	The value must be `"1.x"`; Vercel manages the minor and patch versions.
 
-    	For best results, match your local Bun version with the version used by Vercel.
+    	For best results, match your local Bun version with the version Vercel uses.
     </Step>
 
     <Step title="Add a server">
@@ -41,7 +41,7 @@ mode: center
 
     			`bun install` creates `bun.lock` on Bun 1.2 or later. On older versions, run `bun install --save-text-lockfile`. The preset does not detect the binary `bun.lockb` format.
 
-    			Call `Bun.serve()` once while the module loads. Vercel detects that call and routes incoming requests to it. The `fetch`, [`routes`](/runtime/http/routing), `error`, and `websocket` options are supported:
+    			Call `Bun.serve()` once while the module loads. Vercel detects that call and routes incoming requests to it. Vercel supports the `fetch`, [`routes`](/runtime/http/routing), `error`, and `websocket` options:
 
     			```ts server.ts icon="/icons/typescript.svg"
     			Bun.serve({
@@ -79,11 +79,11 @@ mode: center
     			});
     			```
 
-    			This only needs the `bunVersion` setting from the previous step; it doesn't use the framework preset or require a `bun.lock` file. To send other paths to this server, add route overrides to `vercel.json`. Each override must use the full request path, including the `/api/server` prefix. See [the Vercel Bun runtime documentation](https://vercel.com/docs/functions/runtimes/bun) for details.
+    			This setup only needs the `bunVersion` setting from the previous step; it doesn't use the framework preset or require a `bun.lock` file. To send other paths to this server, add route overrides to `vercel.json`. Each override must use the full request path, including the `/api/server` prefix. See [the Vercel Bun runtime documentation](https://vercel.com/docs/functions/runtimes/bun) for details.
     		</Tab>
 
     		<Tab title="Next.js or another framework">
-    			Frameworks that Vercel supports, such as Next.js, Express, Hono, and Nitro, run on Bun once `bunVersion` is set.
+    			Frameworks that Vercel supports, such as Next.js, Express, Hono, and Nitro, run on Bun once you set `bunVersion`.
 
     			If you're deploying a **Next.js** project (including ISR), also update the `package.json` scripts so the Next.js CLI runs under Bun:
 
@@ -126,7 +126,7 @@ mode: center
     <Step title="Verify the runtime">
     	To confirm your deployment uses Bun, log the Bun version:
 
-    	```ts index.ts icon="/icons/typescript.svg"
+    	```ts server.ts icon="/icons/typescript.svg"
     	console.log("runtime", process.versions.bun);
     	```
     	```txt

@@ -2138,11 +2138,11 @@ impl NodeHTTPResponse {
                 let pinned_value = if is_buffer && input_value.is_cell() {
                     match input_value.as_pinned_arraybuffer(global_object) {
                         Some(ab) if ab.resizable && !ab.shared => {
-                            input_value.unpin_array_buffer();
+                            ab.unpin();
                             None
                         }
-                        Some(_) => Some(input_value),
-                        None => Some(JSValue::ZERO),
+                        Some(ab) if ab.pinned => Some(input_value),
+                        Some(_) | None => Some(JSValue::ZERO),
                     }
                 } else {
                     Some(JSValue::ZERO)
@@ -2802,32 +2802,4 @@ pub(crate) unsafe extern "C" fn NodeHTTPResponse__createForJS(
     // SAFETY: out-param provided by caller.
     unsafe { *node_response_ptr = response };
     js_this
-}
-
-impl NodeHTTPResponse {
-    #[uws::uws_callback(export = "NodeHTTPResponse__setTimeout")]
-    pub(crate) fn ffi_set_timeout(&self, seconds: JSValue, global_this: &JSGlobalObject) -> bool {
-        if !seconds.is_number() {
-            let _: jsc::JsError =
-                global_this.throw_invalid_argument_type_value(b"timeout", b"number", seconds);
-            return false;
-        }
-
-        let flags = self.flags.get();
-        let Some(raw) = self.raw_response.get() else {
-            return false;
-        };
-        if flags.contains(Flags::REQUEST_HAS_COMPLETED)
-            || flags.contains(Flags::SOCKET_CLOSED)
-            || flags.contains(Flags::UPGRADED)
-        {
-            return false;
-        }
-
-        // ECMAScript ToUint32 — same bit pattern as
-        // ToInt32 reinterpreted as unsigned (negative inputs wrap, e.g. -1 → u32::MAX).
-        let secs = (seconds.to_int32() as c_uint).min(255) as u8;
-        raw.timeout(secs);
-        true
-    }
 }

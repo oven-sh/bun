@@ -1131,6 +1131,17 @@ impl VirtualMachine {
         self.rare_data.as_mut().unwrap()
     }
 
+    /// Raw projection to the lazily-allocated `RareData`, for callers holding a borrow into it across re-entry (never forms `&mut RareData`).
+    pub fn rare_data_ptr(&mut self) -> *mut RareData {
+        if self.rare_data.is_none() {
+            self.rare_data();
+        }
+        match &mut self.rare_data {
+            Some(rd) => &raw mut **rd,
+            None => unreachable!(),
+        }
+    }
+
     pub(crate) fn is_main_thread(&self) -> bool {
         self.worker.is_none()
     }
@@ -1378,6 +1389,9 @@ impl VirtualMachine {
         result: JSValue,
         exception_list: Option<&mut ExceptionList>,
     ) {
+        if result.is_termination_exception() {
+            return;
+        }
         // Save/restore `had_errors` around
         // the print, then route the value through `printException` /
         // `printErrorlikeObject` (ConsoleObject formatter). The save/restore
@@ -1509,7 +1523,9 @@ impl VirtualMachine {
         err: JSValue,
         is_rejection: bool,
     ) -> bool {
-        if self.is_shutting_down() {
+        // A VM that has stopped (or is being torn down) has nobody to report to; and what a caller took
+        // to be an error may be its termination.
+        if self.is_shutting_down() || !self.script_allowed() || err.is_termination_exception() {
             return true;
         }
 
@@ -1596,15 +1612,25 @@ impl VirtualMachine {
         let mut dispatch = false;
         loop {
             while self.is_event_loop_alive() {
+                // A stop requested meanwhile (worker.terminate(), or process.exit()
+                // from a listener) ends the drain, as it ends the worker's main
+                // loop: what is still in flight is cancelled by teardown, and its
+                // completions would no longer be delivered to release the loop.
+                if !self.script_allowed() {
+                    return;
+                }
                 self.tick();
+                if !self.script_allowed() {
+                    return;
+                }
                 self.auto_tick_active();
                 dispatch = true;
             }
 
-            // Same guard as on entry: a fatal throw during the inner drain
-            // must not re-dispatch. The main-thread case already hard-exits
-            // via `exit_on_uncaught_exception`; this covers workers.
-            if dispatch && self.unhandled_error_counter == 0 {
+            // Same guards as on entry: a fatal throw or a stop requested during
+            // the inner drain must not re-dispatch. The main-thread case already
+            // hard-exits via `exit_on_uncaught_exception`; this covers workers.
+            if dispatch && self.unhandled_error_counter == 0 && self.script_allowed() {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
 
@@ -2240,9 +2266,7 @@ bun_io::link_impl_EventLoopCtx! {
             vm.after_event_loop_callback = cb;
             vm.after_event_loop_callback_ctx = ctx.map(|p| p.as_ptr());
         },
-        pipe_read_buffer() => {
-            core::ptr::from_mut::<[u8]>(vm_from_owner(this.cast()).rare_data().pipe_read_buffer())
-        },
+        pipe_read_scratch() => &raw const *(*vm_from_owner(this.cast()).rare_data_ptr()).pipe_read_scratch,
     }
 }
 
@@ -3608,7 +3632,7 @@ impl VirtualMachine {
     ) {
         use bun_options_types::schema::api::UnhandledRejections as Mode;
 
-        if self.is_shutting_down() {
+        if self.is_shutting_down() || !self.script_allowed() || reason.is_termination_exception() {
             bun_core::debug_warn!("unhandledRejection during shutdown.");
             return;
         }
@@ -3751,8 +3775,6 @@ impl VirtualMachine {
         if main.is_empty() {
             return;
         }
-        let ext = bun_paths::extension(main);
-        let loader = self.transpiler.options.loader(ext);
         let watcher = self.bun_watcher_ptr();
         if !watcher.is_null() {
             // SAFETY: `bun_watcher` is a live `Box<ImportWatcher>` leaked in
@@ -3762,7 +3784,7 @@ impl VirtualMachine {
             // and `add_file_by_path_slow` serializes the inner watchlist write
             // via `Watcher.mutex`. Borrow is scoped to this single
             // mutex-guarded call.
-            let _ = unsafe { (*watcher).add_file_by_path_slow(main, loader) };
+            let _ = unsafe { (*watcher).add_file_by_path_slow(main) };
         }
     }
 
@@ -5342,6 +5364,7 @@ impl VirtualMachine {
         trace: &crate::ZigStackTrace,
         allow_ansi_colors: bool,
     ) -> crate::CrateResult<()> {
+        use crate::zig_stack_frame::LineColumn;
         let stack = trace.frames();
         if stack.is_empty() {
             return Ok(());
@@ -5387,12 +5410,12 @@ impl VirtualMachine {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
                     frame.name_formatter(allow_ansi_colors),
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if !frame.position.is_invalid() {
                 pretty_write!(
                     "<r>      <d>at <r>{}\n",
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             } else if has_name {
                 pretty_write!(
@@ -5402,7 +5425,7 @@ impl VirtualMachine {
             } else {
                 pretty_write!(
                     "<r>      <d>at <r>{}<d>\n",
-                    frame.source_url_formatter(dir, origin, false, allow_ansi_colors)
+                    frame.source_url_formatter(dir, origin, LineColumn::Include, allow_ansi_colors)
                 )?;
             }
         }
@@ -5724,7 +5747,8 @@ impl VirtualMachine {
                     &mut log,
                     FetchFlags::PrintSource,
                 ) else {
-                    return;
+                    // Source is gone; the frames still get remapped below.
+                    break 'code bun_core::ZigStringSlice::EMPTY;
                 };
                 *must_reset_parser_arena_later = true;
                 // Note: the transpile path `clone_utf8`s the source for
@@ -5798,7 +5822,8 @@ impl VirtualMachine {
 
         if frames.len() > 1 {
             for i in 0..frames.len() {
-                if i == top || frames[i].position.is_invalid() {
+                // `remapped`: frames parsed back out of a formatted `error.stack`.
+                if i == top || frames[i].remapped || frames[i].position.is_invalid() {
                     continue;
                 }
                 let source_url = frames[i].source_url.to_utf8();
@@ -6569,6 +6594,7 @@ impl VirtualMachine {
     #[cold]
     #[inline(never)]
     pub(crate) fn print_github_annotation(exception: &ZigException) {
+        use crate::zig_stack_frame::LineColumn;
         let name = &exception.name;
         let message = &exception.message;
         let frames = exception.stack.frames();
@@ -6658,7 +6684,7 @@ impl VirtualMachine {
                     let _ = write!(
                         loc_str,
                         "{}",
-                        frame.source_url_formatter(file, origin, false, false)
+                        frame.source_url_formatter(file, origin, LineColumn::Include, false)
                     );
                     (name_str, loc_str)
                 };

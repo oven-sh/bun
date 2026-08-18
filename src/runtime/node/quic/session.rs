@@ -1941,15 +1941,6 @@ impl QuicSession {
         }
         Ok(JSValue::UNDEFINED)
     }
-    pub(crate) fn silent_close(&self, _g: &JSGlobalObject, _f: &CallFrame) -> JsResult<JSValue> {
-        if !self.destroyed.get() {
-            if let Some(c) = self.conn() {
-                c.abort();
-                self.schedule_process();
-            }
-        }
-        Ok(JSValue::UNDEFINED)
-    }
     pub(crate) fn destroy(&self, global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSValue> {
         if self.destroyed.get() {
             return Ok(JSValue::UNDEFINED);

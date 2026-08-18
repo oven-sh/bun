@@ -5,7 +5,7 @@ use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsClass, JsResult};
 use bun_core::String as BunString;
 
 use crate::test_runner::bun_test::{self, BaseScopeCfg, BunTest, DescribeScope};
-use crate::test_runner::bun_test::js_fns::{Signature, GetActiveCfg};
+use crate::test_runner::bun_test::js_fns::Signature;
 use crate::test_runner::jest;
 
 // `group_log` wraps `test_runner::debug::group` (a begin/end/log tracer) as an RAII guard
@@ -166,13 +166,7 @@ fn call_as_function(global: &JSGlobalObject, frame: &CallFrame) -> JsResult<JSVa
     let this: &ScopeFunctions = unsafe { &*this_ptr.cast_const() };
     let line_no = jest::capture_test_line_number(frame, global);
 
-    let buntest_strong = bun_test::js_fns::clone_active_strong(
-        global,
-        &GetActiveCfg {
-            signature: Signature::ScopeFunctions(this),
-            allow_in_preload: false,
-        },
-    )?;
+    let buntest_strong = bun_test::js_fns::clone_active_strong(global, Signature::ScopeFunctions(this))?;
     let bun_test_ptr = buntest_strong.get();
 
     let callback_mode: CallbackMode = match this.cfg.self_mode {
@@ -812,7 +806,7 @@ fn bind(value: JSValue, global: &JSGlobalObject, name: BunString) -> JsResult<JS
     // `JSHostFn` shape, not the safe Rust signature.
     let call_fn = bun_jsc::JSFunction::create(global, name.clone(), __jsc_host_call_as_function, 1, Default::default());
     let bound = JSValueTestExt::bind(call_fn, global, value, &name, 1.0, &[])?;
-    set_prototype_direct(bound, value.get_prototype(global), global)?;
+    set_prototype_direct(bound, value.get_prototype(global)?, global)?;
     Ok(bound)
 }
 

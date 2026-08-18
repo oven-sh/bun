@@ -703,7 +703,7 @@ public:
     V(public, LazyPropertyOfGlobalObject<Structure>, m_JSNodeHTTPServerSocketStructure)                      \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMDontContextify)                                    \
     V(public, LazyPropertyOfGlobalObject<Symbol>, m_nodeVMUseMainContextDefaultLoader)                       \
-    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_nodeVMDynamicImportToNamespaceFunction)             \
+    V(public, LazyPropertyOfGlobalObject<JSFunction>, m_nodeVMDynamicImportToNamespaceFunction)              \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcSerializeFunction)                                \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcParseHandleFunction)                              \
     V(public, LazyPropertyOfGlobalObject<JSFunction>, m_ipcTagAdvancedBuffersFunction)                       \

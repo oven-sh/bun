@@ -3,11 +3,11 @@
 
 #include "ErrorCode.h"
 
+#include "JavaScriptCore/CodeCache.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/JIT.h"
 #include "JavaScriptCore/JSWeakMap.h"
 #include "JavaScriptCore/JSWeakMapInlines.h"
-#include "JavaScriptCore/Parser.h"
 #include "JavaScriptCore/ProgramCodeBlock.h"
 #include "JavaScriptCore/SourceCodeKey.h"
 
@@ -139,13 +139,16 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
     SourceCode source = makeSource(sourceString, JSC::SourceOrigin(WTF::URL::fileURLWithFileSystemPath(options.filename), *fetcher), JSC::SourceTaintedOrigin::Untainted, options.filename, TextPosition(options.lineOffset, options.columnOffset));
     RETURN_IF_EXCEPTION(scope, {});
 
+    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    fetcher->owner(vm, script);
+
     // Node's vm.Script throws SyntaxError at construction; the REPL's
-    // recoverable-error flow (and user code) relies on that. This is a
-    // double-parse (checkSyntax discards its AST and runInThisContext reparses
-    // via JSC::evaluate); compile-once via m_cachedExecutable is the follow-up.
+    // recoverable-error flow (and user code) relies on that.
     JSC::ParserError parseError;
-    if (!JSC::checkSyntax(vm, source, parseError)) {
-        auto exception = parseError.toErrorObject(globalObject, source, -1);
+    if (!script->unlinkedCodeBlockFor(globalObject, parseError)) {
+        auto exception = parseError.toErrorObject(globalObject, script->source(), -1);
         // Building the error materializes its stack, running a user
         // Error.prepareStackTrace that may throw; Node throws the SyntaxError
         // anyway. tryClearException leaves a termination for the check below.
@@ -156,19 +159,12 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
         // (node_contextify.cc DecorateErrorStack), independent of displayErrors.
         // An absent filename becomes evalmachine.<anonymous>; an explicitly
         // provided one — including "" — is used verbatim.
-        String url = options.filenameProvided ? options.filename : "evalmachine.<anonymous>"_s;
-        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, options.lineOffset);
+        const ScriptOptions& scriptOptions = script->options();
+        String url = scriptOptions.filenameProvided ? scriptOptions.filename : "evalmachine.<anonymous>"_s;
+        decorateParseErrorStack(globalObject, vm, exception, sourceString, url, parseError, scriptOptions.lineOffset);
         throwException(globalObject, scope, exception);
         return {};
     }
-
-    const bool produceCachedData = options.produceCachedData;
-    auto filename = options.filename;
-
-    NodeVMScript* script = NodeVMScript::create(vm, globalObject, structure, WTF::move(source), WTF::move(options));
-    RETURN_IF_EXCEPTION(scope, {});
-
-    fetcher->owner(vm, script);
 
     WTF::Vector<uint8_t>& cachedData = script->cachedData();
 
@@ -203,7 +199,7 @@ constructScript(JSGlobalObject* globalObject, CallFrame* callFrame, JSValue newT
                 script->cachedDataRejected(TriState::True);
             }
         }
-    } else if (produceCachedData) {
+    } else if (script->options().produceCachedData) {
         script->cacheBytecode();
         // TODO(@heimskr): is there ever a case where bytecode production fails?
         script->cachedDataProduced(true);
@@ -220,6 +216,30 @@ JSC_DEFINE_HOST_FUNCTION(scriptConstructorCall, (JSGlobalObject * globalObject, 
 JSC_DEFINE_HOST_FUNCTION(scriptConstructorConstruct, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     return constructScript(globalObject, callFrame, callFrame->newTarget());
+}
+
+JSC::UnlinkedProgramCodeBlock* NodeVMScript::unlinkedCodeBlockFor(JSGlobalObject* globalObject, JSC::ParserError& error)
+{
+    VM& vm = JSC::getVM(globalObject);
+    OptionSet<JSC::CodeGenerationMode> codeGenerationMode = globalObject->defaultCodeGenerationMode();
+
+    if (m_unlinkedCodeBlock && m_unlinkedCodeBlock->codeGenerationMode() == codeGenerationMode)
+        return m_unlinkedCodeBlock.get();
+
+    // The CodeCache records the parse on the executable it is given (that changes what the executable keys
+    // later lookups with, so m_cachedExecutable is not used for this); every run links its own anyway.
+    JSC::UnlinkedProgramCodeBlock* block = vm.codeCache()->getUnlinkedProgramCodeBlock(vm, JSC::ProgramExecutable::create(globalObject, m_source), m_source, codeGenerationMode, error);
+    if (block)
+        m_unlinkedCodeBlock.set(vm, this, block);
+    return block;
+}
+
+JSValue NodeVMScript::evaluate(JSGlobalObject* globalObject, NakedPtr<JSC::Exception>& exception)
+{
+    // If the compile fails now (stack overflow, OOM), the block is null and
+    // JSC::evaluate reports the failure the way it always has, by compiling itself.
+    JSC::ParserError ignoredError;
+    return JSC::evaluate(globalObject, m_source, unlinkedCodeBlockFor(globalObject, ignoredError), globalObject, exception);
 }
 
 JSC::ProgramExecutable* NodeVMScript::createExecutable()
@@ -273,6 +293,7 @@ void NodeVMScript::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_cachedExecutable);
     visitor.append(thisObject->m_cachedBytecodeBuffer);
+    visitor.append(thisObject->m_unlinkedCodeBlock);
 }
 
 NodeVMScriptConstructor::NodeVMScriptConstructor(VM& vm, Structure* structure)
@@ -336,7 +357,7 @@ static JSC::EncodedJSValue runInContext(NodeVMGlobalObject* globalObject, NodeVM
     JSValue result {};
     {
         NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+        result = script->evaluate(globalObject, exception);
         // Node performs the afterEvaluate microtask checkpoint inside the timeout/SIGINT scope, so a
         // `timeout` also bounds microtasks the script scheduled on the context's own queue. A script cut
         // short before its checkpoint keeps what it queued for the next evaluation's, as in Node.
@@ -383,7 +404,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInThisContext, (JSGlobalObject * globalObject,
     JSValue result {};
     {
         NodeVMRunTermination termination(globalObject, timeoutOf(options), options.breakOnSigint);
-        result = JSC::evaluate(globalObject, script->source(), globalObject, exception);
+        result = script->evaluate(globalObject, exception);
         termination.finish(scope);
     }
     RETURN_IF_EXCEPTION(scope, {});
@@ -412,20 +433,8 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
         return ERR::INVALID_ARG_VALUE(scope, globalObject, "this"_s, thisValue, "must be a Script"_s);
     }
 
+    // Populated by the compile in the constructor (a CodeCache hit copies it over too).
     String url = script->source().provider()->sourceMappingURLDirective();
-
-    if (!url && !script->sourceMapURLParsed()) {
-        // The directive is only populated once the source has been parsed; a
-        // Script that has never run hasn't been. Parse once so sourceMapURL
-        // is available before the first run, like Node where compilation
-        // happens in the Script constructor.
-        script->sourceMapURLParsed(true);
-        ParserError parserError;
-        parseRootNode<ProgramNode>(vm, script->source(), ImplementationVisibility::Public, JSParserBuiltinMode::NotBuiltin,
-            NoLexicallyScopedFeatures, JSParserScriptMode::Classic, SourceParseMode::ProgramMode, parserError);
-        url = script->source().provider()->sourceMappingURLDirective();
-    }
-
     if (!url) {
         return encodedJSUndefined();
     }

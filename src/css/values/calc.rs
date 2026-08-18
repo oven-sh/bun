@@ -220,6 +220,11 @@ impl<V> Calc<V> {
 // `PartialEq for Calc<V>` is provided above with the looser `V: PartialEq +
 // Clone` bound so structural equality is available without `CalcValue`.
 
+/// Resolves a bare identifier inside a math function (e.g. a relative color
+/// channel keyword). Type-erased so the recursive calc parser exists once
+/// per `V` instead of once per call site.
+pub(crate) type ParseIdent<'a, V> = &'a dyn Fn(&[u8]) -> Option<Calc<V>>;
+
 impl<V: CalcValue> Calc<V> {
     fn mul_value_f32(lhs: V, rhs: f32) -> V {
         lhs.mul_f32(rhs)
@@ -280,16 +285,12 @@ impl<V: CalcValue> Calc<V> {
     }
 
     pub fn parse(input: &mut css::Parser) -> CssResult<Self> {
-        fn parse_with_fn<V>(_: (), _: &[u8]) -> Option<Calc<V>> {
-            None
-        }
-        Self::parse_with(input, (), parse_with_fn::<V>)
+        Self::parse_with(input, &|_| None)
     }
 
-    pub(crate) fn parse_with<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    pub(crate) fn parse_with(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: F,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         let location = input.current_source_location();
         // Clone the token before reborrowing `input` so the function
@@ -307,10 +308,9 @@ impl<V: CalcValue> Calc<V> {
             other => return Err(location.new_unexpected_token_error(other)),
         };
 
-        // The closures capture `ctx` + `parse_ident` directly.
         match unit {
             CalcUnit::Calc => {
-                let calc = input.parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident))?;
+                let calc = input.parse_nested_block(|i| Self::parse_sum(i, parse_ident))?;
                 if matches!(calc, Calc::Value(_) | Calc::Number(_)) {
                     return Ok(calc);
                 }
@@ -318,7 +318,7 @@ impl<V: CalcValue> Calc<V> {
             }
             CalcUnit::Min => {
                 let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
+                    i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))
                 })?;
                 // PERF(alloc): i don't like this additional allocation
                 // can we use stack fallback here if the common case is that there will be 1 argument?
@@ -330,7 +330,7 @@ impl<V: CalcValue> Calc<V> {
             }
             CalcUnit::Max => {
                 let mut reduced = input.parse_nested_block(|i| {
-                    i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))
+                    i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))
                 })?;
                 // PERF: i don't like this additional allocation
                 Self::reduce_args(&mut reduced, Ordering::Greater);
@@ -341,11 +341,11 @@ impl<V: CalcValue> Calc<V> {
             }
             CalcUnit::Clamp => {
                 let (mut min, mut center, mut max) = input.parse_nested_block(|i| {
-                    let min = Self::parse_sum(i, ctx, parse_ident)?;
+                    let min = Self::parse_sum(i, parse_ident)?;
                     i.expect_comma()?;
-                    let center = Self::parse_sum(i, ctx, parse_ident)?;
+                    let center = Self::parse_sum(i, parse_ident)?;
                     i.expect_comma()?;
-                    let max = Self::parse_sum(i, ctx, parse_ident)?;
+                    let max = Self::parse_sum(i, parse_ident)?;
                     Ok((Some(min), center, Some(max)))
                 })?;
 
@@ -401,7 +401,6 @@ impl<V: CalcValue> Calc<V> {
                         value: a,
                         interval: b,
                     },
-                    ctx,
                     parse_ident,
                 )
             }),
@@ -420,7 +419,6 @@ impl<V: CalcValue> Calc<V> {
                         dividend: a,
                         divisor: b,
                     },
-                    ctx,
                     parse_ident,
                 )
             }),
@@ -442,41 +440,40 @@ impl<V: CalcValue> Calc<V> {
                         dividend: a,
                         divisor: b,
                     },
-                    ctx,
                     parse_ident,
                 )
             }),
-            CalcUnit::Sin => Self::parse_trig(input, TrigFnKind::Sin, false, ctx, parse_ident),
-            CalcUnit::Cos => Self::parse_trig(input, TrigFnKind::Cos, false, ctx, parse_ident),
-            CalcUnit::Tan => Self::parse_trig(input, TrigFnKind::Tan, false, ctx, parse_ident),
-            CalcUnit::Asin => Self::parse_trig(input, TrigFnKind::Asin, true, ctx, parse_ident),
-            CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, true, ctx, parse_ident),
-            CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, true, ctx, parse_ident),
+            CalcUnit::Sin => Self::parse_trig(input, TrigFnKind::Sin, false, parse_ident),
+            CalcUnit::Cos => Self::parse_trig(input, TrigFnKind::Cos, false, parse_ident),
+            CalcUnit::Tan => Self::parse_trig(input, TrigFnKind::Tan, false, parse_ident),
+            CalcUnit::Asin => Self::parse_trig(input, TrigFnKind::Asin, true, parse_ident),
+            CalcUnit::Acos => Self::parse_trig(input, TrigFnKind::Acos, true, parse_ident),
+            CalcUnit::Atan => Self::parse_trig(input, TrigFnKind::Atan, true, parse_ident),
             CalcUnit::Atan2 => input.parse_nested_block(|i| {
-                let res = Self::parse_atan2(i, ctx, parse_ident)?;
+                let res = Self::parse_atan2(i, parse_ident)?;
                 if let Some(v) = V::try_from_angle(res) {
                     return Ok(Calc::Value(Box::new(v)));
                 }
                 Err(i.new_custom_error(css::ParserError::invalid_value))
             }),
             CalcUnit::Pow => input.parse_nested_block(|i| {
-                let a = Self::parse_numeric(i, ctx, parse_ident)?;
+                let a = Self::parse_numeric(i, parse_ident)?;
                 i.expect_comma()?;
-                let b = Self::parse_numeric(i, ctx, parse_ident)?;
+                let b = Self::parse_numeric(i, parse_ident)?;
                 Ok(Calc::Number(a.powf(b)))
             }),
             CalcUnit::Log => input.parse_nested_block(|i| {
-                let value = Self::parse_numeric(i, ctx, parse_ident)?;
+                let value = Self::parse_numeric(i, parse_ident)?;
                 if i.try_parse(|p| p.expect_comma()).is_ok() {
-                    let base = Self::parse_numeric(i, ctx, parse_ident)?;
+                    let base = Self::parse_numeric(i, parse_ident)?;
                     return Ok(Calc::Number(value.log(base)));
                 }
                 Ok(Calc::Number(value.ln()))
             }),
-            CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, ctx, parse_ident),
-            CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, ctx, parse_ident),
+            CalcUnit::Sqrt => Self::parse_numeric_fn(input, NumericFnOp::Sqrt, parse_ident),
+            CalcUnit::Exp => Self::parse_numeric_fn(input, NumericFnOp::Exp, parse_ident),
             CalcUnit::Hypot => input.parse_nested_block(|i| {
-                let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, ctx, parse_ident))?;
+                let mut args = i.parse_comma_separated(|i| Self::parse_sum(i, parse_ident))?;
                 let val = Self::parse_hypot(&mut args)?;
                 if let Some(v) = val {
                     return Ok(v);
@@ -484,7 +481,7 @@ impl<V: CalcValue> Calc<V> {
                 Ok(Calc::Function(Box::new(MathFunction::Hypot(args))))
             }),
             CalcUnit::Abs => input.parse_nested_block(|i| {
-                let v = Self::parse_sum(i, ctx, parse_ident)?;
+                let v = Self::parse_sum(i, parse_ident)?;
                 Ok(if let Some(vv) = Self::apply_map(&v, absf) {
                     vv
                 } else {
@@ -492,7 +489,7 @@ impl<V: CalcValue> Calc<V> {
                 })
             }),
             CalcUnit::Sign => input.parse_nested_block(|i| {
-                let v = Self::parse_sum(i, ctx, parse_ident)?;
+                let v = Self::parse_sum(i, parse_ident)?;
                 match &v {
                     Calc::Number(n) => return Ok(Calc::Number(std_math_sign(*n))),
                     Calc::Value(v2) => {
@@ -512,14 +509,13 @@ impl<V: CalcValue> Calc<V> {
         }
     }
 
-    pub(crate) fn parse_numeric_fn<C: Copy>(
+    pub(crate) fn parse_numeric_fn(
         input: &mut css::Parser,
         op: NumericFnOp,
-        ctx: C,
-        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         input.parse_nested_block(|i| {
-            let v = Self::parse_numeric(i, ctx, parse_ident)?;
+            let v = Self::parse_numeric(i, parse_ident)?;
             Ok(Calc::Number(match op {
                 NumericFnOp::Sqrt => v.sqrt(),
                 NumericFnOp::Exp => v.exp(),
@@ -527,17 +523,16 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub(crate) fn parse_math_fn<C: Copy, OC: Copy>(
+    pub(crate) fn parse_math_fn<OC: Copy>(
         input: &mut css::Parser,
         ctx_for_op_and_fallback: OC,
         op: fn(OC, f32, f32) -> f32,
         fallback: fn(OC, Self, Self) -> MathFunction<V>,
-        ctx_for_parse_ident: C,
-        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        let a = Self::parse_sum(input, ctx_for_parse_ident, parse_ident)?;
+        let a = Self::parse_sum(input, parse_ident)?;
         input.expect_comma()?;
-        let b = Self::parse_sum(input, ctx_for_parse_ident, parse_ident)?;
+        let b = Self::parse_sum(input, parse_ident)?;
 
         let val = Self::apply_op(&a, &b, ctx_for_op_and_fallback, op)
             .unwrap_or_else(|| Calc::Function(Box::new(fallback(ctx_for_op_and_fallback, a, b))));
@@ -545,12 +540,12 @@ impl<V: CalcValue> Calc<V> {
         Ok(val)
     }
 
-    pub(crate) fn parse_sum<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    #[inline(never)]
+    pub(crate) fn parse_sum(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: F,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        let mut cur = Self::parse_product(input, ctx, parse_ident)?;
+        let mut cur = Self::parse_product(input, parse_ident)?;
         loop {
             let start = input.state();
             let tok = match input.next_including_whitespace() {
@@ -567,10 +562,10 @@ impl<V: CalcValue> Calc<V> {
                 }
                 let next_tok = input.next()?.clone();
                 if matches!(next_tok, css::Token::Delim(c) if c == b'+' as u32) {
-                    let next = Self::parse_product(input, ctx, parse_ident)?;
+                    let next = Self::parse_product(input, parse_ident)?;
                     cur = cur.add(next, input)?;
                 } else if matches!(next_tok, css::Token::Delim(c) if c == b'-' as u32) {
-                    let mut rhs = Self::parse_product(input, ctx, parse_ident)?;
+                    let mut rhs = Self::parse_product(input, parse_ident)?;
                     rhs = rhs.mul_f32(-1.0);
                     cur = cur.add(rhs, input)?;
                 } else {
@@ -585,12 +580,12 @@ impl<V: CalcValue> Calc<V> {
         Ok(cur)
     }
 
-    pub(crate) fn parse_product<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    #[inline(never)]
+    pub(crate) fn parse_product(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: F,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
-        let mut node = Self::parse_value(input, ctx, parse_ident)?;
+        let mut node = Self::parse_value(input, parse_ident)?;
         loop {
             let start = input.state();
             let tok = match input.next() {
@@ -603,7 +598,7 @@ impl<V: CalcValue> Calc<V> {
 
             if matches!(tok, css::Token::Delim(c) if *c == b'*' as u32) {
                 // At least one of the operands must be a number.
-                let rhs = Self::parse_value(input, ctx, parse_ident)?;
+                let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(n) = rhs {
                     node = node.mul_f32(n);
                 } else if let Calc::Number(val) = node {
@@ -613,7 +608,7 @@ impl<V: CalcValue> Calc<V> {
                     return Err(input.new_unexpected_token_error(css::Token::Delim(b'*' as u32)));
                 }
             } else if matches!(tok, css::Token::Delim(c) if *c == b'/' as u32) {
-                let rhs = Self::parse_value(input, ctx, parse_ident)?;
+                let rhs = Self::parse_value(input, parse_ident)?;
                 if let Calc::Number(val) = rhs {
                     if val != 0.0 {
                         node = node.mul_f32(1.0 / val);
@@ -629,10 +624,10 @@ impl<V: CalcValue> Calc<V> {
         Ok(node)
     }
 
-    pub(crate) fn parse_value<C: Copy, F: Fn(C, &[u8]) -> Option<Self> + Copy>(
+    #[inline(never)]
+    pub(crate) fn parse_value(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: F,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         // Parse nested calc() and other math functions.
         match input.try_parse(Self::parse) {
@@ -668,7 +663,7 @@ impl<V: CalcValue> Calc<V> {
         }
 
         if input.try_parse(|p| p.expect_parenthesis_block()).is_ok() {
-            return input.parse_nested_block(|i| Self::parse_sum(i, ctx, parse_ident));
+            return input.parse_nested_block(|i| Self::parse_sum(i, parse_ident));
         }
 
         if let Ok(num) = input.try_parse(|p| p.expect_number()) {
@@ -690,7 +685,7 @@ impl<V: CalcValue> Calc<V> {
                 other => Err(p.new_unexpected_token_error(other)),
             }
         }) {
-            if let Some(c) = parse_ident(ctx, ident) {
+            if let Some(c) = parse_ident(ident) {
                 return Ok(c);
             }
             return Err(location.new_unexpected_token_error(css::Token::Ident(ident)));
@@ -700,12 +695,11 @@ impl<V: CalcValue> Calc<V> {
         Ok(Calc::Value(Box::new(value)))
     }
 
-    pub(crate) fn parse_trig<C: Copy>(
+    pub(crate) fn parse_trig(
         input: &mut css::Parser,
         trig_fn_kind: TrigFnKind,
         to_angle: bool,
-        ctx: C,
-        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Self> {
         let trig_fn = move |x: f32| -> f32 {
             match trig_fn_kind {
@@ -719,20 +713,7 @@ impl<V: CalcValue> Calc<V> {
         };
 
         input.parse_nested_block(|i| {
-            // Wrap `parse_ident` to project `Calc<V>::Number` into
-            // `Calc<Angle>::Number`.
-            let parse_ident_fn = |_self: (), ident: &[u8]| -> Option<Calc<Angle>> {
-                let v = parse_ident(ctx, ident)?;
-                if let Calc::Number(n) = v {
-                    Some(Calc::Number(n))
-                } else {
-                    None
-                }
-            };
-            // ctx is `()` and the
-            // outer closure captures `ctx`/`parse_ident` (both `Copy`, satisfying
-            // `parse_sum`'s `C: Copy` / `F: Fn(C, &[u8]) -> Option<Self> + Copy`).
-            let v = Calc::<Angle>::parse_sum(i, (), parse_ident_fn)?;
+            let v = Calc::<Angle>::parse_sum(i, &Self::number_ident(parse_ident))?;
 
             let rad: f32 = 'rad: {
                 match &v {
@@ -758,21 +739,22 @@ impl<V: CalcValue> Calc<V> {
         })
     }
 
-    pub(crate) fn parse_ident_none<C, Value>(_: C, _: &[u8]) -> Option<Calc<Value>> {
-        None
+    /// Projects `Calc<V>::Number` idents into `Calc<W>::Number` for the
+    /// number-only sub-parsers (trig, atan2, numeric).
+    fn number_ident<'a, W>(
+        parse_ident: ParseIdent<'a, V>,
+    ) -> impl Fn(&[u8]) -> Option<Calc<W>> + 'a {
+        move |ident| match parse_ident(ident)? {
+            Calc::Number(n) => Some(Calc::Number(n)),
+            _ => None,
+        }
     }
 
-    pub(crate) fn parse_atan2<C: Copy>(
+    pub(crate) fn parse_atan2(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Angle> {
-        let angle_ident = move |c: C, ident: &[u8]| -> Option<Calc<Angle>> {
-            match parse_ident(c, ident)? {
-                Calc::Number(n) => Some(Calc::Number(n)),
-                _ => None,
-            }
-        };
+        let angle_ident = Self::number_ident::<Angle>(parse_ident);
 
         let before_args = input.state();
         let failures_before = input.math_fn_parse_failures();
@@ -791,10 +773,10 @@ impl<V: CalcValue> Calc<V> {
                 Err(input.new_custom_error(css::ParserError::invalid_value))
             };
 
-        match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+        match Calc::<Angle>::parse_sum(input, &angle_ident) {
             Ok(a) => {
                 input.expect_comma()?;
-                match Calc::<Angle>::parse_sum(input, ctx, angle_ident) {
+                match Calc::<Angle>::parse_sum(input, &angle_ident) {
                     Ok(b) => {
                         if let Ok(v) = reconcile(input, &a, &b) {
                             return Ok(v);
@@ -817,35 +799,26 @@ impl<V: CalcValue> Calc<V> {
             }
         }
 
-        if let Ok(v) = try_parse_atan2_args::<C, Length>(input, ctx) {
+        if let Ok(v) = try_parse_atan2_args::<Length>(input) {
             return Ok(v);
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Percentage>(input, ctx) {
+        if let Ok(v) = try_parse_atan2_args::<Percentage>(input) {
             return Ok(v);
         }
-        if let Ok(v) = try_parse_atan2_args::<C, Time>(input, ctx) {
+        if let Ok(v) = try_parse_atan2_args::<Time>(input) {
             return Ok(v);
         }
 
-        let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {
-            let v = parse_ident(c, ident)?;
-            if let Calc::Number(n) = v {
-                Some(Calc::Number(n))
-            } else {
-                None
-            }
-        };
-        Calc::<CSSNumber>::parse_atan2_args(input, ctx, parse_ident_fn)
+        Calc::<CSSNumber>::parse_atan2_args(input, &Self::number_ident(parse_ident))
     }
 
-    pub(crate) fn parse_atan2_args<C: Copy>(
+    pub(crate) fn parse_atan2_args(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<Angle> {
-        let a = Self::parse_sum(input, ctx, parse_ident)?;
+        let a = Self::parse_sum(input, parse_ident)?;
         input.expect_comma()?;
-        let b = Self::parse_sum(input, ctx, parse_ident)?;
+        let b = Self::parse_sum(input, parse_ident)?;
 
         if let (Calc::Value(av), Calc::Value(bv)) = (&a, &b) {
             if let Some(v) = av.try_op_to(&**bv, (), |_, x, y| Angle::Rad(x.atan2(y))) {
@@ -862,20 +835,12 @@ impl<V: CalcValue> Calc<V> {
         Err(input.new_custom_error(css::ParserError::invalid_value))
     }
 
-    pub(crate) fn parse_numeric<C: Copy>(
+    pub(crate) fn parse_numeric(
         input: &mut css::Parser,
-        ctx: C,
-        parse_ident: impl Fn(C, &[u8]) -> Option<Self> + Copy,
+        parse_ident: ParseIdent<'_, V>,
     ) -> CssResult<f32> {
-        let parse_ident_fn = move |c: C, ident: &[u8]| -> Option<Calc<CSSNumber>> {
-            let v = parse_ident(c, ident)?;
-            if let Calc::Number(n) = v {
-                Some(Calc::Number(n))
-            } else {
-                None
-            }
-        };
-        let v: Calc<CSSNumber> = Calc::<CSSNumber>::parse_sum(input, ctx, parse_ident_fn)?;
+        let v: Calc<CSSNumber> =
+            Calc::<CSSNumber>::parse_sum(input, &Self::number_ident(parse_ident))?;
         let val = match v {
             Calc::Number(n) => n,
             Calc::Value(v) => *v,
@@ -1109,12 +1074,8 @@ impl<V: CalcValue> Calc<V> {
 }
 
 #[inline]
-fn try_parse_atan2_args<C: Copy, Value: CalcValue>(
-    input: &mut css::Parser,
-    ctx: C,
-) -> CssResult<Angle> {
-    let func = Calc::<Value>::parse_ident_none::<C, Value>;
-    input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, ctx, func))
+fn try_parse_atan2_args<Value: CalcValue>(input: &mut css::Parser) -> CssResult<Angle> {
+    input.try_parse(|i| Calc::<Value>::parse_atan2_args(i, &|_| None))
 }
 
 #[derive(Copy, Clone)]

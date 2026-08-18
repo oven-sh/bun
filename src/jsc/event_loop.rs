@@ -818,22 +818,16 @@ impl EventLoop {
         self.drain_rejected_promises()
     }
 
-    /// Deliver pending `unhandledRejection` notifications, then re-enter the
-    /// `nextTick` + microtask checkpoint the handlers may have filled.
-    ///
-    /// Node's `processTicksAndRejections` loops back into that checkpoint after
-    /// `processPromiseRejections()`. Returning without it drops anything a
-    /// handler scheduled behind an `await`, and the loop sees no pending work.
+    /// Deliver pending `unhandledRejection` notifications, then drain the `nextTick` +
+    /// microtask checkpoint the handlers filled, as node's `processTicksAndRejections`
+    /// does; otherwise work a handler schedules behind an `await` is lost.
     /// `Err(Stopped)` is the VM's termination, taken at this loop-level boundary.
     pub fn drain_rejected_promises(&mut self) -> Result<(), Stopped> {
-        // Note: reshaped for borrowck — `vm_ref()` is `&'static`, so these
-        // borrows detach from `&self` and survive the `&mut self` calls below.
-        let global = self.vm_ref().global();
-        let global_vm = self.vm_ref().jsc_vm();
-
-        while global.has_pending_rejected_promises() {
-            global.handle_rejected_promises().map_err(|_| Stopped)?;
-            self.drain_microtasks_with_global(global, global_vm)?;
+        while self.global_ref().has_pending_rejected_promises() {
+            self.global_ref()
+                .handle_rejected_promises()
+                .map_err(|_| Stopped)?;
+            self.drain_microtasks()?;
         }
         Ok(())
     }

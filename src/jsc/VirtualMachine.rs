@@ -1654,8 +1654,6 @@ impl VirtualMachine {
             if dispatch && self.unhandled_error_counter == 0 && self.script_allowed() {
                 ExitHandler::dispatch_on_before_exit(self);
                 dispatch = false;
-                // The listener just ran may have scheduled work or rejected; the
-                // next pass picks up both.
                 continue;
             }
 

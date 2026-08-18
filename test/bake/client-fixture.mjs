@@ -468,6 +468,13 @@ process.on("message", async message => {
   if (message.type === "exit") {
     // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
     await pageLoad?.catch(() => {});
+    if (!expectErrors && window.document.querySelector("bun-hmr")?.style.display === "block") {
+      const errors = collectOverlayErrors();
+      if (errors.length > 0 && JSON.stringify(errors) !== JSON.stringify(lastReportedErrors)) {
+        console.error("[E] Error overlay is showing errors the test never checked:", errors);
+        process.exit(exitCodeMap.unexpectedErrorOverlay);
+      }
+    }
     process.exit(0);
   }
   if (message.type === "get-style") {
@@ -518,45 +525,11 @@ process.on("message", async message => {
   if (message.type === "get-errors") {
     const [messageId] = message.args;
     try {
-      const overlay = window.document.querySelector("bun-hmr");
-      if (!overlay) {
-        process.send({
-          type: `get-errors-result-${messageId}`,
-          args: [{ value: [] }],
-        });
-        return;
-      }
-
-      const errors = [];
-      const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
-      for (const message of buildErrors) {
-        const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
-        const label = message.querySelector(".log-label").textContent;
-        const text = message.querySelector(".log-text").textContent;
-
-        const lineNumElem = message.querySelector(".gutter");
-        const spaceElem = message.querySelector(".highlight-wrap > .space");
-
-        let formatted;
-        if (lineNumElem && spaceElem) {
-          const line = lineNumElem.textContent;
-          const col = spaceElem.textContent.length + 1;
-          formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
-        } else {
-          formatted = `${fileName}: ${label}: ${text}`;
-        }
-
-        errors.push(formatted);
-      }
-      const runtimeError = overlay.shadowRoot.querySelector(".r-error");
-      if (runtimeError) {
-        // TODO: line and column of this error
-        errors.push(runtimeError.querySelector(".message-desc").textContent);
-      }
-
+      const errors = collectOverlayErrors();
+      lastReportedErrors = errors;
       process.send({
         type: `get-errors-result-${messageId}`,
-        args: [{ value: errors.sort() }],
+        args: [{ value: errors }],
       });
     } catch (error) {
       console.error(error);
@@ -567,6 +540,42 @@ process.on("message", async message => {
     }
   }
 });
+/** Errors currently rendered in the `bun-hmr` overlay, formatted the way `expectErrorOverlay` compares them. */
+function collectOverlayErrors() {
+  const overlay = window.document.querySelector("bun-hmr");
+  if (!overlay) return [];
+  const errors = [];
+  const buildErrors = overlay.shadowRoot.querySelectorAll(".b-msg");
+  for (const message of buildErrors) {
+    const fileName = message.closest(".b-group").querySelector(".file-name").textContent;
+    const label = message.querySelector(".log-label").textContent;
+    const text = message.querySelector(".log-text").textContent;
+
+    const lineNumElem = message.querySelector(".gutter");
+    const spaceElem = message.querySelector(".highlight-wrap > .space");
+
+    let formatted;
+    if (lineNumElem && spaceElem) {
+      const line = lineNumElem.textContent;
+      const col = spaceElem.textContent.length + 1;
+      formatted = `${fileName}:${line}:${col}: ${label}: ${text}`;
+    } else {
+      formatted = `${fileName}: ${label}: ${text}`;
+    }
+
+    errors.push(formatted);
+  }
+  const runtimeError = overlay.shadowRoot.querySelector(".r-error");
+  if (runtimeError) {
+    // TODO: line and column of this error
+    errors.push(runtimeError.querySelector(".message-desc").textContent);
+  }
+  return errors.sort();
+}
+
+/** The last overlay contents the harness read through `get-errors`; an overlay it never read is unexpected at exit. */
+let lastReportedErrors = [];
+
 process.on("disconnect", () => {
   process.exit(0);
 });

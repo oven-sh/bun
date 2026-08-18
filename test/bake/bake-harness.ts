@@ -1067,8 +1067,11 @@ export class Client extends EventEmitter {
     await this.#proc.exited;
     // `exited` settles before `onExit` runs, so read the status off the subprocess itself.
     const { exitCode, signalCode } = this.#proc;
-    // Node on Windows can abort inside process.exit() with libuv's uv_async_send assertion (#39488); not a page failure.
-    const abortedInExit = isWindows && this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));
+    // Node on Windows can abort inside process.exit() with libuv's uv_async_send assertion; not a page failure unless the fixture reported one first.
+    const abortedInExit =
+      isWindows &&
+      !this.output.lines.some(line => line.startsWith("[E]")) &&
+      this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));
     if (exitCode !== 0 && !abortedInExit) {
       let code;
       if (exitCode === null) {

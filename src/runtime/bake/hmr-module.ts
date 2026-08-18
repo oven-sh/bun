@@ -487,6 +487,10 @@ function beginEvaluation(mod: HMRModule): number {
   mod.selfAccept = null;
   mod.depAccepts = null;
   mod.onDispose = null;
+  // The load that follows adds `mod` back to each module it still imports.
+  if (mod.esm && mod.imports) {
+    for (const dep of mod.imports) if (dep instanceof HMRModule) dep.importers.delete(mod);
+  }
   return ++mod.generation;
 }
 

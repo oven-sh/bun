@@ -746,6 +746,35 @@ devTest("an accept callback is not run for an importer the same update evaluated
     await c.expectMessage("mid v2 accepted d3");
   },
 });
+devTest("a module that no longer imports the updated module is not evaluated again", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./a";
+      import { b } from "./b";
+      console.log("index " + b);
+      import.meta.hot.accept();
+    `,
+    "a.ts": `
+      import { b } from "./b";
+      console.log("a:" + b);
+    `,
+    "b.ts": `
+      export const b = "b1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a:b1", "index b1");
+    await dev.write("a.ts", `console.log("a standalone");`);
+    await c.expectMessage("a standalone", "index b1");
+    // `a` was an importer of `b` but its current copy is not: only `index` runs again.
+    await dev.write("b.ts", `export const b = "b2";`);
+    await c.expectMessage("index b2");
+    await dev.write("b.ts", `export const b = "b3";`);
+    await c.expectMessage("index b3");
+  },
+});
 devTest("import.meta.hot.dispose runs for every module the update evaluates again", {
   files: {
     // importer: index handles every update with its accept callback and is never evaluated again, so its own dispose callback must never run.

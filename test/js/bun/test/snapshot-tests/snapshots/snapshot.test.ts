@@ -75,6 +75,8 @@ test("most types", () => {
   expect(new Float32Array()).toMatchSnapshot("Float32Array");
   expect(new Float64Array()).toMatchSnapshot("Float64Array");
   expect(new ArrayBuffer(0)).toMatchSnapshot("ArrayBuffer");
+  expect(new Uint8Array([1, 2, 3]).buffer).toMatchSnapshot("ArrayBuffer with elements");
+  expect({ a: 1, b: new Uint8Array([4, 5]).buffer }).toMatchSnapshot("Object with ArrayBuffer");
   expect(new DataView(new ArrayBuffer(0))).toMatchSnapshot("DataView");
   expect({}).toMatchSnapshot("Object");
   expect({ a: 1, b: 2 }).toMatchSnapshot("Object2");

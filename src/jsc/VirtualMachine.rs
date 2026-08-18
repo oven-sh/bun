@@ -4479,9 +4479,16 @@ impl VirtualMachine {
                     };
 
                     // Only re-query if we previously had something cached.
-                    if self.transpiler.resolver.bust_dir_cache(
+                    let mut busted = self.transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
-                    ) {
+                    );
+                    if bun_paths::is_package_path(normalized_specifier) {
+                        busted |= self.transpiler.resolver.bust_dir_cache_from_tsconfig_paths(
+                            source_to_use,
+                            normalized_specifier,
+                        );
+                    }
+                    if busted {
                         continue;
                     }
                     return Err(crate::CrateError::ModuleNotFound);

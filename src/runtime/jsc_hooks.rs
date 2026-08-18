@@ -5263,11 +5263,21 @@ unsafe fn resolve<'a>(
 
                 // Only re-query if we previously had something cached.
                 // SAFETY: see above.
-                if unsafe {
+                let mut busted = unsafe {
                     (*vm).transpiler.resolver.bust_dir_cache(
                         bun_paths::string_paths::without_trailing_slash_windows_path(buster_name),
                     )
-                } {
+                };
+                if bun_paths::is_package_path(normalized_specifier) {
+                    // SAFETY: see above.
+                    busted |= unsafe {
+                        (*vm)
+                            .transpiler
+                            .resolver
+                            .bust_dir_cache_from_tsconfig_paths(source_to_use, normalized_specifier)
+                    };
+                }
+                if busted {
                     continue;
                 }
                 return Err(crate::Error::ModuleNotFound);

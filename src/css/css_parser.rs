@@ -290,11 +290,8 @@ pub trait EnumProperty: Sized + Copy + Into<&'static str> {
 /// Skips to the end of the current block. Returns `true` if the matching
 /// closing token was found, `false` if the end of input was reached first
 /// (the block is unclosed).
-///
-/// Hot: `parse_nested_block` calls this on every block exit, so the common
-/// case (already at the closing token) must not allocate. `inline(never)`
-/// keeps one copy of it instead of one per `parse_nested_block` instantiation.
-#[inline(never)]
+/// Hot: `parse_nested_block` calls this on every block exit, so it must not allocate.
+#[inline(never)] // one copy, not one per `parse_nested_block` instantiation
 fn consume_until_end_of_block(block_type: BlockType, tokenizer: &mut Tokenizer) -> bool {
     let mut innermost = block_type;
     let mut outer = SmallList::<BlockType, 16>::default();

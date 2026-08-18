@@ -1365,18 +1365,15 @@ describe.concurrent(() => {
   it("assigning stdio on a copy of process's descriptors doesn't write through to process", () => {
     // jest-environment-node builds its per-test `process` this way (jest-util createProcessObject).
     const real = process.stdout;
-    try {
-      const descriptors = Object.getOwnPropertyDescriptors(process);
-      for (const key of Object.keys(descriptors)) descriptors[key].configurable = true;
-      const copy = Object.defineProperties(Object.create(Object.getPrototypeOf(process)), descriptors);
-      expect(copy.stdout).toBe(real);
-      const fake = { write() {} };
-      copy.stdout = fake;
-      expect(copy.stdout).toBe(fake);
-      expect(process.stdout).toBe(real);
-    } finally {
-      process.stdout = real;
-    }
+    const descriptors = Object.getOwnPropertyDescriptors(process);
+    for (const key of Object.keys(descriptors)) descriptors[key].configurable = true;
+    const copy = Object.defineProperties(Object.create(Object.getPrototypeOf(process)), descriptors);
+    expect(copy.stdout).toBe(real);
+    const fake = { write() {} };
+    copy.stdout = fake;
+    expect(copy.stdout).toBe(fake);
+    expect(process.stdout).toBe(real);
+    expect(typeof Object.getOwnPropertyDescriptor(process, "stdout").get).toBe("function");
   });
 
   it("dlopen args parsing", () => {

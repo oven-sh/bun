@@ -271,8 +271,9 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
 
             if (envValue && envValue.isCell()) {
                 envObject = dynamicDowncast<JSC::JSObject>(envValue);
-            } else if (globalObject->m_processEnvObject.isInitialized()) {
-                envObject = globalObject->processEnvObject();
+            } else {
+                // Null (nothing to copy) unless process.env was ever built.
+                envObject = globalObject->m_processEnvObject.get();
             }
 
             if (envObject) {

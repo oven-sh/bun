@@ -56,24 +56,22 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     if (object->type() == JSC::ProxyObjectType) [[unlikely]] {
         // Check if we're actually iterating through the JSEnvironmentVariableMap's proxy.
         auto* zigGlobal = defaultGlobalObject(globalObject);
-        if (zigGlobal->m_processEnvObject.isInitialized()) {
-            if (object == zigGlobal->m_processEnvObject.get(zigGlobal)) {
-                object->methodTable()->getOwnPropertyNames(
-                    object,
-                    globalObject,
-                    array,
-                    DontEnumPropertiesMode::Exclude);
-                RETURN_IF_EXCEPTION(scope, nullptr);
+        if (object == zigGlobal->m_processEnvObject.get()) {
+            object->methodTable()->getOwnPropertyNames(
+                object,
+                globalObject,
+                array,
+                DontEnumPropertiesMode::Exclude);
+            RETURN_IF_EXCEPTION(scope, nullptr);
 
-                *count = array.size();
-                if (array.size() == 0) {
-                    return nullptr;
-                }
-
-                auto* iter = JSPropertyIterator::create(vm, array.releaseData());
-                iter->isSpecialProxy = true;
-                return iter;
+            *count = array.size();
+            if (array.size() == 0) {
+                return nullptr;
             }
+
+            auto* iter = JSPropertyIterator::create(vm, array.releaseData());
+            iter->isSpecialProxy = true;
+            return iter;
         }
     }
 #endif

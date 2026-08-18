@@ -108,7 +108,12 @@ static JSValue constructWebViewObject(VM& vm, JSObject* bunObject);
 
 static JSValue constructEnvObject(VM& vm, JSObject* object)
 {
-    return uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
+    // Same shape as constructEnv in BunProcess.cpp: the exception is left pending so the read throws and the property is retried next time.
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
+    JSObject* env = uncheckedDowncast<Zig::GlobalObject>(object->globalObject())->processEnvObject();
+    if (scope.exception()) [[unlikely]]
+        return {};
+    return env;
 }
 
 JSC::EncodedJSValue flattenArrayOfBuffersIntoArrayBufferOrUint8Array(JSGlobalObject* lexicalGlobalObject, JSValue arrayValue, size_t maxLength, bool asUint8Array)

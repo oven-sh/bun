@@ -516,7 +516,10 @@ JSC_DEFINE_CUSTOM_SETTER(jsImportMetaObjectSetter_require, (JSGlobalObject * jsG
 JSC_DEFINE_CUSTOM_GETTER(jsImportMetaObjectGetter_env, (JSGlobalObject * jsGlobalObject, JSC::EncodedJSValue thisValue, PropertyName propertyName))
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(jsGlobalObject);
-    return JSValue::encode(globalObject->m_processEnvObject.getInitializedOnMainThread(globalObject));
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    JSObject* env = globalObject->processEnvObject();
+    RETURN_IF_EXCEPTION(scope, {});
+    return JSValue::encode(env);
 }
 
 static const HashTableValue ImportMetaObjectPrototypeValues[] = {

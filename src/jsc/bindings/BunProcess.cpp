@@ -1801,9 +1801,14 @@ static JSValue constructLoadEnvFile(VM& vm, JSObject* processObject)
     return JSC::JSFunction::create(vm, globalObject, processObjectInternalsLoadEnvFileCodeGenerator(vm), globalObject);
 }
 
-// Lazy PropertyCallback builders that enter JS. reifyAllStaticProperties wraps these in
-// DeferTerminationForAWhile; a non-termination throw is cleared+reported so the worker's
-// reifyAllStaticProperties (node:worker_threads preload) doesn't leave a pending exception.
+// Throw handling in the lazy process builders. Returning empty with the exception pending
+// (constructEnv) reifies nothing, so the read throws and the next read retries; that builder's
+// object is shared with Bun.env and import.meta.env and must not be cached in a failed state.
+// The builders using the blocks below clear and report instead and reify undefined, so a failure
+// inside the worker_threads preload's reifyAllStaticProperties (which defers termination around
+// the builders) is reported rather than thrown out of an unrelated delete. Both use a
+// TopExceptionScope: that bulk path does not check between builders, so a ThrowScope's simulated
+// throw would fail the next builder under validateExceptionChecks.
 static JSValue callLazyProcessBuilder(VM& vm, JSC::JSGlobalObject* globalObject, JSC::FunctionExecutable* (*generator)(VM&), const JSC::ArgList& args)
 {
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
@@ -2636,10 +2641,6 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         return workers;
     };
 
-    auto constructEnvironmentVariables = [&]() -> JSC::JSValue {
-        return globalObject->processEnvObject();
-    };
-
     auto constructCpus = [&]() -> JSC::JSValue {
         JSC::JSObject* cpus = JSC::constructEmptyArray(globalObject, nullptr);
         RETURN_IF_EXCEPTION(scope, {});
@@ -2687,8 +2688,9 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "workers"_s), constructWorkers(), 0);
         RETURN_IF_EXCEPTION(scope, {});
-        report->putDirect(vm, JSC::Identifier::fromString(vm, "environmentVariables"_s), constructEnvironmentVariables(), 0);
+        JSC::JSObject* environmentVariables = globalObject->processEnvObject();
         RETURN_IF_EXCEPTION(scope, {});
+        report->putDirect(vm, JSC::Identifier::fromString(vm, "environmentVariables"_s), environmentVariables, 0);
         report->putDirect(vm, JSC::Identifier::fromString(vm, "userLimits"_s), constructUserLimits(), 0);
         RETURN_IF_EXCEPTION(scope, {});
         report->putDirect(vm, JSC::Identifier::fromString(vm, "sharedObjects"_s), constructSharedObjects(), 0);
@@ -2773,8 +2775,7 @@ static JSValue constructProcessConfigObject(VM& vm, JSObject* processObject)
     //      v8_use_snapshot: 1
     //    }
     // }
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Clears and reports rather than propagating; see callLazyProcessBuilder.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSObject* config = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
     JSC::JSObject* variables = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 2);
@@ -3218,15 +3219,11 @@ static JSValue constructRevision(VM& vm, JSObject* processObject)
 static JSValue constructEnv(VM& vm, JSObject* processObject)
 {
     auto* globalObject = uncheckedDowncast<Zig::GlobalObject>(processObject->globalObject());
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Propagates (returns empty with the exception pending); see callLazyProcessBuilder.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    JSValue env = globalObject->processEnvObject();
-    if (auto* exception = scope.exception()) [[unlikely]] {
-        (void)scope.tryClearException();
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-        return JSC::jsUndefined();
-    }
+    JSObject* env = globalObject->processEnvObject();
+    if (scope.exception()) [[unlikely]]
+        return {};
     return env;
 }
 
@@ -4272,8 +4269,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_stubFunctionReturningArray, (JSGlobalObject * g
 
 static JSValue Process_stubEmptyArray(VM& vm, JSObject* processObject)
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Clears and reports rather than propagating; see callLazyProcessBuilder.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSC::JSArray* array = JSC::constructEmptyArray(processObject->globalObject(), nullptr);
     if (auto* exception = scope.exception()) [[unlikely]] {
@@ -4407,8 +4403,7 @@ extern "C" void Bun__Process__queueNextTick2(GlobalObject* globalObject, Encoded
 // return require.cache.get(Bun.main)
 static JSValue constructMainModuleProperty(VM& vm, JSObject* processObject)
 {
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Clears and reports rather than propagating; see callLazyProcessBuilder.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     auto* globalObject = defaultGlobalObject(processObject->globalObject());
     auto* bun = globalObject->bunObject();
@@ -4447,8 +4442,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    // Lazy property builder: exceptions must not propagate into
-    // reifyStaticProperty, which performs no exception check.
+    // Clears and reports rather than propagating; see callLazyProcessBuilder.
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
     JSValue nextTickFunction = JSC::profiledCall(globalObject, ProfilingReason::API, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
     if (auto* exception = scope.exception()) [[unlikely]] {

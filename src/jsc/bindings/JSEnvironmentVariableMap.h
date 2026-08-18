@@ -53,7 +53,8 @@ private:
     }
 };
 
-JSC::JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
+// Null with an exception pending if it threw (Windows finishes the map in JS).
+JSC::JSObject* createEnvironmentVariablesMap(Zig::GlobalObject* globalObject);
 
 // Setting TZ must make *existing* Date instances recompute local time. JSC's DateCache
 // reset only clears shared slots; live DateInstances keep a Ref to DateInstanceData

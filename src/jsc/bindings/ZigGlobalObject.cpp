@@ -30,7 +30,6 @@
 #include "JavaScriptCore/JSArray.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/JSGlobalProxyInlines.h"
 #include "JavaScriptCore/JSPromise.h"
 #include "JavaScriptCore/JSLock.h"
 #include "JavaScriptCore/JSMap.h"
@@ -992,7 +991,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::Gl
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_worldIsNormal(true)
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
@@ -1007,7 +1005,6 @@ GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, WebCore::Scri
     , m_bunVM(Bun__getVM())
     , m_constructors(makeUnique<WebCore::DOMConstructors>())
     , m_world(static_cast<JSVMClientData*>(vm.clientData)->normalWorld())
-    , m_worldIsNormal(true)
     , m_builtinInternalFunctions(makeUnique<WebCore::JSBuiltinInternalFunctions>(vm))
     , m_scriptExecutionContext(new WebCore::ScriptExecutionContext(&vm, this, contextId))
     , globalEventScope(adoptRef(*new Bun::GlobalEventScope(m_scriptExecutionContext)))
@@ -1890,58 +1887,6 @@ extern "C" napi_env ZigGlobalObject__makeNapiEnvForFFI(Zig::GlobalObject* global
     return globalObject->makeNapiEnvForFFI();
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionPerformMicrotaskVariadic, (JSGlobalObject * globalObject, CallFrame* callframe))
-{
-    auto& vm = JSC::getVM(globalObject);
-    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-
-    auto job = callframe->argument(0);
-    if (!job || job.isUndefinedOrNull()) {
-        return JSValue::encode(jsUndefined());
-    }
-
-    auto callData = JSC::getCallData(job);
-    MarkedArgumentBuffer arguments;
-    if (callData.type == CallData::Type::None) [[unlikely]] {
-        return JSValue::encode(jsUndefined());
-    }
-
-    JSArray* array = uncheckedDowncast<JSArray>(callframe->argument(1));
-    unsigned length = array->length();
-    for (unsigned i = 0; i < length; i++) {
-        arguments.append(array->getIndex(globalObject, i));
-    }
-
-    JSValue result;
-    WTF::NakedPtr<JSC::Exception> exceptionPtr;
-    JSValue thisValue = jsUndefined();
-
-    if (callframe->argumentCount() > 3) {
-        thisValue = callframe->argument(3);
-    }
-
-    JSValue restoreAsyncContext = {};
-    InternalFieldTuple* asyncContextData = nullptr;
-    auto setAsyncContext = callframe->argument(2);
-    if (!setAsyncContext.isUndefined()) {
-        asyncContextData = globalObject->m_asyncContextData.get();
-        restoreAsyncContext = asyncContextData->getInternalField(0);
-        asyncContextData->putInternalField(vm, 0, setAsyncContext);
-    }
-
-    JSC::profiledCall(globalObject, ProfilingReason::API, job, callData, thisValue, arguments, exceptionPtr);
-
-    if (asyncContextData) {
-        asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
-    }
-
-    if (auto* exception = exceptionPtr.get()) {
-        Bun__reportUnhandledError(globalObject, JSValue::encode(exception));
-    }
-
-    return JSValue::encode(jsUndefined());
-}
-
 extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
 JSC_DEFINE_CUSTOM_GETTER(moduleNamespacePrototypeGetESModuleMarker, (JSGlobalObject * globalObject, JSC::EncodedJSValue encodedThisValue, PropertyName))
 {
@@ -2406,10 +2351,6 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_NativePromiseContextStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(Bun::NativePromiseContext::createStructure(init.vm, init.owner));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_cachedGlobalProxyStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             init.set(
-                 JSC::JSGlobalProxy::createStructure(init.vm, init.owner, JSC::jsNull()));
-         } },
         { OBJECT_OFFSETOF(GlobalObject, m_JSHTTPResponseController), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              auto* structure = createJSSinkControllerStructure(init.vm, init.owner, WebCore::SinkID::HTTPResponseSink);
              init.set(structure);
@@ -2422,12 +2363,6 @@ void GlobalObject::finishCreation(VM& vm)
          } },
         { OBJECT_OFFSETOF(GlobalObject, m_asyncBoundFunctionStructure), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
              init.set(AsyncContextFrame::createStructure(init.vm, init.owner));
-         } },
-        { OBJECT_OFFSETOF(GlobalObject, m_JSCryptoKey), [](const LazyProperty<JSGlobalObject, Structure>::Initializer& init) {
-             Zig::GlobalObject* globalObject = static_cast<Zig::GlobalObject*>(init.owner);
-             auto* prototype = JSCryptoKey::createPrototype(init.vm, *globalObject);
-             auto* structure = JSCryptoKey::createStructure(init.vm, init.owner, JSValue(prototype));
-             init.set(structure);
          } },
     };
 
@@ -2590,9 +2525,7 @@ void GlobalObject::finishCreation(VM& vm)
         { OBJECT_OFFSETOF(GlobalObject, m_errorConstructorPrepareStackTraceInternalValue), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              init.set(JSFunction::create(init.vm, init.owner, 2, "ErrorPrepareStackTrace"_s, jsFunctionDefaultErrorPrepareStackTrace, ImplementationVisibility::Public));
          } },
-        { OBJECT_OFFSETOF(GlobalObject, m_performMicrotaskVariadicFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
-             init.set(JSFunction::create(init.vm, init.owner, 4, "performMicrotaskVariadic"_s, jsFunctionPerformMicrotaskVariadic, ImplementationVisibility::Public));
-         } },
+
         { OBJECT_OFFSETOF(GlobalObject, m_utilInspectFunction), [](const LazyProperty<JSGlobalObject, JSFunction>::Initializer& init) {
              auto scope = DECLARE_THROW_SCOPE(init.vm);
              JSValue nodeUtilValue = uncheckedDowncast<Zig::GlobalObject>(init.owner)->internalModuleRegistry()->requireId(init.owner, init.vm, Bun::InternalModuleRegistry::Field::NodeUtil);

@@ -262,9 +262,12 @@ if (!existsSync(cfg.codegenDir) || !existsSync(join(repo, "vendor/lolhtml/Cargo.
     cwd: repo,
   });
   if (r.status !== 0) process.exit(1);
-  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml"], { stdio: "inherit", cwd: repo });
+  const nr = spawnSync("ninja", ["-C", cfg.buildDir, "codegen", "clone-lolhtml", "clone-rust-argon2"], {
+    stdio: "inherit",
+    cwd: repo,
+  });
   if (nr.error || nr.status !== 0) {
-    console.error(nr.error ? `ninja: ${nr.error.message}` : "ninja codegen/clone-lolhtml failed");
+    console.error(nr.error ? `ninja: ${nr.error.message}` : "ninja codegen/clone-lolhtml/clone-rust-argon2 failed");
     process.exit(1);
   }
 }

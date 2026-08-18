@@ -502,6 +502,11 @@ describe("Valkey: Recovering After fail()", () => {
     return socket.destroyed ? Promise.resolve() : new Promise(resolve => socket.once("close", () => resolve()));
   }
 
+  // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
+  const push = (...items: (string | number)[]) =>
+    `>${items.length}\r\n` +
+    items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
+
   // Calls connect() from the first onclose and reports how that attempt ended.
   function connectFromOnclose(client: RedisClient): Promise<string> {
     const { promise, resolve } = Promise.withResolvers<string>();
@@ -917,10 +922,6 @@ describe("Valkey: Recovering After fail()", () => {
   });
 
   test("a message listener that closes and reconnects is not fed the pushes buffered behind its message", async () => {
-    // RESP3 push frames as the server writes them for SUBSCRIBE and for messages.
-    const push = (...items: (string | number)[]) =>
-      `>${items.length}\r\n` +
-      items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
     const fake = helloServer();
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`);
@@ -1661,9 +1662,6 @@ describe("Valkey: Recovering After fail()", () => {
   );
 
   test("subscribe() on a failed client rejects and registers no handler", async () => {
-    const push = (...items: (string | number)[]) =>
-      `>${items.length}\r\n` +
-      items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
     const fake = helloServer();
     const port = await fake.listen();
     const client = new RedisClient(`redis://127.0.0.1:${port}`, {

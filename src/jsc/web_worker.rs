@@ -160,6 +160,9 @@ unsafe extern "C" {
     );
     safe fn WebWorker__parentContextWillDestroy(proxy: *mut c_void);
     safe fn WebWorker__entrySettled(global: &JSGlobalObject);
+    /// Loads node:worker_threads on a node:worker_threads worker (no-op for a
+    /// Web Worker). `false` = it threw; the exception has been reported.
+    safe fn Bun__NodeWorker__bootstrap(global: &JSGlobalObject) -> bool;
     safe fn WebWorker__dispatchError(
         global: &JSGlobalObject,
         proxy: *mut c_void,
@@ -320,8 +323,7 @@ impl WebWorker {
         for module in preload_modules {
             let utf8_slice = module.to_utf8();
             // node: builtin specifiers skip the file resolver — the worker-side
-            // module loader resolves them. Lets node:worker_threads run its
-            // bootstrap (stdio rebinding) as a preload.
+            // module loader resolves them.
             if utf8_slice.slice().starts_with(b"node:") {
                 preloads.push(utf8_slice.slice().to_vec().into_boxed_slice());
                 continue;
@@ -839,6 +841,18 @@ impl WebWorker {
         // Terminated while resolving — exit code 0, no error.
         if self.has_requested_terminate() {
             self.flush_logs(vm);
+            return self.shutdown();
+        }
+
+        // node:worker_threads: wire parentPort / stdio / process overrides
+        // before preloads and the entry point (Node runs its worker bootstrap
+        // ahead of user code). A throw here is the worker's startup error.
+        if !Bun__NodeWorker__bootstrap(vm.global()) {
+            if !self.exit_called.load(Ordering::Relaxed) {
+                vm.as_mut().exit_handler.exit_code = 1;
+            }
+            self.flush_logs(vm);
+            WebWorker__entrySettled(vm.global());
             return self.shutdown();
         }
 

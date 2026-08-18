@@ -768,9 +768,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .unwrap_or(preload_slice);
 
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally. node:worker_threads is preloaded this way so
-        // its node-style worker bootstrap (stdio rebinding) runs before user code;
-        // this also means `bun --import node:*` works like Node's.
+        // resolves them internally, so `bun --import node:*` works like Node's.
         let module_name = if normalized.starts_with(b"node:") {
             bun_core::String::from_bytes(normalized)
         } else {

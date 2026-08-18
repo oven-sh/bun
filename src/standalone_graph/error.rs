@@ -1,7 +1,6 @@
 /// What `StandaloneModuleGraph::from_bytes` found wrong with the graph embedded
-/// in the executable. Every offset it reads comes from the file, so each one is
-/// checked before it is dereferenced, and every enum byte is checked before it
-/// becomes an enum.
+/// in the executable. Every offset and enum byte it reads comes from the file,
+/// so each one is checked before it is used.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Corruption {
     ByteCount,

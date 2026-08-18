@@ -338,11 +338,9 @@ pub(crate) struct CompiledModuleGraphFile {
 }
 
 impl CompiledModuleGraphFile {
-    /// Decodes one record as `to_bytes` laid it out. The bytes come from the
-    /// executable, so the four enum fields are checked on the way in: reading the
-    /// record straight into a `CompiledModuleGraphFile` would turn a byte outside
-    /// an enum's discriminants into a value the enum cannot hold, which is
-    /// undefined behavior before anything looks at it.
+    /// Decodes one record as `to_bytes` laid it out. The record is not read as a
+    /// whole because a byte outside one of its enums would make that read
+    /// undefined behavior, so each enum byte is checked first.
     fn read(record: &[u8; size_of::<Self>()]) -> crate::Result<Self> {
         let pointer = |field: usize| -> StringPointer {
             // SAFETY: `field` is the offset of a `StringPointer` field of `Self`, so
@@ -708,10 +706,9 @@ impl StandaloneModuleGraph {
                 Corruption::ModuleList,
             )?
         };
-        // Note: the modules blob sits at an arbitrary byte offset in the section, and
-        // `&[CompiledModuleGraphFile]` would require natural alignment (StringPointer's u32 fields
-        // → 4-byte). We instead split it into fixed-size byte records and decode each one with
-        // `CompiledModuleGraphFile::read`, so no `&T` ever points at unaligned memory.
+        // The blob sits at an arbitrary byte offset, so it is split into byte records for
+        // `CompiledModuleGraphFile::read` rather than viewed as a `&[CompiledModuleGraphFile]`,
+        // which would need 4-byte alignment.
         let (records, _) =
             modules_list_bytes.as_chunks::<{ size_of::<CompiledModuleGraphFile>() }>();
 
@@ -2629,8 +2626,7 @@ pub(crate) fn serialize_json_source_map_for_standalone(
 mod tests {
     use super::*;
 
-    /// A record with a different value in every field and no enum left at its
-    /// default, plus its bytes as `to_bytes` serializes them.
+    /// A record with a distinct value in every field, and its bytes as `to_bytes` writes them.
     fn record() -> (
         CompiledModuleGraphFile,
         [u8; size_of::<CompiledModuleGraphFile>()],

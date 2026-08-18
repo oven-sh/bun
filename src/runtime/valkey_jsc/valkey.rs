@@ -1437,55 +1437,51 @@ impl ValkeyClient {
         let mut promise = command::Promise::create(global_this, checked_command.meta);
 
         let js_promise: *mut JSPromise = std::ptr::from_mut::<JSPromise>(promise.promise.get());
-        if self.flags.failed {
+        if let Some(message) = self.send_rejection() {
             let _ = promise.reject(
                 global_this,
-                Ok(global_this
-                    .err(
-                        bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
-                        format_args!("Connection has failed"),
-                    )
-                    .to_js()),
+                Ok(Self::send_rejection_error(global_this, message)),
             );
         } else {
-            // Handle disconnected state with offline queue
-            match self.status {
-                Status::Connected => {
-                    self.enqueue(&checked_command, promise)?;
+            self.enqueue(&checked_command, promise)?;
 
-                    // Schedule auto-flushing to process this command if pipelining is enabled
-                    if self.flags.enable_auto_pipelining
-                        && checked_command
-                            .meta
-                            .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
-                        && self.status == Status::Connected
-                        && !self.queue.is_empty()
-                    {
-                        self.register_auto_flusher(self.vm);
-                    }
-                }
-                Status::NeverConnected | Status::Connecting | Status::Disconnected => {
-                    // Only queue if offline queue is enabled
-                    if self.flags.enable_offline_queue {
-                        self.enqueue(&checked_command, promise)?;
-                    } else {
-                        let _ = promise.reject(
-                            global_this,
-                            Ok(global_this
-                                .err(
-                                    bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
-                                    format_args!(
-                                        "Connection is closed and offline queue is disabled"
-                                    ),
-                                )
-                                .to_js()),
-                        );
-                    }
-                }
+            // Schedule auto-flushing to process this command if pipelining is enabled
+            if self.flags.enable_auto_pipelining
+                && checked_command
+                    .meta
+                    .contains(command::Meta::SUPPORTS_AUTO_PIPELINING)
+                && self.status == Status::Connected
+                && !self.queue.is_empty()
+            {
+                self.register_auto_flusher(self.vm);
             }
         }
 
         Ok(js_promise)
+    }
+
+    /// Why `send()` would reject a command outright instead of sending or
+    /// queueing it in the current state, or `None` when it would be accepted.
+    pub(crate) fn send_rejection(&self) -> Option<&'static str> {
+        if self.flags.failed {
+            return Some("Connection has failed");
+        }
+        if self.status != Status::Connected && !self.flags.enable_offline_queue {
+            return Some("Connection is closed and offline queue is disabled");
+        }
+        None
+    }
+
+    pub(crate) fn send_rejection_error(
+        global_this: &JSGlobalObject,
+        message: &'static str,
+    ) -> JSValue {
+        global_this
+            .err(
+                bun_jsc::ErrorCode::REDIS_CONNECTION_CLOSED,
+                format_args!("{message}"),
+            )
+            .to_js()
     }
 
     /// Close the Valkey connection

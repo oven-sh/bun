@@ -1841,6 +1841,7 @@ impl JSValkeyClient {
 
         let [channel_or_many, handler_callback] = frame.arguments_as_array::<2>();
         let mut redis_channels: Vec<JSArgument> = Vec::with_capacity(1);
+        let mut channel_names: Vec<JSValue> = Vec::with_capacity(1);
 
         if !handler_callback.is_callable() {
             return Err(global.throw_invalid_argument_type("subscribe", "listener", "function"));
@@ -1865,14 +1866,7 @@ impl JSValkeyClient {
                     ));
                 };
                 redis_channels.push(channel);
-
-                // What we do here is add our receive handler. Notice that this doesn't really do anything until the
-                // "SUBSCRIBE" command is sent to redis and we get a response.
-                //
-                // This is less-than-ideal, still, because this assumes a happy path. What happens if
-                // the SUBSCRIBE command fails? We have no way to roll back the addition of the
-                // handler.
-                this.upsert_receive_handler(global, channel_arg, handler_callback)?;
+                channel_names.push(channel_arg);
             }
         } else if channel_or_many.is_string() {
             // It is a single string channel
@@ -1880,14 +1874,26 @@ impl JSValkeyClient {
                 return Err(global.throw_invalid_argument_type("subscribe", "channel", "string"));
             };
             redis_channels.push(channel);
-
-            this.upsert_receive_handler(global, channel_or_many, handler_callback)?;
+            channel_names.push(channel_or_many);
         } else {
             return Err(global.throw_invalid_argument_type(
                 "subscribe",
                 "channel",
                 "string or array",
             ));
+        }
+
+        // A client that cannot take the SUBSCRIBE must not keep the handlers
+        // either: an orphaned handler pins the event loop and the client.
+        if let Some(message) = this.client.get().send_rejection() {
+            let error = valkey::ValkeyClient::send_rejection_error(global, message);
+            return Ok(JSPromise::rejected_promise(global, error).to_js());
+        }
+
+        // The handlers only start receiving once redis has answered the
+        // SUBSCRIBE sent below.
+        for &channel_name in &channel_names {
+            this.upsert_receive_handler(global, channel_name, handler_callback)?;
         }
 
         let command = Command {
@@ -1898,8 +1904,11 @@ impl JSValkeyClient {
         let promise = match this.send(global, frame.this(), &command) {
             Ok(p) => p,
             Err(err) => {
-                // If we catch an error, we need to clean up any handlers we may have added and fall out of subscription mode
-                this.clear_all_receive_handlers(global)?;
+                // Roll back only the handlers added above.
+                for &channel_name in &channel_names {
+                    this.remove_last_receive_handler(global, channel_name, handler_callback)?;
+                }
+                this.update_poll_ref();
                 return send_err_to_js(global, "Failed to send SUBSCRIBE command", &err);
             }
         };

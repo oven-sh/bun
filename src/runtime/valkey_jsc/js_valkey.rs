@@ -178,6 +178,39 @@ impl JSValkeyClient {
         Ok(Some(new_length as usize))
     }
 
+    /// Undo the most recent `upsert_receive_handler` for `channel_name`,
+    /// leaving any handlers registered before it in place.
+    pub(crate) fn remove_last_receive_handler(
+        &self,
+        global_object: &JSGlobalObject,
+        channel_name: JSValue,
+        callback: JSValue,
+    ) -> JsResult<()> {
+        let map = self.subscription_callback_map();
+
+        let existing = map.get(global_object, channel_name)?;
+        if existing.is_undefined_or_null() {
+            return Ok(());
+        }
+        debug_assert!(existing.is_array());
+
+        let length = existing.get_length(global_object)?;
+        if length == 0 || existing.get_index(global_object, (length - 1) as u32)? != callback {
+            return Ok(());
+        }
+        let _ = map.remove(global_object, channel_name)?;
+        if length == 1 {
+            return Ok(());
+        }
+
+        let kept = JSArray::create_empty(global_object, 0)?;
+        for i in 0..(length - 1) as u32 {
+            kept.push(global_object, existing.get_index(global_object, i)?)?;
+        }
+        map.set(global_object, channel_name, kept)?;
+        Ok(())
+    }
+
     /// Add a handler for receiving messages on a specific channel
     pub(crate) fn upsert_receive_handler(
         &self,

@@ -1659,6 +1659,85 @@ describe("Valkey: Recovering After fail()", () => {
       }
     },
   );
+
+  test("subscribe() on a failed client rejects and registers no handler", async () => {
+    const push = (...items: (string | number)[]) =>
+      `>${items.length}\r\n` +
+      items.map(item => (typeof item === "number" ? `:${item}\r\n` : `$${item.length}\r\n${item}\r\n`)).join("");
+    const fake = helloServer();
+    const port = await fake.listen();
+    const client = new RedisClient(`redis://127.0.0.1:${port}`, {
+      connectionTimeout: 0,
+      idleTimeout: 50,
+      autoReconnect: false,
+    });
+    try {
+      const closed = Promise.withResolvers<Error>();
+      client.onclose = err => closed.resolve(err);
+      await client.connect();
+      await closed.promise;
+      const delivered: string[] = [];
+      const listener = (message: string) => delivered.push(message);
+      await expect(client.subscribe("ch", listener)).rejects.toMatchObject({
+        code: "ERR_REDIS_CONNECTION_CLOSED",
+        message: "Connection has failed",
+      });
+      // The rejected subscribe left the client out of subscriber mode.
+      expect(() => client.unsubscribe("ch")).toThrow("can only be called while in subscriber mode");
+
+      // A subscribe on the next connection is the only registration: the
+      // message arrives once, not once per attempt.
+      client.onclose = () => {};
+      await client.connect();
+      const connection2 = fake.sockets[1];
+      connection2.on("data", chunk => {
+        if (chunk.toString("latin1").includes("SUBSCRIBE")) {
+          connection2.write(push("subscribe", "ch", 1) + push("message", "ch", "m0"));
+        }
+      });
+      await client.subscribe("ch", listener);
+      while (delivered.length === 0) await delay(1);
+      await client.ping();
+      expect({ delivered, connections: fake.connections }).toEqual({ delivered: ["m0"], connections: 2 });
+    } finally {
+      client.close();
+      fake.server.close();
+    }
+  });
+
+  test("the process exits after subscribe() is rejected by a failed client", async () => {
+    const fake = helloServer();
+    const port = await fake.listen();
+    try {
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `
+          const client = new Bun.RedisClient("redis://127.0.0.1:${port}", { connectionTimeout: 0, idleTimeout: 50, autoReconnect: false });
+          const closed = Promise.withResolvers();
+          client.onclose = err => closed.resolve(err);
+          await client.connect();
+          console.log("onclose", (await closed.promise).code);
+          await client.subscribe("ch", () => {}).catch(err => console.log("subscribe rejected", err.code));
+          `,
+        ],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const exitCode = await Promise.race([proc.exited, delay(3000).then(() => "still running")]);
+      if (exitCode === "still running") proc.kill();
+      const [stdout, stderr] = await Promise.all([proc.stdout.text(), proc.stderr.text()]);
+      expect({ stdout, stderr, exitCode }).toEqual({
+        stdout: "onclose ERR_REDIS_CONNECTION_CLOSED\nsubscribe rejected ERR_REDIS_CONNECTION_CLOSED\n",
+        stderr: "",
+        exitCode: 0,
+      });
+    } finally {
+      fake.server.close();
+    }
+  });
 });
 
 describe("Valkey: Offline Queue", () => {

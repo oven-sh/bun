@@ -418,3 +418,31 @@ itBundled("zod/ForeignStateOnAChildIsIgnored", {
     expect(api.readFile("/out.js")).toContain('"k":"ref"');
   },
 });
+
+itBundled("zod/LiteralHeldByReferenceMayBeAnArray", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  zodCompiler: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      const KINDS = ["a", "b"];
+      const LIMIT = 3;
+      // zod spreads the array into two accepted values. The compiled literal
+      // only holds a reference, so it has to hand both cases to zod: the union
+      // must not move on to the uppercasing option, and the array itself is
+      // not an accepted value.
+      const U = z.union([z.literal(KINDS), z.string().toUpperCase()]);
+      const L = z.literal(KINDS);
+      const N = z.literal(LIMIT);
+      console.log(U.parse("a"), L.safeParse(KINDS as any).success, L.safeParse("a").success);
+      console.log(N.safeParse(3).success, N.safeParse(4).success);
+    `,
+  },
+  run: { stdout: "a false true\ntrue false" },
+  onAfterBundle(api) {
+    // Both literals compile to reference slots; the primitive one keeps its fast path.
+    expect(api.readFile("/out.js").split('"k":"lit","vs":[],"rs":[0]')).toHaveLength(4);
+  },
+});

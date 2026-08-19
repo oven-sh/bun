@@ -494,6 +494,41 @@ describe.skipIf(skip)("connect() reports the errno the failed dial left", () => 
     expect(await dial(cases)).toEqual(cases.map(([, , , code]) => reported(code)));
   });
 
+  // A hostname is resolved from the event loop, and its addresses are dialed
+  // one after the other. When none connects, the error reported is the last
+  // address's own, not a blanket ECONNREFUSED. The rule fires for every
+  // address; EINVAL is one of the codes the table keeps.
+  test.concurrent("a hostname whose every address fails reports the last address's error", async () => {
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `
+        const { socketFaultInjection: fault } = require("bun:internal-for-testing");
+        const { errno } = require("node:os").constants;
+        const listener = Bun.listen({ hostname: "127.0.0.1", port: 0, socket: { data() {} } });
+        fault.set({ syscall: "connect", action: "errno", errno: errno.EINVAL, repeat: 8 });
+        let callback = "connectError not called";
+        try {
+          await Bun.connect({ hostname: "localhost", port: listener.port, socket: { data() {}, connectError(_s, e) { callback = e.code; } } });
+          console.log("connected");
+        } catch (e) {
+          console.log(JSON.stringify({ code: e.code, errno: e.errno, syscall: e.syscall, message: e.message, callback }));
+        } finally {
+          fault.clear();
+          listener.stop(true);
+        }
+        `,
+      ],
+      env: bunEnv,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stderr, exitCode }).toEqual({ stderr: "", exitCode: 0 });
+    expect(JSON.parse(stdout)).toEqual(reported("EINVAL"));
+  });
+
   // A real refusal, no rule. The kernel reports it either from connect(2) or
   // later through SO_ERROR (on_connect_error); both end in the same table.
   test.concurrent("a refused connect is reported with the platform's ECONNREFUSED errno", async () => {

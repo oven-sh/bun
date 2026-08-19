@@ -702,14 +702,14 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
     for (; c->addrinfo_head != NULL && opened < count; c->addrinfo_head = c->addrinfo_head->ai_next) {
         struct sockaddr_storage addr;
         init_addr_with_port(c->addrinfo_head, c->port, &addr);
-        /* The deferred-DNS path does not carry a local binding. */
-        /* Why this candidate failed. Not reported: the dial goes on with the
-         * next address, and when none connects after_open/after_resolve report
-         * LIBUS_ECONNREFUSED. Read it here, not LIBUS_ERR after the call: the
+        /* The deferred-DNS path does not carry a local binding. The dial goes
+         * on with the next address; the error is kept for the case none
+         * connects. Read from the out-param, not LIBUS_ERR after the call: the
          * failed socket has been closed by then. */
         int candidate_error = 0;
         LIBUS_SOCKET_DESCRIPTOR connect_socket_fd = bsd_create_connect_socket(&addr, NULL, c->options, &candidate_error);
         if (connect_socket_fd == LIBUS_SOCKET_ERROR) {
+            c->last_candidate_error = candidate_error;
             continue;
         }
         bsd_socket_nodelay(connect_socket_fd, 1);
@@ -717,6 +717,7 @@ int start_connections(struct us_connecting_socket_t *c, int count) {
         struct us_poll_t *poll = &s->p;
         us_poll_init(poll, connect_socket_fd, POLL_TYPE_SEMI_SOCKET);
         if (us_poll_start_rc(poll, loop, LIBUS_SOCKET_WRITABLE) != 0) {
+            c->last_candidate_error = bsd_last_error_or_refused();
             bsd_close_socket(connect_socket_fd);
             us_poll_free(poll, loop);
             continue;
@@ -776,8 +777,9 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     int opened = start_connections(c, CONCURRENT_CONNECTIONS);
     if (opened == 0) {
         /* Same as the exhausted path in us_internal_socket_after_open: a
-         * real connect failure must not be reported as a caller abort. */
-        c->error = LIBUS_ECONNREFUSED;
+         * real connect failure must not be reported as a caller abort, and
+         * the last address's own error beats a blanket LIBUS_ECONNREFUSED. */
+        c->error = c->last_candidate_error ? c->last_candidate_error : LIBUS_ECONNREFUSED;
         us_connecting_socket_close(c);
     }
 }
@@ -814,6 +816,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
     #endif
     if (error) {
         if (c) {
+            c->last_candidate_error = error;
             for (struct us_socket_t **next = &c->connecting_head; *next; next = &(*next)->connect_next) {
                 if (*next == s) {
                     *next = s->connect_next;
@@ -828,8 +831,10 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     /* Every resolved address failed to connect. Without this,
                      * us_connecting_socket_close defaults c->error to
                      * ECONNABORTED (caller abort) and never invalidates the
-                     * DNS cache entry for the dead host. */
-                    c->error = LIBUS_ECONNREFUSED;
+                     * DNS cache entry for the dead host. The last address's
+                     * own error is reported; several addresses failing
+                     * differently is last-wins. */
+                    c->error = c->last_candidate_error ? c->last_candidate_error : LIBUS_ECONNREFUSED;
                     us_connecting_socket_close(c);
                 }
             }

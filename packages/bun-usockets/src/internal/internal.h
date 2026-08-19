@@ -387,6 +387,11 @@ struct us_connecting_socket_t {
     unsigned char kind;
     uint16_t port;
     int error;
+    /* The error of the last address that failed (the out-param of a dial
+     * that failed outright, or the SO_ERROR reported through after_open).
+     * When every address is exhausted this is what `error` becomes, in
+     * place of a blanket LIBUS_ECONNREFUSED. */
+    int last_candidate_error;
     struct addrinfo *addrinfo_head;
     // this is used to track pending connecting sockets in the context
     struct us_connecting_socket_t* next_pending;

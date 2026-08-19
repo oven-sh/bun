@@ -2719,8 +2719,6 @@ pub mod ffi {
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::FILETIME {}
     #[cfg(windows)]
-    unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::WSADATA {}
-    #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_storage {}
     #[cfg(windows)]
     unsafe impl Zeroable for bun_windows_sys::externs::ws2_32::sockaddr_in {}

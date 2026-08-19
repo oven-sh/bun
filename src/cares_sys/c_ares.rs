@@ -757,8 +757,8 @@ impl Channel {
         let optmask: c_int =
             ARES_OPT_FLAGS | ARES_OPT_TIMEOUTMS | ARES_OPT_SOCK_STATE_CB | ARES_OPT_TRIES;
 
-        // c-ares creates its sockets with ws2_32 directly; Winsock is otherwise
-        // initialized lazily by libuv.
+        // SAFETY: idempotent Winsock init (uv_once); c-ares creates its sockets with
+        // ws2_32 directly and libuv otherwise initializes Winsock lazily.
         #[cfg(windows)]
         unsafe {
             bun_libuv_sys::uv__winsock_ensure()

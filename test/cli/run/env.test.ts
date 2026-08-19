@@ -1255,7 +1255,7 @@ describe("JSC option environment variables", () => {
     await using proc = Bun.spawn({
       cmd: [bunExe(), "-e", "1"],
       env: { ...bunEnv, ...env },
-      stdout: "pipe",
+      stdout: "ignore",
       stderr: "pipe",
     });
     const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);

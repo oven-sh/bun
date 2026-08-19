@@ -326,21 +326,23 @@ impl<'a> BundleV2<'a> {
         self.graph.path_to_source_index_map(target)
     }
 
-    /// `bun build --app` registers a stylesheet's or asset's source index in every graph's path map so client, server and SSR imports resolve to one copy; per-graph copies print identically (`BundleOptions::css_target`) and would collide on the content-hashed output path. JS stays per-graph (target affects DCE); HTML stays per-graph (server-side HTML imports become per-target manifest modules).
-    pub(crate) fn share_non_js_source_index_across_graphs(
+    /// `bun build --app` registers a stylesheet's source index in every graph's path map so client, server and SSR imports resolve to one copy; per-graph copies print identically (`BundleOptions::css_target`) and would collide on the content-hashed output path. Everything else stays per-graph: a JS chunk takes its side from its entry point's target.
+    pub(crate) fn share_stylesheet_source_index_across_graphs(
         &mut self,
         target: options::Target,
         loader: Loader,
-        path_text: &[u8],
+        path: &bun_paths::fs::Path,
         source_index: IndexInt,
     ) {
-        // The dev server's IncrementalGraph tracks a stylesheet per importing graph, so it keeps per-graph copies.
+        // Only a plain `.css` file prints the same in every graph; the dev server's IncrementalGraph tracks a stylesheet per importing graph, and a plugin namespace can turn the same path text into anything.
         if self.framework.is_none()
             || self.dev_server.is_some()
-            || !(loader.is_css() || loader == Loader::File)
+            || !loader.is_css()
+            || !path.is_file()
         {
             return;
         }
+        let path_text = path.text;
         let main_target = self.transpiler.options.target;
         let separate_ssr = self
             .framework
@@ -2642,7 +2644,7 @@ pub mod bv2_impl {
                 }
 
                 // It is silly to bundle index.css depended on by client+server twice.
-                self.share_non_js_source_index_across_graphs(target, loader, path.text, idx);
+                self.share_stylesheet_source_index_across_graphs(target, loader, &path, idx);
             }
 
             if let Some(source_index) = out_source_index {
@@ -4955,10 +4957,10 @@ pub mod bv2_impl {
                                     ..Default::default()
                                 })
                                 .expect("unreachable");
-                            this.share_non_js_source_index_across_graphs(
+                            this.share_stylesheet_source_index_across_graphs(
                                 resolve.import_record.original_target,
                                 loader,
-                                path.text,
+                                &path,
                                 source_index.get(),
                             );
                             let task_val = ParseTask {
@@ -6835,10 +6837,10 @@ pub mod bv2_impl {
                         *value_ptr = new_task.source_index.get();
                     }
 
-                    self.share_non_js_source_index_across_graphs(
+                    self.share_stylesheet_source_index_across_graphs(
                         target,
                         loader,
-                        new_task.path.text,
+                        &new_task.path,
                         new_task.source_index.get(),
                     );
 

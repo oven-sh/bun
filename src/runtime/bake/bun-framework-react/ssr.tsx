@@ -179,9 +179,12 @@ class RscInjectionStream extends EventEmitter {
     this.finalize = () => {
       if (this.finalized) return;
       this.finalized = true;
-      if (this.tail) controller.write(this.tail);
-      controller.flush();
-      controller.close();
+      // The client may have disconnected while the document was held open for Flight; the sink then throws on write.
+      try {
+        if (this.tail) controller.write(this.tail);
+        controller.flush();
+        controller.close();
+      } catch {}
       resolve();
     };
     this.reject = reject;
@@ -197,8 +200,9 @@ class RscInjectionStream extends EventEmitter {
       // The HTML is already complete; close it off rather than fail the response.
       if (this.htmlHasEnded) return this.finalize();
       this.finalized = true;
-      // Close the controller
-      controller.close();
+      try {
+        controller.close();
+      } catch {}
       // Reject the promise instead of resolving it
       this.reject(err);
     });
@@ -267,15 +271,21 @@ class RscInjectionStream extends EventEmitter {
           "\n",
       );
 
+    if (this.finalized) return;
     if (this.html === HtmlState.Boundary) {
       const { controller, decoder } = this;
-      if (this.rsc === RscState.Waiting) {
-        controller.write(startScriptTag);
-      } else {
-        controller.write(continueScriptTag);
-        this.rsc = RscState.Paused;
+      try {
+        if (this.rsc === RscState.Waiting) {
+          controller.write(startScriptTag);
+        } else {
+          controller.write(continueScriptTag);
+          this.rsc = RscState.Paused;
+        }
+        writeSingleFlightScriptData(chunk, decoder, controller);
+      } catch {
+        // The client went away while the document was held open for this row.
+        this.finalize();
       }
-      writeSingleFlightScriptData(chunk, decoder, controller);
     } else {
       this.rscChunks.push(chunk);
     }

@@ -6,8 +6,8 @@
 // The tests replay the repo's .gitattributes in a scratch repo, so they do not
 // need the test checkout itself to be a git worktree.
 import { expect, test } from "bun:test";
-import { join } from "path";
 import { bunEnv, tempDir } from "harness";
+import { join } from "path";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 const gitattributes = await Bun.file(join(repoRoot, ".gitattributes")).text();

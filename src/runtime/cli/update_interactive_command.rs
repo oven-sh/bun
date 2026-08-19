@@ -1412,9 +1412,7 @@ impl UpdateInteractiveCommand {
                 last_terminal_width = current_size.width;
                 last_terminal_height = current_size.height;
                 Self::update_viewport(state);
-                // Redraw in place: the render body climbs the old frame and
-                // clears it. Starting a fresh frame below instead would leave
-                // the old one as a duplicate in the terminal.
+                // Redraw in place; a fresh frame below would duplicate the old one.
                 needs_redraw = true;
             }
 

@@ -593,8 +593,6 @@ impl ByteStream {
         bun_jsc::mark_binding!();
         debug_assert!(!buffer.is_empty());
         debug_assert!(self.buffer_action.get().is_none());
-        // A reader is back on a stream the producer may have parked unread.
-        self.signal_consumer_attached();
 
         if !self.buffer.get().is_empty() {
             debug_assert!(self.value().is_empty()); // == .zero

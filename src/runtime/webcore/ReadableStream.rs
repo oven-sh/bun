@@ -858,7 +858,7 @@ pub struct NewSource<C: SourceContext> {
     /// The producer holding a native ref has parked ([`Self::unroot_wrapper`]):
     /// its ref keeps this allocation, not the wrapper, so an unread stream can
     /// be collected. Cleared by [`Self::root_wrapper`].
-    pub wrapper_unrooted: bool,
+    pub wrapper_unrooted: Cell<bool>,
     /// R-2: written by context methods (`ByteStream::to_any_blob`,
     /// `ByteBlobLoader::to_any_blob`) through their parent accessor, so
     /// interior-mutable.
@@ -877,7 +877,7 @@ impl<C: SourceContext + Default> Default for NewSource<C> {
             producer: Cell::new(streams::SourceHandle::None),
             global_this: None,
             this_jsvalue: jsc::JsRef::empty(),
-            wrapper_unrooted: false,
+            wrapper_unrooted: Cell::new(false),
             is_closed: Cell::new(false),
         }
     }
@@ -1149,7 +1149,7 @@ impl<C: SourceContext> NewSource<C> {
         // `waiting_for_on_reader_done` I/O ref). Root the wrapper so
         // `on_js_close`, reached from `on_reader_done` off the event loop with
         // no JS frame on the stack, never reads a dead-but-unswept cell.
-        if !self.wrapper_unrooted {
+        if !self.wrapper_unrooted.get() {
             self.upgrade_wrapper();
         }
     }
@@ -1165,14 +1165,16 @@ impl<C: SourceContext> NewSource<C> {
     /// The producer keeps its native ref but stops rooting the wrapper: nothing
     /// is reading, so the stream should be collectable. [`SourceContext::wrapper_finalized`]
     /// tells the producer if that happens.
+    /// Same access pattern as [`Self::increment_count`]: reached through the
+    /// producer's raw pointer while the context may be borrowed.
     pub fn unroot_wrapper(&mut self) {
-        self.wrapper_unrooted = true;
+        self.wrapper_unrooted.set(true);
         self.this_jsvalue.downgrade();
     }
 
     /// Undo [`Self::unroot_wrapper`]: a consumer is reading again.
     pub fn root_wrapper(&mut self) {
-        self.wrapper_unrooted = false;
+        self.wrapper_unrooted.set(false);
         if self.ref_count > 1 {
             self.upgrade_wrapper();
         }

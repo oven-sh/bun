@@ -209,7 +209,7 @@ test("response.body.cancel() on a never-read body aborts the underlying fetch", 
 // body that does not end, the stream, the connection, and the buffered bytes all lived until
 // the process exited.
 describe("an abandoned fetch body stream is collected and its fetch is aborted", () => {
-  const shapes: [string, (res: Response) => Promise<unknown>][] = [
+  const shapes: [string, (res: Response, parked: () => Promise<void>) => Promise<unknown>][] = [
     ["res.body touched", async res => res.body],
     [
       "one read(), then releaseLock()",
@@ -220,11 +220,21 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
       },
     ],
     ["dropped while a reader holds the lock", res => res.body!.getReader().read()],
+    // A read that takes only part of what the parked stream buffered must leave it parked.
+    [
+      "one read() after it parked",
+      async (res, parked) => {
+        void res.body;
+        await parked();
+        await res.body!.getReader().read();
+      },
+    ],
   ];
 
   for (const [name, shape] of shapes) {
     test(name, async () => {
       let aborted = 0;
+      let pulls = 0;
       using server = Bun.serve({
         port: 0,
         fetch(req) {
@@ -232,6 +242,7 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
           return new Response(
             new ReadableStream({
               async pull(controller) {
+                pulls++;
                 await Bun.sleep(1);
                 controller.enqueue(new Uint8Array(64 * 1024));
               },
@@ -239,10 +250,19 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
           );
         },
       });
+      // The client stopped taking bytes: the server is no longer pulled.
+      async function parked() {
+        let last = -1;
+        for (let stable = 0; stable < 5; ) {
+          await Bun.sleep(10);
+          stable = pulls === last ? stable + 1 : 0;
+          last = pulls;
+        }
+      }
       const N = 20;
       // Its own frame, so that nothing on this one still refers to a response afterwards.
       async function abandonOne() {
-        await shape(await fetch(server.url));
+        await shape(await fetch(server.url), parked);
       }
       for (let i = 0; i < N; i++) await abandonOne();
 

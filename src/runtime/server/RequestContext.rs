@@ -3247,6 +3247,8 @@ where
         // SAFETY: caller passes the live `*mut RequestContext` stored as the
         // sink ctx; `_ref` keeps it alive for this call.
         let this = unsafe { &*this };
+        // The stream has already dropped this sink; `_ref` is the pipe's ref.
+        this.byte_stream.set(None);
 
         if this.is_aborted_or_ended() {
             return;

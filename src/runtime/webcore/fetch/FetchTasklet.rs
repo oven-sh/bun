@@ -128,7 +128,8 @@ pub struct FetchTasklet {
     pub(crate) response_stream_source: Cell<Option<NonNull<crate::webcore::byte_stream::Source>>>,
     /// Nothing reads the body stream and it holds `UNOBSERVED_BODY_HIGH_WATER_MARK` bytes: the
     /// transport is left paused, the loop is released, and the stream is left collectable
-    /// (`on_body_stream_collected`). A consumer that comes back unparks (`on_stream_drained`).
+    /// (`on_body_stream_collected`). A consumer that drains the stream's buffer or a native
+    /// sink that attaches unparks it.
     pub(crate) body_stream_parked: Cell<bool>,
     pub(crate) request_headers: Headers,
     pub(crate) promise: jsc::JSPromiseStrong,
@@ -1713,7 +1714,10 @@ impl FetchTasklet {
         let source = self.response_stream_source.take()?;
         self.body_stream_parked.set(false);
         // SAFETY: still pinned by the ref from `on_readable_stream_available`.
-        unsafe { (*source.as_ptr()).producer.set(SourceHandle::None) };
+        unsafe {
+            (*source.as_ptr()).producer.set(SourceHandle::None);
+            (*source.as_ptr()).wrapper_unrooted.set(false);
+        }
         Some(source)
     }
 
@@ -1808,7 +1812,7 @@ impl FetchTasklet {
         self.poll_ref
             .with_mut(|poll_ref| poll_ref.unref(bun_io::js_vm_ctx()));
         if let Some(source) = self.response_stream_source.get() {
-            // SAFETY: live through the producer ref; no borrow of the source is held here.
+            // SAFETY: live through the producer ref (same pattern as `increment_count`).
             unsafe { (*source.as_ptr()).unroot_wrapper() };
         }
     }

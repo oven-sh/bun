@@ -1,8 +1,7 @@
 // Receive-side backpressure: a stalled `res.body.getReader()` must stop the
 // HTTP thread from buffering the entire response in memory.
 import { describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir, tls } from "harness";
-import { join } from "node:path";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tls } from "harness";
 import { randomBytes } from "node:crypto";
 import { once } from "node:events";
 import { createServer } from "node:http";
@@ -605,11 +604,18 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
   // pick the transport up again and see the whole body.
   for (const [name, drain] of [
     ["res.text()", (res: Response) => res.text().then(t => t.length)],
-    ["Bun.write(file, res)", (res: Response, dir: string) => Bun.write(join(dir, "out"), res)],
+    [
+      "HTMLRewriter.transform(res)",
+      (res: Response) =>
+        new HTMLRewriter()
+          .on("x", {})
+          .transform(res)
+          .arrayBuffer()
+          .then(b => b.byteLength),
+    ],
   ] as const) {
     test(`res.body read by nothing, then ${name} drains the whole body`, async () => {
       await using server = await serve("h1");
-      using dir = tempDir("fetch-parked-body", {});
       const res = await fetch(server.url);
       void res.body;
       // Parked: the client stops taking bytes well before the end (16 MiB body, 256 KiB mark).
@@ -620,7 +626,7 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
         last = server.sent();
       }
       expect(server.sent()).toBeLessThan(TOTAL);
-      expect(await drain(res, String(dir))).toBe(TOTAL);
+      expect(await drain(res)).toBe(TOTAL);
     });
   }
 });

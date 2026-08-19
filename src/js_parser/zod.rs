@@ -6,6 +6,8 @@
 
 //! Expressions stay untouched unless rooted at a `"zod"`/`"zod/v4"` import with side-effect-free arguments (the thunk re-evaluates them); recognized-but-unmodeled constructs keep the wrapper with an opaque IR that materializes on first parse.
 
+//! Known divergence: an array passed by `const` reference (`z.enum(KINDS)`, `z.literal(KINDS)`) is read when the schema is used, while zod copies it at construction, so a program that mutates such an array after building the schema observes the mutation.
+
 use crate::p::P;
 use bun_ast::{self as js_ast, E, Expr, Flags, G, OpCode};
 use bun_collections::{ArrayHashMap, VecExt};

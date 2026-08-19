@@ -577,7 +577,6 @@ function __zodConclusive(n) {
       }
       return true;
     }
-    case "lit":
     case "undef":
     case "void":
     case "null":
@@ -586,6 +585,9 @@ function __zodConclusive(n) {
     case "never":
     case "nan":
       return true;
+    // A value held by reference may be an array, which zod spreads into several accepted values.
+    case "lit":
+      return n.rs === undefined;
     case "enum":
       return n.r === undefined;
     case "opt":
@@ -873,6 +875,8 @@ function __zodCompile(n) {
         if (litRefs !== null) {
           for (var i = 0; i < litRefs.length; i++) {
             var lv = refs[litRefs[i]];
+            // An array here is zod's multi-value form and is never itself an accepted value; other objects are left to zod too.
+            if (typeof lv === "object" && lv !== null) continue;
             if (lv === v || (lv !== lv && v !== v)) return v;
           }
         }

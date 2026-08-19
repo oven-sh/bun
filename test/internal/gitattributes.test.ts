@@ -58,8 +58,7 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
     stderr: "pipe",
   });
   const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(stderr.includes("fatal:"), `git ${args.join(" ")} failed: ${stderr}`).toBe(false);
-  expect(exitCode).toBe(0);
+  expect(exitCode, `git ${args.join(" ")} in ${cwd} exited with ${exitCode}:\n${stderr}`).toBe(0);
   return stdout;
 }
 
@@ -70,19 +69,18 @@ async function makeScratchRepo(dir: string): Promise<void> {
   await git(dir, "-c", "core.autocrlf=false", "commit", "-q", "-m", "init");
 }
 
-test("every text file checks out as LF under core.autocrlf=true", async () => {
+test.concurrent("every text file checks out as LF under core.autocrlf=true", async () => {
   using dir = tempDir("gitattributes-lf", { ".gitattributes": gitattributes, ...lfFiles });
   await makeScratchRepo(String(dir));
   await git(String(dir), "-c", "core.autocrlf=true", "clone", "-q", ".", "clone");
 
   const clone = join(String(dir), "clone");
   for (const name of Object.keys(lfFiles)) {
-    const content = await Bun.file(join(clone, name)).text();
-    expect(content.includes("\r"), `${name} checked out with CRLF`).toBe(false);
+    expect(await Bun.file(join(clone, name)).text(), name).toBe(lfFiles[name]);
   }
 });
 
-test("files committed with CRLF keep their bytes", async () => {
+test.concurrent("files committed with CRLF keep their bytes", async () => {
   using dir = tempDir("gitattributes-crlf", { ".gitattributes": gitattributes, ...crlfFiles });
   await makeScratchRepo(String(dir));
   await git(String(dir), "-c", "core.autocrlf=true", "clone", "-q", ".", "clone");

@@ -36,7 +36,9 @@ export const highwayStringsForTesting: (
     | "indexOfAny"
     | "lastIndexOfAny"
     | "memmem"
-    | "memrmem",
+    | "memrmem"
+    | "memmem16"
+    | "memrmem16",
   haystack: Uint8Array,
   arg: number | Uint8Array,
 ) => number = $newCppFunction("highway_strings_testing.cpp", "Bun__highwayStringsForTesting", 3);
@@ -671,8 +673,16 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
-export const getEventLoopStats: () => { activeTasks: number; concurrentRef: number; numPolls: number } =
-  $newRustFunction("event_loop.rs", "getActiveTasks", 0);
+export const getEventLoopStats: () => {
+  activeTasks: number;
+  tasks: number;
+  immediateTasks: number;
+  concurrentTasksEmpty: boolean;
+  concurrentRef: number;
+  numPolls: number;
+  loopActive: boolean;
+  eventLoopAlive: boolean;
+} = $newRustFunction("event_loop.rs", "getActiveTasks", 0);
 
 export const hostedGitInfo = {
   parseUrl: $newRustFunction("hosted_git_info.rs", "TestingAPIs.jsParseUrl", 1),

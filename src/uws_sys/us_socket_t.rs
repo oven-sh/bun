@@ -30,11 +30,12 @@ bun_opaque::opaque_ffi! { pub struct us_socket_t; }
 pub enum CloseCode {
     /// TLS: send close_notify and defer fd close until peer replies. TCP: FIN.
     normal = 0,
-    /// Closes now, whatever the peer does: TLS fast-shutdown with no spill
-    /// deferral; TCP SO_LINGER{1,0} → RST, dropping any unflushed send buffer.
+    /// Closes now, whatever the peer does: TLS sends no close_notify (abortive);
+    /// TCP SO_LINGER{1,0} → RST, dropping any unflushed send buffer.
     /// For `terminate()` / GC abort, and for a protocol client that has given
     /// up on the connection and rejected everything on it (the valkey client's
-    /// `fail()`), whose callers rely on the close callback having run.
+    /// `fail()`, and its `close()` once a `fast_shutdown` came back deferred),
+    /// whose callers rely on the close callback having run.
     failure = 1,
     /// TLS: fast-shutdown, but still deferred while a spill is pending. TCP:
     /// FIN. For `_handle.close()` where the JS wrapper detaches immediately so

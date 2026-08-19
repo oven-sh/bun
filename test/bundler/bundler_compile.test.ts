@@ -1,7 +1,7 @@
 import { Database } from "bun:sqlite";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { rmSync } from "fs";
-import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, tempDir } from "harness";
 import { join } from "path";
 import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 
@@ -9,17 +9,27 @@ import { BundlerTestInput, itBundled as itBundledBase } from "./expectBundled";
 // it.serial (the API backend calls process.chdir), so only CLI cases overlap.
 const itBundled = (id: string, opts: BundlerTestInput) => itBundledBase(id, { backend: "cli", ...opts });
 
-// Nearly every case below links a standalone executable. `bun build --compile`
-// reads the whole bun binary and writes a patched copy, so while it runs it holds
-// about twice the binary in memory (~0.6 GB with the 280 MB profile binary CI
-// tests with, ~2 GB with a debug binary). The cases are independent (expectBundled
-// gives each one its own directory), but describe.concurrent alone starts up to
-// 20 of them at once, which exhausted CI memory and IO and made the build
-// subprocesses time out (build #40193). The hooks below let MAX_CONCURRENT_COMPILES
-// cases run at a time. The rest wait in beforeEach, where no per-test timeout is
-// running yet. The wait itself has no timeout: it ends when the cases ahead of it
-// in the queue end, and each of those has its own timeout.
-const MAX_CONCURRENT_COMPILES = 3;
+// Nearly every case below links a standalone executable. On Linux `bun build
+// --compile` copies the bun binary to the output path, reads the copy back and
+// writes it again with the bundle injected, so one link moves about three times
+// the binary through the page cache and holds about twice the binary in memory.
+// The cases are independent (expectBundled gives each one its own directory), but
+// describe.concurrent alone starts up to 20 links at once, which exhausted CI
+// memory and IO and made the build subprocesses time out (build #40193). The hooks
+// below let MAX_CONCURRENT_COMPILES cases run at a time. The rest wait in
+// beforeEach, where no per-test timeout is running yet. The wait itself has no
+// timeout: it ends when the cases ahead of it in the queue end, and each of those
+// has its own timeout.
+//
+// The limit depends on the size of the binary being linked. With the ~280 MB
+// profile binaries of the release lanes, three at a time took this file from
+// 13-59s (by lane and build) to 8-19s (build 101393 against builds 91981 and
+// 94834). The ASAN lane links a far larger binary, and the same gate made the file
+// slower there (170s against 102-107s one at a time): with that much data per link
+// the file is bound by page-cache writeback, and overlapping links only add to it.
+// Debug binaries are in the same size class. Both link one at a time until #33621
+// removes the extra copy.
+const MAX_CONCURRENT_COMPILES = isASAN || isDebug ? 1 : 3;
 let running = 0;
 const waiting: Array<() => void> = [];
 

@@ -2419,8 +2419,9 @@ lexer_impl_header! {
         // unreachable
     }
 
-    /// Scans `chunk`, the comment text after a `@` or `#`, for a pragma. `chunk_start` is the
-    /// source offset of `chunk[0]`. Returns the byte length to advance by if found, otherwise 0.
+    /// Scans the string for a pragma.
+    /// `chunk_start` is the source offset of `chunk[0]`, the byte after the `@` or `#`.
+    /// Returns the byte length to advance by if found, otherwise 0.
     fn scan_pragma(&mut self, chunk_start: usize, chunk: &[u8], allow_newline: bool) -> usize {
         if !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {

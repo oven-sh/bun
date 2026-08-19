@@ -1410,7 +1410,9 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
                         value = thisObject->globalThis();
                     else if (slot.isCacheableValue() && slot.slotBase() == contextifiedObject) {
                         // A plain data property of the sandbox itself: leave the slot describing it, so that
-                        // get_from_scope can cache the load against the sandbox's structure.
+                        // get_from_scope can cache the load against the sandbox's structure. (Its fast paths compare
+                        // what they load with the sandbox and come back here on a match, so the substitution above
+                        // still happens if the property is later set to the sandbox.)
                         return true;
                     }
                     unsigned ignoredAttributes = 0;

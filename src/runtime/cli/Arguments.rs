@@ -506,6 +506,9 @@ pub(crate) const BUILD_ONLY_PARAMS: &[ParamType] = concat_params!(
         parse_param!(
             "--react-compiler                 Enable the React Compiler optimizing transform"
         ),
+        parse_param!(
+            "--zod-compiler                   Compile zod v4 schemas into lazy wrappers with precompiled validators (experimental)"
+        ),
         parse_param!("--no-bundle                      Transpile file only, do not bundle"),
         parse_param!(
             "--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed."
@@ -2594,6 +2597,10 @@ fn parse_build_command_options(
 
     if args.flag(b"--react-compiler") {
         ctx.bundler_options.react_compiler = true;
+    }
+
+    if args.flag(b"--zod-compiler") {
+        ctx.bundler_options.zod_compiler = true;
     }
 
     if let Some(setting) = args.option(b"--sourcemap") {

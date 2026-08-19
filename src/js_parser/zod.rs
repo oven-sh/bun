@@ -1,4 +1,4 @@
-//! Zod schema transform (`BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD`): rewrites statically-analyzable zod v4 schema expressions into `__zod(() => original, "<ir json>"[, refs])` calls (`__zod` lives in src/runtime.js).
+//! Zod schema transform (`bun build --zod-compiler`, `Bun.build({ zodCompiler: true })`, or `BUN_FEATURE_FLAG_EXPERIMENTAL_ZOD` for every transpiler): rewrites statically-analyzable zod v4 schema expressions into `__zod(() => original, "<ir json>"[, refs])` calls (`__zod` lives in src/runtime.js).
 
 //! The wrapper exposes parse/safeParse/parseAsync/safeParseAsync backed by a validator compiled from the IR, and only constructs the real schema (by calling the thunk) when anything else is touched.
 

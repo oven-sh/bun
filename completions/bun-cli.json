@@ -3929,6 +3929,13 @@
           "multiple": false
         },
         {
+          "name": "zod-compiler",
+          "description": "Compile zod v4 schemas into lazy wrappers with precompiled validators (experimental)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "no-bundle",
           "description": "Transpile file only, do not bundle",
           "hasValue": false,

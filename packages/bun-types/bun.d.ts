@@ -3199,6 +3199,22 @@ declare module "bun" {
     reactCompilerOutputMode?: "client" | "ssr";
 
     /**
+     * Compile zod v4 schemas at build time.
+     *
+     * A schema expression such as `z.object({ ... })` becomes a small wrapper
+     * whose `parse` and `safeParse` run a validator compiled from the schema.
+     * The wrapper only constructs the real zod schema when a parse fails or
+     * when anything else on it is used, so errors always come from zod itself.
+     * Schemas the compiler cannot analyze are left as written.
+     *
+     * Equivalent to the CLI `--zod-compiler` flag.
+     *
+     * @default false
+     * @experimental
+     */
+    zodCompiler?: boolean;
+
+    /**
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override

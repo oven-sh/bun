@@ -365,3 +365,56 @@ itBundled("zod/CheckOnBooleanStillThrows", {
     expect(api.readFile("/out.js")).toContain('"k":"bool","c":[["minl",5]]');
   },
 });
+
+itBundled("zod/MacroRemappedImportStaysAMacro", {
+  backend: "cli",
+  zodCompiler: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { object } from "zod";
+      const S = object();
+      console.log(S);
+    `,
+    // bunfig remaps this import of zod to a macro. The transform must not
+    // claim the binding, or the macro would never run.
+    "/bunfig.toml": /* toml */ `
+      [macros.zod]
+      object = "./zod-macro.ts"
+    `,
+    "/zod-macro.ts": /* ts */ `
+      export function object() {
+        return "from-macro";
+      }
+    `,
+  },
+  run: { stdout: "from-macro" },
+  onAfterBundle(api) {
+    const code = api.readFile("/out.js");
+    expect(code).toContain('"from-macro"');
+    expect(code).not.toContain("__zod(() =>");
+  },
+});
+
+itBundled("zod/ForeignStateOnAChildIsIgnored", {
+  install: ["zod@4.4.3"],
+  backend: "cli",
+  zodCompiler: true,
+  target: "bun",
+  files: {
+    "/entry.ts": /* ts */ `
+      import { z } from "zod";
+      // .describe() keeps Inner a real zod schema. Give it the helper's
+      // registry symbol with a state shaped like another helper version's.
+      const Inner = z.string().describe("inner");
+      (Inner as any)[Symbol.for("__bunZodLazy")] = { version: 2 };
+      const Outer = z.object({ x: Inner });
+      console.log(JSON.stringify(Outer.parse({ x: "a" })), Outer.safeParse({ x: 1 }).success);
+    `,
+  },
+  run: { stdout: '{"x":"a"} false' },
+  onAfterBundle(api) {
+    // Outer is compiled with Inner as a runtime ref, so the parse goes through __zodRunRef.
+    expect(api.readFile("/out.js")).toContain('"k":"ref"');
+  },
+});

@@ -3695,7 +3695,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     self.declare_symbol(js_ast::symbol::Kind::Import, name_loc.loc, name)?;
                 name_loc.ref_ = r#ref;
                 self.is_import_item.insert(r#ref, ());
-                self.zod_maybe_track_import(path.text, r#ref, Some(b"default"));
 
                 // ensure every e_import_identifier holds the namespace
                 if self.options.features.hot_module_reloading {
@@ -3742,6 +3741,9 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     }
                 }
 
+                // A remapped binding is a macro, not zod.
+                self.zod_maybe_track_import(path.text, r#ref, Some(b"default"));
+
                 if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                     if let Some(uses) = &mut self.parse_pass_symbol_uses {
                         uses.put(
@@ -3777,7 +3779,6 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             // `ClauseItem.alias` is an arena-owned `StoreStr` valid for 'a.
             let alias: &'a [u8] = item.alias.slice();
             self.check_for_non_bmp_code_point(item.alias_loc, alias);
-            self.zod_maybe_track_import(path.text, r#ref, Some(alias));
 
             // ensure every e_import_identifier holds the namespace
             if self.options.features.hot_module_reloading {
@@ -3822,6 +3823,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
                     continue;
                 }
             }
+
+            self.zod_maybe_track_import(path.text, r#ref, Some(alias));
 
             if Self::TRACK_SYMBOL_USAGE_DURING_PARSE_PASS {
                 if let Some(uses) = &mut self.parse_pass_symbol_uses {

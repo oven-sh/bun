@@ -131,3 +131,18 @@ devTest("disposing a client reports an exit code the client produced earlier", {
     expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe('Client exited: "Runtime error"');
   },
 });
+
+devTest("disposing a client reports a runtime error that only reached the error overlay", {
+  files,
+  async test(dev) {
+    const c = await dev.client("/");
+    await c.expectMessage("loaded");
+
+    // happy-dom routes a throw from a timer callback to the window "error" event, not to console.error, so it only shows on the overlay after /_bun/report_error answers.
+    await c.js`setTimeout(() => { throw new Error("late boom"); }, 0)`;
+
+    expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe(
+      'Client exited: "Error overlay showing a runtime error the test never checked"',
+    );
+  },
+});

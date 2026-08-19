@@ -100,7 +100,13 @@ function createWindow(windowUrl) {
     if (typeof url === "string") {
       url = new URL(url, windowUrl).href;
     }
-    return await original_window_fetch(url, options);
+    const promise = original_window_fetch(url, options);
+    // The overlay reports a runtime error only after this round trip; the exit handler waits for it.
+    if (String(url).includes("/_bun/report_error")) {
+      inflightErrorReports.add(promise);
+      promise.finally(() => inflightErrorReports.delete(promise)).catch(() => {});
+    }
+    return await promise;
   };
 
   // Provide WebSocket
@@ -468,6 +474,11 @@ process.on("message", async message => {
   if (message.type === "exit") {
     // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
     await pageLoad?.catch(() => {});
+    // Let a runtime error that is still being reported reach the overlay (one macrotask for the handler that follows the fetch).
+    while (inflightErrorReports.size > 0) {
+      await Promise.allSettled([...inflightErrorReports]);
+      await new Promise(resolve => setImmediate(resolve));
+    }
     // Build errors are broadcast to every client and asserted by the test that caused them; a runtime error only reaches the overlay, so one the harness never read is a failure happy-dom swallowed.
     const runtimeError = !expectErrors && overlayRuntimeError();
     if (runtimeError && !lastReportedErrors.includes(runtimeError)) {
@@ -581,6 +592,8 @@ function overlayRuntimeError() {
 
 /** The last overlay contents the harness read through `get-errors`; a runtime error it never read is unexpected at exit. */
 let lastReportedErrors = [];
+/** `/_bun/report_error` requests the page has not finished; the overlay shows the error only after one settles. */
+const inflightErrorReports = new Set();
 
 process.on("disconnect", () => {
   process.exit(0);

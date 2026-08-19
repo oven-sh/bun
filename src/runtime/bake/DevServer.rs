@@ -5148,8 +5148,22 @@ pub struct CacheEntry {
     pub(crate) kind: FileKind,
 }
 
+/// Loaders an import attribute switches a source file to; a plugin answering for a known extension yields code loaders instead.
+fn is_attribute_style_loader(loader: Loader) -> bool {
+    matches!(
+        loader,
+        Loader::Text
+            | Loader::File
+            | Loader::Base64
+            | Loader::Dataurl
+            | Loader::Sqlite
+            | Loader::SqliteEmbedded
+    )
+}
+
 impl DevServer {
-    /// `loader` is what the importer wants (its `with { type }` or the extension default); a file bundled with a different one is re-parsed.
+    /// `loader` is what the importer wants (its `with { type }` or the extension default); a file bundled with a different
+    /// attribute-style loader on either side is re-parsed, while a plugin's own loader for the extension keeps the cache.
     pub(crate) fn is_file_cached(
         &mut self,
         path: &[u8],
@@ -5172,7 +5186,11 @@ impl DevServer {
                         u32::try_from(index).expect("int cast"),
                     ));
                     if file.html_route_bundle_index.is_none()
-                        && file.loader.is_some_and(|bundled| bundled != loader)
+                        && file.loader.is_some_and(|bundled| {
+                            bundled != loader
+                                && (is_attribute_style_loader(bundled)
+                                    || is_attribute_style_loader(loader))
+                        })
                     {
                         return None;
                     }

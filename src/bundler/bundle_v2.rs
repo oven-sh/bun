@@ -7112,17 +7112,14 @@ pub mod bv2_impl {
                     .text;
                 let adopted = this.should_add_watcher(source_path)
                     && matches!(
-                        // const generic `CLONE_FILE_PATH = isWindows`
-                        // matches `cfg!(windows)` at compile time.
-                        this.bun_watcher_mut()
-                            .unwrap()
-                            .add_file::<{ cfg!(windows) }>(
-                                watcher_data.fd,
-                                source_path,
-                                bun_wyhash::hash(source_path) as u32,
-                                watcher_data.dir_fd,
-                                None,
-                            ),
+                        // Copied: `source_path` may die with this bundle's arena (`dupe_alloc`); deduped by hash, so once per file.
+                        this.bun_watcher_mut().unwrap().add_file::<true>(
+                            watcher_data.fd,
+                            source_path,
+                            bun_wyhash::hash(source_path) as u32,
+                            watcher_data.dir_fd,
+                            None,
+                        ),
                         Ok(bun_watcher::FdOwnership::Watcher)
                     );
                 // Already watched (every dev-server re-parse) or excluded: nothing else closes the fd this parse opened.

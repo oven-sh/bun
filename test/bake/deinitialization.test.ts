@@ -174,6 +174,92 @@ test("dev server deinitializes itself when its initialization fails", async () =
   expect(exitCode).toBe(0);
 });
 
+// Every stopped dev server hands its watcher to the watcher thread, which must wake up, close its
+// descriptors and free it: both when the thread is parked with nothing to watch yet (stop() right
+// after serve()) and when it is blocked on real watches (a request was served first).
+test("stopped dev servers release their watcher threads and descriptors", async () => {
+  using dir = tempDir("dev-server-watcher-release", {
+    "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "watcher-release-fixture.ts": `
+      import { getDevServerDeinitCount } from "bun:internal-for-testing";
+      import { fullGC } from "bun:jsc";
+      import { readdirSync, readlinkSync } from "node:fs";
+      import html from "./index.html";
+
+      const fdDir = process.platform === "darwin" ? "/dev/fd" : "/proc/self/fd";
+      // Windows watcher handles are not fds, so only posix can count them.
+      const fdCount = process.platform === "win32" ? () => 0 : () => readdirSync(fdDir).length;
+      // One inotify instance per live watcher (Linux only).
+      function inotifyCount() {
+        if (process.platform !== "linux") return 0;
+        let n = 0;
+        for (const name of readdirSync(fdDir)) {
+          try {
+            if (readlinkSync(fdDir + "/" + name).startsWith("anon_inode:inotify")) n++;
+          } catch {}
+        }
+        return n;
+      }
+      const serve = () => Bun.serve({ port: 0, development: true, routes: { "/": html }, fetch: () => new Response("unreachable") });
+
+      // The first server starts process-global threads (bundler pool) and opens lazily-created fds; keep it out of the measurement.
+      {
+        const warm = serve();
+        await (await fetch(warm.url)).text();
+        warm.stop(true);
+      }
+      async function settle(expectedDeinits, fdsBefore, inotifyBefore) {
+        const deadline = Date.now() + 10_000;
+        while (Date.now() < deadline) {
+          Bun.gc(true);
+          fullGC();
+          if (getDevServerDeinitCount() >= expectedDeinits && fdCount() <= fdsBefore && inotifyCount() <= inotifyBefore) break;
+          await Bun.sleep(20);
+        }
+      }
+      await settle(1, Infinity, Infinity);
+
+      const N = 20;
+      const deinitsBefore = getDevServerDeinitCount();
+      const fdsBefore = fdCount();
+      const inotifyBefore = inotifyCount();
+      for (let i = 0; i < N; i++) {
+        const server = serve();
+        // Every fourth server serves a request first so its watcher thread is blocked on real watches.
+        if (i % 4 === 0) await (await fetch(server.url)).text();
+        server.stop(true);
+        // Collect right away so some shutdowns land while the just-spawned watcher thread is still starting.
+        Bun.gc(true);
+        fullGC();
+      }
+      await settle(deinitsBefore + N, fdsBefore, inotifyBefore);
+      console.log(JSON.stringify({
+        deinits: getDevServerDeinitCount() - deinitsBefore,
+        leakedFds: Math.max(0, fdCount() - fdsBefore),
+        leakedInotify: inotifyCount() - inotifyBefore,
+      }));
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "watcher-release-fixture.ts"],
+    cwd: String(dir),
+    env: bunEnv,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+
+  const summary = stdout.trim().split("\n").at(-1) ?? "";
+  expect(summary.startsWith("{") ? JSON.parse(summary) : { stdout, stderr }).toEqual({
+    deinits: 20,
+    leakedFds: 0,
+    leakedInotify: 0,
+  });
+  expect(exitCode).toBe(0);
+}, 60_000);
+
 // `app.plugins` are held by one native BundlerPlugin cell that the dev server takes over from the serve options; each case releases the cell's owner differently and reports how many cells survive a full GC.
 async function runAppPluginsCase(name: string) {
   using dir = tempDir("app-plugins-release", {

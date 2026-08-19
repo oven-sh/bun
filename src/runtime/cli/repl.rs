@@ -2793,11 +2793,30 @@ fn ends_inside_string(parts: &[&[u8]]) -> bool {
     let mut quote = 0u8;
     // Unclosed-brace count of each `${` hole being scanned, innermost last.
     let mut holes: Vec<u32> = Vec::new();
+    let mut in_regex = false;
+    let mut in_regex_class = false;
+    // Last significant bytes outside strings/templates/regex, for `/` disambiguation.
+    let mut prev: u8 = 0;
+    let mut prev2: u8 = 0;
+    let mut last_word: Vec<u8> = Vec::new();
     for part in parts {
         let mut i = 0;
         while i < part.len() {
             let c = part[i];
             i += 1;
+            if in_regex {
+                match c {
+                    b'[' => in_regex_class = true,
+                    b']' => in_regex_class = false,
+                    b'/' if !in_regex_class => {
+                        in_regex = false;
+                        prev = c;
+                        last_word.clear();
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             if quote != 0 {
                 match c {
                     b'\\' => i += 1,
@@ -2806,16 +2825,27 @@ fn ends_inside_string(parts: &[&[u8]]) -> bool {
                         holes.push(1);
                         quote = 0;
                     }
-                    _ if c == quote => quote = 0,
+                    _ if c == quote => {
+                        quote = 0;
+                        prev = c;
+                        last_word.clear();
+                    }
                     _ => {}
                 }
             } else {
                 match c {
                     b'"' | b'\'' | b'`' => quote = c,
+                    b'/' if regex_allowed_after(prev, prev2, &last_word) => {
+                        in_regex = true;
+                        in_regex_class = false;
+                    }
                     b'{' => {
                         if let Some(depth) = holes.last_mut() {
                             *depth += 1;
                         }
+                        prev2 = prev;
+                        prev = c;
+                        last_word.clear();
                     }
                     b'}' => {
                         if let Some(depth) = holes.last_mut() {
@@ -2825,8 +2855,21 @@ fn ends_inside_string(parts: &[&[u8]]) -> bool {
                                 quote = b'`';
                             }
                         }
+                        prev2 = prev;
+                        prev = c;
+                        last_word.clear();
                     }
-                    _ => {}
+                    _ => {
+                        if c.is_ascii_alphanumeric() || c == b'_' || c == b'$' {
+                            last_word.push(c);
+                        } else if !c.is_ascii_whitespace() {
+                            last_word.clear();
+                        }
+                        if !c.is_ascii_whitespace() {
+                            prev2 = prev;
+                            prev = c;
+                        }
+                    }
                 }
             }
         }
@@ -2885,46 +2928,139 @@ fn parse_completion_context(line: &[u8], cursor: usize) -> Option<CompletionCont
     })
 }
 
+/// Whether a `/` at the current point starts a regex literal rather than division.
+///
+/// Heuristic mirror of the ECMAScript grammar's two lexing contexts: division
+/// follows expressions (`)`, `]`, `}`, string/identifier/number literals,
+/// postfix `++`/`--`, or a closed regex), while regex literals follow
+/// operators, opening brackets, `;`, `,`, `:`, and keywords that expect an
+/// expression (`return`, `typeof`, `in`, `of`, …).
+fn regex_allowed_after(prev: u8, prev2: u8, last_word: &[u8]) -> bool {
+    match prev {
+        b')' | b']' | b'}' | b'/' | b'"' | b'\'' | b'`' => false,
+        // Postfix `++`/`--` end an expression; unary `+`/`-` allow a regex.
+        b'+' | b'-' if prev2 == prev => false,
+        _ if prev.is_ascii_alphanumeric() || prev == b'_' || prev == b'$' => {
+            // Regex after keywords that expect an expression to follow
+            // (`return /re/`), division after identifiers and numbers.
+            let word = last_word;
+            word == b"return".as_slice()
+                || word == b"typeof".as_slice()
+                || word == b"instanceof".as_slice()
+                || word == b"in".as_slice()
+                || word == b"of".as_slice()
+                || word == b"new".as_slice()
+                || word == b"delete".as_slice()
+                || word == b"void".as_slice()
+                || word == b"throw".as_slice()
+                || word == b"case".as_slice()
+                || word == b"do".as_slice()
+                || word == b"else".as_slice()
+                || word == b"yield".as_slice()
+                || word == b"await".as_slice()
+                || word == b"default".as_slice()
+                || word == b"extends".as_slice()
+        }
+        _ => true,
+    }
+}
+
 fn is_incomplete_code(code: &[u8]) -> bool {
     let mut brace_count: i32 = 0;
     let mut bracket_count: i32 = 0;
     let mut paren_count: i32 = 0;
     let mut in_string: u8 = 0;
     let mut in_template = false;
+    let mut in_regex = false;
+    let mut in_regex_class = false;
+    let mut in_line_comment = false;
     let mut escaped = false;
+    // Last significant bytes outside strings/templates/regex, for `/` disambiguation.
+    let mut prev: u8 = 0;
+    let mut prev2: u8 = 0;
+    let mut last_word: Vec<u8> = Vec::new();
 
-    for &ch in code {
+    let mut i = 0;
+    while i < code.len() {
+        let ch = code[i];
+        i += 1;
+
+        if in_line_comment {
+            if ch == b'\n' {
+                in_line_comment = false;
+            }
+            continue;
+        }
         if escaped {
             escaped = false;
             continue;
         }
-
         if ch == b'\\' {
             escaped = true;
             continue;
         }
 
         // Handle strings
-        if in_string == 0 && !in_template {
-            if ch == b'"' || ch == b'\'' {
-                in_string = ch;
-                continue;
+        if in_string != 0 {
+            if ch == in_string {
+                in_string = 0;
+                prev = ch;
+                last_word.clear();
             }
-            if ch == b'`' {
-                in_template = true;
-                continue;
-            }
-        } else if in_string != 0 && ch == in_string {
-            in_string = 0;
             continue;
-        } else if in_template && ch == b'`' {
-            in_template = false;
+        }
+        if in_template {
+            if ch == b'`' {
+                in_template = false;
+                prev = ch;
+                last_word.clear();
+            }
+            continue;
+        }
+        if in_regex {
+            match ch {
+                b'[' => in_regex_class = true,
+                b']' => in_regex_class = false,
+                b'/' if !in_regex_class => {
+                    in_regex = false;
+                    prev = ch;
+                    last_word.clear();
+                }
+                _ => {}
+            }
             continue;
         }
 
-        // Skip content inside strings
-        if in_string != 0 || in_template {
+        if ch == b'"' || ch == b'\'' {
+            in_string = ch;
             continue;
+        }
+        if ch == b'`' {
+            in_template = true;
+            continue;
+        }
+        if ch == b'/' {
+            if code.get(i) == Some(&b'/') {
+                in_line_comment = true;
+                i += 1;
+                continue;
+            }
+            if regex_allowed_after(prev, prev2, &last_word) {
+                in_regex = true;
+                in_regex_class = false;
+                continue;
+            }
+            // Division: fall through to record the byte.
+        }
+
+        if ch.is_ascii_alphanumeric() || ch == b'_' || ch == b'$' {
+            last_word.push(ch);
+        } else if !ch.is_ascii_whitespace() {
+            last_word.clear();
+        }
+        if !ch.is_ascii_whitespace() {
+            prev2 = prev;
+            prev = ch;
         }
 
         // Count brackets
@@ -2939,8 +3075,69 @@ fn is_incomplete_code(code: &[u8]) -> bool {
         }
     }
 
-    // Incomplete if any unclosed delimiters or unclosed strings
-    in_string != 0 || in_template || brace_count > 0 || bracket_count > 0 || paren_count > 0
+    // Incomplete if any unclosed delimiters or unclosed strings/regex/template
+    in_string != 0
+        || in_template
+        || in_regex
+        || brace_count > 0
+        || bracket_count > 0
+        || paren_count > 0
+}
+
+#[cfg(test)]
+mod incomplete_code_tests {
+    use super::*;
+
+    #[test]
+    fn regex_literals_do_not_open_strings() {
+        assert!(!is_incomplete_code(b"x = /hello \"world/;"));
+        assert!(!is_incomplete_code(b"x = /hello `world/;"));
+        assert!(!is_incomplete_code(b"x = /hello 'world'/;"));
+        assert!(!is_incomplete_code(b"const re = /[/]/;"));
+        assert!(!is_incomplete_code(b"const re = /a\\/b/gi;"));
+        assert!(!is_incomplete_code(b"x = /a[b-c]/;"));
+    }
+
+    #[test]
+    fn division_is_not_treated_as_regex() {
+        assert!(!is_incomplete_code(b"x = 10 / 2;"));
+        assert!(!is_incomplete_code(b"const x = (a + b) / c;"));
+        assert!(!is_incomplete_code(b"x = \"a\" / 2;"));
+        assert!(!is_incomplete_code(b"x = /a/ / 2;"));
+        assert!(!is_incomplete_code(b"x = a++ / 2;"));
+    }
+
+    #[test]
+    fn keywords_allow_regex_literals() {
+        assert!(!is_incomplete_code(b"return /re/;"));
+        assert!(!is_incomplete_code(b"for (const k of /re/) {}"));
+        assert!(!is_incomplete_code(b"x = typeof /re/;"));
+    }
+
+    #[test]
+    fn unclosed_strings_regex_and_delimiters_are_incomplete() {
+        assert!(is_incomplete_code(b"x = \"unterminated"));
+        assert!(is_incomplete_code(b"x = 'unterminated"));
+        assert!(is_incomplete_code(b"x = `unterminated"));
+        assert!(is_incomplete_code(b"x = /unterminated regex"));
+        assert!(is_incomplete_code(b"x = /a[b"));
+        assert!(is_incomplete_code(b"foo(bar"));
+    }
+
+    #[test]
+    fn line_comments_do_not_affect_scanning() {
+        assert!(!is_incomplete_code(b"x = 1; // \" comment"));
+        assert!(is_incomplete_code(b"x = 1; // comment\nfoo(bar"));
+    }
+
+    #[test]
+    fn ends_inside_string_respects_regex() {
+        assert!(!ends_inside_string(&[&b"x = /hello \"wor"[..]]));
+        assert!(!ends_inside_string(&[&b"x = /hello `world/;"[..]]));
+        assert!(ends_inside_string(&[&b"x = \"hello"[..]]));
+        assert!(ends_inside_string(&[&b"x = `hello"[..]]));
+        assert!(!ends_inside_string(&[&b"x = 10 / 2;"[..]]));
+    }
 }
 
 use crate::api::js_transpiler::is_likely_object_literal;

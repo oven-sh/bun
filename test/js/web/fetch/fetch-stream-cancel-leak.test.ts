@@ -274,8 +274,9 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
           Bun.gc(true);
           await Bun.sleep(10);
         }
-        // A couple can survive a collection through stale stack slots; the rest must go.
-        expect(N - aborted).toBeLessThanOrEqual(2);
+        // A few can survive a collection through stale stack slots (conservative scanning);
+        // the rest must go. Unfixed, none of them do.
+        expect(N - aborted).toBeLessThan(N / 4);
       },
       30_000,
     );

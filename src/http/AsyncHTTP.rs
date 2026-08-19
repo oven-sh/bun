@@ -280,7 +280,8 @@ impl<'a> AsyncHTTP<'a> {
         &MAX_SIMULTANEOUS_REQUESTS
     }
 
-    pub fn enable_response_body_streaming(&mut self) {
+    /// A store into the shared signal `Store`, not into `self`.
+    pub fn enable_response_body_streaming(&self) {
         self.signals.store(
             crate::signals::Field::ResponseBodyStreaming,
             true,

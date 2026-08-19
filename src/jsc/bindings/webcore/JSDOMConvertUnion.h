@@ -167,13 +167,6 @@ template<typename... T> struct Converter<IDLUnion<T...>> : DefaultConverter<IDLU
         auto& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        // 1. If the union type includes a nullable type and V is null or undefined, then return the IDL value null.
-        constexpr bool hasNullType = brigand::any<TypeList, std::is_same<IDLNull, brigand::_1>>::value;
-        if (hasNullType) {
-            if (value.isUndefinedOrNull())
-                RELEASE_AND_RETURN(scope, (ConditionalConverter<ReturnType, IDLNull, hasNullType>::convert(lexicalGlobalObject, value).value()));
-        }
-
         // 2. Let types be the flattened member types of the union type.
         // NOTE: Union is expected to be pre-flattented.
 

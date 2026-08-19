@@ -450,8 +450,8 @@ export interface LinkOpts {
    * Editing these should trigger relink (cmake's LINK_DEPENDS equivalent).
    */
   implicitInputs?: string[];
-  /** Output linker map to this path (for debugging symbol bloat). */
-  linkerMapOutput?: string | undefined;
+  /** Map files the link's flags make it write alongside the executable (flags.ts linkerMapOutputs). */
+  linkerMapOutputs?: string[];
 }
 
 /**
@@ -461,11 +461,8 @@ export interface LinkOpts {
 export function link(n: Ninja, cfg: Config, out: string, objects: string[], opts: LinkOpts): string {
   const absOut = resolve(cfg.buildDir, out + cfg.exeSuffix);
 
-  // Linker map is an implicit output (ninja tracks it but not in $out)
-  const implicitOutputs: string[] = [];
-  if (opts.linkerMapOutput !== undefined) {
-    implicitOutputs.push(resolve(cfg.buildDir, opts.linkerMapOutput));
-  }
+  // Linker maps are implicit outputs (ninja tracks them but they're not in $out)
+  const implicitOutputs = (opts.linkerMapOutputs ?? []).map(map => resolve(cfg.buildDir, map));
 
   const node: BuildNode = {
     outputs: [absOut],

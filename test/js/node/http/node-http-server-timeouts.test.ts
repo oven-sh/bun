@@ -179,6 +179,42 @@ describe("node:http server timeout enforcement", () => {
     }
   });
 
+  test("server.setTimeout callback does not fire after the socket is destroyed (#39681)", async () => {
+    const { promise: done, resolve: onDone } = Promise.withResolvers<void>();
+    const server = http.createServer((req, res) => {
+      res.end();
+      // Hold the event loop until the socket's 50ms inactivity timer has
+      // expired, so the destroy below races a 'timeout' that is already due.
+      const deadline = Date.now() + 150;
+      while (Date.now() < deadline) {}
+      req.socket.destroy();
+      // This fresh timer is queued behind the expired inactivity timer, so
+      // by the time it runs, a stale 'timeout' (the bug) has already fired.
+      setTimeout(onDone, 100);
+    });
+    // Keep the 50ms timer in the slot across the response finish; a keep-alive
+    // timeout would replace it with a longer one.
+    server.keepAliveTimeout = 0;
+    const timeoutCalls: boolean[] = [];
+    server.setTimeout(50, (socket: net.Socket) => {
+      timeoutCalls.push(socket.destroyed);
+    });
+    const port = await listen(server);
+    try {
+      const socket = net.connect(port, "127.0.0.1");
+      socket.on("error", () => {});
+      socket.resume();
+      socket.on("connect", () => socket.write("GET / HTTP/1.1\r\nHost: a\r\n\r\n"));
+      await done;
+      // Node clears the inactivity timer in Socket._destroy, so the callback
+      // never runs for a socket destroyed before the expired timer fired.
+      expect(timeoutCalls).toEqual([]);
+    } finally {
+      server.closeAllConnections();
+      server.close();
+    }
+  });
+
   test("requestTimeout does not fire while a slow handler streams a response", async () => {
     // The request (a body-less GET) is complete as soon as its head is
     // parsed, so requestTimeout must stop ticking even though the handler

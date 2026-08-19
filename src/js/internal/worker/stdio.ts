@@ -132,7 +132,6 @@ function makePortWritable(port: MessagePort) {
   return stream;
 }
 
-// A node worker's process.stdin without { stdin: true }.
 // The worker's native console formats each call into one Buffer and hands it here
 // (fd 1 or 2), so console output takes the same path as process.stdout.write().
 // As with Node's Console (ignoreErrors), a failing or ended stream drops the output
@@ -147,6 +146,7 @@ function makeConsoleWriter(stdout: Writable, stderr: Writable) {
   };
 }
 
+// A node worker's process.stdin without { stdin: true }.
 function makeEndedReadable() {
   return new Readable({
     read() {
@@ -156,8 +156,8 @@ function makeEndedReadable() {
 }
 
 export default {
-  makeConsoleWriter,
   kFlushSync,
+  makeConsoleWriter,
   makePortReadable,
   makePortWritable,
   makeEndedReadable,

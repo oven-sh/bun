@@ -1,8 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, rmSync, symlinkSync } from "fs";
-import { bunEnv, bunExe, isASAN, isWindows, normalizeBunSnapshot, tempDir } from "harness";
+import { bunEnv, bunExe, isASAN, isDebug, isWindows, normalizeBunSnapshot, tempDir } from "harness";
 import path from "path";
 import { tempDirWithBakeDeps, WAIT_MULTIPLIER } from "../bake-harness";
+
+const hasBakeDebuggingFeatures = isDebug || Bun.version_with_sha.includes("-canary.");
 
 const normalizePath = (path: string) => (process.platform === "win32" ? path.replaceAll("\\", "/") : path);
 const platformPath = (path: string) => (process.platform === "win32" ? path.replaceAll("/", "\\") : path);
@@ -43,26 +45,51 @@ describe("production", () => {
     expect(buildStderr.toString()).toContain("oh no!");
   });
 
-  test("a route generated from getStaticPaths that throws while rendering fails the build", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-param-throw", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/blog/[slug].tsx": `export default function BlogPost({ params }) {
+  test(
+    "every route that throws while pre-rendering is reported",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-two-throwing-routes", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function Index() { return <p>ok</p>; }`,
+        "pages/a.tsx": `export default function A() { throw new Error("ERR_FROM_A"); }`,
+        "pages/b.tsx": `export default function B() { throw new Error("ERR_FROM_B"); }`,
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      expect(stderr.toString()).toContain("ERR_FROM_A");
+      expect(stderr.toString()).toContain("ERR_FROM_B");
+      expect(exitCode).toBe(1);
+    },
+    30_000 * WAIT_MULTIPLIER,
+  );
+
+  test(
+    "a route generated from getStaticPaths that throws while rendering fails the build",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-param-throw", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/blog/[slug].tsx": `export default function BlogPost({ params }) {
   throw new Error("param boom");
   return <div>{params.slug}</div>;
 }
 export function getStaticPaths() {
   return { paths: [{ params: { slug: "hello" } }], fallback: false };
 }`,
-    });
+      });
 
-    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
-      .cwd(dir)
-      .env(bunEnv)
-      .throws(false);
-    expect(stderr.toString()).toContain("param boom");
-    expect(stderr.toString()).not.toContain("cannot be pre-rendered to a static page");
-    expect(exitCode).toBe(1);
-  });
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      expect(stderr.toString()).toContain("param boom");
+      expect(stderr.toString()).not.toContain("cannot be pre-rendered to a static page");
+      expect(exitCode).toBe(1);
+    },
+    30_000 * WAIT_MULTIPLIER,
+  );
 
   test("import.meta properties are inlined in production build", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-import-meta", {
@@ -392,6 +419,36 @@ export default function Docs() {
     const { exitCode, stderr } = await Bun.$`${bunExe()} build --app`.cwd(String(dir)).env(bunEnv).throws(false);
 
     expect(stderr.toString()).toContain("TypeError: plugins must be an array");
+    expect(exitCode).toBe(1);
+  });
+
+  test("an unhandled rejection from the config file fails the build", async () => {
+    // Custom framework: no react install needed; the rejection is printed by the VM and must set the exit code.
+    using dir = tempDir("bake-production-unhandled-rejection", {
+      "bun.app.ts": `
+        Promise.reject(new Error("unhandled-boom"));
+        process.on("exit", code => console.log("exit event: " + code));
+        export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "pages", style: "nextjs-pages", serverEntryPoint: "./server-entry.ts" }],
+            },
+          },
+        };
+      `,
+      "server-entry.ts": `
+        export function render(req, meta) { return new Response(String(meta.pageModule.default())); }
+        export async function prerender(meta) { return { files: { "/index.html": String(meta.pageModule.default()) } }; }
+      `,
+      "pages/index.ts": `export default () => "homepage";`,
+    });
+    const { exitCode, stdout, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .quiet()
+      .throws(false);
+    expect(stderr.toString()).toContain("unhandled-boom");
+    expect(stdout.toString()).toContain("exit event: 1");
     expect(exitCode).toBe(1);
   });
 
@@ -1174,7 +1231,8 @@ export async function prerender(meta: any) {
     );
   });
 
-  describe.concurrent("output files that cannot be written", () => {
+  // These use --debug-no-minify / --debug-dump-server-files, which only canary and debug builds accept.
+  describe.concurrent.skipIf(!hasBakeDebuggingFeatures)("output files that cannot be written", () => {
     const app = {
       "src/index.tsx": `
         process.on("exit", code => console.log("exit event: " + code));
@@ -2140,6 +2198,33 @@ console.log(JSON.stringify({ outerImportsSameInner: outer.innerSeenByOuter() ===
         expect(JSON.parse(stdout)).toStrictEqual({ outerImportsSameInner: true });
         expect(exitCode).toBe(0);
       }
+    },
+    60_000 * WAIT_MULTIPLIER,
+  );
+
+  test(
+    "a page with more than eight client components builds",
+    async () => {
+      // The boundary table switches to a hashed index past eight entries.
+      const count = 12;
+      const files: Record<string, string> = {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx":
+          Array.from({ length: count }, (_, i) => `import { C${i} } from "../components/C${i}";`).join("\n") +
+          `\nexport default function IndexPage() {\n  return <main>${Array.from({ length: count }, (_, i) => `<C${i} />`).join("")}</main>;\n}`,
+        "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
+      };
+      for (let i = 0; i < count; i++) {
+        files[`components/C${i}.tsx`] =
+          `"use client";\nexport function C${i}() { return <span id="c${i}">client ${i}</span>; }`;
+      }
+      const dir = await tempDirWithBakeDeps("bake-production-many-client-components", files);
+
+      const build = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+      expect(build.stderr.toString()).not.toContain("error");
+      const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+      for (let i = 0; i < count; i++) expect(html).toContain(`<span id="c${i}">client ${i}</span>`);
+      expect(build.exitCode).toBe(0);
     },
     60_000 * WAIT_MULTIPLIER,
   );

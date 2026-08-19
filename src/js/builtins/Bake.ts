@@ -121,7 +121,8 @@ export async function renderRoutesForProdStatic(
     }
   }
 
-  return Promise.all(
+  // Every failing route is reported, not only the first one to reject.
+  const settled = await Promise.allSettled(
     modulesForFiles.map(async (modules, i) => {
       const typeAndFlag = typeAndFlags[i];
       const type = typeAndFlag & 0xff;
@@ -157,4 +158,7 @@ export async function renderRoutesForProdStatic(
       }
     }),
   );
+  const errors = settled.filter(r => r.status === "rejected").map(r => (r as PromiseRejectedResult).reason);
+  if (errors.length === 1) throw errors[0];
+  if (errors.length > 1) throw new AggregateError(errors, `${errors.length} routes failed to pre-render`);
 }

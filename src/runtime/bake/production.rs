@@ -228,6 +228,11 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         }
         Err(e) => return Err(e),
     }
+    // An unhandled rejection or exception from the config or a prerender fails the build, as `bun run` would.
+    let _ = vm.global().handle_rejected_promises();
+    if vm.unhandled_error_counter > 0 && vm.exit_handler.exit_code == 0 {
+        vm.exit_handler.exit_code = 1;
+    }
     // Success exits through the VM too: 'exit' handlers, process.exitCode, VM teardown.
     vm.on_exit();
     vm.global_exit()

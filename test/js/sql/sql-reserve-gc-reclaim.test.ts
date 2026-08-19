@@ -154,7 +154,9 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
           servedDuringTransaction = served;
         });
       })();
-      await started.promise;
+      // transaction cannot resolve before the gate opens, so it only wins the
+      // race by rejecting, which surfaces a setup failure instead of a hang.
+      await Promise.race([started.promise, transaction]);
 
       // Nothing but the running transaction references the client now.
       for (let i = 0; i < 10; i++) {

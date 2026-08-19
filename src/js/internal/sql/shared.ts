@@ -772,7 +772,6 @@ abstract class BasePooledConnection<ConnectionHandle extends { close(): void; fl
       this.adapter.readyConnections.delete(this);
       const queries = new Set(this.queries);
       this.queries?.clear?.();
-      this.queryCount = 0;
       this.flags &= ~PooledConnectionFlags.reserved;
 
       // notify all queries that the connection is closed
@@ -1405,8 +1404,8 @@ abstract class BaseSQLAdapter<PooledConnection extends BasePooledConnection, Con
         if (connection.flags & PooledConnectionFlags.preReserved || connection.flags & PooledConnectionFlags.reserved)
           continue;
         const queryCount = connection.queryCount;
-        if (queryCount > 0) {
-          if (queryCount < leastQueries) {
+        if (queryCount !== 0) {
+          if (queryCount > 0 && queryCount < leastQueries) {
             leastQueries = queryCount;
             connectionWithLeastQueries = connection;
           }

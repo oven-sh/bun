@@ -1140,6 +1140,13 @@ describe.concurrent.skipIf(!canBuildNodeAddons())("napi", () => {
     });
   });
 
+  describe("napi_get_cb_info this_arg", () => {
+    it("is globalThis for a bare call resolved through a closure scope", async () => {
+      const output = await checkSameOutput("test_this_value_of_bare_call_through_closure", []);
+      expect(output).toContain("bare call through closure returned globalThis: true");
+    });
+  });
+
   describe("bigint conversion to int64/uint64", () => {
     it("works", async () => {
       const tests = [-1n, 0n, 1n];

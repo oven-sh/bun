@@ -1859,9 +1859,7 @@ fn root_package_json_source(
         Default::default(),
     ) {
         WorkspacePackageJsonCacheResult::Entry(entry) => {
-            // The parser reads an empty file as `{}`. For the root that would
-            // install nothing and delete the lockfile, which is the wrong
-            // answer when the file was truncated by an interrupted write.
+            // The parser turns an empty file into `{}`, which would delete the lockfile.
             if entry.source.contents.is_empty() {
                 Output::err_generic(
                     "failed to parse '{}': file is empty",

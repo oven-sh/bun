@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe, bunRun, isBroken, isWindows, tempDir } from "harness";
+import { bunEnv, bunExe, bunRun, isASAN, isBroken, isDebug, isWindows, tempDir } from "harness";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { decodeSourceMappingsLine, itBundled } from "./expectBundled";
@@ -2831,18 +2831,37 @@ describe.concurrent("bundler", () => {
   // that no longer terminates fails the child, not the test runner. They
   // overlap each other: the DAG case comes first because its fixture is the
   // largest, so the chain cases write theirs while the DAG build runs.
+  //
+  // Only debug and ASAN builds can fail these cases at the full sizes. A
+  // release build from before #34554 and #35310 bundles all three graphs: its
+  // stack holds a chain of more than 10000 modules, and the O(V*E) walk took
+  // about 4.5s on the DAG, far below the build cap. Release builds therefore
+  // run the same shapes at a small size.
+  const deepGraphFullSize = isDebug || isASAN;
+  const deepBuildCapMs = 60_000;
 
   /** Bundles `root/entry` into `root/outfile` and returns the outfile's absolute path. */
-  async function buildDeepGraph(root: string, entry: string, outfile: string): Promise<string> {
+  async function buildDeepGraph(root: string, entry: string, outfile: string, graph: string): Promise<string> {
     await using build = Bun.spawn({
       cmd: [bunExe(), "build", entry, `--outfile=${outfile}`],
       cwd: root,
       env: bunEnv,
       stdio: ["ignore", "pipe", "pipe"],
-      timeout: 60_000,
+      timeout: deepBuildCapMs,
     });
-    const [, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
-    expect({ stderr, exitCode, signalCode: build.signalCode }).toEqual({ stderr: "", exitCode: 0, signalCode: null });
+    const [stdout, stderr, exitCode] = await Promise.all([build.stdout.text(), build.stderr.text(), build.exited]);
+    if (build.signalCode !== null) {
+      throw new Error(
+        `bun build of the ${graph} was killed by ${build.signalCode} ` +
+          `(SIGTERM means it did not finish within ${deepBuildCapMs}ms)\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      );
+    }
+    if (exitCode !== 0 || stderr !== "") {
+      throw new Error(
+        `bun build of the ${graph} exited with ${exitCode} (expected 0 and an empty stderr)` +
+          `\nstdout:\n${stdout}\nstderr:\n${stderr}`,
+      );
+    }
     return join(root, outfile);
   }
 
@@ -2854,7 +2873,7 @@ describe.concurrent("bundler", () => {
   test.concurrent(
     "edgecase/DeepImportDiamondDAG",
     async () => {
-      const N = 20000;
+      const N = deepGraphFullSize ? 20000 : 1000;
       using dir = tempDir("deep-import-dag", {});
       const root = String(dir);
       const values = new Array<number>(N);
@@ -2868,7 +2887,7 @@ describe.concurrent("bundler", () => {
         );
       }
       writeFileSync(join(root, "entry.js"), `import { v } from "./m0.js"; console.log(v);\n`);
-      const outfile = await buildDeepGraph(root, "entry.js", "out.js");
+      const outfile = await buildDeepGraph(root, "entry.js", "out.js", `${N} module DAG`);
       expect(await bunRun(outfile)).toSpawn(String(values[0]));
     },
     120_000,
@@ -2881,7 +2900,7 @@ describe.concurrent("bundler", () => {
   //
   // Both chain cases bundle the same modules, written once. They only read
   // the directory, and each writes its own outfile.
-  const deepChainDepth = 7000;
+  const deepChainDepth = deepGraphFullSize ? 7000 : 500;
   let deepChainDir: ReturnType<typeof tempDir> | undefined;
   function deepChainRoot(): string {
     if (!deepChainDir) {
@@ -2902,7 +2921,12 @@ describe.concurrent("bundler", () => {
   test.concurrent(
     "edgecase/DeepImportChain",
     async () => {
-      const outfile = await buildDeepGraph(deepChainRoot(), "chain.js", "chain.out.js");
+      const outfile = await buildDeepGraph(
+        deepChainRoot(),
+        "chain.js",
+        "chain.out.js",
+        `${deepChainDepth} module chain`,
+      );
       expect(await bunRun(outfile)).toSpawn(String(deepChainDepth));
     },
     120_000,
@@ -2916,7 +2940,13 @@ describe.concurrent("bundler", () => {
   test.concurrent(
     "edgecase/DeepImportChainWrappedTLA",
     async () => {
-      const out = readFileSync(await buildDeepGraph(deepChainRoot(), "tla.js", "tla.out.js"), "utf8");
+      const outfile = await buildDeepGraph(
+        deepChainRoot(),
+        "tla.js",
+        "tla.out.js",
+        `${deepChainDepth} module chain behind await import()`,
+      );
+      const out = readFileSync(outfile, "utf8");
       expect(out.match(/^var init_m\d+ = __esm\(/gm)).toHaveLength(deepChainDepth - 1);
       expect(out).toContain(`var init_m${deepChainDepth - 2} = __esm(`);
     },

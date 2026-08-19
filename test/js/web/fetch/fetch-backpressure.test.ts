@@ -684,11 +684,29 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
     ["an idle reader", /* js */ `const reader = res.body.getReader(); await reader.read(); globalThis.keep = reader;`],
   ] as const;
 
+  // If the process is still around after 6 s, say what it is holding (an unref'd timer, so it
+  // cannot itself be the reason), then how much a late reader finds buffered and whether more
+  // follows. Only ever printed by a failing run.
+  const diagnose = /* js */ `
+    setTimeout(async () => {
+      const { getEventLoopStats } = require("bun:internal-for-testing");
+      const stats = getEventLoopStats();
+      const reader = (globalThis.keep instanceof Response ? globalThis.keep.body : globalThis.keep instanceof ReadableStream ? globalThis.keep : null)?.getReader() ?? globalThis.keep;
+      const reads = [];
+      for (let i = 0; i < 6; i++) {
+        const r = await Promise.race([reader.read(), Bun.sleep(300).then(() => null)]);
+        reads.push(r === null ? "pending" : r.done ? "done" : r.value.byteLength);
+        if (r === null) break;
+      }
+      console.error("still alive: " + JSON.stringify({ stats, reads, after: getEventLoopStats() }));
+    }, 6000).unref();
+  `;
+
   for (const [holding, script] of idleClients) {
     test(`a process holding ${holding} exits on its own`, async () => {
       await using server = await serveUntilBlocked();
       await using proc = Bun.spawn({
-        cmd: [bunExe(), "-e", `const res = await fetch(${JSON.stringify(server.url)}); ${script}`],
+        cmd: [bunExe(), "-e", `const res = await fetch(${JSON.stringify(server.url)}); ${script} ${diagnose}`],
         env: bunEnv,
         stdout: "pipe",
         stderr: "pipe",
@@ -696,13 +714,13 @@ describe.concurrent("fetch() receive backpressure — a body nothing waits for d
       const stderr = proc.stderr.text();
       const exited = proc.exited.then(exitCode => ({ exitCode }));
       const deadline = performance.now() + 10_000;
-      let outcome: { exitCode: number } | { stillAlive: true; serverSentMiB: number } | undefined;
+      let outcome: { exitCode: number } | { stillAlive: true; serverSentKiB: number } | undefined;
       while (outcome === undefined) {
         outcome = await Promise.race([exited, Bun.sleep(20).then(() => undefined)]);
         // Took the whole body: it is draining. Took little and is still around: it is
         // holding the paused body. Neither exited.
         if (outcome === undefined && (server.sent() >= BODY || performance.now() >= deadline)) {
-          outcome = { stillAlive: true, serverSentMiB: server.sent() >> 20 };
+          outcome = { stillAlive: true, serverSentKiB: server.sent() >> 10 };
           proc.kill();
         }
       }

@@ -1849,6 +1849,7 @@ bool CompileFunctionOptions::fromJS(JSC::JSGlobalObject* globalObject, JSC::VM& 
 
         if (!parsingContextValue.isEmpty() && !parsingContextValue.isUndefined()) {
             parsingContext = getGlobalObjectFromContext(globalObject, parsingContextValue, false);
+            RETURN_IF_EXCEPTION(scope, false);
             if (!parsingContext)
                 return ERR::INVALID_ARG_INSTANCE(scope, globalObject, "options.parsingContext"_s, "Context"_s, parsingContextValue);
 

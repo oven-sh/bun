@@ -1181,16 +1181,6 @@ bool NodeVMGlobalObject::preventExtensions(JSObject* object, JSGlobalObject* glo
 // This is copy-pasted from JSC's ProxyObject.cpp
 static const ASCIILiteral s_proxyAlreadyRevokedErrorMessage { "Proxy has already been revoked. No more operations are allowed to be performed on it"_s };
 
-
-
-
-
-
-
-
-
-
-
 bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* globalObject, PropertyName propertyName, PropertySlot& slot)
 {
     VM& vm = JSC::getVM(globalObject);

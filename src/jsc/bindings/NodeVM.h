@@ -115,7 +115,6 @@ public:
     static void destroy(JSCell* cell);
     void setContextifiedObject(JSC::JSObject* contextifiedObject);
     JSObject* contextifiedObject() const { return m_sandbox.get(); }
-    bool isNotContextified() const { return m_contextOptions.notContextified; }
     // The object standing in front of this global's properties, or null for a DONT_CONTEXTIFY context (whose
     // properties simply live on the global object).
     JSObject* sandbox() const { return m_contextOptions.notContextified ? nullptr : m_sandbox.get(); }

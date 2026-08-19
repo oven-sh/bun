@@ -107,7 +107,9 @@ describe.skipIf(!isWindows)("Windows command line splitting follows the C runtim
         try {
           argv = JSON.parse(out).slice(2);
         } catch {
-          return reject(new Error(`child exited ${code} and printed ${JSON.stringify(out)} for tail ${JSON.stringify(tail)}`));
+          return reject(
+            new Error(`child exited ${code} and printed ${JSON.stringify(out)} for tail ${JSON.stringify(tail)}`),
+          );
         }
         if (code !== 0) return reject(new Error(`child exited ${code} for tail ${JSON.stringify(tail)}`));
         resolve(argv);

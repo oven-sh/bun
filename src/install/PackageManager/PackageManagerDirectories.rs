@@ -14,8 +14,6 @@ use bun_install::resolution::Tag as ResolutionTag;
 use bun_install::{PackageID, Resolution};
 use bun_paths::{self as path, AbsPath, PathBuffer, SEP};
 use bun_semver::{self as Semver, String as SemverString};
-#[cfg(windows)]
-use bun_sys::FdDirExt;
 use bun_sys::{self as sys, Dir, Fd, File};
 
 use crate::bun_progress::Node as ProgressNode;
@@ -129,13 +127,13 @@ pub fn get_temporary_directory(this: &mut PackageManager) -> &'static TemporaryD
 
 pub struct TemporaryDirectory {
     pub(crate) handle: Dir,
-    #[cfg(windows)]
+    /// Real path of [`Self::handle`]. After an EXDEV fallback this is
+    /// `cache/.tmp`, never `$TMPDIR`.
     pub(crate) path: ZBox,
-    pub(crate) name: &'static [u8],
 }
 
-// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer),
-// `ZBox` wraps `Box<[u8]>`, and `&'static [u8]` is `Sync`. No `unsafe impl`.
+// `TemporaryDirectory` is auto-`Send + Sync`: `Dir` wraps `Fd` (an integer)
+// and `ZBox` wraps `Box<[u8]>`. No `unsafe impl`.
 const _: fn() = || {
     fn assert<T: Send + Sync>() {}
     assert::<TemporaryDirectory>();
@@ -291,11 +289,9 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     }
 
-    #[cfg(windows)]
     let mut buf = PathBuffer::uninit();
-    #[cfg(windows)]
-    let temp_dir_path = match sys::get_fd_path_z(Fd::from_std_dir(&tempdir), &mut buf) {
-        Ok(p) => p,
+    let temp_dir_path = match sys::get_fd_path_z(tempdir.fd(), &mut buf) {
+        Ok(p) => ZBox::from_bytes(p.as_bytes()),
         Err(err) => {
             Output::err(
                 err,
@@ -306,12 +302,17 @@ fn get_temporary_directory_run(manager: &mut PackageManager) -> TemporaryDirecto
         }
     };
 
-    TemporaryDirectory {
+    let td = TemporaryDirectory {
         handle: tempdir,
-        name: temp_dir_name,
-        #[cfg(windows)]
-        path: ZBox::from_bytes(temp_dir_path.as_bytes()),
+        path: temp_dir_path,
+    };
+    if verbose_install() {
+        bun_core::pretty_errorln!(
+            "<r><d>info<r>: using temporary directory {}",
+            bun_fmt::s(td.path.as_bytes()),
+        );
     }
+    td
 }
 
 /// # Safety

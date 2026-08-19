@@ -91,8 +91,6 @@ public:
     bool ownMicrotaskQueue = false;
 };
 
-class NodeVMGlobalObject;
-
 // This class represents a sandboxed global object for vm contexts
 class NodeVMGlobalObject final : public Bun::GlobalScope {
 public:

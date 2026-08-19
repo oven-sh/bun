@@ -889,6 +889,16 @@ describe.concurrent("Bun REPL", () => {
       expect(exitCode).toBe(0);
     });
 
+    test("-e reports a rejection left by the last timer callback", async () => {
+      const { stdout, exitCode } = await runReplWith([
+        "-e",
+        "process.on('unhandledRejection', e => console.log('unhandledRejection', e.message));" +
+          "setTimeout(() => Promise.reject(new Error('late')), 1)",
+      ]);
+      expect(stdout).toBe("unhandledRejection late\n");
+      expect(exitCode).toBe(0);
+    });
+
     test("-p drains event loop before printing", async () => {
       // Result should be printed after the timer output, since we drain
       // the event loop before printing the final result.

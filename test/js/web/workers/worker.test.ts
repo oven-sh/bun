@@ -369,6 +369,17 @@ describe("web worker", () => {
       expect(err.message).toBe("5");
       expect(err.error).toBe(null);
     });
+
+    // The immediate is the last thing keeping the worker alive, so the rejection
+    // it leaves behind has no later loop turn to be reported in; it used to be
+    // dropped and the worker closed as if nothing had happened.
+    test("is fired for a rejection left by the worker's last callback", async () => {
+      const worker = new Worker("data:text/javascript,setImmediate(() => Promise.reject(new Error('last turn')))");
+      const errors: string[] = [];
+      worker.addEventListener("error", e => errors.push(e.message));
+      await once(worker, "close");
+      expect(errors).toEqual([expect.stringContaining("error: last turn")]);
+    });
   });
 
   describe("terminate() races and lifecycle edges", () => {

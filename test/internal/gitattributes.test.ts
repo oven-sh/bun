@@ -47,6 +47,12 @@ async function git(cwd: string, ...args: string[]): Promise<string> {
     cwd,
     env: {
       ...bunEnv,
+      // Point HOME/XDG_CONFIG_HOME into the scratch dir too: git's default
+      // core.excludesFile ($HOME/.config/git/ignore) is not covered by
+      // GIT_CONFIG_NOSYSTEM, and a host ignore for .env or *.pem would skip
+      // those fixtures on `git add -A`.
+      HOME: cwd,
+      XDG_CONFIG_HOME: cwd,
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_CONFIG_GLOBAL: join(cwd, "does-not-exist.gitconfig"),
       GIT_AUTHOR_NAME: "test",

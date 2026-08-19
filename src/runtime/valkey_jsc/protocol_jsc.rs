@@ -23,6 +23,7 @@ pub(crate) fn valkey_error_to_js(
         RedisError::InvalidInteger => JscError::REDIS_INVALID_INTEGER,
         RedisError::InvalidDouble
         | RedisError::InvalidBoolean
+        | RedisError::InvalidNull
         | RedisError::InvalidMap
         | RedisError::InvalidSet
         | RedisError::InvalidVerbatimString

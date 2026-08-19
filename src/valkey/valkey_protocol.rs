@@ -14,6 +14,7 @@ pub enum RedisError {
     InvalidDouble,
     InvalidInteger,
     InvalidMap,
+    InvalidNull,
     InvalidPush,
     InvalidResponse,
     InvalidResponseType,

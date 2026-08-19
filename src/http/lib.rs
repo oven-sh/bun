@@ -1901,9 +1901,12 @@ impl<'a> HTTPClient<'a> {
         // `agent.keepAlive` (see _http_client.ts) — so requests through
         // `http.globalAgent` (`keepAlive: true`) get TCP keepalive and requests
         // through a non-keepalive Agent or `agent: false` skip it, matching Node.
-        // Like undici, this is decided once by the request that opens the
-        // connection; a `keepalive: false` request never takes a socket from
-        // the pool (`is_keep_alive_possible`), so reuse has nothing to undo.
+        // Like undici, the request that opens the connection decides this for
+        // the connection's whole life. A `keepalive: false` request does not
+        // take a socket from the pool (`is_keep_alive_possible`), so reuse has
+        // nothing to undo. It can still donate one: `build_request` clears
+        // `disable_keepalive` again for an explicit `Connection: keep-alive`
+        // header, and that socket is pooled without TCP keepalive.
         //
         // A unix socket has no TCP keepalive (Node's `setKeepAlive` is a no-op
         // on a pipe handle too).

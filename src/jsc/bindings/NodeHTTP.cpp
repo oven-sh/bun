@@ -570,8 +570,6 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
     }
 }
 
-// Throws when header conversion or validation fails; the Rust caller checks
-// through its own scope (from_js_host_call_generic in write_head_internal).
 template<bool isSSL>
 static void NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,

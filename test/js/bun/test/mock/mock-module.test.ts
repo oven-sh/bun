@@ -8,6 +8,7 @@
 // - Write test for import {foo} from "./foo"; export {foo}
 
 import { expect, mock, spyOn, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { default as defaultValue, fn, iCallFn, rexported, rexportedAs, variable } from "./mock-module-fixture";
 import * as spyFixture from "./spymodule-fixture";
 
@@ -212,4 +213,56 @@ test("onResolve plugin errors surface from mock.module; an unresolvable specifie
   } finally {
     Bun.plugin.clearAll();
   }
+});
+
+// mock.module() of a file whose import() is still loading removes the file's
+// registry entry (the module is not linked yet, so there is no namespace to
+// patch). The in-flight import must still finish with the real module, and the
+// next import() must load the mock instead of answering from the removed
+// entry, which crashed in JSModuleLoader::loadModule. The load is held in
+// flight by an async onLoad plugin for the module's dependency. Runs in a
+// subprocess because the failure is a crash.
+test("mocking a file whose import() is in flight", async () => {
+  using dir = tempDir("mock-module-in-flight", {
+    "entry.mjs": `
+      import { dep } from "./dep.mjs";
+      export const value = dep;
+    `,
+    "dep.mjs": "",
+    "in-flight.test.ts": `
+      import { expect, mock, test } from "bun:test";
+
+      const gate = Promise.withResolvers<void>();
+      const depLoadStarted = Promise.withResolvers<void>();
+      Bun.plugin({
+        name: "gate",
+        setup(build) {
+          build.onLoad({ filter: /dep\\.mjs$/ }, async () => {
+            depLoadStarted.resolve();
+            await gate.promise;
+            return { loader: "js", contents: 'export const dep = "real";' };
+          });
+        },
+      });
+
+      test("mock.module while import() is in flight", async () => {
+        const first = import("./entry.mjs");
+        await depLoadStarted.promise;
+        mock.module("./entry.mjs", () => ({ value: "mocked" }));
+        gate.resolve();
+        expect((await first).value).toBe("real");
+        expect((await import("./entry.mjs")).value).toBe("mocked");
+      });
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "test", "in-flight.test.ts"],
+    env: bunEnv,
+    cwd: String(dir),
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect(stdout + stderr).toContain(" 1 pass");
+  expect(exitCode).toBe(0);
 });

@@ -228,7 +228,7 @@ describe.concurrent("process.on('memoryPressure')", () => {
     // Each step: [file content, holdoff clock in ms, levels the listener must see].
     // The counters accumulate from step to step, as they do in the real file.
     // A null content removes and re-adds the listener, which sets up a new source.
-    const steps: [string | null, number, string[]][] = [];
+    const steps: [string | null, number | null, string[]][] = [];
     let counters: Parameters<typeof memoryEvents>[0] = {};
     const moved = (changed: typeof counters, atMs: number, emitted: string[], extraLines = "") => {
       counters = { ...counters, ...changed };
@@ -248,7 +248,7 @@ describe.concurrent("process.on('memoryPressure')", () => {
     moved({ high: 8 }, 9000, ["warning"], "no_value\nsome_future_counter x\n"); // bad lines are skipped, the rest still counts
     steps.push([memoryEvents({ high: 1 }), 9000, []]); // a short read: below the counts already seen
     steps.push([null, 0, []]);
-    steps.push([memoryEvents({}), 0, []]); // the new source takes its own baseline from the first injection
+    steps.push([memoryEvents({}), null, []]); // the new source takes its baseline from the first injection (atMs omitted)
     steps.push([memoryEvents({ high: 1 }), 0, ["warning"]]); // and starts with no holdoff
     const { stdout, stderr, exitCode } = await run(/* js */ `
       const { memoryPressureInjectCgroupEvents } = require("bun:internal-for-testing");
@@ -259,13 +259,15 @@ describe.concurrent("process.on('memoryPressure')", () => {
       for (const [body, atMs] of ${JSON.stringify(steps.map(([body, atMs]) => [body, atMs]))}) {
         let injected = null;
         if (body === null) {
+          // No turn of the event loop between here and the next injection, so
+          // the new source never polls the real file before it has its baseline.
           process.off("memoryPressure", listener);
           process.on("memoryPressure", listener);
         } else {
-          injected = memoryPressureInjectCgroupEvents(body, atMs);
+          injected = memoryPressureInjectCgroupEvents(body, atMs ?? undefined);
+          // The source queues the event on the event loop. Let it run.
+          await new Promise(resolve => setImmediate(resolve));
         }
-        // The source queues the event on the event loop. Let it run.
-        await new Promise(resolve => setImmediate(resolve));
         results.push({ injected, emitted: emitted.splice(0) });
       }
       process.stdout.write(JSON.stringify(results));

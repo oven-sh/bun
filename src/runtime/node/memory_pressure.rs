@@ -757,7 +757,7 @@ pub(crate) fn js_inject_cgroup_events(
         let [text, at_ms] = frame.arguments_as_array::<2>();
         let text = bun_core::OwnedString::new(text.to_bun_string(global)?);
         let counters = posix::Counters::parse(text.to_utf8().slice());
-        let at_ms = at_ms.to_int32().max(0) as u64;
+        let at_ms = at_ms.get_number().unwrap_or(0.0).max(0.0) as u64;
 
         let vm = global.bun_vm().as_mut();
         let Some(events) = posix::watcher_mut(vm).and_then(|w| w.cgroup.as_mut()) else {

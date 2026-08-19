@@ -1708,9 +1708,7 @@ impl FetchTasklet {
 
     /// Stop being the producer. The source stays pinned by our ref, so the caller can still
     /// deliver a terminal chunk before `release_response_stream_source`. Touches no JS cell.
-    fn take_response_stream_source(
-        &self,
-    ) -> Option<NonNull<crate::webcore::byte_stream::Source>> {
+    fn take_response_stream_source(&self) -> Option<NonNull<crate::webcore::byte_stream::Source>> {
         let source = self.response_stream_source.take()?;
         self.body_stream_parked.set(false);
         // SAFETY: still pinned by the ref from `on_readable_stream_available`.

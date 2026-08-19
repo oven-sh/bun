@@ -232,49 +232,53 @@ describe("an abandoned fetch body stream is collected and its fetch is aborted",
   ];
 
   for (const [name, shape] of shapes) {
-    test(name, async () => {
-      let aborted = 0;
-      let pulls = 0;
-      using server = Bun.serve({
-        port: 0,
-        fetch(req) {
-          req.signal.addEventListener("abort", () => aborted++);
-          return new Response(
-            new ReadableStream({
-              async pull(controller) {
-                pulls++;
-                await Bun.sleep(1);
-                controller.enqueue(new Uint8Array(64 * 1024));
-              },
-            }),
-          );
-        },
-      });
-      // The client stopped taking bytes: the server is no longer pulled.
-      async function parked() {
-        let last = -1;
-        for (let stable = 0; stable < 5; ) {
-          await Bun.sleep(10);
-          stable = pulls === last ? stable + 1 : 0;
-          last = pulls;
+    test(
+      name,
+      async () => {
+        let aborted = 0;
+        let pulls = 0;
+        using server = Bun.serve({
+          port: 0,
+          fetch(req) {
+            req.signal.addEventListener("abort", () => aborted++);
+            return new Response(
+              new ReadableStream({
+                async pull(controller) {
+                  pulls++;
+                  await Bun.sleep(1);
+                  controller.enqueue(new Uint8Array(64 * 1024));
+                },
+              }),
+            );
+          },
+        });
+        // The client stopped taking bytes: the server is no longer pulled.
+        async function parked() {
+          let last = -1;
+          for (let stable = 0; stable < 5; ) {
+            await Bun.sleep(10);
+            stable = pulls === last ? stable + 1 : 0;
+            last = pulls;
+          }
         }
-      }
-      const N = 20;
-      // Its own frame, so that nothing on this one still refers to a response afterwards.
-      async function abandonOne() {
-        await shape(await fetch(server.url), parked);
-      }
-      for (let i = 0; i < N; i++) await abandonOne();
+        const N = 20;
+        // Its own frame, so that nothing on this one still refers to a response afterwards.
+        async function abandonOne() {
+          await shape(await fetch(server.url), parked);
+        }
+        for (let i = 0; i < N; i++) await abandonOne();
 
-      // Bounds the failing case only; the fixed build is done in well under a second.
-      const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
-      while (aborted < N && performance.now() < deadline) {
-        Bun.gc(true);
-        await Bun.sleep(10);
-      }
-      // A couple can survive a collection through stale stack slots; the rest must go.
-      expect(N - aborted).toBeLessThanOrEqual(2);
-    }, 30_000);
+        // Bounds the failing case only; the fixed build is done in well under a second.
+        const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
+        while (aborted < N && performance.now() < deadline) {
+          Bun.gc(true);
+          await Bun.sleep(10);
+        }
+        // A couple can survive a collection through stale stack slots; the rest must go.
+        expect(N - aborted).toBeLessThanOrEqual(2);
+      },
+      30_000,
+    );
   }
 });
 

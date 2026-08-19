@@ -10,6 +10,7 @@
 //!   - `PosixSpawnOptions`/`PosixStdio`/`PosixSpawnResult`/`ExtraPipe`/
 //!     `StdioKind`/`Dup2`/`Rusage`
 //!   - signal-forwarding / no-orphans `extern "C"` decls
+//!   - the no-orphans `pdeathsig` default and exit-time `spawn_gate`
 //!
 //! Dependencies are deliberately leaf-only: `libc`, `bun_sys`, `bun_core`,
 //! `bun_analytics`, and (Windows-only) `bun_libuv_sys`. There is **no**
@@ -177,6 +178,62 @@ pub mod pdeathsig {
     #[inline]
     pub fn is_arming_thread() -> bool {
         INSTALL_THREAD.get().copied() == Some(std::thread::current().id())
+    }
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Exit-time spawn gate. The no-orphans exit callback
+// (`bun_io::ParentDeathWatchdog::on_process_exit`) closes it before it lists
+// and kills our descendants. That walk lists our children once, so it is only
+// complete if no other thread of this process (a Worker's `Bun.spawn`, a
+// threadpool `git`) creates a child after the listing. Every POSIX spawn goes
+// through `posix_spawn::spawn_z`, which holds an `InFlight` token from before
+// the fork until the child exists. Once the gate is closed, `spawn_z` fails
+// with ECANCELED instead.
+// ──────────────────────────────────────────────────────────────────────────
+#[cfg(unix)]
+pub mod spawn_gate {
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
+
+    static CLOSED: AtomicBool = AtomicBool::new(false);
+    static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
+
+    /// A spawn that passed the gate and whose child may not exist yet.
+    pub(crate) struct InFlight(());
+
+    impl Drop for InFlight {
+        fn drop(&mut self) {
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// `None` once the gate is closed: the caller must not create a child.
+    ///
+    /// The count is raised before the flag is read and `close()` raises the
+    /// flag before it reads the count (all SeqCst), so a spawn either observes
+    /// the closed gate or is counted by the time `close()` waits.
+    pub(crate) fn enter() -> Option<InFlight> {
+        IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        if CLOSED.load(Ordering::SeqCst) {
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(InFlight(()))
+    }
+
+    /// Fail every spawn from now on, then wait for the spawns already past the
+    /// gate to return, so the children they create are visible to the caller.
+    /// Process exit only: the gate never reopens. A spawn in flight is a
+    /// thread suspended in vfork until its child execs, so the wait is
+    /// normally microseconds; the bound keeps a stuck exec from holding up
+    /// exit.
+    pub fn close() {
+        CLOSED.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while IN_FLIGHT.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_micros(100));
+        }
     }
 }
 

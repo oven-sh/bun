@@ -18,9 +18,11 @@
 //!        JS runtime actually starts; commands that never spin up an event
 //!        loop are short-lived enough not to need it.
 //!
-//!   2. On any clean exit (`Global.exit` → `Bun__onExit`), walks the process
-//!      tree rooted at `getpid()` and SIGKILLs every descendant so children
-//!      Bun spawned don't outlive it.
+//!   2. On any clean exit (`Global.exit` → `Bun__onExit`), closes
+//!      `bun_spawn_sys::spawn_gate` (threads that are still running, such as
+//!      Workers, can no longer spawn), then walks the process tree rooted at
+//!      `getpid()` and SIGKILLs every descendant so children Bun spawned don't
+//!      outlive it.
 //!      - macOS: libproc `proc_listchildpids()`.
 //!      - Linux: `/proc/<pid>/task/*/children`.
 //!
@@ -361,7 +363,14 @@ pub fn on_parent_exit(_this: &mut ParentDeathWatchdog) {
 /// Registered with `Global.addExitCallback` so it runs from `Bun__onExit`
 /// (atexit on macOS, at_quick_exit on Linux, and the explicit `Global.exit`
 /// path). C calling convention because that's the exit-callback ABI.
+///
+/// Only the calling thread is exiting in an orderly way: Worker threads (and
+/// any other spawning thread) keep running until `_exit`. Close the spawn gate
+/// first so the tree walk below sees every child this process will ever have;
+/// otherwise a child created after the walk lists our children survives it.
 extern "C" fn on_process_exit() {
+    #[cfg(unix)]
+    bun_spawn_sys::spawn_gate::close();
     kill_sync_pgroups_and_descendants();
 }
 
@@ -381,8 +390,9 @@ extern "C" fn on_process_exit() {
 ///      and unlike SIGTERM can't be trapped or ignored.
 /// A frozen process can neither exit (so its pid can't be reused) nor fork
 /// (so its child set is stable while we recurse), which is what makes the
-/// verify step sufficient. The only forking process is `self`, and we're in
-/// the exit handler — not forking.
+/// verify step sufficient. The only unfrozen process in the tree is `self`,
+/// whose child set is stable because the callers run either before any other
+/// thread exists (`enable`) or after `spawn_gate::close()` (`on_process_exit`).
 fn kill_descendants() {
     #[cfg(unix)]
     {

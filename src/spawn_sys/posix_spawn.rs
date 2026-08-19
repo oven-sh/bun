@@ -618,6 +618,14 @@ pub mod posix_spawn {
         argv: *const *const c_char,
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
+        // Dropped when this returns, i.e. once the child exists (or the spawn
+        // failed), which is what `spawn_gate::close()` waits for.
+        let Some(_in_flight) = crate::spawn_gate::enter() else {
+            return sys::Result::Err(
+                sys::Error::from_code(sys::E::ECANCELED, SYSCALL_POSIX_SPAWN)
+                    .with_path(path.to_bytes()),
+            );
+        };
         let pty_slave_fd = attr.map_or(-1, |a| a.pty_slave_fd);
         let detached = attr.is_some_and(|a| a.detached);
         let uid = attr.and_then(|a| a.uid);

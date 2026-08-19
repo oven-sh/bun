@@ -456,23 +456,23 @@ impl Snapshots {
             let test_filename_z = ZStr::from_slice_with_nul(&test_filename[..]);
 
             // O_RDWR: a file that may not be written to is reported here, not replaced below.
-            let file = match bun_sys::File::open(test_filename_z, bun_sys::O::RDWR, 0o644) {
-                bun_sys::Result::Ok(file) => file,
+            let file_text: Vec<u8> = match bun_sys::File::open(test_filename_z, bun_sys::O::RDWR, 0o644)
+                .and_then(|file| file.read_to_end())
+            {
+                bun_sys::Result::Ok(file_text) => file_text,
                 bun_sys::Result::Err(e) => {
                     log.add_error_fmt(
                         &bun_ast::Source::init_empty_file(test_filename_z.as_bytes()),
                         bun_ast::Loc { start: 0 },
                         format_args!(
-                            "Failed to update inline snapshot: Failed to open file: {}",
+                            "Failed to update inline snapshot: Failed to {} file: {}",
+                            e.syscall.name(),
                             bstr::BStr::new(e.name()),
                         ),
                     );
                     continue;
                 }
             };
-
-            let file_text: Vec<u8> = file.read_to_end().map_err(Error::from)?;
-            drop(file);
 
             let source =
                 bun_ast::Source::init_path_string(test_filename_z.as_bytes(), file_text.as_slice());

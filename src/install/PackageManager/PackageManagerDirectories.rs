@@ -79,8 +79,13 @@ pub fn lock_project(this: &mut PackageManager) {
     if this.project_lock.is_some() {
         return;
     }
-    let project_dir =
-        bun_core::strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    // Canonical: a junction or another case of the same directory must lock the same file.
+    let top_level_dir = FileSystem::instance().top_level_dir();
+    let top_level_dir_z = ZBox::from_bytes(top_level_dir);
+    let mut project_dir_buf = path::path_buffer_pool::get();
+    let project_dir = bun_core::strings::without_trailing_slash(
+        sys::realpath(top_level_dir_z.as_zstr(), &mut project_dir_buf).unwrap_or(top_level_dir),
+    );
     if env_var::BUN_INTERNAL_INSTALL_LOCK_DIR
         .get()
         .is_some_and(|held| bun_core::strings::without_trailing_slash(held) == project_dir)

@@ -385,9 +385,7 @@ impl File {
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         f.write_all(data)
     }
-    /// [`File::write_file`] through `.<name>.<random>.tmp` and a rename, so that a concurrent
-    /// reader or writer sees the old file or the new one. Follows symlinks, fails when the file
-    /// exists and cannot be opened for writing, keeps its mode; `mode` is for a new file.
+    /// [`File::write_file`] through a temporary file and a rename; an existing file keeps its mode.
     pub fn write_file_atomically(path: &ZStr, data: &[u8], mode: Mode) -> Maybe<()> {
         use std::io::Write as _;
 

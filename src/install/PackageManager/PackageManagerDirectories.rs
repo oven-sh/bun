@@ -74,8 +74,7 @@ impl PackageManager {
 
 // ───────────────────────────── project lock ───────────────────────────────────
 
-/// Holds `<cache dir>/.locks/<hash of the project root>` until the process exits, so that the
-/// processes that edit one project run one at a time. Best effort: without a lock file, no lock.
+/// Serializes the processes that edit one project; held until exit, and best effort.
 pub fn lock_project(this: &mut PackageManager) {
     if this.project_lock.is_some() {
         return;

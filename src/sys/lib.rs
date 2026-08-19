@@ -1052,8 +1052,7 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
-/// Mode for [`flock`]: a whole-file lock that closing the fd releases. Mandatory on Windows
-/// (`LockFileEx` fails other handles' reads and writes), so lock the files nobody reads.
+/// Whole-file lock for [`flock`], released with the fd; mandatory on Windows, so lock unread files.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum FileLockMode {
     Shared,

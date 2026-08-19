@@ -98,16 +98,17 @@ async function install(dir: string, env: NodeJS.Dict<string>, extraArgs: string[
   return await finish(proc);
 }
 
+/** Parse the "N packages installed" summary line from stdout. */
+function installedCount(stdout: string): number {
+  return Number(stdout.match(/(\d+)\s+packages? installed/)?.[1] ?? "0");
+}
+
 /**
  * Parse the test-only "[ParallelHoistedInstall] N tasks" marker that
  * complete_parallel_installs() emits under
  * BUN_INTERNAL_PARALLEL_HOISTED_MARKER. Returns 0 if the marker is
  * absent (i.e. the parallel path was not taken, or doesn't exist).
  */
-function installedCount(stdout: string): number {
-  return Number(stdout.match(/(\d+)\s+packages? installed/)?.[1] ?? "0");
-}
-
 function parallelTaskCount(stderr: string): number {
   const m = stderr.match(/\[ParallelHoistedInstall\]\s+(\d+)\s+tasks/);
   return m ? Number(m[1]) : 0;
@@ -241,12 +242,24 @@ async function orExit<T>(event: Promise<T>, proc: ReturnType<typeof spawnInstall
   return v;
 }
 
-/** Let anything bun already spawned or scheduled run: two bun startups outlast one such step. */
-async function settle() {
+/**
+ * Bounded poll for `path` appearing. From outside, "bun never spawned the script" and "bun spawned
+ * it and it has not written yet" look identical, so the only evidence of a regression is the file
+ * itself. The bound is two bun startups, which outlast an `echo` that was spawned before the poll
+ * began, so it scales with the machine instead of being a wall-clock sleep.
+ */
+async function appearsWithinBound(path: string): Promise<boolean> {
   for (let i = 0; i < 2; i++) {
+    if (await file(path).exists()) return true;
     await using ref = spawn({ cmd: [bunExe(), "-e", "0"], env: bunEnv, stdout: "ignore", stderr: "ignore" });
     await ref.exited;
   }
+  return file(path).exists();
+}
+
+/** Resolve once `cond` holds; callers race this against process exit via orExit(). */
+async function until(cond: () => Promise<boolean>): Promise<void> {
+  while (!(await cond())) await Bun.sleep(5);
 }
 
 /**
@@ -330,6 +343,10 @@ async function scriptsFixture() {
     marker,
     env,
     nested: join(dir, "node_modules", "app", "node_modules", "scripted", "package.json"),
+    async cacheHas(pattern: string): Promise<boolean> {
+      for await (const _ of new Glob(pattern).scan({ cwd: cacheDir, onlyFiles: false })) return true;
+      return false;
+    },
     /** Hold `tarball` once requested; returns when it was requested plus a release() */
     gate(tarball: string) {
       const g = { requested: Promise.withResolvers<void>(), release: Promise.withResolvers<void>() };
@@ -369,7 +386,7 @@ async function scriptsFixture() {
   };
 }
 
-describe.skipIf(!isPosix)("parallel hoisted install: rerouted downloads", () => {
+describe.concurrent.skipIf(!isPosix)("parallel hoisted install: rerouted downloads", () => {
   /**
    * A package's lifecycle scripts may only run once every ancestor tree is
    * installed, because its dependencies can be hoisted into any ancestor.
@@ -388,9 +405,8 @@ describe.skipIf(!isPosix)("parallel hoisted install: rerouted downloads", () => 
     await orExit(lib.requested, proc, "requesting lib");
     try {
       // Replay (where a buggy build spawns the postinstall) finished before this request was sent.
-      await settle();
       expect(
-        await file(fx.marker).exists(),
+        await appearsWithinBound(fx.marker),
         "scripted@1's postinstall ran while its ancestor tree (root) was still waiting on lib",
       ).toBe(false);
     } finally {
@@ -422,8 +438,14 @@ describe.skipIf(!isPosix)("parallel hoisted install: rerouted downloads", () => 
     await using proc = spawnInstall(fx.dir, fx.env, ["--frozen-lockfile"]);
     try {
       await orExit(Promise.all([lib.requested, nestedServed]), proc, "downloading the evicted packages");
-      // Let scripted@1 extract and park in pending_installs before root can complete.
-      await settle();
+      // Once scripted@1 is back in the cache its extraction has completed, so its install attempt is
+      // queued ahead of lib's (which has yet to download and extract): it will park in
+      // pending_installs before root can complete, whenever lib is released after this point.
+      await orExit(
+        until(() => fx.cacheHas("scripted@1.0.0*")),
+        proc,
+        "re-extracting scripted@1",
+      );
     } finally {
       lib.release();
     }

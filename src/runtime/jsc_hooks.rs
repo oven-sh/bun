@@ -102,9 +102,8 @@ pub(crate) struct RuntimeState {
     /// The resolver's PackageManager wake-handler context (module queue + VM
     /// handle); the resolver holds a raw pointer to it. Freed with the state.
     pub(crate) wake_ctx: Option<Box<bun_jsc::async_module::WakeContext>>,
-    /// The `uv_loop_t` N-API addons get for this VM (`napi_get_uv_event_loop`,
-    /// and `uv_default_loop()` for the main thread's). Embedded here because
-    /// addons keep its address for as long as the VM lives.
+    /// The `uv_loop_t` addons get for this VM; they keep its address as long as
+    /// the VM lives, hence embedded.
     #[cfg(unix)]
     pub(crate) uv_loop: crate::napi::uv_posix::UvLoop,
 }

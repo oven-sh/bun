@@ -1,27 +1,19 @@
-//! The loop-backed part of libuv's API for N-API addons on posix: `uv_async_t`,
-//! `uv_queue_work`, `uv_default_loop`, and the `uv_handle_t` functions for the
-//! handle type an addon can create here.
+//! libuv's loop-backed API for N-API addons on posix: `uv_default_loop`,
+//! `uv_async_t`, `uv_queue_work` and the `uv_handle_t` functions. Every other
+//! `uv_*` symbol is a crash stub (uv-posix-stubs.c) or a header-only polyfill
+//! (uv-posix-polyfills.c). Bun has no libuv loop here, so these map onto the
+//! VM's event loop and keep libuv's ABI and thread contract:
 //!
-//! Bun does not run a libuv loop on posix. Every other `uv_*` symbol is a crash
-//! stub (`src/jsc/bindings/uv-posix-stubs.c`) or a loop-free polyfill
-//! (`src/jsc/bindings/uv-posix-polyfills.c`). The functions here keep libuv's
-//! ABI and its threading contract, and map the loop onto the VM's event loop:
-//!
-//! - The addon allocates the `uv_async_t` / `uv_work_t` and reads `data`,
-//!   `loop` and `type` from it, so those fields sit where `uv.h` puts them
-//!   ([`UvHandle`], [`UvReq`]). The private fields behind them are Bun's.
-//! - As in libuv, only `uv_async_send` may be called from any thread.
-//!   Everything else runs on the loop's JS thread, the handle memory stays
-//!   valid until `close_cb` has run, and the request until `after_work_cb`
-//!   has run.
-//! - A `uv_loop_t*` is a [`UvLoop`]: one per VM, embedded in its
-//!   `RuntimeState`. Only its first word, `data`, is part of the ABI.
+//! - The addon allocates the handle or request and reads `data`, `loop` and
+//!   `type` from it ([`UvHandle`], [`UvReq`]); the fields behind those are Bun's.
+//! - Only `uv_async_send` may be called off the loop's JS thread. A handle is
+//!   valid until its `close_cb` has run, a request until its `after_work_cb`.
+//! - A `uv_loop_t*` is a [`UvLoop`], one per VM; only its `data` word is ABI.
 //! - `uv_async_send` sets the handle's `pending` flag and posts at most one
-//!   dispatch task per loop through the VM's [`VmHandle`], coalescing sends
-//!   the way libuv's eventfd does. The task walks the loop's live handles on
-//!   the JS thread, as libuv's `uv__async_io` does.
-//! - `uv_queue_work` is a [`Job`]: `work_cb` on the work pool, `after_work_cb`
-//!   from the job's completion on the JS thread.
+//!   dispatch task per loop through the VM's [`VmHandle`] (libuv: the eventfd).
+//!   The task walks the loop's handles on the JS thread (libuv: `uv__async_io`).
+//! - `uv_queue_work` is a [`Job`]: `work_cb` on the pool, `after_work_cb` in
+//!   its completion.
 
 use core::cell::Cell;
 use core::ffi::{CStr, c_char, c_int, c_uint, c_void};
@@ -41,8 +33,7 @@ use crate::jsc_hooks::RuntimeState;
 bun_output::declare_scope!(uv, hidden);
 
 unsafe extern "C" {
-    /// Crashes with the report the stubs in `uv-posix-stubs.c` produce. `name`
-    /// is kept by pointer, so it must be static. Does not return.
+    /// The stubs' crash; keeps `name` by pointer, never returns.
     fn CrashHandler__unsupportedUVFunction(name: *const c_char);
 }
 
@@ -58,19 +49,15 @@ const UV_EINVAL: c_int = -libc::EINVAL;
 const UV_EBUSY: c_int = -libc::EBUSY;
 const UV_ECANCELED: c_int = -libc::ECANCELED;
 
-/// `uv_handle_type` / `uv_req_type` members (`UV_HANDLE_TYPE_MAP` /
-/// `UV_REQ_TYPE_MAP` in uv.h).
+/// Positions in uv.h's `UV_HANDLE_TYPE_MAP` and `UV_REQ_TYPE_MAP`.
 const UV_ASYNC: c_uint = 1;
 const UV_WORK: c_uint = 7;
 
-/// The `uv_handle_t.flags` bits libuv itself uses for these states
-/// (src/uv-common.h). Whether the handle refs the loop is the [`KeepAlive`]
-/// in [`UvAsync`], not a flag.
+/// libuv's own `flags` values for these two states (src/uv-common.h).
 const UV_HANDLE_CLOSING: c_uint = 0x01;
 const UV_HANDLE_CLOSED: c_uint = 0x02;
 
-/// `sizeof(uv_async_t)` and `sizeof(uv_work_t)` on 64-bit unix: the addon
-/// allocates both, so Bun's private fields must fit behind the public ones.
+/// `sizeof` on 64-bit unix; the addon allocates both, so Bun's fields must fit.
 const UV_ASYNC_T_SIZE: usize = 128;
 const UV_WORK_T_SIZE: usize = 128;
 
@@ -94,26 +81,20 @@ enum DispatchState {
     Running = 2,
 }
 
-/// What a `uv_loop_t*` points at on posix. One per VM, owned by its
-/// `RuntimeState`, so it lives exactly as long as the VM: the main thread's
-/// for the whole process (like libuv's default loop), a Worker's until the
-/// Worker exits (by when, as in libuv, the addon must have closed its handles).
+/// What a `uv_loop_t*` points at. Lives in the VM's `RuntimeState`, so as long
+/// as the VM: forever for the main thread's, like libuv's default loop.
 #[repr(C)]
 pub(crate) struct UvLoop {
-    /// `uv_loop_t.data`, at offset 0 as in uv.h. The addon reads and writes it,
-    /// directly or through `uv_loop_{get,set}_data` (uv-posix-polyfills.c);
-    /// Bun never touches it.
+    /// `uv_loop_t.data`: the addon's, read and written by it (offset 0 as in uv.h).
     data: Cell<*mut c_void>,
     vm: NonNull<VirtualMachine>,
-    /// How `uv_async_send`, on any thread, reaches the JS thread. Uncounted:
-    /// the loop is VM-owned, so it must not be something the VM waits for.
+    /// How `uv_async_send` reaches the JS thread from any thread.
     handle: VmHandle,
     dispatch_state: AtomicU8,
     /// The initialised, not yet closed async handles. JS thread.
     asyncs: JsCell<Vec<NonNull<UvAsync>>>,
-    /// While a dispatch pass runs, the handles it has not visited yet (in
-    /// reverse order). `uv_close` removes from both lists, so a handle closed
-    /// by a callback is never visited afterwards. JS thread.
+    /// The handles the running dispatch pass has not visited yet, last first.
+    /// `uv_close` removes from both lists. JS thread.
     dispatching: JsCell<Vec<NonNull<UvAsync>>>,
 }
 
@@ -132,14 +113,12 @@ impl UvLoop {
         }
     }
 
-    /// The loop of `vm`, or null when `vm` has no `RuntimeState` (a `bun_jsc`
-    /// unit test, or a Worker's VM after its teardown).
+    /// Null once a Worker's VM has torn its `RuntimeState` down.
     ///
     /// # Safety
-    /// `vm` points at a live or never-freed `VirtualMachine`. Any thread: this
-    /// reads one field, `runtime_state`, which is written before the VM runs
-    /// any script (so before an addon exists) and again only by a Worker's
-    /// teardown, after which no conforming addon uses that Worker's loop.
+    /// `vm` is live or never freed. Any thread: `runtime_state` is written before
+    /// the VM runs script and again only by a Worker's teardown, after which, as
+    /// with libuv, the addon must not use that loop.
     pub(crate) unsafe fn of_vm(vm: *const VirtualMachine) -> *mut UvLoop {
         // SAFETY: fn contract.
         let state = unsafe { (*vm).runtime_state }.cast::<RuntimeState>();
@@ -158,9 +137,8 @@ impl UvLoop {
         unsafe { self.vm.as_ref() }.global().js_thread()
     }
 
-    /// Any thread. Makes sure a dispatch pass runs after this point; at most
-    /// one task is queued per loop however many handles are sent
-    /// (`ThreadSafeFunction::schedule_dispatch` has the same state machine).
+    /// Any thread. One queued task however many handles are sent; the state
+    /// machine is `ThreadSafeFunction::schedule_dispatch`'s.
     fn schedule_dispatch(&self) {
         let prev = self
             .dispatch_state
@@ -172,9 +150,7 @@ impl UvLoop {
         let this: *const UvLoop = self;
         let task = ConcurrentTask::from_callback(this.cast_mut(), UvLoop::dispatch);
         if let Posted::Refused(task) = self.handle.post(LoopKind::Regular, task) {
-            // The VM is gone. As with a send to a closed libuv loop, the
-            // callback is lost; stay consistent so a later send does not
-            // believe a task is queued.
+            // The VM is gone: the callback is lost, as with a closed libuv loop.
             // SAFETY: refused ⇒ the task was never queued and is ours to free.
             unsafe { ConcurrentTask::release_refused(task) };
             self.dispatch_state
@@ -193,14 +169,12 @@ impl UvLoop {
         loop {
             this.dispatch_state
                 .store(DispatchState::Running as u8, Ordering::SeqCst);
-            // A stopping VM takes no more callbacks, like a threadsafe
-            // function's; close callbacks still run (`UvAsync::run_close`).
+            // A stopping VM takes no more callbacks (threadsafe functions agree).
             if global.bun_vm().script_allowed() {
                 this.run_pass(global);
             }
-            // A send that arrived during the pass found `Running`, so it did not
-            // post a task: it set `Pending`, this exchange fails, and the next
-            // pass picks its handle up. (A plain store of `Idle` would lose it.)
+            // A send during the pass set `Pending` instead of posting a task;
+            // then this fails and the next pass picks its handle up.
             if this
                 .dispatch_state
                 .compare_exchange(
@@ -216,12 +190,9 @@ impl UvLoop {
         }
     }
 
-    /// One walk over the handles that were live when it started: libuv's
-    /// `uv__async_io`. Like libuv, a handle goes back into the live list before
-    /// its callback runs, so a `uv_close` from inside any callback finds it.
-    /// A handle initialised by a callback lands in the live list and, if it is
-    /// sent, in the next pass. A callback's uncaught exception is reported and
-    /// the walk goes on; the VM's termination ends it.
+    /// libuv's `uv__async_io`: each handle goes back into the live list before
+    /// its callback runs, so a `uv_close` from any callback finds it in one of
+    /// the two lists. Handles initialised meanwhile are the next pass's.
     fn run_pass(&self, global: &JSGlobalObject) {
         self.asyncs.with_mut(|live| {
             self.dispatching.with_mut(|todo| {
@@ -252,7 +223,7 @@ impl UvLoop {
                 break;
             }
         }
-        // Only a termination leaves anything here. Put it back, in order.
+        // Left over only by a termination.
         self.dispatching.with_mut(|todo| {
             if !todo.is_empty() {
                 self.asyncs
@@ -266,8 +237,7 @@ impl UvLoop {
         self.asyncs.with_mut(|live| live.push(async_));
     }
 
-    /// JS thread. A handle may be in either list (a close from inside a
-    /// dispatch pass) and, if an addon initialised it twice, more than once.
+    /// JS thread. `retain`: a handle an addon initialised twice is in twice.
     fn unregister(&self, async_: NonNull<UvAsync>) {
         self.asyncs.with_mut(|live| live.retain(|h| *h != async_));
         self.dispatching
@@ -275,12 +245,8 @@ impl UvLoop {
     }
 }
 
-/// `uv_loop_t* uv_default_loop(void)`: the main thread's loop, from any
-/// thread, like libuv's process-wide default loop. Null when there is no main
-/// JS thread (libuv returns null when the default loop cannot be set up).
-///
-/// An addon loaded in a Worker gets the main thread's loop from this, as it
-/// does in Node; `napi_get_uv_event_loop` is how it gets its own.
+/// `uv_loop_t* uv_default_loop(void)`: the main thread's loop, from any thread,
+/// also inside a Worker (as in Node; `napi_get_uv_event_loop` gives its own).
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn uv_default_loop() -> *mut UvLoop {
     let Some(vm) = VirtualMachine::get_main_thread_vm() else {
@@ -294,10 +260,8 @@ pub(crate) extern "C" fn uv_default_loop() -> *mut UvLoop {
 // uv_handle_t / uv_async_t
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `UV_HANDLE_FIELDS` (uv.h) and `UV_HANDLE_PRIVATE_FIELDS` (uv/unix.h): the
-/// common prefix of every handle type, and the view `uv_close` and friends
-/// get. `data`, `loop` and `type` are read by addons and must stay where uv.h
-/// puts them; the rest is libuv's private state, used here as libuv uses it.
+/// `UV_HANDLE_FIELDS` + `UV_HANDLE_PRIVATE_FIELDS` (uv.h, uv/unix.h): every
+/// handle's prefix. Addons read `data`, `loop` and `type`; the rest is private.
 #[repr(C)]
 pub(crate) struct UvHandle {
     data: *mut c_void,
@@ -318,8 +282,7 @@ const _: () = assert!(core::mem::offset_of!(UvHandle, flags) == 88);
 const _: () = assert!(core::mem::size_of::<UvHandle>() == 96);
 
 impl UvHandle {
-    /// Sets up the common prefix as libuv's `uv__handle_init` does. `data` is
-    /// the addon's and is left alone: addons commonly set it before init.
+    /// libuv's `uv__handle_init`; `data` is the addon's and is left alone.
     fn init(this: *mut UvHandle, loop_: *mut UvLoop, type_: c_uint) {
         // SAFETY: `this` is the addon's handle memory, on the loop thread;
         // field-wise writes because the memory is uninitialised.
@@ -335,23 +298,16 @@ impl UvHandle {
     }
 }
 
-/// `struct uv_async_s`: the [`UvHandle`] prefix, then libuv's
-/// `UV_ASYNC_PRIVATE_FIELDS`, of which Bun keeps `async_cb` and `pending`
-/// and uses the rest for its own state.
+/// `struct uv_async_s`: the prefix, then Bun's use of `UV_ASYNC_PRIVATE_FIELDS`.
 #[repr(C)]
 pub(crate) struct UvAsync {
     handle: UvHandle,
     async_cb: Option<UvAsyncCb>,
-    /// Whether the handle keeps the process alive (`uv_ref` / `uv_unref`).
-    /// JS thread.
+    /// `uv_ref` / `uv_unref`. JS thread.
     keep_alive: KeepAlive,
-    /// Threads past the first check of `uv_async_send`. libuv's busy counter:
-    /// `uv_close` waits for it to reach zero, so once it returns no thread is
-    /// still touching the handle and `close_cb` may free it.
+    /// libuv's busy counter: senders past their first check; `uv_close` waits it out.
     busy: AtomicI32,
-    /// Set by `uv_async_send`, cleared by the dispatch pass, and set for good
-    /// by `uv_close`, so that a send after the close returns at its first
-    /// check (libuv's `uv__async_spin` does the same).
+    /// Set by a send, cleared by the dispatch pass, set for good by `uv_close`.
     pending: AtomicI32,
 }
 
@@ -359,14 +315,11 @@ const _: () = assert!(core::mem::offset_of!(UvAsync, handle) == 0);
 const _: () = assert!(core::mem::offset_of!(UvAsync, async_cb) == 96);
 const _: () = assert!(core::mem::size_of::<UvAsync>() <= UV_ASYNC_T_SIZE);
 
-// No function below forms a reference to a whole handle: while the loop
-// thread is inside one of them, other threads may be in `uv_async_send` on the
-// same handle, which is fine for its atomics but not under a `&UvAsync` or
-// `&mut UvAsync` covering them. Fields are read and written through the raw
-// pointer, and a reference is formed to one field at a time.
+// SAFETY: nothing below forms a `&UvAsync` or `&mut UvAsync`: other threads may be
+// in `uv_async_send` on the handle, which is fine for its atomics but not under a
+// reference covering them. Fields are accessed through the raw pointer, one at a time.
 impl UvAsync {
-    /// The dispatch pass: clears `pending`; true if it was set (libuv's
-    /// `uv__async_io`). A send from now on schedules a new pass.
+    /// The dispatch pass (libuv's `uv__async_io`): true if the handle was sent.
     ///
     /// # Safety
     /// `this` is an initialised, not yet closed handle.
@@ -375,12 +328,9 @@ impl UvAsync {
         unsafe { &(*this.as_ptr()).pending }.swap(0, Ordering::SeqCst) != 0
     }
 
-    /// `uv_close`: libuv's `uv__async_spin`. Sets `pending` so that every
-    /// later `uv_async_send` returns at its first check, then waits until no
-    /// thread is past that check any more. That window is a flag exchange and
-    /// a queue push, so the wait is short; the yield is for a sender preempted
-    /// inside it. Once this returns, nothing but the loop thread touches the
-    /// handle, so `close_cb` may free it.
+    /// `uv_close` (libuv's `uv__async_spin`): later sends return at their first
+    /// check, and the senders past it (a flag exchange and a queue push away from
+    /// done) are waited out, so afterwards `close_cb` may free the handle.
     ///
     /// # Safety
     /// As [`Self::take_pending`].
@@ -399,9 +349,7 @@ impl UvAsync {
         }
     }
 
-    /// JS thread, the task `uv_close` posted: `close_cb`, one loop turn later.
-    /// The handle is the addon's again once the callback returns (it usually
-    /// frees it), so nothing touches it afterwards.
+    /// The task `uv_close` posted. The callback usually frees the handle.
     fn run_close(this: *mut UvAsync) -> JsResult<()> {
         // SAFETY: `uv_close` posted this for a handle the addon keeps alive
         // until `close_cb` has run.
@@ -423,13 +371,12 @@ impl UvAsync {
     }
 }
 
-/// `int uv_async_init(uv_loop_t*, uv_async_t*, uv_async_cb)`. Loop thread.
-/// The handle starts active and ref'd, as in libuv, so it keeps the process
-/// alive until it is unref'd or closed.
+/// `int uv_async_init(uv_loop_t*, uv_async_t*, uv_async_cb)`. Loop thread. The
+/// handle starts active and ref'd, as in libuv.
 ///
 /// # Safety
-/// `loop_` is null or a loop this VM handed out; `handle` points at
-/// `sizeof(uv_async_t)` bytes the addon keeps alive until its `close_cb` ran.
+/// `loop_` is null or one of this module's loops; `handle` is `sizeof(uv_async_t)`
+/// bytes the addon keeps until its `close_cb` has run.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_async_init(
     loop_: *mut UvLoop,
@@ -454,19 +401,15 @@ pub(crate) unsafe extern "C" fn uv_async_init(
     0
 }
 
-/// `int uv_async_send(uv_async_t*)`. Any thread; the first send after a
-/// dispatch schedules one, later ones until then are coalesced into it.
-/// Legal until `close_cb` runs: after `uv_close` (`stop_sends`) it returns at
-/// the first check, like libuv's, and touches nothing else.
+/// `int uv_async_send(uv_async_t*)`. Any thread; sends before the next dispatch
+/// coalesce into it. After `uv_close` it returns at the first check, like libuv's.
 ///
 /// # Safety
 /// `handle` was initialised by `uv_async_init` and its `close_cb` has not run.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_async_send(handle: *mut UvAsync) -> c_int {
-    // The loop thread may be in `uv_close` on this handle, writing its plain
-    // fields; the ones used here are the atomics and `loop`, which only
-    // `uv_async_init` writes, before the handle can reach another thread.
-    // SAFETY: fn contract.
+    // SAFETY: fn contract. The loop thread may be in `uv_close` writing the plain
+    // fields; these are the atomics and `loop`, which nothing writes after init.
     let (pending, busy, loop_) =
         unsafe { (&(*handle).pending, &(*handle).busy, (*handle).handle.loop_) };
     if pending.load(Ordering::SeqCst) != 0 {
@@ -475,18 +418,15 @@ pub(crate) unsafe extern "C" fn uv_async_send(handle: *mut UvAsync) -> c_int {
     }
     let _ = busy.fetch_add(1, Ordering::SeqCst);
     if pending.swap(1, Ordering::SeqCst) == 0 {
-        // SAFETY: the loop outlives the handle (see `UvLoop`); only its
-        // thread-safe fields are used here.
+        // SAFETY: the loop outlives the handle; `schedule_dispatch` is any-thread.
         unsafe { &*loop_ }.schedule_dispatch();
     }
     let _ = busy.fetch_sub(1, Ordering::SeqCst);
     0
 }
 
-/// The async handle behind a `uv_handle_t*`, for the functions that take any
-/// handle type. Only async handles can be initialised on posix, so anything
-/// else is memory no `uv_*_init` here wrote: crash the way the stub for
-/// `function` did, with its name.
+/// For the functions that take any handle type: only async handles exist, so
+/// anything else crashes like `function`'s stub did.
 ///
 /// # Safety
 /// `handle` points at an initialised handle.
@@ -499,11 +439,8 @@ unsafe fn as_async(handle: *mut UvHandle, function: &'static CStr) -> NonNull<Uv
     NonNull::new(handle.cast::<UvAsync>()).expect("dereferenced above")
 }
 
-/// `void uv_close(uv_handle_t*, uv_close_cb)`. Loop thread. Stops the handle
-/// at once (no callback runs after this returns, no `uv_async_send` is still
-/// inside the handle, and later ones return at their first check) and runs
-/// `close_cb` from the loop later, as libuv does, since addons free the
-/// handle there. Closing twice does nothing.
+/// `void uv_close(uv_handle_t*, uv_close_cb)`. Loop thread. Stops the handle now
+/// and runs `close_cb` on a later turn, as libuv does. Closing twice does nothing.
 ///
 /// # Safety
 /// `handle` was initialised by a `uv_*_init` of this module.
@@ -512,8 +449,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
     // SAFETY: fn contract.
     let this = unsafe { as_async(handle, c"uv_close") };
     let async_ = this.as_ptr();
-    // SAFETY: initialised (`as_async`); loop thread, so nothing else writes
-    // the plain fields or uses the keep-alive.
+    // SAFETY: initialised (`as_async`); the loop thread alone uses these fields.
     let loop_ = unsafe {
         if (*async_).handle.flags & UV_HANDLE_CLOSING != 0 {
             return;
@@ -528,9 +464,8 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
     // SAFETY: initialised and, until this line, not closed.
     unsafe { UvAsync::stop_sends(this) };
     loop_.unregister(this);
-    // The queued task keeps the loop alive until `close_cb` has run, as
-    // libuv's closing list does. Refused means the VM is already gone, and
-    // with it the turn `close_cb` would have run on.
+    // The queued task keeps the loop alive until `close_cb` has run (libuv: the
+    // closing list). Refused: the VM is gone, and with it that turn.
     let task = ConcurrentTask::from_callback(async_, UvAsync::run_close);
     if let Posted::Refused(task) = loop_.handle.post(LoopKind::Regular, task) {
         // SAFETY: refused ⇒ never queued, ours to free.
@@ -538,8 +473,7 @@ pub(crate) unsafe extern "C" fn uv_close(handle: *mut UvHandle, close_cb: Option
     }
 }
 
-/// `void uv_ref(uv_handle_t*)`. Loop thread. Idempotent; nothing after
-/// `uv_close`, whose unref is final.
+/// `void uv_ref(uv_handle_t*)`. Loop thread. Idempotent; `uv_close`'s unref is final.
 ///
 /// # Safety
 /// As [`uv_close`].
@@ -579,8 +513,8 @@ pub(crate) unsafe extern "C" fn uv_has_ref(handle: *mut UvHandle) -> c_int {
     c_int::from(unsafe { (*async_).keep_alive.is_active() })
 }
 
-/// `int uv_is_active(const uv_handle_t*)`. Loop thread. An async handle is
-/// active from `uv_async_init` until `uv_close` (libuv starts it in init).
+/// `int uv_is_active(const uv_handle_t*)`. Loop thread. libuv starts an async
+/// handle in its init, so: not closed.
 ///
 /// # Safety
 /// As [`uv_close`].
@@ -592,8 +526,7 @@ pub(crate) unsafe extern "C" fn uv_is_active(handle: *mut UvHandle) -> c_int {
     c_int::from(unsafe { (*async_).handle.flags } & UV_HANDLE_CLOSING == 0)
 }
 
-/// `int uv_is_closing(const uv_handle_t*)`. Loop thread. True from `uv_close`
-/// on, `close_cb` included.
+/// `int uv_is_closing(const uv_handle_t*)`. Loop thread. True from `uv_close` on.
 ///
 /// # Safety
 /// As [`uv_close`].
@@ -610,8 +543,7 @@ pub(crate) unsafe extern "C" fn uv_is_closing(handle: *mut UvHandle) -> c_int {
 // uv_req_t / uv_work_t
 // ──────────────────────────────────────────────────────────────────────────
 
-/// `UV_REQ_FIELDS` (uv.h): the common prefix of every request type, and the
-/// view `uv_cancel` gets. `data` and `type` are the addon's to read.
+/// `UV_REQ_FIELDS` (uv.h): every request's prefix. Addons read `data` and `type`.
 #[repr(C)]
 pub(crate) struct UvReq {
     data: *mut c_void,
@@ -634,9 +566,8 @@ enum WorkState {
     Cancelled = 2,
 }
 
-/// `struct uv_work_s`: the [`UvReq`] prefix and the three fields uv.h
-/// declares after it (`loop`, `work_cb`, `after_work_cb` are read by addons),
-/// then Bun's state where libuv keeps its `struct uv__work`.
+/// `struct uv_work_s`: the prefix, the three fields uv.h declares after it
+/// (addons read them too), then Bun's state where libuv keeps `struct uv__work`.
 #[repr(C)]
 pub(crate) struct UvWork {
     req: UvReq,
@@ -653,23 +584,22 @@ const _: () = assert!(core::mem::offset_of!(UvWork, work_cb) == 72);
 const _: () = assert!(core::mem::offset_of!(UvWork, after_work_cb) == 80);
 const _: () = assert!(core::mem::size_of::<UvWork>() <= UV_WORK_T_SIZE);
 
-/// The [`Job`] behind one `uv_queue_work`. Its off-thread half is the request
-/// itself: the addon keeps it alive until `after_work_cb` has run, which is
-/// the job's whole life, so the pool may read it through the [`JsPtr`].
+/// The [`Job`] behind one `uv_queue_work`. Its off-thread half is the request:
+/// the addon keeps it alive until `after_work_cb` has run, the job's whole life.
 struct UvWorkJob;
 
 impl JobContext for UvWorkJob {
     type OffThread = JsPtr<UvWork>;
     type Js = ();
 
-    // As with the handles above, no reference to a whole request is formed:
-    // `uv_cancel` may be running against it on another thread. Fields are
-    // read through the raw pointer, `state` borrowed on its own.
+    // SAFETY: as for the handles, no reference to a whole request is formed: the
+    // pool's `run` and the loop thread's `uv_cancel` overlap. Fields are accessed
+    // through the raw pointer, `state` borrowed on its own.
 
     fn run(req: &mut JsPtr<UvWork>, done: Completion<Self>) -> Option<Completion<Self>> {
         let req = req.as_ptr();
-        // SAFETY: the request is alive for the job's life (see `UvWorkJob`);
-        // `work_cb` was written before the job was scheduled.
+        // SAFETY: alive for the job's life (`UvWorkJob`); `work_cb` was written
+        // before the job was scheduled.
         let started = unsafe { &(*req).state }
             .compare_exchange(
                 WorkState::Queued as u32,
@@ -680,8 +610,7 @@ impl JobContext for UvWorkJob {
             .is_ok();
         // SAFETY: as above.
         if started && let Some(work_cb) = unsafe { (*req).work_cb } {
-            // SAFETY: the addon's callback, on a pool thread, as uv_queue_work
-            // documents.
+            // SAFETY: the addon's callback, on a pool thread as documented.
             unsafe { work_cb(req) };
         }
         Some(done)
@@ -689,8 +618,7 @@ impl JobContext for UvWorkJob {
 
     fn then(req: JsPtr<UvWork>, _: (), cx: &JsThread<'_>) -> JsResult<()> {
         let req = req.as_ptr();
-        // SAFETY: as in `run`. `state` is final: the pool thread took it, or
-        // `uv_cancel` did.
+        // SAFETY: as in `run`; `state` is final once the job has been posted.
         let (state, after_work_cb) =
             unsafe { ((*req).state.load(Ordering::SeqCst), (*req).after_work_cb) };
         let status = if state == WorkState::Cancelled as u32 {
@@ -699,8 +627,7 @@ impl JobContext for UvWorkJob {
             0
         };
         bun_output::scoped_log!(uv, "uv_work_t {:?}: after_work_cb({})", req, status);
-        // The request is the addon's again once the callback returns (it
-        // usually frees it), so nothing touches it afterwards.
+        // The callback usually frees the request.
         if let Some(after_work_cb) = after_work_cb {
             // SAFETY: the addon's callback, on the loop thread.
             unsafe { after_work_cb(req, status) };
@@ -713,12 +640,11 @@ impl JobContext for UvWorkJob {
 }
 
 /// `int uv_queue_work(uv_loop_t*, uv_work_t*, uv_work_cb, uv_after_work_cb)`.
-/// Loop thread. The request keeps the process alive until `after_work_cb` has
-/// run, as an active libuv request does.
+/// Loop thread. The request keeps the process alive, as an active one does in libuv.
 ///
 /// # Safety
-/// `loop_` is null or a loop this VM handed out; `req` points at
-/// `sizeof(uv_work_t)` bytes the addon keeps alive until `after_work_cb` ran.
+/// `loop_` is null or one of this module's loops; `req` is `sizeof(uv_work_t)`
+/// bytes the addon keeps until its `after_work_cb` has run.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_queue_work(
     loop_: *mut UvLoop,
@@ -734,8 +660,8 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
         return UV_EINVAL;
     };
     bun_output::scoped_log!(uv, "uv_work_t {:?}: uv_queue_work", req);
-    // SAFETY: fn contract; field-wise writes into uninitialised addon memory.
-    // `data` is the addon's and is left alone, as libuv leaves it.
+    // SAFETY: fn contract; field-wise writes into uninitialised addon memory,
+    // except `data`, which is the addon's.
     unsafe {
         (&raw mut (*req).req.type_).write(UV_WORK);
         (&raw mut (*req).req.reserved).write([core::ptr::null_mut(); 6]);
@@ -751,16 +677,13 @@ pub(crate) unsafe extern "C" fn uv_queue_work(
     0
 }
 
-/// `int uv_cancel(uv_req_t*)`. Loop thread, as in libuv: there it cannot
-/// race the `after_work_cb` that hands the request back to the addon. Only
-/// work requests exist here; libuv also answers `UV_EINVAL` for a request
-/// type it cannot cancel. `0` means `work_cb` will not run and
-/// `after_work_cb` gets `UV_ECANCELED`; `UV_EBUSY` means the work already
-/// started (or finished, or was cancelled).
+/// `int uv_cancel(uv_req_t*)`. Loop thread, as in libuv (so it cannot race the
+/// `after_work_cb` that hands the request back). libuv's answers: `0` and
+/// `after_work_cb` gets `UV_ECANCELED`; `UV_EBUSY` once the work started;
+/// `UV_EINVAL` for a request type it cannot cancel, here every other type.
 ///
 /// # Safety
-/// `req` is null or a request queued by `uv_queue_work` whose `after_work_cb`
-/// has not returned.
+/// `req` is null or a queued request whose `after_work_cb` has not returned.
 #[unsafe(no_mangle)]
 pub(crate) unsafe extern "C" fn uv_cancel(req: *mut UvReq) -> c_int {
     if req.is_null() {
@@ -770,8 +693,8 @@ pub(crate) unsafe extern "C" fn uv_cancel(req: *mut UvReq) -> c_int {
     if unsafe { (*req).type_ } != UV_WORK {
         return UV_EINVAL;
     }
-    // SAFETY: `type` says `uv_queue_work` initialised this memory as a
-    // `UvWork`; only its atomic is touched, as the pool thread may be racing.
+    // SAFETY: `type` says this is a `UvWork`; only its atomic is touched, as the
+    // pool thread may be in `run`.
     let state = unsafe { &(*req.cast::<UvWork>()).state };
     match state.compare_exchange(
         WorkState::Queued as u32,

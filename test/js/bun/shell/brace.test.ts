@@ -146,6 +146,19 @@ describe.concurrent("brace + glob composition", () => {
     expect(words(out)).toEqual(["src/app.ts", "src/util.tsx"]);
   });
 
+  test("src/**/*.test.{ts,tsx} keeps both * of a ** through brace expansion", async () => {
+    // `**` records two adjacent metacharacter offsets, so each variant has to
+    // come back out of brace expansion with both of them, or it stops recursing.
+    using dir = tempDir("shell-brace-glob-doublestar", {
+      "src/x.test.ts": "",
+      "src/a/y.test.tsx": "",
+      "src/a/b/z.test.ts": "",
+      "src/skip.ts": "",
+    });
+    const out = await $`echo src/**/*.test.{ts,tsx}`.cwd(String(dir)).text();
+    expect(words(out)).toEqual(["src/a/b/z.test.ts", "src/a/y.test.tsx", "src/x.test.ts"]);
+  });
+
   test("{src,lib}/*.ts composes a brace prefix with a glob", async () => {
     using dir = tempDir("shell-brace-glob2", {
       "src/a.ts": "",
@@ -369,21 +382,22 @@ describe("comma-less brace group is literal (bash 5.2)", () => {
     });
   });
 
-  test("a comma-less brace group still globs a literal * and keeps interpolated * as data", async () => {
-    // Brace-expand count is 0, so the word skips the tag round-trip and keeps
-    // its original metacharacter offsets. A template `*` still reaches the
-    // glob walker (which reads `{x}` as a one-branch group, hence the `x.*`
-    // fixtures). An interpolated `*` sets no glob hint, so the word is emitted
-    // as the literal text it is.
+  test("a zero-variant word with a matching glob emits only the matches", async () => {
+    // The trailing comma sets the brace hint (a word needs `{`, `}` and a `,`
+    // anywhere), the lexer then demotes the comma-less `{x}`, and the expand
+    // count is 0. The unchanged word must keep its metacharacter offsets: the
+    // template `*` globs (the walker reads `{x}` as a one-branch group, hence
+    // the `x,` fixtures) and the literal pattern is not emitted next to the
+    // matches. With an interpolated `*` there is no glob hint, so the word is
+    // emitted as the literal text it is.
     using dir = tempDir("shell-brace-literal-glob2", {
-      "x.a.txt": "",
-      "x.b.txt": "",
-      "x.*.txt": "",
+      "x,a.txt": "",
+      "x,b.txt": "",
     });
     const words = (out: string) => out.trim().split(" ").sort();
-    const globbed = await $`echo {x}.*.txt`.cwd(String(dir)).text();
-    expect(words(globbed)).toEqual(["x.*.txt", "x.a.txt", "x.b.txt"]);
-    const interpolated = await $`echo {x}.${"*"}.txt`.cwd(String(dir)).text();
-    expect(interpolated.trim()).toBe("{x}.*.txt");
+    const globbed = await $`echo {x},*.txt`.cwd(String(dir)).text();
+    expect(words(globbed)).toEqual(["x,a.txt", "x,b.txt"]);
+    const interpolated = await $`echo {x},${"*"}.txt`.cwd(String(dir)).text();
+    expect(interpolated.trim()).toBe("{x},*.txt");
   });
 });

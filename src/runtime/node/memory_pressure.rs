@@ -30,10 +30,8 @@
 use bun_event_loop::ConcurrentTask::{Task, task_tag};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use bun_jsc::ArrayBuffer;
-#[cfg(not(windows))]
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{CallFrame, JSGlobalObject, JSValue, JsResult, bun_string_jsc};
-#[cfg(not(windows))]
 use core::ptr::NonNull;
 
 /// Pressure level passed to JS. Values are the `NOTE_MEMORYSTATUS_PRESSURE_*`
@@ -73,8 +71,10 @@ fn pressure_task(lvl: i32) -> Task {
     Task::init(lvl as usize as *mut MemoryPressureTask)
 }
 
-#[cfg(not(windows))]
-fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<core::ffi::c_void>> {
+/// `RareData.memory_pressure_watcher`: the erased `Box` of the backend's watcher.
+type Slot = Option<NonNull<core::ffi::c_void>>;
+
+fn slot(vm: &mut VirtualMachine) -> &mut Slot {
     vm.rare_data().memory_pressure_watcher_slot()
 }
 
@@ -97,7 +97,7 @@ mod posix {
     #[cfg(any(target_os = "linux", target_os = "android"))]
     pub(super) use cgroup::{CgroupEvents, Counters};
 
-    use super::slot;
+    use super::{Slot, slot};
 
     /// Stored type-erased in `RareData.memory_pressure_watcher`. It exists
     /// while listeners exist, even when no source could be set up.
@@ -117,12 +117,6 @@ mod posix {
         // and never hold the reference across a call that can reach
         // `uninstall` (the sources enqueue a task instead of running JS).
         Some(unsafe { &mut *raw.as_ptr().cast::<MemoryPressureWatcher>() })
-    }
-
-    fn take_watcher(vm: &mut VirtualMachine) -> Option<Box<MemoryPressureWatcher>> {
-        let raw = slot(vm).take()?;
-        // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
-        Some(unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) })
     }
 
     fn deinit_poll(poll: &mut FilePoll) {
@@ -256,10 +250,12 @@ mod posix {
         }
     }
 
-    pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(watcher) = take_watcher(global.bun_vm().as_mut()) else {
+    pub(super) fn release(slot: &mut Slot) {
+        let Some(raw) = slot.take() else {
             return;
         };
+        // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
+        let watcher = unsafe { bun_core::heap::take(raw.as_ptr().cast::<MemoryPressureWatcher>()) };
         if let Some(mut poll) = watcher.poll {
             // SAFETY: the sources enqueue a task instead of running user JS,
             // so this is never reached from inside a dispatch and no other
@@ -536,7 +532,8 @@ mod windows {
 
     use bun_event_loop::ConcurrentTask::ConcurrentTask;
     use bun_jsc::JSGlobalObject;
-    use bun_jsc::virtual_machine::VirtualMachine;
+
+    use super::{Slot, slot};
 
     type HANDLE = *mut c_void;
     type BOOL = i32;
@@ -576,10 +573,6 @@ mod windows {
         _notify: OwnedHandle,
         shutdown: OwnedHandle,
         thread: Option<std::thread::JoinHandle<()>>,
-    }
-
-    fn slot(vm: &mut VirtualMachine) -> &mut Option<NonNull<c_void>> {
-        vm.rare_data().memory_pressure_watcher_slot()
     }
 
     fn thread_main(vm: bun_jsc::VmHandle, notify: usize, shutdown: usize) {
@@ -647,8 +640,8 @@ mod windows {
         *slot(global.bun_vm().as_mut()) = NonNull::new(bun_core::heap::into_raw(watcher).cast());
     }
 
-    pub(super) fn uninstall(global: &JSGlobalObject) {
-        let Some(raw) = slot(global.bun_vm().as_mut()).take() else {
+    pub(super) fn release(slot: &mut Slot) {
+        let Some(raw) = slot.take() else {
             return;
         };
         // SAFETY: slot is populated only by `install` with a `Box<MemoryPressureWatcher>`.
@@ -676,10 +669,29 @@ pub(crate) extern "C" fn Bun__MemoryPressure__install(global: &JSGlobalObject) {
 
 #[unsafe(no_mangle)]
 pub(crate) extern "C" fn Bun__MemoryPressure__uninstall(global: &JSGlobalObject) {
+    release(slot(global.bun_vm().as_mut()));
+}
+
+fn release(slot: &mut Slot) {
     #[cfg(not(windows))]
-    posix::uninstall(global);
+    posix::release(slot);
     #[cfg(windows)]
-    windows::uninstall(global);
+    windows::release(slot);
+}
+
+/// VM teardown and the `bun test --isolate` swap: the listeners the watcher
+/// served belong to the outgoing global, so nothing removes them through
+/// `onDidChangeListeners`. Runs while the event loop is still alive.
+///
+/// # Safety
+/// `vm` is the live per-thread VM, on the JS thread.
+pub(crate) unsafe fn shutdown_for_exit(vm: *mut VirtualMachine) {
+    // Read the raw option so a VM that never used rare data does not
+    // allocate it here.
+    // SAFETY: per fn contract.
+    if let Some(rare) = unsafe { &mut (*vm).rare_data }.as_deref_mut() {
+        release(rare.memory_pressure_watcher_slot());
+    }
 }
 
 #[unsafe(no_mangle)]

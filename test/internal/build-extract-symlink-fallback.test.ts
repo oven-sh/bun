@@ -5,7 +5,8 @@
  * zstd dep archive and exits 1 on its two symlink test fixtures
  * (tests/cli-tests/bin/{unzstd,zstdcat} -> zstd), killing the build
  * (oven-sh/bun#39669). The fallback: after a failure, list the archive's
- * symlink entries and retry with each excluded; with none, rethrow.
+ * symlink entries and retry with each excluded; with none, or with a name
+ * that cannot be excluded literally (--exclude is a glob), rethrow.
  *
  * The privilege failure can't be reproduced on a POSIX host (and on Windows
  * tarExe is an absolute System32 path), so these tests put a fake `tar` on
@@ -22,21 +23,35 @@ import { join } from "node:path";
 import { extractTarGz } from "../../scripts/build/download.ts";
 import { BuildError } from "../../scripts/build/error.ts";
 
-const realTar = Bun.which("tar")!;
+const realTar = Bun.which("tar");
+// The fixtures are sh scripts and the fake tar intercepts a PATH lookup,
+// which the absolute System32 tarExe on Windows ignores anyway.
+const cannotRunFakeTar = isWindows || realTar === null;
 
-/** A zstd-shaped .tar.gz: lib sources plus, optionally, the two symlink test fixtures. */
-function makeTarball(root: string, { withSymlinks }: { withSymlinks: boolean }): string {
+/** A zstd-shaped .tar.gz: lib sources plus symlink test fixtures named by `symlinks`. */
+function makeTarball(root: string, { symlinks, files = [] }: { symlinks: string[]; files?: string[] }): string {
   const top = join(root, "src", "zstd-abc123");
   mkdirSync(join(top, "lib"), { recursive: true });
   mkdirSync(join(top, "tests", "cli-tests", "bin"), { recursive: true });
   writeFileSync(join(top, "lib", "zstd.c"), "int zstd;\n");
   writeFileSync(join(top, "tests", "cli-tests", "bin", "zstd"), "#!/bin/sh\n");
-  if (withSymlinks) {
-    symlinkSync("zstd", join(top, "tests", "cli-tests", "bin", "unzstd"));
-    symlinkSync("zstd", join(top, "tests", "cli-tests", "bin", "zstdcat"));
+  for (const name of symlinks) {
+    symlinkSync("zstd", join(top, "tests", "cli-tests", "bin", name));
   }
+  for (const name of files) {
+    writeFileSync(join(top, "tests", "cli-tests", "bin", name), "");
+  }
+  // List the members explicitly: archiving the directory stores them in
+  // readdir order, which varies by filesystem, and the tests assert on the
+  // entry order the fallback reports.
+  const members = [
+    "zstd-abc123/lib/zstd.c",
+    "zstd-abc123/tests/cli-tests/bin/zstd",
+    ...symlinks.map(name => `zstd-abc123/tests/cli-tests/bin/${name}`),
+    ...files.map(name => `zstd-abc123/tests/cli-tests/bin/${name}`),
+  ];
   const tarball = join(root, "dep.tar.gz");
-  const result = spawnSync(realTar, ["-czf", tarball, "-C", join(root, "src"), "zstd-abc123"], { encoding: "utf8" });
+  const result = spawnSync(realTar!, ["-czf", tarball, "-C", join(root, "src"), ...members], { encoding: "utf8" });
   expect(result.status).toBe(0);
   return tarball;
 }
@@ -65,8 +80,9 @@ esac
 case "$1" in
   -t*) exec ${realTar} "$@" ;;
 esac
-# Plain extraction: extract everything, then fail the symlink entries the
-# way bsdtar does without privilege (error per entry, delayed exit 1).
+# Plain extraction: extract everything, then fail the two known symlink
+# fixtures the way bsdtar does without privilege (error per entry,
+# delayed exit 1).
 dest=.
 prev=
 for a in "$@"; do
@@ -74,7 +90,8 @@ for a in "$@"; do
   prev=$a
 done
 ${realTar} "$@"
-find "$dest" -type l | while read -r link; do
+for link in "$dest/tests/cli-tests/bin/unzstd" "$dest/tests/cli-tests/bin/zstdcat"; do
+  [ -L "$link" ] || continue
   echo "$link: Cannot create: Invalid argument" >&2
   rm -f "$link"
 done
@@ -113,9 +130,9 @@ async function withLogCaptured<T>(fn: () => Promise<T>): Promise<{ result: T; li
   }
 }
 
-test.skipIf(isWindows)("with symlink support, symlink entries extract normally", async () => {
+test.skipIf(cannotRunFakeTar)("with symlink support, symlink entries extract normally", async () => {
   using dir = tempDir("extract-symlink", {});
-  const tarball = makeTarball(String(dir), { withSymlinks: true });
+  const tarball = makeTarball(String(dir), { symlinks: ["unzstd", "zstdcat"] });
   const dest = join(String(dir), "out");
   mkdirSync(dest);
 
@@ -125,9 +142,9 @@ test.skipIf(isWindows)("with symlink support, symlink entries extract normally",
   expect(lines).toEqual([]);
 });
 
-test.skipIf(isWindows)("without symlink privilege, extraction retries with the symlink entries excluded", async () => {
+test.skipIf(cannotRunFakeTar)("without symlink privilege, extraction retries with the symlink entries excluded", async () => {
   using dir = tempDir("extract-symlink", {});
-  const tarball = makeTarball(String(dir), { withSymlinks: true });
+  const tarball = makeTarball(String(dir), { symlinks: ["unzstd", "zstdcat"] });
   const dest = join(String(dir), "out");
   mkdirSync(dest);
 
@@ -145,9 +162,9 @@ test.skipIf(isWindows)("without symlink privilege, extraction retries with the s
   ]);
 });
 
-test.skipIf(isWindows)("an archive with no symlinks rethrows the original error", async () => {
+test.skipIf(cannotRunFakeTar)("an archive with no symlinks rethrows the original error", async () => {
   using dir = tempDir("extract-symlink", {});
-  const tarball = makeTarball(String(dir), { withSymlinks: false });
+  const tarball = makeTarball(String(dir), { symlinks: [] });
   const dest = join(String(dir), "out");
   mkdirSync(dest);
 
@@ -161,9 +178,9 @@ test.skipIf(isWindows)("an archive with no symlinks rethrows the original error"
   expect(lines).toEqual([]);
 });
 
-test.skipIf(isWindows)("a retry that still fails reports both attempts", async () => {
+test.skipIf(cannotRunFakeTar)("a retry that still fails reports both attempts", async () => {
   using dir = tempDir("extract-symlink", {});
-  const tarball = makeTarball(String(dir), { withSymlinks: true });
+  const tarball = makeTarball(String(dir), { symlinks: ["unzstd", "zstdcat"] });
   const dest = join(String(dir), "out");
   mkdirSync(dest);
 
@@ -177,4 +194,22 @@ test.skipIf(isWindows)("a retry that still fails reports both attempts", async (
   expect((err as BuildError).message).toContain("retry (exit 1): boom: disk full");
   expect(lines).toHaveLength(1);
   expect(lines[0]).toStartWith("tar exited 1; retrying without 2 symlink entries:");
+});
+
+test.skipIf(cannotRunFakeTar)("a symlink name with a glob metacharacter declines the fallback", async () => {
+  using dir = tempDir("extract-symlink", {});
+  // --exclude=un*zstd would also drop the regular member unXzstd, so the
+  // fallback must rethrow the original error instead of retrying.
+  const tarball = makeTarball(String(dir), { symlinks: ["un*zstd"], files: ["unXzstd"] });
+  const dest = join(String(dir), "out");
+  mkdirSync(dest);
+
+  const { result: err, lines } = await withFakeTar(String(dir), tarThatAlwaysFailsExtraction, () =>
+    withLogCaptured(() => rejection(extractTarGz(tarball, dest))),
+  );
+
+  expect(err).toBeInstanceOf(BuildError);
+  expect((err as BuildError).message).toStartWith("tar extraction failed (exit 1):");
+  expect((err as BuildError).message).toContain("boom: disk full");
+  expect(lines).toEqual([]);
 });

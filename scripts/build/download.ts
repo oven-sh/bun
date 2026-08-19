@@ -258,7 +258,9 @@ export async function downloadWithRetry(
  * every other entry, then exits 1 on just those. So the happy path runs
  * unchanged, and only after a failure do we list the archive for symlink
  * entries and retry with each excluded. An archive with no symlinks failed
- * for some other reason and the original error is rethrown.
+ * for some other reason and the original error is rethrown. The same goes
+ * for a symlink name that cannot be excluded literally (see
+ * isLiterallyExcludable): declining is safer than excluding too much.
  *
  * @param stripComponents How many top-level dirs to strip. 1 for github
  *   archives. 0 for tarballs that are already flat (e.g. prebuilt WebKit
@@ -281,7 +283,7 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
   }
   if (result.status !== 0) {
     const symlinks = listSymlinkEntries(tarball);
-    if (symlinks.length === 0) {
+    if (symlinks.length === 0 || !symlinks.every(isLiterallyExcludable)) {
       throw new BuildError(`tar extraction failed (exit ${result.status}): ${result.stderr}`, { file: tarball });
     }
     console.log(
@@ -304,6 +306,18 @@ export async function extractTarGz(tarball: string, dest: string, stripComponent
 
   const entries = await readdir(dest);
   assert(entries.length > 0, `tar extracted nothing from ${tarball}`, { hint: "Tarball may be corrupt" });
+}
+
+/**
+ * `--exclude` takes a glob pattern in both bsdtar and GNU tar, and Windows'
+ * bsdtar has no literal-match mode, so a name with a metacharacter could
+ * also exclude a regular member. A control character is no safer (a newline
+ * breaks the listing pairing in listSymlinkEntries). No pinned dep archive
+ * has such names; if one ever does, the fallback declines and the original
+ * error stands.
+ */
+function isLiterallyExcludable(name: string): boolean {
+  return /^[\x20-\x7e]+$/.test(name) && !/[\\*?[\]]/.test(name);
 }
 
 /**

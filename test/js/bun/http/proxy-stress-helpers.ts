@@ -546,7 +546,7 @@ function buildResponse(opts: AdversarialOriginOptions, reqBody: Buffer): Buffer 
   const framing = opts.framing ?? "content-length";
   const encoded = encodeBody(rawBody, encoding);
 
-  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : (STATUS_TEXT[status] ?? "Status")}\r\n`;
+  let head = `HTTP/1.1 ${status} ${status === 200 ? "OK" : STATUS_TEXT[status] ?? "Status"}\r\n`;
   for (const [k, v] of Object.entries(opts.headers ?? {})) head += `${k}: ${v}\r\n`;
   if (encoding !== "identity") head += `Content-Encoding: ${encoding}\r\n`;
 

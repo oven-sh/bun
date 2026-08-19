@@ -806,6 +806,8 @@ describe("Bun.Archive", () => {
       // its end (`panic: index out of bounds: the len is 32767 but the index is
       // 32767`); it has to be skipped like any other name that does not fit.
       // Elsewhere it is a single 32766-byte component and is skipped as well.
+      // The extraction with a glob is a separate implementation (it also
+      // rejects the drive letter outright) and has to apply the same limit.
       const collapsing = Buffer.alloc(50_000, "d/../").toString() + "payload.txt";
       const growing = "C:\\" + Buffer.alloc(32763, "..\\").toString();
       expect(growing).toHaveLength(32766);
@@ -818,9 +820,14 @@ describe("Bun.Archive", () => {
         ]),
         "extract.ts": `
           const fs = require("node:fs");
-          fs.mkdirSync("out");
-          const count = await new Bun.Archive(new Uint8Array(fs.readFileSync("input.tar"))).extract("out");
-          console.log(JSON.stringify({ count, files: fs.readdirSync("out").sort() }));
+          const archive = new Bun.Archive(new Uint8Array(fs.readFileSync("input.tar")));
+          const results = {};
+          for (const [out, options] of [["out", undefined], ["out-glob", { glob: "**" }]]) {
+            fs.mkdirSync(out);
+            const count = await archive.extract(out, options);
+            results[out] = { count, files: fs.readdirSync(out).sort() };
+          }
+          console.log(JSON.stringify(results));
         `,
       });
 
@@ -835,7 +842,8 @@ describe("Bun.Archive", () => {
       const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
 
       expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toEqual({ count: 2, files: ["ok.txt", "payload.txt"] });
+      const extracted = { count: 2, files: ["ok.txt", "payload.txt"] };
+      expect(JSON.parse(stdout)).toEqual({ "out": extracted, "out-glob": extracted });
       expect(exitCode).toBe(0);
     });
 

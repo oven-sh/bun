@@ -1011,7 +1011,9 @@ describe("handleUpgrade on a node:http upgrade socket", () => {
     client.on("error", () => {});
     let data = "";
     client.on("data", chunk => (data += chunk.toString("latin1")));
-    const closed = once(client, "close");
+    // Not events.once(): that rejects on 'error', and a reset connection emits
+    // 'error' before 'close'. Whatever happened, 'close' ends the wait.
+    const closed = new Promise<void>(resolve => client.once("close", resolve));
     await once(client, "connect");
     client.write(request);
     const [req, socket, head] = await upgrade;

@@ -295,10 +295,9 @@ describe.concurrent("absolute specifier with long basename (load_as_file buffer)
     );
   });
 
-  // Exactly MAX_PATH_BYTES: load_as_file returns not-found, then the
-  // fall-through directory probe in dir_info_cached_miss slices
-  // `[..len + 1]` for its NUL-splice.
-  it("require.resolve: path == MAX_PATH_BYTES (dir_info_cached_miss +1 slice)", async () => {
+  // Exactly MAX_PATH_BYTES: the bare copy fits, so only the `>=` in
+  // load_as_file keeps the extension probe from overflowing.
+  it("require.resolve: path == MAX_PATH_BYTES", async () => {
     await expectNotFound(
       `${JSON.stringify(root)} + Buffer.alloc(${max - root.length - 3}, "a").toString() + ".ts"`,
       "require.resolve",

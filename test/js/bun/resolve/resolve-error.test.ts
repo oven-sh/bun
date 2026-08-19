@@ -1,5 +1,6 @@
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, tempDir } from "harness";
+import { bunEnv, bunExe, isWindows, tempDir } from "harness";
+import { mkdirSync } from "node:fs";
 import path from "node:path";
 
 describe("ResolveMessage", () => {
@@ -246,10 +247,17 @@ describe.concurrent("long import path overflow", () => {
 // extensions by appending to that buffer. When the specifier's dirname names
 // a real directory (so read_directory succeeds), a basename long enough to
 // push the total path to MAX_PATH_BYTES used to abort the process instead of
-// returning MODULE_NOT_FOUND.
-describe.concurrent("absolute specifier with long basename (load_as_file buffer)", () => {
-  // MAX_PATH_BYTES: 1024 darwin, 4096 linux, 32767*3+1 windows.
-  const max = process.platform === "darwin" ? 1024 : process.platform === "win32" ? 32767 * 3 + 1 : 4096;
+// returning MODULE_NOT_FOUND. The directory cases at the end cover the index
+// probe that runs after load_as_file gives up.
+describe.concurrent("absolute specifier at the PathBuffer boundary", () => {
+  // Mirrors MAX_PATH_BYTES in src/bun_core/util.rs: 4096 on linux/android,
+  // PATH_MAX_WIDE * 3 + 1 on windows, 1024 everywhere else (darwin, the BSDs).
+  const max =
+    process.platform === "linux" || process.platform === "android"
+      ? 4096
+      : process.platform === "win32"
+        ? 32767 * 3 + 1
+        : 1024;
   const root = process.platform === "win32" ? "C:/" : "/";
 
   async function expectNotFound(specExpr: string, how: "require.resolve" | "import" | "Bun.resolveSync") {
@@ -295,11 +303,12 @@ describe.concurrent("absolute specifier with long basename (load_as_file buffer)
     );
   });
 
-  // Exactly MAX_PATH_BYTES: the bare copy fits, so only the `>=` in
-  // load_as_file keeps the extension probe from overflowing.
-  it("require.resolve: path == MAX_PATH_BYTES", async () => {
+  // Exactly MAX_PATH_BYTES with a .js specifier: the bare copy fits and every
+  // load_extension probe is rejected, but the .js -> .tsx rewrite grows the
+  // path by one byte. Only the `>=` (not `>`) in load_as_file stops it.
+  it("require.resolve: .js path == MAX_PATH_BYTES", async () => {
     await expectNotFound(
-      `${JSON.stringify(root)} + Buffer.alloc(${max - root.length - 3}, "a").toString() + ".ts"`,
+      `${JSON.stringify(root)} + Buffer.alloc(${max - root.length - 3}, "a").toString() + ".js"`,
       "require.resolve",
     );
   });
@@ -311,6 +320,69 @@ describe.concurrent("absolute specifier with long basename (load_as_file buffer)
       `${JSON.stringify(root)} + Buffer.alloc(${chars * 3}, "\\u20ac", "utf8").toString() + ".ts"`,
       "require.resolve",
     );
+  });
+
+  // Creates a real directory under `root` whose absolute path is exactly
+  // `byteLength` bytes and returns its path.
+  function mkLongDir(root: string, byteLength: number): string {
+    let p = root;
+    for (;;) {
+      const remaining = byteLength - Buffer.byteLength(p);
+      if (remaining === 0) break;
+      // Each step appends "/" + segment. NAME_MAX is 255 on linux and darwin.
+      // Never leave exactly one byte, which would force an empty final
+      // segment and a trailing slash.
+      let segLen = Math.min(200, remaining - 1);
+      if (remaining - 1 - segLen === 1) segLen -= 1;
+      p += "/" + Buffer.alloc(segLen, "x").toString();
+    }
+    expect(Buffer.byteLength(p)).toBe(byteLength);
+    expect(p.endsWith("/")).toBe(false);
+    mkdirSync(p, { recursive: true });
+    return p;
+  }
+
+  // The directory cases below need a directory that really exists at the
+  // boundary. On Windows MAX_PATH_BYTES is far past what the filesystem
+  // allows, so such a directory cannot be created there.
+
+  // A directory at MAX_PATH_BYTES - 1 (the longest path the OS allows) gets
+  // past load_as_file and dir_info_cached, then
+  // load_as_index_with_browser_remapping appended SEP and a NUL to it in a
+  // PathBuffer, writing one byte past the end.
+  it.skipIf(isWindows)("import: real directory at MAX_PATH_BYTES - 1", async () => {
+    using dir = tempDir("resolve-long-dir", {});
+    const p = mkLongDir(String(dir), max - 1);
+    await expectNotFound(JSON.stringify(p), "import");
+  });
+
+  // With target browser and an enclosing package.json "browser" map, the same
+  // function joins the directory with "index" into another PathBuffer. A
+  // directory a few bytes under MAX_PATH_BYTES overflowed that join.
+  it.skipIf(isWindows)("Bun.build target browser: real directory at MAX_PATH_BYTES - 2", async () => {
+    using dir = tempDir("resolve-long-dir-browser", {
+      "package.json": JSON.stringify({ name: "p", browser: { "./unrelated.js": "./other.js" } }),
+    });
+    const p = mkLongDir(String(dir), max - 2);
+    await Bun.write(path.join(String(dir), "entry.js"), `import ${JSON.stringify(p)};`);
+    await using proc = Bun.spawn({
+      cmd: [
+        bunExe(),
+        "-e",
+        `const r = await Bun.build({ entrypoints: ["./entry.js"], target: "browser", throw: false });
+         console.log(r.success, r.logs.map(l => l.name).join(","));`,
+      ],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    expect({ stdout: stdout.trim(), stderr, exitCode }).toEqual({
+      stdout: "false ResolveMessage",
+      stderr: "",
+      exitCode: 0,
+    });
   });
 });
 

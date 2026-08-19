@@ -5443,6 +5443,9 @@ impl<'a> Resolver<'a> {
         // this fn (only `remap_path` is, via a separate `bufs!` raw-ptr projection).
         let path_buf = bufs!(remap_path_trailing_slash);
         if !strings::ends_with_char(path_, SEP) {
+            if path.len() + 2 > MAX_PATH_BYTES {
+                return MatchStatus::NotFound;
+            }
             path_buf[..path.len()].copy_from_slice(path);
             path_buf[path.len()] = SEP;
             path_buf[path.len() + 1] = 0;
@@ -5455,13 +5458,15 @@ impl<'a> Resolver<'a> {
 
                 if let Some(browser_json) = browser_scope.package_json() {
                     let index_paths = [path, FIELD_REL_PATH];
-                    let index_abs_path = self.fs_ref().abs_buf(&index_paths, bufs!(remap_path));
-                    if let Some(remap) = self
-                        .check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
+                    let index_abs_path = self
+                        .fs_ref()
+                        .abs_buf_checked(&index_paths, bufs!(remap_path));
+                    if let Some(remap) = index_abs_path.and_then(|index_abs_path| {
+                        self.check_browser_map::<{ BrowserMapPathKind::AbsolutePath }>(
                             &browser_scope,
                             index_abs_path,
                         )
-                    {
+                    }) {
                         // Is the path disabled?
                         if remap.is_empty() {
                             let new_path =

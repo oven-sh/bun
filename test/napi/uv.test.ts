@@ -337,12 +337,12 @@ describe.if(!isWindows)("uv stubs", () => {
     expect(exitCode).toBe(0);
   });
 
-  test.concurrent("uv_close with a send pending runs only close_cb, and a second uv_close is ignored", async () => {
+  test.concurrent("uv_close with a send pending: close_cb only; a later close or send does nothing", async () => {
     const { stdout, stderr, exitCode } = await runInChild(`
       console.log("after close", JSON.stringify(addon.testAsyncCloseWithSendPending(report)));
     `);
     expect(stderr).toBe("");
-    expect(stdout).toBe("after close [0,1]\nclose 1 1\n");
+    expect(stdout).toBe("after close [0,1,0]\nclose 1 1\n");
     expect(exitCode).toBe(0);
   });
 

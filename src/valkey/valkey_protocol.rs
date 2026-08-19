@@ -88,8 +88,7 @@ impl RESPType {
 pub enum RESPValue {
     // RESP2 types
     SimpleString(Box<[u8]>),
-    /// A `-` simple error or `!` blob error reply. Both carry the server's
-    /// message and reject the command that produced them.
+    /// A `-` simple error or a `!` blob error reply, holding the server's message.
     Error(Box<[u8]>),
     Integer(i64),
     BulkString(Option<Box<[u8]>>),

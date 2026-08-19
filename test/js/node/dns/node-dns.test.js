@@ -739,30 +739,70 @@ describe("dns.lookupService rejects non-IP address strings", () => {
     );
   });
 
-  it("accepts an IPv6 zone id and resolves the address without it", async () => {
-    // getnameinfo for ::1 is environment dependent, so assert that the zoned
-    // form yields the same outcome as the bare one rather than a specific result.
-    const settle = p =>
-      p.then(
-        v => ({ ok: v }),
-        e => ({ err: e.code }),
-      );
-    const viaCallback = address => {
-      const { promise, resolve } = Promise.withResolvers();
-      dns.lookupService(address, 22, (err, hostname, service) =>
-        resolve(err ? { err: err.code } : { ok: { hostname, service } }),
-      );
-      return promise;
-    };
-    const [zonedP, bareP, zonedCb, bareCb] = await Promise.all([
-      settle(dns_promises.lookupService("::1%lo0", 22)),
-      settle(dns_promises.lookupService("::1", 22)),
-      viaCallback("::1%lo0"),
-      viaCallback("::1"),
-    ]);
-    expect(zonedP).toEqual(bareP);
-    expect(zonedCb).toEqual(bareCb);
-    expect(zonedP.err).not.toBe("ERR_INVALID_ARG_VALUE");
+  it("strips an IPv6 zone id for the query and reports the caller's address on failure", async () => {
+    // lookupService() resolves PTR through the default resolver, so point it at a
+    // local NXDOMAIN responder in a child process. The responder records each name.
+    const wire = [];
+    const srv = dgram.createSocket("udp4");
+    try {
+      await new Promise((resolve, reject) => {
+        srv.once("error", reject);
+        srv.bind(0, "127.0.0.1", resolve);
+      });
+      srv.on("message", (m, ri) => {
+        let o = 12;
+        const labels = [];
+        while (m[o]) {
+          labels.push(m.subarray(o + 1, o + 1 + m[o]).toString());
+          o += 1 + m[o];
+        }
+        wire.push(labels.join("."));
+        const h = Buffer.alloc(12);
+        h.writeUInt16BE(m.readUInt16BE(0), 0);
+        h.writeUInt16BE(0x8183, 2);
+        h.writeUInt16BE(1, 4);
+        srv.send(Buffer.concat([h, m.subarray(12, o + 5)]), ri.port, ri.address);
+      });
+
+      await using proc = Bun.spawn({
+        cmd: [
+          bunExe(),
+          "-e",
+          `const dns = require("node:dns");
+           dns.setServers(["127.0.0.1:" + process.argv[1]]);
+           const shape = e => ({ code: e.code, syscall: e.syscall, hostname: e.hostname, message: e.message });
+           const cb = new Promise(resolve => dns.lookupService("2001:db8::a%lo0", 22, e => resolve(shape(e))));
+           const promise = dns.promises.lookupService("2001:db8::b", 22).then(() => "resolved", shape);
+           Promise.all([cb, promise]).then(r => console.log(JSON.stringify(r)));`,
+          String(srv.address().port),
+        ],
+        env: bunEnv,
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect(stderr).toBe("");
+      expect(JSON.parse(stdout)).toEqual([
+        {
+          code: "ENOTFOUND",
+          syscall: "getnameinfo",
+          hostname: "2001:db8::a%lo0",
+          message: "getnameinfo ENOTFOUND 2001:db8::a%lo0",
+        },
+        {
+          code: "ENOTFOUND",
+          syscall: "getnameinfo",
+          hostname: "2001:db8::b",
+          message: "getnameinfo ENOTFOUND 2001:db8::b",
+        },
+      ]);
+      expect(exitCode).toBe(0);
+      expect(wire.sort()).toEqual([
+        "a.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+        "b.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa",
+      ]);
+    } finally {
+      await new Promise(resolve => srv.close(resolve));
+    }
   });
 });
 

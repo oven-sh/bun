@@ -127,18 +127,25 @@ function normalizeIP(ip) {
   return isIP(bare) === 6 ? bare : null;
 }
 
-// Node reports the caller's string, zone id included, on a failed reverse().
+// Node reports the caller's address argument, zone id included, on a failure.
+function rejectWithHostname(error, hostname) {
+  error = withTranslatedError(error);
+  if (typeof error?.hostname === "string") {
+    error.hostname = hostname;
+    error.message = `${error.syscall} ${error.code} ${hostname}`;
+  }
+  return Promise.$reject(error);
+}
+
 function reverseOn(object, address, ip) {
   const promise = object.reverse(address);
   if (address === ip) return promise;
-  return promise.catch(error => {
-    error = withTranslatedError(error);
-    if (typeof error?.hostname === "string") {
-      error.hostname = ip;
-      error.message = `${error.syscall} ${error.code} ${ip}`;
-    }
-    return Promise.$reject(error);
-  });
+  return promise.catch(error => rejectWithHostname(error, ip));
+}
+
+// The native error names the "address|port" request key, so always rewrite it.
+function lookupServiceFor(address, port) {
+  return dns.lookupService(stripZoneId(address), port).catch(error => rejectWithHostname(error, address));
 }
 
 function setServersOn(servers, object) {
@@ -420,7 +427,7 @@ function lookupService(address, port, callback) {
   }
 
   callback = guardCallback(callback);
-  dns.lookupService(stripZoneId(address), +port).then(
+  lookupServiceFor(address, +port).then(
     results => {
       callback(null, ...results);
     },
@@ -874,7 +881,7 @@ const promises = {
     validatePort(port, "port");
 
     try {
-      return translateErrorCode(dns.lookupService(stripZoneId(address), +port)).then(([hostname, service]) => ({
+      return translateErrorCode(lookupServiceFor(address, +port)).then(([hostname, service]) => ({
         hostname,
         service,
       }));

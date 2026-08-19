@@ -662,6 +662,159 @@ describe.concurrent("socket", () => {
     }
   });
 
+  // Adoption (us_socket_adopt -> us_poll_resize) can run after the peer's FIN
+  // was already consumed by end() and the write buffer drained, i.e. with the
+  // poll watching neither direction and relying on implicit EPOLLHUP/EPOLLERR.
+  // The kernel registration must follow the adopted socket so the peer's later
+  // reset dispatches to the live poll, exactly once, instead of touching a
+  // freed one. Linux-only: the zero-event steady state is epoll's (kqueue
+  // keeps no kernel filter on such a socket, so the reset goes unseen there).
+  it.skipIf(!isLinux)("upgradeTLS after the peer half-closed survives a subsequent reset", async () => {
+    const { promise: ended, resolve: onEnd, reject: onEndFail } = Promise.withResolvers<Socket<undefined>>();
+    const { promise: torndown, resolve: onTeardown } = Promise.withResolvers<string>();
+    let endCount = 0;
+
+    using server = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      allowHalfOpen: true,
+      socket: {
+        open() {},
+        data() {},
+        end(socket) {
+          endCount++;
+          onEnd(socket);
+        },
+        // Latched by the end() resolve on the expected path; these only fire
+        // it when the socket dies early, turning a would-be hang into a
+        // diagnosable failure.
+        close() {
+          onEndFail(new Error("server socket closed before end fired"));
+        },
+        error(_socket, error) {
+          onEndFail(error);
+        },
+      },
+    });
+
+    const client = net.connect({ port: server.port, host: "127.0.0.1", allowHalfOpen: true });
+    client.on("error", () => {}); // post-connect errors (the reset) are expected
+    await new Promise<void>((resolve, reject) => {
+      client.once("connect", resolve);
+      client.once("error", reject);
+    });
+    client.end(); // FIN; the server side stays half-open
+
+    const socket = await ended;
+    // end() leaves the poll armed for WRITABLE only; the next writable
+    // dispatch finds nothing buffered and drops it to zero events. One
+    // event-loop turn suffices, and the state is stable once reached (nothing
+    // re-arms the poll without a JS-side write), so the extra turns are slack
+    // for scheduling differences, not a timing condition.
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+
+    // Grow the adopted ext so us_poll_resize actually reallocates and must
+    // re-register the kernel poll under the new pointer (no in-tree adopter
+    // grows on its own). The rule is armed and consumed inside this
+    // synchronous block, so concurrent tests cannot hit it.
+    if (socketFaultInjection.available()) {
+      socketFaultInjection.set({ syscall: "adopt_grow", action: "short", bytes: 512, repeat: 1 });
+    }
+    try {
+      socket.upgradeTLS({
+        tls: { cert: tls.cert, key: tls.key },
+        isServer: true,
+        data: {},
+        socket: {
+          data() {},
+          end() {},
+          close() {
+            onTeardown("close");
+          },
+          error() {
+            onTeardown("error");
+          },
+        },
+      });
+    } finally {
+      if (socketFaultInjection.available()) {
+        socketFaultInjection.clear();
+      }
+    }
+
+    // Let the loop retire the replaced socket (freed at the outermost
+    // loop_post) before the peer resets, so the reset must find the live
+    // registration rather than racing the retirement.
+    for (let i = 0; i < 10; i++) {
+      await new Promise(resolve => setImmediate(resolve));
+    }
+
+    // The reset must reach the adopted socket (EPOLLHUP/EPOLLERR have no mask).
+    client.resetAndDestroy();
+    expect(["close", "error"]).toContain(await torndown);
+    expect(endCount).toBe(1);
+  });
+
+  // Same forced reallocation on a socket that is actively polling readable: a
+  // full TLS handshake and an echo must flow through the relocated socket
+  // (covers the grow path's normal-interest re-registration on every backend).
+  it.skipIf(!socketFaultInjection.available())(
+    "upgradeTLS survives a forced poll reallocation (handshake + echo)",
+    async () => {
+      const { promise: echoed, resolve: onEcho, reject: onEchoFail } = Promise.withResolvers<string>();
+
+      using server = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        socket: {
+          open(socket) {
+            socketFaultInjection.set({ syscall: "adopt_grow", action: "short", bytes: 512, repeat: 1 });
+            try {
+              socket.upgradeTLS({
+                tls: { cert: tls.cert, key: tls.key },
+                isServer: true,
+                data: {},
+                socket: {
+                  data(tlsSocket, chunk) {
+                    tlsSocket.write(chunk);
+                  },
+                  // Latched once the echo resolves; before that, a close is a
+                  // failure worth a fast diagnosis instead of a timeout.
+                  close() {
+                    onEchoFail(new Error("TLS server socket closed before echo"));
+                  },
+                  error(_socket, error) {
+                    onEchoFail(error);
+                  },
+                },
+              });
+            } finally {
+              socketFaultInjection.clear();
+            }
+          },
+          data() {},
+          close() {},
+          error() {},
+        },
+      });
+
+      const client = tlsConnect({ port: server.port, host: "127.0.0.1", rejectUnauthorized: false }, () => {
+        client.write("ping");
+      });
+      client.on("error", onEchoFail);
+      client.once("close", () => {
+        onEchoFail(new Error("TLS client socket closed before echo"));
+      });
+      client.on("data", data => {
+        onEcho(String(data));
+        client.end();
+      });
+      expect(await echoed).toBe("ping");
+    },
+  );
+
   it("upgradeTLS handles errors", async () => {
     using server = Bun.serve({
       port: 0,

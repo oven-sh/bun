@@ -642,12 +642,81 @@ struct us_poll_t *us_poll_resize(struct us_poll_t *p, struct us_loop_t *loop, un
     
     int events = us_poll_events(p);
 #ifdef LIBUS_USE_EPOLL
-    /* Hack: forcefully update poll by stripping away already set events */
-    new_p->state.poll_type = us_internal_poll_type(new_p);
-    us_poll_change(new_p, loop, events);
+    /* Re-point the kernel's epitem at new_p directly instead of through
+     * us_poll_change, whose old==new diff would skip the epoll_ctl at
+     * events == 0 (a real steady state: half-open socket after on_end, see
+     * us_poll_start_rc) - and the MOD is what moves data.ptr off the old
+     * poll, which the caller frees. */
+    struct epoll_event event;
+    event.events = events;
+    if (!(events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+        /* See us_poll_start_rc: 0-event polls rely on implicit EPOLLHUP/EPOLLERR. */
+        event.events |= EPOLLHUP | EPOLLERR;
+    }
+    event.data.ptr = new_p;
+    int rc;
+    do {
+        rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, new_p->state.fd, &event);
+    } while (IS_EINTR(rc));
+    if (rc != 0) {
+        /* A failed MOD leaves the kernel's data.ptr on the old poll, which the
+         * caller frees: crash now rather than use-after-free later (the
+         * eventfd failure in us_internal_create_async sets the precedent). */
+        BUN_PANIC("us_poll_resize: epoll_ctl failed to re-register the poll");
+    }
 #else
-    /* Forcefully update poll by resetting them with new_p as user data */
-    kqueue_change(loop->fd, new_p->state.fd, 0, LIBUS_SOCKET_WRITABLE | LIBUS_SOCKET_READABLE, new_p);
+    /* Re-register each filter with new_p as udata (EV_ADD on an existing knote
+     * updates udata in place), arming exactly the poll's current interest: the
+     * registration must match us_poll_events, because the dispatcher masks
+     * delivered events with it but never deletes an over-armed filter, and
+     * us_poll_change cannot diff away a filter the poll state never armed.
+     * The deletes drop filters the poll does not want, so a stale FIN-detector
+     * oneshot (kqueue_change arms EVFILT_WRITE at 0 events, and that knote
+     * survives a later 0 -> READABLE transition) cannot keep the old poll as
+     * udata past its free. EV_DELETE of an absent filter reports ENOENT, and
+     * on FreeBSD the first error aborts the rest of the changelist (the
+     * kevent64 shim passes no eventlist), so the EV_ADDs - the udata move -
+     * go first and the one possible EV_DELETE comes last. */
+    struct kevent64_s change_list[2];
+    int change_length = 0;
+    if (events & LIBUS_SOCKET_READABLE) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_READ,
+            EV_ADD, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
+    /* A 0-event poll may still have a pending FIN-detector oneshot in the
+     * kernel (kqueue_change arms one on transitions to 0 events; delivery
+     * consumes it). EV_ADD moves a pending knote's udata off the soon-freed
+     * old poll, and re-arms the detector when it was already consumed. */
+    if ((events & LIBUS_SOCKET_WRITABLE) || events == 0) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_WRITE,
+            EV_ADD | EV_ONESHOT, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
+    if (!(events & LIBUS_SOCKET_READABLE)) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_READ,
+            EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
+    if ((events & LIBUS_SOCKET_READABLE) && !(events & LIBUS_SOCKET_WRITABLE)) {
+        EV_SET64(&change_list[change_length++], new_p->state.fd, EVFILT_WRITE,
+            EV_DELETE, 0, 0, (uint64_t)(void *)new_p, 0, 0);
+    }
+    int ret;
+    do {
+        ret = kevent64(loop->fd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
+    /* A change that failed to apply leaves the kernel referencing the old
+     * poll, which the caller frees: crash now rather than use-after-free
+     * later. ENOENT is the trailing EV_DELETE of an absent filter, the one
+     * benign failure; on FreeBSD it surfaces as ret < 0 (the shim passes no
+     * eventlist) after every EV_ADD before it has already applied. */
+    if (ret < 0 && errno != ENOENT) {
+        BUN_PANIC("us_poll_resize: kevent failed to re-register the poll");
+    }
+    for (int i = 0; i < ret; i++) {
+        if ((change_list[i].flags & EV_ERROR) && change_list[i].data != 0 &&
+            change_list[i].data != ENOENT) {
+            BUN_PANIC("us_poll_resize: kevent failed to re-register the poll");
+        }
+    }
 #endif
     /* This is needed for epoll also (us_change_poll doesn't update the old poll) */
     us_internal_loop_update_pending_ready_polls(loop, p, new_p, events, events);

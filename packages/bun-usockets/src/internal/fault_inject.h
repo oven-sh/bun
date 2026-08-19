@@ -54,6 +54,13 @@ enum us_fault_syscall {
      * US_FAULT_ERRNO applies, and the errno value is ignored — the simulated
      * failure is a thrown JS out-of-memory error, not an errno. */
     US_FAULT_SESSION_BUFFER,
+    /* Not a fault: inflates the adopted ext size in us_socket_adopt by the
+     * rule's clamp_bytes so us_poll_resize takes its grow path (reallocate,
+     * re-register the kernel poll under the new pointer, retire the old
+     * socket). Every in-tree adopter passes an equal or smaller ext size, so
+     * that path is unreachable without injection. Only US_FAULT_SHORT
+     * applies, reusing clamp_bytes as the number of bytes to add. */
+    US_FAULT_ADOPT_GROW,
     US_FAULT_COUNT
 };
 

@@ -578,8 +578,8 @@ export const setSocketOptions: setSocketOptionsFn = $newRustFunction(
 /**
  * The syscalls instrumented in bsd.c, plus non-syscall hooks whose failure
  * paths are otherwise unreachable without injection ("ssl_loop_buffer",
- * "poll_start", "session_buffer"; see fault_inject.h for the per-hook
- * description). Arming anything else is rejected.
+ * "poll_start", "session_buffer", "adopt_grow"; see fault_inject.h for the
+ * per-hook description). Arming anything else is rejected.
  */
 export type SocketFaultSyscall =
   | "recv"
@@ -591,7 +591,8 @@ export type SocketFaultSyscall =
   | "accept"
   | "ssl_loop_buffer"
   | "poll_start"
-  | "session_buffer";
+  | "session_buffer"
+  | "adopt_grow";
 
 export type SocketFaultRule = {
   syscall: SocketFaultSyscall;
@@ -612,7 +613,7 @@ export type SocketFaultRule = {
     | "ENETUNREACH"
     | "EHOSTUNREACH"
     | number;
-  /** clamp recv/send length to this many bytes; required and > 0 when action === "short" */
+  /** clamp recv/send length to this many bytes, or the ext growth for "adopt_grow"; required and > 0 when action === "short" */
   bytes?: number;
   /** skip the first N matching calls before triggering. Default 0. */
   after?: number;

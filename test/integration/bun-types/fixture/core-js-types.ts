@@ -149,6 +149,28 @@ expectType(Promise.try(() => 1)).is<Promise<number>>();
 expectType(Promise.try(async () => "a")).is<Promise<string>>();
 expectType(Promise.try((a: number, b: string) => `${a}${b}`, 1, "b")).is<Promise<string>>();
 
+declare const asyncNumbers: AsyncIterable<number>;
+expectType(Array.fromAsync([1, Promise.resolve(2)])).is<Promise<number[]>>();
+expectType(Array.fromAsync(asyncNumbers)).is<Promise<number[]>>();
+expectType(Array.fromAsync([1, 2], n => `${n}`)).is<Promise<string[]>>();
+expectType(Array.fromAsync(asyncNumbers, async n => n > 1)).is<Promise<boolean[]>>();
+Array.fromAsync(
+  [1, 2],
+  (n, index) => {
+    expectType(n).is<number>();
+    expectType(index).is<number>();
+    return n;
+  },
+  { thisArg: true },
+);
+
+declare const caught: unknown;
+if (Error.isError(caught)) {
+  expectType(caught).is<Error>();
+}
+
+expectType(RegExp.escape("foo.bar")).is<string>();
+
 const bytes = new Uint8Array(8);
 expectType(bytes.setFromBase64("aGVsbG8=")).is<{ read: number; written: number }>();
 bytes.setFromBase64("aGVsbG8", { alphabet: "base64", lastChunkHandling: "loose" });

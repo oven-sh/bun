@@ -445,12 +445,6 @@ impl File {
         }
         result
     }
-    /// Takes the exclusive advisory lock of this file (`flock(LOCK_EX)`, `LockFileEx` on
-    /// Windows). Closing the file releases it, so a process that dies releases it too. With
-    /// `wait == false`, returns `Ok(false)` when another process holds the lock.
-    pub fn lock_exclusive(&self, wait: bool) -> Maybe<bool> {
-        flock_exclusive(self.handle, wait)
-    }
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(

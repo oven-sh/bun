@@ -78,7 +78,7 @@ impl PackageManager {
 /// `bun remove` started together each read package.json and bun.lock, and the one that writes
 /// last silently drops the other one's edit; two installs also undo each other's work while they
 /// place the same packages in node_modules. The lock is a file in the install cache directory,
-/// named after the project root, locked with `flock` (see `File::lock_exclusive`) and held until
+/// named after the project root, locked with `sys::flock` and held until
 /// this process exits. Lifecycle scripts get `BUN_INTERNAL_INSTALL_LOCK_DIR` so that a bun they
 /// run in the same project does not wait for this process.
 ///
@@ -101,7 +101,7 @@ pub fn lock_project(this: &mut PackageManager) {
         bun_core::scoped_log!(project_lock, "no lock for {}", bstr::BStr::new(project_dir));
         return;
     };
-    let locked = match lock_file.lock_exclusive(false) {
+    let locked = match sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, true) {
         Ok(true) => true,
         Ok(false) => {
             if !this.options.log_level.is_silent() {
@@ -111,7 +111,10 @@ pub fn lock_project(this: &mut PackageManager) {
                 );
                 Output::flush();
             }
-            matches!(lock_file.lock_exclusive(true), Ok(true))
+            matches!(
+                sys::flock(lock_file.handle, sys::FileLockMode::Exclusive, false),
+                Ok(true)
+            )
         }
         Err(_) => false,
     };

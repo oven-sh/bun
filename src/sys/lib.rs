@@ -1052,6 +1052,16 @@ impl error::IntoErrnoInt for bun_windows_sys::NTSTATUS {
     }
 }
 
+/// Mode for [`flock`], a whole-file lock: advisory `flock(2)` on POSIX, `LockFileEx` on Windows,
+/// where it is mandatory (reads and writes through other handles fail while it is held, so lock
+/// files whose contents nobody needs are the intended use). Closing the fd releases it, so a
+/// process that dies releases it too.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum FileLockMode {
+    Shared,
+    Exclusive,
+}
+
 /// `Exchange` and `NoReplace` are mutually exclusive at the kernel level.
 #[derive(Clone, Copy, Default, PartialEq, Eq)]
 pub enum RenameMode {
@@ -2648,15 +2658,16 @@ mod posix_impl {
         check!(safe_libc::ftruncate(fd.native(), len), Tag::ftruncate);
         Ok(())
     }
-    /// `flock(LOCK_EX)`. The lock belongs to the open file description: closing `fd` (or the
-    /// process exiting) releases it. With `wait == false` the call returns `Ok(false)` instead of
-    /// blocking while another process holds the lock.
-    pub fn flock_exclusive(fd: Fd, wait: bool) -> Maybe<bool> {
-        let operation = if wait {
-            libc::LOCK_EX
-        } else {
-            libc::LOCK_EX | libc::LOCK_NB
+    /// See [`FileLockMode`]. With `nonblocking`, returns `Ok(false)` instead of waiting while
+    /// another process holds a conflicting lock.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let mut operation = match mode {
+            FileLockMode::Shared => libc::LOCK_SH,
+            FileLockMode::Exclusive => libc::LOCK_EX,
         };
+        if nonblocking {
+            operation |= libc::LOCK_NB;
+        }
         loop {
             // SAFETY: `flock` takes only by-value scalars; a bad fd is EBADF, never UB.
             if unsafe { libc::flock(fd.native(), operation) } == 0 {
@@ -2666,7 +2677,7 @@ mod posix_impl {
             if errno == libc::EINTR {
                 continue;
             }
-            if !wait && errno == libc::EWOULDBLOCK {
+            if nonblocking && errno == libc::EWOULDBLOCK {
                 return Ok(false);
             }
             return Err(Error::from_code_int(errno, Tag::flock).with_fd(fd));
@@ -3930,26 +3941,29 @@ mod windows_impl {
         }
         Ok(())
     }
-    /// The POSIX arm's `flock(LOCK_EX)`: `LockFileEx` over the first byte of the file. The
-    /// lock is released when the handle is closed, which includes the process exiting. With
-    /// `wait == false` the call returns `Ok(false)` instead of blocking while another process
-    /// holds the lock.
-    pub fn flock_exclusive(fd: Fd, wait: bool) -> Maybe<bool> {
-        let mut flags = w::LOCKFILE_EXCLUSIVE_LOCK;
-        if !wait {
+    /// See [`FileLockMode`]: `LockFileEx` over the whole possible range of the file, the
+    /// closest thing to the POSIX arm's whole-file lock. With `nonblocking`, returns `Ok(false)`
+    /// instead of waiting while another process holds a conflicting lock.
+    pub fn flock(fd: Fd, mode: FileLockMode, nonblocking: bool) -> Maybe<bool> {
+        let mut flags: w::DWORD = 0;
+        if mode == FileLockMode::Exclusive {
+            flags |= w::LOCKFILE_EXCLUSIVE_LOCK;
+        }
+        if nonblocking {
             flags |= w::LOCKFILE_FAIL_IMMEDIATELY;
         }
-        // The zeroed offset selects byte 0. Every locker uses the same range, so the locks
-        // conflict with each other; the file's contents are irrelevant.
+        // The zeroed offset starts the range at byte 0.
         let mut overlapped: w::OVERLAPPED = bun_core::ffi::zeroed();
         // SAFETY: FFI; `fd` is a live handle and `overlapped` outlives the call, which is
         // synchronous for the handles bun opens (no FILE_FLAG_OVERLAPPED).
-        let rc = unsafe { w::kernel32::LockFileEx(fd.native(), flags, 0, 1, 0, &mut overlapped) };
+        let rc = unsafe {
+            w::kernel32::LockFileEx(fd.native(), flags, 0, u32::MAX, u32::MAX, &mut overlapped)
+        };
         if rc != 0 {
             return Ok(true);
         }
         let er = w::Win32Error::get();
-        if !wait && er == w::Win32Error::LOCK_VIOLATION {
+        if nonblocking && er == w::Win32Error::LOCK_VIOLATION {
             return Ok(false);
         }
         Err(Error::new(er.to_e(), Tag::flock).with_fd(fd))

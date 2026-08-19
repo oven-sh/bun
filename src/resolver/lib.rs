@@ -1949,10 +1949,7 @@ pub mod dir_entry_accessor {
     }
 
     impl DirEntryAccessor {
-        /// `path` resolved against the directory `handle` was opened on, as one path
-        /// a syscall can take. The directory and `path` each fit a path buffer, but
-        /// the joined path need not: `spill` holds it then, and whatever takes the
-        /// path reports ENAMETOOLONG for it.
+        /// `path` joined onto the handle's directory. Both fit a path buffer, the result need not.
         fn full_path<'a>(
             handle: DirEntryHandle,
             path: &'a ZStr,
@@ -2001,9 +1998,7 @@ pub mod dir_entry_accessor {
             let mut buf = path_buffer_pool::get();
             let mut spill = Vec::new();
             let path = Self::full_path(handle, path_, &mut buf[..], &mut spill);
-            // A `read_directory` failure ends the whole walk (the `Err` below). A path
-            // that does not fit only fails this directory, like the walker reports
-            // its own paths that do not fit.
+            // Fails only this directory: a `read_directory` error below ends the whole walk.
             if path.len() >= MAX_PATH_BYTES {
                 let err = SysError::from_code(E::ENAMETOOLONG, Syscall::Tag::open);
                 return Ok(Err(err.with_path(path.as_bytes())));

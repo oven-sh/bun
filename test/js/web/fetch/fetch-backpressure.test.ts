@@ -600,6 +600,32 @@ describe("fetch() receive backpressure — body stream nothing is reading", () =
     }, 60_000);
   }
 
+  // The other half of the rule: a small body nobody reads is still taken off the socket, so
+  // the keep-alive connection goes back to the pool instead of staying pinned under it.
+  test("small unread bodies complete and their connection is reused", async () => {
+    let connections = 0;
+    const srv = createServer((_req, res) => {
+      res.setHeader("content-length", String(16 * 1024));
+      res.end(Buffer.alloc(16 * 1024, 65));
+    }).on("connection", () => connections++);
+    srv.listen(0);
+    await once(srv, "listening");
+    try {
+      const url = `http://127.0.0.1:${(srv.address() as import("node:net").AddressInfo).port}/`;
+      const N = 10;
+      for (let i = 0; i < N; i++) {
+        const res = await fetch(url);
+        expect(res.status).toBe(200);
+        void res.body;
+      }
+      // Not exactly 1: a request can start before the previous body's last packet landed.
+      expect(connections).toBeLessThan(N / 2);
+    } finally {
+      srv.closeAllConnections();
+      await new Promise(r => srv.close(() => r(undefined)));
+    }
+  });
+
   // The other ways back to a parked body: a buffered read and a native sink both have to
   // pick the transport up again and see the whole body.
   for (const [name, drain] of [

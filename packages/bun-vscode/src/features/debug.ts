@@ -101,14 +101,17 @@ function launchFile(configuration: vscode.DebugConfiguration, resource?: vscode.
 }
 
 // `command` is a package.json script, not a path, so the folder comes from the
-// editor that shows the package.json.
+// editor that shows the package.json. Like launchFile, the cwd is concrete:
+// the folder that owns the package.json, else the package.json's own
+// directory, so a package.json that no folder owns still launches.
 export function debugCommand(command: string): void {
   const packageJson = vscode.window.activeTextEditor?.document.uri;
   const folder = packageJson && vscode.workspace.getWorkspaceFolder(packageJson);
   vscode.debug.startDebugging(folder, {
     ...DEBUG_CONFIGURATION,
     program: command,
-    runtime: getRuntime(folder),
+    cwd: folder?.uri.fsPath ?? (packageJson && path.dirname(packageJson.fsPath)),
+    runtime: getRuntime(folder ?? packageJson),
   });
 }
 

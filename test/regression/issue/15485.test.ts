@@ -202,11 +202,19 @@ describe("multi-root window", () => {
     mockWindow.activeTextEditor = { document: { uri: MockUri.file("/repo/lib/package.json") } };
     debugCommand("dev");
 
-    // The script is not a path, so the cwd stays the variable. VS Code resolves
-    // it against the folder that is passed.
     expect(launches()).toEqual([
-      { folder: folderLib, noDebug: undefined, program: "dev", cwd: "${workspaceFolder}", runtime: libRuntime },
+      { folder: folderLib, noDebug: undefined, program: "dev", cwd: "/repo/lib", runtime: libRuntime },
     ]);
+  });
+
+  test("debugCommand for a package.json that no folder owns launches in the package.json's directory", () => {
+    mockWindow.activeTextEditor = { document: { uri: MockUri.file("/outside/package.json") } };
+    debugCommand("dev");
+
+    expect(launches()).toEqual([
+      { folder: undefined, noDebug: undefined, program: "dev", cwd: "/outside", runtime: "bun" },
+    ]);
+    expect(unresolvedVariables()).toEqual([]);
   });
 
   test("a file that no folder owns launches in its own directory", () => {

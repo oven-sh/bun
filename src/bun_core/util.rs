@@ -3752,27 +3752,14 @@ fn raw_os_argv() -> Option<&'static [*const core::ffi::c_char]> {
 fn argv_storage() -> &'static [ZBox] {
     ARGV_STORAGE.get_or_init(|| {
         // Windows: the CRT-provided `char** argv` captured by `init_argv` is
-        // ANSI-encoded (CP_ACP) — lossy for non-ASCII argv (e.g.
-        // `bun -e "🌊 测试"`, https://github.com/oven-sh/bun/issues/11610).
-        // libstd's `args_os()` splits `GetCommandLineW` itself with the MSVC
-        // CRT (2008+) rules — the argv every `wmain` program, node included,
-        // sees — without loading shell32.dll for `CommandLineToArgvW`.
-        // `into_string()` is an O(1) check that moves the buffer through; only
-        // an arg with an unpaired surrogate takes the lossy copy (→ U+FFFD, as
-        // before).
-        #[cfg(windows)]
-        let args = std::env::args_os()
-            .map(|a| {
-                ZBox::from_vec(
-                    a.into_string()
-                        .unwrap_or_else(|a| a.to_string_lossy().into_owned())
-                        .into_bytes(),
-                )
-            })
-            .collect();
+        // ANSI-encoded (CP_ACP) and lossy, so Windows always takes the
+        // `args_os()` path below: libstd splits `GetCommandLineW` itself with
+        // the MSVC CRT rules (the argv every `wmain` program, node included,
+        // sees) without loading shell32.dll for `CommandLineToArgvW`.
+        // https://github.com/oven-sh/bun/issues/11610 is the non-ASCII case.
         #[cfg(not(windows))]
-        let args = match raw_os_argv() {
-            Some(raw) => raw
+        if let Some(raw) = raw_os_argv() {
+            return raw
                 .iter()
                 .map(|&p| {
                     // SAFETY: kernel argv entries are NUL-terminated and live
@@ -3780,17 +3767,30 @@ fn argv_storage() -> &'static [ZBox] {
                     let s = unsafe { core::ffi::CStr::from_ptr(p) };
                     ZBox::from_bytes(s.to_bytes())
                 })
-                .collect(),
-            // Entry points that don't go through `extern "C" fn main` (the
-            // `cargo test` harness, Rust `fn main()` via `lang_start`). On
-            // glibc/macOS this also works for the real binary — only
-            // musl-static needs the `raw_os_argv` path above.
-            None => std::env::args_os()
-                .map(|a| ZBox::from_vec_with_nul(a.into_encoded_bytes()))
-                .collect(),
-        };
-        args
+                .collect();
+        }
+        // Fallback for entry points that don't go through `extern "C" fn main`
+        // (e.g. `cargo test` harness, Rust `fn main()` via `lang_start`). On
+        // glibc/macOS/Windows this also works for the real binary — only
+        // musl-static needs the `raw_os_argv` path above.
+        std::env::args_os().map(zbox_from_os_arg).collect()
     })
+}
+
+/// Windows: `into_string()` is an O(1) check that moves libstd's buffer through;
+/// only an argument holding an unpaired surrogate takes the lossy copy (→ U+FFFD).
+#[cfg(windows)]
+fn zbox_from_os_arg(arg: std::ffi::OsString) -> ZBox {
+    ZBox::from_vec(
+        arg.into_string()
+            .unwrap_or_else(|arg| arg.to_string_lossy().into_owned())
+            .into_bytes(),
+    )
+}
+
+#[cfg(not(windows))]
+fn zbox_from_os_arg(arg: std::ffi::OsString) -> ZBox {
+    ZBox::from_vec_with_nul(arg.into_encoded_bytes())
 }
 
 #[cold]

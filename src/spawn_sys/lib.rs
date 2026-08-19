@@ -184,17 +184,45 @@ pub mod pdeathsig {
 /// Closed at no-orphans exit so a Worker cannot add a child the tree walk misses.
 #[cfg(unix)]
 pub mod spawn_gate {
-    use core::sync::atomic::{AtomicBool, Ordering};
+    use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+    use std::time::{Duration, Instant};
 
     static CLOSED: AtomicBool = AtomicBool::new(false);
+    static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
-    /// Call before the walk lists our children. Never reopens.
-    pub fn close() {
-        CLOSED.store(true, Ordering::SeqCst);
+    /// Held by `spawn_z` across the fork. A spawner sits in vfork until its
+    /// child execs, so this is what `close` has to wait for.
+    pub(crate) struct InFlight(());
+
+    impl Drop for InFlight {
+        fn drop(&mut self) {
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+        }
+    }
+
+    /// Counts before it reads the flag (`close` stores, then reads the count).
+    pub(crate) fn enter() -> Option<InFlight> {
+        IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
+        if CLOSED.load(Ordering::SeqCst) {
+            IN_FLIGHT.fetch_sub(1, Ordering::SeqCst);
+            return None;
+        }
+        Some(InFlight(()))
     }
 
     pub(crate) fn is_closed() -> bool {
         CLOSED.load(Ordering::SeqCst)
+    }
+
+    /// Refuse new spawns, then wait for the ones in flight. Never reopens.
+    /// The bound keeps exit from hanging on a stalled spawner, whose child is
+    /// then killed by `spawn_z` itself.
+    pub fn close() {
+        CLOSED.store(true, Ordering::SeqCst);
+        let deadline = Instant::now() + Duration::from_secs(1);
+        while IN_FLIGHT.load(Ordering::SeqCst) != 0 && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_micros(100));
+        }
     }
 }
 

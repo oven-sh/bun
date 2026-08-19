@@ -188,9 +188,6 @@ JSC::Structure* GlobalObject::createStructure(JSC::VM& vm)
     return structure;
 }
 
-struct BunVirtualMachine;
-extern "C" BunVirtualMachine* Bun__getVM();
-
 const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
 {
     const auto& parent = Zig::GlobalObject::globalObjectMethodTable();
@@ -222,43 +219,6 @@ const JSC::GlobalObjectMethodTable& GlobalObject::globalObjectMethodTable()
     };
 #undef INHERIT_HOOK_METHOD
     return table;
-}
-
-// A lot of this function is taken from 'Zig__GlobalObject__create'
-// TODO: remove this entire method
-extern "C" GlobalObject* BakeCreateProdGlobal(void* console)
-{
-    RefPtr<JSC::VM> vmPtr = JSC::VM::tryCreate(JSC::HeapType::Large);
-    if (!vmPtr) [[unlikely]] {
-        BUN_PANIC("Failed to allocate JavaScriptCore Virtual Machine. Did your computer run out of memory? Or maybe you compiled Bun with a mismatching libc++ version or compiler?");
-    }
-    // We need to unsafely ref this so it stays alive, later in
-    // `Zig__GlobalObject__destructOnExit` will call
-    // `vm.derefSuppressingSaferCPPChecking()` to free it.
-    vmPtr->refSuppressingSaferCPPChecking();
-    JSC::VM& vm = *vmPtr;
-
-    vm.heap.acquireAccess();
-    JSC::JSLockHolder locker(vm);
-    BunVirtualMachine* bunVM = Bun__getVM();
-    WebCore::JSVMClientData::create(&vm, bunVM, /* isWorkerVM */ false);
-
-    JSC::Structure* structure = Bake::GlobalObject::createStructure(vm);
-    Bake::GlobalObject* global = Bake::GlobalObject::create(
-        vm, structure, &Bake::GlobalObject::globalObjectMethodTable());
-    if (!global)
-        BUN_PANIC("Failed to create BakeGlobalObject");
-
-    global->m_bunVM = bunVM;
-
-    JSC::gcProtect(global);
-
-    global->setConsole(console);
-    global->isThreadLocalDefaultGlobalObject = true;
-
-    vm.heap.disableStopIfNecessaryTimer();
-
-    return global;
 }
 
 extern "C" void BakeGlobalObject__attachPerThreadData(JSC::JSGlobalObject* global, void* perThreadData)

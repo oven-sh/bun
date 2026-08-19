@@ -6,7 +6,6 @@ leak:resolver.resolver.Resolver.parseTSConfig
 leak:JSC::Identifier::fromString
 leak:jsc.JSGlobalObject.JSGlobalObject.create
 leak:Zig__GlobalObject__create
-leak:BakeCreateProdGlobal
 leak:_objc_msgSend_uncached
 leak:WTF::AutomaticThread::start
 leak:Bun__transpileFile

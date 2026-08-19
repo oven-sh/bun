@@ -100,6 +100,8 @@ pub struct InitOptions {
     pub store_fd: bool,
     pub smol: bool,
     pub eval_mode: bool,
+    /// Creates a `Bake::GlobalObject` (production `bun build --app`) instead of a `Zig::GlobalObject`.
+    pub bake_mode: bool,
     pub is_main_thread: bool,
     /// Forwarded to `Zig__GlobalObject__create` so the C++ ZigGlobalObject is
     /// created with its `WebCore::Worker*` already wired. `null` for the
@@ -125,6 +127,7 @@ impl Default for InitOptions {
             store_fd: false,
             smol: false,
             eval_mode: false,
+            bake_mode: false,
             is_main_thread: false,
             worker_ptr: core::ptr::null_mut(),
             context_id: None,
@@ -2351,6 +2354,7 @@ unsafe extern "C" {
         context_id: i32,
         mini_mode: bool,
         eval_mode: bool,
+        bake_mode: bool,
         worker_ptr: *mut c_void,
     ) -> *mut JSGlobalObject;
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle (`&` is
@@ -2569,6 +2573,7 @@ impl VirtualMachine {
             context_id,
             opts.mini_mode,
             opts.eval_mode,
+            opts.bake_mode,
             opts.worker_ptr,
         );
         // JSC may mess with the stack size.
@@ -3396,9 +3401,7 @@ crate::jsc_abi_extern! {
     safe fn Bake__getAsyncLocalStorage(global: &JSGlobalObject) -> JSValue;
 }
 // `JSGlobalObject` / `VM` are opaque `UnsafeCell`-backed ZST handles, so
-// `&T` is ABI-identical to a non-null `T*`. `BakeCreateProdGlobal`'s
-// `console_ptr` is an opaque round-trip pointer C++ stores into the new global
-// (never dereferenced as Rust data) — same contract as `Zig__GlobalObject__create`.
+// `&T` is ABI-identical to a non-null `T*`.
 #[allow(improper_ctypes)]
 unsafe extern "C" {
     safe fn Bun__promises__isErrorLike(global: &JSGlobalObject, reason: JSValue) -> bool;
@@ -3412,7 +3415,6 @@ unsafe extern "C" {
         global: &JSGlobalObject,
         reason: JSValue,
     ) -> JSValue;
-    safe fn BakeCreateProdGlobal(console_ptr: *mut c_void) -> *mut JSGlobalObject;
 }
 
 extern "C" fn free_ref_string(str_: *mut crate::ref_string::RefString, _: *mut c_void, _: usize) {
@@ -4018,42 +4020,19 @@ impl VirtualMachine {
         Ok(vm)
     }
 
-    /// Creates a `VirtualMachine` configured for the bake (dev server) runtime.
+    /// Creates a `VirtualMachine` whose global is a `Bake::GlobalObject` (production `bun build --app`).
     pub fn init_bake(opts: Options) -> crate::CrateResult<*mut VirtualMachine> {
-        let init_opts = InitOptions {
+        Self::init(InitOptions {
             transform_options: opts.args,
             log: opts.log,
             env_loader: opts.env_loader,
             smol: opts.smol,
             mini_mode: opts.smol,
             eval_mode: false,
+            bake_mode: true,
             is_main_thread: opts.is_main_thread,
             ..Default::default()
-        };
-        // Note: shares the console / log / event-loop wiring with `init`;
-        // the only delta is the global is created via `BakeCreateProdGlobal`
-        // instead of `ZigGlobalObject__create`. Route through `init` then
-        // swap the global.
-        let vm = Self::init(init_opts)?;
-        // SAFETY: `vm` is the unique live VM on this thread.
-        let vm_ref = unsafe { &mut *vm };
-        // `console` is the opaque round-trip pointer C++ stores into the new global.
-        let new_global = BakeCreateProdGlobal(vm_ref.console.cast());
-        vm_ref.global = new_global;
-        VMHolder::set_cached_global_object(Some(new_global));
-        vm_ref.regular_event_loop.global = NonNull::new(new_global);
-        // `new_global` is freshly created and live for VM lifetime; safe
-        // ZST-handle deref. `vm_ptr()` returns the FFI `*mut VM` directly
-        // (no `&VM` reborrow).
-        vm_ref.jsc_vm = JSGlobalObject::opaque_ref(new_global).vm_ptr();
-        // SAFETY: per-thread uws loop is live.
-        unsafe { (*uws::Loop::get()).internal_loop_data.jsc_vm = vm_ref.jsc_vm.cast() };
-        vm_ref.event_loop_mut().ensure_waker();
-        if opts.smol {
-            // SAFETY: process-global written once at startup.
-            IS_SMOL_MODE.store(true, core::sync::atomic::Ordering::Relaxed);
-        }
-        Ok(vm)
+        })
     }
 
     /// Stored as [`RefString::on_before_deinit`] (an unsafe-fn-ptr slot) in

@@ -106,6 +106,7 @@ pub fn build_command(ctx: Context) -> crate::Result<()> {
         log: NonNull::new(ctx.log),
         args: ctx.args.clone(),
         smol: ctx.runtime_options.smol,
+        is_main_thread: true,
         ..Default::default()
     })?;
     // SAFETY: `init_bake` returns a freshly-allocated VM owned by this thread;

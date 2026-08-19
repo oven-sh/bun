@@ -5046,6 +5046,7 @@ impl DevServer {
                         watch_for_route_file = !file.failed;
                         self.client_graph.insert_failure(
                             incremental_graph::InsertFailureKey::AbsPath(abs_path),
+                            loader,
                             log,
                             false,
                         )?;

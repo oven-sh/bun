@@ -309,6 +309,18 @@ describe.concurrent("require.cache", () => {
     }, 20000);
   });
 
+  // Runs the main.mjs of one of the `delete require.cache[esm]` fixtures below.
+  async function runMain(dir: string) {
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), "run", "main.mjs"],
+      env: bunEnv,
+      cwd: dir,
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout: stdout.trim(), stderr, exitCode };
+  }
+
   // `delete require.cache[path]` removes the module's ES module registry entry.
   // It can run while an import() of that module is still loading: here the
   // module's dependency is held back by an async onLoad plugin until the test
@@ -355,17 +367,6 @@ describe.concurrent("require.cache", () => {
       `,
     });
 
-    async function run(dir: string) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "main.mjs"],
-        env: bunEnv,
-        cwd: dir,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim(), stderr, exitCode };
-    }
-
     test("the next import() loads the file again", async () => {
       using dir = tempDir(
         "require-cache-delete-in-flight",
@@ -377,7 +378,11 @@ describe.concurrent("require.cache", () => {
         `),
       );
 
-      expect(await run(String(dir))).toEqual({ stdout: JSON.stringify({ loads: [1, 2] }), stderr: "", exitCode: 0 });
+      expect(await runMain(String(dir))).toEqual({
+        stdout: JSON.stringify({ loads: [1, 2] }),
+        stderr: "",
+        exitCode: 0,
+      });
     });
 
     test("a load that finishes after the replacement load does not replace it", async () => {
@@ -393,7 +398,7 @@ describe.concurrent("require.cache", () => {
         `),
       );
 
-      expect(await run(String(dir))).toEqual({
+      expect(await runMain(String(dir))).toEqual({
         stdout: JSON.stringify({ loads: [1, 2, 2], thirdIsSecond: true }),
         stderr: "",
         exitCode: 0,
@@ -438,17 +443,6 @@ describe.concurrent("require.cache", () => {
       `,
     });
 
-    async function run(dir: string) {
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "run", "main.mjs"],
-        env: bunEnv,
-        cwd: dir,
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      return { stdout: stdout.trim(), stderr, exitCode };
-    }
-
     test("the next import() loads the file again", async () => {
       using dir = tempDir(
         "require-cache-delete-resolve-chain",
@@ -459,7 +453,7 @@ describe.concurrent("require.cache", () => {
         `),
       );
 
-      expect(await run(String(dir))).toEqual({
+      expect(await runMain(String(dir))).toEqual({
         stdout: JSON.stringify({ first: "d", second: "d", secondIsFirst: false }),
         stderr: "",
         exitCode: 0,
@@ -477,7 +471,7 @@ describe.concurrent("require.cache", () => {
         `),
       );
 
-      expect(await run(String(dir))).toEqual({
+      expect(await runMain(String(dir))).toEqual({
         stdout: JSON.stringify({ first: "d", replacementIsFirst: false, secondIsReplacement: true }),
         stderr: "",
         exitCode: 0,

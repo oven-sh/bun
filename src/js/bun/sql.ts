@@ -64,9 +64,7 @@ function onTransactionDisconnected(this: TransactionState, err: Error) {
   }
 }
 
-/// The pool side of one reserve(): what the connection's close handler and the
-/// collection callback need. Held by the pooled connection and by
-/// reservationRegistry, so it must not reference the client itself.
+/// Retained by the pooled connection and reservationRegistry: must not reference the client.
 interface Reservation {
   pool: ReturnType<typeof adapterFromOptions>;
   pooledConnection: any;

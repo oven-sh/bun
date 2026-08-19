@@ -1,6 +1,6 @@
 import crypto from "crypto";
 import { readFileSync, realpathSync } from "fs";
-import { bunEnv, bunExe, tls as cert1, isDebug } from "harness";
+import { bunEnv, bunExe, tls as cert1, isDebug, isWindows } from "harness";
 import https from "https";
 import net, { AddressInfo } from "net";
 import { createTest } from "node-harness";
@@ -2455,5 +2455,106 @@ describe("deferred spill-close", () => {
     } finally {
       server.close();
     }
+  });
+});
+
+describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
+  // The peer fills both kernel buffers while the accepted socket is paused, then
+  // resets the connection (RST) instead of ending it. Node reports that as a read
+  // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
+  // after an 'end', so a reset misreported as an orderly end strands it.
+  async function acceptPausedSocketAndFill() {
+    const accepted = Promise.withResolvers<net.Socket>();
+    const onConnection = (socket: net.Socket) => {
+      socket.pause();
+      accepted.resolve(socket);
+    };
+    const server =
+      transport === "tls"
+        ? createServer({ ...COMMON_CERT, allowHalfOpen: true }, onConnection)
+        : net.createServer({ allowHalfOpen: true }, onConnection);
+    await once(server.listen(0, "127.0.0.1"), "listening");
+
+    const peerReady = Promise.withResolvers<void>();
+    const peer = await Bun.connect({
+      hostname: "127.0.0.1",
+      port: (server.address() as AddressInfo).port,
+      tls: transport === "tls" ? { ca: COMMON_CERT.cert } : undefined,
+      socket: {
+        open() {
+          if (transport !== "tls") peerReady.resolve();
+        },
+        handshake(_peer, success, verifyError) {
+          if (success) peerReady.resolve();
+          else peerReady.reject(verifyError ?? new Error("handshake failed"));
+        },
+        data() {},
+        close() {},
+        error(_peer, error) {
+          peerReady.reject(error);
+        },
+        connectError(_peer, error) {
+          peerReady.reject(error);
+        },
+      },
+    });
+    const socket = await accepted.promise;
+    await peerReady.promise;
+
+    const events: string[] = [];
+    let bytes = 0;
+    // Settles on 'close', or on the 'end' that must not happen, so a failure does
+    // not wait for the test timeout on a socket left half-open.
+    const settled = Promise.withResolvers<void>();
+    socket.on("data", chunk => (bytes += chunk.length));
+    socket.on("end", () => {
+      events.push("end");
+      settled.resolve();
+    });
+    socket.on("error", error => events.push(`error ${(error as NodeJS.ErrnoException).code}`));
+    socket.on("close", hadError => {
+      events.push(`close hadError=${hadError}`);
+      settled.resolve();
+    });
+    // Paused again: the 'data' listener above switched the stream to flowing.
+    socket.pause();
+
+    // A short write means the peer's send buffer and the server's receive buffer
+    // are both full: everything written so far is queued ahead of the reset.
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    while (peer.write(chunk) === chunk.length) {}
+
+    return {
+      socket,
+      peer,
+      events,
+      bytesRead: () => bytes,
+      settled: settled.promise,
+      [Symbol.dispose]() {
+        socket.destroy();
+        server.close();
+      },
+    };
+  }
+
+  it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {
+    using t = await acceptPausedSocketAndFill();
+    t.peer.terminate();
+    await t.settled;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+  });
+
+  it("delivers the data queued ahead of the reset and then reports ECONNRESET, not 'end'", async () => {
+    using t = await acceptPausedSocketAndFill();
+    // Both happen before the event loop runs again, so the socket's next read
+    // event carries the queued data and the reset together: the read loop drains
+    // the data and then gets the error from recv().
+    t.socket.resume();
+    t.peer.terminate();
+    await t.settled;
+    expect(t.events).toEqual(["error ECONNRESET", "close hadError=true"]);
+    // Windows discards the receive queue on a reset. Linux and macOS keep it, and
+    // like node, the data is delivered before the error.
+    if (!isWindows) expect(t.bytesRead()).toBeGreaterThan(0);
   });
 });

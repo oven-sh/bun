@@ -21,7 +21,7 @@ import { LIBC_ALLOCATION_SYMBOLS } from "../source.ts";
 // uv__split_path allocates with uv__malloc instead of _wcsdup so the buffer
 // can be uv__free'd under uv_replace_allocator (oven-sh/libuv#14).
 // To bump, update `bun`.
-const LIBUV_COMMIT = "0c89a51e2de5c42cca40e3bccc1e8542e157087c";
+const LIBUV_COMMIT = "8023581113b276e7c1aee3f82da57ca0893faab1";
 
 // prettier-ignore
 const SHARED = [

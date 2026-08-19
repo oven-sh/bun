@@ -90,7 +90,8 @@ function onReservedConnectionClosed(this: Reservation, err: Error) {
 let reservationRegistry: FinalizationRegistry<Reservation> | undefined;
 function onReservationCollected(reservation: Reservation) {
   const { pool, pooledConnection, state } = reservation;
-  if (state.connectionState & ReservedConnectionState.released) return;
+  // closed: close() is tearing the connection down and its close handler releases the slot.
+  if (state.connectionState & (ReservedConnectionState.closed | ReservedConnectionState.released)) return;
   state.connectionState |= ReservedConnectionState.closed;
   state.connectionState &= ~ReservedConnectionState.acceptQueries;
   if (pool.detachConnectionCloseHandler) {
@@ -499,7 +500,6 @@ const SQL: typeof Bun.SQL = function SQL(
         return Promise.$resolve(undefined);
       }
       state.connectionState &= ~ReservedConnectionState.acceptQueries;
-      reservationRegistry!.unregister(state);
       let timeout = options?.timeout;
       if (timeout) {
         timeout = Number(timeout);

@@ -41,7 +41,7 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
         })();
 
         let result: unknown = "pending";
-        const probe = sql`select 42 as v`.then(
+        sql`select 42 as v`.then(
           ([{ v }]) => (result = v),
           e => (result = e),
         );
@@ -50,7 +50,6 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
         for (let i = 0; i < 50 && result === "pending"; i++) {
           await collectOnce();
         }
-        await Promise.race([probe, Promise.resolve()]);
         expect(result).toBe(42);
         expect(controller.signal.aborted).toBe(false);
       } finally {
@@ -177,6 +176,34 @@ describeWithContainer("postgres", { image: "postgres_plain" }, container => {
       expect((await parked)[0].v).toBe(3);
     } finally {
       gate.resolve();
+      await sql.close({ timeout: 0.1 });
+    }
+  });
+
+  // close({ timeout }) whose in-flight work drains in time resolves without
+  // closing or releasing anything today, so a client dropped after it is the
+  // same leak as one that was never closed and must still be reclaimed.
+  test("a client dropped after close({ timeout }) drained its work still returns its slot", async () => {
+    await container.ready;
+    const sql = new SQL({ url: url(), max: 1, idleTimeout: 5 });
+    try {
+      await (async () => {
+        const client = await sql.reserve();
+        const inflight = client`select pg_sleep(0.01)`;
+        await client.close({ timeout: 5 });
+        await inflight;
+      })();
+
+      let result: unknown = "pending";
+      sql`select 4 as v`.then(
+        ([{ v }]) => (result = v),
+        e => (result = e),
+      );
+      for (let i = 0; i < 50 && result === "pending"; i++) {
+        await collectOnce();
+      }
+      expect(result).toBe(4);
+    } finally {
       await sql.close({ timeout: 0.1 });
     }
   });

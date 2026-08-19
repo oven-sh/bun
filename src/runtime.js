@@ -344,7 +344,18 @@ var __zodProtoHandler;
 
 function __zodState(x) {
   // Own symbol property; reading it never hits the lazy prototype proxy.
-  return x[__zodStateSymbol];
+  var state = x[__zodStateSymbol];
+  // The symbol is a registry symbol, so a stand-in made by another copy of this helper can carry a state this copy does not know. Answering undefined routes such a child through its own _zod accessor instead.
+  if (
+    typeof state !== "object" ||
+    state === null ||
+    typeof state.thunk !== "function" ||
+    typeof state.ir !== "string" ||
+    !Array.isArray(state.refs)
+  ) {
+    return undefined;
+  }
+  return state;
 }
 
 // Each wrapper's prototype is a Proxy whose target carries the wrapper and its state; after materialization the prototype is swapped to the real schema's, so traps cannot re-enter.

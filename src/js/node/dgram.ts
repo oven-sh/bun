@@ -843,7 +843,7 @@ function doConnect(ex, self, ip, address, port, callback) {
     try {
       connectFn.$call(state.handle.socket, ip, port);
     } catch (e) {
-      ex = e;
+      ex = decorateHostPortError(e, "connect", address, port);
     }
   }
 
@@ -1069,7 +1069,7 @@ function doSend(ex, self, ip, list, address, port, callback) {
   else err = state.handle.send(req, list, list.length, !!callback);
 
   if (typeof err !== "number") {
-    if (callback) process.nextTick(callback, decorateSendError(err, address, port));
+    if (callback) process.nextTick(callback, decorateHostPortError(err, "send", address, port));
     return;
   }
 
@@ -1100,21 +1100,21 @@ function afterQueuedSend(err, sent) {
   } else if (typeof err === "number") {
     callback(new ExceptionWithHostPort(err, "send", this.address, this.port));
   } else {
-    callback(decorateSendError(err, this.address, this.port));
+    callback(decorateHostPortError(err, "send", this.address, this.port));
   }
 }
 
-// Native send failure: keep the original error (its code is already
+// Native send/connect failure: keep the original error (its code is already
 // platform-correct) and decorate it like Node's ExceptionWithHostPort, which
 // omits the host segment when no address/port is known.
-function decorateSendError(err, address, port) {
-  err.syscall = "send";
+function decorateHostPortError(err, syscall, address, port) {
+  err.syscall = syscall;
   err.address = address;
   if (port) err.port = port;
   let details = "";
   if (port && port > 0) details = ` ${address}:${port}`;
   else if (address) details = ` ${address}`;
-  err.message = `send ${err.code}${details}`;
+  err.message = `${syscall} ${err.code}${details}`;
   return err;
 }
 

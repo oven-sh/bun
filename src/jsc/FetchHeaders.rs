@@ -133,18 +133,21 @@ impl FetchHeaders {
         self.put(name_, value, global)
     }
 
+    /// Throws (and returns `Err`) when a header name or value is invalid.
     pub fn create(
         global: &JSGlobalObject,
         names: *mut StringPointer,
         values: *mut StringPointer,
         buf: &ZigString,
         count_: u32,
-    ) -> Option<NonNull<FetchHeaders>> {
-        // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
-        // passed by address only.
-        let p =
-            unsafe { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) };
-        NonNull::new(p)
+    ) -> JsResult<NonNull<FetchHeaders>> {
+        let p = host_fn::from_js_host_call_generic(global, || {
+            // SAFETY: forwarding caller-provided buffers to C++; `global` is an opaque ZST handle
+            // passed by address only.
+            unsafe { WebCore__FetchHeaders__createValueNotJS(global, names, values, buf, count_) }
+        })?;
+        Ok(NonNull::new(p)
+            .expect("WebCore__FetchHeaders__createValueNotJS returned null without an exception"))
     }
 
     pub fn from(

@@ -1333,6 +1333,8 @@ const heldBundleFiles = {
   "routes/held.ts": `
     export default () => new Response('held');
   `,
+  // Thrown, not returned: `handleRequest` only re-routes a `Response.render()` it catches (React's wrapper throws it for the
+  // component); this framework hands a returned one straight back as the response.
   "routes/render.ts": `
     export default () => { throw Response.render('/parked'); };
   `,
@@ -1378,16 +1380,17 @@ devTest("route deferred to the next bundle that reaches a recorded failure is re
   },
 });
 // `Response.render()` to a route nobody requested yet goes through `bundleNewRoute`, whose promise is parked on the next bundle while
-// the rendering route's own bundle is still being finalized. The target reaches the recorded failure: the promise rejects.
-devTest("Response.render() to an unrequested route that reaches a recorded failure rejects", {
+// the rendering route's own bundle is still being finalized. The target reaches the recorded failure: the promise rejects with the
+// error page as a `Response`, and `handleRequest` answers with that page.
+devTest("Response.render() to an unrequested route that reaches a recorded failure serves its error page", {
   files: heldBundleFiles,
   env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
   async test(dev) {
     await expectBuildFailedPage(dev, "/first", "flaky.ts");
-    expect((await dev.fetch("/render")).status).toBe(500);
+    await expectBuildFailedResponse(dev.fetch("/render"), "flaky.ts");
     // The target route was left in a state a plain request can pick up from.
     await expectBuildFailedPage(dev, "/parked", "flaky.ts");
-    expect((await dev.fetch("/render")).status).toBe(500);
+    await expectBuildFailedResponse(dev.fetch("/render"), "flaky.ts");
   },
 });
 // Same, without the assumption: the promise waits for the rebuild and resolves, and the target route is `Loaded` afterwards.

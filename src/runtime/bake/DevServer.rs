@@ -5725,7 +5725,8 @@ impl DevServer {
                 // ownership is transferred to `HeadersRef`.
                 let headers_ref =
                     unsafe { crate::webcore::response::HeadersRef::adopt(fetch_headers) };
-                let response: Response = Response::init(
+                // The JS wrapper adopts the heap allocation and frees it in `ResponseClass__finalize`.
+                let response = bun_core::heap::into_raw(Box::new(Response::init(
                     crate::webcore::response::Init {
                         status_code: 500,
                         headers: Some(headers_ref),
@@ -5736,10 +5737,11 @@ impl DevServer {
                     )),
                     BunString::empty(),
                     false,
-                );
+                )));
+                let response_js = Response::make_maybe_pooled(global, response);
                 let vm = self.vm();
                 let _exit = vm.enter_event_loop_scope();
-                r.promise.reject(global, Ok(response.to_js(global)))?;
+                r.promise.reject(global, Ok(response_js))?;
             }
         }
         Ok(())

@@ -1107,18 +1107,20 @@ impl UpdateInteractiveCommand {
         }
     }
 
+    /// Raw terminal size in character cells. The viewport reserve is applied
+    /// by `compute_viewport_height`, not here.
     fn get_terminal_size() -> TerminalSize {
         // Try to get terminal size
         #[cfg(unix)]
         {
             // TIOCGWINSZ on stdout, routed through the output sink (bun_sys).
             if let Some(size) = bun_core::output::File::from(bun_core::Fd::stdout()).winsize() {
-                // Reserve space for prompt (1 line) + scroll indicators (2 lines) + some buffer
-                let usable_height = if size.row > 6 { size.row - 4 } else { 20 };
-                return TerminalSize {
-                    height: usable_height as usize,
-                    width: size.col as usize,
-                };
+                if size.row > 0 && size.col > 0 {
+                    return TerminalSize {
+                        height: size.row as usize,
+                        width: size.col as usize,
+                    };
+                }
             }
         }
         #[cfg(windows)]
@@ -1142,18 +1144,38 @@ impl UpdateInteractiveCommand {
             {
                 let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
                 let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-                // Reserve space for prompt + scroll indicators + buffer
-                let usable_height = if height > 6 { height - 4 } else { 20 };
-                return TerminalSize {
-                    height: usize::try_from(usable_height).expect("int cast"),
-                    width: usize::try_from(width).expect("int cast"),
-                };
+                if width > 0 && height > 0 {
+                    return TerminalSize {
+                        height: usize::try_from(height).expect("int cast"),
+                        width: usize::try_from(width).expect("int cast"),
+                    };
+                }
             }
         }
         TerminalSize {
-            height: 20,
+            height: 24,
             width: 80,
         } // Default fallback
+    }
+
+    /// Package rows that fit on screen next to the frame's fixed lines: the
+    /// help line, a blank line plus a header line per dependency group, the
+    /// bottom scroll indicator, and the row the cursor parks on below the
+    /// frame. A frame taller than the terminal cannot be redrawn in place:
+    /// the cursor-up clamps at the screen top and every redraw scrolls the
+    /// previous frame's top lines into scrollback.
+    fn compute_viewport_height(terminal_rows: usize, packages: &[OutdatedPackage]) -> usize {
+        let mut groups: usize = 0;
+        let mut current_dep_type: Option<&[u8]> = None;
+        for pkg in packages.iter() {
+            if current_dep_type.is_none()
+                || !strings::eql(current_dep_type.unwrap(), pkg.dependency_type)
+            {
+                groups += 1;
+                current_dep_type = Some(pkg.dependency_type);
+            }
+        }
+        terminal_rows.saturating_sub(2 * groups + 3).max(1)
     }
 
     fn truncate_with_ellipsis(text: &[u8], max_width: usize, only_end: bool) -> Box<[u8]> {
@@ -1198,12 +1220,13 @@ impl UpdateInteractiveCommand {
         // Get terminal size for viewport and width optimization
         let terminal_size = Self::get_terminal_size();
 
+        let viewport_height = Self::compute_viewport_height(terminal_size.height, packages);
         let mut state = MultiSelectState {
             packages,
             selected: &mut selected,
             cursor: 0,
             viewport_start: 0,
-            viewport_height: terminal_size.height,
+            viewport_height,
             toggle_all: false,
             max_name_len: columns.name,
             max_current_len: columns.current,
@@ -1348,6 +1371,8 @@ impl UpdateInteractiveCommand {
         let mut reprint_menu = true;
         let mut total_lines: usize = 0;
         let mut last_terminal_width = initial_terminal_size.width;
+        let mut last_terminal_height = initial_terminal_size.height;
+        let mut needs_redraw = true;
 
         macro_rules! cleanup_and_reprint {
             ($reprint:expr) => {{
@@ -1375,9 +1400,12 @@ impl UpdateInteractiveCommand {
         loop {
             // Check for terminal resize
             let current_size = Self::get_terminal_size();
-            if current_size.width != last_terminal_width {
+            if current_size.width != last_terminal_width
+                || current_size.height != last_terminal_height
+            {
                 // Terminal was resized, update viewport and redraw
-                state.viewport_height = current_size.height;
+                state.viewport_height =
+                    Self::compute_viewport_height(current_size.height, state.packages);
                 let columns = Self::calculate_column_widths(state.packages);
                 state.show_workspace = columns.show_workspace && current_size.width > 100;
                 state.max_name_len = columns.name;
@@ -1386,13 +1414,15 @@ impl UpdateInteractiveCommand {
                 state.max_latest_len = columns.latest;
                 state.max_workspace_len = columns.workspace;
                 last_terminal_width = current_size.width;
+                last_terminal_height = current_size.height;
                 Self::update_viewport(state);
                 // Force full redraw
                 initial_draw = true;
+                needs_redraw = true;
             }
 
             // The render body
-            {
+            if needs_redraw {
                 let synchronized = Output::synchronized();
                 let _sync_end = scopeguard::guard(synchronized, |s| s.end());
 
@@ -1923,6 +1953,7 @@ impl UpdateInteractiveCommand {
                 Output::clear_to_end();
             }
             Output::flush();
+            needs_redraw = false;
 
             // Read input
             let mut reader = bun_core::output::stdin_reader();
@@ -1955,6 +1986,7 @@ impl UpdateInteractiveCommand {
                         state.packages[state.cursor].use_latest = true;
                     }
                     state.toggle_all = false;
+                    needs_redraw = true;
                     // Don't move cursor on space - let user manually navigate
                 }
                 b'a' | b'A' => {
@@ -1967,10 +1999,12 @@ impl UpdateInteractiveCommand {
                         }
                     }
                     state.toggle_all = true; // Mark that 'a' was used
+                    needs_redraw = true;
                 }
                 b'n' | b'N' => {
                     state.selected.fill(false);
                     state.toggle_all = false; // Reset toggle_all mode
+                    needs_redraw = true;
                 }
                 b'i' | b'I' => {
                     // Invert selection
@@ -1978,6 +2012,7 @@ impl UpdateInteractiveCommand {
                         *sel = !*sel;
                     }
                     state.toggle_all = false; // Reset toggle_all mode
+                    needs_redraw = true;
                 }
                 b'l' | b'L' => {
                     // Only affect all packages if 'a' (select all) was used
@@ -1997,6 +2032,7 @@ impl UpdateInteractiveCommand {
                             !state.packages[state.cursor].use_latest;
                         state.selected[state.cursor] = true;
                     }
+                    needs_redraw = true;
                 }
                 b'j' => {
                     if state.cursor < state.packages.len() - 1 {
@@ -2006,6 +2042,7 @@ impl UpdateInteractiveCommand {
                     }
                     Self::update_viewport(state);
                     state.toggle_all = false;
+                    needs_redraw = true;
                 }
                 b'k' => {
                     if state.cursor > 0 {
@@ -2015,6 +2052,7 @@ impl UpdateInteractiveCommand {
                     }
                     Self::update_viewport(state);
                     state.toggle_all = false;
+                    needs_redraw = true;
                 }
                 27 => {
                     // escape sequence
@@ -2034,6 +2072,7 @@ impl UpdateInteractiveCommand {
                                     state.cursor = state.packages.len() - 1;
                                 }
                                 Self::update_viewport(state);
+                                needs_redraw = true;
                             }
                             b'B' => {
                                 // down arrow
@@ -2043,16 +2082,19 @@ impl UpdateInteractiveCommand {
                                     state.cursor = 0;
                                 }
                                 Self::update_viewport(state);
+                                needs_redraw = true;
                             }
                             b'C' => {
                                 // right arrow - switch to Latest version and select
                                 state.packages[state.cursor].use_latest = true;
                                 state.selected[state.cursor] = true;
+                                needs_redraw = true;
                             }
                             b'D' => {
                                 // left arrow - switch to Target version and select
                                 state.packages[state.cursor].use_latest = false;
                                 state.selected[state.cursor] = true;
+                                needs_redraw = true;
                             }
                             b'5' => {
                                 // Page Up
@@ -2067,6 +2109,7 @@ impl UpdateInteractiveCommand {
                                         state.cursor = 0;
                                     }
                                     Self::update_viewport(state);
+                                    needs_redraw = true;
                                 }
                             }
                             b'6' => {
@@ -2082,6 +2125,7 @@ impl UpdateInteractiveCommand {
                                         state.cursor = state.packages.len() - 1;
                                     }
                                     Self::update_viewport(state);
+                                    needs_redraw = true;
                                 }
                             }
                             b'<' => {
@@ -2108,6 +2152,7 @@ impl UpdateInteractiveCommand {
                                                         1usize.min(state.viewport_start);
                                                     state.viewport_start -= scroll_amount;
                                                     Self::ensure_cursor_in_viewport(state);
+                                                    needs_redraw = true;
                                                 }
                                             } else if button == 65 {
                                                 // Scroll down
@@ -2121,8 +2166,11 @@ impl UpdateInteractiveCommand {
                                                     let scroll_amount = 1usize.min(max_scroll);
                                                     state.viewport_start += scroll_amount;
                                                     Self::ensure_cursor_in_viewport(state);
+                                                    needs_redraw = true;
                                                 }
                                             }
+                                            // Click press/release and other
+                                            // buttons change nothing: no redraw.
                                         }
                                         break;
                                     }

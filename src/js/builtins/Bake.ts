@@ -159,6 +159,7 @@ export async function renderRoutesForProdStatic(
     }),
   );
   const errors = settled.filter(r => r.status === "rejected").map(r => (r as PromiseRejectedResult).reason);
-  if (errors.length === 1) throw errors[0];
-  if (errors.length > 1) throw new AggregateError(errors, `${errors.length} routes failed to pre-render`);
+  const { length: failed } = errors;
+  if (failed === 1) throw errors[0];
+  if (failed > 1) throw new AggregateError(errors, `${failed} routes failed to pre-render`);
 }

@@ -30,7 +30,8 @@ test.concurrent("DevServer is notified when [serve.static] plugin setup rejects"
       };
     `,
     "index.html": indexHtml,
-    "other.html": indexHtml,
+    // Distinct content: two byte-identical HTML imports collapse into one module.
+    "other.html": indexHtml.replace("<body>", "<body><p>other</p>"),
     "entry.ts": `console.log("unused");`,
     "server.ts": `
       import html from "./index.html";

@@ -138,8 +138,8 @@ devTest("disposing a client reports a runtime error that only reached the error 
     const c = await dev.client("/");
     await c.expectMessage("loaded");
 
-    // happy-dom routes a throw from a timer callback to the window "error" event, not to console.error, so it only shows on the overlay after /_bun/report_error answers.
-    await c.js`setTimeout(() => { throw new Error("late boom"); }, 0)`;
+    // happy-dom routes a throw from a timer callback to the window "error" event, not to console.error, so it only shows on the overlay after /_bun/report_error answers. The second timer runs after the first has thrown, so the report is in flight when the client is disposed.
+    await c.js`new Promise(resolve => { setTimeout(() => { throw new Error("late boom"); }, 0); setTimeout(resolve, 5); })`;
 
     expect(await rejectionMessage(c[Symbol.asyncDispose]())).toBe(
       'Client exited: "Error overlay showing a runtime error the test never checked"',

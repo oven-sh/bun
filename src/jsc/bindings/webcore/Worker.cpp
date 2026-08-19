@@ -361,56 +361,42 @@ JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject)
     array->putDirectIndex(globalObject, 10, jsBoolean(isNodeWorker));
     array->putDirectIndex(globalObject, 11, JSFunction::create(vm, globalObject, 1, "setParentPort"_s, jsFunctionSetParentPort, ImplementationVisibility::Public, NoIntrinsic));
     array->putDirectIndex(globalObject, 12, JSFunction::create(vm, globalObject, 1, "setStdioPorts"_s, jsFunctionSetNodeWorkerStdioPorts, ImplementationVisibility::Public, NoIntrinsic));
-    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 2, "routeConsoleToProcessStdio"_s, jsFunctionRouteConsoleToProcessStdio, ImplementationVisibility::Public, NoIntrinsic));
+    array->putDirectIndex(globalObject, 13, JSFunction::create(vm, globalObject, 1, "routeConsoleToProcessStdio"_s, jsFunctionRouteConsoleToProcessStdio, ImplementationVisibility::Public, NoIntrinsic));
     return array;
 }
 
 extern "C" void Bun__ConsoleObject__useWorkerStdio(JSC::JSGlobalObject*);
 
-// worker_threads (worker side): from now on the global console writes through the given
-// process.stdout / process.stderr (port-backed streams to the parent) instead of the fds,
-// as Node routes a worker's console through them.
+// worker_threads (worker side): from now on the global console hands each call's output to
+// `write(chunk, fd)` (internal/worker/stdio makeConsoleWriter, over the worker's port-backed
+// process.stdout / process.stderr) instead of writing the fds, as Node routes a worker's
+// console through its stdio streams.
 JSC_DEFINE_HOST_FUNCTION(jsFunctionRouteConsoleToProcessStdio, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
-    auto* stdoutStream = callFrame->argument(0).getObject();
-    auto* stderrStream = callFrame->argument(1).getObject();
-    ASSERT(stdoutStream && stderrStream);
-    globalObject->setNodeWorkerConsoleStreams(stdoutStream, stderrStream);
+    auto* write = callFrame->argument(0).getObject();
+    ASSERT(write && write->isCallable());
+    globalObject->setNodeWorkerConsoleWrite(write);
     Bun__ConsoleObject__useWorkerStdio(globalObject);
     return JSValue::encode(jsUndefined());
 }
 
-// The worker console's sink: `stream.write(chunk)` on the stream registered above (fd picks
-// which). As with Node's Console (ignoreErrors), a failing or ended stream never makes
-// console.log() throw: errors are dropped, and nothing is written once the stream has ended.
+// The worker console's sink: one call into the writer registered above per console call.
 extern "C" void Bun__NodeWorker__writeConsoleStream(JSC::JSGlobalObject* lexicalGlobalObject, uint8_t fd, JSC::EncodedJSValue chunk)
 {
     auto* globalObject = defaultGlobalObject(lexicalGlobalObject);
+    JSObject* write = globalObject->nodeWorkerConsoleWrite();
+    if (!write)
+        return;
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
-    auto ignoreErrors = [&] { (void)scope.tryClearException(); };
-
-    JSObject* stream = globalObject->nodeWorkerConsoleStream(fd);
-    if (!stream)
-        return;
-    auto& names = WebCore::clientData(vm)->builtinNames();
-    JSValue writable = stream->get(globalObject, names.writablePublicName());
-    if (scope.exception()) [[unlikely]]
-        return ignoreErrors();
-    if (writable.isFalse())
-        return;
-    JSValue write = stream->get(globalObject, names.writePublicName());
-    if (scope.exception()) [[unlikely]]
-        return ignoreErrors();
-    auto callData = JSC::getCallData(write);
-    if (callData.type == CallData::Type::None) [[unlikely]]
-        return;
     MarkedArgumentBuffer args;
     args.append(JSValue::decode(chunk));
-    JSC::call(globalObject, write, callData, stream, args);
+    args.append(jsNumber(fd));
+    JSC::call(globalObject, write, JSC::getCallData(write), jsUndefined(), args);
+    // The writer drops stream errors itself; only OOM / termination can surface here.
     if (scope.exception()) [[unlikely]]
-        return ignoreErrors();
+        (void)scope.tryClearException();
 }
 
 // worker_threads (worker side): { stdin?, stdout, stderr } ports from the parent Worker.

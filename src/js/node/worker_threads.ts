@@ -95,7 +95,7 @@ const {
   boolean,
   (port: MessagePort) => void,
   (ports: object) => void,
-  (stdout: object, stderr: object) => void,
+  (write: (chunk: Buffer, fd: number) => void) => void,
 ];
 
 type NodeWorkerOptions = import("node:worker_threads").WorkerOptions;
@@ -329,7 +329,7 @@ const BUN_WORKER_MESSAGING_KEY = "@@bunWorkerThreadsMessaging";
 // stdio and control ports.
 const BUN_WORKER_PARENT_PORT_KEY = "@@bunWorkerThreadsParentPort";
 
-const { makePortReadable, makePortWritable } = require("internal/worker/stdio");
+const { makePortReadable, makePortWritable, makeConsoleWriter } = require("internal/worker/stdio");
 
 // The parent always sends stdout and stderr ports; stdin only for { stdin: true }.
 // With the ports registered on the global, process.stdin/stdout/stderr's native
@@ -340,7 +340,7 @@ function setupWorkerStdio(stdio) {
   // node routes a worker's console through its process.stdout/stderr (so the parent's
   // worker.stdout sees it); the native console writes through these two streams from
   // here on instead of the fds. It stays the same console the main thread has.
-  _routeConsoleToProcessStdio(process.stdout, process.stderr);
+  _routeConsoleToProcessStdio(makeConsoleWriter(process.stdout, process.stderr));
   // node always replaces a worker's process.stdin: port-backed when { stdin: true },
   // otherwise an immediately-EOF'd stream — never the process-wide fd 0, which
   // would race the main thread (and hang on a TTY).

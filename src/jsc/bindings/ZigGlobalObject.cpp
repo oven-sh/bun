@@ -4231,11 +4231,6 @@ void GlobalObject::adoptNapiEnvsForTestIsolation(GlobalObject* oldGlobal)
 
 void GlobalObject::setNodeWorkerEnvironmentData(JSMap* data) { m_nodeWorkerEnvironmentData.set(vm(), this, data); }
 void GlobalObject::setNodeWorkerStdioPorts(JSObject* ports) { m_nodeWorkerStdioPorts.set(vm(), this, ports); }
-void GlobalObject::setNodeWorkerConsoleStreams(JSObject* stdoutStream, JSObject* stderrStream)
-{
-    m_nodeWorkerConsoleStdout.set(vm(), this, stdoutStream);
-    m_nodeWorkerConsoleStderr.set(vm(), this, stderrStream);
-}
 void GlobalObject::setNodeWorkerEntryEvaluatedHook(JSObject* hook)
 {
     if (hook)

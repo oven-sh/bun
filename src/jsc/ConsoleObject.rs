@@ -647,9 +647,10 @@ impl<'a> Sink<'a> {
 }
 
 unsafe extern "C" {
-    /// `stream.write(chunk)` on the worker's bootstrap-time process.stdout/stderr.
-    /// Stream errors are dropped, like Node's Console with `ignoreErrors`, so it never
-    /// leaves a (non-termination) exception pending.
+    /// Hands `chunk` to the worker's console writer (internal/worker/stdio
+    /// makeConsoleWriter → process.stdout/stderr.write). Stream errors are dropped
+    /// there, like Node's Console with `ignoreErrors`; never leaves a
+    /// (non-termination) exception pending.
     safe fn Bun__NodeWorker__writeConsoleStream(global: &JSGlobalObject, fd: u8, chunk: JSValue);
 }
 

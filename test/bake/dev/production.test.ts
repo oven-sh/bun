@@ -13,37 +13,41 @@ const platformPath = (path: string) => (process.platform === "win32" ? path.repl
  * Production build tests
  */
 describe("production", () => {
-  test("works with sourcemaps - error thrown in React component", async () => {
-    const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
-      "src/index.tsx": `export default { app: { framework: "react" } };`,
-      "pages/index.tsx": `export default function IndexPage() {
+  test(
+    "works with sourcemaps - error thrown in React component",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-sourcemap", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `export default function IndexPage() {
   throw new Error("oh no!");
   return <div>Hello World</div>;
 }`,
-      "package.json": JSON.stringify({
-        "name": "test-app",
-        "version": "1.0.0",
-        "devDependencies": {
-          "react": "^18.0.0",
-          "react-dom": "^18.0.0",
-        },
-      }),
-    });
+        "package.json": JSON.stringify({
+          "name": "test-app",
+          "version": "1.0.0",
+          "devDependencies": {
+            "react": "^18.0.0",
+            "react-dom": "^18.0.0",
+          },
+        }),
+      });
 
-    // Run the build command
-    const {
-      exitCode: buildExitCode,
-      stdout: buildStdout,
-      stderr: buildStderr,
-    } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
+      // Run the build command
+      const {
+        exitCode: buildExitCode,
+        stdout: buildStdout,
+        stderr: buildStderr,
+      } = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).throws(false);
 
-    // The build should fail due to the runtime error during SSG
-    expect(buildExitCode).toBe(1);
+      // The build should fail due to the runtime error during SSG
+      expect(buildExitCode).toBe(1);
 
-    // Check that the error message shows the proper source location
-    expect(buildStderr.toString()).toContain("throw new Error");
-    expect(buildStderr.toString()).toContain("oh no!");
-  });
+      // Check that the error message shows the proper source location
+      expect(buildStderr.toString()).toContain("throw new Error");
+      expect(buildStderr.toString()).toContain("oh no!");
+    },
+    30_000 * WAIT_MULTIPLIER,
+  );
 
   test(
     "every route that throws while pre-rendering is reported",
@@ -87,6 +91,42 @@ export function getStaticPaths() {
       expect(stderr.toString()).toContain("param boom");
       expect(stderr.toString()).not.toContain("cannot be pre-rendered to a static page");
       expect(exitCode).toBe(1);
+    },
+    30_000 * WAIT_MULTIPLIER,
+  );
+
+  // A throw inside a <Suspense> boundary is recoverable: React renders the fallback and the client retries, so the build succeeds.
+  test(
+    "a client component that throws inside Suspense pre-renders the fallback",
+    async () => {
+      const dir = await tempDirWithBakeDeps("bake-production-suspense-client-throw", {
+        "src/index.tsx": `export default { app: { framework: "react" } };`,
+        "pages/index.tsx": `import { Suspense } from "react";
+import ClientOnly from "../components/ClientOnly";
+export default function Page() {
+  return (
+    <main>
+      <Suspense fallback={<p>FALLBACK</p>}>
+        <ClientOnly />
+      </Suspense>
+    </main>
+  );
+}`,
+        "components/ClientOnly.tsx": `"use client";
+export default function ClientOnly() {
+  if (typeof window === "undefined") throw new Error("CLIENT_ONLY_THROW");
+  return <p>rendered on the client</p>;
+}`,
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+        .cwd(dir)
+        .env(bunEnv)
+        .throws(false);
+      // Logged once, like React's default `onError`, but not fatal.
+      expect(stderr.toString().match(/error: CLIENT_ONLY_THROW/g)).toHaveLength(1);
+      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("FALLBACK");
+      expect(exitCode).toBe(0);
     },
     30_000 * WAIT_MULTIPLIER,
   );
@@ -420,6 +460,39 @@ export default function Docs() {
 
     expect(stderr.toString()).toContain("TypeError: plugins must be an array");
     expect(exitCode).toBe(1);
+  });
+
+  test("rejects a fileSystemRouterTypes[n].prefix other than /", async () => {
+    using dir = tempDir("bake-production-prefix", {
+      "server.ts": `export function render() { return new Response("unused"); }
+export function prerender(meta) { return { files: { "/index.html": String(meta.pageModule.default()) } }; }`,
+      "routes/index.ts": `export default () => "index";`,
+      "bun.app.ts": `
+        const { prefix } = JSON.parse(process.env.PREFIX_JSON!);
+        export default {
+          app: {
+            framework: {
+              fileSystemRouterTypes: [{ root: "routes", style: "nextjs-pages", serverEntryPoint: "./server.ts", prefix }],
+            },
+          },
+        };
+      `,
+    });
+
+    // TypeError message when rejected, otherwise the exit code.
+    const build = async (prefix: string | null) => {
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+        .cwd(String(dir))
+        .env({ ...bunEnv, PREFIX_JSON: JSON.stringify({ prefix }) })
+        .quiet()
+        .throws(false);
+      return stderr.toString().match(/TypeError: (.*)/)?.[1] ?? exitCode;
+    };
+    const prefixes = [null, "/", "/docs", ""];
+    const results = await Promise.all(prefixes.map(async prefix => [prefix, await build(prefix)]));
+
+    const rejected = `'fileSystemRouterTypes[0].prefix' other than "/" is not supported yet`;
+    expect(Object.fromEntries(results)).toStrictEqual({ null: 0, "/": 0, "/docs": rejected, "": rejected });
   });
 
   test("an unhandled rejection from the config file fails the build", async () => {
@@ -1064,6 +1137,42 @@ export default function IndexPage() {
     expect(htmlContent).not.toContain('<script type="module"');
   });
 
+  test("prerendered index.rsc encodes the joined stylesheet byte length in its header", async () => {
+    const dir = await tempDirWithBakeDeps("bake-production-rsc-css-header", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import "./styles.css";
+export default function IndexPage() {
+  return <div>Hello World</div>;
+}`,
+      "pages/styles.css": `div { color: red; }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) {
+      expect(stderr.toString()).toBe("");
+    }
+    expect(exitCode).toBe(0);
+
+    // The <link rel="stylesheet"> hrefs in the HTML are `meta.styles`, an independent source for the expected CSS list.
+    const html = await Bun.file(path.join(dir, "dist", "index.html")).text();
+    const hrefs = [...html.matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)]
+      .map(tag => tag[0].match(/\bhref="([^"]*)"/)?.[1])
+      .filter((href): href is string => !!href);
+    expect(hrefs.length).toBeGreaterThan(0);
+    const expectedCss = hrefs.join("\n");
+
+    // index.rsc layout: little-endian uint32 byte length of the CSS list, the list, then the flight payload.
+    const buf = Buffer.from(await Bun.file(path.join(dir, "dist", "index.rsc")).arrayBuffer());
+    const header = buf.readUInt32LE(0);
+    expect(header).toBe(Buffer.byteLength(expectedCss));
+    expect(buf.toString("utf8", 4, 4 + header)).toBe(expectedCss);
+    // React flight rows start with a numeric id like "0:".
+    expect(buf.toString("utf8", 4 + header)).toMatch(/^\d+:/);
+  });
+
   test("a custom framework without server components builds and keeps its client entry", async () => {
     using dir = tempDir("bake-production-custom-framework", {
       "bun.app.ts": `export default {
@@ -1104,6 +1213,86 @@ export async function prerender(meta: any) {
     expect(existsSync(path.join(String(dir), "dist", scriptMatch![1].replace(/^\//, "")))).toBe(true);
     expect(exitCode).toBe(0);
   });
+
+  test("a route file that is not a script is reported by name", async () => {
+    using dir = tempDir("bake-production-non-js-route", {
+      "bun.app.ts": `export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              { root: "pages", style: "nextjs-pages", serverEntryPoint: "./server-entry.ts", extensions: "*" },
+            ],
+          },
+        },
+      };`,
+      "pages/index.tsx": `export default function Home() { return "homepage"; }`,
+      "pages/style.css": `body { color: red; }`,
+      "pages/doc.html": `<!doctype html><html><body>static</body></html>`,
+      "server-entry.ts": `export function render(req: Request, meta: any) {
+  return new Response(String(meta.pageModule.default()));
+}
+export async function prerender(meta: any) {
+  return { files: { "/index.html": "<!DOCTYPE html><html><body>" + String(meta.pageModule.default()) + "</body></html>" } };
+}`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts`
+      .cwd(String(dir))
+      .env(bunEnv)
+      .throws(false);
+
+    for (const file of ["pages/style.css", "pages/doc.html"]) {
+      expect(stderr.toString()).toContain(
+        `error: "${platformPath(file)}" is not a JavaScript or TypeScript file, so it cannot be a route`,
+      );
+    }
+    expect(exitCode).toBe(1);
+  });
+
+  // --debug-no-minify names an entry in the project root `_bun/./[name].[hash].js`; module keys must normalise that like the resolver does.
+  test.skipIf(!hasBakeDebuggingFeatures)(
+    "a server entry point in the project root loads under --debug-no-minify",
+    async () => {
+      using dir = tempDir("bake-production-root-entry-no-minify", {
+        "bun.app.ts": `export default {
+        app: {
+          framework: {
+            fileSystemRouterTypes: [
+              {
+                root: "pages",
+                style: "nextjs-pages",
+                serverEntryPoint: "./server-entry.ts",
+                clientEntryPoint: "./client-entry.ts",
+              },
+            ],
+          },
+        },
+      };`,
+        "pages/index.tsx": `export default function Home() { return "homepage"; }`,
+        "server-entry.ts": `export function render(req: Request, meta: any) {
+  return new Response(String(meta.pageModule.default()));
+}
+export async function prerender(meta: any) {
+  const scripts = meta.modules.map(m => '<script type="module" src="' + m + '"></script>').join("");
+  return { files: { "/index.html": "<!DOCTYPE html><html><body>" + String(meta.pageModule.default()) + scripts + "</body></html>" } };
+}`,
+        "client-entry.ts": `console.log("client loaded");`,
+      });
+
+      const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./bun.app.ts --debug-no-minify`
+        .cwd(String(dir))
+        .env(bunEnv)
+        .throws(false);
+
+      expect(stderr.toString()).not.toContain("error:");
+      const htmlContent = await Bun.file(path.join(String(dir), "dist", "index.html")).text();
+      expect(htmlContent).toContain("homepage");
+      const scriptMatch = htmlContent.match(/<script type="module" src="([^"]*_bun[^"]*\.js)"><\/script>/);
+      expect(scriptMatch).not.toBeNull();
+      expect(existsSync(path.join(String(dir), "dist", scriptMatch![1].replace(/^\//, "")))).toBe(true);
+      expect(exitCode).toBe(0);
+    },
+  );
 
   // A successful build leaves through `on_exit` + `global_exit`: 'exit' handlers, process.exitCode, and VM teardown under BUN_DESTRUCT_VM_ON_EXIT.
   describe.concurrent("exits through the build VM", () => {

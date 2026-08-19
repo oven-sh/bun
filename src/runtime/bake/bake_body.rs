@@ -938,6 +938,12 @@ impl Framework {
                     get_optional_string(fsr_opts, global, b"clientEntryPoint", refs)?;
                 let prefix =
                     get_optional_string(fsr_opts, global, b"prefix", refs)?.unwrap_or(b"/");
+                if prefix != b"/" {
+                    return Err(global.throw_invalid_arguments(format_args!(
+                        "'fileSystemRouterTypes[{}].prefix' other than \"/\" is not supported yet",
+                        i
+                    )));
+                }
                 let ignore_underscores =
                     get_boolean_strict(fsr_opts, global, b"ignoreUnderscores")?.unwrap_or(false);
                 let layouts = get_boolean_strict(fsr_opts, global, b"layouts")?.unwrap_or(false);

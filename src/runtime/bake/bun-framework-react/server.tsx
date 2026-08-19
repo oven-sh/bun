@@ -37,6 +37,14 @@ function getPage(meta: Bake.RouteMetadata & { request?: Request }, styles: reado
   );
 }
 
+// client.tsx splits the CSS list from the RSC payload by this UTF-8 byte length, so `render` and `prerender` must encode it identically.
+function encodeCssHeader(styles: readonly string[]): [Buffer, string] {
+  const str = styles.join("\n");
+  const int = Buffer.allocUnsafe(4);
+  int.writeUInt32LE(Buffer.byteLength(str), 0);
+  return [int, str];
+}
+
 function component(mod: any, params: Record<string, string> | null, request?: Request) {
   const Page = mod.default;
   let props = {};
@@ -88,9 +96,7 @@ export async function render(
     // "client.tsx" reads the start of the response to determine the
     // CSS files to load. The styles are loaded before the new page
     // is presented, to avoid a flash of unstyled content.
-    const int = Buffer.allocUnsafe(4);
-    const str = meta.styles.join("\n");
-    int.writeUInt32LE(str.length, 0);
+    const [int, str] = encodeCssHeader(meta.styles);
     rscPayload.write(int);
     rscPayload.write(str);
   }
@@ -178,9 +184,7 @@ export async function prerender(meta: Bake.RouteMetadata) {
   }));
   pipe(rscPayload);
 
-  const int = new Uint32Array(1);
-  int[0] = meta.styles.length;
-  let rscChunks: Array<BlobPart> = [int.buffer as ArrayBuffer, meta.styles.join("\n")];
+  const rscChunks: Array<BlobPart> = encodeCssHeader(meta.styles);
   rscPayload.on("data", chunk => rscChunks.push(chunk));
 
   // A render error rejects here so the build fails with the component's error, not "cannot be pre-rendered".

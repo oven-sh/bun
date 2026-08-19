@@ -105,27 +105,28 @@ export function renderToStaticHtml(
   const stream = new StaticRscInjectionStream(rscPayload, signal);
   const promise = createFromNodeStream(rscPayload, createFromNodeStreamOptions);
   const Root = () => React.use(promise);
-  let pipe: (stream: any) => void;
-  let abort: ((reason?: any) => void) | undefined;
-  let aborted = false;
-  ({ pipe, abort } = renderToPipeableStream(<Root />, {
+  // Fizz reports every render error to `onError`. One thrown inside a <Suspense> boundary is recoverable: the
+  // boundary renders its fallback, retries on the client, and `onAllReady` still fires, so it is only logged.
+  const errors: unknown[] = [];
+  const { pipe } = renderToPipeableStream(<Root />, {
     bootstrapModules,
-    // Only begin flowing HTML once all of it is ready. This tells React
-    // to not emit the flight chunks, just the entire HTML.
-    onAllReady: () => pipe(stream),
-    // `onAllReady` never fires after an error, so reject the result here and abort the render once; Fizz's `abort()` calls `onError` again for every task it cancels.
-    onError(error) {
+    onError: error => void errors.push(error),
+    // An error outside every boundary leaves no HTML: reject with it and stop the flight render too.
+    onShellError(error) {
+      errors.length = 0;
       stream.destroy(signal.aborted ?? error);
       if (!signal.aborted) {
-        signal.aborted = error;
+        signal.aborted = error as Error;
         signal.abort?.();
       }
-      if (!aborted) {
-        aborted = true;
-        queueMicrotask(() => abort?.(error));
-      }
     },
-  }));
+    // Only begin flowing HTML once all of it is ready. This tells React
+    // to not emit the flight chunks, just the entire HTML.
+    onAllReady() {
+      if (!signal.aborted) for (const error of errors) console.error(error);
+      pipe(stream);
+    },
+  });
   return stream.result;
 }
 

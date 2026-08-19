@@ -249,7 +249,8 @@ declare module "bun" {
        */
       root: string;
       /**
-       * The prefix to serve this directory on.
+       * The prefix to serve this directory on. Only `"/"` is supported so far;
+       * any other value is rejected.
        * @default "/"
        */
       prefix?: string | undefined;

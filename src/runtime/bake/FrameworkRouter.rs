@@ -323,9 +323,9 @@ impl EncodedPattern {
     }
 
     /// `match_slow` strips the trailing slash first, so a separator with nothing after it is an empty segment.
-    fn matches(&self, path: &[u8], params: &mut MatchedParams) -> bool {
+    fn matches(&self, path: &[u8], params: &mut MatchedParamList) -> bool {
         // Discard captures left by a previous candidate that failed partway.
-        params.params.clear();
+        params.clear();
         let mut param_num: usize = 0;
         // Start of the segment after the one ending at `end`, or `None` when only a separator follows it.
         let next_segment = |end: usize| -> Option<usize> {
@@ -372,8 +372,8 @@ impl EncodedPattern {
                             bstr::BStr::new(path)
                         ));
                     }
-                    params.params.resize(param_num + 1).unwrap();
-                    params.params.slice()[param_num] = MatchedParamEntry {
+                    params.resize(param_num + 1).unwrap();
+                    params.slice()[param_num] = MatchedParamEntry {
                         key: bun_ptr::RawSlice::new(name),
                         value: bun_ptr::RawSlice::new(&path[i..end]),
                     };
@@ -396,8 +396,8 @@ impl EncodedPattern {
                         if param_num >= MatchedParams::MAX_COUNT {
                             return false;
                         }
-                        params.params.resize(param_num + 1).unwrap();
-                        params.params.slice()[param_num] = MatchedParamEntry {
+                        params.resize(param_num + 1).unwrap();
+                        params.slice()[param_num] = MatchedParamEntry {
                             key: bun_ptr::RawSlice::new(name),
                             value: bun_ptr::RawSlice::new(&path[i..end]),
                         };
@@ -1218,16 +1218,20 @@ impl<'a> Part<'a> {
     }
 }
 
+pub(crate) type MatchedParamList = BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>;
+
 /// An enforced upper bound of 64 unique patterns allows routing to use no heap allocation
 #[derive(Default)]
 pub struct MatchedParams {
-    pub(crate) params: BoundedArray<MatchedParamEntry, { MatchedParams::MAX_COUNT }>,
+    pub(crate) params: MatchedParamList,
+    /// Percent-decoded copy of the path when it had escapes; param values borrow it, so it lives as long as they do.
+    decoded: Option<paths::path_buffer_pool::Guard>,
 }
 
 #[derive(Copy, Clone)]
 pub(crate) struct MatchedParamEntry {
-    // Borrow from the input `path`/`pattern` buffers; both outlive the
-    // `MatchedParams` stack frame. See `RawSlice` invariant.
+    // Borrow from the input `path`/`pattern` buffers or `MatchedParams::decoded`;
+    // all outlive the `MatchedParams` stack frame. See `RawSlice` invariant.
     pub key: bun_ptr::RawSlice<u8>,
     pub value: bun_ptr::RawSlice<u8>,
 }
@@ -1266,12 +1270,37 @@ impl FrameworkRouter {
     /// complicated data structure that production uses to efficiently map
     /// urls to routes instead of this tree-traversal algorithm.
     pub(crate) fn match_slow(&self, path: &[u8], params: &mut MatchedParams) -> Option<RouteIndex> {
-        params.params = BoundedArray::default();
+        let MatchedParams {
+            params: captures,
+            decoded,
+        } = params;
+        *captures = BoundedArray::default();
 
         // Request-targets like `*` or `host:port` name no path, so they match no route.
         if path.first() != Some(&b'/') {
             return None;
         }
+        // Percent-decode once, like Bun.FileSystemRouter, so `/h%C3%A9llo` reaches `héllo.tsx` and params arrive decoded.
+        let path: &[u8] = if strings::index_of_char(path, b'%').is_some() {
+            // An escaped slash is segment data, not a separator, and no file-system route segment contains one.
+            if path
+                .windows(3)
+                .any(|w| w[0] == b'%' && w[1] == b'2' && (w[2] | 0x20) == b'f')
+            {
+                return None;
+            }
+            let buf = decoded.insert(paths::path_buffer_pool::get());
+            if path.len() > buf.len() {
+                return None;
+            }
+            // A malformed escape names no route.
+            let Ok(len) = bun_url::PercentEncoding::decode_into(&mut buf[..], path) else {
+                return None;
+            };
+            &buf[..len as usize]
+        } else {
+            path
+        };
         // "/about/" serves the same route as "/about", like Bun.FileSystemRouter.
         let path = if path.len() > 1 && path[path.len() - 1] == b'/' {
             &path[..path.len() - 1]
@@ -1283,7 +1312,7 @@ impl FrameworkRouter {
         }
 
         for (i, pattern) in self.dynamic_routes.keys().iter().enumerate() {
-            if pattern.matches(path, params) {
+            if pattern.matches(path, captures) {
                 return Some(self.dynamic_routes.values()[i]);
             }
         }
@@ -1982,9 +2011,7 @@ impl JSFrameworkRouter {
             )));
         }
 
-        let mut params_out = MatchedParams {
-            params: BoundedArray::default(),
-        };
+        let mut params_out = MatchedParams::default();
         if let Some(index) = self.router.match_slow(path.slice(), &mut params_out) {
             let obj = JSValue::create_empty_object(global, 2);
             obj.put(global, b"params", params_out.to_js(global));

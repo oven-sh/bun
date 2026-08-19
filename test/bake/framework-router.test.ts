@@ -590,6 +590,30 @@ describe("url matching", () => {
     expect(() => r.router.match("docs/a")).toThrow("should be non-empty and start with a slash");
   });
 
+  // The path is percent-decoded once before matching, like Bun.FileSystemRouter, so browsers can reach non-ASCII routes.
+  test("percent-encoded paths are decoded before matching", () => {
+    using r = makeMatcher("héllo.tsx", "hello world.tsx", "a/b.tsx", "blog/[slug].tsx", "docs/[...rest].tsx");
+    // Static segments.
+    expect(r.match("/h%C3%A9llo")).toStrictEqual({ file: "héllo.tsx", params: null });
+    expect(r.match("/héllo")).toStrictEqual({ file: "héllo.tsx", params: null });
+    expect(r.match("/hello%20world")).toStrictEqual({ file: "hello world.tsx", params: null });
+    expect(r.match("/%61/b")).toStrictEqual({ file: "a/b.tsx", params: null });
+    // Param values arrive decoded, and only once.
+    expect(r.match("/blog/caf%C3%A9")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "café" } });
+    expect(r.match("/blog/a%20b")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "a b" } });
+    expect(r.match("/blog/100%2525")).toStrictEqual({ file: "blog/[slug].tsx", params: { slug: "100%25" } });
+    expect(r.match("/docs/x%20y/z")).toStrictEqual({ file: "docs/[...rest].tsx", params: { rest: ["x y", "z"] } });
+    // Unlike Bun.FileSystemRouter, an escaped slash never acts as a separator; no route segment can contain one.
+    expect(r.match("/a%2Fb")).toBe(null);
+    expect(r.match("/a%2fb")).toBe(null);
+    expect(r.match("/blog/a%2Fb")).toBe(null);
+    // A malformed escape names no route.
+    expect(r.match("/%zz")).toBe(null);
+    expect(r.match("/blog/%zz")).toBe(null);
+    expect(r.match("/blog/a%")).toBe(null);
+    expect(r.match("/blog/a%2")).toBe(null);
+  });
+
   test("optional catch-all matches zero segments", () => {
     using r = makeMatcher("blog/[[...slug]].tsx");
     expect(r.match("/blog")).toStrictEqual({ file: "blog/[[...slug]].tsx", params: null });

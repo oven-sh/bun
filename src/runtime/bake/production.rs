@@ -3,7 +3,6 @@
 use bun_paths::strings;
 use core::cell::UnsafeCell;
 use core::ptr::NonNull;
-use std::io::Write as _;
 use std::sync::OnceLock;
 
 use bstr::BStr;
@@ -256,18 +255,20 @@ fn write_sourcemap_to_disk(
     let source_map_index = file.source_map_index;
     debug_assert!(bundled_outputs[source_map_index as usize].output_kind == OutputKind::Sourcemap);
 
-    let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-        || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-    {
-        &file.dest_path[2..]
-    } else {
-        &file.dest_path[..]
-    };
-
-    let mut key = Vec::with_capacity(6 + without_prefix.len());
-    write!(&mut key, "bake:/{}", BStr::new(without_prefix)).expect("infallible: in-memory write");
-    source_maps.put(&key, OutputFileIndex::init(source_map_index))?;
+    source_maps.put(
+        &module_key(&file.dest_path),
+        OutputFileIndex::init(source_map_index),
+    )?;
     Ok(())
+}
+
+/// `bake:` + the output path, normalised as `BakeProdResolve` normalises specifiers so both agree (`_bun/./x.js` -> `bake:/_bun/x.js`).
+fn module_key(dest_path: &[u8]) -> Vec<u8> {
+    let path = resolve_path::join_abs::<platform::Posix>(b"/", dest_path);
+    let mut key = Vec::with_capacity(5 + path.len());
+    key.extend_from_slice(b"bake:");
+    key.extend_from_slice(path);
+    key
 }
 
 struct OutputDir {
@@ -761,34 +762,22 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
 
                     match file.output_kind {
                         OutputKind::EntryPoint | OutputKind::Chunk => {
-                            let without_prefix = if strings::has_prefix(&file.dest_path, b"./")
-                                || (cfg!(windows) && strings::has_prefix(&file.dest_path, b".\\"))
-                            {
-                                &file.dest_path[2..]
-                            } else {
-                                &file.dest_path[..]
-                            };
+                            let key = module_key(&file.dest_path);
 
                             if let Some(entry_point_index) = file.entry_point_index {
                                 if (entry_point_index as usize) < module_keys.len() {
-                                    let mut str = BunString::create_format(format_args!(
-                                        "bake:/{}",
-                                        BStr::new(without_prefix)
-                                    ));
+                                    let mut str = BunString::clone_utf8(&key);
                                     str.to_thread_safe();
                                     module_keys[entry_point_index as usize] = OwnedString::new(str);
                                 }
                             }
 
                             log!(
-                                "  adding module map entry: output_module_map(bake:/{}) = {}\n",
-                                BStr::new(without_prefix),
+                                "  adding module map entry: output_module_map({}) = {}\n",
+                                BStr::new(&key),
                                 i
                             );
 
-                            let mut key = Vec::with_capacity(6 + without_prefix.len());
-                            write!(&mut key, "bake:/{}", BStr::new(without_prefix))
-                                .expect("infallible: in-memory write");
                             output_module_map.put(
                                 &key,
                                 OutputFileIndex::init(u32::try_from(i).expect("int cast")),
@@ -821,6 +810,34 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
     }
     if output_dir.failed_writes > 0 {
         // Every failed write has been reported; the pages would only reference the missing files.
+        return Err(crate::Error::BakeBuildFailed);
+    }
+
+    // A route file with no server-side JavaScript chunk (a `.css` or `.html` page under `extensions: "*"`) cannot be rendered.
+    let mut non_module_routes: usize = 0;
+    for route in router.routes.iter() {
+        for file in [route.file_page, route.file_layout].into_iter().flatten() {
+            let i = file.get() as usize;
+            let is_module = !module_keys[i].is_dead()
+                && bundled_outputs_list[entry_points.files.values()[i].get() as usize]
+                    .loader
+                    .is_javascript_like();
+            if !is_module {
+                bun_core::err_generic!(
+                    "{} is not a JavaScript or TypeScript file, so it cannot be a route",
+                    bun_core::fmt::quote(resolve_path::relative(
+                        cwd,
+                        entry_points.files.keys()[i].abs_path()
+                    ))
+                );
+                non_module_routes += 1;
+            }
+        }
+    }
+    if non_module_routes > 0 {
+        bun_core::note!(
+            "Narrow 'fileSystemRouterTypes[n].extensions' so that only route modules match."
+        );
         return Err(crate::Error::BakeBuildFailed);
     }
 

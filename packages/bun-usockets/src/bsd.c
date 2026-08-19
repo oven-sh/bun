@@ -1986,9 +1986,10 @@ int bsd_last_error_or_refused(void) {
 }
 
 LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr, struct sockaddr_storage *local_addr, int options, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, NULL);
+    int socket_error = 0;
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(addr->ss_family, SOCK_STREAM, 0, &socket_error);
     if (fd == LIBUS_SOCKET_ERROR) {
-        *error = bsd_last_error_or_refused();
+        *error = socket_error ? socket_error : LIBUS_ECONNREFUSED;
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -2056,10 +2057,11 @@ LIBUS_SOCKET_DESCRIPTOR bsd_create_connect_socket(struct sockaddr_storage *addr,
 }
 
 static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_connect_socket_unix(const char *server_path, size_t len, int options, struct sockaddr_un* server_address, const size_t addrlen, int *error) {
-    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, NULL);
+    int socket_error = 0;
+    LIBUS_SOCKET_DESCRIPTOR fd = bsd_create_socket(AF_UNIX, SOCK_STREAM, 0, &socket_error);
 
     if (fd == LIBUS_SOCKET_ERROR) {
-        *error = bsd_last_error_or_refused();
+        *error = socket_error ? socket_error : LIBUS_ECONNREFUSED;
         return LIBUS_SOCKET_ERROR;
     }
 

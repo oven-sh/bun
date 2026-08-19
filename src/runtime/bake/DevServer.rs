@@ -3156,12 +3156,6 @@ impl DevServer {
         debug_assert!(!entry_points.set.is_empty());
         self.log.clear_and_free();
 
-        if had_reload_event {
-            for route_bundle in &mut self.route_bundles {
-                route_bundle.rebundled_for_failures = false;
-            }
-        }
-
         // Notify inspector about bundle start
         if let Some(agent) = self.inspector() {
             let mut trigger_files: Vec<BunString> = Vec::with_capacity(entry_points.set.len());
@@ -5334,6 +5328,8 @@ impl DevServer {
                 .and_then(|file| file.html_route_bundle_index)
             {
                 html_ref.dev_server_id.set(Some(existing));
+                // A fresh registration is a chance to retry a cached build error whose fix never arrived as a watcher batch.
+                self.route_bundle_ptr(existing).rebundled_for_failures = false;
                 return Ok(existing);
             }
         }

@@ -1284,3 +1284,55 @@ test("server.reload() while an html route's first bundle is still in flight", as
     exitCode: 0,
   });
 });
+
+// A build error whose fix does not arrive as a file change (here: plugin state) is retried when server.reload() re-registers the route.
+test("server.reload() retries a cached build error", async () => {
+  using dir = tempDir("bun-serve-html-reload-retries-failure", {
+    "bunfig.toml": `[serve.static]\nplugins = ["./plugin.ts"]\n`,
+    "index.html": `<!DOCTYPE html><html><head><title>t</title></head><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("app");`,
+    "plugin.ts": /*ts*/ `
+      export default {
+        name: "external-state",
+        setup(build) {
+          build.onLoad({ filter: /app\\.ts$/ }, () => {
+            globalThis.loads++;
+            return { loader: "ts", contents: globalThis.broken ? "console.log(" : "console.log('app');" };
+          });
+        },
+      };
+    `,
+    "serve.ts": /*ts*/ `
+      import html from "./index.html";
+      globalThis.loads = 0;
+      globalThis.broken = true;
+      const options = { port: 0, development: true, routes: { "/": html } };
+      const server = Bun.serve(options);
+      const status = () => fetch(server.url).then(res => res.status);
+
+      const statuses = [await status(), await status(), await status()];
+      globalThis.broken = false;
+      // The failure is retried once per route and then cached until something invalidates it; a plain re-request does not.
+      const cached = await status();
+      const loadsBeforeReload = globalThis.loads;
+      server.reload(options);
+      const reloaded = await status();
+      console.log(JSON.stringify({ statuses, cached, loadsBeforeReload, reloaded, loads: globalThis.loads }));
+      server.stop(true);
+    `,
+  });
+
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    // Debug builds skip the retry by default.
+    env: { ...bunEnv, BUN_ASSUME_PERFECT_INCREMENTAL: "0" },
+    cwd: String(dir),
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+  expect({ stdout: stdout.trim(), exitCode }, stderr).toStrictEqual({
+    stdout: JSON.stringify({ statuses: [500, 500, 500], cached: 500, loadsBeforeReload: 2, reloaded: 200, loads: 3 }),
+    exitCode: 0,
+  });
+});

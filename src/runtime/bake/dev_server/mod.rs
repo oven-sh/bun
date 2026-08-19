@@ -461,6 +461,11 @@ impl HotReloadEvent {
         // drop, so it does not hold a borrow of `dev` for the scope.
         let _g = dev.graph_safety_lock.guard();
 
+        // Any file change may be the fix for a build error a route already retried once, even one outside the graph.
+        for route_bundle in &mut dev.route_bundles {
+            route_bundle.rebundled_for_failures = false;
+        }
+
         // First handle directories, because this may mutate `event.files`
         if dev.directory_watchers.watches.count() > 0 {
             for changed_dir_with_slash in self.dirs.keys() {

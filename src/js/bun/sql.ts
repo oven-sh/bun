@@ -39,6 +39,17 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
+function settleReservedTransaction(
+  reservedTransaction: Set<Promise<void>>,
+  finished: { promise: Promise<void>; resolve: () => void },
+  settle: (value: any) => void,
+  value: any,
+) {
+  reservedTransaction.delete(finished.promise);
+  finished.resolve();
+  settle(value);
+}
+
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
   switch (options.adapter) {
     case "postgres":
@@ -286,6 +297,31 @@ const SQL: typeof Bun.SQL = function SQL(
     };
   }
 
+  // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
+  function runReservedTransaction(
+    reservedTransaction: Set<Promise<void>>,
+    pooledConnection,
+    callback: TransactionCallback,
+    options: string | undefined,
+    distributed: boolean,
+  ) {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const finished = Promise.withResolvers<void>();
+    reservedTransaction.add(finished.promise);
+    // lets just reuse the same code path as the transaction begin
+    onTransactionConnected(
+      callback,
+      options,
+      settleReservedTransaction.bind(null, reservedTransaction, finished, resolve),
+      settleReservedTransaction.bind(null, reservedTransaction, finished, reject),
+      true,
+      distributed,
+      null,
+      pooledConnection,
+    );
+    return promise;
+  }
+
   function onReserveConnected(this: Query<any, any>, err: Error | null, pooledConnection) {
     const { resolve, reject } = this;
 
@@ -378,33 +414,6 @@ const SQL: typeof Bun.SQL = function SQL(
     reserved_sql.array = sql.array;
     reserved_sql.listen = listen;
     reserved_sql.notify = makeNotify(reserved_sql);
-    function settleReservedTransaction(
-      finished: { promise: Promise<void>; resolve: () => void },
-      settle: (value: any) => void,
-      value: any,
-    ) {
-      reservedTransaction.delete(finished.promise);
-      finished.resolve();
-      settle(value);
-    }
-    // Never attach a handler to the caller's promise: it changes which rejections are reported as unhandled.
-    function runReservedTransaction(callback: TransactionCallback, options: string | undefined, distributed: boolean) {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      const finished = Promise.withResolvers<void>();
-      reservedTransaction.add(finished.promise);
-      // lets just reuse the same code path as the transaction begin
-      onTransactionConnected(
-        callback,
-        options,
-        settleReservedTransaction.bind(null, finished, resolve),
-        settleReservedTransaction.bind(null, finished, reject),
-        true,
-        distributed,
-        null,
-        pooledConnection,
-      );
-      return promise;
-    }
     reserved_sql.beginDistributed = (name: string, fn: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
       if (state.connectionState & ReservedConnectionState.closed) {
@@ -419,7 +428,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      return runReservedTransaction(callback, name, true);
+      return runReservedTransaction(reservedTransaction, pooledConnection, callback, name, true);
     };
     reserved_sql.begin = (options_or_fn: string | TransactionCallback, fn?: TransactionCallback) => {
       // begin is allowed the difference is that we need to make sure to use the same connection and never release it
@@ -440,7 +449,7 @@ const SQL: typeof Bun.SQL = function SQL(
       if (!$isCallable(callback)) {
         return Promise.$reject($ERR_INVALID_ARG_VALUE("fn", callback, "must be a function"));
       }
-      return runReservedTransaction(callback, options, false);
+      return runReservedTransaction(reservedTransaction, pooledConnection, callback, options, false);
     };
 
     reserved_sql.flush = () => {

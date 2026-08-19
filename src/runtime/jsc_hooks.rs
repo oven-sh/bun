@@ -106,9 +106,8 @@ pub(crate) struct RuntimeState {
     /// stop; one ref per entry, released by `CronJob::remove_from_list` /
     /// `clear_all_for_vm`.
     pub(crate) cron_jobs: Vec<bun_ptr::RefPtr<crate::api::cron::CronJob>>,
-    /// The `uv_loop_t` N-API addons get for this VM (`napi_get_uv_event_loop`,
-    /// and `uv_default_loop()` for the main thread's). Embedded here because
-    /// addons keep its address for as long as the VM lives.
+    /// The `uv_loop_t` addons get for this VM; they keep its address as long as
+    /// the VM lives, hence embedded.
     #[cfg(unix)]
     pub(crate) uv_loop: crate::napi::uv_posix::UvLoop,
 }

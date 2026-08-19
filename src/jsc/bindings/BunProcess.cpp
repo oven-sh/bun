@@ -81,9 +81,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/resource.h>
-// uv-posix-polyfills.c: the version of the libuv headers the posix uv_*
-// polyfills implement, for process.versions.uv.
-extern "C" const char* uv_version_string(void);
+extern "C" const char* uv_version_string(void); // uv-posix-polyfills.c
 #else
 #include <uv.h>
 #include <io.h>

@@ -4063,9 +4063,7 @@ mod posix_platform_specific_v8_apis {
 // uv_* symbol references (posix DCE suppression)
 // ──────────────────────────────────────────────────────────────────────────
 
-/// The uv_* symbols defined in C (uv-posix-stubs.c, uv-posix-polyfills.c) and
-/// C++ (uv_tty_reset_mode). The ones defined in Rust are kept by
-/// `uv_posix::fix_dead_code_elimination`.
+/// The uv_* symbols defined in C and C++; `uv_posix` keeps its own.
 #[cfg(unix)]
 mod uv_functions_to_export {
     unsafe extern "C" {

@@ -130,11 +130,9 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
         abort();
 }
 
-// The functions below need nothing but the headers in ./libuv, so they are
-// libuv's own definitions (src/version.c, src/uv-common.c,
-// src/uv-data-getter-setters.c, src/unix/core.c). The loop-backed functions
-// for the same handles and requests (uv_async_*, uv_close, uv_queue_work, ...)
-// are in src/runtime/napi/uv_posix.rs.
+// libuv's own definitions of the functions that need only the headers (its
+// version.c, uv-common.c, uv-data-getter-setters.c, unix/core.c). The
+// loop-backed functions are in src/runtime/napi/uv_posix.rs.
 
 #define UV_STRINGIFY(v) UV_STRINGIFY_HELPER(v)
 #define UV_STRINGIFY_HELPER(v) #v
@@ -147,9 +145,7 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
 #define UV_VERSION_STRING UV_VERSION_STRING_BASE "-" UV_VERSION_SUFFIX
 #endif
 
-// The version of the headers these polyfills implement the ABI of, which is
-// also the libuv Bun links on Windows. BunProcess.cpp reports it as
-// process.versions.uv on every platform.
+// The headers' version, which is also what process.versions.uv reports.
 UV_EXTERN unsigned int uv_version(void)
 {
     return UV_VERSION_HEX;
@@ -254,8 +250,7 @@ UV_EXTERN void uv_req_set_data(uv_req_t* req, void* data)
     req->data = data;
 }
 
-// A uv_loop_t* is a UvLoop (uv_posix.rs), whose first field is `data` like
-// uv_loop_t's, so these are the libuv definitions.
+// A uv_loop_t* is a UvLoop (uv_posix.rs); its first field is `data` too.
 UV_EXTERN void* uv_loop_get_data(const uv_loop_t* loop)
 {
     return loop->data;

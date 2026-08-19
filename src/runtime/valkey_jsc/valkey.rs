@@ -595,9 +595,7 @@ impl ValkeyClient {
 
         // A failure the client detected itself (idle timeout, protocol or
         // handshake error) has always been a deliberate close; `on_close` reads
-        // `failed` and skips the retry policy. It is not `is_manually_closed`:
-        // that flag is copied into `duplicate()`, and a duplicate of a failed
-        // client should still reconnect.
+        // `failed` and skips the retry policy.
         let closed = self.close(uws::CloseCode::Failure); // unconditionally, whatever `val` is
         val.and(closed)
     }

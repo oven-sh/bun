@@ -1189,7 +1189,6 @@ fn build_with_vm(ctx: Context, cwd: &[u8], pt: &mut PerThread) -> crate::Result<
             return Err(js_err(global.throw_value(err)));
         }
     }
-    vm.wait_for_tasks();
     Ok(())
 }
 

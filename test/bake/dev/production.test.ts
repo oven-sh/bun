@@ -1104,6 +1104,31 @@ export async function prerender(meta: any) {
       timeout,
     );
 
+    // Like `bun build`, the build does not wait for ref'd handles a config or route module leaves behind.
+    test(
+      "a rendered build exits without draining a timer left running by the config module",
+      async () => {
+        const dir = await tempDirWithBakeDeps("bake-production-exit-interval", {
+          "app.ts": `
+            setInterval(() => {}, 1000);
+            ${onExitConfig}
+          `,
+          "pages/index.tsx": `export default function IndexPage() { return <div>Hello World</div>; }`,
+        });
+
+        const { stdout, exitCode } = await Bun.$`${bunExe()} build --app ./app.ts`
+          .cwd(dir)
+          .env(env)
+          .quiet()
+          .throws(false);
+
+        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain("Hello World");
+        expect(stdout.toString()).toBe("done\nexit event: 0\n");
+        expect(exitCode).toBe(0);
+      },
+      timeout,
+    );
+
     // These natives are freed by wrapper finalizers, so a build that exits without destroying its VM leaves them for LeakSanitizer.
     test.skipIf(!isASAN)(
       "a rendered build frees the natives its JS objects own",

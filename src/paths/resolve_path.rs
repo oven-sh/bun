@@ -759,22 +759,10 @@ pub fn relative_buf_z<'a>(buf: &'a mut [u8], from: &[u8], to: &[u8]) -> &'a ZStr
     relative_buf_z_checked(buf, from, to).unwrap_or_else(|| path_buffer_too_small(buf_len))
 }
 
-/// Normalizes `from` and `to` into `from_buf` and `to_buf`, resolving a
-/// relative one against the top-level directory (normalizing it into `scratch`
-/// first, so that the join does not read the buffer it writes). `None` when
-/// one of them does not fit.
-fn normalize_relative_inputs<'a, P: PlatformT>(
-    from_buf: &'a mut [u8],
-    to_buf: &'a mut [u8],
-    scratch: &mut [u8],
-    from: &[u8],
-    to: &[u8],
-) -> Option<(&'a [u8], &'a [u8])> {
-    let normalized_from = normalize_relative_input::<P>(from_buf, scratch, from)?;
-    let normalized_to = normalize_relative_input::<P>(to_buf, scratch, to)?;
-    Some((normalized_from, normalized_to))
-}
-
+/// Normalizes one input of `relative*` into `out`, resolving a relative one
+/// against the top-level directory (it is normalized into `scratch` first, so
+/// that the join does not read the buffer it writes). `None` when it does not
+/// fit.
 fn normalize_relative_input<'a, P: PlatformT>(
     out: &'a mut [u8],
     scratch: &mut [u8],
@@ -819,13 +807,8 @@ pub fn relative_platform_buf_checked<'a, P: PlatformT, const ALWAYS_COPY: bool>(
     // two `&mut` borrows below are disjoint.
     let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
     let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
-    let (normalized_from, normalized_to) = normalize_relative_inputs::<P>(
-        &mut relative_from_buf[..],
-        &mut relative_to_buf[..],
-        buf,
-        from,
-        to,
-    )?;
+    let normalized_from = normalize_relative_input::<P>(&mut relative_from_buf[..], buf, from)?;
+    let normalized_to = normalize_relative_input::<P>(&mut relative_to_buf[..], buf, to)?;
     relative_normalized_buf_checked::<P, ALWAYS_COPY>(buf, normalized_from, normalized_to)
 }
 
@@ -852,13 +835,11 @@ pub fn relative_platform<P: PlatformT, const ALWAYS_COPY: bool>(
     let common_buf = RELATIVE_TO_COMMON_PATH_BUF.with(lazy_path_buf);
     let relative_from_buf = RELATIVE_FROM_BUF.with(lazy_path_buf);
     let relative_to_buf = RELATIVE_TO_BUF.with(lazy_path_buf);
-    let Some((normalized_from, normalized_to)) = normalize_relative_inputs::<P>(
-        &mut relative_from_buf[..],
-        &mut relative_to_buf[..],
-        &mut common_buf[..],
-        from,
-        to,
-    ) else {
+    let normalized = (
+        normalize_relative_input::<P>(&mut relative_from_buf[..], &mut common_buf[..], from),
+        normalize_relative_input::<P>(&mut relative_to_buf[..], &mut common_buf[..], to),
+    );
+    let (Some(normalized_from), Some(normalized_to)) = normalized else {
         return relative_platform_spilled::<P>(from, to);
     };
     match relative_normalized_buf_checked::<P, ALWAYS_COPY>(
@@ -890,9 +871,10 @@ fn relative_platform_spilled<P: PlatformT>(from: &[u8], to: &[u8]) -> &'static [
     let mut from_buf = vec![0u8; input_capacity(from)];
     let mut to_buf = vec![0u8; input_capacity(to)];
     let mut scratch = vec![0u8; from.len().max(to.len()) + 1];
-    let (normalized_from, normalized_to) =
-        normalize_relative_inputs::<P>(&mut from_buf, &mut to_buf, &mut scratch, from, to)
-            .unwrap_or_else(|| unreachable!("input_capacity bounds the normalized inputs"));
+    let normalized_from = normalize_relative_input::<P>(&mut from_buf, &mut scratch, from)
+        .unwrap_or_else(|| unreachable!("input_capacity bounds the normalized input"));
+    let normalized_to = normalize_relative_input::<P>(&mut to_buf, &mut scratch, to)
+        .unwrap_or_else(|| unreachable!("input_capacity bounds the normalized input"));
     relative_normalized_spilled::<P>(normalized_from, normalized_to)
 }
 
@@ -1039,10 +1021,13 @@ fn windows_filesystem_root_t<T: PathChar>(path: &[T]) -> &[T] {
 }
 
 /// Called before every write of `units` units at `buf[at..]`. Returning `false`
-/// makes the normalizer report `None` instead of writing past `buf`.
+/// makes the normalizer report `None` instead of writing past `buf`. `at` is a
+/// write position, so it never exceeds `buf.len()`: every advance of it
+/// follows a write this function admitted.
 #[inline(always)]
 fn has_room<T>(buf: &[T], at: usize, units: usize) -> bool {
-    at <= buf.len() && units <= buf.len() - at
+    debug_assert!(at <= buf.len());
+    units <= buf.len() - at
 }
 
 /// [`normalize_string_generic_tz`] without NUL termination or an NT prefix.
@@ -1627,6 +1612,21 @@ fn normalize_string_buf_t<
     {
         return Some(&mut buf[..len]);
     }
+    normalize_string_buf_via_scratch_t::<T, ALLOW_ABOVE_ROOT, P, PRESERVE_TRAILING_SLASH>(str, buf)
+}
+
+#[cold]
+#[inline(never)]
+fn normalize_string_buf_via_scratch_t<
+    'a,
+    T: PathChar,
+    const ALLOW_ABOVE_ROOT: bool,
+    P: PlatformT,
+    const PRESERVE_TRAILING_SLASH: bool,
+>(
+    str: &[T],
+    buf: &'a mut [T],
+) -> Option<&'a mut [T]> {
     // Normalizing grows a path by at most one unit (see `normalize_string_generic_tz`).
     let mut scratch = vec![T::from_u8(0); str.len() + 1];
     let normalized =
@@ -1816,6 +1816,20 @@ pub fn join_z_spill<'a, P: PlatformT>(spill: &'a mut Vec<u8>, parts: &[&[u8]]) -
     join_z_buf::<P>(&mut spill[..], parts)
 }
 
+/// Where a `join*` result lies in the buffer it was written to: off Windows
+/// `normalize_string_node_t` places a relative result at `start == 1`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Placed {
+    start: usize,
+    len: usize,
+}
+
+impl Placed {
+    fn end(self) -> usize {
+        self.start + self.len
+    }
+}
+
 /// [`join_string_buf_checked`], NUL-terminated. `None` when the result and its
 /// NUL do not fit `buf`.
 pub fn join_z_buf_checked<'a, P: PlatformT>(
@@ -1823,9 +1837,9 @@ pub fn join_z_buf_checked<'a, P: PlatformT>(
     parts: &[&[u8]],
 ) -> Option<&'a ZStr> {
     let capacity = buf.len().checked_sub(1)?;
-    let (start, len) = join_string_buf_t::<u8, P>(&mut buf[..capacity], parts)?;
-    buf[start + len] = 0;
-    Some(ZStr::from_slice_with_nul(&buf[start..=start + len]))
+    let placed = join_string_buf_t::<u8, P>(&mut buf[..capacity], parts)?;
+    buf[placed.end()] = 0;
+    Some(ZStr::from_slice_with_nul(&buf[placed.start..=placed.end()]))
 }
 
 /// [`join_z_buf_checked`] for a `buf` known to hold the result; panics otherwise.
@@ -1841,8 +1855,8 @@ pub fn join_string_buf_checked<'a, P: PlatformT>(
     buf: &'a mut [u8],
     parts: &[&[u8]],
 ) -> Option<&'a [u8]> {
-    let (start, len) = join_string_buf_t::<u8, P>(buf, parts)?;
-    Some(&buf[start..start + len])
+    let placed = join_string_buf_t::<u8, P>(buf, parts)?;
+    Some(&buf[placed.start..placed.end()])
 }
 
 /// [`join_string_buf_checked`] for a `buf` known to hold the result; panics otherwise.
@@ -1858,8 +1872,8 @@ pub fn join_string_buf_w_same_checked<'a, P: PlatformT>(
     buf: &'a mut [u16],
     parts: &[&[u16]],
 ) -> Option<&'a [u16]> {
-    let (start, len) = join_string_buf_t_same::<u16, P>(buf, parts)?;
-    Some(&buf[start..start + len])
+    let placed = join_string_buf_t_same::<u16, P>(buf, parts)?;
+    Some(&buf[placed.start..placed.end()])
 }
 
 /// [`join_string_buf_w_same_checked`] for a `buf` known to hold the result;
@@ -1889,12 +1903,11 @@ fn join_temp_buf<'a, T>(
 
 /// Same-width `joinStringBufT`: parts already match `T`, so no UTF-8→16 transcode.
 /// split out of `join_string_buf_t` because Rust can't monomorphize on the
-/// parts' element types — callers pick the overload. Returns where in `buf`
-/// the result starts and its length (see `normalize_string_node_t`).
+/// parts' element types — callers pick the overload.
 fn join_string_buf_t_same<T: PathChar, P: PlatformT>(
     buf: &mut [T],
     parts: &[&[T]],
-) -> Option<(usize, usize)> {
+) -> Option<Placed> {
     let mut written: usize = 0;
     let mut stack_temp_buf = [const { MaybeUninit::<T>::uninit() }; JOIN_TEMP_LEN];
     let mut heap_temp_buf: Vec<T> = Vec::new();
@@ -1933,28 +1946,35 @@ fn join_string_buf_t_same<T: PathChar, P: PlatformT>(
 }
 
 /// The result of joining nothing but empty parts.
-fn join_dot<T: PathChar>(buf: &mut [T]) -> Option<(usize, usize)> {
+fn join_dot<T: PathChar>(buf: &mut [T]) -> Option<Placed> {
     *buf.get_mut(0)? = T::from_u8(b'.');
-    Some((0, 1))
+    Some(Placed { start: 0, len: 1 })
 }
 
 /// `normalize_string_node_t` under the `*_checked` contract (see
 /// `normalize_string_buf_t`): a result that fits `buf` is produced even when
 /// the intermediate form does not, by normalizing in a scratch buffer first.
-fn join_normalize_into<T: PathChar, P: PlatformT>(
+fn join_normalize_into<T: PathChar, P: PlatformT>(joined: &[T], buf: &mut [T]) -> Option<Placed> {
+    normalize_string_node_t::<T, P>(joined, buf)
+        .or_else(|| join_normalize_via_scratch::<T, P>(joined, buf))
+}
+
+#[cold]
+#[inline(never)]
+fn join_normalize_via_scratch<T: PathChar, P: PlatformT>(
     joined: &[T],
     buf: &mut [T],
-) -> Option<(usize, usize)> {
-    if let Some(placed) = normalize_string_node_t::<T, P>(joined, buf) {
-        return Some(placed);
-    }
+) -> Option<Placed> {
     // Room for the leading slot or the one unit Windows normalization can add.
     let mut scratch = vec![T::from_u8(0); joined.len() + 2];
-    let (start, len) = normalize_string_node_t::<T, P>(joined, &mut scratch)
+    let in_scratch = normalize_string_node_t::<T, P>(joined, &mut scratch)
         .unwrap_or_else(|| unreachable!("the scratch buffer is sized for the input"));
-    buf.get_mut(..len)?
-        .copy_from_slice(&scratch[start..start + len]);
-    Some((0, len))
+    let out = buf.get_mut(..in_scratch.len)?;
+    out.copy_from_slice(&scratch[in_scratch.start..in_scratch.end()]);
+    Some(Placed {
+        start: 0,
+        len: out.len(),
+    })
 }
 
 /// [`join_z_buf`] under its older name.
@@ -1963,12 +1983,7 @@ pub fn join_string_buf_z<'a, P: PlatformT>(buf: &'a mut [u8], parts: &[&[u8]]) -
     join_z_buf::<P>(buf, parts)
 }
 
-/// Returns where in `buf` the result starts and its length (see
-/// `normalize_string_node_t`).
-fn join_string_buf_t<T: PathChar, P: PlatformT>(
-    buf: &mut [T],
-    parts: &[&[u8]],
-) -> Option<(usize, usize)> {
+fn join_string_buf_t<T: PathChar, P: PlatformT>(buf: &mut [T], parts: &[&[u8]]) -> Option<Placed> {
     // Takes `&[&[u8]]` — every in-tree caller passes u8
     // parts — and transcodes to u16 below when `T == u16`.
     let mut written: usize = 0;
@@ -2425,14 +2440,11 @@ fn normalize_string_windows_t<
     )
 }
 
-/// `path.normalize` for `join*`. Returns where in `buf` the result starts and
-/// its length: off Windows the result of a relative input starts at `buf[1]`,
-/// the slot an absolute one uses for its leading separator. `None` when the
-/// intermediate form does not fit `buf` (see `normalize_string_generic_tz`).
-fn normalize_string_node_t<T: PathChar, P: PlatformT>(
-    str: &[T],
-    buf: &mut [T],
-) -> Option<(usize, usize)> {
+/// `path.normalize` for `join*`. Off Windows the result of a relative input
+/// starts at `buf[1]`, the slot an absolute one uses for its leading separator.
+/// `None` when the intermediate form does not fit `buf` (see
+/// `normalize_string_generic_tz`).
+fn normalize_string_node_t<T: PathChar, P: PlatformT>(str: &[T], buf: &mut [T]) -> Option<Placed> {
     if str.is_empty() {
         return join_dot(buf);
     }
@@ -2459,7 +2471,7 @@ fn normalize_string_node_t<T: PathChar, P: PlatformT>(
     if out_len == 0 {
         if is_absolute {
             *buf.get_mut(0)? = separator_t;
-            return Some((0, 1));
+            return Some(Placed { start: 0, len: 1 });
         }
 
         if trailing_separator {
@@ -2467,7 +2479,7 @@ fn normalize_string_node_t<T: PathChar, P: PlatformT>(
             let dot_slash = buf.get_mut(0..2)?;
             dot_slash[0] = T::from_u8(sep[0]);
             dot_slash[1] = T::from_u8(sep[1]);
-            return Some((0, 2));
+            return Some(Placed { start: 0, len: 2 });
         }
 
         return join_dot(buf);
@@ -2482,10 +2494,16 @@ fn normalize_string_node_t<T: PathChar, P: PlatformT>(
 
     if is_absolute && P::P != Platform::Windows {
         buf[0] = separator_t;
-        return Some((0, out_len + 1));
+        return Some(Placed {
+            start: 0,
+            len: out_len + 1,
+        });
     }
 
-    Some((buf_off, out_len))
+    Some(Placed {
+        start: buf_off,
+        len: out_len,
+    })
 }
 
 /// **NOT** plain basename (see
@@ -3323,21 +3341,22 @@ mod tests {
         // Off Windows `normalize_string_node_t` places a relative result at
         // `buf[1..]`; a buffer with room for the result alone still works.
         let mut buf = [0u8; 8];
+        let placed = |start: usize, len: usize| Some(Placed { start, len });
         assert_eq!(
             join_string_buf_t::<u8, platform::Posix>(&mut buf, &[b"a", b"b"]),
-            Some((1, 3))
+            placed(1, 3)
         );
         assert_eq!(
             join_string_buf_t::<u8, platform::Posix>(&mut buf, &[b"/a", b"b"]),
-            Some((0, 4))
+            placed(0, 4)
         );
         assert_eq!(
             join_string_buf_t::<u8, platform::Windows>(&mut buf, &[b"a", b"b"]),
-            Some((0, 3))
+            placed(0, 3)
         );
         assert_eq!(
             join_string_buf_t::<u8, platform::Posix>(&mut buf[..3], &[b"a", b"b"]),
-            Some((0, 3))
+            placed(0, 3)
         );
         assert_fits_exactly(b"a/b", |buf| {
             join_string_buf_checked::<platform::Posix>(buf, &[b"a", b"b"]).map(|s| s.to_vec())

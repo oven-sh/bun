@@ -1263,7 +1263,10 @@ describe("JSC option environment variables", () => {
   }
   test.concurrent("BUN_JSC_<option> applies", async () => {
     // level 1 lists overridden options only
-    const { stderr, exitCode } = await dumpOptions({ BUN_JSC_dumpOptions: "1", BUN_JSC_thresholdForJITAfterWarmUp: "77" });
+    const { stderr, exitCode } = await dumpOptions({
+      BUN_JSC_dumpOptions: "1",
+      BUN_JSC_thresholdForJITAfterWarmUp: "77",
+    });
     expect(stderr).toContain("thresholdForJITAfterWarmUp=77");
     expect(exitCode).toBe(0);
   });

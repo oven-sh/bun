@@ -808,8 +808,9 @@ mod _impl {
         #[cfg(windows)]
         {
             let mut name_buffer: [u16; 130] = [0; 130]; // [129:0]u16 → 130 u16s with NUL at [129]
-            // SAFETY: idempotent Winsock init (libuv defers it to first use); valid buffer.
+            // SAFETY: idempotent Winsock init (libuv defers it to first use).
             unsafe { windows::libuv::uv__winsock_ensure() };
+            // SAFETY: valid buffer
             if unsafe { windows::GetHostNameW(name_buffer.as_mut_ptr(), 129) } == 0 {
                 let str = BunString::clone_utf16(slice_to_nul_u16(&name_buffer));
                 let js = str.to_js(global);

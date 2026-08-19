@@ -1777,6 +1777,15 @@ describe("DONT_CONTEXTIFY", () => {
       ),
     ).toEqual([true, "number", "function"]);
   });
+
+  test("compileFunction accepts a DONT_CONTEXTIFY context as parsingContext", () => {
+    const ctx = createContext(constants.DONT_CONTEXTIFY);
+    const fn = compileFunction("return [globalThis === g, Array]", ["g"], { parsingContext: ctx });
+    const [isContextGlobal, ctxArray] = fn(ctx);
+    expect(isContextGlobal).toBe(true);
+    expect(ctxArray).toBe(ctx.Array);
+    expect(ctxArray).not.toBe(Array);
+  });
 });
 
 describe("defineProperty errors use vm-realm global", () => {

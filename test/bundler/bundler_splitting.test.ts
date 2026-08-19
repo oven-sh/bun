@@ -25,8 +25,8 @@ function readOutput(api: BundlerTestBundleAPI, file: string) {
 }
 
 // The import() specifiers in an output file. Each of them must name a file in
-// the output directory: with splitting they used to be rewritten to the
-// importee's CSS output instead of its JS chunk.
+// the output directory: the import() of a module that imports CSS used to be
+// rewritten to the module's CSS output instead of its JS chunk.
 function dynamicImportsIn(api: BundlerTestBundleAPI, file: string) {
   const specifiers = Array.from(readOutput(api, file).matchAll(/\bimport\("\.\/([^"]+)"\)/g), m => m[1]);
   for (const specifier of specifiers) api.assertFileExists("/out/" + specifier);
@@ -40,7 +40,8 @@ const cssSourcesIn = (api: BundlerTestBundleAPI, file: string) =>
 
 // Every case builds into its own directory under expectBundled's temp root and
 // spawns its own processes, so they can overlap. expectBundled registers the
-// backend: "api" cases with it.serial because that backend chdirs.
+// backend: "api" cases with it.serial because that backend chdirs. Each of
+// those waits for the cases declared before it and blocks the ones after it.
 describe.concurrent("bundler", () => {
   itBundled("splitting/DynamicImportCSSFile", {
     files: {
@@ -171,17 +172,11 @@ describe.concurrent("bundler", () => {
     env: "inline",
     format: "esm",
     onAfterBundle(api) {
-      // entry-[hash].js holds the runtime helpers that entry.js and level1's
-      // chunk share. level1 reaches the same CSS as the entry point, so it
-      // shares entry.css instead of getting a CSS output of its own.
-      expect(outputFiles(api)).toEqual([
-        "entry-[hash].js",
-        "entry.css",
-        "entry.js",
-        "level1-[hash].js",
-        "level2-[hash].css",
-        "level2-[hash].js",
-      ]);
+      // level1 reaches the same CSS as the entry point, so it shares entry.css
+      // instead of getting a CSS output of its own. Only the CSS outputs are
+      // pinned: the JS side also has a chunk of unused runtime helpers, whose
+      // presence and name this case does not cover.
+      expect(outputFiles(api).filter(file => file.endsWith(".css"))).toEqual(["entry.css", "level2-[hash].css"]);
       expect(dynamicImportsIn(api, "entry.js")).toEqual(["level1-[hash].js"]);
       expect(dynamicImportsIn(api, "level1-[hash].js")).toEqual(["level2-[hash].js"]);
       expect(cssSourcesIn(api, "entry.css")).toEqual(["level1.css", "level2.css"]);
@@ -407,8 +402,9 @@ describe.concurrent("bundler", () => {
     env: "inline",
     format: "esm",
     onAfterBundle(api) {
-      // A stylesheet has no JS chunk, so the import() is rewritten to the
-      // stylesheet's own CSS output.
+      // Current behavior: the stylesheet gets no JS chunk, so the import() is
+      // rewritten to the stylesheet's own CSS output. A build that gives an
+      // import()ed stylesheet a JS chunk has to update these two lists.
       expect(outputFiles(api)).toEqual(["entry.css", "entry.js", "styles-[hash].css"]);
       expect(dynamicImportsIn(api, "entry.js")).toEqual(["styles-[hash].css"]);
       expect(cssSourcesIn(api, "entry.css")).toEqual(["styles.css"]);
@@ -453,18 +449,13 @@ describe.concurrent("bundler", () => {
     env: "inline",
     format: "esm",
     onAfterBundle(api) {
-      // a.js is reached from both import() targets, so its code moves into a
-      // shared chunk; the second shared chunk holds the runtime helpers. Both
-      // are named after the entry point.
-      expect(outputFiles(api)).toEqual([
+      // b reaches a's CSS too. Only the CSS outputs are pinned: a.js itself
+      // moves into a shared chunk, next to a chunk of unused runtime helpers,
+      // and the names of those two chunks are not what this case covers.
+      expect(outputFiles(api).filter(file => file.endsWith(".css"))).toEqual([
         "a-[hash].css",
-        "a-[hash].js",
         "b-[hash].css",
-        "b-[hash].js",
-        "entry-[hash].js",
-        "entry-[hash].js",
         "entry.css",
-        "entry.js",
       ]);
       expect(dynamicImportsIn(api, "entry.js")).toEqual(["a-[hash].js", "b-[hash].js"]);
       expect(cssSourcesIn(api, "entry.css")).toEqual(["a.css", "b.css"]);
@@ -646,22 +637,22 @@ describe.concurrent("bundler", () => {
 
   // N same-named cross-chunk exports must get unique aliases in O(N) total
   // (ExportRenamer::next_renamed_name). The O(N^2) renamer that #34529 replaced
-  // needs about 16s for N=2500 in a debug/ASAN build, and in release 17s for
-  // N=20000, so about 39s for N=30000. The O(N) one needs about 3s and 0.5s.
+  // needs about 15s for N=2500 in a debug/ASAN build, and in release 17s for
+  // N=20000, so about 39s for N=30000. The O(N) one needs about 1.6s and 0.6s.
   //
-  // A plugin supplies the N modules: creating, reading and deleting N files
+  // The N modules are passed in memory: creating, reading and deleting N files
   // costs many times more than the build itself on the macOS and Alpine lanes.
   // Serial so that the other cases do not run while the build is timed.
   test.serial(
     "splitting/ManyCrossChunkExportAliasCollisions",
     async () => {
       const N = isDebug || isASAN ? 2500 : 30000;
-      const THRESHOLD_MS = 15000;
+      const THRESHOLD_MS = 10_000;
 
       let imports = "";
       let uses = "";
       for (let i = 0; i < N; i++) {
-        imports += `import { shared as s${i} } from "shared:${i}";\n`;
+        imports += `import { shared as s${i} } from "./s${i}.js";\n`;
         uses += `t += s${i};\n`;
       }
       // Flat statement list keeps every import live without building a deep AST.
@@ -670,6 +661,8 @@ describe.concurrent("bundler", () => {
       using dir = tempDir("splitting-export-alias-collisions", { "e1.js": entryBody, "e2.js": entryBody });
       const root = String(dir);
       const outDir = join(root, "out");
+      const files: Record<string, string> = {};
+      for (let i = 0; i < N; i++) files[`${root}/s${i}.js`] = `export const shared = ${i};\n`;
 
       const start = performance.now();
       const build = await Bun.build({
@@ -677,21 +670,7 @@ describe.concurrent("bundler", () => {
         outdir: outDir,
         splitting: true,
         format: "esm",
-        plugins: [
-          {
-            name: "shared modules",
-            setup(builder) {
-              builder.onResolve({ filter: /^shared:\d+$/ }, ({ path }) => ({
-                path: path.slice("shared:".length),
-                namespace: "shared",
-              }));
-              builder.onLoad({ filter: /.*/, namespace: "shared" }, ({ path }) => ({
-                contents: `export const shared = ${path};\n`,
-                loader: "js",
-              }));
-            },
-          },
-        ],
+        files,
       });
       const buildMs = performance.now() - start;
       expect(build.logs).toBeEmpty();

@@ -234,20 +234,6 @@ extern "C" EncodedJSValue Bun__NodeHTTP__buildRawHeadersArray(JSC::JSGlobalObjec
     RELEASE_AND_RETURN(scope, JSValue::encode(array));
 }
 
-// Scope-free VM::exception() read. A callee's ThrowScope destructor
-// simulates a throw so its caller must check; when the caller is Rust
-// (writeHeadAndEnd's write-head phase) there is no ThrowScope to do it, so
-// this acknowledges the check without declaring a scope (declaring one
-// would trip the verifier before the read). The actual success/failure
-// travels through NodeHTTPServer__writeHead's return value.
-extern "C" void Bun__NodeHTTP__acknowledgeThrowScope(JSC::JSGlobalObject* globalObject)
-{
-    // The same sanctioned read RETURN_IF_EXCEPTION performs; it observes
-    // (and under exception-scope verification, acknowledges) any pending
-    // exception without constructing a verifying scope.
-    (void)globalObject->vm().hasExceptionsAfterHandlingTraps();
-}
-
 // Defined in Rust (NodeHTTPResponse.rs): moves the captured raw header bytes
 // onto the native response so takeRawHeaders can materialize them on demand.
 extern "C" void NodeHTTPResponse__adoptRawRequestHeaders(void* nodeHttpResponse, const uint8_t* data, size_t length);
@@ -586,8 +572,12 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
 
 // Returns false when a JS exception is pending (header conversion or
 // validation threw). The exception check happens here, inside the owning
-// ThrowScope; callers on the Rust side branch on the return value instead
-// of probing VM exception state through another scope.
+// scope; callers on the Rust side branch on the return value instead of
+// probing VM exception state through another scope. TopExceptionScope rather
+// than ThrowScope because this returns to Rust, not to JS: a ThrowScope
+// destructor simulates a throw for its caller under validateExceptionChecks,
+// and the scope-less Rust caller has nothing to satisfy it with (same reason
+// as NAPI_PREAMBLE in napi.cpp).
 template<bool isSSL>
 static bool NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,
@@ -599,7 +589,7 @@ static bool NodeHTTPServer__writeHead(
     uWS::HttpResponse<isSSL>* response)
 {
     auto& vm = globalObject->vm();
-    auto scope = DECLARE_THROW_SCOPE(vm);
+    auto scope = DECLARE_TOP_EXCEPTION_SCOPE(vm);
 
     JSObject* headersObject = headersObjectValue.getObject();
     if (!response->uWS::template AsyncSocket<isSSL>::isCorked() && response->getBufferedAmount() == 0) {

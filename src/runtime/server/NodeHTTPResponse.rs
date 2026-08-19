@@ -219,10 +219,6 @@ unsafe extern "C" {
         length: usize,
         use_insecure_http_parser: bool,
     ) -> JSValue;
-    // Scope-free exception read: satisfies the exception-check verifier
-    // after a callee ThrowScope destructor simulated a throw for this
-    // (scope-less native) caller. A single traps check in release builds.
-    safe fn Bun__NodeHTTP__acknowledgeThrowScope(global_object: &JSGlobalObject);
     // Builds req.rawHeaders' flat [name, value, ...] JSArray from the header
     // bytes captured at dispatch ([u32 nameLen][u32 valueLen][name][value]...).
     safe fn Bun__NodeHTTP__buildRawHeadersArray(
@@ -234,8 +230,9 @@ unsafe extern "C" {
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
-    // Returns false when the C++ header writer left a JS exception pending
-    // (checked inside its own ThrowScope).
+    // Returns false when the C++ header writer left a JS exception pending.
+    // It checks that inside its own (Top)ExceptionScope and leaves nothing
+    // for this scope-less caller to acknowledge.
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -1057,12 +1054,9 @@ impl NodeHTTPResponse {
             }
         }
 
-        // The writeHead ThrowScope's destructor simulates a throw so its
-        // caller must check; acknowledge it scope-free (we are that caller
-        // when running inside writeHeadAndEnd), then propagate the result
-        // that traveled through the return value - otherwise the end phase
-        // would run with an exception pending.
-        Bun__NodeHTTP__acknowledgeThrowScope(global_object);
+        // Propagate the failure that traveled through the return value;
+        // otherwise writeHeadAndEnd's end phase would run with an exception
+        // pending.
         if !wrote_head_ok {
             return Err(jsc::JsError::Thrown);
         }

@@ -4857,10 +4857,21 @@ CPP_DECL double Bun__JSValue__toNumber(JSC::EncodedJSValue JSValue0, JSC::JSGlob
     return value.toInt32(arg1);
 }
 
+// The own `errors` data property of an AggregateError when it holds an object,
+// otherwise undefined. `getDirect` returns the empty value when the property is
+// missing and a GetterSetter cell when it was redefined as an accessor; passing
+// either to forEachInIterable reads them as a cell.
 JSC::EncodedJSValue JSC__JSValue__getErrorsProperty(JSC::EncodedJSValue JSValue0, JSC::JSGlobalObject* global)
 {
     JSC::JSObject* obj = JSC::JSValue::decode(JSValue0).getObject();
-    return JSC::JSValue::encode(obj->getDirect(global->vm(), global->vm().propertyNames->errors));
+    if (!obj)
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    JSC::JSValue errors = obj->getDirect(global->vm(), global->vm().propertyNames->errors);
+    if (!errors || !errors.isObject())
+        return JSC::JSValue::encode(JSC::jsUndefined());
+
+    return JSC::JSValue::encode(errors);
 }
 
 [[ZIG_EXPORT(nothrow)]] JSC::EncodedJSValue JSC__JSValue__jsTDZValue()

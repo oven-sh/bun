@@ -378,15 +378,20 @@ impl JSValue {
     /// `JSValue.getErrorsProperty(globalObject)`. Returns the
     /// own `errors` data property via `JSObject::getDirect` — no prototype
     /// walk, no getters invoked, nothrow. Used for `AggregateError.errors`.
+    ///
+    /// `None` when the property is missing (`getDirect` yields the empty
+    /// value), is an accessor (a `GetterSetter` cell), or holds a primitive.
+    /// The C++ side returns `undefined` for all three.
     #[inline]
-    pub(crate) fn get_errors_property(self, global: &JSGlobalObject) -> JSValue {
+    pub(crate) fn get_errors_property(self, global: &JSGlobalObject) -> Option<JSValue> {
         unsafe extern "C" {
             safe fn JSC__JSValue__getErrorsProperty(
                 this: JSValue,
                 global: &JSGlobalObject,
             ) -> JSValue;
         }
-        JSC__JSValue__getErrorsProperty(self, global)
+        let errors = JSC__JSValue__getErrorsProperty(self, global);
+        errors.is_object().then_some(errors)
     }
     /// `JSValue.isTerminationException()` — true if this
     /// value is the VM's termination-exception sentinel.

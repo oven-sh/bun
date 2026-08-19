@@ -817,6 +817,8 @@ function __zodCompile(n) {
       };
     }
     case "bool": {
+      // No check fits a boolean; like the other primitives, a schema that carries one defers its construction error to materialization.
+      if (n.c && n.c.length !== 0) return null;
       var boolCoerce = n.co === 1;
       return v => {
         if (boolCoerce) v = Boolean(v);

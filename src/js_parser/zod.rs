@@ -1609,8 +1609,13 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
     }
 
     fn zod_string_value_imm(&self, expr: Expr) -> Option<String> {
-        match &expr.data {
-            js_ast::ExprData::EString(s) => {
+        match expr.data {
+            js_ast::ExprData::EString(mut s) => {
+                // Constant folding (`--minify-syntax`) turns `"a" + "b"` into a rope, and `string()` alone returns its first segment.
+                s.resolve_rope_if_needed(self.arena);
+                if s.next.is_some() {
+                    return None;
+                }
                 let bytes = s.string(self.arena).ok()?;
                 Some(core::str::from_utf8(bytes).ok()?.to_string())
             }

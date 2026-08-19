@@ -673,6 +673,19 @@ export const isMemoryPressureWatcherInstalled: () => boolean = $newCppFunction(
   0,
 );
 
+// True when the installed watcher registered a real OS source (a PSI trigger
+// on Linux). The watcher installs silently without one when the kernel
+// refuses the trigger, so isMemoryPressureWatcherInstalled() cannot tell.
+export const memoryPressureWatcherHasOsBackend: () => boolean = $newRustFunction(
+  "memory_pressure.rs",
+  "jsWatcherHasOsBackend",
+  0,
+);
+
+// The exact bytes Bun writes to /proc/pressure/memory to arm its trigger.
+// null where there is no PSI backend (everything except Linux).
+export const memoryPressurePsiTrigger: () => Buffer | null = $newRustFunction("memory_pressure.rs", "jsPsiTrigger", 0);
+
 export const getEventLoopStats: () => {
   activeTasks: number;
   tasks: number;

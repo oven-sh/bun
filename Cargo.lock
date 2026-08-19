@@ -1794,7 +1794,6 @@ dependencies = [
  "bun_sha_hmac",
  "bun_url",
  "p256",
- "pkcs8",
  "rand_core",
  "serde",
  "serde_json",

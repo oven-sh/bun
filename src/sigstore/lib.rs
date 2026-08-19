@@ -637,14 +637,13 @@ fn rekor_entry_to_tlog(e: &serde_json::Value) -> Result<SerializedTlogEntry, Sig
 /// DSSE PAE: `"DSSEv1" SP len(type) SP type SP len(body) SP body`.
 fn dsse_pre_auth_encoding(payload_type: &str, payload: &[u8]) -> Vec<u8> {
     let mut out = Vec::with_capacity(64 + payload_type.len() + payload.len());
-    write!(
+    let _ = write!(
         &mut out,
         "DSSEv1 {} {} {} ",
         payload_type.len(),
         payload_type,
         payload.len()
-    )
-    .ok();
+    );
     out.extend_from_slice(payload);
     out
 }

@@ -89,13 +89,12 @@ describe("argv round-trips through spawn", () => {
 // launch raw command lines — no re-quoting by the parent — and compare against
 // both spelled-out expectations and a reference implementation of those rules.
 describe.skipIf(!isWindows)("Windows command line splitting follows the C runtime", () => {
-  // The exe path goes onto the command line unquoted in verbatim mode; a space in
-  // it would shift argv before the part under test.
-  const exeHasSpace = bunExe().includes(" ");
-
+  // Verbatim mode joins argv0 and the args with single spaces and no quoting, so
+  // quote the exe path ourselves (via argv0) the same way the script path is.
   function runVerbatim(tail) {
     return new Promise((resolve, reject) => {
       const child = nodeSpawn(bunExe(), [`"${arg1}"${tail}`], {
+        argv0: `"${bunExe()}"`,
         env: bunEnv,
         stdio: ["ignore", "pipe", "inherit"],
         windowsVerbatimArguments: true,
@@ -103,12 +102,15 @@ describe.skipIf(!isWindows)("Windows command line splitting follows the C runtim
       let out = "";
       child.stdout.setEncoding("utf8").on("data", d => (out += d));
       child.on("error", reject);
-      child.on("close", () => {
+      child.on("close", code => {
+        let argv;
         try {
-          resolve(JSON.parse(out).slice(2));
+          argv = JSON.parse(out).slice(2);
         } catch {
-          reject(new Error(`child printed ${JSON.stringify(out)} for tail ${JSON.stringify(tail)}`));
+          return reject(new Error(`child exited ${code} and printed ${JSON.stringify(out)} for tail ${JSON.stringify(tail)}`));
         }
+        if (code !== 0) return reject(new Error(`child exited ${code} for tail ${JSON.stringify(tail)}`));
+        resolve(argv);
       });
     });
   }
@@ -150,13 +152,13 @@ describe.skipIf(!isWindows)("Windows command line splitting follows the C runtim
     [` \\"`, ['"']],
   ];
 
-  test.skipIf(exeHasSpace)("curated command lines", async () => {
+  test("curated command lines", async () => {
     for (const [tail, want] of table) expect(expected(tail)).toEqual(want); // pins the reference itself
     const got = await Promise.all(table.map(([tail]) => runVerbatim(tail)));
     for (let i = 0; i < table.length; i++) expect(got[i], `tail ${JSON.stringify(table[i][0])}`).toEqual(table[i][1]);
   });
 
-  test.skipIf(exeHasSpace)("generated command lines", async () => {
+  test("generated command lines", async () => {
     // Deterministic generator over the characters the rules care about.
     let seed = 0x9e3779b9;
     const next = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 2 ** 32;

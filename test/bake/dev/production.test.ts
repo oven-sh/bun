@@ -2068,24 +2068,14 @@ export default function DocsLayout({ children }) {
   test(
     "client component imported by a server component and by another client component is bundled once",
     async () => {
+      // The page imports Inner and Outer side by side, so either browser build of Inner.tsx can finish first.
       const dir = await tempDirWithBakeDeps("bake-production-client-shared-boundary", {
         "src/index.tsx": `export default { app: { framework: "react" } };`,
         "pages/index.tsx": `import { Inner } from "../components/Inner";
-import { Shell } from "../components/Shell";
+import { Outer } from "../components/Outer";
 
 export default function IndexPage() {
-  return <main><Inner /><Shell /></main>;
-}`,
-        // Server components between the page and Outer, so Inner.tsx is a boundary before Outer.tsx resolves it.
-        "components/Shell.tsx": `import { Frame } from "./Frame";
-
-export function Shell() {
-  return <section><Frame /></section>;
-}`,
-        "components/Frame.tsx": `import { Outer } from "./Outer";
-
-export function Frame() {
-  return <article><Outer /></article>;
+  return <main><Inner /><Outer /></main>;
 }`,
         "components/Outer.tsx": `"use client";
 import { Inner } from "./Inner";
@@ -2112,37 +2102,42 @@ console.log(JSON.stringify({ outerImportsSameInner: outer.innerSeenByOuter() ===
         "package.json": JSON.stringify({ "name": "test-app", "version": "1.0.0" }),
       });
 
-      const build = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
-      expect(build.stderr.toString()).not.toContain("error");
-      expect(build.exitCode).toBe(0);
+      // Repeat the build so both parse orders get a chance to happen.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        rmSync(path.join(dir, "dist"), { recursive: true, force: true });
 
-      expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
-        '<div id="outer"><span class="inner">inner module marker</span></div>',
-      );
+        const build = await Bun.$`${bunExe()} build --app ./src/index.tsx`.cwd(dir).env(bunEnv).throws(false);
+        expect(build.stderr.toString()).not.toContain("error");
+        expect(build.exitCode).toBe(0);
 
-      const chunkDir = path.join(dir, "dist", "_bun");
-      const chunksWithInner: string[] = [];
-      for (const file of readdirSync(chunkDir)) {
-        if (
-          file.endsWith(".js") &&
-          (await Bun.file(path.join(chunkDir, file)).text()).includes("inner module marker")
-        ) {
-          chunksWithInner.push(file);
+        expect(await Bun.file(path.join(dir, "dist", "index.html")).text()).toContain(
+          '<main><span class="inner">inner module marker</span><div id="outer"><span class="inner">inner module marker</span></div></main>',
+        );
+
+        const chunkDir = path.join(dir, "dist", "_bun");
+        const chunksWithInner: string[] = [];
+        for (const file of readdirSync(chunkDir)) {
+          if (
+            file.endsWith(".js") &&
+            (await Bun.file(path.join(chunkDir, file)).text()).includes("inner module marker")
+          ) {
+            chunksWithInner.push(file);
+          }
         }
-      }
-      expect(chunksWithInner).toHaveLength(1);
+        expect(chunksWithInner).toHaveLength(1);
 
-      await using proc = Bun.spawn({
-        cmd: [bunExe(), "check-client-chunks.mjs"],
-        cwd: dir,
-        env: bunEnv,
-        stdout: "pipe",
-        stderr: "pipe",
-      });
-      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-      expect(stderr).toBe("");
-      expect(JSON.parse(stdout)).toStrictEqual({ outerImportsSameInner: true });
-      expect(exitCode).toBe(0);
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "check-client-chunks.mjs"],
+          cwd: dir,
+          env: bunEnv,
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect(stderr).toBe("");
+        expect(JSON.parse(stdout)).toStrictEqual({ outerImportsSameInner: true });
+        expect(exitCode).toBe(0);
+      }
     },
     60_000 * WAIT_MULTIPLIER,
   );

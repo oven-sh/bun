@@ -3787,6 +3787,42 @@ pub mod bv2_impl {
             Ok(source_index.get())
         }
 
+        /// False when another browser build of `path` holds the map slot: that build is the boundary and importers of `source_index` move to it.
+        fn claim_client_component_boundary(&mut self, source_index: IndexInt, path: &[u8]) -> bool {
+            let slot = self
+                .path_to_source_index_map(Target::Browser)
+                .get_or_put(path)
+                .expect("oom");
+            if !slot.found_existing || *slot.value_ptr == source_index {
+                *slot.value_ptr = source_index;
+                return true;
+            }
+            let boundary = Index::init(*slot.value_ptr);
+            // Files parsed so far already point at `source_index`; later ones read the path maps.
+            for records in self.graph.ast.items_import_records_mut() {
+                for record in records.as_mut_slice() {
+                    if record.source_index.get() == source_index {
+                        record.source_index = boundary;
+                    }
+                }
+            }
+            for pending in self
+                .resolve_tasks_waiting_for_import_source_index
+                .values_mut()
+            {
+                for import in pending.iter_mut() {
+                    if import.to_source_index.get() == source_index {
+                        import.to_source_index = boundary;
+                    }
+                }
+            }
+            let server_target = self.transpiler.options.target;
+            let _ = self
+                .path_to_source_index_map(server_target)
+                .put(path, boundary.get()); // OOM-only Result
+            false
+        }
+
         /// Workers may not read `graph.ast` while this thread appends to it, hence the copies.
         fn copy_export_names_for_reference_proxy(
             &self,
@@ -7243,7 +7279,7 @@ pub mod bv2_impl {
                     }
                     result.ast.import_records = import_records;
 
-                    let is_server_component_boundary =
+                    let mut is_server_component_boundary =
                         result.use_directive != crate::UseDirective::None && {
                             let separate = this
                                 .framework
@@ -7261,6 +7297,17 @@ pub mod bv2_impl {
                                 is_client != is_browser
                             }
                         };
+                    // A server and a client importer can each schedule a browser build of one "use client" file; only the first is the boundary.
+                    if is_server_component_boundary
+                        && result.use_directive == crate::UseDirective::Client
+                        && result_ast_target == Target::Browser
+                        && this.dev_server.is_none()
+                    {
+                        is_server_component_boundary = this.claim_client_component_boundary(
+                            result_source_index as IndexInt,
+                            source_path_text,
+                        );
+                    }
 
                     let result_heap = *result.ast.parts.allocator();
                     this.graph.ast.set(
@@ -7322,33 +7369,49 @@ pub mod bv2_impl {
                                 )
                                 .expect("oom");
 
-                            let mut ssr_source =
-                                this.graph.input_files.items_source()[result_source_index].clone();
-                            // `path_with_pretty_initialized` takes/returns
-                            // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
-                            // `fs_path_from_logger`/`fs_path_to_logger` until the
-                            // three `Path` mirrors unify.
-                            ssr_source.path.pretty = ssr_source.path.text;
-                            ssr_source.path = path_as_static(
-                                &this
-                                    .path_with_pretty_initialized(
-                                        &ssr_source.path,
-                                        Target::ServerComponentsSsr,
-                                    )
-                                    .expect("oom"),
-                            );
-                            let ssr_index = this
-                                .enqueue_parse_task2(
+                            // An SSR importer of this file may already have scheduled its SSR build.
+                            let existing_ssr_index = if this.dev_server.is_none() {
+                                this.graph
+                                    .path_to_source_index_map(Target::ServerComponentsSsr)
+                                    .get(source_path_text)
+                            } else {
+                                None
+                            };
+                            let ssr_index = if let Some(ssr_index) = existing_ssr_index {
+                                ssr_index
+                            } else {
+                                let mut ssr_source = this.graph.input_files.items_source()
+                                    [result_source_index]
+                                    .clone();
+                                // `path_with_pretty_initialized` takes/returns
+                                // `Fs::Path` (`bun_resolver::fs::Path`); bridge through
+                                // `fs_path_from_logger`/`fs_path_to_logger` until the
+                                // three `Path` mirrors unify.
+                                ssr_source.path.pretty = ssr_source.path.text;
+                                ssr_source.path = path_as_static(
+                                    &this
+                                        .path_with_pretty_initialized(
+                                            &ssr_source.path,
+                                            Target::ServerComponentsSsr,
+                                        )
+                                        .expect("oom"),
+                                );
+                                this.enqueue_parse_task2(
                                     &mut ssr_source,
                                     source_loader,
                                     Target::ServerComponentsSsr,
                                 )
-                                .expect("oom");
+                                .expect("oom")
+                            };
 
-                            // A same-target importer reuses these builds; a slot already taken belongs to a client-discovered copy.
+                            // An importer from any graph reuses these builds; a slot already taken belongs to a copy an importer scheduled first.
                             for (map_target, index) in [
                                 (result_ast_target, result_source_index as IndexInt),
                                 (Target::ServerComponentsSsr, ssr_index),
+                                (
+                                    this.transpiler.options.target,
+                                    result_source_index as IndexInt,
+                                ),
                             ] {
                                 let slot = this
                                     .graph

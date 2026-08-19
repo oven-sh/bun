@@ -2777,23 +2777,23 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     return JSC::JSValue::encode(result);
 }
 
-JSC::JSFunction* GlobalObject::utilInspectFunction()
+JSC::JSObject* GlobalObject::utilInspectFunction()
 {
     if (auto* inspect = m_utilInspectFunction.get())
         return inspect;
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSValue nodeUtil = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::NodeUtil);
+    JSValue inspectModule = internalModuleRegistry()->requireId(this, vm, Bun::InternalModuleRegistry::Field::InternalUtilInspect);
     RETURN_IF_EXCEPTION(scope, nullptr);
-    RELEASE_ASSERT(nodeUtil.isObject());
-    JSValue inspectValue = asObject(nodeUtil)->get(this, Identifier::fromString(vm, "inspect"_s));
+    RELEASE_ASSERT(inspectModule.isObject());
+    JSValue inspectValue = asObject(inspectModule)->get(this, Identifier::fromString(vm, "inspect"_s));
     RETURN_IF_EXCEPTION(scope, nullptr);
-    auto* inspect = dynamicDowncast<JSFunction>(inspectValue);
-    if (!inspect) [[unlikely]] {
+    if (!inspectValue.isCallable()) [[unlikely]] {
         throwTypeError(this, scope, "util.inspect is not a function"_s);
         return nullptr;
     }
+    JSObject* inspect = asObject(inspectValue);
     m_utilInspectFunction.set(vm, this, inspect);
     return inspect;
 }
@@ -2805,7 +2805,7 @@ JSC::JSFunction* GlobalObject::utilInspectStylizeColorFunction()
 
     auto& vm = this->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSFunction* inspect = utilInspectFunction();
+    JSObject* inspect = utilInspectFunction();
     RETURN_IF_EXCEPTION(scope, nullptr);
 
     JSC::MarkedArgumentBuffer args;

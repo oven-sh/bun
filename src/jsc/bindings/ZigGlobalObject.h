@@ -266,8 +266,8 @@ public:
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* utilInspectOptionsStructure() const { return m_utilInspectOptionsStructure.getInitializedOnMainThread(this); }
-    // nullptr with an exception pending if loading node:util throws.
-    JSC::JSFunction* utilInspectFunction();
+    // The callable `inspect` export of internal/util/inspect, or nullptr with an exception pending.
+    JSC::JSObject* utilInspectFunction();
     JSC::JSFunction* utilInspectStylizeColorFunction();
     JSC::JSFunction* utilInspectStylizeNoColorFunction() const { return m_utilInspectStylizeNoColorFunction.getInitializedOnMainThread(this); }
 
@@ -605,7 +605,7 @@ public:
     V(private, LazyPropertyOfGlobalObject<Structure>, m_pendingVirtualModuleResultStructure)                 \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_JSSocketHandlersStructure)                           \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_nativeMicrotaskTrampoline)                          \
-    V(private, WriteBarrier<JSFunction>, m_utilInspectFunction)                                              \
+    V(private, WriteBarrier<JSObject>, m_utilInspectFunction)                                                \
     V(private, LazyPropertyOfGlobalObject<Structure>, m_utilInspectOptionsStructure)                         \
     V(private, WriteBarrier<JSFunction>, m_utilInspectStylizeColorFunction)                                  \
     V(private, LazyPropertyOfGlobalObject<JSFunction>, m_utilInspectStylizeNoColorFunction)                  \

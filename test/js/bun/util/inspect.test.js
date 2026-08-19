@@ -494,12 +494,12 @@ it("Bun.inspect.custom exists", () => {
   expect(Bun.inspect.custom).toBe(util.inspect.custom);
 });
 
-// The native formatter loads util.inspect (and, with colors, its stylize helper) the first time a
-// custom inspect function runs. When that load throws (a global that node:util reads while it
-// loads has been replaced, the stack is nearly exhausted, util.inspect has been replaced with a
-// non-function), the error has to reach the caller and the next call has to load again. It used
-// to abort the process. Each case runs in a fresh child so that nothing has loaded util.inspect
-// for the formatter yet.
+// The native formatter loads the inspect function of internal/util/inspect (and, with colors, its
+// stylize helper) the first time a custom inspect function runs. When that load throws (a global
+// that the module reads while it loads has been replaced, the stack is nearly exhausted, the export
+// is not callable), the error has to reach the caller and the next call has to load again. It used
+// to abort the process. Each case runs in a fresh child so that nothing has loaded the function for
+// the formatter yet.
 describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect function throws", () => {
   async function inspectInChild(code) {
     await using proc = Bun.spawn({
@@ -520,7 +520,7 @@ describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect 
     return { stdout, stderr, exitCode };
   }
 
-  it("throws while a global that node:util reads is replaced, and works once it is restored", async () => {
+  it("throws while a global that the module reads is replaced, and works once it is restored", async () => {
     const result = await inspectInChild(`
       const RealSymbol = Symbol;
       globalThis.Symbol = 0;
@@ -568,20 +568,36 @@ describe.concurrent("Bun.inspect when loading util.inspect for a custom inspect 
     });
   });
 
-  it("throws a TypeError while util.inspect is not a function, and works once it is restored", async () => {
+  // bunEnv exposes the internal modules to the child. Any callable export is accepted, not only a
+  // plain function, so a wrapper such as a Proxy or a mock works.
+  it("throws a TypeError while the export is not callable, and passes the export once it is", async () => {
+    const result = await inspectInChild(`
+      const exports = require("internal/util/inspect");
+      const realInspect = exports.inspect;
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === exports.inspect); } };
+      exports.inspect = 42;
+      try {
+        console.log(Bun.inspect(receives));
+      } catch (e) {
+        console.log(String(e));
+      }
+      exports.inspect = new Proxy(realInspect, {});
+      console.log(Bun.inspect(receives));
+    `);
+    expect(result).toEqual({ stdout: "TypeError: util.inspect is not a function\ntrue\n", stderr: "", exitCode: 0 });
+  });
+
+  // Like node, the formatter passes the inspect function of the internal module to custom inspect
+  // functions. Replacing util.inspect does not change it.
+  it("passes the real inspect function while util.inspect is replaced", async () => {
     const result = await inspectInChild(`
       const util = require("node:util");
       const realInspect = util.inspect;
       util.inspect = 42;
-      try {
-        console.log(Bun.inspect(obj));
-      } catch (e) {
-        console.log(String(e));
-      }
-      util.inspect = realInspect;
-      console.log(Bun.inspect(obj));
+      const receives = { [Bun.inspect.custom](depth, options, inspect) { return String(inspect === realInspect); } };
+      console.log(Bun.inspect(receives));
     `);
-    expect(result).toEqual({ stdout: "TypeError: util.inspect is not a function\ncustom\n", stderr: "", exitCode: 0 });
+    expect(result).toEqual({ stdout: "true\n", stderr: "", exitCode: 0 });
   });
 });
 

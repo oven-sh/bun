@@ -1126,29 +1126,21 @@ impl UpdateInteractiveCommand {
         #[cfg(windows)]
         {
             use bun_sys::windows;
-            let handle = match windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
-                Some(h) => h,
-                None => {
-                    return TerminalSize {
-                        height: 20,
-                        width: 80,
-                    };
-                }
-            };
-
-            // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
-            let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
-            // SAFETY: handle is valid; csbi is a valid out-ptr.
-            if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
-                != windows::FALSE
-            {
-                let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
-                let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
-                if width > 0 && height > 0 {
-                    return TerminalSize {
-                        height: usize::try_from(height).expect("int cast"),
-                        width: usize::try_from(width).expect("int cast"),
-                    };
+            if let Some(handle) = windows::GetStdHandle(windows::STD_OUTPUT_HANDLE) {
+                // SAFETY: all-zero is a valid CONSOLE_SCREEN_BUFFER_INFO (#[repr(C)] POD).
+                let mut csbi: windows::CONSOLE_SCREEN_BUFFER_INFO = bun_core::ffi::zeroed();
+                // SAFETY: handle is valid; csbi is a valid out-ptr.
+                if unsafe { windows::kernel32::GetConsoleScreenBufferInfo(handle, &mut csbi) }
+                    != windows::FALSE
+                {
+                    let width = csbi.srWindow.Right - csbi.srWindow.Left + 1;
+                    let height = csbi.srWindow.Bottom - csbi.srWindow.Top + 1;
+                    if width > 0 && height > 0 {
+                        return TerminalSize {
+                            height: usize::try_from(height).expect("int cast"),
+                            width: usize::try_from(width).expect("int cast"),
+                        };
+                    }
                 }
             }
         }
@@ -1305,7 +1297,12 @@ impl UpdateInteractiveCommand {
                 {
                     state.cursor - (state.viewport_height - context_below)
                 } else {
-                    0
+                    // Viewport too short for context (it can be a single row
+                    // on a short terminal): keep the cursor on the last
+                    // visible row.
+                    state
+                        .cursor
+                        .saturating_sub(state.viewport_height.saturating_sub(1))
                 }
             };
 

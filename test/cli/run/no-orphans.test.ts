@@ -325,24 +325,33 @@ async function waitUntilAllDead(pids: number[], timeoutMs: number): Promise<numb
 // child that lives long enough to matter is always on the list, whether or
 // not the Worker that spawned it got to run again before exit. A spawn
 // failure other than ECANCELED is appended too, so the test cannot pass
-// because the workers failed to spawn.
+// because the workers failed to spawn. The main thread exits only once the
+// file has MIN_RECORDED lines: on a release build the first spawns and the
+// exit are otherwise so close together that no child has written yet, and
+// the list would be empty.
+const MIN_RECORDED = 20;
 test.concurrent.skipIf(!isPosix)(
   "--no-orphans: clean exit reaps children spawned by Workers during the exit",
   async () => {
     using dir = tempDir("no-orphans-workers", {
-      // Pre-created so that a run in which no child got to write still fails
-      // on the assertions below rather than on reading the file.
       pids: "",
       "exit-while-workers-spawn.js": `
         import { Worker, isMainThread, parentPort } from "node:worker_threads";
-        import { appendFileSync } from "node:fs";
+        import { appendFileSync, readFileSync } from "node:fs";
         const workerCount = 4;
         if (isMainThread) {
           let hot = 0;
+          const started = performance.now();
+          const exitOnceChildrenHaveRun = () => {
+            const recorded = readFileSync(process.env.PIDFILE, "utf8").split("\\n").filter(Boolean).length;
+            // The deadline is a hang guard: the test then fails on the count.
+            if (recorded >= ${MIN_RECORDED} || performance.now() - started > 10_000) process.exit(0);
+            setTimeout(exitOnceChildrenHaveRun, 1);
+          };
           for (let i = 0; i < workerCount; i++) {
             new Worker(new URL(import.meta.url)).on("message", () => {
-              // Every worker is inside its spawn loop: exit in the middle of it.
-              if (++hot === workerCount) process.exit(0);
+              // Every worker is inside its spawn loop and stays there until exit.
+              if (++hot === workerCount) exitOnceChildrenHaveRun();
             });
           }
         } else {
@@ -376,13 +385,11 @@ test.concurrent.skipIf(!isPosix)(
     const lines = readFileSync(pidfile, "utf8").split("\n").filter(Boolean);
     const spawnErrors = lines.filter(line => !/^\d+$/.test(line));
     const children = lines.filter(line => /^\d+$/.test(line)).map(Number);
-    // A child killed before its echo is not on the list, so the count varies;
-    // this only proves the workers were spawning.
-    expect(children.length).toBeGreaterThan(0);
     const survivors = await waitUntilAllDead(children, 10000);
     reap(...survivors);
     if (exitCode !== 0) console.error(stderr);
     expect({ spawnErrors, survivors, exitCode }).toEqual({ spawnErrors: [], survivors: [], exitCode: 0 });
+    expect(children.length).toBeGreaterThanOrEqual(MIN_RECORDED);
   },
 );
 

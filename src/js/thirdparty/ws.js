@@ -933,8 +933,7 @@ function wsEmitClose(server) {
 }
 
 function abortHandshake(socket, code, message, headers = {}) {
-  // An 'upgrade' socket has no ServerResponse, so reply through the native
-  // response handle. A closed socket has neither.
+  // node:http gives an 'upgrade' socket no ServerResponse, and a closed socket has no native handle.
   const response = socket._httpMessage || socket[kBunInternals];
   if (!response) {
     socket.destroy();

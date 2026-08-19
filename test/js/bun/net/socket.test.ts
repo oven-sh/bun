@@ -4141,19 +4141,137 @@ describe.concurrent.each(["tcp", "tls"] as const)("%s socket paused when its pee
     peer.terminate();
 
     const error = (await closedWith.promise) as NodeJS.ErrnoException | undefined;
-    // On Windows the close reports the reset too, but the error it carries has no code: the
-    // raw WSA code reaches on_close unmapped (node:net papers over it, see SocketEmitEndNT).
-    // That is a separate bug. Until it is fixed only POSIX can check the code.
     expect({
       reported: error instanceof Error,
       syscall: error?.syscall,
       dataCalls,
-      code: isWindows ? null : error?.code,
+      code: error?.code,
     }).toEqual({
       reported: true,
       syscall: "read",
       dataCalls: 0,
-      code: isWindows ? null : "ECONNRESET",
+      code: "ECONNRESET",
     });
+  });
+});
+
+// A close that the event loop initiated passes the read error to close(). usockets
+// reports that error in the platform's own numbering (an errno on POSIX, a WSA code
+// such as WSAECONNRESET = 10054 on Windows) and on_close has to map it: unmapped, a
+// reset reached JS on Windows as an error without a code (errno -10054, "Unknown
+// Error, read"), and loop.c's poll-error fallback as ESHUTDOWN. The code is the same
+// on every platform, like node's "read ECONNRESET".
+describe.concurrent("close() error after the peer resets the connection", () => {
+  type CloseError = (Error & { code?: string; syscall?: string }) | undefined;
+  function closeErrorShape(error: CloseError) {
+    return { reported: error instanceof Error, code: error?.code, syscall: error?.syscall };
+  }
+  const readReset = { reported: true, code: "ECONNRESET", syscall: "read" };
+
+  describe.each(["tcp", "tls"] as const)("%s", transport => {
+    // The peer lives in a child process that is killed while data it never read sits
+    // in its receive buffer: the kernel then closes its socket with an RST, and
+    // nothing (no FIN, and for TLS no close_notify) is queued ahead of the reset. An
+    // in-process terminate() is not usable for the TLS case: it writes a close_notify
+    // first, and on POSIX the reading side consumes that as a clean end.
+    const peerSource = `
+      await Bun.connect({
+        hostname: "127.0.0.1",
+        port: Number(process.argv[2]),
+        tls: ${transport === "tls" ? JSON.stringify({ ca: tls.cert }) : "undefined"},
+        socket: {
+          data(socket) {
+            // The greeting arrived, so both sides are fully open. Stop reading: what
+            // the server writes next stays unread in this process's receive buffer.
+            socket.pause();
+            socket.write("ready");
+          },
+          close() {},
+          error() {},
+        },
+      });
+      await Bun.stdin.text(); // keeps the process alive until the test kills it
+    `;
+
+    it("the accepted socket reports the reset as read ECONNRESET", async () => {
+      const ready = Promise.withResolvers<Socket>();
+      const closedWith = Promise.withResolvers<CloseError>();
+      let received = "";
+      const greet = (socket: Socket) => socket.write("greeting");
+      using listener = Bun.listen({
+        hostname: "127.0.0.1",
+        port: 0,
+        tls: transport === "tls" ? tls : undefined,
+        socket: {
+          open(socket) {
+            if (transport === "tcp") greet(socket);
+          },
+          handshake(socket, success, authorizationError) {
+            if (success) greet(socket);
+            else ready.reject(authorizationError ?? new Error("server handshake failed"));
+          },
+          data(socket, chunk) {
+            received += chunk.toString();
+            if (received.includes("ready")) ready.resolve(socket);
+          },
+          close(_socket, error) {
+            ready.reject(new Error("the accepted socket closed before the peer was ready"));
+            closedWith.resolve(error as CloseError);
+          },
+        },
+      });
+      using dir = tempDir("socket-peer-reset", { "peer.ts": peerSource });
+      await using peer = Bun.spawn({
+        cmd: [bunExe(), "peer.ts", String(listener.port)],
+        cwd: String(dir),
+        env: bunEnv,
+        stdin: "pipe",
+      });
+
+      const accepted = await ready.promise;
+      accepted.write("left unread in the peer's receive buffer");
+      peer.kill("SIGKILL");
+
+      expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
+    });
+  });
+
+  it("a connected socket reports the reset the same way (tcp)", async () => {
+    // Plain TCP terminate() queues nothing ahead of the RST, so the server side of
+    // the same process can reset the connection.
+    const accepted = Promise.withResolvers<Socket>();
+    using listener = Bun.listen({
+      hostname: "127.0.0.1",
+      port: 0,
+      socket: {
+        open(socket) {
+          accepted.resolve(socket);
+          socket.write("greeting");
+        },
+        data() {},
+        close() {},
+      },
+    });
+
+    const greeted = Promise.withResolvers<void>();
+    const closedWith = Promise.withResolvers<CloseError>();
+    await Bun.connect({
+      hostname: "127.0.0.1",
+      port: listener.port,
+      socket: {
+        data: () => greeted.resolve(),
+        connectError: (_socket, error) => greeted.reject(error),
+        close(_socket, error) {
+          greeted.reject(new Error("the connected socket closed before the greeting arrived"));
+          closedWith.resolve(error as CloseError);
+        },
+      },
+    });
+
+    const server = await accepted.promise;
+    await greeted.promise;
+    server.terminate();
+
+    expect(closeErrorShape(await closedWith.promise)).toEqual(readReset);
   });
 });

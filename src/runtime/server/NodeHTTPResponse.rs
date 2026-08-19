@@ -735,8 +735,7 @@ impl NodeHTTPResponse {
         let vm = vm_get();
         self.clear_on_data_callback(self.get_this_value(), vm.global());
         self.clear_pending_pinned_write(vm.global(), JSValue::ZERO);
-        // A tunneled connection stays open after this release, and its 'upgrade'
-        // listener may still call server.upgrade() on it (upgrade() resets it).
+        // A tunnel stays open, and ws may still upgrade it later. upgrade() resets this itself.
         if !self.flags.get().contains(Flags::TUNNELED) {
             self.upgrade_context.with_mut(|c| c.reset());
         }

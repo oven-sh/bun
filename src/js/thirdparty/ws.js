@@ -932,24 +932,10 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-/**
- * Handle socket errors.
- *
- * @private
- */
 function socketOnError() {
   this.destroy();
 }
 
-/**
- * Close the connection when preconditions are not fulfilled.
- *
- * @param {Duplex} socket The socket of the upgrade request
- * @param {Number} code The HTTP response status code
- * @param {String} [message] The HTTP response body
- * @param {Object} [headers] Additional HTTP response headers
- * @private
- */
 function abortHandshake(socket, code, message, headers) {
   const { STATUS_CODES } = lazyHttp();
   message = message || STATUS_CODES[code];

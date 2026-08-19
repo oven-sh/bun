@@ -329,8 +329,8 @@ bun_dispatch::link_interface! {
         fn handle_client_component_boundary_failure(abs_path: &[u8]) -> Result<(), crate::Error>;
         fn put_or_overwrite_asset(path: *const (), contents: &[u8], content_hash: u64) -> Result<(), crate::Error>;
         fn track_resolution_failure(import_source: &[u8], specifier: &[u8], renderer: bake_types::Graph, loader: bun_ast::Loader) -> Result<(), crate::Error>;
-        // `loader`: what the import asks for (its `with { type }` or the extension default); `None` for an extension only a plugin knows.
-        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph, loader: Option<bun_ast::Loader>) -> Option<bake_types::CacheEntry>;
+        // `attribute` is the import's `with { type }` loader; `default` is what the path gets without one.
+        fn is_file_cached(abs_path: &[u8], side: bake_types::Graph, attribute: Option<bun_ast::Loader>, default: bun_ast::Loader) -> Option<bake_types::CacheEntry>;
         // The loader `side`'s graph wants `abs_path` rebundled with; `None` if it has no record of the file.
         fn bundled_loader(abs_path: &[u8], side: bake_types::Graph) -> Option<bun_ast::Loader>;
         fn asset_hash(abs_path: &[u8]) -> Option<u64>;

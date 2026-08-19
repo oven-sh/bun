@@ -6588,12 +6588,15 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        let wanted_loader = import_record
-                            .loader
-                            .or_else(|| path.loader(&self.transpiler.options.loaders));
-                        if let Some(entry) =
-                            dev_server.is_file_cached(path.text, bake_graph, wanted_loader)
-                        {
+                        let default_loader = path
+                            .loader(&self.transpiler.options.loaders)
+                            .unwrap_or(Loader::File);
+                        if let Some(entry) = dev_server.is_file_cached(
+                            path.text,
+                            bake_graph,
+                            import_record.loader,
+                            default_loader,
+                        ) {
                             if loader == Loader::Html && entry.kind == bake_types::CacheKind::Asset
                             {
                                 // Overload `path.text` to point to the final URL

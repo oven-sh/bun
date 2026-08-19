@@ -5162,13 +5162,14 @@ fn is_attribute_style_loader(loader: Loader) -> bool {
 }
 
 impl DevServer {
-    /// `loader` is what the importer wants (its `with { type }` or the extension default); a file bundled with a different
-    /// attribute-style loader on either side is re-parsed, while a plugin's own loader for the extension keeps the cache.
+    /// An explicit `with { type }` that differs from the cached build always re-parses; without one, only a cached
+    /// attribute-style build (what a dropped attribute leaves behind) is stale, so a plugin's loader keeps the cache.
     pub(crate) fn is_file_cached(
         &mut self,
         path: &[u8],
         side: bake::Graph,
-        loader: Option<Loader>,
+        attribute: Option<Loader>,
+        default: Loader,
     ) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         if self.barrel_files_with_deferrals.contains_key(path) {
@@ -5186,9 +5187,9 @@ impl DevServer {
                         u32::try_from(index).expect("int cast"),
                     ));
                     if file.html_route_bundle_index.is_none()
-                        && let (Some(bundled), Some(wanted)) = (file.loader, loader)
-                        && bundled != wanted
-                        && (is_attribute_style_loader(bundled) || is_attribute_style_loader(wanted))
+                        && let Some(bundled) = file.loader
+                        && bundled != attribute.unwrap_or(default)
+                        && (attribute.is_some() || is_attribute_style_loader(bundled))
                     {
                         return None;
                     }

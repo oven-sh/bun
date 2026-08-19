@@ -1,9 +1,17 @@
 // Hot tests ensure that the `import.meta.hot` interface is functional
+//
+// Writes whose outcome the next `expectMessage`/`c.js` assertion pins pass
+// `errors: null`. The default (`errors: []`) polls the client for an error
+// overlay for a full second after every write, which is most of a write's
+// cost. Skipping it loses nothing for those steps: a build error sends no
+// update, so the message assertion fails, and a module that throws while it is
+// re-evaluated exits the client, which rejects the write. Steps whose subject
+// is the overlay itself (an error appears or clears) keep the default.
 import { expect } from "bun:test";
 import { renameSync, unlinkSync, writeFileSync } from "node:fs";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
-devTest("import.meta.hot.accept basic", {
+devTest("import.meta.hot.accept: self-accept callbacks, then accept([deps])", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -11,10 +19,18 @@ devTest("import.meta.hot.accept basic", {
     "index.ts": `
       console.log("Hello, world!");
     `,
+    // Only imported by the accept([deps]) half of the test.
+    "counter.ts": `
+      export const count = 1;
+    `,
+    "name.ts": `
+      export const name = "Alice";
+    `,
   },
   async test(dev) {
     await using c = await dev.client("/");
     await c.expectMessage("Hello, world!");
+    // The module does not accept, so editing it reloads the page.
     await c.expectReload(async () => {
       await dev.write(
         "index.ts",
@@ -25,9 +41,12 @@ devTest("import.meta.hot.accept basic", {
             console.log(newModule.method());
           });
         `,
+        { errors: null },
       );
     });
     await c.expectMessage("Hello, Bun!");
+    // The callback registered by the previous version receives the exports of
+    // the new version.
     await dev.write(
       "index.ts",
       `
@@ -38,6 +57,7 @@ devTest("import.meta.hot.accept basic", {
           console.log(Object.keys(newModule));
         });
       `,
+      { errors: null },
     );
     await c.expectMessage(["method"], "Bun");
     await dev.write(
@@ -45,12 +65,83 @@ devTest("import.meta.hot.accept basic", {
       `
         console.log("Without anything.");
       `,
+      { errors: null },
     );
     await c.expectMessage("Without anything.", []);
+    // Saving a non-accepting module without changes still reloads the page.
+    // (`dev.writeNoChanges` cannot skip the error overlay poll.)
     await c.expectReload(async () => {
-      await dev.writeNoChanges("index.ts");
+      await dev.write("index.ts", dev.read("index.ts"), { dedent: false, errors: null });
     });
     await c.expectMessage("Without anything.");
+
+    // accept([deps], cb): the callback receives an array with the updated
+    // module at its index and `undefined` for the other dependencies, and the
+    // importer's live bindings are patched before the callback runs.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          import { count } from "./counter.ts";
+          import { name } from "./name.ts";
+          console.log("Initial: " + name + " " + count);
+          globalThis.read = () => name + " " + count;
+
+          import.meta.hot.accept(["./counter.ts", "./name.ts"], ([counter, nameModule]) => {
+            console.log([counter ? counter.count : "unchanged", nameModule ? nameModule.name : "unchanged"]);
+          });
+        `,
+        { errors: null },
+      );
+    });
+    await c.expectMessage("Initial: Alice 1");
+
+    await dev.write(
+      "counter.ts",
+      `
+        export const count = 2;
+      `,
+      { errors: null },
+    );
+    await c.expectMessage([2, "unchanged"]);
+    expect(await c.js<string>`read()`).toBe("Alice 2");
+
+    await dev.write(
+      "name.ts",
+      `
+        export const name = "Bob";
+      `,
+      { errors: null },
+    );
+    await c.expectMessage(["unchanged", "Bob"]);
+    expect(await c.js<string>`read()`).toBe("Bob 2");
+
+    // One hot update that contains both dependencies calls the callback once
+    // per dependency.
+    {
+      await using batch = await dev.batchChanges({ errors: null });
+      await dev.write(
+        "counter.ts",
+        `
+          export const count = 3;
+        `,
+      );
+      await dev.write(
+        "name.ts",
+        `
+          export const name = "Charlie";
+        `,
+      );
+    }
+    await c.expectMessageInAnyOrder([3, "unchanged"], ["unchanged", "Charlie"]);
+    expect(await c.js<string>`read()`).toBe("Charlie 3");
+
+    // Accepting dependencies does not make the module self-accepting: saving
+    // it reloads the page, and the fresh page sees the updated dependencies.
+    await c.expectReload(async () => {
+      await dev.write("index.ts", dev.read("index.ts"), { dedent: false, errors: null });
+    });
+    await c.expectMessage("Initial: Charlie 3");
   },
 });
 devTest("import.meta.hot.accept patches imports", {
@@ -87,26 +178,25 @@ devTest("import.meta.hot.accept patches imports", {
     await c.expectMessage("C", "B", "A");
     expect(await c.js<string>`callFunction()`).toBe("A!0!0");
     expect(await c.js<string>`callFunction()`).toBe("A!1!1");
-    await dev.patch("c.ts", { find: "0", replace: "5" });
+    await dev.patch("c.ts", { find: "0", replace: "5", errors: null });
     await c.expectMessage("C", "B"); // C does not self-accept
     expect(await c.js<string>`callFunction()`).toBe("A!0!5");
     expect(await c.js<string>`callFunction()`).toBe("A!1!6");
-    await dev.patch("b.ts", { find: "A!", replace: "B!" });
+    await dev.patch("b.ts", { find: "A!", replace: "B!", errors: null });
     await c.expectMessage("B"); // B does not cause C to re-evaluate
     expect(await c.js<string>`callFunction()`).toBe("B!0!7");
     expect(await c.js<string>`callFunction()`).toBe("B!1!8");
-    await dev.patch("c.ts", { find: "// ", replace: "" });
+    await dev.patch("c.ts", { find: "// ", replace: "", errors: null });
     await c.expectMessage("C", "B"); // C does not self-accept YET
     expect(await c.js<string>`callFunction()`).toBe("B!0!5");
     expect(await c.js<string>`callFunction()`).toBe("B!1!6");
-    await dev.patch("c.ts", { find: "import.meta.hot.accept();", replace: "" });
+    await dev.patch("c.ts", { find: "import.meta.hot.accept();", replace: "", errors: null });
     await c.expectMessage("C"); // C self accepted even if the new one doesnt
     expect(await c.js<string>`callFunction()`).toBe("B!2!5");
     expect(await c.js<string>`callFunction()`).toBe("B!3!6");
   },
 });
 devTest("import.meta.hot.accept specifier", {
-  timeoutMultiplier: 3,
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["a.ts"],
@@ -156,6 +246,8 @@ devTest("import.meta.hot.accept specifier", {
           "b.ts:3:24: error: Dependencies to `import.meta.hot.accept` must be statically analyzable module specifiers matching direct imports.",
         ],
       });
+      // Fixing the specifier clears the overlay (the default `errors: []`
+      // asserts this) and reloads the page.
       await c.expectReload(async () => {
         await dev.patch("b.ts", { find: "./d.ts", replace: "./d" });
       });
@@ -170,6 +262,7 @@ devTest("import.meta.hot.accept specifier", {
             console.log("D2");
             export default "hey2!";
           `,
+          { errors: null },
         );
       });
       await c.expectMessage("D2", "B", "C", "A");
@@ -192,6 +285,7 @@ devTest("import.meta.hot.accept specifier", {
           console.log("D3");
           export default "hey3!";
         `,
+        { errors: null },
       );
       await c.expectMessage("D3", "C", "B:hey3!");
 
@@ -211,6 +305,7 @@ devTest("import.meta.hot.accept specifier", {
           ],
         },
       );
+      // The default `errors: []` asserts that the overlay is gone again.
       await dev.patch("c.ts", {
         find: "oh no",
         replace: "./d",
@@ -223,6 +318,7 @@ devTest("import.meta.hot.accept specifier", {
           export default "hey4!";
           import.meta.hot.accept();
         `,
+        { errors: null },
       );
       // This order is guaranteed regardless of top-level await if it had existed.
       await c.expectMessage("D4", "B:hey4!", "C:hey4!");
@@ -233,6 +329,7 @@ devTest("import.meta.hot.accept specifier", {
           export default "hey5!";
           import.meta.hot.accept();
         `,
+        { errors: null },
       );
       await c.expectMessage("D5", "B:hey5!", "C:hey5!");
       await c.hardReload();
@@ -244,151 +341,13 @@ devTest("import.meta.hot.accept specifier", {
           export default "hey6!";
           import.meta.hot.accept();
         `,
+        { errors: null },
       );
       await c.expectMessage("D6", "B:hey6!", "C:hey6!");
     }
   },
 });
-devTest("import.meta.hot.accept multiple modules", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      import { count } from "./counter.ts";
-      import { name } from "./name.ts";
-      console.log("Initial: " + name + " " + count);
-      
-      import.meta.hot.accept(["./counter.ts", "./name.ts"], (newModules) => {
-        if (newModules[0]) console.log("Counter updated: " + newModules[0].count);
-        if (newModules[1]) console.log("Name updated: " + newModules[1].name);
-      });
-    `,
-    "counter.ts": `
-      export const count = 1;
-    `,
-    "name.ts": `
-      export const name = "Alice";
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("Initial: Alice 1");
-
-    await dev.write(
-      "counter.ts",
-      `
-        export const count = 2;
-      `,
-    );
-
-    await c.expectMessage("Counter updated: 2");
-
-    await dev.write(
-      "name.ts",
-      `
-        export const name = "Bob";
-      `,
-    );
-
-    await c.expectMessage("Name updated: Bob");
-
-    // Test updating both files
-    {
-      await using batch = await dev.batchChanges();
-      await dev.write(
-        "counter.ts",
-        `
-          export const count = 3;
-        `,
-      );
-      await dev.write(
-        "name.ts",
-        `
-          export const name = "Charlie";
-        `,
-      );
-    }
-
-    await c.expectMessageInAnyOrder("Counter updated: 3", "Name updated: Charlie");
-  },
-});
-devTest("import.meta.hot.data persistence", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      // Initialize or retrieve stored value
-      import.meta.hot.data.count ??= 0;
-      console.log("Initial count: " + import.meta.hot.data.count);
-      
-      // Increment the count on each evaluation
-      import.meta.hot.data.count++;
-
-      // By using hot.data, you opt into implicit self-acceptance
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("Initial count: 0");
-    await dev.writeNoChanges("index.ts");
-    await c.expectMessage("Initial count: 1");
-    await dev.writeNoChanges("index.ts");
-    await c.expectMessage("Initial count: 2");
-    await dev.writeNoChanges("index.ts");
-    await c.expectMessage("Initial count: 3");
-  },
-});
-devTest("import.meta.hot.dispose cleanup", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      console.log("Setting up");
-      const id = setInterval(() => {}, 1000);
-      
-      import.meta.hot.dispose(() => {
-        console.log("Cleaning up");
-        clearInterval(id);
-      });
-      
-      import.meta.hot.accept();
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("Setting up");
-
-    await dev.write(
-      "index.ts",
-      `
-        console.log("Setting up again");
-        const id = setInterval(() => {}, 1000);
-        
-        import.meta.hot.dispose(() => {
-          console.log("Cleaning up");
-          clearInterval(id);
-        });
-        
-        import.meta.hot.accept();
-      `,
-    );
-
-    await c.expectMessage("Cleaning up", "Setting up again");
-
-    await dev.write(
-      "index.ts",
-      `
-        console.log("Third setup");
-      `,
-    );
-
-    await c.expectMessage("Cleaning up", "Third setup");
-  },
-});
-devTest("import.meta.hot invalid usage", {
+devTest("import.meta.hot: indirect usage, data, dispose, on/off", {
   files: {
     "index.html": emptyHtmlFile({
       scripts: ["index.ts"],
@@ -416,6 +375,10 @@ devTest("import.meta.hot invalid usage", {
         console.log(e?.message ?? e);
       }
     `,
+    // Only imported by the on/off section of the test.
+    "dep.ts": `
+      export default "dep 1";
+    `,
   },
   async test(dev) {
     await using c = await dev.client("/");
@@ -424,51 +387,142 @@ devTest("import.meta.hot invalid usage", {
       '"import.meta.hot.accept" must be directly called with string literals for the specifiers. This way, the bundler can pre-process the arguments.',
       "import.meta.hot cannot be used indirectly.",
     );
-  },
-});
-devTest("import.meta.hot on/off events", {
-  files: {
-    "index.html": emptyHtmlFile({
-      scripts: ["index.ts"],
-    }),
-    "index.ts": `
-      console.log("Initial setup");
-      // Add event listener
-      import.meta.hot.on("vite:beforeUpdate", () => {
-        console.log("Before update event");
-      });
-      import.meta.hot.accept();
-    `,
-  },
-  async test(dev) {
-    await using c = await dev.client("/");
-    await c.expectMessage("Initial setup");
+
+    // import.meta.hot.data: the module above does not accept, so replacing it
+    // reloads the page, and the fresh page starts with empty data.
+    await c.expectReload(async () => {
+      await dev.write(
+        "index.ts",
+        `
+          // Initialize or retrieve stored value
+          import.meta.hot.data.count ??= 0;
+          console.log("Initial count: " + import.meta.hot.data.count);
+
+          // Increment the count on each evaluation
+          import.meta.hot.data.count++;
+
+          // By using hot.data, you opt into implicit self-acceptance
+        `,
+        { errors: null },
+      );
+    });
+    await c.expectMessage("Initial count: 0");
+    // Every save re-evaluates the module with the same data object, even when
+    // the contents did not change. (`dev.writeNoChanges` cannot skip the error
+    // overlay poll.)
+    for (let count = 1; count <= 3; count++) {
+      await dev.write("index.ts", dev.read("index.ts"), { dedent: false, errors: null });
+      await c.expectMessage("Initial count: " + count);
+    }
+
+    // import.meta.hot.dispose: the previous version wrote to hot.data, so this
+    // update is applied in place. Dispose callbacks receive the data object
+    // and run before the next version is evaluated.
+    await dev.write(
+      "index.ts",
+      `
+        console.log("Setting up");
+
+        import.meta.hot.dispose(data => {
+          data.disposed = (data.disposed ?? 0) + 1;
+          console.log("Cleaning up");
+        });
+
+        import.meta.hot.accept();
+      `,
+      { errors: null },
+    );
+    await c.expectMessage("Setting up");
+    await dev.write(
+      "index.ts",
+      `
+        console.log("Setting up again, disposed " + import.meta.hot.data.disposed + "x");
+
+        import.meta.hot.dispose(data => {
+          data.disposed++;
+          console.log("Cleaning up again");
+        });
+
+        import.meta.hot.accept();
+      `,
+      { errors: null },
+    );
+    await c.expectMessage("Cleaning up", "Setting up again, disposed 1x");
+    // The replacement does not need to accept for the old version's dispose
+    // callback to run.
+    await dev.write(
+      "index.ts",
+      `
+        console.log("Third setup, disposed " + import.meta.hot.data.disposed + "x");
+      `,
+      { errors: null },
+    );
+    await c.expectMessage("Cleaning up again", "Third setup, disposed 2x");
+
+    // import.meta.hot.on/off: hot.data is still populated, so the module is
+    // still implicitly self-accepting and this update is applied in place too.
+    await dev.write(
+      "index.ts",
+      `
+        import dep from "./dep.ts";
+        console.log("Initial setup: " + dep);
+        import.meta.hot.on("bun:beforeUpdate", () => {
+          console.log("v1 saw bun:beforeUpdate");
+        });
+        import.meta.hot.on("bun:afterUpdate", () => {
+          console.log("v1 saw bun:afterUpdate");
+        });
+        import.meta.hot.accept("./dep.ts", newDep => {
+          console.log("v1 accepted " + newDep.default);
+        });
+      `,
+      { errors: null },
+    );
+    // The listeners exist by the time the update that loaded v1 finishes.
+    await c.expectMessage("Initial setup: dep 1", "v1 saw bun:afterUpdate");
+    // An update that v1 survives fires both events around it.
+    await dev.write(
+      "dep.ts",
+      `
+        export default "dep 2";
+      `,
+      { errors: null },
+    );
+    await c.expectMessage("v1 saw bun:beforeUpdate", "v1 accepted dep 2", "v1 saw bun:afterUpdate");
+    // Replacing v1 removes its listeners. beforeUpdate is emitted before v1 is
+    // disposed, so that listener fires one last time. afterUpdate is emitted
+    // after, so only v2's listener sees it.
     await dev.write(
       "index.ts",
       `
         console.log("Updated setup");
-        // Events implementation is partial according to docs
-        import.meta.hot.on("vite:beforeUpdate", () => {
-          console.log("Before update event 2");
-        });
         const handler = () => {
-          console.log("Another handler");
+          console.log("removed handler");
         };
-        import.meta.hot.on("vite:beforeUpdate", handler);
-        // Remove the handler
-        import.meta.hot.off("vite:beforeUpdate", handler);
+        import.meta.hot.on("bun:beforeUpdate", handler);
+        import.meta.hot.off("bun:beforeUpdate", handler);
+        import.meta.hot.on("bun:beforeUpdate", () => {
+          console.log("v2 saw bun:beforeUpdate");
+        });
+        import.meta.hot.on("bun:afterUpdate", () => {
+          console.log("v2 saw bun:afterUpdate");
+        });
         import.meta.hot.accept();
       `,
+      { errors: null },
     );
-    await c.expectMessage("Updated setup");
+    await c.expectMessage("v1 saw bun:beforeUpdate", "Updated setup", "v2 saw bun:afterUpdate");
+    // The handler that v2 passed to off() never fires, and disposing v2
+    // removes its remaining listeners.
     await dev.write(
       "index.ts",
       `
         console.log("Third update");
         import.meta.hot.accept();
       `,
+      { errors: null },
     );
-    await c.expectMessage("Third update");
+    await c.expectMessage("v2 saw bun:beforeUpdate", "Third update");
   },
 });
 devTest("hmr forwards every merged inotify sub-path from a directory batch", {
@@ -509,7 +563,7 @@ devTest("hmr forwards every merged inotify sub-path from a directory batch", {
       const target = dev.join("dep.ts");
       const content = `export default "atomic ${round}";\n`;
       {
-        await using _wait = await dev.batchChanges();
+        await using _wait = await dev.batchChanges({ errors: null });
         // Remove the direct file watch so only the directory watch can
         // pick up the new dep.ts.
         unlinkSync(target);
@@ -599,6 +653,7 @@ devTest("hot update frames are not delivered to application websocket topics", {
           console.log("updated");
           import.meta.hot.accept();
         `,
+        { errors: null },
       );
       await c.expectMessage("updated");
 
@@ -626,19 +681,38 @@ devTest("dev.write resolves only after the new module body has run", {
     await c.expectMessage("ready");
     expect(await c.js`globalThis.marker`).toBe("initial");
 
-    await dev.write(
+    // The new module body blocks in a top-level await until the test releases
+    // it, so the write has to stay pending for as long as the test wants.
+    const write = dev.write(
       "index.ts",
       `
-        await new Promise(r => setTimeout(r, 500));
+        console.log("blocked");
+        await new Promise(resolve => {
+          globalThis.unblock = resolve;
+        });
         globalThis.marker = "updated";
         import.meta.hot.accept();
       `,
-      // errors: null skips the post-write expectErrorOverlay poll (5 * 200ms),
-      // which would otherwise mask a premature ack.
+      // errors: null also skips the post-write expectErrorOverlay poll, which
+      // would otherwise mask a premature ack.
       { errors: null },
     );
+    let settled = false;
+    write.then(
+      () => (settled = true),
+      () => (settled = true),
+    );
+    // "blocked" proves the client received the update and started evaluating
+    // it. An ack sent on WebSocket receipt would have resolved the write before
+    // that point.
+    await c.expectMessage("blocked");
+    expect(await c.js`globalThis.marker`).toBe("initial");
+    expect(settled).toBe(false);
+
     // dev.write resolves on bun:afterUpdate, i.e. after replaceModules has
-    // awaited the 500ms TLA. Acking on WS receipt would see "initial" here.
+    // awaited the top-level await.
+    await c.js`globalThis.unblock()`;
+    await write;
     expect(await c.js`globalThis.marker`).toBe("updated");
   },
 });

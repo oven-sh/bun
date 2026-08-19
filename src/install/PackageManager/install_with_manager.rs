@@ -163,7 +163,7 @@ pub fn install_with_manager(
                 let mut lockfile = Lockfile::default();
                 let mut maybe_root = lockfile::Package::default();
 
-                let source_copy = root_package_json_source(manager, root_package_json_path)?;
+                let source_copy = root_package_json_source(manager, root_package_json_path);
 
                 let mut resolver: () = ();
                 // `parse` needs `manager`, `manager.log` and a fresh
@@ -1855,23 +1855,20 @@ fn record_updating_package_versions(manager: &mut PackageManager) {
     }
 }
 
-fn root_package_json_source(
-    manager: &mut PackageManager,
-    root_package_json_path: &ZStr,
-) -> crate::Result<Source> {
+fn root_package_json_source(manager: &mut PackageManager, root_package_json_path: &ZStr) -> Source {
     let (verb, err) = match manager.workspace_package_json_cache.get_with_path(
         manager.log_mut(),
         root_package_json_path.as_bytes(),
         Default::default(),
     ) {
-        WorkspacePackageJsonCacheResult::Entry(entry) => return Ok(entry.source.clone()),
+        WorkspacePackageJsonCacheResult::Entry(entry) => return entry.source.clone(),
         WorkspacePackageJsonCacheResult::ReadErr(err) => ("read", err),
         WorkspacePackageJsonCacheResult::ParseErr(err) => ("parse", err),
     };
     if manager.log_mut().errors > 0 {
-        manager
+        let _ = manager
             .log_mut()
-            .print(std::ptr::from_mut(Output::error_writer()))?;
+            .print(std::ptr::from_mut(Output::error_writer()));
     }
     Output::err(
         err,
@@ -1918,7 +1915,7 @@ fn create_new_lockfile_and_enqueue(
         Global::crash();
     }
 
-    let source_copy = root_package_json_source(manager, root_package_json_path)?;
+    let source_copy = root_package_json_source(manager, root_package_json_path);
 
     let mut resolver: () = ();
     {

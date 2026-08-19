@@ -37,11 +37,8 @@ pub struct Expansion {
     /// and must not change the expansion structure or broaden the glob.
     pub(crate) meta_offsets: Vec<u32>,
     pub(crate) child_script: Option<NodeId>,
-    /// Brace-expansion variants still awaiting pathname expansion, in the order
-    /// they must appear in argv. Only populated when the word combines brace
-    /// and glob expansion; see [`ExpansionState::BraceWords`].
+    /// Consumed in argv order by [`ExpansionState::BraceWords`].
     pub(crate) brace_words: Vec<BraceWord>,
-    /// Index of the next `brace_words` entry to pathname-expand.
     pub(crate) brace_word_idx: u32,
     /// Whether the in-flight command substitution was `"$(...)"` (no IFS
     /// splitting on its result). Only meaningful while `state == CmdSubst`.
@@ -65,9 +62,8 @@ pub enum ExpansionState {
     CmdSubst,
     Glob,
     BraceExpand,
-    /// Pathname-expand the pending brace-expansion variants in `brace_words`,
-    /// one per re-entry. The list is empty for every word without brace
-    /// expansion, so the plain glob path falls straight through to `Done`.
+    /// Globs `brace_words` one variant per re-entry. A word with no brace
+    /// expansion has an empty list, so it falls straight through to `Done`.
     BraceWords,
     Done,
     /// The parent inspects this on
@@ -75,18 +71,16 @@ pub enum ExpansionState {
     Err(Box<ShellErr>),
 }
 
-/// One brace-expansion variant, paired with the byte offsets of the glob
-/// metacharacters it inherited from literal `*`/`**` atoms.
+/// A brace-expansion variant and the offsets of its literal `*` bytes.
 #[derive(Default)]
 pub struct BraceWord {
     pub(crate) word: Vec<u8>,
     pub(crate) meta_offsets: Vec<u32>,
 }
 
-/// Marks a literal `*` in the brace lexer's input so `decode_brace_word` can
-/// recover its offset within the expanded variant, where the word's original
-/// `meta_offsets` no longer line up. Data bytes equal to it are doubled, so
-/// the encoding round-trips any input.
+/// Brace expansion invalidates `meta_offsets`, so each literal `*` is
+/// prefixed with this byte on the way in and `decode_brace_word` recovers the
+/// offsets on the way out. A data byte equal to it is doubled.
 const META_TAG: u8 = 0x01;
 
 #[derive(Default)]
@@ -168,10 +162,6 @@ impl Expansion {
                     continue;
                 }
                 ExpansionState::BraceWords => {
-                    // Pathname expansion runs once per brace-expansion variant,
-                    // in order: a variant carrying a literal `*` is globbed and
-                    // replaced by its matches, every other variant is already
-                    // the final word.
                     let Some(needs_glob) = Self::load_next_brace_word(me) else {
                         me.state = ExpansionState::Done;
                         continue;
@@ -305,12 +295,8 @@ impl Expansion {
 
     /// Re-tokenize `current_out` (the
     /// fully-expanded word with `{`/`,`/`}` markers preserved by
-    /// `expand_simple_no_io`) and turn each variant into a separate word.
-    ///
-    /// Brace expansion precedes pathname expansion, so when the word also
-    /// carries a literal `*` the variants are parked in `brace_words` for
-    /// [`ExpansionState::BraceWords`] to glob one by one instead of being
-    /// pushed straight to argv.
+    /// `expand_simple_no_io`) into one word per variant: straight to `out`, or
+    /// to `brace_words` when a glob still has to run on each of them.
     fn do_brace_expand(me: &mut Expansion) {
         use bun_shell_parser::braces;
         let glob_follows = me.node.get().has_glob_expansion();
@@ -319,9 +305,7 @@ impl Expansion {
         // metacharacters. Bytes from Text/Var/cmd-subst expansion — notably JS
         // `${...}` interpolations — are data: backslash-escape them so the
         // brace lexer cannot be steered into emitting extra argv words.
-        // `meta_offsets` also records literal `*`/`**` positions: those are not
-        // brace syntax, but each one is tagged so the variant it lands in keeps
-        // an accurate offset for `neutralize_glob_metachars`.
+        // Literal `*` bytes (also in `meta_offsets`) get a `META_TAG` instead.
         let mut escaped: Vec<u8> = Vec::with_capacity(me.current_out.len());
         let mut next_meta = 0usize;
         for (i, &b) in me.current_out.iter().enumerate() {
@@ -356,11 +340,8 @@ impl Expansion {
         }
         let count = count as usize;
         if count == 0 {
-            // No `{...}` group formed an expansion (no top-level comma, or
-            // unbalanced), so the word is unchanged and `meta_offsets` still
-            // describes it: hand it on as-is instead of round-tripping through
-            // the tag encoding. `expand` would index `out[0]` of an empty
-            // slice here.
+            // Nothing expanded (`expand` would index `out[0]` of an empty
+            // slice), so the word and its `meta_offsets` are still valid as-is.
             if glob_follows {
                 me.brace_words = vec![BraceWord {
                     word: core::mem::take(&mut me.current_out),
@@ -415,11 +396,8 @@ impl Expansion {
         me.state = ExpansionState::Done;
     }
 
-    /// Strip the [`META_TAG`] markers `do_brace_expand` wrote into the brace
-    /// lexer's input, recovering the offsets of the literal `*` bytes within
-    /// this variant. `META_TAG` + `*` is one glob metacharacter; a doubled
-    /// `META_TAG` is one data byte. Decoding only removes bytes, so it compacts
-    /// in place.
+    /// Inverse of the [`META_TAG`] encoding. Decoding only removes bytes, so
+    /// it compacts in place.
     fn decode_brace_word(mut word: Vec<u8>) -> BraceWord {
         let mut meta_offsets: Vec<u32> = Vec::new();
         let (mut read, mut write) = (0usize, 0usize);
@@ -441,9 +419,8 @@ impl Expansion {
         BraceWord { word, meta_offsets }
     }
 
-    /// Move the next pending brace-expansion variant into `current_out` /
-    /// `meta_offsets`, reporting whether it needs pathname expansion. `None`
-    /// once every variant has been consumed.
+    /// Stages the next variant in `current_out`/`meta_offsets`. Returns whether
+    /// it needs a glob, or `None` once all variants are consumed.
     fn load_next_brace_word(me: &mut Expansion) -> Option<bool> {
         let idx = me.brace_word_idx as usize;
         if idx >= me.brace_words.len() {

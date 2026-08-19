@@ -436,6 +436,10 @@ pub(crate) fn writable_stream(
             .global_this
             .expect("NetworkSink.global_this set at construction");
         let global = global.get();
+        // As in `S3UploadStreamWrapper::resolve`: the promises are settled until
+        // one settle leaves an exception pending (or reports the VM's teardown),
+        // and the sink lets go of the upload on every path.
+        let mut settled: JsResult<()> = Ok(());
         if sink.end_promise.has_value() || sink.flush_promise.has_value() {
             // SAFETY: `bun_vm()` returns the live per-thread VM pointer.
             let event_loop = global.bun_vm().as_mut().event_loop();
@@ -445,20 +449,19 @@ pub(crate) fn writable_stream(
             match result {
                 S3UploadResult::Success => {
                     if sink.flush_promise.has_value() {
-                        sink.flush_promise
-                            .resolve(global, JSValue::js_number(0.0))?;
+                        settled = sink.flush_promise.resolve(global, JSValue::js_number(0.0));
                     }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.resolve(global, JSValue::js_number(0.0))?;
+                    if settled.is_ok() && sink.end_promise.has_value() {
+                        settled = sink.end_promise.resolve(global, JSValue::js_number(0.0));
                     }
                 }
                 S3UploadResult::Failure(err) => {
                     let js_err = s3_error_to_js(&err, global, sink.path());
                     if sink.flush_promise.has_value() {
-                        sink.flush_promise.reject(global, Ok(js_err))?;
+                        settled = sink.flush_promise.reject(global, Ok(js_err));
                     }
-                    if sink.end_promise.has_value() {
-                        sink.end_promise.reject(global, Ok(js_err))?;
+                    if settled.is_ok() && sink.end_promise.has_value() {
+                        settled = sink.end_promise.reject(global, Ok(js_err));
                     }
                     if !sink.done {
                         sink.abort();
@@ -467,7 +470,7 @@ pub(crate) fn writable_stream(
             }
         }
         sink.finalize();
-        Ok(())
+        settled
     }
 
     // Thunks adapting typed callbacks to the erased `*mut c_void` signatures stored on
@@ -530,6 +533,7 @@ pub(crate) fn writable_stream(
 
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.active_handle().register();
 
     // Heap-allocate; `JSSink<NetworkSink>` is layout-
     // compatible (`{ sink: NetworkSink }`) so the cast in `to_sink()` is just a pointer reinterpret.
@@ -566,7 +570,8 @@ pub struct S3UploadStreamWrapper {
     /// this is owned by the task not by the wrapper
     pub path: bun_ptr::RawSlice<u8>,
     /// Pins the source ReadableStream when the native ByteStream fast-path is
-    /// taken (no JS reader to lock it). Empty on the `assign_to_stream` path.
+    /// taken (no JS reader to lock it). Empty on the `assign_to_stream` path,
+    /// which is how `pump_ref_is_stranded` tells the two paths apart.
     pub readable_stream_ref: ReadableStreamStrong,
     pub global: GlobalRef, // JSC_BORROW
 }
@@ -610,6 +615,36 @@ impl S3UploadStreamWrapper {
     fn task_ref(&self) -> &MultiPartUpload {
         // SAFETY: see doc comment — counted ref keeps pointee live.
         unsafe { &*self.task }
+    }
+
+    /// Whether `resolve` has to release the +1 `upload_stream` took for the
+    /// stream pump itself, because the pump's own release can no longer happen.
+    ///
+    /// - Native fast-path: `NetworkSink::end_from_stream` releases it once the
+    ///   source has ended, after clearing `source`. A native `source` still
+    ///   attached when the upload settles means the S3 side failed first and
+    ///   `end_from_stream` will never run (mirrors
+    ///   `FetchTasklet::cancel_request_body_sink`).
+    /// - JS pump (`assign_to_stream`): the pump promise's `.then` shim
+    ///   (`handle_resolve_stream` / `handle_reject_stream`, which also take
+    ///   `sink`) releases it. Once the VM has forbidden script, that microtask
+    ///   can never run: the upload is settled by teardown itself, either from
+    ///   the stop phase (`MultiPartUpload::stop_for_vm_teardown`) or by a
+    ///   request the HTTP thread hands back while the VM waits for it.
+    ///
+    /// Decided before the promises are settled: the failure path's
+    /// `source.close()` can clear `source`.
+    fn pump_ref_is_stranded(&mut self) -> bool {
+        let native_fast_path = !matches!(self.readable_stream_ref, ReadableStreamStrong::Empty);
+        let script_allowed = self.global.bun_vm().script_allowed();
+        let Some(sink) = self.sink_mut() else {
+            return false;
+        };
+        match sink.source {
+            crate::webcore::streams::SourceHandle::ByteStream(_)
+            | crate::webcore::streams::SourceHandle::FileReader(_) => true,
+            _ => !native_fast_path && !script_allowed,
+        }
     }
 
     pub(crate) fn on_writable(task: &MultiPartUpload, self_: &mut Self, flushed: u64) {
@@ -672,6 +707,7 @@ impl S3UploadStreamWrapper {
             unsafe { Self::deref_(s) }
         });
         let global = self_.global;
+        let release_pump_ref = self_.pump_ref_is_stranded();
         // The native teardown (source close, pump-ref release, completion callback)
         // runs on every path; the promise slots are settled until one settle leaves an
         // exception pending, which is what this returns (nothing settles over it).
@@ -702,23 +738,12 @@ impl S3UploadStreamWrapper {
                 let js_err = stashed
                     .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
-                let mut is_native = false;
                 if let Some(sink) = self_.sink_mut() {
                     // Sink pump still in-flight: fire source.close() so the JSSink
-                    // controller's onClose cancels the upstream ReadableStream. The
-                    // pump promise settles after, triggering the `.then` shim which
-                    // calls `detach_sink` and releases the pump ref.
-                    //
-                    // Captured before `source.close()`: on the native fast-path
-                    // there is no pump promise, so the pump +1 must be released
-                    // inline below (mirrors `FetchTasklet::cancel_request_body_sink`).
-                    // `end_from_stream` cleared `source` when it drove this call,
-                    // so this is only true when the S3 side failed first.
-                    is_native = matches!(
-                        sink.source,
-                        crate::webcore::streams::SourceHandle::ByteStream(_)
-                            | crate::webcore::streams::SourceHandle::FileReader(_)
-                    );
+                    // controller's onClose cancels the upstream ReadableStream (a
+                    // native source is cancelled directly). While script runs, the
+                    // pump promise settles after, and its `.then` shim calls
+                    // `detach_sink` and releases the pump ref.
                     sink.ended = true;
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;
@@ -731,13 +756,6 @@ impl S3UploadStreamWrapper {
                     }
                     sink.source.close(None);
                 }
-                if is_native {
-                    self_.detach_sink();
-                    // SAFETY: `self_` is the live Box allocation; this balances the
-                    // pump +1 from `upload_stream` (rc 2→1). The scopeguard above
-                    // releases the remaining ref at scope exit.
-                    unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
-                }
                 if self_.end_promise.has_value() {
                     if settled.is_ok() {
                         settled = self_.end_promise.reject(&global, Ok(js_err));
@@ -745,6 +763,13 @@ impl S3UploadStreamWrapper {
                     self_.end_promise = bun_jsc::JSPromiseStrong::empty();
                 }
             }
+        }
+        if release_pump_ref {
+            self_.detach_sink();
+            // SAFETY: `self_` is the live Box allocation; this balances the pump
+            // +1 from `upload_stream` (rc 2→1). The scopeguard above releases the
+            // remaining ref at scope exit.
+            unsafe { Self::deref_(std::ptr::from_mut::<Self>(self_)) };
         }
 
         if let Some(callback) = self_.callback {
@@ -981,10 +1006,11 @@ pub(crate) fn upload_stream(
 
     task.poll_ref
         .with_mut(|poll_ref| poll_ref.ref_(bun_io::js_vm_ctx()));
+    task.active_handle().register();
 
     let ctx_ptr: *mut S3UploadStreamWrapper =
         bun_core::heap::into_raw(Box::new(S3UploadStreamWrapper {
-            ref_count: Cell::new(2), // +1 for the stream pump (released by the .then shim / handle_*_stream)
+            ref_count: Cell::new(2), // +1 for the stream pump; see `pump_ref_is_stranded` for who releases it
             sink: None,
             callback,
             callback_context,
@@ -1087,7 +1113,9 @@ pub(crate) fn upload_stream(
             }
             // `!had_last`: the stream-pump +1 (rc=2) is released by
             // `NetworkSink::end_from_stream` after the terminal write/fail so the
-            // sink outlives the synchronous `resolve()` re-entry.
+            // sink outlives the synchronous `resolve()` re-entry, or by `resolve`
+            // itself when the upload fails before the source ends
+            // (`pump_ref_is_stranded`).
             return Ok(end_promise_value);
         }
         // sink already attached: fall through to the JS pump.

@@ -129,6 +129,9 @@ pub(crate) enum ActiveHandle {
     /// An S3 request / streaming download out on the HTTP thread; same.
     S3Request(ptr::NonNull<crate::webcore::s3::simple_request::S3HttpSimpleTask>),
     S3Download(ptr::NonNull<crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask>),
+    /// An S3 upload fed by a stream or a `writer()`. Between parts it has no
+    /// request out, so only stopping it ends it; stopping fails it.
+    S3Upload(ptr::NonNull<crate::webcore::s3::MultiPartUpload>),
     /// A `Bun.build` running on the bundle thread with this VM's plugins/env.
     Bundle(ptr::NonNull<crate::api::js_bundle_completion_task::JSBundleCompletionTask>),
     /// A `dns.Resolver` (or the VM-global one) with a live c-ares channel.
@@ -1824,6 +1827,10 @@ fn stop_active_handles(vm: &mut VirtualMachine, reason: StopReason) -> SweepResu
             // SAFETY: as above.
             ActiveHandle::S3Download(t) => unsafe {
                 crate::webcore::s3::download_stream::S3HttpDownloadStreamingTask::stop_for_vm_teardown(t.as_ptr())
+            },
+            // SAFETY: live until it unregisters in its `Drop`; may free itself inside.
+            ActiveHandle::S3Upload(u) => unsafe {
+                crate::webcore::s3::MultiPartUpload::stop_for_vm_teardown(u.as_ptr())
             },
             // A live VM cannot cancel a build: hop tasks it already queued here
             // would still be dispatched against the finished pass. The build

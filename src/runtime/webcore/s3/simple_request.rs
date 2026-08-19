@@ -549,6 +549,12 @@ impl<'a> Default for S3SimpleRequestOptions<'a> {
     }
 }
 
+/// What an S3 operation fails with when its VM stops before it is done.
+pub(crate) const VM_SHUTDOWN: S3Error<'static> = S3Error {
+    code: b"ERR_S3_VM_SHUTDOWN",
+    message: b"The JavaScript VM that owns this request is shutting down",
+};
+
 pub(crate) fn execute_simple_s3_request(
     this: &S3Credentials,
     options: S3SimpleRequestOptions<'_>,
@@ -559,11 +565,7 @@ pub(crate) fn execute_simple_s3_request(
     // release; nothing new leaves a VM that is stopping.
     if !VirtualMachine::get().script_allowed() {
         drop(options.range);
-        callback.fail(
-            b"ERR_S3_VM_SHUTDOWN",
-            b"The JavaScript VM that owns this request is shutting down",
-            callback_context,
-        )?;
+        callback.fail(VM_SHUTDOWN.code, VM_SHUTDOWN.message, callback_context)?;
         return Ok(());
     }
     let result = match this.sign_request::<false>(

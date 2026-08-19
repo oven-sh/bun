@@ -1795,16 +1795,6 @@ async function spawnBun(execPath, { args, cwd, timeout, gracefulTimeout, idleTim
     BUN_DISABLE_SLOW_FILESYSTEM_WARNING: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
     BUN_JSC_randomIntegrityAuditRate: "1.0",
-    // When the marker is handed a cell that the sweeper already freed (a
-    // missing GC root or write barrier somewhere), JSC aborts at once, while
-    // the visitChildren or root constraint that still pointed at the dead cell
-    // is on the stack, so the crash report and the core name the owner of the
-    // stale pointer. Without it the cell is pushed and a GC helper thread
-    // segfaults later when it pops it. Checked on x86_64 only; accepted and
-    // inert elsewhere. Not on Windows: the abort there is a __fastfail, which
-    // exits 0xC0000409 with no crash report, and no cores are collected, so it
-    // would only hide the access violation the crash handler reports today.
-    BUN_JSC_dumpZappedCellCrashData: isWindows ? undefined : "1",
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows

@@ -511,10 +511,16 @@ describe("Valkey: Recovering After fail()", () => {
     });
   }
 
-  // Writes 256 KB SETs until two flushes in a row hand nothing to the socket,
-  // i.e. the peer has stopped reading and the socket holds undelivered bytes.
+  const STUCK_VALUE_BYTES = 256 * 1024;
+  // One of writeUntilStuck's SETs as the client frames it: header, value, CRLF.
+  const STUCK_COMMAND_BYTES =
+    `*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$${STUCK_VALUE_BYTES}\r\n`.length + STUCK_VALUE_BYTES + 2;
+
+  // Writes SETs of STUCK_VALUE_BYTES until two flushes in a row hand nothing to
+  // the socket, i.e. the peer has stopped reading and the socket holds
+  // undelivered bytes.
   async function writeUntilStuck(client: RedisClient): Promise<Promise<string>[]> {
-    const value = Buffer.alloc(256 * 1024, "x").toString();
+    const value = Buffer.alloc(STUCK_VALUE_BYTES, "x").toString();
     const pending: Promise<string>[] = [];
     let stuckFlushes = 0;
     while (stuckFlushes < 2 && pending.length < 256) {
@@ -1898,6 +1904,7 @@ describe("Valkey: Recovering After fail()", () => {
       exitCode: 0,
     });
   });
+
   // A TLS stub run under Node in its own process, so it can read while this
   // loop is blocked, and so how it sees the peer's close is not shared with
   // the client under test: Bun's own sockets report data followed by an RST
@@ -1935,7 +1942,7 @@ describe("Valkey: Recovering After fail()", () => {
                 clearInterval(poll);
                 socket.resume();
                 const [handed, peerClosed] = readFileSync(resumeFile, "utf8").split(" ").map(Number);
-                const expected = handed - 256 * 1024;
+                const expected = handed - ${STUCK_VALUE_BYTES};
                 let last = -1;
                 const settle = setInterval(() => {
                   const now = socket.bytesRead;
@@ -2124,9 +2131,7 @@ describe("Valkey: Recovering After fail()", () => {
       const pending = await writeUntilStuck(client);
       // Bytes handed to the socket so far: everything written less what the
       // client still holds as plaintext.
-      const handed =
-        pending.length * (`*3\r\n$3\r\nSET\r\n$3\r\nkey\r\n$262144\r\n`.length + 256 * 1024 + 2) -
-        client.bufferedAmount;
+      const handed = pending.length * STUCK_COMMAND_BYTES - client.bufferedAmount;
       const drained = stub.resumeAndDrain(handed, false);
       client.close();
       expect({ connected: client.connected, closes }).toEqual({ connected: false, closes: 1 });

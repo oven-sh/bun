@@ -291,3 +291,102 @@ test.concurrent("a test without a timeout keeps its processes when an earlier te
   expect(combined).toContain(" 2 pass\n");
   expect(exitCode).toBe(0);
 });
+
+// Consecutive test.concurrent tests share one group and one auto-kill scope, so
+// the runner cannot tell which of them spawned a process. A timeout in such a
+// group kills the scope once the group is done. These two files wait for the
+// runner to kill a child, which can take a while on a slow machine, hence the
+// generous default timeout; the timeouts under test are set per test.
+const waitForKill = ["--timeout=30000"];
+
+test.concurrent("test.concurrent: the children of timed-out tests are killed once the group is done", async () => {
+  const { combined, exitCode } = await runTestFile(
+    /* ts */ `
+      import { afterAll, describe, expect, test } from "bun:test";
+
+      const children: ReturnType<typeof spawnEcho>[] = [];
+      afterAll(() => children.forEach(child => child.kill()));
+
+      describe("hanging", () => {
+        test.concurrent.each(["a", "b"])(
+          "hangs %s",
+          async () => {
+            children.push(spawnEcho());
+            await new Promise(() => {});
+          },
+          100,
+        );
+      });
+
+      // Spawns from a continuation, well before its deadline.
+      test.concurrent("hangs after returning to the event loop", async () => {
+        await new Promise(resolve => setImmediate(resolve));
+        children.push(spawnEcho());
+        await new Promise(() => {});
+      }, 500);
+
+      test("the children were killed", async () => {
+        expect(children).toHaveLength(3);
+        await Promise.all(children.map(child => child.exited));
+        expect(children.map(child => child.signalCode)).toEqual(["SIGTERM", "SIGTERM", "SIGTERM"]);
+      });
+    `,
+    waitForKill,
+  );
+
+  expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 3 dangling processes"]);
+  expect(combined).toContain("(fail) hanging > hangs a");
+  expect(combined).toContain("(fail) hanging > hangs b");
+  expect(combined).toContain("(fail) hangs after returning to the event loop");
+  expect(combined).toContain("(pass) the children were killed");
+  expect(combined).toContain(" 1 pass\n");
+  expect(combined).toContain(" 3 fail\n");
+  expect(exitCode).toBe(1);
+});
+
+test.concurrent(
+  "test.concurrent: nothing is killed while a sibling of the timed-out test is still running",
+  async () => {
+    const { combined, exitCode } = await runTestFile(
+      /* ts */ `
+      import { afterAll, expect, test } from "bun:test";
+
+      const children: ReturnType<typeof spawnEcho>[] = [];
+      afterAll(() => children.forEach(child => child.kill()));
+
+      let fromTimedOut: ReturnType<typeof spawnEcho>;
+      const timedOutStarted = Promise.withResolvers<void>();
+
+      test.concurrent("times out", async () => {
+        fromTimedOut = spawnEcho();
+        children.push(fromTimedOut);
+        timedOutStarted.resolve();
+        await new Promise(() => {});
+      }, 100);
+
+      test.concurrent("sibling that keeps running", async () => {
+        children.push(spawnEcho());
+        await timedOutStarted.promise;
+        // The 100ms deadline above was armed before this timer, so the runner has
+        // handled that timeout by the time this resolves, with this test still running.
+        await Bun.sleep(200);
+        expect(await echo(fromTimedOut, "still here")).toBe("still here");
+      });
+
+      test("both children were killed once the group was done", async () => {
+        await Promise.all(children.map(child => child.exited));
+        expect(children.map(child => child.signalCode)).toEqual(["SIGTERM", "SIGTERM"]);
+      });
+    `,
+      waitForKill,
+    );
+
+    expect(combined.match(/killed \d+ dangling process(?:es)?/g)).toEqual(["killed 2 dangling processes"]);
+    expect(combined).toContain("(fail) times out");
+    expect(combined).toContain("(pass) sibling that keeps running");
+    expect(combined).toContain("(pass) both children were killed once the group was done");
+    expect(combined).toContain(" 2 pass\n");
+    expect(combined).toContain(" 1 fail\n");
+    expect(exitCode).toBe(1);
+  },
+);

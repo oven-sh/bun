@@ -20,12 +20,15 @@
 #include <wtf/HashSet.h>
 #include <wtf/ListHashSet.h>
 #include <wtf/Lock.h>
+#include <wtf/Threading.h>
 
+#include <atomic>
 #include <optional>
 #include <unordered_set>
 #include <variant>
 
 extern "C" void napi_internal_register_cleanup_zig(napi_env env);
+extern "C" void napi_internal_tick_platform_loop(napi_env env);
 extern "C" void napi_internal_threadsafe_function_env_teardown(void* tsfn);
 extern "C" void napi_internal_suppress_crash_on_abort_if_desired();
 extern "C" void Bun__crashHandler(const char* message, size_t message_len);
@@ -124,6 +127,8 @@ napi_status defineProperty(napi_env env, JSC::JSObject* to, const napi_property_
 // itself has already run (that call is how it signals completion).
 struct napi_async_cleanup_hook_handle__ {
     napi_env env;
+    // Set by drain(); afterwards napi_remove_async_cleanup_hook (any thread) is the completion signal.
+    std::atomic<bool> started { false };
 
     explicit napi_async_cleanup_hook_handle__(napi_env env)
         : env(env)
@@ -216,6 +221,7 @@ public:
         while (!m_cleanupHooks.empty()) {
             drain();
         }
+        waitForAsyncCleanupHooks();
         // erase() above leaves the bucket array allocated; release it here
         // since ~NapiEnv may not run before process exit (late finalizers can
         // hold the last Ref past GlobalObject teardown).
@@ -385,6 +391,14 @@ public:
         // Freed unconditionally, matching Node: for an already-drained hook
         // this call is the addon's completion signal.
         delete handle;
+    }
+
+    // Any thread. `this` is alive: the JS thread is parked in waitForAsyncCleanupHooks() until the counter hits zero.
+    void asyncCleanupHookCompleted(napi_async_cleanup_hook_handle handle)
+    {
+        delete handle;
+        size_t prev = m_pendingAsyncCleanupHooks.fetch_sub(1, std::memory_order_acq_rel);
+        ASSERT_UNUSED(prev, prev > 0);
     }
 
     bool inGC() const
@@ -592,6 +606,7 @@ private:
     Napi::HookSet m_cleanupHooks;
     JSC::Strong<JSC::Unknown> m_pendingException;
     size_t m_cleanupHookCounter = 0;
+    std::atomic<size_t> m_pendingAsyncCleanupHooks { 0 };
 
     WTF::Lock m_threadSafeFunctionsLock;
     WTF::HashSet<void*> m_threadSafeFunctions WTF_GUARDED_BY_LOCK(m_threadSafeFunctionsLock);
@@ -632,13 +647,23 @@ private:
             } else {
                 auto& async = std::get<Napi::AsyncCleanupHook>(hook);
                 ASSERT(async.function != nullptr);
-                // The addon owns the handle and frees it via
-                // napi_remove_async_cleanup_hook, possibly after this returns (#37201).
+                // Node's RunAsyncCleanupHook; the addon frees the handle via napi_remove_async_cleanup_hook (#37201).
+                m_pendingAsyncCleanupHooks.fetch_add(1, std::memory_order_acq_rel);
+                async.handle->started.store(true, std::memory_order_release);
                 async.function(async.handle, async.data);
             }
             // Same invariant as the finalizer loop in cleanup(): a hook
             // that leaked an exception must not poison the next hook.
             clearExceptionsBetweenFinalizers();
+        }
+    }
+
+    // Node's CleanupHandles. Must run after abortThreadSafeFunctions(): a tsfn finalizer may be the completer (#37201).
+    void waitForAsyncCleanupHooks()
+    {
+        while (m_pendingAsyncCleanupHooks.load(std::memory_order_acquire) > 0) {
+            napi_internal_tick_platform_loop(this);
+            WTF::Thread::yield();
         }
     }
 };

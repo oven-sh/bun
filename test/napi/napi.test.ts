@@ -1912,6 +1912,67 @@ describe.skipIf(!canBuildNodeAddons())("cleanup hooks", () => {
     });
   });
 
+  describe("async cleanup hooks", () => {
+    const addonPath = join(__dirname, "napi-app/build/Debug/test_async_cleanup_hook_deferred.node");
+
+    // The addon's instance-data finalizer runs as part of env teardown, after
+    // the cleanup hooks, so "instance-data-finalized" marks the point where
+    // teardown moved past the hooks. With the wait it orders after
+    // "hook-completed"; without it, it prints straight after "hook-invoked".
+    it("waits for a hook that completes synchronously inside the callback", async () => {
+      const out = await checkSameOutput("test_async_cleanup_hook_deferred", [0]);
+      expect(out.split(/\r?\n/)).toEqual([
+        "armed:0 status=0",
+        "hook-invoked",
+        "hook-completed",
+        "instance-data-finalized",
+      ]);
+    });
+
+    it("blocks env teardown until a background thread calls napi_remove_async_cleanup_hook", async () => {
+      // The hook spawns a detached thread that sleeps, then calls
+      // napi_remove_async_cleanup_hook. Env teardown (and process exit) must
+      // not proceed until that call (Node.js: RunCleanup spins uv_run while
+      // request_waiting_ > 0). Not compared against Node: it also blocks, but
+      // releases its env ref from the foreign thread via a non-threadsafe
+      // SetImmediate and so drops the instance-data finalizer in this shape.
+      const out = (await runOn(bunExe(), "test_async_cleanup_hook_deferred", [1]))
+        .replaceAll(/^\[\w+\].+$/gm, "")
+        .trim();
+      expect(out.split(/\r?\n/)).toEqual([
+        "armed:1 status=0",
+        "hook-invoked",
+        "hook-completed",
+        "instance-data-finalized",
+      ]);
+    });
+
+    it("blocks a Worker's env teardown until a background thread calls napi_remove_async_cleanup_hook", async () => {
+      const code = `
+        const { Worker } = require("worker_threads");
+        const w = new Worker(
+          "require(" + JSON.stringify(${JSON.stringify(addonPath)}) + ").arm(1);",
+          { eval: true },
+        );
+        w.on("exit", () => { console.log("worker-exited"); });
+        w.on("error", err => { console.error("worker-error", err); process.exitCode = 1; });
+      `;
+      await using proc = spawn({
+        cmd: [bunExe(), "-e", code],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      expect({ stdout: stdout.split(/\r?\n/).filter(Boolean), stderr, exitCode }).toEqual({
+        stdout: ["armed:1 status=0", "hook-invoked", "hook-completed", "instance-data-finalized", "worker-exited"],
+        stderr: "",
+        exitCode: 0,
+      });
+      expect(proc.signalCode).toBeNull();
+    });
+  });
+
   describe("duplicate prevention", () => {
     it("should crash on duplicate hooks", async () => {
       await checkBothFail("test_cleanup_hook_duplicates", []);

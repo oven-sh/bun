@@ -2361,6 +2361,19 @@ extern "C" fn napi_internal_register_cleanup_zig(env_: napi_env) {
     );
 }
 
+/// One non-blocking poll of the platform loop, for `NapiEnv::waitForAsyncCleanupHooks`.
+#[unsafe(no_mangle)]
+extern "C" fn napi_internal_tick_platform_loop(env_: napi_env) {
+    // SAFETY: caller (NapiEnv::waitForAsyncCleanupHooks) guarantees env_ is
+    // non-null and we are on the env's JS thread.
+    let env = unsafe { &*env_ };
+    let loop_ = env.to_js().bun_vm().event_loop_ref().usockets_loop();
+    // SAFETY: `usockets_loop` returns the live per-VM loop (it panics rather
+    // than returning null); JS thread only, and no other `&mut` to the loop is
+    // live because the caller is parked in env teardown, outside any tick.
+    unsafe { (*loop_).tick_without_idle() };
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn napi_internal_suppress_crash_on_abort_if_desired() {
     if bun_core::env_var::feature_flag::BUN_INTERNAL_SUPPRESS_CRASH_ON_NAPI_ABORT

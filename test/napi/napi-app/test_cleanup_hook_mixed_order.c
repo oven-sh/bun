@@ -24,13 +24,13 @@ static void regular_hook2(void* arg) {
 static void async_hook1(napi_async_cleanup_hook_handle handle, void* arg) {
     async1_executed = execution_order++;
     printf("async_hook1 executed at position %d\n", async1_executed);
-    // Signal completion (this is required for async hooks)
+    napi_remove_async_cleanup_hook(handle);
 }
 
 static void async_hook2(napi_async_cleanup_hook_handle handle, void* arg) {
     async2_executed = execution_order++;
     printf("async_hook2 executed at position %d\n", async2_executed);
-    // Signal completion (this is required for async hooks)
+    napi_remove_async_cleanup_hook(handle);
 }
 
 napi_value test_function(napi_env env, napi_callback_info info) {

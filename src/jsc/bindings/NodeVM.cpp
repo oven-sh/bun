@@ -1020,11 +1020,6 @@ JSC_DEFINE_HOST_FUNCTION(jsNodeVmWasmCompileDisallowed, (JSC::JSGlobalObject * g
 void NodeVMGlobalObject::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    // In a contextified context, global variable reads, writes and declarations must reach getOwnPropertySlot / put /
-    // defineOwnProperty below (which put the sandbox object in front of them) instead of being linked straight to a
-    // symbol-table slot.
-    if (!m_contextOptions.notContextified)
-        setInterceptsGlobalScope();
 
     // microtaskMode: "afterEvaluate" — give this context its own microtask
     // queue, like Node's contextify own_microtask_queue. Microtasks enqueued
@@ -1128,7 +1123,14 @@ NodeVMGlobalObject::~NodeVMGlobalObject() = default;
 
 void NodeVMGlobalObject::setContextifiedObject(JSC::JSObject* contextifiedObject)
 {
+    ASSERT(!m_sandbox);
     m_sandbox.set(vm(), this, contextifiedObject);
+    // In a contextified context, global variable reads, writes and declarations must reach getOwnPropertySlot / put /
+    // defineOwnProperty below, which put the sandbox in front of them, instead of being linked straight to a
+    // symbol-table slot; JSC then inline-caches an access against the sandbox when those report a plain data property
+    // of the sandbox itself.
+    if (!m_contextOptions.notContextified)
+        setGlobalScopeInterceptor(vm(), contextifiedObject);
 }
 
 void NodeVMGlobalObject::setSpecialSandbox(NodeVMSpecialSandbox* sandbox)
@@ -1181,21 +1183,30 @@ bool NodeVMGlobalObject::put(JSCell* cell, JSGlobalObject* globalObject, Propert
         RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
 
     // The sandbox gets the value with plain (sloppy) [[Set]] semantics, whatever the caller's mode.
-    {
-        PutPropertySlot sandboxSlot(sandbox, false);
-        sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, sandboxSlot);
-        RETURN_IF_EXCEPTION(scope, false);
-    }
+    PutPropertySlot sandboxSlot(sandbox, false);
+    sandbox->methodTable()->put(sandbox, globalObject, propertyName, value, sandboxSlot);
+    RETURN_IF_EXCEPTION(scope, false);
 
     // An accessor on the sandbox itself has fully handled the store; anything else is also stored behind it, on
     // the global (where a declared `var` / function binding lives).
     if (isDeclaredOnSandbox && onSandbox.isAccessor() && onSandbox.slotBase() == sandbox)
         return true;
 
-    // (JSObject::put hands index names back to the method table's putByIndex, which is this function again.)
-    if (std::optional<uint32_t> index = parseIndex(propertyName))
-        RELEASE_AND_RETURN(scope, Base::putByIndex(cell, globalObject, *index, value, slot.isStrictMode()));
-    RELEASE_AND_RETURN(scope, Base::put(cell, globalObject, propertyName, value, slot));
+    bool result;
+    {
+        PutPropertySlot globalSlot(slot.thisValue(), slot.isStrictMode(), slot.context());
+        // (JSObject::put hands index names back to the method table's putByIndex, which is this function again.)
+        if (std::optional<uint32_t> index = parseIndex(propertyName))
+            result = Base::putByIndex(cell, globalObject, *index, value, slot.isStrictMode());
+        else
+            result = Base::put(cell, globalObject, propertyName, value, globalSlot);
+        RETURN_IF_EXCEPTION(scope, false);
+    }
+    // Report a replaced plain data property of the sandbox itself, so that put_to_scope can cache the store against the
+    // sandbox's structure (JSC then also keeps the global's variable slot, if the name has one, up to date itself).
+    if (sandboxSlot.isCacheablePut() && sandboxSlot.type() == PutPropertySlot::ExistingProperty && sandboxSlot.base() == sandbox)
+        slot.setExistingProperty(sandbox, sandboxSlot.cachedOffset());
+    return result;
 }
 
 bool NodeVMGlobalObject::putByIndex(JSCell* cell, JSGlobalObject* globalObject, unsigned index, JSValue value, bool shouldThrow)
@@ -1324,9 +1335,10 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
 
             // If there is a `get` trap, we don't need to our special handling
             if (getHandler) {
-                if (contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot)) {
+                bool found = contextifiedObject->methodTable()->getOwnPropertySlot(contextifiedObject, globalObject, propertyName, slot);
+                RETURN_IF_EXCEPTION(scope, false);
+                if (found)
                     return true;
-                }
                 goto try_from_global;
             }
 
@@ -1375,6 +1387,11 @@ bool NodeVMGlobalObject::getOwnPropertySlot(JSObject* cell, JSGlobalObject* glob
                     RETURN_IF_EXCEPTION(scope, false);
                     if (value == contextifiedObject)
                         value = thisObject->globalThis();
+                    else if (slot.isCacheableValue() && slot.slotBase() == contextifiedObject) {
+                        // A plain data property of the sandbox itself: leave the slot describing it, so that
+                        // get_from_scope can cache the load against the sandbox's structure.
+                        return true;
+                    }
                     unsigned ignoredAttributes = 0;
                     slot.disableCaching();
                     slot.setValue(contextifiedObject, ignoredAttributes, value);

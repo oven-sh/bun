@@ -1394,6 +1394,123 @@ describe("global object and its sandbox", () => {
     expect(Object.getOwnPropertySymbols(sandbox)).toEqual([]);
   });
 
+  // These run each access enough times for every JIT tier to have cached it against the sandbox.
+  describe("hot (inline-cached) global accesses keep the sandbox semantics", () => {
+    const N = 20_000;
+
+    test("var reads see outside writes; var writes land on the sandbox", () => {
+      const sandbox: any = {};
+      const context = createContext(sandbox);
+      runInContext(
+        `var v = 0; var seen = [];
+         function tick(i) { v = i; return v; }
+         function read() { return v; }`,
+        context,
+      );
+      const { tick, read } = sandbox;
+      for (let i = 0; i < N; i++) if (tick(i) !== i) throw new Error("tick " + i);
+      expect(sandbox.v).toBe(N - 1);
+      sandbox.v = "outside";
+      expect(read()).toBe("outside");
+      expect(runInContext(`for (var i = 0, last; i < ${N}; i++) last = v; last`, context)).toBe("outside");
+      runInContext(`for (var i = 0; i < ${N}; i++) v = i;`, context);
+      expect(sandbox.v).toBe(N - 1);
+    });
+
+    test("after the sandbox's copy of a var is deleted from outside, the global still has the latest value", () => {
+      const sandbox: any = {};
+      const context = createContext(sandbox);
+      runInContext(`var v = 0; for (var i = 0; i < ${N}; i++) v = i;`, context);
+      expect(sandbox.v).toBe(N - 1);
+      delete sandbox.v;
+      expect(runInContext("v", context)).toBe(N - 1);
+      expect(runInContext("Object.getOwnPropertyDescriptor(globalThis, 'v').value", context)).toBe(N - 1);
+    });
+
+    test("sandbox structure changes and accessors are honoured after caching", () => {
+      const sandbox: any = { x: 1 };
+      const context = createContext(sandbox);
+      runInContext(`function readX() { return x; } function writeX(v) { x = v; }`, context);
+      const { readX, writeX } = sandbox;
+      for (let i = 0; i < N; i++) (readX(), writeX(i));
+      expect(sandbox.x).toBe(N - 1);
+      sandbox.y = 2; // structure transition
+      expect(readX()).toBe(N - 1);
+      let stored;
+      Object.defineProperty(sandbox, "x", { get: () => "getter", set: v => (stored = v), configurable: true });
+      expect(readX()).toBe("getter");
+      writeX("via setter");
+      expect(stored).toBe("via setter");
+      delete sandbox.x;
+      expect(readX()).toBe(N - 1); // the global's own copy: every plain write reached it, the accessor's didn't
+      sandbox.x = "back";
+      for (let i = 0; i < N; i++) if (readX() !== "back") throw new Error("readX " + i);
+    });
+
+    test("a global lexical declaration added later shadows a cached sandbox property", () => {
+      const sandbox: any = { x: "sandbox" };
+      const context = createContext(sandbox);
+      runInContext(`function readX() { return x; }`, context);
+      for (let i = 0; i < N; i++) if (sandbox.readX() !== "sandbox") throw new Error("readX " + i);
+      runInContext(`let x = "lexical";`, context);
+      expect(sandbox.readX()).toBe("lexical");
+      expect(runInContext(`x = "assigned"; x`, context)).toBe("assigned");
+      expect(sandbox.x).toBe("sandbox");
+    });
+
+    test("a sandbox property holding the sandbox reads as the context's globalThis", () => {
+      const sandbox: any = { later: 1 };
+      sandbox.self = sandbox;
+      const context = createContext(sandbox);
+      expect(
+        runInContext(`var ok = true; for (var i = 0; i < ${N}; i++) ok = ok && self === globalThis; ok`, context),
+      ).toBe(true);
+      // ... including a property that only starts holding it after its reads were cached.
+      runInContext(`function readLater() { return later; }`, context);
+      for (let i = 0; i < N; i++) if (sandbox.readLater() !== 1) throw new Error("readLater " + i);
+      sandbox.later = sandbox;
+      expect(sandbox.readLater()).toBe(runInContext("globalThis", context));
+      expect(
+        runInContext(
+          `var same = true; for (var i = 0; i < ${N}; i++) same = same && later === globalThis; same`,
+          context,
+        ),
+      ).toBe(true);
+    });
+
+    test("names that don't exist keep throwing / reading as undefined in hot code", () => {
+      const sandbox: any = {};
+      const context = createContext(sandbox);
+      runInContext(
+        `function rd() { try { return nope; } catch (e) { return e.constructor.name; } }
+         function wr(i) { "use strict"; try { nope2 = i; return "no throw"; } catch (e) { return e.constructor.name; } }
+         function ty() { return typeof nope3; }`,
+        context,
+      );
+      // (fewer rounds: every one throws twice, which is slow in debug builds)
+      for (let i = 0; i < N / 4; i++) {
+        if (sandbox.rd() !== "ReferenceError") throw new Error("rd " + i);
+        if (sandbox.wr(i) !== "ReferenceError") throw new Error("wr " + i);
+        if (sandbox.ty() !== "undefined") throw new Error("ty " + i);
+      }
+      expect("nope2" in sandbox).toBe(false);
+      sandbox.nope = 5;
+      sandbox.nope3 = "s";
+      expect([sandbox.rd(), sandbox.ty()]).toEqual([5, "string"]);
+    });
+
+    test("read-only sandbox properties stay read-only", () => {
+      const sandbox: any = {};
+      Object.defineProperty(sandbox, "ro", { value: 1, writable: false, enumerable: true, configurable: true });
+      const context = createContext(sandbox);
+      runInContext(`for (var i = 0; i < ${N}; i++) { ro = i; }`, context);
+      expect(sandbox.ro).toBe(1);
+      expect(() => runInContext(`"use strict"; for (var i = 0; i < ${N}; i++) { ro = i; }`, context)).toThrow(
+        expect.objectContaining({ name: "TypeError" }),
+      );
+    });
+  });
+
   test("running a script against the context's own `this` (the global's proxy) uses the same context", () => {
     const sandbox = { a: 1 };
     const context = createContext(sandbox);

@@ -70,6 +70,25 @@ impl FetchTaskletDeinitHop {
     }
 }
 
+/// The "request body buffer drained → resume the body stream" hop
+/// (`on_write_request_data_drain`): same pointer, its own tag, carrying the
+/// +1 that `resume_request_data_stream` drops.
+#[repr(transparent)]
+pub struct FetchTaskletDrainHop(FetchTasklet);
+impl Taskable for FetchTaskletDrainHop {
+    const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTaskletDrain;
+    unsafe fn release_unrun(this: *mut Self) {
+        FetchTasklet::deref(this.cast());
+    }
+}
+impl FetchTaskletDrainHop {
+    /// # Safety
+    /// `this` is the tasklet the hop was posted for, with the hop's ref held; JS thread.
+    pub(crate) unsafe fn run(this: *mut Self) -> ElJsResult<()> {
+        FetchTasklet::resume_request_data_stream(this.cast())
+    }
+}
+
 impl Taskable for FetchTasklet {
     const TAG: bun_event_loop::TaskTag = bun_event_loop::task_tag::FetchTasklet;
     /// A progress hop the HTTP thread posted: it carries the +1 that
@@ -552,6 +571,16 @@ impl FetchTasklet {
             // The upload's ref; it can be the last one.
             FetchTasklet::deref(this);
         }
+    }
+
+    /// `bun test --isolate` swap (JS thread): only abort. The VM keeps
+    /// running, so the final progress update still cancels the body sink.
+    ///
+    /// # Safety
+    /// `this` is live (registered ⇒ not yet deinit'd); JS thread.
+    pub(crate) unsafe fn abort_for_test_isolation(this: *mut FetchTasklet) {
+        // SAFETY: fn contract.
+        unsafe { (*this).abort_task() };
     }
 
     /// `HTTPClientResultCallback::release_at_shutdown` for `FetchTasklet`.
@@ -2273,10 +2302,10 @@ impl FetchTasklet {
     /// This is ALWAYS called from the http thread and we cannot touch the buffer here because is locked
     fn on_write_request_data_drain(this: *mut FetchTasklet) {
         let this_ref = Self::from_raw_ref(this);
-        // ref until the main thread callback is called
+        // Held by the hop until `resume_request_data_stream` (or its release
+        // unrun) drops it.
         this_ref.ref_();
-        // `from_callback` heap-allocates a fresh `ConcurrentTaskItem`.
-        let task = ConcurrentTask::from_callback(this, FetchTasklet::resume_request_data_stream);
+        let task = ConcurrentTask::create_from(this.cast::<FetchTaskletDrainHop>());
         this_ref
             .http_ticket
             .as_ref()
@@ -2285,7 +2314,6 @@ impl FetchTasklet {
     }
 
     /// This is ALWAYS called from the main thread
-    // ConcurrentTask::from_callback expects `fn(*mut T) -> bun_event_loop::JsResult<()>`.
     fn resume_request_data_stream(this: *mut FetchTasklet) -> ElJsResult<()> {
         let this_ref = Self::from_raw_mut(this);
         bun_output::scoped_log!(FetchTasklet, "resumeRequestDataStream");

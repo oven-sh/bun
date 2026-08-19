@@ -767,9 +767,7 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
             .unwrap_or(preload_slice);
 
         // node: builtin specifiers bypass the file resolver — JSModuleLoader
-        // resolves them internally. node:worker_threads is preloaded this way so
-        // its node-style worker bootstrap (stdio rebinding) runs before user code;
-        // this also means `bun --import node:*` works like Node's.
+        // resolves them internally, so `bun --import node:*` works like Node's.
         let module_name = if normalized.starts_with(b"node:") {
             bun_core::String::from_bytes(normalized)
         } else {
@@ -855,8 +853,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                 // enabled.
                 // SAFETY: `el` is the live per-thread event loop.
                 let el = unsafe { &*vm }.event_loop();
-                // SAFETY: `el` is the live per-thread event loop.
-                unsafe { (*el).perform_gc() };
                 loop {
                     // SAFETY: `pending_internal_promise` was set just above (or
                     // swapped by HMR to another live cell); `status()` is a
@@ -880,8 +876,6 @@ unsafe fn load_preloads(vm: *mut VirtualMachine) -> bun_jsc::CrateResult<*mut JS
                     }
                 }
             } else {
-                // SAFETY: `el` is the live per-thread event loop.
-                unsafe { (*(*vm).event_loop()).perform_gc() };
                 // SAFETY: per fn contract — short-lived `&mut *vm`; `promise` is a
                 // live protected JSC heap cell.
                 let _ = unsafe { (*vm).wait_for_promise(AnyPromise::Internal(promise)) };

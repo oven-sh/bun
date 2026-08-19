@@ -21,6 +21,7 @@ use bun_resolver::fs;
 use bun_sys::{self, PosixStat};
 use bun_threading::{Guarded, UnboundedQueue};
 
+use crate::generated_classes::js_StatWatcher as js;
 use crate::node::stat::{StatsBig, StatsSmall};
 use crate::node::types::PathLikeExt;
 use crate::timer::{EventLoopTimer, EventLoopTimerState, EventLoopTimerTag};
@@ -525,64 +526,6 @@ pub struct StatWatcher {
     scheduler: RefPtr<StatWatcherScheduler>,
 }
 
-/// `jsc.Codegen.JSStatWatcher` — cached-value accessors generated from
-/// `.classes.ts`. The C++ symbols are emitted by `generate-classes.ts`; this
-/// module declares them locally so callers can write `js::listener_get_cached`
-/// without depending on the placeholder type in `crate::generated_classes`.
-mod js {
-    use super::{JSGlobalObject, JSValue};
-
-    // `safe fn` to match the `safe fn …CachedValue` declarations
-    // `generate-classes.ts` emits in `generated_classes.rs` (avoids
-    // `clashing_extern_declarations`). C++ side declares these with
-    // `JSC_CALLCONV` (= SysV ABI on win-x64), so import via `jsc_abi_extern!`
-    // — a plain `extern "C"` block here is the wrong ABI on Windows and
-    // garbages the args (Win64 puts them in rcx/rdx/r8, callee reads rdi/rsi/rdx).
-    bun_jsc::jsc_abi_extern! {
-        safe fn StatWatcherPrototype__listenerSetCachedValue(
-            this_value: JSValue,
-            global: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        safe fn StatWatcherPrototype__listenerGetCachedValue(this_value: JSValue) -> JSValue;
-        safe fn StatWatcherPrototype__prevStatSetCachedValue(
-            this_value: JSValue,
-            global: *mut JSGlobalObject,
-            value: JSValue,
-        );
-        safe fn StatWatcherPrototype__prevStatGetCachedValue(this_value: JSValue) -> JSValue;
-    }
-
-    #[inline]
-    pub(super) fn listener_set_cached(
-        this_value: JSValue,
-        global: &JSGlobalObject,
-        value: JSValue,
-    ) {
-        StatWatcherPrototype__listenerSetCachedValue(this_value, global.as_mut_ptr(), value)
-    }
-    #[inline]
-    pub(super) fn listener_get_cached(this_value: JSValue) -> Option<JSValue> {
-        let v = StatWatcherPrototype__listenerGetCachedValue(this_value);
-        if v.is_empty() { None } else { Some(v) }
-    }
-
-    pub(super) mod gc {
-        pub(crate) mod prev_stat {
-            use super::super::*;
-            #[inline]
-            pub(crate) fn set(this_value: JSValue, global: &JSGlobalObject, value: JSValue) {
-                StatWatcherPrototype__prevStatSetCachedValue(this_value, global.as_mut_ptr(), value)
-            }
-            #[inline]
-            pub(crate) fn get(this_value: JSValue) -> Option<JSValue> {
-                let v = StatWatcherPrototype__prevStatGetCachedValue(this_value);
-                if v.is_empty() { None } else { Some(v) }
-            }
-        }
-    }
-}
-
 impl StatWatcher {
     /// Safe `&JSGlobalObject` accessor for the JSC_BORROW `global_this` back-pointer.
     #[inline]
@@ -845,7 +788,7 @@ impl StatWatcher {
         // Propagated to the task fold: reporting here would leave a
         // termination pending for the next queued task's JS entry.
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
-        js::gc::prev_stat::set(js_this, global_this, jsvalue);
+        js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
         // SAFETY: scheduler is live (`RefPtr`); `this` is live (ref'd, guard above).
         StatWatcherScheduler::append(this_ref.scheduler.as_ptr(), this);
@@ -870,7 +813,7 @@ impl StatWatcher {
         };
         let global_this = this_ref.global_this();
         let jsvalue = stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
-        js::gc::prev_stat::set(js_this, global_this, jsvalue);
+        js::prev_stat_set_cached(js_this, global_this, jsvalue);
 
         let result = js::listener_get_cached(js_this).unwrap().call(
             global_this,
@@ -955,10 +898,10 @@ impl StatWatcher {
             return Ok(());
         };
         let global_this = this_ref.global_this();
-        let prev_jsvalue = js::gc::prev_stat::get(js_this).unwrap_or(JSValue::UNDEFINED);
+        let prev_jsvalue = js::prev_stat_get_cached(js_this).unwrap_or(JSValue::UNDEFINED);
         let current_jsvalue =
             stat_to_js_stats(global_this, &this_ref.get_last_stat(), this_ref.bigint)?;
-        js::gc::prev_stat::set(js_this, global_this, current_jsvalue);
+        js::prev_stat_set_cached(js_this, global_this, current_jsvalue);
 
         // Propagate to the dispatcher: `report_error_or_terminate` reports a
         // regular throw as uncaught and stops the tick loop on termination.

@@ -932,7 +932,16 @@ function wsEmitClose(server) {
   server.emit("close");
 }
 
-function abortHandshake(response, code, message, headers = {}) {
+function abortHandshake(socket, code, message, headers = {}) {
+  // node:http does not assign a ServerResponse to the socket of an 'upgrade'
+  // request, so the reply goes through the native response handle instead.
+  // Both are gone once the socket has been closed or destroyed.
+  const response = socket._httpMessage || socket[kBunInternals];
+  if (!response) {
+    socket.destroy();
+    return;
+  }
+
   message = message || lazyHttp().STATUS_CODES[code];
   headers = {
     Connection: "close",
@@ -946,14 +955,14 @@ function abortHandshake(response, code, message, headers = {}) {
   response.end();
 }
 
-function abortHandshakeOrEmitwsClientError(server, req, response, socket, code, message) {
+function abortHandshakeOrEmitwsClientError(server, req, socket, code, message) {
   if (server.listenerCount("wsClientError")) {
     const err = new Error(message);
     Error.captureStackTrace(err, abortHandshakeOrEmitwsClientError);
 
     server.emit("wsClientError", err, socket, req);
   } else {
-    abortHandshake(response, code, message);
+    abortHandshake(socket, code, message);
   }
 }
 
@@ -1516,11 +1525,21 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const response = socket._httpMessage;
+    //
+    // Destroy the socket if the client has already sent a FIN packet.
+    //
+    if (!socket.readable || !socket.writable) return socket.destroy();
+
     const server = socket.server[kBunInternals];
     const req = socket[kBunInternals];
 
-    if (this._state > RUNNING) return abortHandshake(response, 503);
+    if (req?.upgraded) {
+      throw new Error(
+        "server.handleUpgrade() was called more than once with the same socket, possibly due to a misconfiguration",
+      );
+    }
+
+    if (this._state > RUNNING) return abortHandshake(socket, 503);
 
     let protocol = "";
     if (protocols.size) {
@@ -1555,7 +1574,7 @@ class WebSocketServer extends EventEmitter {
       }
       cb(ws, request);
     } else {
-      abortHandshake(response, 500);
+      abortHandshake(socket, 500);
     }
   }
   /**
@@ -1569,9 +1588,6 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
-    // socket is actually fake so we use internal http_res
-    const response = socket._httpMessage || socket[kBunInternals];
-
     // socket.on("error", socketOnError);
 
     const key = req.headers["sec-websocket-key"];
@@ -1579,31 +1595,31 @@ class WebSocketServer extends EventEmitter {
 
     if (req.method !== "GET") {
       const message = "Invalid HTTP method";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 405, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 405, message);
       return;
     }
 
     const upgrade = req.headers.upgrade;
     if (upgrade === undefined || upgrade.toLowerCase() !== "websocket") {
       const message = "Invalid Upgrade header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (!key || !wsKeyRegex.test(key)) {
       const message = "Missing or invalid Sec-WebSocket-Key header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (version !== 8 && version !== 13) {
       const message = "Missing or invalid Sec-WebSocket-Version header";
-      abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+      abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
       return;
     }
 
     if (!this.shouldHandle(req)) {
-      abortHandshake(response, 400);
+      abortHandshake(socket, 400);
       return;
     }
 
@@ -1615,7 +1631,7 @@ class WebSocketServer extends EventEmitter {
         protocols = subprotocolParse(secWebSocketProtocol);
       } catch {
         const message = "Invalid Sec-WebSocket-Protocol header";
-        abortHandshakeOrEmitwsClientError(this, req, response, socket, 400, message);
+        abortHandshakeOrEmitwsClientError(this, req, socket, 400, message);
         return;
       }
     }
@@ -1637,7 +1653,7 @@ class WebSocketServer extends EventEmitter {
       if (this.options.verifyClient.length === 2) {
         this.options.verifyClient(info, (verified, code, message, headers) => {
           if (!verified) {
-            return abortHandshake(response, code || 401, message, headers);
+            return abortHandshake(socket, code || 401, message, headers);
           }
 
           this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);
@@ -1645,7 +1661,7 @@ class WebSocketServer extends EventEmitter {
         return;
       }
 
-      if (!this.options.verifyClient(info)) return abortHandshake(response, 401);
+      if (!this.options.verifyClient(info)) return abortHandshake(socket, 401);
     }
 
     this.completeUpgrade(extensions, key, protocols, req, socket, head, cb);

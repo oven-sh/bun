@@ -11,7 +11,8 @@ const cdnUrls = (source: string) => [...source.matchAll(/"(https:\/\/cdn\.exampl
 
 // itBundled registers backend=api cases as it.serial, so only the backend=cli
 // cases and the plain test() cases below overlap. Each of them builds in its
-// own directory.
+// own directory. The exception is todo cases, which itBundled registers with
+// a plain it.todo: adjacent api ones overlap in a `bun test --todo` run.
 describe.concurrent("bundler", () => {
   itBundled("edgecase/EmptyFile", {
     files: {

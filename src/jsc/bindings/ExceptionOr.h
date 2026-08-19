@@ -51,27 +51,6 @@ public:
 
 private:
     Expected<ReturnType, Exception> m_value;
-#if ASSERT_ENABLED
-    bool m_wasReleased { false };
-#endif
-};
-
-template<typename T> class ExceptionOr<T&> {
-public:
-    using ReturnType = T&;
-    using ReturnReferenceType = T;
-
-    ExceptionOr(Exception&&);
-    ExceptionOr(ReturnReferenceType&);
-
-    bool hasException() const;
-    const Exception& exception() const;
-    Exception releaseException();
-    const ReturnReferenceType& returnValue() const;
-    ReturnReferenceType& releaseReturnValue();
-
-private:
-    ExceptionOr<ReturnReferenceType*> m_value;
 };
 
 template<> class ExceptionOr<void> {
@@ -88,8 +67,6 @@ public:
 private:
     Expected<void, Exception> m_value;
 };
-
-ExceptionOr<void> isolatedCopy(ExceptionOr<void>&&);
 
 template<typename ReturnType> inline ExceptionOr<ReturnType>::ExceptionOr(Exception&& exception)
     : m_value(makeUnexpected(WTF::move(exception)))
@@ -131,41 +108,6 @@ template<typename ReturnType> inline ReturnType ExceptionOr<ReturnType>::release
     return WTF::move(m_value.value());
 }
 
-template<typename ReturnReferenceType> inline ExceptionOr<ReturnReferenceType&>::ExceptionOr(Exception&& exception)
-    : m_value(WTF::move(exception))
-{
-}
-
-template<typename ReturnReferenceType> inline ExceptionOr<ReturnReferenceType&>::ExceptionOr(ReturnReferenceType& returnValue)
-    : m_value(&returnValue)
-{
-}
-
-template<typename ReturnReferenceType> inline bool ExceptionOr<ReturnReferenceType&>::hasException() const
-{
-    return m_value.hasException();
-}
-
-template<typename ReturnReferenceType> inline const Exception& ExceptionOr<ReturnReferenceType&>::exception() const
-{
-    return m_value.exception();
-}
-
-template<typename ReturnReferenceType> inline Exception ExceptionOr<ReturnReferenceType&>::releaseException()
-{
-    return m_value.releaseException();
-}
-
-template<typename ReturnReferenceType> inline const ReturnReferenceType& ExceptionOr<ReturnReferenceType&>::returnValue() const
-{
-    return *m_value.returnValue();
-}
-
-template<typename ReturnReferenceType> inline ReturnReferenceType& ExceptionOr<ReturnReferenceType&>::releaseReturnValue()
-{
-    return *m_value.releaseReturnValue();
-}
-
 inline ExceptionOr<void>::ExceptionOr(Exception&& exception)
     : m_value(makeUnexpected(WTF::move(exception)))
 {
@@ -184,13 +126,6 @@ inline const Exception& ExceptionOr<void>::exception() const
 inline Exception ExceptionOr<void>::releaseException()
 {
     return WTF::move(m_value.error());
-}
-
-inline ExceptionOr<void> isolatedCopy(ExceptionOr<void>&& value)
-{
-    if (value.hasException())
-        return isolatedCopy(value.releaseException());
-    return {};
 }
 
 template<typename T> inline constexpr bool IsExceptionOr = WTF::IsTemplate<std::decay_t<T>, ExceptionOr>::value;

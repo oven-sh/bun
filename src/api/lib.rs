@@ -8,9 +8,7 @@
 // Re-exports — canonical definitions live in `bun_options_types::schema::api`.
 // ──────────────────────────────────────────────────────────────────────────
 
-pub use bun_options_types::schema::api::{
-    BunInstall, Ca, NodeLinker, NpmRegistry, NpmRegistryMap, PnpmMatcher,
-};
+pub use bun_options_types::schema::api::{BunInstall, Ca, NpmRegistry};
 
 // ──────────────────────────────────────────────────────────────────────────
 // npm_registry  — module path for the nested `NpmRegistry::Parser`

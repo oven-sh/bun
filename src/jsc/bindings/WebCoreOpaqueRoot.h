@@ -36,8 +36,6 @@ public:
     {
     }
 
-    WebCoreOpaqueRoot(std::nullptr_t) {}
-
     void* pointer() const { return m_pointer; }
 
 private:
@@ -46,20 +44,5 @@ private:
 
 template<typename Visitor>
 inline void addWebCoreOpaqueRoot(Visitor&, WebCoreOpaqueRoot);
-
-template<typename Visitor, typename ImplType>
-inline void addWebCoreOpaqueRoot(Visitor&, ImplType*);
-
-template<typename Visitor, typename ImplType>
-inline void addWebCoreOpaqueRoot(Visitor&, ImplType&);
-
-template<typename Visitor>
-inline bool containsWebCoreOpaqueRoot(Visitor&, WebCoreOpaqueRoot);
-
-template<typename Visitor, typename ImplType>
-inline bool containsWebCoreOpaqueRoot(Visitor&, ImplType&);
-
-template<typename Visitor, typename ImplType>
-inline bool containsWebCoreOpaqueRoot(Visitor&, ImplType*);
 
 } // namespace WebCore

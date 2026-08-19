@@ -326,17 +326,6 @@ static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* pro
     emitter.emit(event, arguments);
 }
 
-JSC_DEFINE_CUSTOM_SETTER(Process_defaultSetter, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName propertyName))
-{
-    auto& vm = JSC::getVM(globalObject);
-
-    JSC::JSObject* thisObject = dynamicDowncast<JSC::JSObject>(JSValue::decode(thisValue));
-    if (value)
-        thisObject->putDirect(vm, propertyName, JSValue::decode(value), 0);
-
-    return true;
-}
-
 extern "C" bool Bun__resolveEmbeddedNodeFile(void*, BunString*);
 #if OS(WINDOWS)
 extern "C" HMODULE Bun__LoadLibraryBunString(BunString*);
@@ -1257,15 +1246,9 @@ extern "C" bool Bun__onSignalForJS(int signalNumber, Zig::GlobalObject* globalOb
 #if OS(WINDOWS)
 extern "C" uv_signal_t* Bun__UVSignalHandle__init(JSC::JSGlobalObject* lexicalGlobalObject, int signalNumber, void (*callback)(uv_signal_t*, int));
 extern "C" uv_signal_t* Bun__UVSignalHandle__close(uv_signal_t*);
-#endif
 
-#if !OS(WINDOWS)
-void signalHandler(int signalNumber)
-#else
 void signalHandler(uv_signal_t* signal, int signalNumber)
-#endif
 {
-#if OS(WINDOWS)
     if (signalNumberToNameMap->find(signalNumber) == signalNumberToNameMap->end()) [[unlikely]]
         return;
 
@@ -1277,10 +1260,8 @@ void signalHandler(uv_signal_t* signal, int signalNumber)
     context->postTaskConcurrently([signalNumber](ScriptExecutionContext& context) {
         Bun__onSignalForJS(signalNumber, uncheckedDowncast<Zig::GlobalObject>(context.jsGlobalObject()));
     });
-#else
-
+}
 #endif
-};
 
 extern "C" void Bun__logUnhandledException(JSC::EncodedJSValue exception);
 
@@ -4353,15 +4334,6 @@ void Process::queueNextTick(JSC::JSGlobalObject* globalObject, const ArgList& ar
     ASSERT_WITH_MESSAGE(!args.at(0).inherits<AsyncContextFrame>(), "queueNextTick must not pass an AsyncContextFrame. This will cause a crash.");
     JSC::call(globalObject, nextTickFn, args, "Failed to call nextTick"_s);
     RELEASE_AND_RETURN(scope, void());
-}
-
-void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value)
-{
-    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
-    MarkedArgumentBuffer args;
-    if (!value.isEmpty())
-        args.append(value);
-    this->queueNextTick(globalObject, args);
 }
 
 void Process::queueNextTick(JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)

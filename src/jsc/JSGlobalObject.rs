@@ -9,8 +9,8 @@ use crate::error_code::ErrorBuilder;
 use crate::virtual_machine::VirtualMachine;
 use crate::zig_string::ZigString;
 use crate::{
-    CommonStrings, DOMExceptionCode, ErrorableString, Exception, JSValue, JsError, JsResult,
-    MAX_SAFE_INTEGER, MIN_SAFE_INTEGER, VM,
+    CommonStrings, DOMExceptionCode, ErrorableString, JSValue, JsError, JsResult, MAX_SAFE_INTEGER,
+    MIN_SAFE_INTEGER, VM,
 };
 
 use bun_core::{Output, fmt as bun_fmt};
@@ -1449,16 +1449,6 @@ unsafe extern "C" fn Zig__GlobalObject__resolve(
             debug_assert!(!res.success);
         }
     }
-}
-
-#[unsafe(no_mangle)]
-unsafe extern "C" fn Zig__GlobalObject__reportUncaughtException(
-    global: *const JSGlobalObject,
-    exception: *mut Exception,
-) -> JSValue {
-    crate::mark_binding();
-    // SAFETY: C++ passes valid non-null pointers.
-    unsafe { VirtualMachine::report_uncaught_exception(&*global, &*exception) }
 }
 
 #[unsafe(no_mangle)]

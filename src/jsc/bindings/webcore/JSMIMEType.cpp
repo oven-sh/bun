@@ -61,40 +61,6 @@ static int findFirstInvalidHTTPTokenChar(const StringView& view)
     return -1;
 }
 
-// Checks if a character is valid within an HTTP quoted string value (excluding DQUOTE and backslash).
-// Equivalent to /[^\t\u0020-\u007E\u0080-\u00FF]/, but we handle quotes/backslash separately.
-static inline bool isHTTPQuotedStringChar(char16_t c)
-{
-    return c == 0x09 || (c >= 0x20 && c <= 0x7E) || (c >= 0x80 && c <= 0xFF);
-}
-
-// Checks if a character is NOT a valid HTTP quoted string code point.
-static inline bool isNotHTTPQuotedStringChar(char16_t c)
-{
-    return !isHTTPQuotedStringChar(c);
-}
-
-// Finds the first invalid character in a potential parameter value. Returns -1 if all are valid.
-static int findFirstInvalidHTTPQuotedStringChar(const StringView& view)
-{
-    if (view.is8Bit()) {
-        const auto span = view.span8();
-        for (size_t i = 0; i < span.size(); ++i) {
-            if (isNotHTTPQuotedStringChar(span[i])) {
-                return i;
-            }
-        }
-    } else {
-        const auto span = view.span16();
-        for (size_t i = 0; i < span.size(); ++i) {
-            if (isNotHTTPQuotedStringChar(span[i])) {
-                return i;
-            }
-        }
-    }
-    return -1;
-}
-
 // Equivalent to /[^\r\n\t ]|$/
 static size_t findEndBeginningWhitespace(const StringView& view)
 {
@@ -141,78 +107,6 @@ static size_t findStartEndingWhitespace(const StringView& view)
         }
         return 0;
     }
-}
-
-static String removeBackslashes(const StringView& view)
-{
-    if (view.find('\\') == notFound) {
-        return view.toString();
-    }
-
-    StringBuilder builder;
-    if (view.is8Bit()) {
-        auto span = view.span8();
-        for (size_t i = 0; i < span.size(); ++i) {
-            Latin1Character c = span[i];
-            if (c == '\\' && i + 1 < span.size()) {
-                builder.append(span[++i]);
-            } else {
-                builder.append(c);
-            }
-        }
-    } else {
-        auto span = view.span16();
-        for (size_t i = 0; i < span.size(); ++i) {
-            char16_t c = span[i];
-            if (c == '\\' && i + 1 < span.size()) {
-                builder.append(span[++i]);
-            } else {
-                builder.append(c);
-            }
-        }
-    }
-    return builder.toString();
-}
-
-static String escapeQuoteOrBackslash(const StringView& view)
-{
-    if (view.find([](char16_t c) { return c == '"' || c == '\\'; }) == notFound) {
-        return view.toString();
-    }
-
-    StringBuilder builder;
-    if (view.is8Bit()) {
-        auto span = view.span8();
-        for (Latin1Character c : span) {
-            if (c == '"' || c == '\\') {
-                builder.append('\\');
-            }
-            builder.append(c);
-        }
-    } else {
-        auto span = view.span16();
-        for (char16_t c : span) {
-            if (c == '"' || c == '\\') {
-                builder.append('\\');
-            }
-            builder.append(c);
-        }
-    }
-    return builder.toString();
-}
-
-// Encodes a parameter value for serialization.
-static String encodeParamValue(const StringView& value)
-{
-    if (value.isEmpty()) {
-        return "\"\""_s;
-    }
-    if (findFirstInvalidHTTPTokenChar(value) == -1) {
-        // It's a simple token, no quoting needed.
-        return value.toString();
-    }
-    // Needs quoting and escaping.
-    return makeString('"', escapeQuoteOrBackslash(value), '"');
 }
 
 // Helper to parse type/subtype

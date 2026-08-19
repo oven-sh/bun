@@ -13,7 +13,6 @@ bun_opaque::opaque_ffi! {
 // ABI-identical to non-null `*mut String`. `URL__deinit` consumes the C++
 // allocation, so it keeps a raw pointer and stays `unsafe fn`.
 unsafe extern "C" {
-    safe fn URL__fromJS(value: JSValue, global: &JSGlobalObject) -> *mut URL;
     safe fn URL__fromString(input: &mut String) -> *mut URL;
     safe fn URL__protocol(url: &URL) -> String;
     safe fn URL__username(url: &URL) -> String;
@@ -45,11 +44,6 @@ impl URL {
         crate::call_check_slow(global, || URL__getHrefFromJS(value, global))
     }
 
-    #[track_caller]
-    pub fn from_js(value: JSValue, global: &JSGlobalObject) -> JsResult<Option<NonNull<URL>>> {
-        crate::call_check_slow(global, || URL__fromJS(value, global)).map(NonNull::new)
-    }
-
     pub fn from_utf8(input: &[u8]) -> Option<NonNull<URL>> {
         Self::from_string(String::borrow_utf8(input))
     }
@@ -58,7 +52,7 @@ impl URL {
         let mut input = str;
         NonNull::new(URL__fromString(&mut input))
     }
-    // from_js/from_string/from_utf8 return an owned C++ heap pointer that the
+    // from_string/from_utf8 return an owned C++ heap pointer that the
     // caller must destroy().
 
     pub fn protocol(&self) -> String {

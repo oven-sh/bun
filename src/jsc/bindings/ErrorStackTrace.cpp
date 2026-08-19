@@ -256,15 +256,6 @@ JSC::JSString* JSCStackFrame::functionName()
     return jsString(this->m_vm, m_functionName);
 }
 
-JSC::JSString* JSCStackFrame::typeName()
-{
-    if (!m_typeName) {
-        m_typeName = retrieveTypeName();
-    }
-
-    return jsString(this->m_vm, m_typeName);
-}
-
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
 {
     if (SourcePositionsState::NotCalculated == m_sourcePositionsState) {
@@ -336,12 +327,6 @@ ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
     }
 
     return emptyString();
-}
-
-ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
-{
-    JSC::JSObject* calleeObject = uncheckedDowncast<JSC::JSObject>(m_callee);
-    return calleeObject->className();
 }
 
 // General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)

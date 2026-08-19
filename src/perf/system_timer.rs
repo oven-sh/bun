@@ -16,17 +16,13 @@ impl Timer {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
 
-    pub fn lap(&mut self) -> u64 {
-        unreachable!("FeatureFlags.tracing should be disabled in WASM");
-    }
-
-    pub fn reset(&mut self) -> u64 {
+    pub fn reset(&mut self) {
         unreachable!("FeatureFlags.tracing should be disabled in WASM");
     }
 }
 
 // Non-WASM: wrap `std::time::Instant` behind a small monotonic-timer surface
-// (`start`/`read`/`lap`/`reset`, ns as u64).
+// (`start`/`read`/`reset`, ns as u64).
 #[cfg(not(target_family = "wasm"))]
 pub struct Timer {
     started: std::time::Instant,

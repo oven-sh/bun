@@ -2624,11 +2624,14 @@ describe("VM teardown ordering", () => {
   // "request out" rows are here too: the stop phase now ends the upload first,
   // and the request coming back afterwards must not free anything twice.
   //
-  // The oracle on a debug build is each object's own teardown log line: exactly
+  // Two oracles. On a debug build, each object's own teardown log line: exactly
   // one MultiPartUpload deinit per row, and one S3UploadStreamWrapper deinit per
-  // s3file.write(stream). The ASAN release build has no debug logs; there the
-  // rows only run for the sanitizer (a double release frees an object the
-  // request coming back still touches).
+  // s3file.write(stream). On the ASAN build (a release build, so no debug logs),
+  // LeakSanitizer at the host's exit: without the fix it reports the upload and
+  // everything it holds. ASAN itself catches a double release on every row (the
+  // request coming back touches a freed upload). The sink behind s3file.writer()
+  // is not freed on any path, fixed or not (#34999), so the writer() rows run
+  // without leak detection.
   describe.skipIf(!isDebug && !isASAN)("an S3 upload still open when its VM goes", () => {
     const ROWS: {
       name: string;
@@ -2640,6 +2643,7 @@ describe("VM teardown ordering", () => {
       waitForRequest?: boolean;
       wrappers: number;
       mainThread?: boolean;
+      leakCheck?: false;
     }[] = [
       {
         name: "s3file.write(response) still waiting for bytes, worker terminated",
@@ -2655,6 +2659,7 @@ describe("VM teardown ordering", () => {
         name: "s3file.writer() with bytes written and no end(), worker terminated",
         start: `const w = file.writer(); w.write(new Uint8Array(64));`,
         wrappers: 0,
+        leakCheck: false,
       },
       {
         name: "s3file.write(response) whose body ended, PUT in flight, worker terminated",
@@ -2668,6 +2673,7 @@ describe("VM teardown ordering", () => {
         start: `const w = file.writer(); w.write(new Uint8Array(64)); w.end().catch(() => {});`,
         waitForRequest: true,
         wrappers: 0,
+        leakCheck: false,
       },
       {
         name: "s3file.write(response) still waiting for bytes, process.exit() on the main thread",
@@ -2682,7 +2688,9 @@ describe("VM teardown ordering", () => {
       const gotRequest = Promise.withResolvers();
       const standIn = Bun.serve({
         port: 0,
-        fetch() {
+        async fetch(req) {
+          // Read, so the request left unanswered holds no body buffer of its own.
+          await req.arrayBuffer();
           gotRequest.resolve();
           return new Promise(() => {});
         },
@@ -2737,6 +2745,10 @@ describe("VM teardown ordering", () => {
             BUN_DEBUG_S3MultiPartUpload: "1",
             BUN_DEBUG_S3UploadStream: "1",
             BUN_DESTRUCT_VM_ON_EXIT: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, `detect_leaks=${row.leakCheck === false ? 0 : 1}`]
+              .filter(Boolean)
+              .join(":"),
+            LSAN_OPTIONS: `print_suppressions=0:suppressions=${join(import.meta.dirname, "../../../leaksan.supp")}`,
           },
           stdout: "pipe",
           stderr: "pipe",

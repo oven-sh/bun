@@ -415,3 +415,89 @@ describe.skipIf(isWindows)("terminate() waits for work that cannot be cancelled"
     expect(await proc.exited).toBe(0);
   });
 });
+
+// A fetch() whose request body is still uploading when its worker goes holds
+// one more reference than the "fetch in flight" row above: the one
+// start_request_stream takes for the upload. A body pumped by JS (a pull or
+// direct stream) releases it when the JSC heap destroys the pump's controller
+// cell. A body streaming in from a native source (another response's body, a
+// file) has no such cell, and the progress update that would cancel the sink
+// is released unrun at teardown, so the stop phase has to end the sink itself
+// or the whole request (tasklet, AsyncHTTP, sink, stream buffer) outlives the
+// worker. The target server terminates the worker once the first body chunk
+// has arrived, so the upload is mid-flight every time. LSan reports a request
+// that was never released; ASAN reports one released once too often as a
+// use-after-free when the HTTP thread hands it back during the wait.
+describe.skipIf(!isASAN || isWindows)("terminate() while a request body is still uploading", () => {
+  const BODIES = {
+    "a JS pull stream": `new ReadableStream({ pull(c) { c.enqueue(new Uint8Array(16)); return new Promise(() => {}); } })`,
+    "a direct stream": `new ReadableStream({ type: "direct", pull(c) { c.write(new Uint8Array(16)); return new Promise(() => {}); } })`,
+    "another response's body": `(await fetch(workerData.upstream)).body`,
+    "Bun.file(fifo).stream()": `Bun.file(workerData.fifo).stream()`,
+  };
+  // Runs in the host process: two servers (the target, which never answers,
+  // and an upstream whose body never ends), a FIFO the host keeps open so the
+  // worker's reader gets bytes but never EOF, and one worker that starts the
+  // upload. The host terminates the worker when the target has the first chunk.
+  const host = (body: string) => `
+    const { Worker } = require("node:worker_threads");
+    const { execFileSync } = require("node:child_process");
+    const fs = require("node:fs");
+    execFileSync("mkfifo", ["fifo"]);
+    const fifoFd = fs.openSync("fifo", "r+");
+    fs.writeSync(fifoFd, Buffer.alloc(64, 1));
+    const firstChunk = Promise.withResolvers();
+    const target = Bun.serve({
+      port: 0,
+      async fetch(req) {
+        await req.body.getReader().read();
+        firstChunk.resolve();
+        return new Promise(() => {});
+      },
+    });
+    const upstream = Bun.serve({
+      port: 0,
+      fetch: () => new Response(new ReadableStream({
+        start(c) { c.enqueue(new Uint8Array(1024)); },
+        pull() { return new Promise(() => {}); },
+      })),
+    });
+    const worker = new Worker(
+      'const { workerData } = require("node:worker_threads");' +
+      '(async () => { const body = ' + ${JSON.stringify(body)} + '; fetch(workerData.target, { method: "POST", body }).catch(() => {}); })();',
+      { eval: true, workerData: { target: target.url.href, upstream: upstream.url.href, fifo: "fifo" } },
+    );
+    worker.on("error", e => { console.error("worker error:", e); process.exit(1); });
+    await firstChunk.promise;
+    console.log("terminated:", await worker.terminate());
+    fs.closeSync(fifoFd);
+    target.stop(true);
+    upstream.stop(true);
+  `;
+
+  for (const [name, body] of Object.entries(BODIES)) {
+    test.concurrent(
+      name,
+      async () => {
+        using dir = tempDir("worker-terminate-upload", {});
+        await using proc = Bun.spawn({
+          cmd: [bunExe(), "-e", host(body)],
+          cwd: String(dir),
+          env: {
+            ...bunEnv,
+            BUN_DESTRUCT_VM_ON_EXIT: "1",
+            ASAN_OPTIONS: [bunEnv.ASAN_OPTIONS, "detect_leaks=1"].filter(Boolean).join(":"),
+            LSAN_OPTIONS: `print_suppressions=0:suppressions=${path.join(import.meta.dirname, "../../../leaksan.supp")}`,
+          },
+          stdout: "pipe",
+          stderr: "pipe",
+        });
+        const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+        expect({ stdout, stderr, exitCode }).toEqual({ stdout: "terminated: 1\n", stderr: "", exitCode: 0 });
+      },
+      // LSan symbolizes its report against the debug binary on failure, which
+      // alone can take tens of seconds.
+      90_000,
+    );
+  }
+});

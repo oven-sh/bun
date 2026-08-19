@@ -26,6 +26,7 @@ pub(crate) mod js_bindings {
             ("panic", __jsc_host_js_panic),
             ("rootError", __jsc_host_js_root_error),
             ("outOfMemory", __jsc_host_js_out_of_memory),
+            ("allocError", __jsc_host_js_alloc_error),
             ("abort", __jsc_host_js_abort),
             ("fastfail", __jsc_host_js_fastfail),
             ("trap", __jsc_host_js_trap),
@@ -206,6 +207,29 @@ pub(crate) mod js_bindings {
     fn js_out_of_memory(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
         crash_handler::suppress_core_dumps_if_necessary();
         bun_core::out_of_memory();
+    }
+
+    /// Fails an infallible std allocation (`Vec::with_capacity`), the path a
+    /// `Vec`/`Box`/`String` takes when the global allocator returns null.
+    /// `outOfMemory` above covers the explicit `AllocError` path instead.
+    #[bun_jsc::host_fn]
+    fn js_alloc_error(_global: &JSGlobalObject, _frame: &CallFrame) -> JsResult<JSValue> {
+        crash_handler::suppress_core_dumps_if_necessary();
+        // Larger than any 64-bit address space, so mimalloc returns null no
+        // matter how much memory or overcommit the machine has, and within
+        // `isize::MAX`, so `Vec` reaches the allocator instead of panicking
+        // with a capacity overflow.
+        const SIZE: usize = 1 << 62;
+        // Under ASAN the global allocator is libc's, and ASAN treats a request
+        // this large as an error of its own (allocation-size-too-big) instead
+        // of returning null, so enter std's failure path directly. This is the
+        // same call `Vec` makes below once the allocator has returned null.
+        if Environment::ENABLE_ASAN {
+            std::alloc::handle_alloc_error(core::alloc::Layout::from_size_align(SIZE, 1).unwrap());
+        }
+        let buf: Vec<u8> = Vec::with_capacity(SIZE);
+        core::hint::black_box(buf);
+        Ok(JSValue::UNDEFINED)
     }
 
     #[bun_jsc::host_fn]

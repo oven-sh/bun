@@ -186,6 +186,29 @@ impl ByteStream {
         self.sink_paused.set(false);
     }
 
+    /// The sink takes nothing more: it answered a write with `Done` or `Err`, or it is
+    /// being torn down. The stream stays locked to it, so the rest of the body has no
+    /// taker either. A producer still mid-body is closed the way [`Self::cancel_from_sink`]
+    /// closes it for a sink that closes itself; left alone it would sit paused on its
+    /// connection for good.
+    pub(crate) fn detach_finished_sink(&self) {
+        if self.has_received_last_chunk.get() {
+            self.unpipe_without_deref();
+        } else {
+            self.cancel_from_sink(None);
+        }
+    }
+
+    /// [`Self::detach_finished_sink`] for a sink this stream ends itself. `end` only
+    /// detaches the sink from the stream (`FileSink::end_from_stream`,
+    /// `FetchRequestBodySink::end_from_stream`): the producer is still attached after
+    /// it and still holds the source, so it is closed last.
+    fn end_finished_sink(&self, sink: SinkHandle, err: Option<streams::StreamError>) {
+        self.unpipe_without_deref();
+        sink.end(err);
+        self.detach_finished_sink();
+    }
+
     /// Sink's drain ack: unpause, push buffered bytes, end if last chunk already arrived.
     pub fn resume(&self) {
         if !self.sink_paused.get() {
@@ -212,13 +235,11 @@ impl ByteStream {
                     return;
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
-                    sink.end(Some(streams::StreamError::Error(e)));
+                    self.end_finished_sink(sink, Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
-                    sink.end(None);
+                    self.end_finished_sink(sink, None);
                     return;
                 }
                 _ => {}
@@ -311,15 +332,11 @@ impl ByteStream {
                     self.sink_paused.set(true);
                 }
                 streams::Writable::Err(e) => {
-                    self.sink.set(SinkHandle::None);
-                    self.sink_paused.set(false);
-                    sink.end(Some(streams::StreamError::Error(e)));
+                    self.end_finished_sink(sink, Some(streams::StreamError::Error(e)));
                     return;
                 }
                 streams::Writable::Done => {
-                    self.sink.set(SinkHandle::None);
-                    self.sink_paused.set(false);
-                    sink.end(None);
+                    self.end_finished_sink(sink, None);
                     return;
                 }
                 _ => {

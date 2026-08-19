@@ -1063,7 +1063,7 @@ pub(crate) fn upload_stream(
                     }
                     crate::webcore::streams::Writable::Done
                     | crate::webcore::streams::Writable::Err(_) => {
-                        byte_stream.sink.set(crate::webcore::SinkHandle::None);
+                        byte_stream.detach_finished_sink();
                         sink.source.clear();
                         if !sink.ended {
                             let _ = sink.end(None);

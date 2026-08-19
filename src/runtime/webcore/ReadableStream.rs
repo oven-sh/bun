@@ -26,8 +26,9 @@ pub enum NativeWireResult {
     /// Not a native source (no `Bytes`/`File` backing, or it already has a
     /// sink). Fall through to the JS-pump path.
     NotNative,
-    /// The source was already done or errored. The sink was not left
-    /// installed; the caller runs its own end-of-stream handling.
+    /// The source was already done or errored, or the sink took no more than
+    /// the bytes buffered so far (the source is cancelled then). The sink was
+    /// not left installed; the caller runs its own end-of-stream handling.
     EndedInline(Option<streams::StreamError>),
 }
 
@@ -351,7 +352,7 @@ impl ReadableStream {
                     match sink.write(&chunk) {
                         Writable::Backpressure(_) => byte_stream.sink_paused.set(true),
                         Writable::Done | Writable::Err(_) => {
-                            byte_stream.sink.set(SinkHandle::None);
+                            byte_stream.detach_finished_sink();
                             return NativeWireResult::EndedInline(None);
                         }
                         _ => {}
@@ -1164,7 +1165,9 @@ impl<C: SourceContext> NewSource<C> {
     /// that ([`SourceContext::native_ref_roots_wrapper`]). Called when either
     /// input changes: [`Self::increment_count`], and
     /// [`ReadableStream::wire_native_sink`]. [`Self::decrement_count`] drops the
-    /// root once only the wrapper's own ref remains.
+    /// root once only the wrapper's own ref remains; a sink that goes away
+    /// mid-body closes the producer (`ByteStream::detach_finished_sink`,
+    /// `ByteStream::cancel_from_sink`), and the producer's release is that drop.
     pub fn root_wrapper_if_needed(&mut self) {
         if self.ref_count <= 1 || !self.context.native_ref_roots_wrapper() {
             return;

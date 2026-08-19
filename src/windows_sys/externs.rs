@@ -1343,11 +1343,6 @@ impl Win32Error {
 pub type LPDWORD = *mut DWORD;
 pub type HPCON = *mut c_void;
 
-#[cfg_attr(windows, link(name = "shell32"))]
-unsafe extern "system" {
-    pub fn CommandLineToArgvW(lpCmdLine: LPCWSTR, pNumArgs: *mut c_int) -> *mut LPWSTR;
-}
-
 #[cfg_attr(windows, link(name = "kernel32"))]
 unsafe extern "system" {
     pub fn GetFileInformationByHandle(

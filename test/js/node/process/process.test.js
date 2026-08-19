@@ -1095,6 +1095,15 @@ describe.concurrent(() => {
       expect(full).toBeGreaterThan(0);
       expect(heapUsed).toBe(full);
     });
+
+    // Nothing requests a collection while Bun starts up, so there is no figure
+    // yet. Nothing has been freed yet either, so the whole heap counts as used.
+    it("counts the whole heap as used before the first collection", async () => {
+      const { heapTotal, heapUsed } = await reportedBy(`console.log(JSON.stringify(process.memoryUsage()))`);
+
+      expect(heapTotal).toBeGreaterThan(0);
+      expect(heapUsed).toBe(heapTotal);
+    });
   });
 
   describe("process.cpuUsage", () => {

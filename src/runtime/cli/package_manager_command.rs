@@ -315,7 +315,9 @@ Learn more about these at <magenta>https://bun.com/docs/cli/pm<r>.\n";
         }
 
         // `bun pm` subcommands that always rewrite package.json or the lockfile.
-        if strings::eql_comptime(subcommand, b"trust") || strings::eql_comptime(subcommand, b"migrate") {
+        if strings::eql_comptime(subcommand, b"trust")
+            || strings::eql_comptime(subcommand, b"migrate")
+        {
             pm.lock_project();
         }
 

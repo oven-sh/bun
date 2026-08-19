@@ -422,7 +422,8 @@ impl File {
         tmp_path.extend_from_slice(&target_bytes[..dir_len]);
         tmp_path.push(b'.');
         tmp_path.extend_from_slice(&target_bytes[dir_len..]);
-        write!(tmp_path, ".{:016x}.tmp\0", bun_core::fast_random()).expect("Vec write is infallible");
+        write!(tmp_path, ".{:016x}.tmp\0", bun_core::fast_random())
+            .expect("Vec write is infallible");
         let tmp_path = ZStr::from_slice_with_nul(&tmp_path);
 
         let cwd = Fd::cwd();

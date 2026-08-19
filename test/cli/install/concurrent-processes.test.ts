@@ -75,7 +75,10 @@ describe("package manager processes that share a project", () => {
     await write(packageJson, JSON.stringify({ name: "root", workspaces: ["packages/*"] }));
     const appDir = join(packageDir, "packages", "app");
     const appPackageJson = join(appDir, "package.json");
-    await write(appPackageJson, JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }));
+    await write(
+      appPackageJson,
+      JSON.stringify({ name: "app", dependencies: { "no-deps": "1.0.0", "a-dep": "1.0.1" } }),
+    );
     await installed(packageDir);
 
     await addAndRemoveTogether(appDir);
@@ -98,9 +101,9 @@ describe("package manager processes that share a project", () => {
     );
 
     const results = await Promise.all(Array.from({ length: 4 }, () => run(packageDir, "install")));
-    expect(results.map(({ stderr, exitCode }) => ({ stderr: stderr.includes("error:") ? stderr : "", exitCode }))).toEqual(
-      results.map(() => ({ stderr: "", exitCode: 0 })),
-    );
+    expect(
+      results.map(({ stderr, exitCode }) => ({ stderr: stderr.includes("error:") ? stderr : "", exitCode })),
+    ).toEqual(results.map(() => ({ stderr: "", exitCode: 0 })));
     // The first install runs the script, which writes "postinstall!". The others find the package
     // installed and leave it alone. A second run of the script writes "postinstall exists!".
     expect(await file(join(packageDir, "node_modules", "lifecycle-postinstall", "postinstall.txt")).text()).toBe(
@@ -125,7 +128,11 @@ describe("package manager processes that share a project", () => {
     // The root postinstall script runs while the install still holds the project.
     await write(
       packageJson,
-      JSON.stringify({ name: "held", dependencies: { "no-deps": "1.0.0" }, scripts: { postinstall: `${bunExe()} hold.js` } }),
+      JSON.stringify({
+        name: "held",
+        dependencies: { "no-deps": "1.0.0" },
+        scripts: { postinstall: `${bunExe()} hold.js` },
+      }),
     );
 
     await using install = spawn({

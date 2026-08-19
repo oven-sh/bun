@@ -88,7 +88,8 @@ pub fn lock_project(this: &mut PackageManager) {
     if this.project_lock.is_some() {
         return;
     }
-    let project_dir = bun_core::strings::without_trailing_slash(FileSystem::instance().top_level_dir());
+    let project_dir =
+        bun_core::strings::without_trailing_slash(FileSystem::instance().top_level_dir());
     if env_var::BUN_INTERNAL_INSTALL_LOCK_DIR
         .get()
         .is_some_and(|held| bun_core::strings::without_trailing_slash(held) == project_dir)
@@ -115,7 +116,11 @@ pub fn lock_project(this: &mut PackageManager) {
         Err(_) => false,
     };
     if !locked {
-        bun_core::scoped_log!(project_lock, "could not lock {}", bstr::BStr::new(project_dir));
+        bun_core::scoped_log!(
+            project_lock,
+            "could not lock {}",
+            bstr::BStr::new(project_dir)
+        );
         return;
     }
 

@@ -539,7 +539,8 @@ impl TrustCommand {
         // Read by path, not through the descriptor `init` opened before this process took the
         // project lock: a `bun add` that finished in between replaced the file.
         let package_json_contents =
-            bun_sys::File::read_from(bun_sys::Fd::cwd(), root_package_json_path).map_err(crate::Error::from)?;
+            bun_sys::File::read_from(bun_sys::Fd::cwd(), root_package_json_path)
+                .map_err(crate::Error::from)?;
         let package_json_source = bun_ast::Source::init_path_string(
             root_package_json_path.as_bytes(),
             package_json_contents.as_slice(),
@@ -664,8 +665,12 @@ impl TrustCommand {
 
         let new_package_json_contents = package_json_writer.ctx.written_without_trailing_zero();
 
-        bun_sys::File::write_file_atomically(root_package_json_path, new_package_json_contents, 0o644)
-            .map_err(crate::Error::from)?;
+        bun_sys::File::write_file_atomically(
+            root_package_json_path,
+            new_package_json_contents,
+            0o644,
+        )
+        .map_err(crate::Error::from)?;
 
         debug_assert!(total_scripts_ran > 0);
 

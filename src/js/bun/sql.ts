@@ -39,6 +39,16 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
+/// Bound as `this` to the one callback that both the timer and the pending work of a
+/// reserved.close({ timeout }) call settle through, so whichever comes first closes
+/// and the other one is a no-op.
+interface ReservedCloseState {
+  state: TransactionState;
+  pooledConnection: { close(): void };
+  timer: ReturnType<typeof setTimeout> | null;
+  resolve: () => void;
+}
+
 function settleReservedTransaction(
   reservedTransaction: Set<Promise<void>>,
   finished: { promise: Promise<void>; resolve: () => void },
@@ -48,6 +58,25 @@ function settleReservedTransaction(
   reservedTransaction.delete(finished.promise);
   finished.resolve();
   settle(value);
+}
+
+/// Every reserved.close() path ends here. The closed bit is already set when the
+/// connection dropped on its own or when release() handed it back to the pool, where
+/// it may be serving other queries by now, so then there is nothing for us to close.
+function closeReservedConnection(state: TransactionState, pooledConnection: { close(): void }) {
+  if (state.connectionState & ReservedConnectionState.closed) return;
+  state.connectionState |= ReservedConnectionState.closed;
+  for (const query of state.queries) {
+    query.cancel();
+  }
+  // the close handler attached in onReserveConnected returns the pool slot
+  pooledConnection.close();
+}
+
+function settleReservedClose(this: ReservedCloseState) {
+  clearTimeout(this.timer!);
+  closeReservedConnection(this.state, this.pooledConnection);
+  this.resolve();
 }
 
 function adapterFromOptions(options: Bun.SQL.__internal.DefinedOptions) {
@@ -478,35 +507,18 @@ const SQL: typeof Bun.SQL = function SQL(
           throw $ERR_INVALID_ARG_VALUE("options.timeout", timeout, "must be a non-negative integer less than 2^31");
         }
         if (timeout > 0 && (reserveQueries.size > 0 || reservedTransaction.size > 0)) {
-          const { promise, resolve } = Promise.withResolvers();
-          // race all queries vs timeout
-          const pending_queries = Array.from(reserveQueries);
-          const pending_transactions = Array.from(reservedTransaction);
-          const timer = setTimeout(() => {
-            state.connectionState |= ReservedConnectionState.closed;
-            for (const query of reserveQueries) {
-              (query as Query<any, any>).cancel();
-            }
-            state.connectionState |= ReservedConnectionState.closed;
-            pooledConnection.close();
-
-            resolve();
-          }, timeout * 1000);
-          timer.unref(); // dont block the event loop
-          Promise.all([Promise.all(pending_queries), Promise.all(pending_transactions)]).finally(() => {
-            clearTimeout(timer);
-            resolve();
-          });
+          const { promise, resolve } = Promise.withResolvers<void>();
+          const closeState: ReservedCloseState = { state, pooledConnection, timer: null, resolve };
+          const settle = settleReservedClose.bind(closeState);
+          // the timeout is a ceiling: close as soon as the pending work settles, or when it fires
+          closeState.timer = setTimeout(settle, timeout * 1000);
+          closeState.timer.unref(); // dont block the event loop
+          // allSettled: one failing query must not close the connection under the others
+          Promise.allSettled([...reserveQueries, ...reservedTransaction]).then(settle);
           return promise;
         }
       }
-      state.connectionState |= ReservedConnectionState.closed;
-      for (const query of reserveQueries) {
-        (query as Query<any, any>).cancel();
-      }
-
-      pooledConnection.close();
-
+      closeReservedConnection(state, pooledConnection);
       return Promise.$resolve(undefined);
     };
     reserved_sql.release = () => {

@@ -2856,8 +2856,6 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            // accessed here (no overlapping `&mut EventLoop`).
-            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -2880,7 +2878,6 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop_mut().perform_gc();
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 
@@ -4920,7 +4917,6 @@ impl VirtualMachine {
         entry_path: &[u8],
     ) -> crate::CrateResult<*mut JSInternalPromise> {
         let promise = self.reload_entry_point(entry_path)?;
-        self.event_loop_mut().perform_gc();
         self.event_loop_mut()
             .wait_for_worker_entry_evaluation(jsc::AnyPromise::Internal(promise));
         if let Some(worker) = self.worker_ref() {
@@ -4940,7 +4936,6 @@ impl VirtualMachine {
 
         // pending_internal_promise can change if hot module reloading is enabled
         if self.is_watcher_enabled() {
-            self.event_loop_mut().perform_gc();
             loop {
                 let Some(p) = self.pending_internal_promise else {
                     break;
@@ -4963,7 +4958,6 @@ impl VirtualMachine {
             if crate::JSPromise::status_ptr(promise) == crate::js_promise::Status::Rejected {
                 return Ok(promise);
             }
-            self.event_loop_mut().perform_gc();
             let _ = self.wait_for_promise(jsc::AnyPromise::Internal(promise));
         }
 

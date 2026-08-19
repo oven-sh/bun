@@ -576,7 +576,7 @@ it("process.versions", () => {
   const expectedVersions = {
     boringssl: "2288897e2e716330490893d226b4f079f9da9e0c",
     libarchive: "ded82291ab41d5e355831b96b0e1ff49e24d8939",
-    mimalloc: "6e891cbe4790982ca9f3f9a60319a72e61b5d725",
+    mimalloc: "6a14aee24315e503fa295a1fa90fe8b24ad91774",
     picohttpparser: "066d2b1e9ab820703db0837a7255d92d30f0c9f5",
     zlib: "12731092979c6d07f42da27da673a9f6c7b13586",
     tinycc: "05f0fafaa3be31e31d7b4b5c17dc60f62c991171",
@@ -1094,6 +1094,15 @@ describe.concurrent(() => {
 
       expect(full).toBeGreaterThan(0);
       expect(heapUsed).toBe(full);
+    });
+
+    // Nothing requests a collection while Bun starts up, so there is no figure
+    // yet. Nothing has been freed yet either, so the whole heap counts as used.
+    it("counts the whole heap as used before the first collection", async () => {
+      const { heapTotal, heapUsed } = await reportedBy(`console.log(JSON.stringify(process.memoryUsage()))`);
+
+      expect(heapTotal).toBeGreaterThan(0);
+      expect(heapUsed).toBe(heapTotal);
     });
   });
 

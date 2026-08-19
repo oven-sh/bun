@@ -741,13 +741,6 @@ void us_internal_socket_raw_shutdown(struct us_socket_t *s) {
         us_internal_poll_set_type(&s->p, POLL_TYPE_SOCKET_SHUT_DOWN);
         us_poll_change(&s->p, s->group->loop, us_poll_events(&s->p) & LIBUS_SOCKET_READABLE);
         bsd_shutdown_socket(us_poll_fd((struct us_poll_t *) s));
-#ifdef LIBUS_USE_KQUEUE
-        if (!(us_poll_events(&s->p) & LIBUS_SOCKET_READABLE)) {
-            /* Shut down with reads off: no filter remains, so a peer FIN/RST
-             * would never be delivered (epoll still reports HUP/ERR). */
-            us_internal_kqueue_socket_arm_read_sentinel(s);
-        }
-#endif
     }
 }
 
@@ -881,13 +874,6 @@ void us_socket_pause(struct us_socket_t *s) {
     // we are readable and writable so we can just pause readable side
     us_poll_change(&s->p, s->group->loop, LIBUS_SOCKET_WRITABLE);
     s->flags.is_paused = 1;
-#ifdef LIBUS_USE_KQUEUE
-    if (us_socket_is_shut_down(s)) {
-        /* Pausing dropped a shut-down socket's read filter; same as
-         * us_internal_socket_raw_shutdown. */
-        us_internal_kqueue_socket_arm_read_sentinel(s);
-    }
-#endif
 }
 
 void us_socket_resume(struct us_socket_t *s) {

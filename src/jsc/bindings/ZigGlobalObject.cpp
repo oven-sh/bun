@@ -232,8 +232,6 @@
 
 using namespace Bun;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
-
 JSC_DECLARE_HOST_FUNCTION(jsFunctionMakeAbortError);
 
 using JSGlobalObject = JSC::JSGlobalObject;

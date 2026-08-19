@@ -142,25 +142,28 @@ test.skipIf(cannotRunFakeTar)("with symlink support, symlink entries extract nor
   expect(lines).toEqual([]);
 });
 
-test.skipIf(cannotRunFakeTar)("without symlink privilege, extraction retries with the symlink entries excluded", async () => {
-  using dir = tempDir("extract-symlink", {});
-  const tarball = makeTarball(String(dir), { symlinks: ["unzstd", "zstdcat"] });
-  const dest = join(String(dir), "out");
-  mkdirSync(dest);
+test.skipIf(cannotRunFakeTar)(
+  "without symlink privilege, extraction retries with the symlink entries excluded",
+  async () => {
+    using dir = tempDir("extract-symlink", {});
+    const tarball = makeTarball(String(dir), { symlinks: ["unzstd", "zstdcat"] });
+    const dest = join(String(dir), "out");
+    mkdirSync(dest);
 
-  const { lines } = await withFakeTar(String(dir), tarWithoutSymlinkPrivilege, () =>
-    withLogCaptured(() => extractTarGz(tarball, dest)),
-  );
+    const { lines } = await withFakeTar(String(dir), tarWithoutSymlinkPrivilege, () =>
+      withLogCaptured(() => extractTarGz(tarball, dest)),
+    );
 
-  // Everything the build reads is there; only the two fixtures are skipped.
-  expect(existsSync(join(dest, "lib", "zstd.c"))).toBe(true);
-  expect(existsSync(join(dest, "tests", "cli-tests", "bin", "zstd"))).toBe(true);
-  expect(existsSync(join(dest, "tests", "cli-tests", "bin", "unzstd"))).toBe(false);
-  expect(lines).toEqual([
-    "tar exited 1; retrying without 2 symlink entries: " +
-      "zstd-abc123/tests/cli-tests/bin/unzstd, zstd-abc123/tests/cli-tests/bin/zstdcat",
-  ]);
-});
+    // Everything the build reads is there; only the two fixtures are skipped.
+    expect(existsSync(join(dest, "lib", "zstd.c"))).toBe(true);
+    expect(existsSync(join(dest, "tests", "cli-tests", "bin", "zstd"))).toBe(true);
+    expect(existsSync(join(dest, "tests", "cli-tests", "bin", "unzstd"))).toBe(false);
+    expect(lines).toEqual([
+      "tar exited 1; retrying without 2 symlink entries: " +
+        "zstd-abc123/tests/cli-tests/bin/unzstd, zstd-abc123/tests/cli-tests/bin/zstdcat",
+    ]);
+  },
+);
 
 test.skipIf(cannotRunFakeTar)("an archive with no symlinks rethrows the original error", async () => {
   using dir = tempDir("extract-symlink", {});

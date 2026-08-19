@@ -39,9 +39,7 @@ interface ReserveAbortState {
   onAbort: (() => void) | null;
 }
 
-/// Bound as `this` to the one callback that both the timer and the pending work of a
-/// reserved.close({ timeout }) call settle through, so whichever comes first closes
-/// and the other one is a no-op.
+/// Bound as `this` to the callback shared by the timer and the pending work of reserved.close({ timeout }).
 interface ReservedCloseState {
   state: TransactionState;
   pooledConnection: { close(): void };
@@ -60,10 +58,8 @@ function settleReservedTransaction(
   settle(value);
 }
 
-/// Every reserved.close() path ends here. The closed bit is already set when the
-/// connection dropped on its own or when release() handed it back to the pool, where
-/// it may be serving other queries by now, so then there is nothing for us to close.
 function closeReservedConnection(state: TransactionState, pooledConnection: { close(): void }) {
+  // already closed, or release() gave the connection back to the pool in the meantime
   if (state.connectionState & ReservedConnectionState.closed) return;
   state.connectionState |= ReservedConnectionState.closed;
   for (const query of state.queries) {

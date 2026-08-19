@@ -38,7 +38,7 @@ use crate::Graph::Graph;
 use crate::PathToSourceIndexMap::PathToSourceIndexMap;
 use crate::barrel_imports::RequestedExports;
 use crate::cache::ExternalFreeFunction;
-use crate::options::{self, Target};
+use crate::options::{self, Loader, Target};
 use crate::transpiler::Transpiler;
 use crate::{Index, IndexInt, LinkerContext};
 
@@ -324,6 +324,19 @@ impl<'a> BundleV2<'a> {
         target: options::Target,
     ) -> &mut PathToSourceIndexMap {
         self.graph.path_to_source_index_map(target)
+    }
+
+    /// The graph an imported file is built in. A production server-components build shares one copy of each stylesheet across the server, SSR and client graphs so it is emitted once.
+    pub(crate) fn target_for_imported_file(
+        &self,
+        importer_target: options::Target,
+        loader: Loader,
+    ) -> options::Target {
+        if loader.is_css() && self.dev_server.is_none() && self.transpiler.options.server_components
+        {
+            return Target::Browser;
+        }
+        importer_target
     }
 
     pub(crate) fn transpiler_for_target(&mut self, target: options::Target) -> &mut Transpiler<'a> {
@@ -6297,6 +6310,7 @@ pub mod bv2_impl {
                                 .unwrap_or(Loader::File)
                         });
                         import_record.loader = Some(import_record_loader);
+                        let target = self.target_for_imported_file(target, import_record_loader);
 
                         if let Some(id) =
                             self.path_to_source_index_map(target).get(path_primary.text)
@@ -6665,6 +6679,7 @@ pub mod bv2_impl {
                     break 'brk resolved_loader;
                 };
                 import_record.loader = Some(import_record_loader);
+                let target = self.target_for_imported_file(target, import_record_loader);
 
                 let is_html_entrypoint = import_record_loader == Loader::Html
                     && target.is_server_side()
@@ -6772,14 +6787,16 @@ pub mod bv2_impl {
                 });
                 let is_html_entrypoint =
                     loader == Loader::Html && target.is_server_side() && dev_server_is_none;
+                let map_target = if is_html_entrypoint {
+                    Target::Browser
+                } else {
+                    self.target_for_imported_file(target, loader)
+                };
                 // Select map and perform get_or_put, capturing the slot as a raw ptr
                 // so the &mut on self.graph is released before we touch other fields.
                 let (found_existing, value_ptr): (bool, *mut IndexInt) = {
-                    let map: &mut PathToSourceIndexMap = if is_html_entrypoint {
-                        self.graph.path_to_source_index_map(Target::Browser)
-                    } else {
-                        self.graph.path_to_source_index_map(target)
-                    };
+                    let map: &mut PathToSourceIndexMap =
+                        self.graph.path_to_source_index_map(map_target);
                     let existing = map.get_or_put(key).expect("oom");
                     (
                         existing.found_existing,
@@ -6937,10 +6954,13 @@ pub mod bv2_impl {
                 drop(value);
             }
 
-            // Inlined `self.path_to_source_index_map(ctx.target)` (== `&mut self.graph.build_graphs[target]`)
-            // so borrowck sees it as disjoint from `self.graph.input_files` above.
-            let path_to_source_index_map = &mut self.graph.build_graphs[ctx.target];
             for (i, record) in import_records.as_mut_slice().iter_mut().enumerate() {
+                let map_target = record.loader.map_or(ctx.target, |loader| {
+                    self.target_for_imported_file(ctx.target, loader)
+                });
+                // Inlined `self.path_to_source_index_map(map_target)` (== `&mut self.graph.build_graphs[target]`)
+                // so borrowck sees it as disjoint from `self.graph.input_files` above.
+                let path_to_source_index_map = &mut self.graph.build_graphs[map_target];
                 if let Some(source_index) = path_to_source_index_map.get_path(&record.path) {
                     if save_import_record_source_index
                         || input_file_loaders[source_index as usize].is_css()

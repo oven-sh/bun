@@ -839,6 +839,47 @@ export default function ManifestPage() {
     });
   });
 
+  test("a stylesheet imported by a client component is emitted once and linked from its pages", async () => {
+    // Btn.tsx is built for both the client and the SSR graph; both/ also imports the stylesheet from a server component.
+    const dir = await tempDirWithBakeDeps("bake-production-client-css", {
+      "src/index.tsx": `export default { app: { framework: "react" } };`,
+      "pages/index.tsx": `import { Btn } from "../components/Btn";
+export default function IndexPage() { return <main><Btn /></main>; }`,
+      "pages/both.tsx": `import "../components/btn.css";
+import { Btn } from "../components/Btn";
+export default function BothPage() { return <main><Btn /></main>; }`,
+      "components/Btn.tsx": `"use client";
+import "./btn.css";
+export function Btn() { return <button className="btn">hi</button>; }`,
+      "components/btn.css": `.btn { color: red }`,
+    });
+
+    const { exitCode, stderr } = await Bun.$`${bunExe()} build --app ./src/index.tsx`
+      .cwd(dir)
+      .env(bunEnv)
+      .throws(false);
+    if (exitCode !== 0) {
+      expect(stderr.toString()).toBe("");
+    }
+
+    const cssFiles = readdirSync(path.join(dir, "dist", "_bun")).filter(file => file.endsWith(".css"));
+    expect(cssFiles).toHaveLength(1);
+    expect(await Bun.file(path.join(dir, "dist", "_bun", cssFiles[0])).text()).toContain(".btn");
+
+    const stylesheets = async (page: string) =>
+      [...(await Bun.file(path.join(dir, "dist", page)).text()).matchAll(/<link\b[^>]*\brel="stylesheet"[^>]*>/g)].map(
+        tag => tag[0].match(/\bhref="([^"]*)"/)?.[1],
+      );
+    expect({
+      index: await stylesheets("index.html"),
+      both: await stylesheets("both/index.html"),
+    }).toEqual({
+      index: [`/_bun/${cssFiles[0]}`],
+      both: [`/_bun/${cssFiles[0]}`],
+    });
+    expect(exitCode).toBe(0);
+  });
+
   test("importing useState server-side", async () => {
     const dir = await tempDirWithBakeDeps("bake-production-react-import", {
       "src/index.tsx": `export default { app: { framework: "react" } };`,

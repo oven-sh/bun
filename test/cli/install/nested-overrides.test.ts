@@ -42,29 +42,30 @@ async function installOk(dir: string, ...args: string[]) {
   return result;
 }
 
-// `from` is a dependency name (resolved through node_modules) or a workspace path; returns what that package sees as `name@version`.
+// What `from` (a dependency name, a workspace path, or "." / undefined for the root) gets when it requires `name`, as
+// `name@version`. Walks the node_modules directories require() would try, from the dependency's real directory so that
+// the isolated linker's per-package links are what is under test. It reads the disk every time: the in-process resolver
+// caches directory listings, and several cases look at a project again after a re-install has moved packages around.
 async function packageSeenBy(packageDir: string, from: string | undefined, name: string): Promise<string> {
-  const cwd =
-    from === undefined
+  const start =
+    from === undefined || from === "."
       ? packageDir
       : from.includes("/")
         ? join(packageDir, from)
         : realpathSync(join(packageDir, "node_modules", from));
-  await using proc = Bun.spawn({
-    cmd: [
-      bunExe(),
-      "-e",
-      `const p = require(${JSON.stringify(name + "/package.json")}); console.log(p.name + "@" + p.version)`,
-    ],
-    cwd,
-    env: bunEnv,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [out, err, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
-  expect(err).toBe("");
-  expect(exitCode).toBe(0);
-  return out.trim();
+  let dir = start;
+  while (true) {
+    const manifest = join(dir, "node_modules", name, "package.json");
+    if (existsSync(manifest)) {
+      const installed = await file(manifest).json();
+      return `${installed.name}@${installed.version}`;
+    }
+    const parent = join(dir, "..");
+    if (dir === packageDir || parent === dir) {
+      throw new Error(`${name} is not installed for ${from ?? "the root"} (looked up from ${start})`);
+    }
+    dir = parent;
+  }
 }
 
 async function versionSeenBy(packageDir: string, from: string | undefined, name: string): Promise<string> {

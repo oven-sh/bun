@@ -6588,10 +6588,9 @@ pub mod bv2_impl {
 
                         import_record.source_index = Index::INVALID;
 
-                        let wanted_loader = import_record.loader.unwrap_or_else(|| {
-                            path.loader(&self.transpiler.options.loaders)
-                                .unwrap_or(Loader::File)
-                        });
+                        let wanted_loader = import_record
+                            .loader
+                            .or_else(|| path.loader(&self.transpiler.options.loaders));
                         if let Some(entry) =
                             dev_server.is_file_cached(path.text, bake_graph, wanted_loader)
                         {

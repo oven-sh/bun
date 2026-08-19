@@ -5168,7 +5168,7 @@ impl DevServer {
         &mut self,
         path: &[u8],
         side: bake::Graph,
-        loader: Loader,
+        loader: Option<Loader>,
     ) -> Option<CacheEntry> {
         // Barrel files with deferred records must always be re-parsed.
         if self.barrel_files_with_deferrals.contains_key(path) {
@@ -5186,11 +5186,9 @@ impl DevServer {
                         u32::try_from(index).expect("int cast"),
                     ));
                     if file.html_route_bundle_index.is_none()
-                        && file.loader.is_some_and(|bundled| {
-                            bundled != loader
-                                && (is_attribute_style_loader(bundled)
-                                    || is_attribute_style_loader(loader))
-                        })
+                        && let (Some(bundled), Some(wanted)) = (file.loader, loader)
+                        && bundled != wanted
+                        && (is_attribute_style_loader(bundled) || is_attribute_style_loader(wanted))
                     {
                         return None;
                     }

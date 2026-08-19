@@ -139,7 +139,7 @@ impl EnvStr {
             break 'brk 1;
         };
         if divisor == 0 {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             return 0;
         }
 

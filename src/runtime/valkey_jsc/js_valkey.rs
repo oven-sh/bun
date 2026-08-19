@@ -1196,7 +1196,7 @@ impl JSValkeyClient {
         // No reconnecting on a VM that is exiting: its stop phase would only
         // have to close the new socket again.
         if self.vm().is_shutting_down() {
-            bun_core::hint::cold();
+            core::hint::cold_path();
             return Ok(());
         }
 
@@ -1597,7 +1597,7 @@ impl JSValkeyClient {
         if self.client.get().status != valkey::Status::NeverConnected {
             return;
         }
-        bun_core::hint::cold();
+        core::hint::cold_path();
 
         match self.connect() {
             // The command is queued as for a dial in flight; the deferred

@@ -1,5 +1,4 @@
-// https://github.com/oven-sh/bun/issues/15485
-// https://github.com/oven-sh/bun/issues/39612
+// https://github.com/oven-sh/bun/issues/15485 (#39612 is a duplicate)
 // In a multi-root workspace, "Bun: Run File" and "Bun: Debug File" called
 // vscode.debug.startDebugging(undefined, ...) with a config that uses
 // ${workspaceFolder}. VS Code cannot resolve that variable without a folder
@@ -7,10 +6,9 @@
 // multi folder workspace". The extension must pass the workspace folder that
 // owns the target file, and it must read bun.runtime from that folder.
 // This test lives under test/ (not packages/bun-vscode) because CI's test
-// runner only discovers files in the test/ directory. It reuses the
-// extension's shared mock types, but registers its own vscode module mock:
-// the shared one in vscode.mock.ts targets the test controller and lacks
-// command registration and startDebugging capture.
+// runner only discovers files in the test/ directory. It registers its own
+// vscode module mock: the shared one in vscode.mock.ts targets the test
+// controller and lacks command registration and startDebugging capture.
 import { beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import {

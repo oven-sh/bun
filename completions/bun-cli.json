@@ -3929,6 +3929,13 @@
           "multiple": false
         },
         {
+          "name": "zod-compiler",
+          "description": "Compile zod schemas into specialized validators (adds import \"zod/compile\" to modules that import zod)",
+          "hasValue": false,
+          "required": false,
+          "multiple": false
+        },
+        {
           "name": "no-bundle",
           "description": "Transpile file only, do not bundle",
           "hasValue": false,

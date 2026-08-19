@@ -160,6 +160,12 @@ bun build <entry points>
   output mode from `--target` (`browser` → client, `bun`/`node` → ssr). Experimental.
 </ParamField>
 
+<ParamField path="--zod-compiler" type="boolean">
+  Compile zod schemas into specialized validators. Adds `import "zod/compile"` in front of every module outside of
+  `node_modules` that imports `zod`, so zod compiles each schema the first time it parses. Requires a version of zod
+  that exports `zod/compile`. Experimental.
+</ParamField>
+
 ### Standalone Executables
 
 <ParamField path="--compile" type="boolean">

@@ -176,6 +176,7 @@ impl<'a> Options<'a> {
                 react_fast_refresh: f.react_fast_refresh,
                 react_compiler: f.react_compiler,
                 react_compiler_parse_test_pragmas: f.react_compiler_parse_test_pragmas,
+                zod_compiler: f.zod_compiler,
                 hot_module_reloading: f.hot_module_reloading,
                 server_components: f.server_components,
                 is_macro_runtime: f.is_macro_runtime,
@@ -2184,6 +2185,10 @@ impl<'a> Parser<'a> {
                     ..Default::default()
                 });
             }
+        }
+
+        if p.options.features.zod_compiler {
+            p.inject_zod_compile_import(exports_kind, &mut before)?;
         }
 
         if p.react_refresh.register_used || p.react_refresh.signature_used {

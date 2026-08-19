@@ -119,6 +119,7 @@ pub mod js_bundler {
         pub(crate) react_compiler: bun_ast::runtime::ReactCompilerMode,
         pub(crate) react_compiler_parse_test_pragmas: bool,
         pub(crate) react_compiler_output_mode: Option<bun_ast::runtime::ReactCompilerMode>,
+        pub(crate) zod_compiler: bool,
         pub(crate) define: StringMap,
         pub(crate) loaders: Option<api::LoaderMap>,
         pub(crate) dir: OwnedString,
@@ -174,6 +175,7 @@ pub mod js_bundler {
                 react_compiler: bun_ast::runtime::ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
                 react_compiler_output_mode: None,
+                zod_compiler: false,
                 define: StringMap::init(false),
                 loaders: None,
                 dir: OwnedString::default(),
@@ -633,6 +635,10 @@ pub mod js_bundler {
                     }
                 });
                 drop(slice);
+            }
+
+            if let Some(zod_compiler) = config.get_boolean_loose(global_this, "zodCompiler")? {
+                this.zod_compiler = zod_compiler;
             }
 
             let mut has_out_dir = false;

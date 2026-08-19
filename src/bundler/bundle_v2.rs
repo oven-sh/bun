@@ -342,6 +342,7 @@ pub mod bv2_impl {
     use bun_collections::{ArrayHashMap, DynamicBitSet, DynamicBitSetUnmanaged, VecExt};
     use bun_core::strings;
     use bun_core::{FeatureFlags, Output};
+    use bun_js_parser::zod_compiler::{ZOD_COMPILE_SPECIFIER, ZOD_COMPILE_UNRESOLVED};
     use bun_resolver::DataURL;
     use bun_resolver::fs::PathResolverExt as _;
     use bun_resolver::{self as _resolver, is_package_path};
@@ -2364,6 +2365,17 @@ pub mod bv2_impl {
                                                 bstr::BStr::new(import_record.kind.error_label()),
                                                 bstr::BStr::new(path_to_use)
                                             ),
+                                            path_to_use,
+                                            import_record.kind,
+                                        );
+                                    } else if self.transpiler.options.zod_compiler
+                                        && &path_to_use[..] == ZOD_COMPILE_SPECIFIER
+                                    {
+                                        add_error(
+                                            log,
+                                            source,
+                                            import_record.range,
+                                            format_args!("{ZOD_COMPILE_UNRESOLVED}"),
                                             path_to_use,
                                             import_record.kind,
                                         );
@@ -6268,6 +6280,17 @@ pub mod bv2_impl {
                                                         ""
                                                     },
                                                 ),
+                                                import_record.path.text,
+                                                import_record.kind,
+                                            );
+                                        } else if self.transpiler.options.zod_compiler
+                                            && import_record.path.text == ZOD_COMPILE_SPECIFIER
+                                        {
+                                            add_error(
+                                                log,
+                                                Some(source),
+                                                import_record.range,
+                                                format_args!("{ZOD_COMPILE_UNRESOLVED}"),
                                                 import_record.path.text,
                                                 import_record.kind,
                                             );

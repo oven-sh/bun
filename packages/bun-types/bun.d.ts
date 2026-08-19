@@ -3199,6 +3199,22 @@ declare module "bun" {
     reactCompilerOutputMode?: "client" | "ssr";
 
     /**
+     * Compile zod schemas into specialized validators.
+     *
+     * Adds `import "zod/compile"` in front of every module outside of
+     * `node_modules` that imports `zod` (or a `zod/*` subpath). zod then
+     * compiles each schema those modules construct the first time it parses,
+     * and falls back to its regular parser for schemas it cannot compile.
+     * Requires a version of zod that exports `zod/compile`.
+     *
+     * Equivalent to the CLI `--zod-compiler` flag.
+     *
+     * @default false
+     * @experimental
+     */
+    zodCompiler?: boolean;
+
+    /**
      * A map of file paths to their contents for in-memory bundling.
      *
      * Use this to bundle virtual files that don't exist on disk, or override

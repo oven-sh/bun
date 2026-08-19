@@ -385,6 +385,11 @@ pub struct P<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> {
     /// arrow-visit to apply to the original `G::Fn` / `E::Arrow`.
     pub(crate) react_compiler_result: Option<bun_react_compiler::CompileResult>,
 
+    /// only applicable when `.options.features.zod_compiler` is set. The
+    /// import record of the `zod/compile` import this parse generated, see
+    /// `inject_zod_compile_import` / `finish_zod_compile_import`.
+    pub(crate) zod_compile_import_record: Option<u32>,
+
     /// only applicable when `.options.features.server_components` is
     /// configured to wrap exports. populated before visit pass starts.
     pub(crate) server_components_wrap_ref: Ref,
@@ -8030,6 +8035,8 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             }
         }
 
+        self.finish_zod_compile_import();
+
         if wrap_mode == WrapMode::BunCommonjs && !self.options.features.remove_cjs_module_wrapper {
             // This transforms the user's code into.
             //
@@ -8694,6 +8701,7 @@ impl<'a, const TYPESCRIPT: bool, const SCAN_ONLY: bool> P<'a, TYPESCRIPT, SCAN_O
             react_compiler_in_react_hoc: false,
             react_compiler_pending: None,
             react_compiler_result: None,
+            zod_compile_import_record: None,
             server_components_wrap_ref: Ref::NONE,
             jest: Jest::default(),
             import_records_for_current_part: BumpVec::new_in(arena),

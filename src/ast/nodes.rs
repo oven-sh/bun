@@ -1092,6 +1092,7 @@ pub enum PartTag {
     JsxImport,
     Runtime,
     ReactCompiler,
+    ZodCompiler,
     DirnameFilename,
     BunTest,
     DeadDueToInlining,

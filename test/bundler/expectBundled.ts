@@ -267,6 +267,7 @@ export interface BundlerTestInput {
   serverComponents?: boolean;
   reactCompiler?: boolean;
   reactCompilerOutputMode?: "client" | "ssr";
+  zodCompiler?: boolean;
   treeShaking?: boolean;
   unsupportedCSSFeatures?: string[];
   unsupportedJSFeatures?: string[];
@@ -533,6 +534,7 @@ function expectBundled(
     serverComponents = false,
     reactCompiler = false,
     reactCompilerOutputMode,
+    zodCompiler = false,
     skipOnEsbuild,
     snapshotSourceMap,
     sourceMap,
@@ -825,6 +827,7 @@ function expectBundled(
               splitting && `--splitting`,
               serverComponents && "--server-components",
               reactCompiler && "--react-compiler",
+              zodCompiler && "--zod-compiler",
               outbase && `--root=${outbase}`,
               banner && `--banner="${banner}"`, // TODO: --banner-css=*
               footer && `--footer="${footer}"`,
@@ -1194,6 +1197,7 @@ function expectBundled(
           target,
           reactCompiler,
           reactCompilerOutputMode,
+          zodCompiler,
           bytecode,
           publicPath,
           emitDCEAnnotations,

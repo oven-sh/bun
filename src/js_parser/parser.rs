@@ -184,6 +184,10 @@ pub mod Runtime {
         /// Test-only: have the React Compiler read leading `// @key value`
         /// fixture pragmas from the source. Set by the fixture runner.
         pub react_compiler_parse_test_pragmas: bool,
+        /// Prepend `import "zod/compile"` to every module that imports zod
+        /// (`P::inject_zod_compile_import`). Only the bundler sets this, so it
+        /// takes no part in the runtime transpiler cache hash.
+        pub zod_compiler: bool,
         /// `hot_module_reloading` is specific to if we are using bun.bake.DevServer.
         /// It can be enabled on the command line with --format=internal_bake_dev
         ///
@@ -282,6 +286,7 @@ pub mod Runtime {
                 react_fast_refresh: false,
                 react_compiler: ReactCompilerMode::Disabled,
                 react_compiler_parse_test_pragmas: false,
+                zod_compiler: false,
                 hot_module_reloading: false,
                 server_components: ServerComponentsMode::None,
                 is_macro_runtime: false,

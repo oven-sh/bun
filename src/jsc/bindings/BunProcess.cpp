@@ -772,9 +772,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen, (JSC::JSGlobalObject * globalOb
     return JSValue::encode(resultValue);
 }
 
+// The no-arg "read" is a umask(0)+umask(old) pair, so serialize every
+// process.umask call to keep a worker's read from interleaving with a
+// main-thread write (node: per_process::umask_mutex).
+static WTF::Lock umaskLock;
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     if (callFrame->argumentCount() == 0 || callFrame->argument(0).isUndefined()) {
+        Locker<Lock> locker(umaskLock);
         mode_t currentMask = umask(0);
         umask(currentMask);
         return JSValue::encode(jsNumber(currentMask));
@@ -797,6 +803,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask, (JSGlobalObject * globalObject, 
         newUmask = value.toUInt32(globalObject);
     }
 
+    Locker<Lock> locker(umaskLock);
     return JSC::JSValue::encode(JSC::jsNumber(umask(newUmask)));
 }
 
@@ -3674,6 +3681,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
     visitor.append(thisObject->m_nextTickFunction);
     visitor.append(thisObject->m_cachedCwd);
+    visitor.append(thisObject->m_workerThreadTitle);
     visitor.append(thisObject->m_argv);
     visitor.append(thisObject->m_execArgv);
     visitor.append(thisObject->m_onWarning);
@@ -4545,6 +4553,12 @@ JSC_DEFINE_CUSTOM_GETTER(processTitle, (JSC::JSGlobalObject * globalObject, JSC:
 {
     auto& vm = JSC::getVM(globalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!Bun__isMainThreadVM()) {
+        auto* processObject = defaultGlobalObject(globalObject)->processObject();
+        if (auto* cached = processObject->workerThreadTitle()) {
+            RELEASE_AND_RETURN(scope, JSValue::encode(cached));
+        }
+    }
 #if !OS(WINDOWS)
     BunString str;
     Bun__Process__getTitle(globalObject, &str);
@@ -4586,6 +4600,11 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessTitle, (JSC::JSGlobalObject * globalObject, J
     JSC::JSString* jsString = dynamicDowncast<JSC::JSString>(JSValue::decode(value));
     if (!thisObject || !jsString) {
         return false;
+    }
+    if (!Bun__isMainThreadVM()) {
+        auto* processObject = defaultGlobalObject(globalObject)->processObject();
+        processObject->setWorkerThreadTitle(vm, jsString);
+        return true;
     }
 #if !OS(WINDOWS)
     BunString str = Bun::toStringRef(globalObject, jsString);

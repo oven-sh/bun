@@ -30,6 +30,9 @@ class Process : public WebCore::JSEventEmitter {
     WriteBarrier<JSObject> m_nextTickFunction;
     // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/bootstrap/switches/does_own_process_state.js#L113-L116
     WriteBarrier<JSString> m_cachedCwd;
+    // Workers cannot change the OS process title; the setter stores here so the
+    // assignment round-trips without leaking into the process-wide title.
+    WriteBarrier<JSString> m_workerThreadTitle;
     WriteBarrier<Unknown> m_argv;
     WriteBarrier<Unknown> m_execArgv;
     // The JS warning printer (ProcessObjectInternals createOnWarning), built on the first warning.
@@ -88,6 +91,9 @@ public:
     JSString* cachedCwd() { return m_cachedCwd.get(); }
     void setCachedCwd(JSC::VM& vm, JSString* cwd) { m_cachedCwd.set(vm, this, cwd); }
     void clearCachedCwd() { m_cachedCwd.clear(); }
+
+    JSString* workerThreadTitle() { return m_workerThreadTitle.get(); }
+    void setWorkerThreadTitle(JSC::VM& vm, JSString* title) { m_workerThreadTitle.set(vm, this, title); }
 
     JSValue getArgv(JSGlobalObject* globalObject);
     void setArgv(JSGlobalObject* globalObject, JSValue argv);

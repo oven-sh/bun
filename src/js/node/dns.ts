@@ -44,6 +44,23 @@ const IANA_DNS_PORT = 53;
 const IPv6RE = /^\[([^[\]]*)\]/;
 const addrSplitRE = /(^.+?)(?::(\d+))?$/;
 
+// Matches the case-sensitive rrtype validation in Node.js
+// (lib/internal/dns/utils.js `RRTYPES`).
+const RRTYPES = new Set([
+  "A",
+  "AAAA",
+  "ANY",
+  "CAA",
+  "CNAME",
+  "MX",
+  "NAPTR",
+  "NS",
+  "PTR",
+  "SOA",
+  "SRV",
+  "TXT",
+]);
+
 function translateErrorCode(promise: Promise<any>) {
   return promise.catch(error => {
     return Promise.$reject(withTranslatedError(error));
@@ -408,6 +425,8 @@ var InternalResolver = class Resolver {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+    } else if (!RRTYPES.has(rrtype)) {
+      throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype);
     }
 
     callback = validateResolve(hostname, callback);
@@ -804,6 +823,8 @@ const promises = {
       rrtype = "A";
     } else if (typeof rrtype !== "string") {
       throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+    } else if (!RRTYPES.has(rrtype)) {
+      throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype);
     }
 
     switch (rrtype?.toLowerCase()) {
@@ -880,7 +901,9 @@ const promises = {
       if (typeof rrtype === "undefined") {
         rrtype = "A";
       } else if (typeof rrtype !== "string") {
-        rrtype = null;
+        throw $ERR_INVALID_ARG_TYPE("rrtype", "string", rrtype);
+      } else if (!RRTYPES.has(rrtype)) {
+        throw $ERR_INVALID_ARG_VALUE("rrtype", rrtype);
       }
       switch (rrtype?.toLowerCase()) {
         case "a":

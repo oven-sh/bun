@@ -602,6 +602,32 @@ describe("test invalid arguments", () => {
     });
   });
 
+  // https://github.com/oven-sh/bun/issues/39553
+  describe.each([
+    ["dns.resolve", rrtype => dns.resolve("localhost", rrtype, () => {})],
+    ["dns.promises.resolve", rrtype => dns_promises.resolve("localhost", rrtype)],
+    [
+      "dns.promises.Resolver#resolve",
+      rrtype => new dns_promises.Resolver().resolve("localhost", rrtype),
+    ],
+  ])("%s", (_, fn) => {
+    it("throws ERR_INVALID_ARG_VALUE for lowercase rrtype", () => {
+      expect(() => fn("a")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    });
+
+    it("throws ERR_INVALID_ARG_VALUE for unknown rrtype", () => {
+      expect(() => fn("bogus")).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" }));
+    });
+
+    it("accepts uppercase rrtype values", () => {
+      expect(() => fn("A")).not.toThrow();
+      const result = fn("A");
+      if (result instanceof Promise) {
+        result.catch(() => {});
+      }
+    });
+  });
+
   it("dns.promises.resolve with undefined rrtype does not throw", async () => {
     // Node's promises API treats undefined rrtype as "A"
     const promise = dns_promises.resolve("localhost", undefined);

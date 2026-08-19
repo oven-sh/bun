@@ -5160,8 +5160,7 @@ impl VirtualMachine {
         // once the AggregateError branch is taken).
         let global_ref = self.global();
 
-        // Prints the members in place of the AggregateError. `errors` can be missing without
-        // user code: `JSModuleLoader::duplicateError` replays a failed module load without it.
+        // `errors` is missing on the copies `JSModuleLoader::duplicateError` makes of a load error.
         if value.is_aggregate_error(global_ref)
             && let Some(errors) = value.get_errors_property(global_ref)
         {

@@ -62,8 +62,7 @@ pub enum ExpansionState {
     CmdSubst,
     Glob,
     BraceExpand,
-    /// Globs `brace_words` one variant per re-entry. A word with no brace
-    /// expansion has an empty list, so it falls straight through to `Done`.
+    /// Globs `brace_words` one per re-entry; an empty list falls straight through to `Done`.
     BraceWords,
     Done,
     /// The parent inspects this on
@@ -78,9 +77,8 @@ pub struct BraceWord {
     pub(crate) meta_offsets: Vec<u32>,
 }
 
-/// Brace expansion invalidates `meta_offsets`, so each literal `*` is
-/// prefixed with this byte on the way in and `decode_brace_word` recovers the
-/// offsets on the way out. A data byte equal to it is doubled.
+/// Prefixed to each literal `*` because brace expansion invalidates `meta_offsets`;
+/// `decode_brace_word` rebuilds them. Doubled where it occurs as data.
 const META_TAG: u8 = 0x01;
 
 #[derive(Default)]
@@ -340,8 +338,7 @@ impl Expansion {
         }
         let count = count as usize;
         if count == 0 {
-            // Nothing expanded (`expand` would index `out[0]` of an empty
-            // slice), so the word and its `meta_offsets` are still valid as-is.
+            // `expand` needs `out[0]`; with nothing to expand, word and `meta_offsets` are final.
             if glob_follows {
                 me.brace_words = vec![BraceWord {
                     word: core::mem::take(&mut me.current_out),
@@ -396,8 +393,7 @@ impl Expansion {
         me.state = ExpansionState::Done;
     }
 
-    /// Inverse of the [`META_TAG`] encoding. Decoding only removes bytes, so
-    /// it compacts in place.
+    /// Inverse of [`META_TAG`]; it only removes bytes, so it compacts in place.
     fn decode_brace_word(mut word: Vec<u8>) -> BraceWord {
         let mut meta_offsets: Vec<u32> = Vec::new();
         let (mut read, mut write) = (0usize, 0usize);
@@ -419,8 +415,7 @@ impl Expansion {
         BraceWord { word, meta_offsets }
     }
 
-    /// Stages the next variant in `current_out`/`meta_offsets`. Returns whether
-    /// it needs a glob, or `None` once all variants are consumed.
+    /// Stages the next variant; returns `Some(needs_glob)`, or `None` once all are consumed.
     fn load_next_brace_word(me: &mut Expansion) -> Option<bool> {
         let idx = me.brace_word_idx as usize;
         if idx >= me.brace_words.len() {

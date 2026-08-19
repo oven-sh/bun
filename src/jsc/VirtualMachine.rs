@@ -6374,8 +6374,6 @@ impl VirtualMachine {
                     let prev_format_buffer_as_text = formatter.format_buffer_as_text;
                     formatter.depth += 1;
                     formatter.format_buffer_as_text = true;
-                    // One level of this property's contents, relative to where
-                    // we are now (cause-chain recursion bumps `depth`).
                     formatter.max_depth = formatter.depth;
                     formatter.quote_strings = true;
                     formatter.disable_inspect_custom = true;

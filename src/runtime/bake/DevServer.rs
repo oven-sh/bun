@@ -4670,18 +4670,11 @@ pub(super) fn finalize_bundle(
         // lives in the VM's `Debugger`, which outlives this scope.
         let mut inspector_agent_ptr: Option<*const BunFrontendDevServerAgent> =
             dev.inspector().map(std::ptr::from_ref);
+        // A promise route can ride this bundle after its JS promise was already rejected (`recheck_deferred_routes`).
+        current_bundle!()
+            .promise
+            .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
         if current_bundle!().promise.strong.has_value() {
-            // SAFETY: see `current_bundle!` SAFETY; guard runs before the outer `finalize_bundle_cleanup` defer.
-            // Note: copy the raw ptr so `defer!`'s by-ref capture does not
-            // hold `*current_bundle_ptr` borrowed across `current_bundle!()` uses.
-            let cb_ptr_defer: *mut CurrentBundle = current_bundle_ptr;
-            scopeguard::defer! {
-                // SAFETY: `cb_ptr_defer` points into `dev.current_bundle`, live until the outer `finalize_bundle_cleanup` defer runs.
-                unsafe { (*cb_ptr_defer).promise.reset() }
-            };
-            current_bundle!()
-                .promise
-                .set_route_bundle_state(dev, route_bundle::State::PossibleBundlingFailures);
             let global = dev.global();
             // Note: `bundling_failures` lives on `*dev` but
             // `send_serialized_failures` needs `&mut self`; reborrow the keys
@@ -4897,8 +4890,8 @@ fn answer_deferred_requests(
         }
     }
 
+    promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
     if promise.strong.has_value() {
-        promise.set_route_bundle_state(dev, route_bundle::State::Loaded);
         let mut strong = promise.strong.take();
         promise.deinit_idempotently();
         let vm = dev.vm();
@@ -5051,7 +5044,7 @@ impl DevServer {
         let mut requests = scopeguard::guard(requests, fail_all);
         let mut ready = scopeguard::guard(deferred_request::List::default(), fail_all);
 
-        // Decide every queued route before any handler runs, so one bundle picks up every rebuild.
+        // Decide every queued route, and start the one bundle that covers every rebuild, before any waiter is answered.
         let mut route_failures: Vec<(route_bundle::Index, Vec<SerializedFailure>)> = Vec::new();
         let mut entry_points = EntryPointList::empty();
         for i in 0..self.next_bundle.route_queue.len() {
@@ -5073,6 +5066,10 @@ impl DevServer {
             self.route_bundle_ptr(route_bundle_index).server_state = state;
         }
         self.next_bundle.route_queue.clear_retaining_capacity();
+        if !entry_points.set.is_empty() {
+            self.start_async_bundle(entry_points, false, Instant::now())
+                .expect("oom");
+        }
         fn failures_for(
             route_failures: &[(route_bundle::Index, Vec<SerializedFailure>)],
             rbi: route_bundle::Index,
@@ -5083,11 +5080,12 @@ impl DevServer {
                 .map_or(&[], |(_, f)| f)
         }
 
+        // One JS promise covers every route `bundleNewRoute` parked here: any reachable failure rejects it now, else the rebuild settles it.
         let mut promise_failures: Vec<SerializedFailure> = Vec::new();
-        let mut promise_rebuild = false;
+        let mut promise_rebuilds: Vec<route_bundle::Index> = Vec::new();
         for &route_bundle_index in promise.route_bundle_indices.keys() {
             match self.route_bundle_ptr(route_bundle_index).server_state {
-                route_bundle::State::Bundling => promise_rebuild = true,
+                route_bundle::State::Bundling => promise_rebuilds.push(route_bundle_index),
                 route_bundle::State::PossibleBundlingFailures => {
                     for failure in failures_for(&route_failures, route_bundle_index) {
                         // Two routes can reach the same failed file.
@@ -5102,17 +5100,41 @@ impl DevServer {
                 _ => {}
             }
         }
+        // Every listed route had its state written above; the rebuilt ones are listed again on the new bundle below.
+        promise.route_bundle_indices = Default::default();
+        let rejected = if promise_failures.is_empty() {
+            jsc::JSPromiseStrong::empty()
+        } else {
+            promise.strong.take()
+        };
+        if !promise_rebuilds.is_empty() {
+            // The rebuild resets these routes' state when it lands, whether or not it still has the promise to settle.
+            let cb = self
+                .current_bundle
+                .as_mut()
+                .expect("infallible: bundle active");
+            cb.promise.strong = promise.strong.take();
+            for route_bundle_index in promise_rebuilds {
+                cb.promise
+                    .route_bundle_indices
+                    .put(route_bundle_index, ())?;
+            }
+        }
 
         while let Some(node) = requests.pop_first() {
             // SAFETY: `pop_first` hands back ownership of the node; `data` was initialized by `defer_request`.
             let req = unsafe { (*node).data.assume_init_mut() };
-            // `Aborted` waiters ride along: the bundle that lands resets the state of every route in its list.
+            // `Aborted` waiters ride along: whoever answers the list frees them.
             match self.route_bundle_ptr(req.route_bundle_index).server_state {
                 // SAFETY: `node` is live and unlinked; `ready` owns it from here.
                 route_bundle::State::Loaded => unsafe { ready.prepend(&mut *node) },
-                // SAFETY: as above; `start_async_bundle` below moves this list into the bundle.
+                // SAFETY: as above; the rebuild started above owns it from here.
                 route_bundle::State::Bundling => unsafe {
-                    self.next_bundle.requests.prepend(&mut *node)
+                    self.current_bundle
+                        .as_mut()
+                        .expect("infallible: bundle active")
+                        .requests
+                        .prepend(&mut *node)
                 },
                 route_bundle::State::PossibleBundlingFailures => {
                     let req_ptr = std::ptr::from_mut::<DeferredRequest>(req);
@@ -5134,30 +5156,11 @@ impl DevServer {
             }
         }
 
-        if !entry_points.set.is_empty() {
-            if promise_rebuild {
-                // The bundle resets these routes' state when it lands, and settles the promise unless the failures below do it first.
-                self.next_bundle.promise = DeferredPromise {
-                    strong: if promise_failures.is_empty() {
-                        promise.strong.take()
-                    } else {
-                        jsc::JSPromiseStrong::empty()
-                    },
-                    route_bundle_indices: ::core::mem::take(&mut promise.route_bundle_indices),
-                };
-            }
-            self.start_async_bundle(entry_points, false, Instant::now())
-                .expect("oom");
-        }
-        debug_assert!(self.next_bundle.requests.first.is_null());
-
-        if !promise_failures.is_empty() {
-            let strong = promise.strong.take();
-            promise.deinit_idempotently();
+        if rejected.has_value() {
             let global = self.global();
             self.send_serialized_failures(
                 DevResponse::Promise(PromiseResponse {
-                    promise: strong,
+                    promise: rejected,
                     global,
                 }),
                 &promise_failures,

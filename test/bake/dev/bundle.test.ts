@@ -1275,6 +1275,130 @@ devTest("route deferred to the next bundle with no stale files left ignores unre
     await Promise.all([dev.fetch("/a").equals("a: B"), dev.fetch("/b").equals("b: B")]);
   },
 });
+// `bun.app.ts` for the deferred-route tests below. Its plugin holds the first load of routes/held.ts until `/__release` sees one more
+// request waiting on the server than `/__started` did, and makes flaky.ts fail to parse the first time it is bundled and only then,
+// with no change on disk for the watcher to pick up.
+const heldBundleFiles = {
+  "bun.app.ts": `
+    const hold = { armed: true, started: Promise.withResolvers(), release: Promise.withResolvers(), pending: 0 };
+    let flakyLoads = 0;
+    export default {
+      app: {
+        framework: ${JSON.stringify(minimalFramework)},
+        plugins: [
+          {
+            name: "hold-and-flaky",
+            setup(build) {
+              build.onLoad({ filter: /held\\.ts$/ }, async args => {
+                if (hold.armed) {
+                  hold.armed = false;
+                  hold.started.resolve();
+                  await hold.release.promise;
+                }
+                return { loader: "ts", contents: await Bun.file(args.path).text() };
+              });
+              build.onLoad({ filter: /flaky\\.ts$/ }, () => ({
+                loader: "ts",
+                contents: flakyLoads++ === 0 ? "export const flaky = ;" : "export const flaky = 'fixed';",
+              }));
+            },
+          },
+        ],
+      },
+      routes: {
+        "/__started": async (req, server) => {
+          await hold.started.promise;
+          hold.pending = server.pendingRequests;
+          return new Response("started");
+        },
+        "/__release": async (req, server) => {
+          // A request parked behind the held bundle keeps one more request pending than /__started saw.
+          while (server.pendingRequests <= hold.pending) await new Promise(done => setImmediate(done));
+          hold.release.resolve();
+          return new Response("released");
+        },
+      },
+    };
+  `,
+  // Requesting this records flaky.ts's failure and bundles routes/parked.ts on the way, so a later /parked has nothing stale of its own.
+  "routes/first.ts": `
+    import { flaky } from './parked';
+    export default () => new Response('first: ' + flaky);
+  `,
+  "routes/parked.ts": `
+    import { flaky } from '../flaky';
+    export { flaky };
+    export default () => new Response('parked: ' + flaky);
+  `,
+  "routes/held.ts": `
+    export default () => new Response('held');
+  `,
+  "routes/render.ts": `
+    export default () => { throw Response.render('/parked'); };
+  `,
+  "flaky.ts": `export const flaky = "on disk";`,
+};
+/** `expectBuildFailedPage` for a response that is already on its way. */
+async function expectBuildFailedResponse(response: Promise<Response>, error: string) {
+  const res = await response;
+  const html = await res.text();
+  expect(html).toContain(buildFailedTitle);
+  expect(atob(html.match(/atob\("([^"]*)"\)/)![1])).toContain(error);
+  expect(res.status).toBe(500);
+}
+/** Parks a request for /parked behind /held's first bundle, then lets that bundle finish. */
+async function parkBehindHeldBundle(dev: Dev) {
+  const held = dev.fetch("/held");
+  await dev.fetch("/__started").equals("started");
+  const parked = dev.fetch("/parked");
+  await dev.fetch("/__release").equals("released");
+  await held.equals("held");
+  return parked;
+}
+// The route deferred behind another bundle has no stale files, but a failure recorded earlier is reachable from it: with perfect
+// incremental bundling assumed, its parked request is answered with that failure and nothing is rebuilt.
+devTest("route deferred to the next bundle that reaches a recorded failure gets the error page", {
+  files: heldBundleFiles,
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/first", "flaky.ts");
+    await expectBuildFailedResponse(parkBehindHeldBundle(dev), "flaky.ts");
+    await expectBuildFailedPage(dev, "/parked", "flaky.ts");
+  },
+});
+// Same, without that assumption: the failure gets one rebuild of everything the route reaches, and the parked request rides it.
+devTest("route deferred to the next bundle that reaches a recorded failure is rebuilt once", {
+  files: heldBundleFiles,
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/first", "flaky.ts");
+    const parked = await parkBehindHeldBundle(dev);
+    expect(await parked.text()).toBe("parked: fixed");
+    expect(parked.status).toBe(200);
+    await dev.fetch("/parked").equals("parked: fixed");
+  },
+});
+// `Response.render()` to a route nobody requested yet goes through `bundleNewRoute`, whose promise is parked on the next bundle while
+// the rendering route's own bundle is still being finalized. The target reaches the recorded failure: the promise rejects.
+devTest("Response.render() to an unrequested route that reaches a recorded failure rejects", {
+  files: heldBundleFiles,
+  env: { BUN_ASSUME_PERFECT_INCREMENTAL: "1" },
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/first", "flaky.ts");
+    expect((await dev.fetch("/render")).status).toBe(500);
+    // The target route was left in a state a plain request can pick up from.
+    await expectBuildFailedPage(dev, "/parked", "flaky.ts");
+    expect((await dev.fetch("/render")).status).toBe(500);
+  },
+});
+// Same, without the assumption: the promise waits for the rebuild and resolves, and the target route is `Loaded` afterwards.
+devTest("Response.render() to an unrequested route that reaches a recorded failure waits for its rebuild", {
+  files: heldBundleFiles,
+  async test(dev) {
+    await expectBuildFailedPage(dev, "/first", "flaky.ts");
+    await dev.fetch("/render").equals("parked: fixed");
+    await dev.fetch("/parked").equals("parked: fixed");
+  },
+});
 // `checkRouteFailures` must start from an empty `failures_added`, not the previous bundle's list.
 devTest("route marked by an earlier failure does not report another route's errors", {
   framework: minimalFramework,

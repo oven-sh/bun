@@ -2257,20 +2257,12 @@ lexer_impl_header! {
             return;
         }
 
-        let mut rest = &text[0..end_comment_text];
-
-        while let Some(i) = strings::index_of_any(rest, b"@#") {
-            rest = &rest[i + 1..];
-            // `rest` is a suffix of `text[..end_comment_text]`, and `text`
-            // starts at `self.start`.
-            let chunk_start = self.start + (end_comment_text - rest.len());
-            let offset = self.scan_pragma(chunk_start, rest, false);
-
-            rest = &rest[
-                // The min is necessary because the file could end
-                // with a pragma and hasPrefixWithWordBoundary
-                // returns true when that "word boundary" is EOF
-                offset.min(rest.len())..];
+        let body = &text[..end_comment_text];
+        let mut pos = 0;
+        while let Some(i) = strings::index_of_any(&body[pos..], b"@#") {
+            pos += i + 1;
+            let chunk = &body[pos..];
+            pos += self.scan_pragma(self.start + pos, chunk, false).min(chunk.len());
         }
     }
 
@@ -2427,11 +2419,8 @@ lexer_impl_header! {
         // unreachable
     }
 
-    /// Scans `chunk`, the comment text after a `@` or `#`, for a pragma.
-    /// `chunk_start` is the source offset of `chunk[0]`. It becomes the
-    /// location of the pragma argument, which the parser reports when the
-    /// argument is invalid.
-    /// Returns the byte length to advance by if found, otherwise 0.
+    /// Scans `chunk`, the comment text after a `@` or `#`, for a pragma. `chunk_start` is the
+    /// source offset of `chunk[0]`. Returns the byte length to advance by if found, otherwise 0.
     fn scan_pragma(&mut self, chunk_start: usize, chunk: &[u8], allow_newline: bool) -> usize {
         if !self.has_pure_comment_before {
             if strings::has_prefix_with_word_boundary(chunk, b"__PURE__") {
@@ -3860,8 +3849,7 @@ impl PragmaArg {
         PREFIX as usize + url_len // Correct total length
     }
 
-    /// `text_` starts with `pragma`. `chunk_start` is the source offset of
-    /// `text_[0]`, so the returned span points at the argument in the source.
+    /// `text_` starts with `pragma` and sits at source offset `chunk_start`.
     pub(crate) fn scan(
         chunk_start: usize,
         pragma: &[u8],

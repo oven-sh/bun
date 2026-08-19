@@ -799,7 +799,11 @@ impl VirtualMachine {
         VM.get()
     }
 
-    pub(crate) fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
+    /// The main thread's VM, from any thread; `None` before it exists. It is
+    /// never freed, but off its own thread only what is thread-safe may be
+    /// reached through it: a wakeup of its loop (`PosixSignalHandle`), a field
+    /// written once at init (`uv_default_loop`).
+    pub fn get_main_thread_vm() -> Option<*mut VirtualMachine> {
         let p = MAIN_THREAD_VM.load(core::sync::atomic::Ordering::Acquire);
         if p.is_null() { None } else { Some(p) }
     }

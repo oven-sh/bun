@@ -130,4 +130,151 @@ UV_EXTERN void uv_mutex_unlock(uv_mutex_t* mutex)
         abort();
 }
 
+// The functions below need nothing but the headers in ./libuv, so they are
+// libuv's own definitions (src/version.c, src/uv-common.c,
+// src/uv-data-getter-setters.c, src/unix/core.c). The loop-backed functions
+// for the same handles and requests (uv_async_*, uv_close, uv_queue_work, ...)
+// are in src/runtime/napi/uv_posix.rs.
+
+#define UV_STRINGIFY(v) UV_STRINGIFY_HELPER(v)
+#define UV_STRINGIFY_HELPER(v) #v
+
+#define UV_VERSION_STRING_BASE UV_STRINGIFY(UV_VERSION_MAJOR) "." UV_STRINGIFY(UV_VERSION_MINOR) "." UV_STRINGIFY(UV_VERSION_PATCH)
+
+#if UV_VERSION_IS_RELEASE
+#define UV_VERSION_STRING UV_VERSION_STRING_BASE
+#else
+#define UV_VERSION_STRING UV_VERSION_STRING_BASE "-" UV_VERSION_SUFFIX
+#endif
+
+// The version of the headers these polyfills implement the ABI of, which is
+// also the libuv Bun links on Windows. BunProcess.cpp reports it as
+// process.versions.uv on every platform.
+UV_EXTERN unsigned int uv_version(void)
+{
+    return UV_VERSION_HEX;
+}
+
+UV_EXTERN const char* uv_version_string(void)
+{
+    return UV_VERSION_STRING;
+}
+
+UV_EXTERN size_t uv_handle_size(uv_handle_type type)
+{
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return sizeof(uv_##lc##_t);
+        UV_HANDLE_TYPE_MAP(XX)
+#undef XX
+    default:
+        return (size_t)-1;
+    }
+}
+
+UV_EXTERN size_t uv_req_size(uv_req_type type)
+{
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return sizeof(uv_##lc##_t);
+        UV_REQ_TYPE_MAP(XX)
+#undef XX
+    default:
+        return (size_t)-1;
+    }
+}
+
+UV_EXTERN const char* uv_handle_type_name(uv_handle_type type)
+{
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return #lc;
+        UV_HANDLE_TYPE_MAP(XX)
+#undef XX
+    case UV_FILE:
+        return "file";
+    case UV_HANDLE_TYPE_MAX:
+    case UV_UNKNOWN_HANDLE:
+        return NULL;
+    }
+    return NULL;
+}
+
+UV_EXTERN const char* uv_req_type_name(uv_req_type type)
+{
+    switch (type) {
+#define XX(uc, lc) \
+    case UV_##uc:  \
+        return #lc;
+        UV_REQ_TYPE_MAP(XX)
+#undef XX
+    case UV_REQ_TYPE_MAX:
+    case UV_UNKNOWN_REQ:
+    default: /* UV_REQ_TYPE_PRIVATE */
+        break;
+    }
+    return NULL;
+}
+
+UV_EXTERN uv_handle_type uv_handle_get_type(const uv_handle_t* handle)
+{
+    return handle->type;
+}
+
+UV_EXTERN void* uv_handle_get_data(const uv_handle_t* handle)
+{
+    return handle->data;
+}
+
+UV_EXTERN uv_loop_t* uv_handle_get_loop(const uv_handle_t* handle)
+{
+    return handle->loop;
+}
+
+UV_EXTERN void uv_handle_set_data(uv_handle_t* handle, void* data)
+{
+    handle->data = data;
+}
+
+UV_EXTERN uv_req_type uv_req_get_type(const uv_req_t* req)
+{
+    return req->type;
+}
+
+UV_EXTERN void* uv_req_get_data(const uv_req_t* req)
+{
+    return req->data;
+}
+
+UV_EXTERN void uv_req_set_data(uv_req_t* req, void* data)
+{
+    req->data = data;
+}
+
+// A uv_loop_t* is a UvLoop (uv_posix.rs), whose first field is `data` like
+// uv_loop_t's, so these are the libuv definitions.
+UV_EXTERN void* uv_loop_get_data(const uv_loop_t* loop)
+{
+    return loop->data;
+}
+
+UV_EXTERN void uv_loop_set_data(uv_loop_t* loop, void* data)
+{
+    loop->data = data;
+}
+
+// On unix a uv_os_fd_t is an int: both directions are the identity.
+UV_EXTERN uv_os_fd_t uv_get_osfhandle(int fd)
+{
+    return fd;
+}
+
+UV_EXTERN int uv_open_osfhandle(uv_os_fd_t os_fd)
+{
+    return os_fd;
+}
+
 #endif

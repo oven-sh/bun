@@ -290,7 +290,7 @@ const final_contents = `// GENERATED CODE - DO NOT MODIFY BY HAND
 #include "uv-posix-polyfills.h"
 
 
-#if OS(LINUX) || OS(DARWIN)
+#if OS(LINUX) || OS(DARWIN) || OS(FREEBSD)
 ${parts.map(([stub, _]) => stub).join("\n\n")}
 #endif
 

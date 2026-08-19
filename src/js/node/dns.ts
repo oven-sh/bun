@@ -120,6 +120,30 @@ function stripZoneId(host) {
   return pct === -1 ? host : host.slice(0, pct);
 }
 
+// The address uv_inet_pton would parse out of `ip`, in the form ares_inet_pton
+// accepts, or null. uv_inet_pton only strips a zone id when parsing as IPv6, so
+// "1.2.3.4%x" is invalid while "fe80::1%br_lan" is fe80::1 even though isIP()
+// rejects the underscore in the zone.
+function normalizeIP(ip) {
+  if (isIP(ip) === 4) return ip;
+  const bare = stripZoneId(ip);
+  return isIP(bare) === 6 ? bare : null;
+}
+
+// Node reports the caller's string, zone id included, on a failed reverse().
+function reverseOn(object, address, ip) {
+  const promise = object.reverse(address);
+  if (address === ip) return promise;
+  return promise.catch(error => {
+    error = withTranslatedError(error);
+    if (typeof error?.hostname === "string") {
+      error.hostname = ip;
+      error.message = `${error.syscall} ${error.code} ${ip}`;
+    }
+    return Promise.$reject(error);
+  });
+}
+
 function setServersOn(servers, object) {
   validateArray(servers, "servers");
 
@@ -245,22 +269,25 @@ function validateResolve(hostname, callback) {
 
 function validateLocalAddresses(first, second) {
   validateString(first, "ipv4");
-  const firstFamily = isIP(first);
-  if (firstFamily === 0) {
-    throw localAddressError("Invalid IP address.");
-  }
   if (typeof second !== "undefined") {
     validateString(second, "ipv6");
-    const secondFamily = isIP(second);
-    if (secondFamily === 0) {
-      throw localAddressError("Invalid IP address.");
-    }
-    if (firstFamily === secondFamily) {
-      throw localAddressError(`Cannot specify two IPv${firstFamily} addresses.`);
-    }
-    return [stripZoneId(first), stripZoneId(second)];
   }
-  return [stripZoneId(first)];
+  const firstAddress = normalizeIP(first);
+  if (firstAddress === null) {
+    throw localAddressError("Invalid IP address.");
+  }
+  if (typeof second === "undefined") {
+    return [firstAddress];
+  }
+  const secondAddress = normalizeIP(second);
+  if (secondAddress === null) {
+    throw localAddressError("Invalid IP address.");
+  }
+  const firstFamily = isIP(firstAddress);
+  if (firstFamily === isIP(secondAddress)) {
+    throw localAddressError(`Cannot specify two IPv${firstFamily} addresses.`);
+  }
+  return [firstAddress, secondAddress];
 }
 
 function invalidHostname(hostname) {
@@ -698,21 +725,20 @@ var InternalResolver = class Resolver {
     if (typeof callback !== "function") {
       throw $ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
-    if (isIP(ip) === 0) {
+    const address = normalizeIP(ip);
+    if (address === null) {
       throw reverseInvalidIPError(ip);
     }
     callback = guardCallback(callback);
 
-    Resolver.#getResolver(this)
-      .reverse(stripZoneId(ip))
-      .then(
-        results => {
-          callback(null, results);
-        },
-        error => {
-          callback(withTranslatedError(error));
-        },
-      );
+    reverseOn(Resolver.#getResolver(this), address, ip).then(
+      results => {
+        callback(null, results);
+      },
+      error => {
+        callback(withTranslatedError(error));
+      },
+    );
   }
 
   setLocalAddress(first, second) {
@@ -923,10 +949,11 @@ const promises = {
   },
   reverse(ip) {
     validateString(ip, "name");
-    if (isIP(ip) === 0) {
+    const address = normalizeIP(ip);
+    if (address === null) {
       return Promise.$reject(reverseInvalidIPError(ip));
     }
-    return translateErrorCode(dns.reverse(stripZoneId(ip)));
+    return translateErrorCode(reverseOn(dns, address, ip));
   },
 
   Resolver: class Resolver {
@@ -1019,10 +1046,11 @@ const promises = {
 
     reverse(ip) {
       validateString(ip, "name");
-      if (isIP(ip) === 0) {
+      const address = normalizeIP(ip);
+      if (address === null) {
         return Promise.$reject(reverseInvalidIPError(ip));
       }
-      return translateErrorCode(Resolver.#getResolver(this).reverse(stripZoneId(ip)));
+      return translateErrorCode(reverseOn(Resolver.#getResolver(this), address, ip));
     }
 
     setLocalAddress(first, second) {

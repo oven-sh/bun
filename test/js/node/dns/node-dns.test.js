@@ -574,6 +574,7 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
     "1.2.3.4.5",
     " 1.2.3.4",
     "1.2.3.4 ",
+    "%lo0",
     "",
   ];
 
@@ -623,12 +624,14 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
           ]);
         const rd = enc("host.example");
         const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
+        // Names whose first label is a hex letter (…::a through …::f) get NXDOMAIN.
+        const nxdomain = /^[a-f]$/.test(labels[0]);
         const h = Buffer.alloc(12);
         h.writeUInt16BE(m.readUInt16BE(0), 0);
-        h.writeUInt16BE(0x8180, 2);
+        h.writeUInt16BE(nxdomain ? 0x8183 : 0x8180, 2);
         h.writeUInt16BE(1, 4);
-        h.writeUInt16BE(1, 6);
-        srv.send(Buffer.concat([h, q, a]), ri.port, ri.address);
+        h.writeUInt16BE(nxdomain ? 0 : 1, 6);
+        srv.send(nxdomain ? Buffer.concat([h, q]) : Buffer.concat([h, q, a]), ri.port, ri.address);
       });
 
       const resolver = new dns.promises.Resolver({ timeout: 1500, tries: 1 });
@@ -660,21 +663,52 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
       // non-string input is a synchronous ERR_INVALID_ARG_TYPE even in the promises form
       expect(() => dns.promises.reverse(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
 
+      // A zone id on an IPv4 literal is invalid, as it is for uv_inet_pton.
+      await expect(resolver.reverse("192.0.2.1%lo0")).rejects.toEqual(
+        expect.objectContaining({ code: "EINVAL", hostname: "192.0.2.1%lo0" }),
+      );
+
       // control: valid IPv4 and IPv6 still reach the local responder, and an
-      // IPv6 zone id is stripped the way uv_inet_pton strips it (c-ares rejects it)
+      // IPv6 zone id is stripped the way uv_inet_pton strips it (c-ares rejects
+      // it), even one isIP() would not accept, like an interface name with "_".
       const v6ptr = last => `${last}.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa`;
       expect(await resolver.reverse("192.0.2.1")).toEqual(["host.example"]);
       expect(await resolver.reverse("2001:db8::5")).toEqual(["host.example"]);
       expect(await resolver.reverse("2001:db8::6%lo0")).toEqual(["host.example"]);
+      expect(await resolver.reverse("2001:db8::7%br_lan")).toEqual(["host.example"]);
 
       const cbResolver = new dns.Resolver({ timeout: 1500, tries: 1 });
       cbResolver.setServers([`127.0.0.1:${srv.address().port}`]);
-      const { promise, resolve, reject } = Promise.withResolvers();
-      cbResolver.reverse("2001:db8::7%lo0", (err, hostnames) => (err ? reject(err) : resolve(hostnames)));
-      expect(await promise).toEqual(["host.example"]);
+      const cbReverse = ip => {
+        const { promise, resolve } = Promise.withResolvers();
+        cbResolver.reverse(ip, (err, hostnames) => resolve(err ?? hostnames));
+        return promise;
+      };
+      expect(await cbReverse("2001:db8::8%br_lan")).toEqual(["host.example"]);
+
+      // A failed lookup reports the caller's string, zone id included, like Node.
+      const notFound = ip =>
+        expect.objectContaining({
+          code: "ENOTFOUND",
+          syscall: "getHostByAddr",
+          hostname: ip,
+          message: `getHostByAddr ENOTFOUND ${ip}`,
+        });
+      await expect(resolver.reverse("2001:db8::a%br_lan")).rejects.toEqual(notFound("2001:db8::a%br_lan"));
+      expect(await cbReverse("2001:db8::b%lo0")).toEqual(notFound("2001:db8::b%lo0"));
+      await expect(resolver.reverse("2001:db8::c")).rejects.toEqual(notFound("2001:db8::c"));
 
       expect(srvError).toBeUndefined();
-      expect(wire).toEqual(["1.2.0.192.in-addr.arpa", v6ptr(5), v6ptr(6), v6ptr(7)]);
+      expect(wire).toEqual([
+        "1.2.0.192.in-addr.arpa",
+        v6ptr(5),
+        v6ptr(6),
+        v6ptr(7),
+        v6ptr(8),
+        v6ptr("a"),
+        v6ptr("b"),
+        v6ptr("c"),
+      ]);
     } finally {
       await new Promise(resolve => srv.close(resolve));
     }
@@ -682,7 +716,9 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
 });
 
 describe("dns.lookupService rejects non-IP address strings", () => {
-  it.each(["127.1", "1.2.3", "0x7f000001", "google.com", "", 123])(
+  // Unlike reverse() and setLocalAddress(), Node gates lookupService() on isIP()
+  // itself, so a zone id isIP() rejects is rejected here too.
+  it.each(["127.1", "1.2.3", "0x7f000001", "google.com", "", 123, "fe80::1%br_lan"])(
     "throws ERR_INVALID_ARG_VALUE synchronously for %j",
     address => {
       const expected = expect.objectContaining({ code: "ERR_INVALID_ARG_VALUE" });
@@ -738,8 +774,13 @@ describe("Resolver.setLocalAddress validates IP strings", () => {
     [["1.2.3.4", "127.1"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
     [["1.2.3.4", "5.6.7.8"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv4 addresses."],
     [["::1", "::2"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv6 addresses."],
+    [["::1%lo0", "::2%lo0"], "ERR_INVALID_ARG_VALUE", "Cannot specify two IPv6 addresses."],
+    // a zone id is only stripped from an IPv6 literal
+    [["1.2.3.4%lo0"], "ERR_INVALID_ARG_VALUE", "Invalid IP address."],
     [[123], "ERR_INVALID_ARG_TYPE", /"ipv4" argument/],
     [["1.2.3.4", 123], "ERR_INVALID_ARG_TYPE", /"ipv6" argument/],
+    // both types are checked before either value is parsed
+    [["not-an-ip", 123], "ERR_INVALID_ARG_TYPE", /"ipv6" argument/],
   ])("rejects %j with %s", (args, code, message) => {
     for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
       const r = new Resolver();
@@ -753,9 +794,11 @@ describe("Resolver.setLocalAddress validates IP strings", () => {
     [["::1"]],
     [["1.2.3.4", "::1"]],
     [["::1", "1.2.3.4"]],
-    // uv_inet_pton strips an IPv6 zone id; c-ares would reject it
+    // uv_inet_pton strips an IPv6 zone id (whatever it contains); c-ares would reject it
     [["fe80::1%lo0"]],
     [["1.2.3.4", "fe80::1%lo0"]],
+    [["fe80::1%br_lan"]],
+    [["fe80::1%br_lan", "1.2.3.4"]],
   ])("accepts %j", args => {
     for (const Resolver of [dns.Resolver, dns.promises.Resolver]) {
       const r = new Resolver();

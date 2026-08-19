@@ -2747,7 +2747,7 @@ fn update_package_json_after_migration(
         );
 
         // Write the updated package.json
-        if sys::File::write_file(
+        if sys::File::write_file_atomic(
             dir,
             bun_core::zstr!("package.json"),
             root_pkg_json.source.contents(),

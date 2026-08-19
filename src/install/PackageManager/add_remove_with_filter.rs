@@ -295,7 +295,7 @@ pub(crate) fn write_target(manager: &mut PackageManager, target: &WorkspaceTarge
     let entry = fetch_entry(manager, target);
     let mut zbuf = path_buffer_pool::get();
     let path = resolve_path::z(&target.package_json_path, &mut zbuf);
-    match File::write_file(Fd::cwd(), path, &entry.source.contents) {
+    match File::write_file_atomic(Fd::cwd(), path, &entry.source.contents) {
         Ok(()) => true,
         Err(err) => {
             Output::err_generic(

@@ -385,6 +385,109 @@ impl File {
         let f = Self::openat(dir, path, O::WRONLY | O::CREAT | O::TRUNC, 0o664)?;
         f.write_all(data)
     }
+    /// Replace the contents of `path` without a window in which the file is
+    /// empty or half-written. `data` goes to a fresh `O_EXCL` temporary file in
+    /// the same directory, which is then renamed over `path`. At any point in
+    /// time `path` holds either its previous contents or all of `data`, so a
+    /// failed write (`ENOSPC`, `EFBIG`, a signal) leaves the old file alone.
+    /// Use this for files the user owns (package.json, snapshots, sources);
+    /// [`File::write_file`] truncates in place and is fine for caches and
+    /// build output.
+    ///
+    /// An existing file must be writable, as with an in-place write: a
+    /// read-only file is reported as such even though the rename alone would
+    /// succeed. A symlink at `path` is followed, so the file it points to is
+    /// replaced and the link stays. An existing regular file keeps its mode
+    /// and, when the caller is allowed to set it, its owner. A new file gets
+    /// `0o666` masked by the umask, like [`File::create`].
+    pub fn write_file_atomic(dir: impl AsFd, path: &ZStr, data: &[u8]) -> Maybe<()> {
+        let dir = dir.as_fd();
+        let existing = match lstatat(dir, path) {
+            Ok(st) => st,
+            Err(err) if err.get_errno() == E::ENOENT => {
+                return Self::replace_via_tmp(dir, path, data, None);
+            }
+            Err(err) => return Err(err),
+        };
+
+        let current = Self::openat(dir, path, O::WRONLY | O::CLOEXEC, 0)?;
+        if kind_from_mode(existing.st_mode as Mode) != FileKind::SymLink {
+            drop(current);
+            return Self::replace_via_tmp(dir, path, data, Some(&existing));
+        }
+
+        // Renaming over the link would turn it into a regular file. Replace
+        // the file it points to instead.
+        let target_stat = current.stat()?;
+        let mut buf = bun_paths::path_buffer_pool::get();
+        let real_path = get_fd_path_z(current.handle, &mut buf)?;
+        drop(current);
+        Self::replace_via_tmp(Fd::cwd(), real_path, data, Some(&target_stat))
+    }
+
+    fn replace_via_tmp(dir: Fd, path: &ZStr, data: &[u8], existing: Option<&Stat>) -> Maybe<()> {
+        use std::io::Write as _;
+
+        // `basename` strips trailing separators, so this also rejects `dir/`.
+        let base = bun_paths::basename(path.as_bytes());
+        if base.is_empty() || !path.as_bytes().ends_with(base) {
+            return Err(Error::from_code(E::EINVAL, Tag::open).with_path(path.as_bytes()));
+        }
+        let parent = &path.as_bytes()[..path.len() - base.len()];
+
+        let mut attempts = 0u32;
+        let (file, tmp_path) = loop {
+            let mut tmp_path = Vec::with_capacity(path.len() + 24);
+            tmp_path.extend_from_slice(parent);
+            tmp_path.push(b'.');
+            tmp_path.extend_from_slice(base);
+            // Writing into a `Vec` cannot fail.
+            let _ = write!(tmp_path, ".{:016x}.tmp", bun_core::util::fast_random());
+            let tmp_path = bun_core::ZBox::from_vec(tmp_path);
+            match openat(
+                dir,
+                tmp_path.as_zstr(),
+                O::WRONLY | O::CREAT | O::EXCL | O::CLOEXEC,
+                0o666,
+            ) {
+                Ok(fd) => break (Self::from_fd(fd), tmp_path),
+                Err(err) if err.get_errno() == E::EEXIST && attempts < 16 => attempts += 1,
+                Err(err) => return Err(err),
+            }
+        };
+
+        let result = Self::fill_tmp_and_rename(dir, file, tmp_path.as_zstr(), path, data, existing);
+        if result.is_err() {
+            let _ = unlinkat(dir, tmp_path.as_zstr());
+        }
+        result
+    }
+
+    fn fill_tmp_and_rename(
+        dir: Fd,
+        file: File,
+        tmp_path: &ZStr,
+        path: &ZStr,
+        data: &[u8],
+        existing: Option<&Stat>,
+    ) -> Maybe<()> {
+        #[cfg(unix)]
+        if let Some(st) = existing {
+            if is_regular_file(st.st_mode as Mode) {
+                // Best effort: a filesystem without ownership or mode support
+                // still gets the new contents. chown first, it clears setuid bits.
+                let _ = fchown(file.handle, st.st_uid, st.st_gid);
+                let _ = fchmod(file.handle, (st.st_mode as Mode) & 0o7777);
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = existing;
+
+        file.write_all(data)?;
+        file.close()?;
+        renameat(dir, tmp_path, dir, path)
+    }
+
     /// Like [`File::write_file`] but takes the platform-native path type so Windows
     /// callers can pass a `&WStr` without round-tripping through UTF-8.
     pub fn write_file_os_path(

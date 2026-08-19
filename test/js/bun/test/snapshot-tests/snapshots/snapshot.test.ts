@@ -1,7 +1,17 @@
 import { $ } from "bun";
 import { describe, expect, it, test } from "bun:test";
-import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, DirectoryTree, isDebug, tempDir, tempDirWithFiles } from "harness";
+import { readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "fs";
+import {
+  bunEnv,
+  bunExe,
+  DirectoryTree,
+  isDebug,
+  isWindows,
+  tempDir,
+  tempDirWithFiles,
+  withFileSizeLimit,
+} from "harness";
+import { join } from "path";
 
 function test1000000(arg1: any, arg218718132: any) {}
 
@@ -957,4 +967,100 @@ test("write snapshot from filter", async () => {
   expect(await Bun.file(dir + "/mytests/snap.test.ts").text()).toBe(sver("a", true));
   expect(await Bun.file(dir + "/mytests/snap2.test.ts").text()).toBe(sver("b", true));
   expect(await Bun.file(dir + "/mytests/more/testing.test.ts").text()).toBe(sver("TEST", true));
+});
+
+// A .snap file, and a test file with inline snapshots, is replaced in one step
+// once bun test has everything it wants to write. Until then the file on disk
+// stays as it was, whatever happens to the run.
+describe.concurrent("snapshot files are replaced, never truncated", () => {
+  const snapHeader = "// Bun Snapshot v1, https://bun.sh/docs/test/snapshots\n";
+  const oldSnap = snapHeader + '\nexports[`a 1`] = `"old a"`;\n\nexports[`b 1`] = `"old b"`;\n';
+  const snapTest = (a: string) => /*js*/ `
+    import { expect, test } from "bun:test";
+    test("a", () => {
+      expect(${JSON.stringify(a)}).toMatchSnapshot();
+    });
+    test("b", () => {
+      expect("old b").toMatchSnapshot();
+    });
+  `;
+
+  async function runBunTest(dir: string, args: string[], fileSizeLimitBlocks?: number) {
+    const cmd = [bunExe(), "test", ...args];
+    await using proc = Bun.spawn({
+      cmd: fileSizeLimitBlocks === undefined ? cmd : withFileSizeLimit(fileSizeLimitBlocks, cmd),
+      cwd: dir,
+      env: { ...bunEnv, CI: "false" },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+    return { stdout, stderr, exitCode };
+  }
+
+  test("--update-snapshots keeps the old .snap when the run exits before the end", async () => {
+    using dir = tempDir("snap-exit-early", {
+      "a.test.ts": /*js*/ `
+        import { expect, test } from "bun:test";
+        test("a", () => {
+          expect("new a").toMatchSnapshot();
+          process.exit(0);
+        });
+      `,
+      "__snapshots__/a.test.ts.snap": oldSnap,
+    });
+    const { exitCode } = await runBunTest(dir, ["--update-snapshots", "./a.test.ts"]);
+    expect(exitCode).toBe(0);
+    expect(readFileSync(join(dir, "__snapshots__/a.test.ts.snap"), "utf8")).toBe(oldSnap);
+  });
+
+  test.skipIf(isWindows)("--update-snapshots keeps the old .snap when the new one cannot be written", async () => {
+    using dir = tempDir("snap-write-fails", {
+      "a.test.ts": snapTest("new a"),
+      "__snapshots__/a.test.ts.snap": oldSnap,
+    });
+    const { stderr, exitCode } = await runBunTest(dir, ["--update-snapshots", "./a.test.ts"], 0);
+    expect(stderr).toContain("failed to write snapshot file");
+    expect(exitCode).toBe(1);
+    expect(readFileSync(join(dir, "__snapshots__/a.test.ts.snap"), "utf8")).toBe(oldSnap);
+    expect(readdirSync(join(dir, "__snapshots__"))).toEqual(["a.test.ts.snap"]);
+  });
+
+  test("a run that adds no snapshot does not touch the .snap file", async () => {
+    using dir = tempDir("snap-unchanged", {
+      "a.test.ts": snapTest("old a"),
+      "__snapshots__/a.test.ts.snap": oldSnap,
+    });
+    const snapPath = join(dir, "__snapshots__/a.test.ts.snap");
+    const past = new Date("2001-01-01T00:00:00Z");
+    utimesSync(snapPath, past, past);
+
+    const { stderr, exitCode } = await runBunTest(dir, ["./a.test.ts"]);
+    expect(stderr).toContain("2 pass");
+    expect(exitCode).toBe(0);
+    expect(statSync(snapPath).mtimeMs).toBe(past.getTime());
+  });
+
+  // The source is long enough that, with the limit of one block, the write is
+  // cut off after the first block instead of failing as a whole. Writing in
+  // place would leave the start of the new text in front of the rest of the old.
+  test.skipIf(isWindows)("keeps the test file when the inline snapshot update cannot be written", async () => {
+    const source =
+      /*js*/ `
+      import { expect, test } from "bun:test";
+      test("a", () => {
+        expect("new a").toMatchInlineSnapshot();
+      });
+    ` +
+      "// " +
+      Buffer.alloc(3000, "x").toString() +
+      "\n";
+    using dir = tempDir("inline-snap-write-fails", { "a.test.ts": source });
+
+    const { stderr, exitCode } = await runBunTest(dir, ["./a.test.ts"], 1);
+    expect(stderr).toContain("Failed to update inline snapshot: Write file error: EFBIG");
+    expect(exitCode).toBe(1);
+    expect(readFileSync(join(dir, "a.test.ts"), "utf8")).toBe(source);
+    expect(readdirSync(dir)).toEqual(["a.test.ts"]);
+  });
 });

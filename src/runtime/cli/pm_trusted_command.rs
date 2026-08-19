@@ -542,11 +542,13 @@ impl TrustCommand {
             bun_sys::File::from_fd(fd)
         };
         let package_json_contents = root_file.read_to_end().map_err(crate::Error::from)?;
+        let _ = root_file.close();
 
         // SAFETY: `ROOT_PACKAGE_JSON_PATH` is set during `PackageManager::init`
         // (single-threaded startup) and immutable thereafter.
+        let root_package_json_path = unsafe { ROOT_PACKAGE_JSON_PATH.read() };
         let package_json_source = bun_ast::Source::init_path_string(
-            unsafe { ROOT_PACKAGE_JSON_PATH.read() }.as_bytes(),
+            root_package_json_path.as_bytes(),
             package_json_contents.as_slice(),
         );
 
@@ -669,11 +671,14 @@ impl TrustCommand {
 
         let new_package_json_contents = package_json_writer.ctx.written_without_trailing_zero();
 
-        root_file
-            .pwrite_all(new_package_json_contents, 0)
-            .map_err(crate::Error::from)?;
-        let _ = bun_sys::ftruncate(root_file.handle, new_package_json_contents.len() as i64);
-        let _ = root_file.close();
+        if let Err(err) = bun_sys::File::write_file_atomic(
+            bun_sys::Fd::cwd(),
+            root_package_json_path,
+            new_package_json_contents,
+        ) {
+            Output::err(err, "failed to write package.json", ());
+            Global::crash();
+        }
 
         debug_assert!(total_scripts_ran > 0);
 

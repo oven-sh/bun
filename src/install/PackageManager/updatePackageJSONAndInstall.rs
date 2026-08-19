@@ -698,14 +698,14 @@ fn update_package_json_and_install_with_manager_with_updates(
 
         // Now that we've run the install step
         // We can save our in-memory package.json to disk
-        let workspace_package_json_file =
-            File::openat(Fd::cwd(), path, bun_sys::O::RDWR, 0).map_err(Error::from)?;
-
-        workspace_package_json_file
-            .pwrite_all(source, 0)
-            .map_err(Error::from)?;
-        let _ = bun_sys::ftruncate(workspace_package_json_file.handle, source.len() as i64);
-        let _ = workspace_package_json_file.close(); // close error is non-actionable
+        if let Err(err) = File::write_file_atomic(Fd::cwd(), path, source) {
+            Output::err(
+                err,
+                "failed to write package.json at '{s}'",
+                (BStr::new(path.as_bytes()),),
+            );
+            Global::exit(1);
+        }
 
         if subcommand == Subcommand::Remove {
             if !any_changes {

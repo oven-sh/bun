@@ -787,17 +787,9 @@ impl InitCommand {
             template.write_to_package_json(&mut fields, &bump)?;
         }
 
+        // The read handle is done; close it before the file is replaced.
+        let mut had_package_json_file = package_json_file.take().is_some();
         'write_package_json: {
-            let (fd, created_close): (Fd, Option<bun_sys::CloseOnDrop>) = match package_json_file
-                .as_ref()
-            {
-                Some(f) => (f.handle(), None),
-                None => {
-                    let fd = bun_sys::File::create(Fd::cwd(), b"package.json", true)?.into_raw();
-                    (fd, Some(bun_sys::CloseOnDrop::new(fd)))
-                }
-            };
-            let _close = created_close;
             let mut buffer_writer = js_printer::BufferWriter::init();
             buffer_writer.append_newline = true;
             let mut package_json_writer = js_printer::BufferPrinter::init(buffer_writer);
@@ -820,26 +812,20 @@ impl InitCommand {
                     "package.json failed to write due to error {}",
                     err.name(),
                 );
-                package_json_file = None;
+                had_package_json_file = false;
                 break 'write_package_json;
             }
             let written = package_json_writer.ctx.get_written();
-            if let Err(err) = bun_sys::File::borrow(&fd).write_all(written) {
+            if let Err(err) = bun_sys::File::write_file_atomic(
+                Fd::cwd(),
+                ZStr::from_static(b"package.json\0"),
+                written,
+            ) {
                 bun_core::pretty_errorln!(
                     "package.json failed to write due to error {}",
                     bstr::BStr::new(err.name()),
                 );
-                package_json_file = None;
-                break 'write_package_json;
-            }
-            if let Err(err) =
-                bun_sys::ftruncate(fd, i64::try_from(written.len()).expect("int cast"))
-            {
-                bun_core::pretty_errorln!(
-                    "package.json failed to write due to error {}",
-                    bstr::BStr::new(err.name()),
-                );
-                package_json_file = None;
+                had_package_json_file = false;
                 break 'write_package_json;
             }
         }
@@ -855,7 +841,7 @@ impl InitCommand {
                     Template::create_agent_rule();
                 }
 
-                if package_json_file.is_some() && !did_load_package_json {
+                if had_package_json_file && !did_load_package_json {
                     bun_core::prettyln!(" + <r><d>package.json<r>");
                     Output::flush();
                 }

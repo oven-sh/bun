@@ -278,7 +278,7 @@ impl Pragma {
         ))
     }
 
-    pub fn from_api(jsx: api::Jsx) -> Result<Pragma, crate::Error> {
+    pub fn from_api(jsx: api::Jsx) -> Pragma {
         let mut pragma = Pragma::default();
 
         if let Some(fragment) =
@@ -304,7 +304,7 @@ impl Pragma {
 
         pragma.development = jsx.development;
         pragma.parse = true;
-        Ok(pragma)
+        pragma
     }
 }
 

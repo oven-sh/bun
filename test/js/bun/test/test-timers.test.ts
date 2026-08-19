@@ -1,4 +1,7 @@
 import { bunEnv, bunExe } from "harness";
+import dgram from "node:dgram";
+import { promises as dnsPromises } from "node:dns";
+import { once } from "node:events";
 import path from "node:path";
 
 test("we can go back in time", () => {
@@ -113,4 +116,71 @@ test("real timer heap is ticked against the real clock under useFakeTimers", asy
   // null => exited on its own; non-null => killed by the spawn timeout (spun).
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(0);
+});
+
+describe("c-ares poll timer under useFakeTimers", () => {
+  test("an in-flight dns.resolve*() query is not counted, and survives useRealTimers()", async () => {
+    // Nothing answers on this port, so the query stays in flight until c-ares
+    // times it out (c-ares floors the timeout at 250ms; the poll runs every 1s).
+    const server = dgram.createSocket("udp4");
+    server.bind(0, "127.0.0.1");
+    await once(server, "listening");
+    try {
+      const resolver = new dnsPromises.Resolver({ timeout: 100, tries: 1 });
+      resolver.setServers([`127.0.0.1:${server.address().port}`]);
+
+      let outcome: Promise<string>;
+      let timerCount: number;
+      jest.useFakeTimers();
+      try {
+        outcome = resolver.resolve4("silent.test").then(
+          () => "resolved",
+          e => e.code,
+        );
+        timerCount = jest.getTimerCount();
+      } finally {
+        jest.useRealTimers();
+      }
+      expect(timerCount).toBe(0);
+
+      // useRealTimers() discarded every node in the fake heap. Pre-fix the poll
+      // timer was one of them and this query stayed pending forever.
+      expect(await outcome).toBe("ETIMEOUT");
+    } finally {
+      server.close();
+    }
+  });
+
+  // A passing child spends about a second of real time waiting for ETIMEOUT on
+  // top of its startup; pre-fix it never gets out of runAllTimers() (100% CPU)
+  // and has to be reaped by the spawn timeout before the test's own timeout.
+  const childTimeout = 20_000;
+  const testTimeout = 30_000;
+
+  test(
+    "runAllTimers() returns, and the query still times out on the real clock",
+    async () => {
+      await using proc = Bun.spawn({
+        cmd: [bunExe(), "test", path.join(import.meta.dir, "test-timers-dns-resolver-fixture.ts")],
+        env: bunEnv,
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: childTimeout,
+      });
+      const [stdout, stderr, exitCode] = await Promise.all([proc.stdout.text(), proc.stderr.text(), proc.exited]);
+      if (exitCode !== 0) console.error(stderr);
+      const results = stdout
+        .split("\n")
+        .filter(line => line.startsWith("{"))
+        .map(line => JSON.parse(line));
+      expect(results).toEqual([
+        { test: "runAllTimers", timerCount: 0, outcome: "ECANCELLED" },
+        { test: "realClock", outcome: "ETIMEOUT" },
+      ]);
+      // null => exited on its own; non-null => killed by the spawn timeout (spun).
+      expect(proc.signalCode).toBeNull();
+      expect(exitCode).toBe(0);
+    },
+    testTimeout,
+  );
 });

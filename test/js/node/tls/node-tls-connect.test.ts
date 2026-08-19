@@ -1614,3 +1614,135 @@ describe("throwing 'secureConnect' listener", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+describe("tls.connect({ socket }) over a net.Socket whose connect has not completed yet", () => {
+  // The upgrade to TLS only happens once the wrapped socket emits 'connect'.
+  // Until then node forwards the wrapped socket's 'error' to the TLSSocket and
+  // destroys the TLSSocket when the wrapped socket closes; the event sequences
+  // asserted below are the ones node v26.3.0 produces.
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L977
+  // https://github.com/nodejs/node/blob/v26.3.0/lib/internal/tls/wrap.js#L740
+
+  // A port on 127.0.0.1 that refuses connections: it is the local port of a
+  // live connection, so nothing listens on it and, unlike a port that was
+  // bound and released again, a concurrent listen(0) cannot be handed it.
+  async function refusedPort(): Promise<{ port: number } & AsyncDisposable> {
+    const sink = net.createServer();
+    await once(sink.listen(0, "127.0.0.1"), "listening");
+    const holder = net.connect((sink.address() as AddressInfo).port, "127.0.0.1");
+    const [[accepted]] = await Promise.all([once(sink, "connection"), once(holder, "connect")]);
+    return {
+      port: (holder.address() as AddressInfo).port,
+      async [Symbol.asyncDispose]() {
+        holder.destroy();
+        accepted.destroy();
+        sink.close();
+        await once(sink, "close");
+      },
+    };
+  }
+
+  function observe(name: string, socket: net.Socket, log: string[], errors: Error[] = []) {
+    socket.on("error", err => {
+      errors.push(err);
+      log.push(`${name} error ${(err as NodeJS.ErrnoException).code}`);
+    });
+    socket.on("close", hadError => log.push(`${name} close hadError=${hadError}`));
+  }
+
+  // events.once() would reject on the 'error' these tests expect first.
+  function closed(socket: net.Socket): Promise<void> {
+    return new Promise(resolve => socket.once("close", () => resolve()));
+  }
+
+  it("a refused connect is emitted as the TLSSocket's 'error', then its 'close'", async () => {
+    await using refused = await refusedPort();
+    const log: string[] = [];
+    const errors: Error[] = [];
+    const raw = net.connect(refused.port, "127.0.0.1");
+    observe("raw", raw, log, errors);
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    observe("tls", client, log, errors);
+
+    await closed(client);
+
+    expect(log).toEqual([
+      "raw error ECONNREFUSED",
+      "tls error ECONNREFUSED",
+      "raw close hadError=true",
+      "tls close hadError=false",
+    ]);
+    // The TLSSocket re-emits the wrapped socket's error object itself.
+    expect(errors[1]).toBe(errors[0]);
+  });
+
+  it("a socket that starts connecting after being wrapped reports the failure to TLSSocket listeners alone", async () => {
+    await using refused = await refusedPort();
+    const log: string[] = [];
+    const raw = new net.Socket();
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    observe("tls", client, log);
+    raw.connect(refused.port, "127.0.0.1");
+
+    await closed(client);
+
+    expect(log).toEqual(["tls error ECONNREFUSED", "tls close hadError=false"]);
+  });
+
+  it("destroying the socket before it connects closes the TLSSocket without an error", async () => {
+    await using refused = await refusedPort();
+    const log: string[] = [];
+    const raw = net.connect(refused.port, "127.0.0.1");
+    observe("raw", raw, log);
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    observe("tls", client, log);
+    raw.destroy();
+
+    await closed(client);
+
+    expect(log).toEqual(["raw close hadError=false", "tls close hadError=false"]);
+  });
+
+  it("a connect that fails after the TLSSocket was destroyed is neither emitted on it nor left unhandled", async () => {
+    await using refused = await refusedPort();
+    const log: string[] = [];
+    // No listeners on the wrapped socket: its refused connect used to surface
+    // as an uncaught exception here.
+    const raw = net.connect(refused.port, "127.0.0.1");
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    observe("tls", client, log);
+    client.destroy();
+
+    await closed(raw);
+
+    expect(log).toEqual(["tls close hadError=false"]);
+  });
+
+  it("a socket reconnected after the failure is no longer tied to the closed TLSSocket", async () => {
+    await using refused = await refusedPort();
+    // resume() so whatever the client sends is discarded and the accepted
+    // socket can reach 'end' -> autoDestroy, letting the disposal close() finish.
+    await using plain = net.createServer(socket => {
+      socket.resume();
+      socket.end("plain");
+    });
+    await once(plain.listen(0, "127.0.0.1"), "listening");
+    const log: string[] = [];
+    const raw = net.connect(refused.port, "127.0.0.1");
+    raw.on("error", () => {});
+    const client = tls.connect({ socket: raw, rejectUnauthorized: false });
+    observe("tls", client, log);
+    await closed(raw);
+
+    // The wrap's 'connect' listener used to stay armed and upgrade whatever
+    // the socket connected to next, so the plain reply below reached the
+    // TLSSocket as ERR_SSL_WRONG_VERSION_NUMBER.
+    raw.connect((plain.address() as AddressInfo).port, "127.0.0.1");
+    const received: Buffer[] = [];
+    raw.on("data", chunk => received.push(chunk));
+    await closed(raw);
+
+    expect(Buffer.concat(received).toString()).toBe("plain");
+    expect(log).toEqual(["tls error ECONNREFUSED", "tls close hadError=false"]);
+  });
+});

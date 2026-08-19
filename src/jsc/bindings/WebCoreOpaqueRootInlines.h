@@ -35,34 +35,4 @@ ALWAYS_INLINE void addWebCoreOpaqueRoot(Visitor& visitor, WebCoreOpaqueRoot root
     visitor.addOpaqueRoot(root.pointer());
 }
 
-template<typename Visitor, typename ImplType>
-ALWAYS_INLINE void addWebCoreOpaqueRoot(Visitor& visitor, ImplType* impl)
-{
-    addWebCoreOpaqueRoot(visitor, root(impl));
-}
-
-template<typename Visitor, typename ImplType>
-ALWAYS_INLINE void addWebCoreOpaqueRoot(Visitor& visitor, ImplType& impl)
-{
-    addWebCoreOpaqueRoot(visitor, root(&impl));
-}
-
-template<typename Visitor>
-ALWAYS_INLINE bool containsWebCoreOpaqueRoot(Visitor& visitor, WebCoreOpaqueRoot root)
-{
-    return visitor.containsOpaqueRoot(root.pointer());
-}
-
-template<typename Visitor, typename ImplType>
-ALWAYS_INLINE bool containsWebCoreOpaqueRoot(Visitor& visitor, ImplType& impl)
-{
-    return containsWebCoreOpaqueRoot(visitor, root(&impl));
-}
-
-template<typename Visitor, typename ImplType>
-ALWAYS_INLINE bool containsWebCoreOpaqueRoot(Visitor& visitor, ImplType* impl)
-{
-    return containsWebCoreOpaqueRoot(visitor, root(impl));
-}
-
 } // namespace WebCore

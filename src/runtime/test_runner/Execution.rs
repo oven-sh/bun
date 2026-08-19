@@ -137,12 +137,6 @@ impl ConcurrentGroup {
     pub(crate) fn sequences<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
         &execution.sequences[self.sequence_start..self.sequence_end]
     }
-
-
-    /// Immutable view of [`Self::sequences`] for read-only callers (e.g. debug dumps).
-    pub(crate) fn sequences_const<'a>(&self, execution: &'a Execution) -> &'a [ExecutionSequence] {
-        &execution.sequences[self.sequence_start..self.sequence_end]
-    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]

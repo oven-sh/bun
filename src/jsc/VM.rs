@@ -45,9 +45,6 @@ bun_opaque::opaque_ffi! {
 }
 
 impl VM {
-    // Note: `JSC__VM__create` was removed from bindings.cpp (Bun creates
-    // its VM via `Zig::GlobalObject::create` → `WebWorker__createVM` instead).
-
     // Note: not `impl Drop` — takes a `global_object` param and `VM` is an opaque FFI handle.
 
     pub fn enable_control_flow_profiler(&self) {
@@ -102,10 +99,8 @@ impl VM {
         JSC__VM__executionForbidden(self)
     }
 
-    // These four functions fire VM traps. To understand what that means, see VMTraps.h for a giant explainer.
-    // These may be called concurrently from another thread.
-
     /// Fires NeedTermination Trap. Thread safe. See jsc's "VMTraps.h" for explaination on traps.
+    /// May be called concurrently from another thread.
     pub(crate) fn notify_need_termination(&self) {
         JSC__VM__notifyNeedTermination(self)
     }
@@ -119,12 +114,6 @@ impl VM {
     /// until thrown.
     pub fn termination_exception(&self) -> JSValue {
         JSC__VM__terminationException(self)
-    }
-
-    /// Has termination been requested on this VM (worker.terminate(), or
-    /// teardown's forbidExecution)? JS thread.
-    pub fn has_termination_request(&self) -> bool {
-        crate::cpp::JSC__VM__hasTerminationRequest(self)
     }
 
     #[track_caller]

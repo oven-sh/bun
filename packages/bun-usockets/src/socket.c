@@ -743,13 +743,6 @@ int us_connecting_socket_get_dns_error(struct us_connecting_socket_t *c) {
     return c->error_is_dns ? c->error : 0;
 }
 
-struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *ip, int ip_length) {
-    if (s->ssl) {
-        return us_internal_ssl_on_open(s, is_client, ip, ip_length);
-    }
-    return us_dispatch_open(s, is_client, ip, ip_length);
-}
-
 unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
 {
     // This function is manual inlining + modification of

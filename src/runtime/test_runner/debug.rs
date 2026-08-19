@@ -77,7 +77,7 @@ pub(crate) fn dump_order(this: &Execution) -> JsResult<()> {
             group_index, group_value.sequence_start, group_value.sequence_end,
         ));
 
-        for (sequence_index, sequence) in group_value.sequences_const(this).iter().enumerate() {
+        for (sequence_index, sequence) in group_value.sequences(this).iter().enumerate() {
             let _guard = group::begin_msg(format_args!(
                 "{} Sequence ({}x)",
                 sequence_index, sequence.remaining_repeat_count,

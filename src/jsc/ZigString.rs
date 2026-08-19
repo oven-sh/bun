@@ -54,30 +54,6 @@ pub unsafe fn to_external_u16(ptr: *const u16, len: usize, global: &JSGlobalObje
 }
 
 /// # Safety
-/// `raw` must point to `len` bytes allocated by the default allocator.
-#[unsafe(no_mangle)]
-unsafe extern "C" fn ZigString__free(raw: *const u8, len: usize, allocator_: *mut c_void) {
-    let Some(allocator_) = core::ptr::NonNull::new(allocator_) else {
-        return;
-    };
-    // The buffer is always owned by the global allocator. Verified:
-    // no C++ call site passes a non-default allocator — the only reference to
-    // this symbol outside this file is the declaration in
-    // headers-handwritten.h (helpers.h frees via `ZigString__freeGlobal`).
-    let _ = allocator_;
-    // SAFETY: raw/len describe a valid slice allocated by the caller-provided allocator.
-    let s = unsafe { bun_core::ffi::slice(raw, len) };
-    let ptr = ZigString::init(s).slice().as_ptr();
-    if bun_alloc::USE_MIMALLOC {
-        // SAFETY: read-only heap-region probe.
-        debug_assert!(unsafe { bun_alloc::mimalloc::mi_is_in_heap_region(ptr.cast()) });
-    }
-    let _ = len;
-    // SAFETY: ptr was allocated by the default allocator.
-    unsafe { bun_alloc::default_alloc::free(ptr.cast_mut().cast::<c_void>()) };
-}
-
-/// # Safety
 /// `ptr` must point to `len` bytes allocated by the default allocator.
 #[unsafe(no_mangle)]
 unsafe extern "C" fn ZigString__freeGlobal(ptr: *const u8, len: usize) {

@@ -188,8 +188,6 @@ pub use bun_resolve_builtins::node_builtins::{
 // NODE_BUILTINS_MAP removed: dead — `is_node_builtin` (line 142) already delegates to
 // `bun_resolve_builtins::Alias::has`; no other reader. See node_builtins.rs header.
 
-pub use bun_options_types::BundlePackage;
-
 // Re-export of `bun_options_types::bundle_enums::ModuleType`.
 // Re-exported so `crate::options_impl::ModuleType` and `js_ast::parser::options::ModuleType`
 // (which also re-exports the BundleEnums def) are the *same* nominal type — kills the
@@ -2040,7 +2038,6 @@ pub enum PlaceholderField {
     Target,
 }
 
-// Shared body for PathTemplate::needs / PathTemplateConst::needs (D064).
 #[inline]
 fn path_template_needs(data: &[u8], field: PlaceholderField) -> bool {
     let needle: &[u8] = match field {
@@ -2081,7 +2078,6 @@ pub fn find_unterminated_placeholder(template: &[u8]) -> Option<(usize, &[u8])> 
     None
 }
 
-// Shared body for PathTemplate::print / PathTemplateConst::print (D064).
 // Writes raw path bytes via a byte-writer free fn (not `core::fmt::Display`).
 fn path_template_print<W: bun_io::Write>(
     writer: &mut W,
@@ -2390,45 +2386,6 @@ impl PlaceholderConst {
         hash: None,
         target: b"",
     };
-}
-
-impl PathTemplateConst {
-    /// Byte-writer form mirroring [`PathTemplate::print`].
-    /// Kept as an inherent method so callers writing
-    /// to `Vec<u8>` via `write!(.., "{}", template)` resolve through the
-    /// blanket [`core::fmt::Display`] impl below.
-    pub(crate) fn print<W: bun_io::Write>(
-        &self,
-        writer: &mut W,
-        sanitize_parent_dirs: bool,
-    ) -> bun_io::Result<()> {
-        path_template_print(
-            writer,
-            self.data,
-            self.placeholder.dir,
-            self.placeholder.name,
-            self.placeholder.ext,
-            self.placeholder.hash,
-            self.placeholder.target,
-            sanitize_parent_dirs,
-        )
-    }
-}
-
-impl core::fmt::Display for PathTemplateConst {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut buf = Vec::<u8>::new();
-        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
-        write!(f, "{}", bstr::BStr::new(&buf))
-    }
-}
-
-impl core::fmt::Display for PathTemplate {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let mut buf = Vec::<u8>::new();
-        self.print(&mut buf, true).map_err(|_| core::fmt::Error)?;
-        write!(f, "{}", bstr::BStr::new(&buf))
-    }
 }
 
 impl From<PathTemplateConst> for PathTemplate {

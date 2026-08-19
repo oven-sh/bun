@@ -78,11 +78,6 @@ unsafe extern "C" {
     // safe: `JSGlobalObject` is an opaque `UnsafeCell`-backed ZST handle;
     // `&mut *mut u8` is ABI-identical to a non-null `void**` out-param the
     // callee fills on success.
-    safe fn Bun__allocUint8ArrayForCopy(
-        global: &JSGlobalObject,
-        len: usize,
-        out: &mut *mut u8,
-    ) -> JSValue;
     safe fn Bun__allocArrayBufferForCopy(
         global: &JSGlobalObject,
         len: usize,
@@ -341,9 +336,6 @@ impl ArrayBuffer {
     ) -> JsResult<(JSValue, &'a mut [u8])> {
         let mut ptr_out: *mut u8 = ptr::null_mut();
         let buf = match KIND {
-            JSType::Uint8Array => crate::host_fn::from_js_host_call(global, || {
-                Bun__allocUint8ArrayForCopy(global, len as usize, &mut ptr_out)
-            })?,
             JSType::ArrayBuffer => crate::host_fn::from_js_host_call(global, || {
                 Bun__allocArrayBufferForCopy(global, len as usize, &mut ptr_out)
             })?,
@@ -931,11 +923,6 @@ impl MarkedArrayBuffer {
 
 // `no_mangle` dropped: 0 C++ refs (phase_c_exports.rs mention is a comment).
 pub use bun_alloc::c_thunks::mi_free_bytes as MarkedArrayBuffer_deallocator;
-
-// LAYERING: `BlobArrayBuffer_deallocator` releases a
-// `Blob::Store` ref. `Store` is a `bun_runtime` type, so the `#[no_mangle]`
-// export lives next to it at `bun_runtime::webcore::blob::Store` — `bun_jsc`
-// cannot own this symbol without a dep cycle. C++ links by name only.
 
 // ──────────────────────────────────────────────────────────────────────────
 // Free functions

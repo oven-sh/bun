@@ -1016,12 +1016,8 @@ impl WTFStringImplStruct {
         // `AtomicU32`; see doc comment above.
         unsafe { AtomicU32::from_ptr(self.m_ref_count.as_ptr()) }
     }
-    /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181).
-    ///
-    /// Cross-language LTO does not inline the `Bun__WTFStringImpl__ref` C++
-    /// shim into Rust callers (2151 out-of-line `callq` sites in the release
-    /// binary), so the one-instruction body is reimplemented here.
-    /// `Relaxed` matches WebKit's
+    /// Inline port of `WTF::StringImpl::ref()` (StringImpl.h:1181); `Relaxed`
+    /// matches WebKit's
     /// `m_refCount.fetch_add(s_refCountIncrement, std::memory_order_relaxed)`.
     #[inline]
     pub fn r#ref(&self) {
@@ -1121,9 +1117,6 @@ unsafe extern "C" {
     // `destroy` path crosses FFI. `*const` + `unsafe`: it frees the
     // allocation backing the pointer.
     pub fn Bun__WTFStringImpl__destroy(this: *const WTFStringImplStruct);
-    // Rust no longer calls these.
-    pub safe fn Bun__WTFStringImpl__ref(this: &WTFStringImplStruct);
-    pub fn Bun__WTFStringImpl__deref(this: *const WTFStringImplStruct);
     safe fn WTFStringImpl__isThreadSafe(this: &WTFStringImplStruct) -> bool;
     safe fn Bun__WTFStringImpl__ensureHash(this: &WTFStringImplStruct);
 }

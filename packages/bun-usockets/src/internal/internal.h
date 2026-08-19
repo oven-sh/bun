@@ -75,13 +75,20 @@ extern void __attribute__((__noreturn__)) Bun__panic(const char *message, size_t
  * allocations this library has no way to fail gracefully from. */
 extern void __attribute__((__noreturn__)) Bun__outOfMemory(void);
 
+/* The error code a loop-driven close carries (recv()'s error, SO_ERROR, or
+ * the fallback where those report nothing) is in LIBUS_ERR's numbering: errno
+ * on POSIX, a WSA code on Windows, which on_close maps (socket_body.rs). The
+ * fallback has to be in that numbering too: the CRT's ECONNRESET is a
+ * different number on Windows (108) and is misread as another errno there. */
 #ifdef _WIN32
 #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
 #define LIBUS_ERR WSAGetLastError()
+#define LIBUS_ECONNRESET WSAECONNRESET
 #else
 #include <errno.h>
 #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #define LIBUS_ERR errno
+#define LIBUS_ECONNRESET ECONNRESET
 #endif
 #include <stdbool.h>
 /* Poll type and what it polls for */

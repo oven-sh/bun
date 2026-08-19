@@ -899,7 +899,7 @@ void us_socket_resume(struct us_socket_t *s) {
         /* The dispatcher parked this socket while it was paused (loop.c) and the
          * kernel refused to take it back: nothing would ever deliver its tail,
          * end or close again, so fail it now like a failed first registration. */
-        int err = errno;
-        us_internal_socket_close_raw(s, err > 2 ? err : ECONNRESET, NULL);
+        int err = LIBUS_ERR;
+        us_internal_socket_close_raw(s, err > 2 ? err : LIBUS_ECONNRESET, NULL);
     }
 }

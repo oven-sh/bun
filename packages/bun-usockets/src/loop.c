@@ -542,11 +542,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                 if (error || eof) {
                     connect_error = us_socket_get_error((struct us_socket_t *) p);
                     if (connect_error == 0) {
-#ifdef _WIN32
-                        connect_error = WSAECONNRESET;
-#else
-                        connect_error = ECONNRESET;
-#endif
+                        connect_error = LIBUS_ECONNRESET;
                     }
                 }
                 us_internal_socket_after_open((struct us_socket_t *) p, connect_error);
@@ -985,9 +981,13 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                  * callers would either misread as an errno or drop entirely.
                  * Values 0..2 collide with the libus CloseCode enum that JS
                  * filters out as self-initiated; SO_ERROR can't be EPERM/ENOENT
-                 * for an established TCP socket, so clamp them defensively. */
+                 * for an established TCP socket, so clamp them defensively.
+                 * The fallback must be in LIBUS_ERR's numbering (internal.h):
+                 * Windows does not reliably latch a received RST in SO_ERROR
+                 * (see us_internal_libuv_peer_reset_probe), so it is taken
+                 * there, and the CRT's ECONNRESET reached JS as ESHUTDOWN. */
                 int socket_error = us_socket_get_error(s);
-                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : ECONNRESET, NULL);
+                s = us_internal_socket_close_raw(s, socket_error > 2 ? socket_error : LIBUS_ECONNRESET, NULL);
                 return;
             }
             break;

@@ -933,9 +933,8 @@ function wsEmitClose(server) {
 }
 
 function abortHandshake(socket, code, message, headers = {}) {
-  // node:http does not assign a ServerResponse to the socket of an 'upgrade'
-  // request, so the reply goes through the native response handle instead.
-  // Both are gone once the socket has been closed or destroyed.
+  // An 'upgrade' socket has no ServerResponse, so reply through the native
+  // response handle. A closed socket has neither.
   const response = socket._httpMessage || socket[kBunInternals];
   if (!response) {
     socket.destroy();
@@ -1525,9 +1524,7 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    //
     // Destroy the socket if the client has already sent a FIN packet.
-    //
     if (!socket.readable || !socket.writable) return socket.destroy();
 
     const server = socket.server[kBunInternals];

@@ -725,7 +725,6 @@ impl Expansion {
         me.out.buf.clear();
         me.out.bounds.clear();
         me.current_out.clear();
-        me.base.end_scope();
     }
 
     /// Take the expanded output (called by the parent after `child_done`).

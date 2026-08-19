@@ -69,7 +69,7 @@ commit if you want an identical baseline. Switching a dep between pinned and
 local moves its `-I` path, so the first build after the switch recompiles
 every TU that sees the dep's headers; after that, edits are picked up
 incrementally: `direct` deps through the compiler depfiles,
-`nested-cmake`/`cargo` deps by re-invoking their inner build every run. The
+`nested-cmake` deps by re-invoking their inner build every run. The
 build banner shows `local:<name>` while this is on. Don't edit
 `vendor/<name>/` in place instead — it is wiped whenever the pin or patches
 change. WebKit has its own switch (`--webkit=local`).
@@ -120,7 +120,6 @@ export const mydep: Dependency = {
   provides: cfg => ({
     libs: [],
     includes: ["include"],
-    // defines: ["MY_DEP_STATIC=1"],  // Preprocessor defines for bun's compile.
   }),
 
   // Optional: skip this dep on some platforms.
@@ -138,8 +137,9 @@ export const mydep: Dependency = {
   across the dep boundary into bun's call sites.
 - **`nested-cmake`**: Runs `cmake --fresh -B ...` then `cmake --build`.
   See `NestedCmakeBuild` in `../source.ts` for all fields.
-- **`cargo`**: Rust deps (currently lolhtml and rust-argon2). See `CargoBuild` in `../source.ts`.
-- **`none`**: Header-only or prebuilt. No build step; `.ref` stamp is the output.
+- **`none`**: Header-only, prebuilt, or a Rust crate the workspace cargo
+  build reads straight out of `vendor/` (lolhtml, rust-argon2). No build
+  step; `.ref` stamp is the output.
 
 ## Worked examples
 
@@ -151,7 +151,7 @@ export const mydep: Dependency = {
 - **boringssl.ts** — direct build with NASM assembly (win-x64) and a large gen/ manifest; `forbidUndefined` (with libuv.ts) keeps a dep that bun points at mimalloc from calling libc's allocator behind its back
 - **sqlite.ts** — direct build, in-tree source (lives in `src/`, not `vendor/`)
 - **libuv.ts** — `enabled: cfg => cfg.windows` for a platform-only dep
-- **lolhtml.ts** — cargo build with rustflags
+- **lolhtml.ts** — fetch-only `none` dep: a Rust crate the workspace cargo build compiles into `libbun_rust.a`
 - **webkit.ts** — `nested-cmake` (`sourceSubdir`, `preBuild`) and `prebuilt`
 
 ## How the three-step build works

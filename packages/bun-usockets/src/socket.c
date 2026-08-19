@@ -397,18 +397,6 @@ struct us_socket_t *us_socket_detach(struct us_socket_t *s) {
     return s;
 }
 
-struct us_socket_t *us_socket_pair(struct us_socket_group_t *group, unsigned char kind, int socket_ext_size, LIBUS_SOCKET_DESCRIPTOR *fds) {
-#if defined(LIBUS_USE_LIBUV) || defined(WIN32)
-    return 0;
-#else
-    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) {
-        return 0;
-    }
-
-    return us_socket_from_fd(group, kind, NULL, socket_ext_size, fds[0], 0, 0);
-#endif
-}
-
 /* Re-arm writable for a backpressured write without resuming the read side of
  * a paused socket: us_poll_change sets absolute flags, so including READABLE
  * unconditionally would silently undo us_socket_pause mid-backpressure and

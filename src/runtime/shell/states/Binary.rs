@@ -94,6 +94,5 @@ impl Binary {
         if let Some(exec) = exec {
             interp.deinit_node(exec);
         }
-        interp.as_binary_mut(this).base.end_scope();
     }
 }

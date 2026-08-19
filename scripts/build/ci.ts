@@ -37,9 +37,6 @@ export const isCI: boolean = utils.isCI;
 /** True if running under Buildkite specifically. */
 export const isBuildkite: boolean = utils.isBuildkite;
 
-/** True if running under GitHub Actions specifically. */
-export const isGithubAction: boolean = utils.isGithubAction;
-
 /**
  * Print machine/environment/repository info in collapsible groups.
  * Call at the top of a CI run so you can diagnose without SSH access.
@@ -51,9 +48,6 @@ export const printEnvironment: () => void = utils.printEnvironment;
  * If `fn` is given, runs it and closes the group (handles async).
  */
 export const startGroup: (title: string, fn?: () => unknown) => unknown = utils.startGroup;
-
-/** Close the most recent group opened with `startGroup`. */
-export const endGroup: () => void = utils.endGroup;
 
 interface SpawnAnnotatedOptions {
   /** Working directory for the subprocess. */

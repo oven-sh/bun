@@ -41,56 +41,21 @@ use bun_alloc::Arena;
 // not circularly depend on those modules.
 mod ext {
     use super::*;
-    use crate::dependencies;
 
     /// Inline of `Url::parse`.
     pub(super) fn url_parse(input: &mut Parser) -> Result<Url> {
         let start_pos = input.position();
-        let loc = input.current_source_location();
         let url = input.expect_url()?;
         // SAFETY: `url` borrows the parser source/arena which outlives the
         // `add_import_record` call (same lifetime erasure as `src_str`).
         let url: &'static [u8] = unsafe { &*std::ptr::from_ref::<[u8]>(url) };
         let import_record_idx =
             input.add_import_record(url, start_pos, bun_ast::ImportKind::Url)?;
-        Ok(Url {
-            import_record_idx,
-            loc: dependencies::Location::from_source_location(loc),
-        })
+        Ok(Url { import_record_idx })
     }
 
     /// Inline of `Url::to_css`.
     pub(super) fn url_to_css(this: &Url, dest: &mut Printer) -> PrintResult<()> {
-        let dep: Option<dependencies::UrlDependency> = if dest.dependencies.is_some() {
-            // `get_import_records` borrows &mut *dest, so capture
-            // arena/filename first.
-            let arena = dest.arena;
-            // SAFETY: filename borrows the printer arena/options which outlive `dest`.
-            let filename: &[u8] = unsafe { &*std::ptr::from_ref::<[u8]>(dest.filename()) };
-            let records = dest.get_import_records()?;
-            Some(dependencies::UrlDependency::new(
-                arena, this, filename, records,
-            ))
-        } else {
-            None
-        };
-
-        // If adding dependencies, always write url() with quotes so that the placeholder can
-        // be replaced without escaping more easily. Quotes may be removed later during minification.
-        if let Some(d) = dep {
-            dest.write_str("url(")?;
-            // SAFETY: placeholder borrows the printer arena.
-            let placeholder = unsafe { crate::arena_str(d.placeholder) };
-            dest.serialize_string(placeholder)?;
-            dest.write_char(b')')?;
-
-            if let Some(dependencies) = &mut dest.dependencies {
-                dependencies.push(crate::Dependency::Url(d));
-            }
-
-            return Ok(());
-        }
-
         let import_record = dest.import_record(this.import_record_idx)?;
         let is_internal = import_record.tag.is_internal();
         // `get_import_record_url` reborrows &mut *dest, so capture
@@ -299,7 +264,7 @@ pub struct TokenList {
 impl TokenList {
     // deinit(): body only freed owned `Vec` fields — handled by `Drop` on `Vec`.
 
-    pub fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         if !dest.minify && self.v.len() == 1 && self.v[0].is_whitespace() {
             return Ok(());
         }
@@ -312,37 +277,23 @@ impl TokenList {
                     has_whitespace = false;
                 }
                 TokenOrValue::UnresolvedColor(color) => {
-                    color.to_css(dest, is_custom_property)?;
+                    color.to_css(dest)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::Url(url) => {
-                    if dest.dependencies.is_some()
-                        && is_custom_property
-                        && !url.is_absolute(dest.get_import_records()?)
-                    {
-                        let pretty = std::ptr::from_ref::<[u8]>(
-                            dest.get_import_records()?[url.import_record_idx as usize]
-                                .path
-                                .pretty,
-                        );
-                        return dest.new_error(
-                            css::PrinterErrorKind::ambiguous_url_in_custom_property { url: pretty },
-                            Some(url.loc),
-                        );
-                    }
                     ext::url_to_css(url, dest)?;
                     has_whitespace = false;
                 }
                 TokenOrValue::Var(var) => {
-                    var.to_css(dest, is_custom_property)?;
+                    var.to_css(dest)?;
                     has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                 }
                 TokenOrValue::Env(env) => {
-                    env.to_css(dest, is_custom_property)?;
+                    env.to_css(dest)?;
                     has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                 }
                 TokenOrValue::Function(f) => {
-                    f.to_css(dest, is_custom_property)?;
+                    f.to_css(dest)?;
                     has_whitespace = self.write_whitespace_if_needed(i, dest)?;
                 }
                 TokenOrValue::Length(v) => {
@@ -882,7 +833,7 @@ impl UnresolvedColor {
 
     // deinit(): body only freed owned `TokenList` fields — handled by `Drop`.
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         fn conv(c: f32) -> i32 {
             css_values::color::clamp_unit_f32(c) as i32
         }
@@ -900,7 +851,7 @@ impl UnresolvedColor {
                     dest.delim(b',', false)?;
                     css_parser::to_css::integer(conv(*b), dest)?;
                     dest.delim(b',', false)?;
-                    alpha.to_css(dest, is_custom_property)?;
+                    alpha.to_css(dest)?;
                     dest.write_char(b')')?;
                     return Ok(());
                 }
@@ -912,7 +863,7 @@ impl UnresolvedColor {
                 dest.write_char(b' ')?;
                 css_parser::to_css::integer(conv(*b), dest)?;
                 dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css(dest)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::HSL { h, s, l, alpha } => {
@@ -927,7 +878,7 @@ impl UnresolvedColor {
                     dest.delim(b',', false)?;
                     Percentage { v: *l }.to_css(dest)?;
                     dest.delim(b',', false)?;
-                    alpha.to_css(dest, is_custom_property)?;
+                    alpha.to_css(dest)?;
                     dest.write_char(b')')?;
                     return Ok(());
                 }
@@ -939,26 +890,26 @@ impl UnresolvedColor {
                 dest.write_char(b' ')?;
                 Percentage { v: *l }.to_css(dest)?;
                 dest.delim(b'/', true)?;
-                alpha.to_css(dest, is_custom_property)?;
+                alpha.to_css(dest)?;
                 dest.write_char(b')')
             }
             UnresolvedColor::LightDark { light, dark } => {
                 if !dest.targets.is_compatible(css::compat::Feature::LightDark) {
                     dest.write_str("var(--buncss-light")?;
                     dest.delim(b',', false)?;
-                    light.to_css(dest, is_custom_property)?;
+                    light.to_css(dest)?;
                     dest.write_char(b')')?;
                     dest.whitespace()?;
                     dest.write_str("var(--buncss-dark")?;
                     dest.delim(b',', false)?;
-                    dark.to_css(dest, is_custom_property)?;
+                    dark.to_css(dest)?;
                     return dest.write_char(b')');
                 }
 
                 dest.write_str("light-dark(")?;
-                light.to_css(dest, is_custom_property)?;
+                light.to_css(dest)?;
                 dest.delim(b',', false)?;
-                dark.to_css(dest, is_custom_property)?;
+                dark.to_css(dest)?;
                 dest.write_char(b')')
             }
         }
@@ -1076,12 +1027,12 @@ impl Variable {
         Ok(Variable { name, fallback })
     }
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_str("var(")?;
         ext::dashed_ident_ref_to_css(&self.name, dest)?;
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
-            fallback.to_css(dest, is_custom_property)?;
+            fallback.to_css(dest)?;
         }
         dest.write_char(b')')
     }
@@ -1147,7 +1098,7 @@ impl EnvironmentVariable {
         })
     }
 
-    pub(crate) fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    pub(crate) fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         dest.write_str("env(")?;
         self.name.to_css(dest)?;
 
@@ -1158,7 +1109,7 @@ impl EnvironmentVariable {
 
         if let Some(fallback) = &self.fallback {
             dest.delim(b',', false)?;
-            fallback.to_css(dest, is_custom_property)?;
+            fallback.to_css(dest)?;
         }
 
         dest.write_char(b')')
@@ -1298,10 +1249,10 @@ pub struct Function {
 impl Function {
     // deinit(): body only freed owned `TokenList` field — handled by `Drop`.
 
-    fn to_css(&self, dest: &mut Printer, is_custom_property: bool) -> PrintResult<()> {
+    fn to_css(&self, dest: &mut Printer) -> PrintResult<()> {
         IdentFns::to_css(&self.name, dest)?;
         dest.write_char(b'(')?;
-        self.arguments.to_css(dest, is_custom_property)?;
+        self.arguments.to_css(dest)?;
         dest.write_char(b')')
     }
 
@@ -1376,10 +1327,9 @@ impl Clone for TokenOrValue {
             TokenOrValue::Token(t) => TokenOrValue::Token(t.clone()),
             TokenOrValue::Color(c) => TokenOrValue::Color(c.clone()),
             TokenOrValue::UnresolvedColor(c) => TokenOrValue::UnresolvedColor(c.clone()),
-            // `Url` has no `#[derive(Clone)]` but both fields are `Copy`.
+            // `Url` has no `#[derive(Clone)]` but its field is `Copy`.
             TokenOrValue::Url(u) => TokenOrValue::Url(Url {
                 import_record_idx: u.import_record_idx,
-                loc: u.loc,
             }),
             TokenOrValue::Var(v) => TokenOrValue::Var(v.clone()),
             TokenOrValue::Env(e) => TokenOrValue::Env(e.clone()),

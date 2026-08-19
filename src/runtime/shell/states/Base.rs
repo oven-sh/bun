@@ -25,10 +25,6 @@ impl Base {
         Self { parent, shell }
     }
 
-    /// No-op kept for call-site parity.
-    #[inline]
-    pub(crate) fn end_scope(&mut self) {}
-
     #[inline]
     pub fn shell(&self) -> &ShellExecEnv {
         // SAFETY: `shell` is set in `new()` from a live env owned either by

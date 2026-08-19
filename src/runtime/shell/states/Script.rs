@@ -124,16 +124,12 @@ impl Script {
                 me.base.shell = core::ptr::null_mut();
             }
         }
-        me.base.end_scope();
         // free_node is done by the caller (Interpreter::deinit_node).
     }
 
-    pub(crate) fn deinit_from_interpreter(interp: &Interpreter, this: NodeId) {
+    pub(crate) fn deinit_from_interpreter(_interp: &Interpreter, this: NodeId) {
         log!("Script {} deinitFromInterpreter", this);
-        let me = interp.as_script_mut(this);
         // io.deinit() — IO Drop handles it.
-        // Let the interpreter deinitialize the root shell state.
-        me.base.end_scope();
     }
 
     // ── AST helpers ────────────────────────────────────────────────────────

@@ -7,8 +7,10 @@
  * The probe must therefore pin the proxy to the channel with RUSTUP_TOOLCHAIN.
  *
  * The rustc here is a shell script that reports the RUSTUP_TOOLCHAIN it was
- * given as its sysroot and as its host triple, so both probes are covered;
- * PATH is emptied so no real rustup runs a pre-flight.
+ * given as its sysroot and as its host triple, and the fixture only contains
+ * a rust-lld under the names spelled with the pinned channel, so rust-lld is
+ * found only when both probes carried the pin; PATH is emptied so no real
+ * rustup runs a pre-flight.
  */
 import { afterEach, expect, test } from "bun:test";
 import { isWindows, tempDir } from "harness";
@@ -29,26 +31,26 @@ afterEach(() => {
 });
 
 test.skipIf(isWindows)("the configure-time rustc probe pins the rustup proxy to the pinned channel", () => {
+  const rustLld = join(`sysroot-for:${channel}`, "lib", "rustlib", `host-for:${channel}`, "bin", "gcc-ld", "ld.lld");
   using dir = tempDir("build-rustc-probe", {
-    "bin/rustc": [
-      "#!/bin/sh",
-      'case "$1" in',
-      '  --print) printf "%s\\n" "sysroot-for:${RUSTUP_TOOLCHAIN:-unset}" ;;',
-      '  -vV) printf "host: host-for:%s\\nLLVM version: 22.1.4\\n" "${RUSTUP_TOOLCHAIN:-unset}" ;;',
-      "esac",
-      "",
-    ].join("\n"),
+    "bin/rustc": ({ root }) =>
+      [
+        "#!/bin/sh",
+        'case "$1" in',
+        `  --print) printf "%s\\n" "${root}/sysroot-for:\${RUSTUP_TOOLCHAIN:-unset}" ;;`,
+        '  -vV) printf "host: host-for:%s\\nLLVM version: 22.1.4\\n" "${RUSTUP_TOOLCHAIN:-unset}" ;;',
+        "esac",
+        "",
+      ].join("\n"),
+    [rustLld]: "",
   });
   chmodSync(join(String(dir), "bin", "rustc"), 0o755);
+  chmodSync(join(String(dir), rustLld), 0o755);
   process.env.CARGO_HOME = String(dir);
   process.env.PATH = join(String(dir), "bin");
 
   expect(findRustLld("linux")).toEqual({
-    rustSysroot: `sysroot-for:${channel}`,
-    // Both probes (sysroot and -vV) must carry the pin.
-    rustHostTriple: `host-for:${channel}`,
     rustLlvmVersion: "22.1.4",
-    // The fake sysroot has no lib/rustlib/<host>/bin/gcc-ld/ld.lld.
-    rustLld: undefined,
+    rustLld: join(String(dir), rustLld),
   });
 });

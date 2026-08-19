@@ -182,18 +182,12 @@ pub mod pdeathsig {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Exit-time spawn gate. The no-orphans exit callback
-// (`bun_io::ParentDeathWatchdog::on_process_exit`) closes it before it lists
-// and kills our descendants. That walk lists our children once, so it is only
-// complete if no other thread of this process (a Worker's `Bun.spawn`, a
-// threadpool `git`) creates a child after the listing. Every spawn the runtime
-// can issue from such a thread goes through `posix_spawn::spawn_z`, which
-// holds an `InFlight` token from before the fork until the child exists. Once
-// the gate is closed, `spawn_z` fails with ECANCELED instead. The one spawn
-// path outside `spawn_z` is `bun_core::spawn_sync_inherit` (tier-0, so it
-// cannot see this gate). Its callers are CLI commands and the crash handler.
-// They block until the child exists, and none of them runs on a thread that
-// can race this exit callback.
+// Exit-time spawn gate, closed by the no-orphans exit callback before it
+// lists and kills our descendants, so a thread that is still running (a
+// Worker) cannot add a child after the listing. `posix_spawn::spawn_z` holds
+// an `InFlight` token across the fork and fails with ECANCELED once closed.
+// (`bun_core::spawn_sync_inherit` bypasses it: tier-0, synchronous CLI and
+// crash-handler use only.)
 // ──────────────────────────────────────────────────────────────────────────
 #[cfg(unix)]
 pub mod spawn_gate {
@@ -203,7 +197,6 @@ pub mod spawn_gate {
     static CLOSED: AtomicBool = AtomicBool::new(false);
     static IN_FLIGHT: AtomicUsize = AtomicUsize::new(0);
 
-    /// A spawn that passed the gate and whose child may not exist yet.
     pub(crate) struct InFlight(());
 
     impl Drop for InFlight {
@@ -212,11 +205,8 @@ pub mod spawn_gate {
         }
     }
 
-    /// `None` once the gate is closed: the caller must not create a child.
-    ///
-    /// The count is raised before the flag is read and `close()` raises the
-    /// flag before it reads the count (all SeqCst), so a spawn either observes
-    /// the closed gate or is counted by the time `close()` waits.
+    /// `None` once closed. Count first, then read the flag (SeqCst, mirrored
+    /// by `close`), so a spawn is either refused or seen by `close`'s wait.
     pub(crate) fn enter() -> Option<InFlight> {
         IN_FLIGHT.fetch_add(1, Ordering::SeqCst);
         if CLOSED.load(Ordering::SeqCst) {
@@ -226,12 +216,8 @@ pub mod spawn_gate {
         Some(InFlight(()))
     }
 
-    /// Fail every spawn from now on, then wait for the spawns already past the
-    /// gate to return, so the children they create are visible to the caller.
-    /// Process exit only: the gate never reopens. A spawn in flight is a
-    /// thread suspended in vfork until its child execs, so the wait is
-    /// normally microseconds; the bound keeps a stuck exec from holding up
-    /// exit.
+    /// Refuse further spawns, then wait for the in-flight ones to return.
+    /// Never reopens. Bounded so a child stuck before exec cannot hold up exit.
     pub fn close() {
         CLOSED.store(true, Ordering::SeqCst);
         let deadline = Instant::now() + Duration::from_secs(1);

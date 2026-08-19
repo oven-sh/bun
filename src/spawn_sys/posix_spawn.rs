@@ -618,8 +618,7 @@ pub mod posix_spawn {
         argv: *const *const c_char,
         envp: *const *const c_char,
     ) -> sys::Result<pid_t> {
-        // Dropped when this returns, i.e. once the child exists (or the spawn
-        // failed), which is what `spawn_gate::close()` waits for.
+        // Held until this returns, i.e. until the child exists.
         let Some(_in_flight) = crate::spawn_gate::enter() else {
             return sys::Result::Err(
                 sys::Error::from_code(sys::E::ECANCELED, SYSCALL_POSIX_SPAWN)

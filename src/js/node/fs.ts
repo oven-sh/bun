@@ -1,6 +1,5 @@
 // Hardcoded module "node:fs"
 import type { Dirent as DirentType, PathLike, Stats as StatsType } from "fs";
-const promises = require("node:fs/promises");
 const types = require("node:util/types");
 const {
   validateFunction,
@@ -23,7 +22,7 @@ function lazyGlob() {
   return (_lazyGlob ??= require("internal/fs/glob"));
 }
 
-const { guardCallback } = require("internal/shared");
+const { guardCallback, kCustomPromisifyArgsSymbol } = require("internal/shared");
 
 // guardCallback reroutes a throw inside the user callback to the
 // uncaughtException path instead of rejecting the internal promise chain.
@@ -93,7 +92,7 @@ var access = function access(path, mode, callback) {
 
     callback = ensureCallback(callback);
     // route through promises.rm for the JS-side ERR_FS_EISDIR validation
-    promises.rm(path, options).then(nullcallback(callback), callback);
+    require("node:fs/promises").rm(path, options).then(nullcallback(callback), callback);
   },
   rmdir = function rmdir(path, options, callback) {
     if ($isCallable(options)) {
@@ -637,7 +636,6 @@ var access = function access(path, mode, callback) {
     );
   };
 
-const { defineCustomPromisifyArgs } = require("internal/promisify");
 var kCustomPromisifiedSymbol = Symbol.for("nodejs.util.promisify.custom");
 const existsCb = exists;
 exists[kCustomPromisifiedSymbol] = {
@@ -645,6 +643,9 @@ exists[kCustomPromisifiedSymbol] = {
     return new Promise(resolve => existsCb(path, resolve));
   },
 }.exists;
+function defineCustomPromisifyArgs(target, args) {
+  Object.defineProperty(target, kCustomPromisifyArgsSymbol, { value: args, enumerable: false });
+}
 defineCustomPromisifyArgs(read, ["bytesRead", "buffer"]);
 defineCustomPromisifyArgs(readv, ["bytesRead", "buffers"]);
 defineCustomPromisifyArgs(write, ["bytesWritten", "buffer"]);
@@ -1003,7 +1004,7 @@ function cp(src, dest, options, callback) {
   dest = getValidatedFsPath(dest, "dest");
   callback = guardCallback(callback);
 
-  promises.cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
+  require("node:fs/promises").cp(src, dest, options).then(callOnceWithNull.bind(null, callback), callback);
 }
 
 function _toUnixTimestamp(time: any, name = "time") {
@@ -1432,7 +1433,9 @@ var exports = {
       configurable: true,
     });
   },
-  promises,
+  get promises() {
+    return require("node:fs/promises");
+  },
 };
 export default exports;
 
@@ -1491,6 +1494,7 @@ setName(mkdir, "mkdir");
 setName(mkdirSync, "mkdirSync");
 setName(mkdtemp, "mkdtemp");
 setName(mkdtempSync, "mkdtempSync");
+setName(mkdtempDisposableSync, "mkdtempDisposableSync");
 setName(open, "open");
 setName(openSync, "openSync");
 setName(read, "read");

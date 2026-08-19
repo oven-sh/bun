@@ -6485,3 +6485,20 @@ describe("fs.Utf8Stream", () => {
     await done;
   });
 });
+
+describe("module init", () => {
+  it("fs.promises is a lazy getter that resolves to node:fs/promises", () => {
+    const desc = Object.getOwnPropertyDescriptor(fs, "promises")!;
+    expect(typeof desc.get).toBe("function");
+    expect(desc.enumerable).toBe(true);
+    expect(fs.promises).toBe(_promises);
+  });
+
+  it("every exported function keeps its own name", () => {
+    // FileReadStream/FileWriteStream are aliases of ReadStream/WriteStream, as in Node.
+    const mismatched = Object.keys(fs).filter(
+      k => !k.startsWith("File") && typeof fs[k] === "function" && fs[k].name !== k,
+    );
+    expect(mismatched).toStrictEqual([]);
+  });
+});

@@ -1703,18 +1703,6 @@ BUN_DEFINE_HOST_FUNCTION(JSMock__jsMockFn, (JSC::JSGlobalObject * lexicalGlobalO
 
 namespace Bun {
 
-// Write `value` onto `target` at `name` as a plain property. putDirect
-// asserts `!parseIndex(propertyName)`, so canonical index strings ("0", "1")
-// must go through putDirectIndex — same pattern spyOn uses above.
-static ALWAYS_INLINE void putDirectMaybeIndex(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSObject* target, const JSC::PropertyName& name, JSC::JSValue value)
-{
-    if (auto index = JSC::parseIndex(name)) {
-        target->putDirectIndex(globalObject, *index, value, 0, JSC::PutDirectIndexLikePutDirect);
-    } else {
-        target->putDirect(vm, name, value, 0);
-    }
-}
-
 JSC::JSObject* createAutoMockedFunction(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSValue originalValue)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
@@ -1860,7 +1848,9 @@ static JSC::JSValue autoMockValue(JSC::JSGlobalObject* lexicalGlobalObject, JSC:
         JSValue mockedProp = autoMockValue(lexicalGlobalObject, propValue, visited, depth + 1);
         if (scope.exception()) [[unlikely]]
             return;
-        putDirectMaybeIndex(vm, lexicalGlobalObject, target, name, mockedProp);
+        // putDirectMayBeIndex routes canonical index strings ("0", "1")
+        // through putDirectIndex; plain putDirect asserts on them.
+        target->putDirectMayBeIndex(lexicalGlobalObject, name, mockedProp);
     };
 
     // Functions (including classes) become mock.fn() returning undefined.

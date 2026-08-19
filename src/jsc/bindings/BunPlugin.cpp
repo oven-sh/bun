@@ -764,21 +764,29 @@ extern "C" JSC_DEFINE_HOST_FUNCTION_WITH_ATTRIBUTES(JSMock__jsModuleMock, __attr
             && realExports.getObject()->type() == JSC::ModuleNamespaceObjectType;
 
         JSC::JSObject* mockObject = mockValue.isObject() ? mockValue.getObject() : nullptr;
-        // The walker mock already matches what require() of the real module
-        // returned, so CJS consumers must not unwrap `{ __esModule, default }`
-        // out of it; only the primitive carrier below needs that interop.
-        suppressESModuleInterop = mockObject != nullptr;
-        if (!mockObject) {
-            // Primitive exports need an object carrier; `{ default, __esModule }`
-            // is the shape Bun's interop unwraps back to the raw value for
-            // both require() and default imports.
-            mockObject = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
+        // Exotic exports (Array, Date, Map, ...) pass through the walker
+        // unchanged, so `mockObject` would alias the real user-owned object;
+        // writing `default` onto it would be an observable mutation.
+        bool walkerAliasesRealExports = mockObject
+            && realExports && realExports.isObject()
+            && mockObject == realExports.getObject();
+        // A freshly built walker mock already matches what require() of the
+        // real module returned, so CJS consumers must not unwrap
+        // `{ __esModule, default }` out of it; the carriers below need the
+        // interop to hand the raw value back.
+        suppressESModuleInterop = mockObject != nullptr && !walkerAliasesRealExports;
+        if (!mockObject || walkerAliasesRealExports) {
+            // Primitive and exotic exports need an object carrier;
+            // `{ default, __esModule }` is the shape Bun's interop unwraps
+            // back to the raw value for both require() and default imports.
+            JSC::JSObject* carrier = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype());
             if (scope.exception()) [[unlikely]] {
                 restoreStash();
                 return {};
             }
-            mockObject->putDirect(vm, vm.propertyNames->defaultKeyword, mockValue, 0);
-            mockObject->putDirect(vm, vm.propertyNames->__esModule, JSC::jsBoolean(true), 0);
+            carrier->putDirect(vm, vm.propertyNames->defaultKeyword, mockValue, 0);
+            carrier->putDirect(vm, vm.propertyNames->__esModule, JSC::jsBoolean(true), 0);
+            mockObject = carrier;
         } else if (!realExportsWasNamespace) {
             // CJS/builtin sources have no `default`, so `import pkg from`
             // would fail to link. Mirror require-to-import interop: default

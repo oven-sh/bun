@@ -571,13 +571,9 @@ static void writeAutoHeaders(uWS::HttpResponse<isSSL>* response, uint32_t autoHe
 }
 
 // Returns false when a JS exception is pending (header conversion or
-// validation threw). The exception check happens here, inside the owning
-// scope; callers on the Rust side branch on the return value instead of
-// probing VM exception state through another scope. TopExceptionScope rather
-// than ThrowScope because this returns to Rust, not to JS: a ThrowScope
-// destructor simulates a throw for its caller under validateExceptionChecks,
-// and the scope-less Rust caller has nothing to satisfy it with (same reason
-// as NAPI_PREAMBLE in napi.cpp).
+// validation threw); the Rust callers branch on that. TopExceptionScope, not
+// ThrowScope: this returns to scope-less Rust, which could not acknowledge the
+// simulated throw a ThrowScope destructor leaves behind (as in NAPI_PREAMBLE).
 template<bool isSSL>
 static bool NodeHTTPServer__writeHead(
     JSC::JSGlobalObject* globalObject,

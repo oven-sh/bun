@@ -230,9 +230,8 @@ unsafe extern "C" {
     // `&JSGlobalObject` encodes non-null/aligned; `status_message` is the
     // ptr/len of a Rust `&[u8]` and `response` is a live `uws::Response<SSL>*`
     // from the matched `AnyResponse` arm. Module-private with one call site.
-    // Returns false when the C++ header writer left a JS exception pending.
-    // It checks that inside its own (Top)ExceptionScope and leaves nothing
-    // for this scope-less caller to acknowledge.
+    // Returns false when the C++ header writer left a JS exception pending
+    // (checked inside its own scope; nothing to acknowledge here).
     safe fn NodeHTTPServer__writeHead_http(
         global_object: &JSGlobalObject,
         status_message: *const u8,
@@ -1054,9 +1053,6 @@ impl NodeHTTPResponse {
             }
         }
 
-        // Propagate the failure that traveled through the return value;
-        // otherwise writeHeadAndEnd's end phase would run with an exception
-        // pending.
         if !wrote_head_ok {
             return Err(jsc::JsError::Thrown);
         }

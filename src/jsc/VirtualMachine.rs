@@ -4803,7 +4803,7 @@ impl VirtualMachine {
         writer: &mut bun_core::io::Writer,
         allow_side_effects: bool,
     ) {
-        let mut formatter = crate::console_object::Formatter::new(self.global());
+        let mut formatter = crate::console_object::Formatter::for_error_handler(self.global());
         let colors = bun_core::Output::enable_ansi_colors_stderr();
         self.print_errorlike_object(
             exception.value(),

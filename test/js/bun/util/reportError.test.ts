@@ -1,6 +1,6 @@
 import { spawnSync } from "bun";
-import { expect, test } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { describe, expect, test } from "bun:test";
+import { bunEnv, bunExe, normalizeBunSnapshot, tempDir } from "harness";
 import { join } from "path";
 
 test("reportError", () => {
@@ -121,4 +121,135 @@ test("native error printer handles lone surrogates in message and stack frame na
   // Printer must not have crashed: normal uncaught-error exit (1), no signal.
   expect(proc.signalCode).toBeNull();
   expect(exitCode).toBe(1);
+});
+
+// The error printer receives these values through `run_error_handler`. A value
+// that is not an `Error` is printed whole, so it follows the `console.log`
+// depth (2 by default, `--console-depth`, bunfig `console.depth`) instead of
+// the formatter's default depth of 8.
+describe("an uncaught value that is not an Error is printed at the console depth", () => {
+  // Four object levels. Depth 2 prints `a` and `b` and elides `c`.
+  const value = "{ a: { b: { c: { d: 1 } } } }";
+
+  async function run(args: string[], files: Record<string, string> = {}) {
+    using dir = tempDir("uncaught-depth", files);
+    await using proc = Bun.spawn({
+      cmd: [bunExe(), ...args],
+      env: bunEnv,
+      cwd: String(dir),
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const [stderr, exitCode] = await Promise.all([proc.stderr.text(), proc.exited]);
+    return { stderr: normalizeBunSnapshot(stderr, String(dir)), exitCode };
+  }
+
+  const atDepth2 = `error
+{
+  a: {
+    b: {
+      c: [Object ...],
+    },
+  },
+}
+
+Bun v<bun-version>`;
+
+  const atDepth3 = `error
+{
+  a: {
+    b: {
+      c: {
+        d: 1,
+      },
+    },
+  },
+}
+
+Bun v<bun-version>`;
+
+  test.concurrent.each([
+    ["reportError", `reportError(${value})`],
+    ["unhandled rejection", `Promise.reject(${value})`],
+    ["uncaught exception", `throw ${value}`],
+    ["member of an uncaught AggregateError", `reportError(new AggregateError([${value}]))`],
+  ])("%s", async (_, code) => {
+    const { stderr, exitCode } = await run(["-e", code]);
+    expect(stderr).toBe(atDepth2);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("--console-depth 1 prints one level", async () => {
+    const { stderr, exitCode } = await run(["--console-depth", "1", "-e", `reportError(${value})`]);
+    expect(stderr).toBe(`error
+{
+  a: {
+    b: [Object ...],
+  },
+}
+
+Bun v<bun-version>`);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("--console-depth 3 prints three levels", async () => {
+    const { stderr, exitCode } = await run(["--console-depth", "3", "-e", `reportError(${value})`]);
+    expect(stderr).toBe(atDepth3);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent("bunfig console.depth = 3 prints three levels", async () => {
+    const { stderr, exitCode } = await run(["-e", `reportError(${value})`], {
+      "bunfig.toml": "[console]\ndepth = 3\n",
+    });
+    expect(stderr).toBe(atDepth3);
+    expect(exitCode).toBe(1);
+  });
+
+  test.concurrent(
+    "bun test: a test that rejects with the value, and an unhandled rejection during a test",
+    async () => {
+      const { stderr, exitCode } = await run(["test", "./depth.test.ts"], {
+        "depth.test.ts": `
+        import { test } from "bun:test";
+        const value = ${value};
+        test("rejects with the value", async () => {
+          throw value;
+        });
+        test("unhandled rejection while the test runs", async () => {
+          Promise.reject(value);
+          // The rejection is reported at the microtask checkpoint after the
+          // callback returns, before this timer fires.
+          await new Promise(resolve => setTimeout(resolve, 0));
+        });
+      `,
+      });
+      expect(stderr).toMatchInlineSnapshot(`
+"depth.test.ts:
+error
+{
+  a: {
+    b: {
+      c: [Object ...],
+    },
+  },
+}
+(fail) rejects with the value
+error
+{
+  a: {
+    b: {
+      c: [Object ...],
+    },
+  },
+}
+(fail) unhandled rejection while the test runs
+
+ 0 pass
+ 2 fail
+Ran 2 tests across 1 file."
+`);
+      expect(exitCode).toBe(1);
+    },
+  );
 });

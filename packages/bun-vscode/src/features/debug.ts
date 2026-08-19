@@ -73,30 +73,43 @@ export function registerDebugger(context: vscode.ExtensionContext, factory?: vsc
 }
 
 function runFileCommand(resource?: vscode.Uri): void {
-  const path = getActivePath(resource);
-  if (path) {
-    const folder = getWorkspaceFolder(resource);
-    vscode.debug.startDebugging(folder, {
-      ...RUN_CONFIGURATION,
-      noDebug: true,
-      program: path,
-      runtime: getRuntime(folder ?? resource),
-    });
-  }
+  launchFile(RUN_CONFIGURATION, resource);
 }
 
-export function debugCommand(command: string, folder?: vscode.WorkspaceFolder) {
-  folder ??= getWorkspaceFolder();
+function debugFileCommand(resource?: vscode.Uri): void {
+  launchFile(DEBUG_CONFIGURATION, resource);
+}
+
+// Launches `resource`, or the file in the active editor. The configurations
+// above use `${workspaceFolder}`, which VS Code resolves against the folder
+// passed to `startDebugging`. In a multi-root or empty window a file that no
+// folder owns leaves that variable unresolvable, so the cwd is set here: the
+// folder that owns the file, else the file's own directory (what js-debug does
+// for a file opened without a folder).
+function launchFile(configuration: vscode.DebugConfiguration, resource?: vscode.Uri): void {
+  const uri = resource ?? vscode.window.activeTextEditor?.document.uri;
+  if (!uri) return;
+
+  const folder = vscode.workspace.getWorkspaceFolder(uri);
+  const program = uri.fsPath;
+  vscode.debug.startDebugging(folder, {
+    ...configuration,
+    program,
+    cwd: folder?.uri.fsPath ?? path.dirname(program),
+    runtime: getRuntime(folder ?? uri),
+  });
+}
+
+// `command` is a package.json script, not a path, so the folder comes from the
+// editor that shows the package.json.
+export function debugCommand(command: string): void {
+  const packageJson = vscode.window.activeTextEditor?.document.uri;
+  const folder = packageJson && vscode.workspace.getWorkspaceFolder(packageJson);
   vscode.debug.startDebugging(folder, {
     ...DEBUG_CONFIGURATION,
     program: command,
     runtime: getRuntime(folder),
   });
-}
-
-function debugFileCommand(resource?: vscode.Uri) {
-  const path = getActivePath(resource);
-  if (path) debugCommand(path, getWorkspaceFolder(resource));
 }
 
 async function injectDebugTerminal(terminal: vscode.Terminal): Promise<void> {
@@ -481,23 +494,6 @@ class TerminalDebugSession extends FileDebugSession {
       iconPath: new vscode.ThemeIcon("debug-console"),
     });
   }
-}
-
-function getActivePath(target?: vscode.Uri): string | undefined {
-  return target?.fsPath ?? vscode.window.activeTextEditor?.document?.uri.fsPath;
-}
-
-// In a multi-root workspace, `startDebugging(undefined, ...)` cannot resolve
-// `${workspaceFolder}` and VS Code shows an error instead of launching.
-// Resolve the folder that owns the target file, with a fallback to the
-// active editor's folder, so the run and debug commands stay consistent.
-function getWorkspaceFolder(resource?: vscode.Uri): vscode.WorkspaceFolder | undefined {
-  if (resource) {
-    const folder = vscode.workspace.getWorkspaceFolder(resource);
-    if (folder) return folder;
-  }
-  const uri = vscode.window.activeTextEditor?.document?.uri;
-  return uri ? vscode.workspace.getWorkspaceFolder(uri) : undefined;
 }
 
 function getRuntime(scope?: vscode.ConfigurationScope): string {

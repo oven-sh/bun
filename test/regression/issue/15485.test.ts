@@ -1,15 +1,17 @@
-// https://github.com/oven-sh/bun/issues/15485 (#39612 is a duplicate)
-// In a multi-root workspace, "Bun: Run File" and "Bun: Debug File" called
-// vscode.debug.startDebugging(undefined, ...) with a config that uses
-// ${workspaceFolder}. VS Code cannot resolve that variable without a folder
-// scope and fails with "Variable workspaceFolder can not be resolved in a
-// multi folder workspace". The extension must pass the workspace folder that
-// owns the target file, and it must read bun.runtime from that folder.
+// https://github.com/oven-sh/bun/issues/15485 (#39612 is a duplicate, #11925 is the same launch in a window without a folder)
+// "Bun: Run File" and "Bun: Debug File" called vscode.debug.startDebugging(undefined, ...)
+// with a config whose cwd is "${workspaceFolder}". VS Code resolves that variable only
+// against the folder passed to startDebugging, or against the single folder of a
+// single-root window. So the commands failed in a multi-root window ("Variable
+// workspaceFolder can not be resolved in a multi folder workspace") and in a window
+// without a folder ("Please open a folder"). The commands must pass the folder that owns
+// the file, read bun.runtime from it, and set a concrete cwd so that a file that no
+// folder owns still launches.
 // This test lives under test/ (not packages/bun-vscode) because CI's test
 // runner only discovers files in the test/ directory. It registers its own
 // vscode module mock: the shared one in vscode.mock.ts targets the test
 // controller and lacks command registration and startDebugging capture.
-import { beforeEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import path from "node:path";
 import {
   MockUri,
@@ -94,12 +96,15 @@ mock.module("vscode", () => ({
   TaskPanelKind: { Shared: 1, Dedicated: 2, New: 3 },
 }));
 
+// The unfixed debug.ts also imports OutputEvent. The stub keeps that version
+// loadable, so that this test fails on its assertions against it, not at import.
 mock.module("@vscode/debugadapter", () => ({
   DebugSession: class {
     sendEvent() {}
     sendResponse() {}
     sendRequest() {}
   },
+  OutputEvent: class {},
 }));
 
 // Stub the adapter package so the test does not pull in its "ws" dependency.
@@ -120,13 +125,22 @@ const runFile = registeredCommands.get("extension.bun.runFile")!;
 const debugFile = registeredCommands.get("extension.bun.debugFile")!;
 
 // One entry per startDebugging call: the folder argument plus the parts of
-// the launch config that depend on the folder.
+// the launch config that depend on the folder or on the command.
 function launches() {
   return startDebugging.mock.calls.map(([folder, config]: any[]) => ({
     folder,
+    noDebug: config.noDebug,
     program: config.program,
+    cwd: config.cwd,
     runtime: config.runtime,
   }));
+}
+
+// VS Code cannot resolve a "${...}" variable in a launch without a folder.
+function unresolvedVariables() {
+  return startDebugging.mock.calls.flatMap(([, config]: any[]) =>
+    Object.values(config).filter(value => typeof value === "string" && value.includes("${")),
+  );
 }
 
 beforeEach(() => {
@@ -134,68 +148,103 @@ beforeEach(() => {
   mockWindow.activeTextEditor = undefined;
 });
 
-describe("multi-root workspace folder resolution", () => {
+describe("multi-root window", () => {
   test("registerDebugger registered the run and debug commands", () => {
     expect(runFile).toBeInstanceOf(Function);
     expect(debugFile).toBeInstanceOf(Function);
   });
 
-  test("Bun: Run File passes the folder that owns the file and reads bun.runtime from it", () => {
+  test("Bun: Run File launches in the folder that owns the file and reads bun.runtime from it", () => {
     runFile(MockUri.file("/repo/lib/src/index.ts"));
     runFile(MockUri.file("/repo/app/main.ts"));
 
     expect(launches()).toEqual([
-      { folder: folderLib, program: "/repo/lib/src/index.ts", runtime: libRuntime },
-      { folder: folderApp, program: "/repo/app/main.ts", runtime: "bun" },
+      { folder: folderLib, noDebug: true, program: "/repo/lib/src/index.ts", cwd: "/repo/lib", runtime: libRuntime },
+      { folder: folderApp, noDebug: true, program: "/repo/app/main.ts", cwd: "/repo/app", runtime: "bun" },
     ]);
   });
 
-  test("Bun: Debug File passes the folder that owns the file and reads bun.runtime from it", () => {
+  test("Bun: Debug File launches in the folder that owns the file and reads bun.runtime from it", () => {
     debugFile(MockUri.file("/repo/lib/src/index.ts"));
     debugFile(MockUri.file("/repo/app/main.ts"));
 
     expect(launches()).toEqual([
-      { folder: folderLib, program: "/repo/lib/src/index.ts", runtime: libRuntime },
-      { folder: folderApp, program: "/repo/app/main.ts", runtime: "bun" },
+      {
+        folder: folderLib,
+        noDebug: undefined,
+        program: "/repo/lib/src/index.ts",
+        cwd: "/repo/lib",
+        runtime: libRuntime,
+      },
+      { folder: folderApp, noDebug: undefined, program: "/repo/app/main.ts", cwd: "/repo/app", runtime: "bun" },
     ]);
   });
 
-  test("without a resource (command palette, keybinding) both commands use the active editor's folder", () => {
+  test("without a resource (command palette, keybinding) both commands launch the file in the active editor", () => {
     mockWindow.activeTextEditor = { document: { uri: MockUri.file("/repo/lib/server.ts") } };
     runFile();
     debugFile();
 
     expect(launches()).toEqual([
-      { folder: folderLib, program: "/repo/lib/server.ts", runtime: libRuntime },
-      { folder: folderLib, program: "/repo/lib/server.ts", runtime: libRuntime },
+      { folder: folderLib, noDebug: true, program: "/repo/lib/server.ts", cwd: "/repo/lib", runtime: libRuntime },
+      { folder: folderLib, noDebug: undefined, program: "/repo/lib/server.ts", cwd: "/repo/lib", runtime: libRuntime },
     ]);
   });
 
-  test("debugCommand for a package.json script uses the folder of the active editor", () => {
+  test("without a resource and without an active editor nothing launches", () => {
+    runFile();
+    debugFile();
+
+    expect(launches()).toEqual([]);
+  });
+
+  test("debugCommand for a package.json script uses the folder of the package.json in the active editor", () => {
     mockWindow.activeTextEditor = { document: { uri: MockUri.file("/repo/lib/package.json") } };
     debugCommand("dev");
 
-    expect(launches()).toEqual([{ folder: folderLib, program: "dev", runtime: libRuntime }]);
-  });
-
-  test("a file outside every workspace folder keeps the previous behavior", () => {
-    runFile(MockUri.file("/outside/loose.ts"));
-    debugFile(MockUri.file("/outside/loose.ts"));
-
+    // The script is not a path, so the cwd stays the variable. VS Code resolves
+    // it against the folder that is passed.
     expect(launches()).toEqual([
-      { folder: undefined, program: "/outside/loose.ts", runtime: "bun" },
-      { folder: undefined, program: "/outside/loose.ts", runtime: "bun" },
+      { folder: folderLib, noDebug: undefined, program: "dev", cwd: "${workspaceFolder}", runtime: libRuntime },
     ]);
   });
 
-  test("run and debug agree on a foreign file: both fall back to the active editor's folder", () => {
+  test("a file that no folder owns launches in its own directory", () => {
     mockWindow.activeTextEditor = { document: { uri: MockUri.file("/repo/app/main.ts") } };
     runFile(MockUri.file("/outside/loose.ts"));
     debugFile(MockUri.file("/outside/loose.ts"));
 
     expect(launches()).toEqual([
-      { folder: folderApp, program: "/outside/loose.ts", runtime: "bun" },
-      { folder: folderApp, program: "/outside/loose.ts", runtime: "bun" },
+      { folder: undefined, noDebug: true, program: "/outside/loose.ts", cwd: "/outside", runtime: "bun" },
+      { folder: undefined, noDebug: undefined, program: "/outside/loose.ts", cwd: "/outside", runtime: "bun" },
     ]);
+    expect(unresolvedVariables()).toEqual([]);
+  });
+});
+
+describe("window without a folder", () => {
+  beforeEach(() => {
+    workspaceFolders.length = 0;
+  });
+  afterEach(() => {
+    workspaceFolders.push(folderApp, folderLib);
+  });
+
+  test("both commands launch the file in its own directory", () => {
+    mockWindow.activeTextEditor = { document: { uri: MockUri.file("/home/me/scripts/222.js") } };
+    runFile();
+    debugFile(MockUri.file("/home/me/scripts/111/111.js"));
+
+    expect(launches()).toEqual([
+      { folder: undefined, noDebug: true, program: "/home/me/scripts/222.js", cwd: "/home/me/scripts", runtime: "bun" },
+      {
+        folder: undefined,
+        noDebug: undefined,
+        program: "/home/me/scripts/111/111.js",
+        cwd: "/home/me/scripts/111",
+        runtime: "bun",
+      },
+    ]);
+    expect(unresolvedVariables()).toEqual([]);
   });
 });

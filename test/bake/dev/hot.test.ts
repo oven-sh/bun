@@ -317,16 +317,31 @@ devTest("import.meta.hot.accept multiple modules", {
 devTest("modules between the updated module and its accepting boundary are evaluated again", {
   // One server; each case has its own page and module graph under a directory of the same name. Clients are opened one at a time.
   files: {
-    // accept: index -> d, index -> a -> d. `index` accepts `d` and is not evaluated again, but `a` computed its export from `d` and has to be.
+    // accept: index -> d, index -> a -> d. `index` accepts both and is not evaluated again, but `a` computed its export from `d` and has to be; one callback carries both.
     "accept.html": emptyHtmlFile({ scripts: ["accept/index.ts"] }),
     "accept/index.ts": `
       import { d } from "./d";
       import { a } from "./a";
       console.log("index " + d + " " + a);
       globalThis.snapshot = () => d + " " + a;
-      import.meta.hot.accept("./d", newModule => {
-        globalThis.accepted = newModule.d + " " + a;
+      import.meta.hot.accept(["./d", "./a"], newModules => {
+        globalThis.accepted = newModules[0].d + " " + newModules[1].a;
       });
+    `,
+    // chain: index -> b -> c. `index` accepts `b`, so an edit of `c` is handled by evaluating `b` again and calling the callback with it (Vite semantics).
+    "chain.html": emptyHtmlFile({ scripts: ["chain/index.ts"] }),
+    "chain/index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+      import.meta.hot.accept("./b", newModule => console.log("index accepted " + newModule.b));
+    `,
+    "chain/b.ts": `
+      import { c } from "./c";
+      export const b = "b(" + c + ")";
+      console.log("b evaluated " + b);
+    `,
+    "chain/c.ts": `
+      export const c = "c1";
     `,
     "accept/a.ts": `
       import { d } from "./d";
@@ -435,6 +450,14 @@ devTest("modules between the updated module and its accepting boundary are evalu
       expect(await c.js<string>`globalThis.accepted`).toBe("d3 a(d3)");
     }
     {
+      await using c = await dev.client("/chain");
+      await c.expectMessage("b evaluated b(c1)", "index b(c1)");
+      await dev.write("chain/c.ts", `export const c = "c2";`);
+      await c.expectMessage("b evaluated b(c2)", "index accepted b(c2)");
+      await dev.write("chain/c.ts", `export const c = "c3";`);
+      await c.expectMessage("b evaluated b(c3)", "index accepted b(c3)");
+    }
+    {
       await using c = await dev.client("/order");
       await c.expectMessage("a evaluated a(d1)", "b evaluated b(d1,a(d1))", "index b(d1,a(d1))");
       await dev.write("order/d.ts", `export const d = "d2";`);
@@ -505,6 +528,87 @@ devTest("server: modules between the updated module and the route are evaluated 
     await dev.fetch("/").equals("v1 derived(v1)");
     await dev.write("config.ts", `export const value = "v2";`);
     await dev.fetch("/").equals("v2 derived(v2)");
+  },
+});
+devTest("server: the route module is evaluated again so its module-level state matches its imports", {
+  framework: minimalFramework,
+  files: {
+    "config.ts": `
+      export const value = "v1";
+    `,
+    "routes/index.ts": `
+      import { value } from "../config";
+      const banner = "banner(" + value + ")";
+      export default function () {
+        return new Response(value + " " + banner);
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("v1 banner(v1)");
+    await dev.write("config.ts", `export const value = "v2";`);
+    await dev.fetch("/").equals("v2 banner(v2)");
+    await dev.write("config.ts", `export const value = "v3";`);
+    await dev.fetch("/").equals("v3 banner(v3)");
+  },
+});
+devTest("a self-accepting module in an import cycle with the changed module reloads the page", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { b } from "./b";
+      console.log("index " + b);
+    `,
+    "b.ts": `
+      import { x } from "./x";
+      export const b = "b(" + x + ")";
+      console.log("b " + b);
+      import.meta.hot.accept();
+    `,
+    // The back-edge to `b` is only read lazily: on a cold load `b` has not finished evaluating yet.
+    "x.ts": `
+      import { b } from "./b";
+      export const x = "x1";
+      export const readB = () => b;
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("b b(x1)", "index b(x1)");
+    // No evaluation order gives `b` the new `x` and `x` the new `b`; like Vite, the page reloads.
+    await c.expectReload(async () => {
+      await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+    });
+    await c.expectMessage("b b(x2)", "index b(x2)");
+  },
+});
+devTest("server: a self-accepting module in an import cycle with the changed module is evaluated first", {
+  framework: minimalFramework,
+  files: {
+    "b.ts": `
+      import { x } from "./x";
+      export const b = "b(" + x + ")";
+      import.meta.hot.accept();
+    `,
+    "x.ts": `
+      import { b } from "./b";
+      export const x = "x1";
+      export const readB = () => b;
+    `,
+    "routes/index.ts": `
+      import { b } from "../b";
+      import { readB } from "../x";
+      export default function () {
+        return new Response(b + " " + readB());
+      }
+    `,
+  },
+  async test(dev) {
+    await dev.fetch("/").equals("b(x1) b(x1)");
+    // The server has no page to reload: it warns and evaluates `b` first, so `b` sees the new `x` and `x` is patched to the new `b`.
+    await dev.patch("x.ts", { find: '"x1"', replace: '"x2"' });
+    await dev.output.waitForLine(/import cycle/);
+    await dev.fetch("/").equals("b(x2) b(x2)");
   },
 });
 devTest("server: modules an update never got to evaluate keep their hooks for the next update", {
@@ -599,6 +703,48 @@ devTest("server: an import() that lands while a dispose promise is pending evalu
     expect(await command("load").json()).toStrictEqual({ value: "v2", evaluations: 2 });
   },
 });
+function slowVersion(version: string) {
+  return `
+    (globalThis.bodies ??= []).push("${version}");
+    await globalThis.gates?.["${version}"].promise;
+    export const value = "${version}";
+  `;
+}
+devTest("server: a second update while the first is parked on top-level await ends with the second version", {
+  framework: minimalFramework,
+  files: {
+    "slow.ts": slowVersion("v1"),
+    // "arm" makes the v2 and v3 bodies wait, "release <version>" lets one finish, "bodies" lists the versions evaluated so far, anything else imports `slow`.
+    "routes/index.ts": `
+      export default async function (req) {
+        const [op, version] = req.headers.get("x-command").split(" ");
+        if (op === "arm") {
+          globalThis.gates = { v2: Promise.withResolvers(), v3: Promise.withResolvers() };
+          return new Response("armed");
+        }
+        if (op === "release") {
+          globalThis.gates[version].resolve();
+          return new Response("released");
+        }
+        if (op === "bodies") return Response.json(globalThis.bodies);
+        const { value } = await import("../slow");
+        return Response.json({ value, bodies: globalThis.bodies });
+      }
+    `,
+  },
+  async test(dev) {
+    const command = (line: string) => dev.fetch("/", { headers: { "x-command": line } });
+    expect(await command("load").json()).toStrictEqual({ value: "v1", bodies: ["v1"] });
+    await command("arm").equals("armed");
+    await dev.write("slow.ts", slowVersion("v2"));
+    await dev.write("slow.ts", slowVersion("v3"));
+    expect(await command("bodies").json()).toStrictEqual(["v1", "v2", "v3"]);
+    // The superseded v2 body finishes last; what it exports must not be served.
+    await command("release v3").equals("released");
+    await command("release v2").equals("released");
+    expect(await command("load").json()).toStrictEqual({ value: "v3", bodies: ["v1", "v2", "v3"] });
+  },
+});
 devTest("server: a sync throw during an update with a reload in flight leaves no unhandled rejection", {
   framework: minimalFramework,
   files: {
@@ -633,9 +779,43 @@ devTest("server: a sync throw during an update with a reload in flight leaves no
     await dev.fetch("/").equals("slow(v3) sync(v3)");
   },
 });
+devTest("server: an accept callback that throws does not stop the others", {
+  framework: minimalFramework,
+  files: {
+    "d.ts": `
+      export const d = "d1";
+    `,
+    "a.ts": `
+      import "./d";
+      import.meta.hot.accept("./d", () => {
+        throw new Error("a accept boom");
+      });
+    `,
+    "b.ts": `
+      import "./d";
+      import.meta.hot.accept("./d", newModule => (globalThis.log ??= []).push("b accepted " + newModule.d));
+    `,
+    "routes/index.ts": `
+      import "../a";
+      import "../b";
+      export default function () {
+        return Response.json(globalThis.log ?? []);
+      }
+    `,
+  },
+  async test(dev) {
+    expect(await dev.fetch("/").json()).toStrictEqual([]);
+    await dev.write("d.ts", `export const d = "d2";`);
+    await dev.output.waitForLine(/a accept boom/);
+    expect(await dev.fetch("/").json()).toStrictEqual(["b accepted d2"]);
+    await dev.write("d.ts", `export const d = "d3";`);
+    await dev.output.waitForLine(/a accept boom/);
+    expect(await dev.fetch("/").json()).toStrictEqual(["b accepted d2", "b accepted d3"]);
+  },
+});
 devTest("import.meta.hot.accept specifier callbacks run once per update, dispose once per module", {
   files: {
-    // once: index -> d, index -> a -> d, index -> b -> c -> d, index -> other -> d, other -> a. `index` and `other` are reached once per path; each callback runs once.
+    // once: index -> d, index -> a -> d, index -> b -> c -> d, index -> other -> d, other -> a. `index` and `other` are reached once per path; each callback runs once, with every accepted module the update replaced.
     "once.html": emptyHtmlFile({ scripts: ["once/index.ts"] }),
     "once/index.ts": `
       import { d } from "./d";
@@ -643,8 +823,8 @@ devTest("import.meta.hot.accept specifier callbacks run once per update, dispose
       import { b } from "./b";
       import "./other";
       console.log("index " + d + " " + a + " " + b);
-      import.meta.hot.accept("./d", newModule => {
-        console.log("index accepted " + newModule.d);
+      import.meta.hot.accept(["./d", "./a", "./b"], newModules => {
+        console.log("index accepted " + newModules[0]?.d + " " + newModules[1]?.a + " " + newModules[2]?.b);
       });
     `,
     "once/other.ts": `
@@ -692,10 +872,13 @@ devTest("import.meta.hot.accept specifier callbacks run once per update, dispose
       await using c = await dev.client("/once");
       await c.expectMessage("index d1 a(d1) b(c(d1))");
       await dev.write("once/d.ts", `export const d = "d2";`);
-      await c.expectMessage("index accepted d2", "other accepted d2 undefined");
+      await c.expectMessage("index accepted d2 a(d2) b(c(d2))", "other accepted d2 a(d2)");
       // The next update starts over: the callbacks run again, still once each.
       await dev.write("once/d.ts", `export const d = "d3";`);
-      await c.expectMessage("index accepted d3", "other accepted d3 undefined");
+      await c.expectMessage("index accepted d3 a(d3) b(c(d3))", "other accepted d3 a(d3)");
+      // Only `a` is replaced: the callbacks report just it.
+      await dev.write("once/a.ts", `import { d } from "./d"; export const a = "A(" + d + ")";`);
+      await c.expectMessage("index accepted undefined A(d3) undefined", "other accepted undefined A(d3)");
     }
     {
       await using c = await dev.client("/two");
@@ -773,6 +956,43 @@ devTest("a module that no longer imports the updated module is not evaluated aga
     await c.expectMessage("index b2");
     await dev.write("b.ts", `export const b = "b3";`);
     await c.expectMessage("index b3");
+  },
+});
+devTest("a module that dropped an import is not evaluated again when that import changes", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import "./a";
+      import "./b";
+    `,
+    "a.ts": `
+      import { x } from "./x";
+      console.log("a evaluated " + x);
+      import.meta.hot.accept();
+    `,
+    "b.ts": `
+      import { x } from "./x";
+      console.log("b evaluated " + x);
+      import.meta.hot.accept("./x", newModule => console.log("b accepted " + newModule.x));
+    `,
+    "x.ts": `
+      export const x = "x1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("a evaluated x1", "b evaluated x1");
+    await dev.write(
+      "a.ts",
+      `
+        console.log("a evaluated without x");
+        import.meta.hot.accept();
+      `,
+    );
+    await c.expectMessage("a evaluated without x");
+    // `a` no longer imports `x`: only `b` is told about it.
+    await dev.write("x.ts", `export const x = "x2";`);
+    await c.expectMessage("b accepted x2");
   },
 });
 devTest("import.meta.hot.dispose runs for every module the update evaluates again", {
@@ -996,6 +1216,37 @@ devTest("import.meta.hot.data persistence", {
     await c.expectMessage("Initial count: 2");
     await dev.writeNoChanges("index.ts");
     await c.expectMessage("Initial count: 3");
+  },
+});
+devTest("a dispose callback writing to import.meta.hot.data does not make its module a boundary", {
+  files: {
+    "index.html": emptyHtmlFile({ scripts: ["index.ts"] }),
+    "index.ts": `
+      import { mid } from "./mid";
+      console.log("index " + mid);
+      import.meta.hot.accept();
+    `,
+    // Only the body reading `import.meta.hot.data` opts a module into taking updates itself.
+    "mid.ts": `
+      import { d } from "./d";
+      export const mid = "mid(" + d + ")";
+      import.meta.hot.dispose(data => {
+        data.disposed = (data.disposed ?? 0) + 1;
+        console.log("mid disposed " + data.disposed);
+      });
+    `,
+    "d.ts": `
+      export const d = "d1";
+    `,
+  },
+  async test(dev) {
+    await using c = await dev.client("/");
+    await c.expectMessage("index mid(d1)");
+    await dev.write("d.ts", `export const d = "d2";`);
+    await c.expectMessage("mid disposed 1", "index mid(d2)");
+    // The second save used to stop at `mid` because its data was no longer empty.
+    await dev.write("d.ts", `export const d = "d3";`);
+    await c.expectMessage("mid disposed 2", "index mid(d3)");
   },
 });
 devTest("import.meta.hot.dispose cleanup", {

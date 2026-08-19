@@ -401,12 +401,11 @@ export class Dev extends EventEmitter {
           this.socket!.send("H");
           await this.#rejectOnExit(wait, "the hot reload");
 
-          let errors = options.errors;
-          if (errors !== null) {
-            errors ??= [];
-            for (const client of this.connectedClients) {
-              await client.expectErrorOverlay(errors, options.snapshot);
-            }
+          const errors = options.errors;
+          for (const client of this.connectedClients) {
+            // `errors: null` skips the assertion but still reads the overlay, so the exit check does not report what this write showed.
+            if (errors === null) await client.readErrorOverlay();
+            else await client.expectErrorOverlay(errors ?? [], options.snapshot);
           }
         } finally {
           this.batchingChanges = null;
@@ -1067,9 +1066,10 @@ export class Client extends EventEmitter {
     await this.#proc.exited;
     // `exited` settles before `onExit` runs, so read the status off the subprocess itself.
     const { exitCode, signalCode } = this.#proc;
-    // Node on Windows can abort inside process.exit() with libuv's uv_async_send assertion; not a page failure unless the fixture reported one first.
+    // Node on Windows sometimes exits with a libuv assertion after process.exit(); the fixture prints an `[E]` line before every exit code of its own.
     const abortedInExit =
       isWindows &&
+      (exitCode === 3 || exitCode === 9) &&
       !this.output.lines.some(line => line.startsWith("[E]")) &&
       this.output.lines.some(line => line.includes("UV_HANDLE_CLOSING"));
     if (exitCode !== 0 && !abortedInExit) {
@@ -1206,11 +1206,12 @@ export class Client extends EventEmitter {
         await maybeWaitInteractive("expectErrorOverlay");
         throw new Error("Expected errors, but none found");
       }
-      expect(await this.#overlayErrors()).toStrictEqual([...errors].sort());
+      expect(await this.readErrorOverlay()).toStrictEqual([...errors].sort());
     });
   }
 
-  #overlayErrors() {
+  /** The overlay's messages; the fixture fails at exit only for errors no read has seen. */
+  readErrorOverlay() {
     return this.#request<string[]>("get-errors", "get-errors-result", [], "reading the error overlay");
   }
 

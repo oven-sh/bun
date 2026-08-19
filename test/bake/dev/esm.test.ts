@@ -231,8 +231,8 @@ devTest("server module throwing while it is hot reloaded is reported and fixed b
       `,
     );
     await dev.output.waitForLine(/config boom sync/);
-    // The route (a root, not re-evaluated) keeps serving the modules from before the failed update, and saving again replaces the module regardless.
-    await dev.fetch("/").equals("v1");
+    // The route imports the broken module, so it fails the same way until the next save replaces it.
+    await dev.fetch("/").expectErrorPage("config boom sync");
     await dev.write("config.ts", `export const value = "v3";`);
     await dev.fetch("/").equals("v3");
 
@@ -246,7 +246,7 @@ devTest("server module throwing while it is hot reloaded is reported and fixed b
       `,
     );
     await dev.output.waitForLine(/config boom async/);
-    await dev.fetch("/").equals("v3");
+    await dev.fetch("/").expectErrorPage("config boom async");
     await dev.write(
       "config.ts",
       `
@@ -1443,6 +1443,11 @@ devTest("an evaluation superseded by a hot update does not publish its outcome",
       again: 'resolved: {"value":"slow-1 v2"}',
     });
     expect(await command("load reexports-slow-2").json()).toStrictEqual({
+      first: 'resolved: {"value":"slow-2 v2"}',
+      again: 'resolved: {"value":"slow-2 v2"}',
+    });
+    // v1 settled after v2 had loaded: its `hmr.exports` write must not have replaced v2's namespace.
+    expect(await command("load slow-2").json()).toStrictEqual({
       first: 'resolved: {"value":"slow-2 v2"}',
       again: 'resolved: {"value":"slow-2 v2"}',
     });

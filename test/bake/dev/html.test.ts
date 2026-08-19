@@ -1,4 +1,6 @@
 // HTML tests are tests relating to HTML files themselves.
+import { expect, test } from "bun:test";
+import { bunEnv, bunExe, tempDir } from "harness";
 import { devTest, emptyHtmlFile } from "../bake-harness";
 
 devTest("html file is watched", {
@@ -385,4 +387,30 @@ devTest("multiple html files are served at the routes bun derives from their pat
     await dev.fetch("/docs/guide").expect.toInclude("<h1>guide</h1>");
     await dev.fetch("/docs/index").expect404();
   },
+});
+
+test("dev server HTML route works after process.chdir() before Bun.serve", async () => {
+  // process.chdir() leaves a trailing separator on the cached top-level dir the dev server takes its root from.
+  using dir = tempDir("bake-chdir-html", {
+    "index.html": `<!DOCTYPE html><html><body><script type="module" src="./app.ts"></script></body></html>`,
+    "app.ts": `console.log("hi");\n`,
+    "serve.ts": `
+      process.chdir(import.meta.dir);
+      const html = (await import("./index.html")).default;
+      const server = Bun.serve({ port: 0, development: true, routes: { "/": html } });
+      const res = await fetch(server.url);
+      const body = await res.text();
+      console.log(JSON.stringify({ status: res.status, hasScript: body.includes("<script") }));
+      await server.stop(true);
+    `,
+  });
+  await using proc = Bun.spawn({
+    cmd: [bunExe(), "serve.ts"],
+    env: { ...bunEnv, NODE_ENV: undefined },
+    cwd: String(dir),
+    stdout: "pipe",
+  });
+  const [stdout, exitCode] = await Promise.all([proc.stdout.text(), proc.exited]);
+  expect(stdout.split("\n").find(line => line.startsWith("{"))).toBe(JSON.stringify({ status: 200, hasScript: true }));
+  expect(exitCode).toBe(0);
 });

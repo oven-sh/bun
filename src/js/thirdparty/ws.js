@@ -1602,9 +1602,9 @@ class WebSocketServer extends EventEmitter {
    * @public
    */
   handleUpgrade(req, socket, head, cb) {
-    // Stays attached after the upgrade: node:http removed its own listener at the handoff.
-    // One copy, however many WebSocketServers on the http.Server see the same socket.
+    // Every WebSocketServer on the http.Server sees this socket. Keep one copy.
     socket.removeListener("error", socketOnError);
+    // Stays attached after the upgrade: node:http removed its own listener at the handoff.
     socket.on("error", socketOnError);
 
     const key = req.headers["sec-websocket-key"];

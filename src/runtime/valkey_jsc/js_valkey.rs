@@ -1581,27 +1581,36 @@ impl JSValkeyClient {
         // the host-fn shim passes a bare `&self` with no ref of its own.
         let _guard = self.ref_scope();
 
-        if self.client.get().status == valkey::Status::NeverConnected {
-            bun_core::hint::cold();
-
-            match self.connect() {
-                // The command is queued below as for a dial in flight; the
-                // deferred close then rejects it or a retry sends it, like a
-                // refused dial.
-                Err(err) => {
-                    debug!(
-                        "first dial failed before a socket was opened: {}",
-                        err.name()
-                    );
-                    self.close_without_socket_next_tick();
-                }
-                Ok(()) => self.reset_connection_timeout(),
-            }
-        }
+        self.ensure_dialing();
 
         let self_br = BackRef::new(self);
         let _update = scopeguard::guard(self_br, |p| p.update_poll_ref());
         self.client_mut().send(global_this, command)
+    }
+
+    /// Start the first dial if the client has never connected. Every command
+    /// entry point runs this before looking at the client's state, so a
+    /// command on a fresh client is queued behind a dial in flight (or
+    /// rejected against a dial that already failed), never against
+    /// `NeverConnected`.
+    pub(crate) fn ensure_dialing(&self) {
+        if self.client.get().status != valkey::Status::NeverConnected {
+            return;
+        }
+        bun_core::hint::cold();
+
+        match self.connect() {
+            // The command is queued as for a dial in flight; the deferred
+            // close then rejects it or a retry sends it, like a refused dial.
+            Err(err) => {
+                debug!(
+                    "first dial failed before a socket was opened: {}",
+                    err.name()
+                );
+                self.close_without_socket_next_tick();
+            }
+            Ok(()) => self.reset_connection_timeout(),
+        }
     }
 
     // Getter for memory cost - useful for diagnostics

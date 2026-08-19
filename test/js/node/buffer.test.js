@@ -2794,30 +2794,33 @@ for (let withOverridenBufferWrite of [false, true]) {
         ["swap16", 2],
         ["swap32", 4],
         ["swap64", 8],
-      ])("Buffer.%s matches a byte-reversal reference across vector boundaries and odd byteOffsets", (method, elemSize) => {
-        const reference = (bytes, elemSize) => {
-          const out = new Uint8Array(bytes.length);
-          for (let i = 0; i < bytes.length; i += elemSize)
-            for (let k = 0; k < elemSize; k++) out[i + k] = bytes[i + elemSize - 1 - k];
-          return out;
-        };
-        const lengths = [];
-        for (let n = 0; n <= 288; n += elemSize) lengths.push(n);
-        lengths.push(4096 - elemSize, 4096, 4096 + elemSize, 65536 + 3 * elemSize);
-        for (const len of lengths) {
-          for (const byteOffset of [0, 1, 3]) {
-            const backing = new Uint8Array(len + byteOffset + 1);
-            for (let i = 0; i < backing.length; i++) backing[i] = (i * 37 + 11) & 0xff;
-            const buf = Buffer.from(backing.buffer, byteOffset, len);
-            const expected = reference(Uint8Array.prototype.slice.call(buf), elemSize);
-            expect(buf[method]()).toBe(buf);
-            expect(buf.equals(expected), `${method} len=${len} byteOffset=${byteOffset}`).toBe(true);
-            // Neighbouring bytes are untouched.
-            if (byteOffset > 0) expect(backing[byteOffset - 1]).toBe(((byteOffset - 1) * 37 + 11) & 0xff);
-            expect(backing[byteOffset + len]).toBe(((byteOffset + len) * 37 + 11) & 0xff);
+      ])(
+        "Buffer.%s matches a byte-reversal reference across vector boundaries and odd byteOffsets",
+        (method, elemSize) => {
+          const reference = (bytes, elemSize) => {
+            const out = new Uint8Array(bytes.length);
+            for (let i = 0; i < bytes.length; i += elemSize)
+              for (let k = 0; k < elemSize; k++) out[i + k] = bytes[i + elemSize - 1 - k];
+            return out;
+          };
+          const lengths = [];
+          for (let n = 0; n <= 288; n += elemSize) lengths.push(n);
+          lengths.push(4096 - elemSize, 4096, 4096 + elemSize, 65536 + 3 * elemSize);
+          for (const len of lengths) {
+            for (const byteOffset of [0, 1, 3]) {
+              const backing = new Uint8Array(len + byteOffset + 1);
+              for (let i = 0; i < backing.length; i++) backing[i] = (i * 37 + 11) & 0xff;
+              const buf = Buffer.from(backing.buffer, byteOffset, len);
+              const expected = reference(Uint8Array.prototype.slice.call(buf), elemSize);
+              expect(buf[method]()).toBe(buf);
+              expect(buf.equals(expected), `${method} len=${len} byteOffset=${byteOffset}`).toBe(true);
+              // Neighbouring bytes are untouched.
+              if (byteOffset > 0) expect(backing[byteOffset - 1]).toBe(((byteOffset - 1) * 37 + 11) & 0xff);
+              expect(backing[byteOffset + len]).toBe(((byteOffset + len) * 37 + 11) & 0xff);
+            }
           }
-        }
-      });
+        },
+      );
 
       it("Buffer.toString regessions", () => {
         expect(

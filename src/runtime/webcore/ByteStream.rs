@@ -181,16 +181,6 @@ impl ByteStream {
         self.sink_paused.set(false);
     }
 
-    /// The sink is gone before the stream ended (its peer went away). The stream stays
-    /// locked to it, so nobody else can read the rest: close the producer too.
-    pub(crate) fn detach_finished_sink(&self) {
-        if self.has_received_last_chunk.get() {
-            self.unpipe_without_deref();
-        } else {
-            self.cancel_from_sink(None);
-        }
-    }
-
     /// Bytes delivered that no consumer has taken yet.
     #[inline]
     pub fn buffered_len(&self) -> usize {

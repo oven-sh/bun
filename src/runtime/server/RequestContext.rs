@@ -400,13 +400,14 @@ mod shim {
             .as_ref()
             .is_some_and(|s| matches!(s.data, crate::webcore::blob::store::Data::File(_)))
     }
-    /// The response is done with its natively piped body. A body still mid-stream is
-    /// cancelled: it stayed locked to this response, so nothing else can read it.
     #[inline]
     pub(super) fn byte_stream_unpipe(s: NonNull<ByteStream>) {
-        // The caller has just `take()`n `self.byte_stream` and still holds
-        // `response_body_readable_stream_ref`, which keeps the pointee alive.
-        bun_ptr::BackRef::from(s).detach_finished_sink()
+        // The lone caller has just `take()`n the pointer out of
+        // `self.byte_stream`; the allocation is kept alive by
+        // `response_body_readable_stream_ref` (BackRef invariant: pointee
+        // outlives this temporary). R-2: `unpipe_without_deref` takes `&self`
+        // (interior-mutable `JsCell<SinkHandle>`), so shared deref is sufficient.
+        bun_ptr::BackRef::from(s).unpipe_without_deref()
     }
 }
 use crate::server::DevErrorPage;
@@ -1393,14 +1394,6 @@ where
                 );
             }
             return;
-        }
-
-        // A natively piped body has nobody left to take it. The deref balances the ref
-        // `do_render_with_body` took for the pipe: `end_chunk`, which releases it otherwise,
-        // cannot run once the response is gone.
-        if let Some(stream) = this.byte_stream.take() {
-            shim::byte_stream_unpipe(stream);
-            this.deref();
         }
 
         // if we can, free the request now.
@@ -3247,8 +3240,6 @@ where
         // SAFETY: caller passes the live `*mut RequestContext` stored as the
         // sink ctx; `_ref` keeps it alive for this call.
         let this = unsafe { &*this };
-        // The stream has already dropped this sink; `_ref` is the pipe's ref.
-        this.byte_stream.set(None);
 
         if this.is_aborted_or_ended() {
             return;
@@ -3256,12 +3247,13 @@ where
         if let Some(err) = err {
             // No status committed yet: the upstream producer (e.g. a
             // suspended `HTMLRewriter` transform whose async handler
-            // rejected) failed before any bytes were emitted. Drop the
-            // stream and hand the error to the server's `error()` hook so it
-            // can supply the response.
+            // rejected) failed before any bytes were emitted. Detach the
+            // ByteStream state and hand the error to the server's
+            // `error()` hook so it can supply the response.
             if !this.flags.has_written_status() {
                 let global_this = this.server().global_this();
                 let js_err = err.to_js(global_this);
+                this.byte_stream.set(None);
                 this.response_body_readable_stream_ref
                     .with_mut(|s| s.deinit());
                 this.run_error_handler(js_err);

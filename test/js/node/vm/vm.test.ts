@@ -4,6 +4,7 @@ import {
   compileFunction,
   constants,
   createContext,
+  isContext,
   runInContext,
   runInNewContext,
   runInThisContext,
@@ -1509,6 +1510,16 @@ describe("global object and its sandbox", () => {
         expect.objectContaining({ name: "TypeError" }),
       );
     });
+  });
+
+  test("Script.prototype.runInNewContext contextifies its argument, like createContext()", () => {
+    const sandbox: any = {};
+    new Script("var a = 1").runInNewContext(sandbox);
+    expect(isContext(sandbox)).toBe(true);
+    expect(sandbox.a).toBe(1);
+    // ... so a second run reuses that context (sees its globals) instead of building another one.
+    expect(new Script("typeof a").runInNewContext(sandbox)).toBe("number");
+    expect(runInContext("a", sandbox)).toBe(1);
   });
 
   test("running a script against the context's own `this` (the global's proxy) uses the same context", () => {

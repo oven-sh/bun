@@ -858,6 +858,27 @@ bool getContextArg(JSGlobalObject* globalObject, JSValue& contextArg)
     return false;
 }
 
+JSObject* contextify(JSGlobalObject* globalObject, JSObject* sandbox, const NodeVMContextOptions& options, JSValue importer)
+{
+    VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    ASSERT(!isContext(globalObject, sandbox));
+    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+
+    auto* context = NodeVMGlobalObject::create(vm, zigGlobalObject->NodeVMGlobalObjectStructure(), options, importer);
+    RETURN_IF_EXCEPTION(scope, nullptr);
+    context->setContextifiedObject(sandbox);
+    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, context);
+
+    if (options.notContextified) {
+        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, context);
+        RETURN_IF_EXCEPTION(scope, nullptr);
+        context->setSpecialSandbox(specialSandbox);
+        return specialSandbox;
+    }
+    return sandbox;
+}
+
 bool isUseMainContextDefaultLoaderConstant(JSGlobalObject* globalObject, JSValue value)
 {
     if (value.isSymbol()) {
@@ -1619,28 +1640,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
         return JSValue::encode(sandbox);
     }
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
-
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
-
-    RETURN_IF_EXCEPTION(scope, {});
-
-    // Set sandbox as contextified object
-    targetContext->setContextifiedObject(sandbox);
-
-    // Store context in WeakMap for isContext checks
-    zigGlobalObject->vmModuleContextMap()->set(vm, sandbox, targetContext);
-
-    if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        return JSValue::encode(targetContext->specialSandbox());
-    }
-
-    return JSValue::encode(sandbox);
+    RELEASE_AND_RETURN(scope, JSValue::encode(contextify(globalObject, sandbox, contextOptions, importer)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(vmModule_isContext, (JSGlobalObject * globalObject, CallFrame* callFrame))

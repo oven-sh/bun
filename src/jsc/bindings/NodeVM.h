@@ -43,6 +43,9 @@ JSC::JSFunction* constructAnonymousFunction(JSC::JSGlobalObject* globalObject, c
 JSPromise* importModule(JSGlobalObject* globalObject, JSString* moduleNameValue, RefPtr<JSC::ScriptFetchParameters> parameters, const SourceOrigin& sourceOrigin);
 bool isContext(JSC::JSGlobalObject* globalObject, JSValue);
 bool getContextArg(JSC::JSGlobalObject* globalObject, JSValue& contextArg);
+// Makes `sandbox` (which must not already be one) a context: creates its global, registers it for isContext(), and
+// returns the object that stands for the context (the sandbox, or the DONT_CONTEXTIFY stand-in). Null on exception.
+JSObject* contextify(JSC::JSGlobalObject* globalObject, JSObject* sandbox, const NodeVMContextOptions& options, JSValue importer);
 bool isUseMainContextDefaultLoaderConstant(JSC::JSGlobalObject* globalObject, JSValue value);
 
 } // namespace NodeVM

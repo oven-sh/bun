@@ -553,28 +553,16 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     contextOptions.notContextified = notContextified;
 
-    auto* zigGlobalObject = defaultGlobalObject(globalObject);
+    // As in Node this is createContext() + runInContext(): the object becomes (and stays) a context, and one that
+    // already is a context is used as it is.
     JSObject* context = asObject(contextObjectValue);
-    // Like vm.createContext(), an object that already is a context is used as it is.
-    if (NodeVM::isContext(globalObject, context)) {
-        auto* existingContext = NodeVM::getGlobalObjectFromContext(globalObject, context, true);
+    if (!NodeVM::isContext(globalObject, context)) {
+        context = NodeVM::contextify(globalObject, context, contextOptions, importer);
         RETURN_IF_EXCEPTION(scope, {});
-        RELEASE_AND_RETURN(scope, runInContext(existingContext, script, callFrame->argument(1)));
     }
-    auto* targetContext = NodeVMGlobalObject::create(vm,
-        zigGlobalObject->NodeVMGlobalObjectStructure(),
-        contextOptions, importer);
+    auto* contextGlobal = NodeVM::getGlobalObjectFromContext(globalObject, context, true);
     RETURN_IF_EXCEPTION(scope, {});
-    targetContext->setContextifiedObject(context);
-
-    if (notContextified) {
-        auto* specialSandbox = NodeVMSpecialSandbox::create(vm, targetContext);
-        RETURN_IF_EXCEPTION(scope, {});
-        targetContext->setSpecialSandbox(specialSandbox);
-        RELEASE_AND_RETURN(scope, runInContext(targetContext, script, callFrame->argument(1)));
-    }
-
-    RELEASE_AND_RETURN(scope, runInContext(targetContext, script, callFrame->argument(1)));
+    RELEASE_AND_RETURN(scope, runInContext(contextGlobal, script, callFrame->argument(1)));
 }
 
 class NodeVMScriptPrototype final : public JSC::JSNonFinalObject {

@@ -598,8 +598,7 @@ impl MultiPartUpload {
         }
         if self.state.get() != State::Finished {
             let old_state = self.state.replace(State::Finished);
-            // The deref must run after the callback, whatever it reported
-            // (`Terminated` during teardown), as in `done`:
+            // The deref must run after the callback, whatever it returned:
             let settled =
                 (self.callback)(S3UploadResult::Failure(err), self.callback_context.get());
             if old_state == State::MultipartCompleted {

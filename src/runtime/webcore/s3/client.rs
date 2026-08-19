@@ -724,8 +724,6 @@ impl S3UploadStreamWrapper {
                     .unwrap_or_else(|| s3_error_to_js(err, &global, Some(self_.path.slice())));
                 js_err.ensure_still_alive();
                 if let Some(sink) = self_.sink_mut() {
-                    // `source.close()` below cancels the upstream; a JS pump's promise
-                    // then settles and its `.then` shim releases the pump ref.
                     sink.ended = true;
                     sink.done = true;
                     sink.pending.result = crate::webcore::streams::Writable::Done;

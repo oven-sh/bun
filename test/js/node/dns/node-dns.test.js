@@ -1,4 +1,4 @@
-import { beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
+import { afterAll, beforeAll, describe, expect, it, setDefaultTimeout, test } from "bun:test";
 import { bunEnv, bunExe, isLinux, isWindows } from "harness";
 import * as dgram from "node:dgram";
 import * as dns from "node:dns";
@@ -596,12 +596,44 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
     expect(() => dns.reverse("1.2.3", 123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
   });
 
-  it("promises form rejects asynchronously and never queries", async () => {
-    // Local PTR responder: records every queried name and answers with a fixed PTR.
+  it("top-level dns.promises.reverse rejects asynchronously", async () => {
+    for (const ip of ["999.9.9.9", "not-an-ip", "1.2.3.4.5"]) {
+      await expect(dns.promises.reverse(ip)).rejects.toEqual(
+        expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr", hostname: ip }),
+      );
+    }
+    // non-string input is a synchronous ERR_INVALID_ARG_TYPE even in the promises form
+    expect(() => dns.promises.reverse(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
+  });
+
+  // The tests below share one loopback PTR responder. It records every queried
+  // name, answers "host.example", and returns NXDOMAIN for names whose first
+  // label is a hex letter (…::a through …::f). Each test consumes the names it
+  // expects to have produced, so an invalid input that leaked a query would show
+  // up in the next test's expectation.
+  describe("against a local PTR responder", () => {
     const wire = [];
+    let srv;
     let srvError;
-    const srv = dgram.createSocket("udp4");
-    try {
+    let resolver;
+    let cbResolver;
+
+    const v6ptr = last => `${last}.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa`;
+    const notFound = ip =>
+      expect.objectContaining({
+        code: "ENOTFOUND",
+        syscall: "getHostByAddr",
+        hostname: ip,
+        message: `getHostByAddr ENOTFOUND ${ip}`,
+      });
+    const cbReverse = ip => {
+      const { promise, resolve } = Promise.withResolvers();
+      cbResolver.reverse(ip, (err, hostnames) => resolve(err ?? hostnames));
+      return promise;
+    };
+
+    beforeAll(async () => {
+      srv = dgram.createSocket("udp4");
       srv.on("error", err => (srvError ??= err));
       await new Promise((resolve, reject) => {
         srv.once("error", reject);
@@ -624,7 +656,6 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
           ]);
         const rd = enc("host.example");
         const a = Buffer.concat([Buffer.from([0xc0, 12, 0, 12, 0, 1, 0, 0, 0, 60, 0, rd.length]), rd]);
-        // Names whose first label is a hex letter (…::a through …::f) get NXDOMAIN.
         const nxdomain = /^[a-f]$/.test(labels[0]);
         const h = Buffer.alloc(12);
         h.writeUInt16BE(m.readUInt16BE(0), 0);
@@ -633,85 +664,60 @@ describe("dns.reverse rejects invalid IP strings with EINVAL", () => {
         h.writeUInt16BE(nxdomain ? 0 : 1, 6);
         srv.send(nxdomain ? Buffer.concat([h, q]) : Buffer.concat([h, q, a]), ri.port, ri.address);
       });
+      const servers = [`127.0.0.1:${srv.address().port}`];
+      resolver = new dns.promises.Resolver({ timeout: 1500, tries: 1 });
+      resolver.setServers(servers);
+      cbResolver = new dns.Resolver({ timeout: 1500, tries: 1 });
+      cbResolver.setServers(servers);
+    });
 
-      const resolver = new dns.promises.Resolver({ timeout: 1500, tries: 1 });
-      resolver.setServers([`127.0.0.1:${srv.address().port}`]);
+    afterAll(async () => {
+      await new Promise(resolve => srv.close(resolve));
+    });
 
-      for (const ip of invalid) {
-        const p = resolver.reverse(ip);
-        expect(p).toBeInstanceOf(Promise);
-        let err;
-        await p.catch(e => (err = e));
-        expect(err).toEqual(
-          expect.objectContaining({
-            code: "EINVAL",
-            errno: UV_EINVAL,
-            syscall: "getHostByAddr",
-            ...(ip ? { hostname: ip } : {}),
-          }),
-        );
-        expect("hostname" in err).toBe(!!ip);
-      }
+    it.each(invalid)("promises Resolver rejects %j without querying", async ip => {
+      const p = resolver.reverse(ip);
+      expect(p).toBeInstanceOf(Promise);
+      let err;
+      await p.catch(e => (err = e));
+      expect(err).toEqual(
+        expect.objectContaining({
+          code: "EINVAL",
+          errno: UV_EINVAL,
+          syscall: "getHostByAddr",
+          ...(ip ? { hostname: ip } : {}),
+        }),
+      );
+      expect("hostname" in err).toBe(!!ip);
+    });
 
-      // top-level dns.promises.reverse should behave the same
-      for (const ip of ["999.9.9.9", "not-an-ip", "1.2.3.4.5"]) {
-        await expect(dns.promises.reverse(ip)).rejects.toEqual(
-          expect.objectContaining({ code: "EINVAL", syscall: "getHostByAddr", hostname: ip }),
-        );
-      }
-
-      // non-string input is a synchronous ERR_INVALID_ARG_TYPE even in the promises form
-      expect(() => dns.promises.reverse(123)).toThrow(expect.objectContaining({ code: "ERR_INVALID_ARG_TYPE" }));
-
-      // A zone id on an IPv4 literal is invalid, as it is for uv_inet_pton.
+    it("rejects a zone id on an IPv4 literal, as uv_inet_pton does", async () => {
       await expect(resolver.reverse("192.0.2.1%lo0")).rejects.toEqual(
         expect.objectContaining({ code: "EINVAL", hostname: "192.0.2.1%lo0" }),
       );
+    });
 
-      // control: valid IPv4 and IPv6 still reach the local responder, and an
-      // IPv6 zone id is stripped the way uv_inet_pton strips it (c-ares rejects
-      // it), even one isIP() would not accept, like an interface name with "_".
-      const v6ptr = last => `${last}.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa`;
+    it("queries valid IPv4 and IPv6 literals", async () => {
+      expect(wire.splice(0)).toEqual([]);
       expect(await resolver.reverse("192.0.2.1")).toEqual(["host.example"]);
       expect(await resolver.reverse("2001:db8::5")).toEqual(["host.example"]);
+      expect(wire.splice(0)).toEqual(["1.2.0.192.in-addr.arpa", v6ptr(5)]);
+    });
+
+    it("strips an IPv6 zone id before querying, including one isIP() rejects", async () => {
       expect(await resolver.reverse("2001:db8::6%lo0")).toEqual(["host.example"]);
       expect(await resolver.reverse("2001:db8::7%br_lan")).toEqual(["host.example"]);
-
-      const cbResolver = new dns.Resolver({ timeout: 1500, tries: 1 });
-      cbResolver.setServers([`127.0.0.1:${srv.address().port}`]);
-      const cbReverse = ip => {
-        const { promise, resolve } = Promise.withResolvers();
-        cbResolver.reverse(ip, (err, hostnames) => resolve(err ?? hostnames));
-        return promise;
-      };
       expect(await cbReverse("2001:db8::8%br_lan")).toEqual(["host.example"]);
+      expect(wire.splice(0)).toEqual([v6ptr(6), v6ptr(7), v6ptr(8)]);
+    });
 
-      // A failed lookup reports the caller's string, zone id included, like Node.
-      const notFound = ip =>
-        expect.objectContaining({
-          code: "ENOTFOUND",
-          syscall: "getHostByAddr",
-          hostname: ip,
-          message: `getHostByAddr ENOTFOUND ${ip}`,
-        });
+    it("reports the caller's string, zone id included, when the lookup fails", async () => {
       await expect(resolver.reverse("2001:db8::a%br_lan")).rejects.toEqual(notFound("2001:db8::a%br_lan"));
       expect(await cbReverse("2001:db8::b%lo0")).toEqual(notFound("2001:db8::b%lo0"));
       await expect(resolver.reverse("2001:db8::c")).rejects.toEqual(notFound("2001:db8::c"));
-
+      expect(wire.splice(0)).toEqual([v6ptr("a"), v6ptr("b"), v6ptr("c")]);
       expect(srvError).toBeUndefined();
-      expect(wire).toEqual([
-        "1.2.0.192.in-addr.arpa",
-        v6ptr(5),
-        v6ptr(6),
-        v6ptr(7),
-        v6ptr(8),
-        v6ptr("a"),
-        v6ptr("b"),
-        v6ptr("c"),
-      ]);
-    } finally {
-      await new Promise(resolve => srv.close(resolve));
-    }
+    });
   });
 });
 

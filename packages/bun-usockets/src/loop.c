@@ -921,8 +921,12 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int eof, in
                     return;
                 }
             }
-            /* Such as epollerr or EV_ERROR */
-            if (error && s) {
+            /* Such as epollerr or EV_ERROR. A handler above (on_data, on_end, or the
+             * close they triggered) may already have closed this socket: its fd number
+             * is free again, and a socket that handler opened can own it by now, so the
+             * SO_ERROR read below would consume that socket's error (a refused connect
+             * then reports ECONNRESET). Nothing is left to close in that case. */
+            if (error && s && !us_socket_is_closed(s)) {
                 /* Peer-initiated error event — same rationale as the recv-error
                  * branch above: bypass us_internal_ssl_close so on_handshake
                  * isn't fired for a passive close. The poll flag only says THAT

@@ -2459,8 +2459,8 @@ describe("deferred spill-close", () => {
 });
 
 describe.each(["tls", "net"])("%s server socket whose peer resets the connection behind unread data", transport => {
-  // The peer fills both kernel buffers while the accepted socket is paused, then
-  // resets the connection (RST) instead of ending it. Node reports that as a read
+  // The peer sends data while the accepted socket is paused, then resets the
+  // connection (RST) instead of ending it. Node reports that as a read
   // error and never emits 'end'. allowHalfOpen keeps the accepted socket open
   // after an 'end', so a reset misreported as an orderly end strands it.
   async function acceptPausedSocketAndFill() {
@@ -2519,12 +2519,7 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
     // Paused again: the 'data' listener above switched the stream to flowing.
     socket.pause();
 
-    // A short write means the peer's send buffer and the server's receive buffer
-    // are both full: everything written so far is queued ahead of the reset.
-    const chunk = Buffer.alloc(64 * 1024, "r");
-    while (peer.write(chunk) === chunk.length) {}
-
-    return {
+    const t = {
       socket,
       peer,
       events,
@@ -2535,6 +2530,16 @@ describe.each(["tls", "net"])("%s server socket whose peer resets the connection
         server.close();
       },
     };
+    // One chunk that fits: it is queued ahead of the reset and the receive window
+    // stays open. macOS drops an RST that arrives at a zero window, so filling
+    // the buffers would strand the socket there.
+    const chunk = Buffer.alloc(64 * 1024, "r");
+    const written = peer.write(chunk);
+    if (written !== chunk.length) {
+      t[Symbol.dispose]();
+      throw new Error(`short write: ${written} of ${chunk.length}`);
+    }
+    return t;
   }
 
   it("reports the reset that arrives while the socket is paused as ECONNRESET, not 'end'", async () => {

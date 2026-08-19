@@ -107,7 +107,7 @@
 /* close() codes — two orthogonal bits collapsed into three states:
  *   0  graceful: TLS sends close_notify and DEFERS the fd close until the
  *      peer replies; TCP FINs.
- *   1  reset: TLS fast-shutdown (no wait), TCP arms SO_LINGER{1,0} → RST.
+ *   1  reset: TLS sends no close_notify (abortive), TCP arms SO_LINGER{1,0} → RST.
  *      Drops any unflushed kernel send buffer; only for terminate()/abort.
  *   2  fast-shutdown: TLS fast-shutdown (no wait), TCP FINs normally. For
  *      net.Socket._destroy() / _handle.close() where the wrapper detaches

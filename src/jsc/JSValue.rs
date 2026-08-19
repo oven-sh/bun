@@ -666,6 +666,24 @@ impl JSValue {
     pub fn from_uint64_no_truncate(global: &JSGlobalObject, i: u64) -> JsResult<JSValue> {
         host_fn::from_js_host_call(global, || JSC__JSValue__fromUInt64NoTruncate(global, i))
     }
+    /// A BigInt from a decimal integer literal (optional `-`, then digits).
+    /// Returns `Ok(None)` when `digits` is not such a literal.
+    #[track_caller]
+    pub fn big_int_from_decimal(
+        global: &JSGlobalObject,
+        digits: &[u8],
+    ) -> JsResult<Option<JSValue>> {
+        let unsigned = digits.strip_prefix(b"-").unwrap_or(digits);
+        if unsigned.is_empty() || !unsigned.iter().all(u8::is_ascii_digit) {
+            return Ok(None);
+        }
+        // Only text StringToBigInt accepts gets here, so empty means it threw (too large).
+        let value = host_fn::from_js_host_call(global, || {
+            // SAFETY: `digits` is a live slice for the duration of the call.
+            unsafe { JSC__JSValue__bigIntFromLatin1(global, digits.as_ptr(), digits.len()) }
+        })?;
+        Ok(Some(value))
+    }
     /// `JSValue.fromTimevalNoTruncate` — encode a `struct timeval`
     /// as a BigInt (`sec * 1_000_000 + nsec`) without precision loss. May allocate
     /// a heap BigInt, so wrapped in `from_js_host_call` for exception checking.
@@ -1984,6 +2002,11 @@ unsafe extern "C" {
     safe fn JSC__JSValue__dateInstanceFromNumber(global: &JSGlobalObject, n: f64) -> JSValue;
     safe fn JSC__JSValue__fromInt64NoTruncate(global: &JSGlobalObject, i: i64) -> JSValue;
     safe fn JSC__JSValue__fromUInt64NoTruncate(global: &JSGlobalObject, i: u64) -> JSValue;
+    fn JSC__JSValue__bigIntFromLatin1(
+        global: &JSGlobalObject,
+        ptr: *const u8,
+        len: usize,
+    ) -> JSValue;
     safe fn JSC__JSValue__fromTimevalNoTruncate(
         global: &JSGlobalObject,
         nsec: i64,

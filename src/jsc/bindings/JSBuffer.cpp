@@ -89,6 +89,9 @@ extern "C" void* highway_memmem(const uint8_t* haystack, size_t haystack_len, co
 extern "C" size_t highway_memrmem(const uint8_t* haystack, size_t haystack_len, const uint8_t* needle, size_t needle_len);
 extern "C" size_t highway_memmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
 extern "C" size_t highway_memrmem16(const uint16_t* haystack, size_t haystack_len, const uint16_t* needle, size_t needle_len);
+extern "C" void highway_bswap16(uint8_t* data, size_t len);
+extern "C" void highway_bswap32(uint8_t* data, size_t len);
+extern "C" void highway_bswap64(uint8_t* data, size_t len);
 extern "C" size_t highway_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 extern "C" size_t highway_last_index_of_char(const uint8_t* haystack, size_t haystack_len, uint8_t needle);
 static constexpr size_t kHighwayNotFound = ~static_cast<size_t>(0);
@@ -1968,15 +1971,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap16Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 16-bits"_s);
     }
 
-    uint8_t* data = castedThis->typedVector();
-    size_t count = length / elemSize;
-
-    for (size_t i = 0; i < count; i++) {
-        uint16_t val;
-        memcpy(&val, data + i * elemSize, sizeof(val));
-        val = __builtin_bswap16(val);
-        memcpy(data + i * elemSize, &val, sizeof(val));
-    }
+    highway_bswap16(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -1988,26 +1983,13 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap32Body(JSC::JSGlobalObj
 
     // A detached buffer has byteLength() 0: nothing below touches its null vector
     // and it is returned unchanged, like in Node.
-    constexpr int elemSize = 4;
-    int64_t length = static_cast<int64_t>(castedThis->byteLength());
+    constexpr size_t elemSize = 4;
+    size_t length = castedThis->byteLength();
     if (length % elemSize != 0) {
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 32-bits"_s);
     }
 
-    uint8_t* typedVector = castedThis->typedVector();
-
-    constexpr size_t swaps = elemSize / 2;
-    for (size_t elem = 0; elem < length; elem += elemSize) {
-        const size_t right = elem + elemSize - 1;
-        for (size_t k = 0; k < swaps; k++) {
-            const size_t i = right - k;
-            const size_t j = elem + k;
-
-            uint8_t temp = typedVector[i];
-            typedVector[i] = typedVector[j];
-            typedVector[j] = temp;
-        }
-    }
+    highway_bswap32(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }
@@ -2025,15 +2007,7 @@ static JSC::EncodedJSValue jsBufferPrototypeFunction_swap64Body(JSC::JSGlobalObj
         return Bun::throwError(lexicalGlobalObject, scope, Bun::ErrorCode::ERR_INVALID_BUFFER_SIZE, "Buffer size must be a multiple of 64-bits"_s);
     }
 
-    uint8_t* data = castedThis->typedVector();
-    size_t count = length / elemSize;
-
-    for (size_t i = 0; i < count; i++) {
-        uint64_t val;
-        memcpy(&val, data + i * elemSize, sizeof(val));
-        val = __builtin_bswap64(val);
-        memcpy(data + i * elemSize, &val, sizeof(val));
-    }
+    highway_bswap64(castedThis->typedVector(), length);
 
     return JSC::JSValue::encode(castedThis);
 }

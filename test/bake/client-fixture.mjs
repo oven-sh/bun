@@ -64,6 +64,8 @@ function reset() {
 let allowWebSocketMessages = true;
 
 function createWindow(windowUrl) {
+  // A reload discards the previous page's overlay, read or not.
+  unreadErrorReports = 0;
   window = new Window({
     url: windowUrl,
     width: 1024,
@@ -101,10 +103,12 @@ function createWindow(windowUrl) {
       url = new URL(url, windowUrl).href;
     }
     const promise = original_window_fetch(url, options);
-    // The overlay reports a runtime error only after this round trip; the exit handler waits for it.
+    // A runtime error reaches the overlay only after this round trip and its body are consumed; the exit handler waits for that and counts the report.
     if (String(url).includes("/_bun/report_error")) {
-      inflightErrorReports.add(promise);
-      promise.finally(() => inflightErrorReports.delete(promise)).catch(() => {});
+      unreadErrorReports++;
+      const settled = promise.then(response => response.clone().arrayBuffer()).catch(() => {});
+      inflightErrorReports.add(settled);
+      settled.finally(() => inflightErrorReports.delete(settled));
     }
     return await promise;
   };
@@ -474,16 +478,21 @@ process.on("message", async message => {
   if (message.type === "exit") {
     // Exiting with a fetch in flight trips a libuv assertion on Windows (uv_async_send on a closing handle).
     await pageLoad?.catch(() => {});
-    // Let a runtime error that is still being reported reach the overlay (one macrotask for the handler that follows the fetch).
+    // Let a runtime error that is still being reported reach the overlay.
     while (inflightErrorReports.size > 0) {
       await Promise.allSettled([...inflightErrorReports]);
       await new Promise(resolve => setImmediate(resolve));
     }
     // Build errors are broadcast to every client and asserted by the test that caused them; a runtime error only reaches the overlay, so one the harness never read is a failure happy-dom swallowed.
-    const runtimeError = !expectErrors && overlayRuntimeError();
-    if (runtimeError && !lastReportedErrors.includes(runtimeError)) {
-      console.error("[E] Error overlay is showing a runtime error the test never checked:", runtimeError);
-      process.exit(exitCodeMap.unexpectedErrorOverlay);
+    if (!expectErrors) {
+      const runtimeError = overlayRuntimeError();
+      if (unreadErrorReports > 0 || (runtimeError && !lastReportedErrors.includes(runtimeError))) {
+        console.error(
+          "[E] A runtime error was reported that the test never checked:",
+          runtimeError ?? "(not rendered in the overlay yet)",
+        );
+        process.exit(exitCodeMap.unexpectedErrorOverlay);
+      }
     }
     process.exit(0);
   }
@@ -537,6 +546,7 @@ process.on("message", async message => {
     try {
       const errors = collectOverlayErrors();
       lastReportedErrors = errors;
+      unreadErrorReports = 0;
       process.send({
         type: `get-errors-result-${messageId}`,
         args: [{ value: errors }],
@@ -586,14 +596,15 @@ function collectOverlayErrors() {
 /** The runtime error message the visible overlay shows, or null. */
 function overlayRuntimeError() {
   const overlay = window.document.querySelector("bun-hmr");
-  if (!overlay || overlay.style.display !== "block") return null;
-  return overlay.shadowRoot.querySelector(".r-error .message-desc")?.textContent ?? null;
+  return overlay?.shadowRoot.querySelector(".r-error .message-desc")?.textContent ?? null;
 }
 
 /** The last overlay contents the harness read through `get-errors`; a runtime error it never read is unexpected at exit. */
 let lastReportedErrors = [];
 /** `/_bun/report_error` requests the page has not finished; the overlay shows the error only after one settles. */
 const inflightErrorReports = new Set();
+/** Runtime errors reported to the dev server since the harness last read the overlay. */
+let unreadErrorReports = 0;
 
 process.on("disconnect", () => {
   process.exit(0);

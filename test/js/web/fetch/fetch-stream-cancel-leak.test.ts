@@ -340,7 +340,7 @@ describe("a proxied fetch body is aborted once the response's client is gone", (
 
   async function expectUpstreamAborted(state: { upstreamAborted: boolean }) {
     // Bounds the failing case only; the fixed build aborts the upstream as the client goes.
-    const deadline = performance.now() + 3000;
+    const deadline = performance.now() + (isASAN || isDebug ? 15_000 : 3000);
     while (!state.upstreamAborted && performance.now() < deadline) await Bun.sleep(10);
     expect(state.upstreamAborted).toBe(true);
   }

@@ -994,6 +994,25 @@ impl SourceHandle {
         }
     }
 
+    /// The source's JS wrapper was collected while this producer still held the
+    /// source: nothing can read what it delivers from now on. Called from a GC
+    /// sweep: arms must not run JS.
+    pub fn consumer_collected(self) {
+        match self {
+            SourceHandle::FetchResponseBody(p) => p.on_body_stream_collected(),
+            SourceHandle::None
+            | SourceHandle::JSController(_)
+            | SourceHandle::ServerRequestBody(_)
+            | SourceHandle::ByteStream(_)
+            | SourceHandle::FileReader(_)
+            | SourceHandle::Subprocess(_)
+            | SourceHandle::ShellWritable(_)
+            | SourceHandle::S3DownloadBody(_)
+            | SourceHandle::HTMLRewriter(_)
+            | SourceHandle::TestingCancelOnDrain(_) => {}
+        }
+    }
+
     pub fn start(&mut self) {
         match *self {
             SourceHandle::FetchResponseBody(p) => p.on_start(),

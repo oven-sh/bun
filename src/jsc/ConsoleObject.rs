@@ -85,8 +85,7 @@ bun_opaque::opaque_ffi! {
 /// Only `--console-depth` CLI flag and `console.depth` bunfig option should modify this.
 const DEFAULT_CONSOLE_LOG_DEPTH: u16 = 2;
 
-/// The `console.log` inspection depth: `--console-depth`, then the bunfig
-/// `console.depth` option, then [`DEFAULT_CONSOLE_LOG_DEPTH`].
+/// `--console-depth`, bunfig `console.depth`, or the default.
 pub(crate) fn console_depth() -> u16 {
     bun_options_types::context::try_get()
         .and_then(|ctx| ctx.runtime_options.console_depth)
@@ -1687,9 +1686,8 @@ pub mod formatter {
             }
         }
 
-        /// Constructor for `VirtualMachine::run_error_handler` (uncaught
-        /// exceptions, unhandled rejections, `reportError`). An uncaught value
-        /// that is not an `Error` is printed whole, at the `console.log` depth.
+        /// For `run_error_handler`: an uncaught value that is not an `Error` is
+        /// printed whole, so it gets the `console.log` depth.
         pub fn for_error_handler(global_this: &'a JSGlobalObject) -> Self {
             let mut formatter = Self::new(global_this);
             formatter.max_depth = console_depth();

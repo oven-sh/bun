@@ -215,6 +215,91 @@ describe("highway byte-search kernels", () => {
     }
   });
 
+  // UTF-16 code-unit search (utf16le Buffer.indexOf / lastIndexOf). Lengths,
+  // offsets and results are in code units; the byte views handed to hw() alias
+  // Uint16Arrays so the base pointer stays 2-byte aligned.
+  function ref16(h: Uint16Array, n: number[], forward: boolean) {
+    const starts = h.length - n.length + 1;
+    for (let k = 0; k < starts; k++) {
+      const i = forward ? k : starts - 1 - k;
+      let ok = true;
+      for (let j = 0; j < n.length && ok; j++) ok = h[i + j] === n[j];
+      if (ok) return i;
+    }
+    return -1;
+  }
+  function filler16(len: number, off: number): Uint16Array {
+    const backing = new Uint16Array(len + off + 8);
+    let x = 0x9e3779b9 ^ len ^ (off << 8);
+    for (let i = 0; i < backing.length; i++) {
+      x = (Math.imul(x, 1103515245) + 12345) >>> 0;
+      backing[i] = 0x8000 | (x >>> 16);
+    }
+    return backing.subarray(off, off + len);
+  }
+  const bytes = (h: Uint16Array) => new Uint8Array(h.buffer, h.byteOffset, h.byteLength);
+  const u16 = (units: number[]) => bytes(new Uint16Array(units));
+
+  it("memmem16 / memrmem16: needle lengths 1..5 and 17 code units, planted across boundaries", () => {
+    const needles = [
+      [0x3131],
+      [0x3131, 0x0132],
+      [1, 2, 3],
+      [7, 7, 7, 7, 8],
+      Array.from({ length: 17 }, (_, i) => 0x100 + i),
+    ];
+    for (const n of needles) {
+      const nb = u16(n);
+      for (const len of LENGTHS) {
+        for (const off of [0, 3]) {
+          const none = filler16(len, off);
+          const at0 = `needle=${n.length} len=${len} off=${off}`;
+          expect(hw("memmem16", bytes(none), nb), at0).toBe(-1);
+          expect(hw("memrmem16", bytes(none), nb), at0).toBe(-1);
+          if (n.length > len) continue;
+          const starts = len - n.length + 1;
+          // Long haystacks: both ends, the middle, and a few lane edges are enough.
+          const planted = positions(starts).filter(
+            (p, i, all) => starts <= 300 || i < 4 || i >= all.length - 4 || Math.abs(p - (starts >> 1)) <= 17,
+          );
+          for (const pos of planted) {
+            const h = filler16(len, off);
+            h.set(n, pos);
+            const at = `${at0} pos=${pos}`;
+            expect(hw("memmem16", bytes(h), nb), at).toBe(pos);
+            expect(hw("memrmem16", bytes(h), nb), at).toBe(pos);
+            const later = len - n.length;
+            if (later >= pos + n.length) {
+              h.set(n, later);
+              expect(hw("memmem16", bytes(h), nb), at).toBe(pos);
+              expect(hw("memrmem16", bytes(h), nb), at).toBe(later);
+            }
+          }
+        }
+      }
+    }
+  });
+
+  it("memmem16 / memrmem16: units that share a low byte with the needle do not match", () => {
+    // The anchor filter buckets by low byte; verification must compare full units.
+    const n = [0x0141, 0x0142, 0x0143];
+    const nb = u16(n);
+    for (const len of [3, 8, 9, 17, 33, 65, 130]) {
+      const h = new Uint16Array(len);
+      for (let i = 0; i < len; i++) h[i] = 0x0241 + (i % 3);
+      expect(hw("memmem16", bytes(h), nb), `len=${len}`).toBe(-1);
+      expect(hw("memrmem16", bytes(h), nb), `len=${len}`).toBe(-1);
+      if (len >= 6) {
+        h.set(n, len - 3);
+        expect(hw("memmem16", bytes(h), nb), `len=${len}`).toBe(ref16(h, n, true));
+        expect(hw("memrmem16", bytes(h), nb), `len=${len}`).toBe(len - 3);
+        h.set(n, 1);
+        expect(hw("memmem16", bytes(h), nb), `len=${len}`).toBe(1);
+        expect(hw("memrmem16", bytes(h), nb), `len=${len}`).toBe(ref16(h, n, false));
+      }
+    }
+  });
+
   it("Buffer.indexOf / lastIndexOf / includes(byte) through the public API", () => {
     // These go through JSBuffer.cpp's indexOfNumber (offset/end plumbing) into
     // the same kernels; assert against the planted positions, not a Buffer

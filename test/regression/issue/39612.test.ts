@@ -162,4 +162,16 @@ describe("multi-root workspace folder resolution", () => {
     const [folder] = startDebugging.mock.calls[0] as any[];
     expect(folder).toBeUndefined();
   });
+
+  test("run and debug agree on a foreign file: both fall back to the active editor's folder", () => {
+    mockWindow.activeTextEditor = { document: { uri: MockUri.file("/repo/app/main.ts") } };
+    runFile(MockUri.file("/outside/loose.ts"));
+    debugFile(MockUri.file("/outside/loose.ts"));
+
+    expect(startDebugging).toHaveBeenCalledTimes(2);
+    const [runFolder] = startDebugging.mock.calls[0] as any[];
+    const [debugFolder] = startDebugging.mock.calls[1] as any[];
+    expect(runFolder).toBe(folderApp);
+    expect(debugFolder).toBe(folderApp);
+  });
 });

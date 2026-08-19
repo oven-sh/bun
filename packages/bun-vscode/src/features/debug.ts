@@ -488,9 +488,14 @@ function getActivePath(target?: vscode.Uri): string | undefined {
 
 // In a multi-root workspace, `startDebugging(undefined, ...)` cannot resolve
 // `${workspaceFolder}` and VS Code shows an error instead of launching.
-// Resolve the folder that owns the target file (or the active editor's file).
+// Resolve the folder that owns the target file, with a fallback to the
+// active editor's folder, so the run and debug commands stay consistent.
 function getWorkspaceFolder(resource?: vscode.Uri): vscode.WorkspaceFolder | undefined {
-  const uri = resource ?? vscode.window.activeTextEditor?.document?.uri;
+  if (resource) {
+    const folder = vscode.workspace.getWorkspaceFolder(resource);
+    if (folder) return folder;
+  }
+  const uri = vscode.window.activeTextEditor?.document?.uri;
   return uri ? vscode.workspace.getWorkspaceFolder(uri) : undefined;
 }
 

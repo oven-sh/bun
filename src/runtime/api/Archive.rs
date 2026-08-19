@@ -1339,12 +1339,12 @@ fn extract_to_disk_filtered(
         let raw_pathname = raw_pathname_z.as_bytes();
 
         let mut normalized_buf = bun_paths::PathBuffer::uninit();
-        if raw_pathname.len() >= normalized_buf.len() {
-            continue;
-        }
-        let pathname_z: &bun_core::ZStr = bun_paths::resolve_path::normalize_buf_z::<
+        let Some(pathname_z) = bun_paths::resolve_path::normalize_buf_z_checked::<
             bun_paths::platform::Posix,
-        >(raw_pathname, &mut normalized_buf[..]);
+        >(raw_pathname, &mut normalized_buf[..]) else {
+            continue;
+        };
+        let pathname_z: &bun_core::ZStr = pathname_z;
         let pathname = pathname_z.as_bytes();
 
         // Validate path safety (reject absolute paths, path traversal)
